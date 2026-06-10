@@ -65,6 +65,25 @@ describe("单应用模板工具链", () => {
     expect(cargo).not.toContain("r2d2");
   });
 
+  it("GitHub OAuth 设备授权请求显式协商 JSON 响应并保留错误详情", () => {
+    const workspace = readFileSync(resolve("src-tauri/src/workspace.rs"), "utf-8");
+    const startDeviceFlow = workspace.slice(
+      workspace.indexOf("pub fn github_start_device_flow"),
+      workspace.indexOf("#[tauri::command]\npub fn github_poll_device_flow"),
+    );
+    const pollDeviceFlow = workspace.slice(workspace.indexOf("pub fn github_poll_device_flow"));
+
+    expect(workspace).toContain('const GITHUB_OAUTH_ACCEPT: &str = "application/json";');
+    expect(workspace).toContain("fn github_oauth_headers");
+    expect(workspace).toContain("fn github_http_error");
+    expect(startDeviceFlow).toContain(".post(\"https://github.com/login/device/code\")");
+    expect(startDeviceFlow).toContain("github_oauth_headers(");
+    expect(startDeviceFlow).toContain('github_http_error("启动 GitHub 设备授权失败", response)');
+    expect(pollDeviceFlow).toContain(".post(\"https://github.com/login/oauth/access_token\")");
+    expect(pollDeviceFlow).toContain("github_oauth_headers(");
+    expect(pollDeviceFlow).toContain('github_http_error("轮询 GitHub 授权失败", response)');
+  });
+
   it("包管理器检查接受 Yarn 4 并拒绝其他入口", () => {
     const ok = spawnSync("node", ["scripts/check-package-manager.mjs"], {
       cwd: resolve("."),
