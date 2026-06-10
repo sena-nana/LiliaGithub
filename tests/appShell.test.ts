@@ -105,7 +105,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("左上角按钮切换左侧栏折叠状态并写回本地存储", async () => {
-    const view = await renderAppShell();
+    const view = await renderAppShell("/plugins");
     const shell = shellElement(view.container);
     const collapse = view.getByRole("button", { name: "折叠左侧栏" });
 
@@ -131,7 +131,7 @@ describe("AppShell sidebar", () => {
 
   it("左侧栏宽度可拖拽调整、写回存储并双击恢复默认", async () => {
     localStorage.setItem(SIDEBAR_CONFIG.widthStorageKey, "260");
-    const view = await renderAppShell();
+    const view = await renderAppShell("/plugins");
     const shell = shellElement(view.container);
     const resizer = leftResizer(view.container);
 
@@ -189,7 +189,7 @@ describe("AppShell sidebar", () => {
     });
     expect(view.getByRole("button", { name: /关于/ })).toHaveClass("is-active");
 
-    await view.router.push("/");
+    await view.router.push("/plugins");
     expect(shell).toHaveClass("is-sidebar-collapsed");
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
   });

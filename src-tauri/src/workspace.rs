@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring_core::{Entry, Error as KeyringError};
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, Response};
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -30,6 +30,7 @@ const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 const GITHUB_SCOPE: &str = "repo read:user";
 const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
+const GITHUB_OAUTH_ACCEPT: &str = "application/json";
 const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
 const LAUNCH_LOG_LIMIT: usize = 500;
 
@@ -223,6 +224,13 @@ struct TokenResponse {
     access_token: Option<String>,
     scope: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubErrorResponse {
+    error: Option<String>,
+    error_description: Option<String>,
+    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -431,6 +439,35 @@ fn github_headers(
     } else {
         builder
     }
+}
+
+fn github_oauth_headers(
+    builder: reqwest::blocking::RequestBuilder,
+) -> reqwest::blocking::RequestBuilder {
+    builder
+        .header(USER_AGENT, GITHUB_USER_AGENT)
+        .header(ACCEPT, GITHUB_OAUTH_ACCEPT)
+}
+
+fn github_http_error(prefix: &str, response: Response) -> String {
+    let status = response.status();
+    let body = response.text().unwrap_or_default();
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return format!("{prefix}：HTTP {status}");
+    }
+    if let Ok(error) = serde_json::from_str::<GitHubErrorResponse>(trimmed) {
+        if let Some(detail) = error
+            .error_description
+            .or(error.message)
+            .or(error.error)
+            .filter(|value| !value.trim().is_empty())
+        {
+            return format!("{prefix}：HTTP {status}：{detail}");
+        }
+    }
+    let detail = trimmed.chars().take(240).collect::<String>();
+    format!("{prefix}：HTTP {status}：{detail}")
 }
 
 fn github_auth_header(token: &str) -> String {
@@ -942,16 +979,12 @@ pub fn github_start_device_flow() -> Result<GitHubDeviceFlowStart, String> {
         return Err("GitHub Client ID 未配置".to_string());
     };
     let client = build_client()?;
-    let response = client
-        .post("https://github.com/login/device/code")
+    let response = github_oauth_headers(client.post("https://github.com/login/device/code"))
         .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
         .send()
         .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "启动 GitHub 设备授权失败：HTTP {}",
-            response.status()
-        ));
+        return Err(github_http_error("启动 GitHub 设备授权失败", response));
     }
     let body = response
         .json::<DeviceCodeResponse>()
@@ -975,9 +1008,7 @@ pub fn github_poll_device_flow(
         return Err("GitHub Client ID 未配置".to_string());
     };
     let client = build_client()?;
-    let response = client
-        .post("https://github.com/login/oauth/access_token")
-        .header(ACCEPT, "application/json")
+    let response = github_oauth_headers(client.post("https://github.com/login/oauth/access_token"))
         .form(&[
             ("client_id", client_id),
             ("device_code", device_code.trim()),
@@ -986,7 +1017,7 @@ pub fn github_poll_device_flow(
         .send()
         .map_err(|e| format!("轮询 GitHub 授权失败：{e}"))?;
     if !response.status().is_success() {
-        return Err(format!("轮询 GitHub 授权失败：HTTP {}", response.status()));
+        return Err(github_http_error("轮询 GitHub 授权失败", response));
     }
     let body = response
         .json::<TokenResponse>()

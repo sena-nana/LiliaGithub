@@ -9,6 +9,7 @@ const deviceFlow = ref<null>(null);
 const isReady = computed(() => false);
 const isAuthorized = computed(() => false);
 const state = reactive({
+  loading: true,
   authLoading: false,
   error: null,
 });
@@ -69,7 +70,7 @@ async function renderSetupHome() {
 }
 
 describe("初始化覆盖界面", () => {
-  it("未完成配置时覆盖标题栏下方整窗并隐藏侧栏", async () => {
+  it("初始化加载期间覆盖标题栏下方整窗并隐藏侧栏", async () => {
     const view = await renderSetupHome();
     const shell = view.container.querySelector(".shell");
 

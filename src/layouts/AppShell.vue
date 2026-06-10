@@ -19,9 +19,7 @@ const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
 void workspace.initialize();
 
-const isSetupOverlay = computed(() =>
-  route.path === "/" && !workspace.state.loading && !workspace.isReady.value
-);
+const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.value);
 </script>
 
 <template>
