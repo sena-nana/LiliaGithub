@@ -53,13 +53,16 @@ describe("单应用模板工具链", () => {
     expect(deps.zod).toBeUndefined();
   });
 
-  it("Rust 端只新增通用窗口状态 store 插件", () => {
+  it("Rust 端包含 Git/GitHub MVP 所需插件和依赖，不引入 Lilia agent 存储", () => {
     const cargo = readFileSync(resolve("src-tauri/Cargo.toml"), "utf-8");
 
     expect(cargo).toContain('tauri-plugin-store = "2"');
+    expect(cargo).toContain('tauri-plugin-dialog = "2"');
+    expect(cargo).toContain("reqwest");
+    expect(cargo).toContain("keyring");
+    expect(cargo).toContain("base64");
     expect(cargo).not.toContain("rusqlite");
     expect(cargo).not.toContain("r2d2");
-    expect(cargo).not.toContain("reqwest");
   });
 
   it("包管理器检查接受 Yarn 4 并拒绝其他入口", () => {
@@ -165,7 +168,7 @@ describe("Lilia 外壳样式迁移", () => {
     expect(styles).toContain("background: transparent");
   });
 
-  it("保留 Lilia 侧边栏行内工具的悬停显隐动画", () => {
+  it("保留 Lilia 侧边栏行内工具样式并接入仓库同步入口", () => {
     const secondaryPanel = readFileSync(resolve("src/layouts/SecondaryPanel.vue"), "utf-8");
     const rowTools = readFileSync(resolve("src/components/sidebar/SidebarRowTools.vue"), "utf-8");
 
@@ -173,11 +176,8 @@ describe("Lilia 外壳样式迁移", () => {
     expect(rowTools).toContain(".sb-tree__hover-tools");
     expect(rowTools).toContain("opacity: 0");
     expect(rowTools).toContain("pointer-events: none");
-    expect(secondaryPanel).toContain(".sb-tree__hover-tools");
-    expect(secondaryPanel).toContain(".sb-tree__row:hover .sb-tree__hover-tools");
-    expect(secondaryPanel).toContain(".sb-tree__row:focus-within .sb-tree__hover-tools");
-    expect(secondaryPanel).toContain(".sb-tree__row.is-active .sb-tree__hover-tools");
-    expect(secondaryPanel).toContain("opacity: 1");
-    expect(secondaryPanel).toContain("pointer-events: auto");
+    expect(secondaryPanel).toContain("拉取预检");
+    expect(secondaryPanel).toContain("推送预检");
+    expect(secondaryPanel).toContain("workspace.state.repos");
   });
 });

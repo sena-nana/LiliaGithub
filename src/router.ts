@@ -8,6 +8,7 @@ import AppShell from "./layouts/AppShell.vue";
 const HomePage = () => import("./pages/Home.vue");
 const PluginsPage = () => import("./pages/Plugins.vue");
 const SettingsPage = () => import("./pages/Settings.vue");
+const RepoPage = () => import("./pages/RepoDetail.vue");
 
 export function createLiliaGithubRouter(history: RouterHistory = createWebHistory()) {
   return createRouter({
@@ -18,6 +19,7 @@ export function createLiliaGithubRouter(history: RouterHistory = createWebHistor
         component: AppShell,
         children: [
           { path: "", component: HomePage },
+          { path: "repos/:repoId(.*)", component: RepoPage },
           { path: "plugins", component: PluginsPage },
           {
             path: "settings",
