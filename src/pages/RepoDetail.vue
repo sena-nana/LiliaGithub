@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   Check,
   ExternalLink,
@@ -21,10 +21,21 @@ import { repoDisplayName } from "../utils/repoDisplay";
 import "../styles/page.css";
 
 type RepoTab = "changes" | "history" | "branches";
+type HistoryCommit = {
+  readonly hash: string;
+  readonly shortHash: string;
+  readonly author: string;
+  readonly authorEmail?: string | null;
+  readonly timestamp: number;
+  readonly subject: string;
+  readonly parents: readonly string[];
+  readonly refs: readonly string[];
+};
 
 const route = useRoute();
+const router = useRouter();
 const workspace = useWorkspace();
-const activeTab = ref<RepoTab>("changes");
+const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
 const selectedFiles = ref<Set<string>>(new Set());
 const commitMessage = ref("");
 const pushAfter = ref(true);
@@ -73,6 +84,17 @@ const selectedSummaryText = computed(() => {
   return `已选 ${selectedFileList.value.length} 个文件`;
 });
 const selectedFilePreview = computed(() => selectedFileList.value.slice(0, 3));
+const historyBranches = computed(() => ({
+  local: detail.value?.branches.filter((branch) => !branch.remote) ?? [],
+  remote: detail.value?.branches.filter((branch) => branch.remote) ?? [],
+}));
+const historyRefNames = computed(() => {
+  const refs = new Set<string>();
+  for (const commit of detail.value?.commits ?? []) {
+    for (const refName of commit.refs) refs.add(refName);
+  }
+  return Array.from(refs);
+});
 
 const tabs: Array<{ key: RepoTab; label: string }> = [
   { key: "changes", label: "变更" },
@@ -104,9 +126,22 @@ watch(repoId, () => {
   void load();
 });
 
+watch(
+  () => route.query.tab,
+  (tab) => {
+    const normalized = normalizeTab(tab);
+    if (normalized) activeTab.value = normalized;
+  },
+);
+
 watch(changes, () => {
   syncFocusedChange();
 });
+
+function normalizeTab(value: unknown): RepoTab | null {
+  if (value === "changes" || value === "history" || value === "branches") return value;
+  return null;
+}
 
 async function load() {
   if (!repoId.value) return;
@@ -243,6 +278,10 @@ function checkout(branch: string) {
   void runAction(() => workspace.checkout(repoId.value, branch));
 }
 
+function openCommit(commit: HistoryCommit) {
+  void router.push(`/repos/${repoId.value}/commits/${commit.hash}`);
+}
+
 function openGitHub() {
   if (!summary.value?.githubFullName) return;
   void workspace.openUrl(`https://github.com/${summary.value.githubFullName}`);
@@ -269,6 +308,25 @@ function statusTone(change: RepoChange) {
 
 function formatTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString();
+}
+
+function formatCompactTime(timestamp: number) {
+  return new Date(timestamp * 1000).toLocaleString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function commitMetaTitle(commit: HistoryCommit) {
+  return [
+    commit.hash,
+    commit.authorEmail ? `${commit.author} <${commit.authorEmail}>` : commit.author,
+    formatTime(commit.timestamp),
+    commit.parents.length ? `parents: ${commit.parents.join(", ")}` : "root commit",
+    commit.refs.length ? `refs: ${commit.refs.join(", ")}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 function lastCommitText() {
@@ -455,13 +513,70 @@ function streamText(stream: string) {
             </div>
           </div>
           <p v-if="!detail?.commits.length" class="muted repo-empty">没有提交历史。</p>
-          <div v-else class="repo-list-panel">
-            <div v-for="commit in detail?.commits" :key="commit.hash" class="commit-row">
-              <GitCommitHorizontal :size="14" aria-hidden="true" />
-              <div>
-                <strong>{{ commit.subject }}</strong>
-                <span>{{ commit.shortHash }} · {{ commit.author }} · {{ formatTime(commit.timestamp) }}</span>
-              </div>
+          <div v-else class="history-workspace" aria-label="提交历史和分支树">
+            <aside class="history-tree" aria-label="历史和分支树">
+              <section>
+                <h3>本地分支</h3>
+                <p v-if="!historyBranches.local.length" class="muted">无本地分支</p>
+                <div v-for="branch in historyBranches.local" :key="branch.name" class="history-tree__item">
+                  <GitBranch :size="13" aria-hidden="true" />
+                  <span :title="branch.name">{{ branch.name }}</span>
+                  <em v-if="branch.current">当前</em>
+                </div>
+              </section>
+              <section>
+                <h3>远端分支</h3>
+                <p v-if="!historyBranches.remote.length" class="muted">无远端分支</p>
+                <div v-for="branch in historyBranches.remote" :key="branch.name" class="history-tree__item">
+                  <GitBranch :size="13" aria-hidden="true" />
+                  <span :title="branch.name">{{ branch.name }}</span>
+                </div>
+              </section>
+              <section v-if="historyRefNames.length">
+                <h3>历史引用</h3>
+                <div v-for="refName in historyRefNames" :key="refName" class="history-tree__item history-tree__item--ref">
+                  <GitCommitHorizontal :size="13" aria-hidden="true" />
+                  <span :title="refName">{{ refName }}</span>
+                </div>
+              </section>
+            </aside>
+            <div class="history-list" aria-label="提交历史密集列表">
+              <button
+                v-for="(commit, index) in detail?.commits"
+                :key="commit.hash"
+                type="button"
+                class="history-row"
+                :title="commitMetaTitle(commit)"
+                @click="openCommit(commit)"
+              >
+                <span class="history-graph" aria-label="提交图谱">
+                  <span class="history-graph__line" :class="{ 'is-first': index === 0, 'is-last': index === (detail?.commits.length ?? 0) - 1 }" />
+                  <span class="history-graph__node" />
+                </span>
+                <span class="history-row__body">
+                  <span class="history-row__main">
+                    <strong>{{ commit.subject }}</strong>
+                    <span class="history-row__refs" v-if="commit.refs.length">
+                      <span v-for="ref in commit.refs.slice(0, 3)" :key="ref">{{ ref }}</span>
+                    </span>
+                  </span>
+                  <span class="history-row__meta">
+                    <span>{{ commit.shortHash }}</span>
+                    <span>{{ commit.author }}</span>
+                  </span>
+                </span>
+                <time class="history-row__time" :datetime="new Date(commit.timestamp * 1000).toISOString()">
+                  {{ formatCompactTime(commit.timestamp) }}
+                </time>
+                <span class="history-popover" role="tooltip">
+                  <strong>{{ commit.subject }}</strong>
+                  <span>{{ commit.hash }}</span>
+                  <span>{{ commit.authorEmail ? `${commit.author} <${commit.authorEmail}>` : commit.author }}</span>
+                  <span>{{ formatTime(commit.timestamp) }}</span>
+                  <span>{{ commit.parents.length ? `父提交 ${commit.parents.join(", ")}` : "根提交" }}</span>
+                  <span v-if="commit.refs.length">引用 {{ commit.refs.join(", ") }}</span>
+                </span>
+              </button>
             </div>
           </div>
         </section>
@@ -830,13 +945,11 @@ function streamText(stream: string) {
 }
 
 .change-row,
-.commit-row,
 .branch-row {
   border-top: 1px solid var(--border-soft);
 }
 
 .change-row:first-of-type,
-.commit-row:first-of-type,
 .branch-row:first-of-type {
   border-top: 0;
 }
@@ -960,7 +1073,6 @@ function streamText(stream: string) {
   align-items: center;
 }
 
-.commit-row,
 .branch-row {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -969,16 +1081,265 @@ function streamText(stream: string) {
   padding: 10px 0;
 }
 
-.commit-row span,
 .branch-row span {
   display: block;
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.commit-row strong,
 .branch-row strong {
   overflow-wrap: anywhere;
+}
+
+.history-workspace {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.history-tree {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.history-tree section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.history-tree h3 {
+  margin: 0 0 2px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.history-tree p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.history-tree__item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.history-tree__item:hover {
+  background: var(--bg-hover);
+}
+
+.history-tree__item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-tree__item em {
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.history-tree__item--ref {
+  color: var(--text);
+}
+
+.history-list {
+  display: grid;
+  position: relative;
+}
+
+.history-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 128px;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 8px 0 0;
+  border-top: 1px solid var(--border-soft);
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text);
+}
+
+.history-row:first-child {
+  border-top: 0;
+}
+
+.history-row:hover,
+.history-row:focus-visible {
+  background: var(--bg-hover);
+}
+
+.history-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.history-graph {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  min-height: 34px;
+}
+
+.history-graph__line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--border);
+}
+
+.history-graph__line.is-first {
+  top: 50%;
+}
+
+.history-graph__line.is-last {
+  bottom: 50%;
+}
+
+.history-graph__node {
+  position: relative;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--bg-elev);
+}
+
+.history-row__body,
+.history-row__main,
+.history-row__meta {
+  min-width: 0;
+}
+
+.history-row__body {
+  display: grid;
+  gap: 2px;
+}
+
+.history-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-row__main strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.history-row__refs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.history-row__refs span {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.history-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.history-row__meta span:not(:last-child)::after {
+  content: "·";
+  margin-left: 8px;
+  color: var(--text-faint);
+}
+
+.history-row__time {
+  justify-self: end;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.history-popover {
+  pointer-events: none;
+  position: absolute;
+  z-index: 5;
+  left: 48px;
+  top: calc(100% - 2px);
+  display: none;
+  width: min(420px, calc(100vw - 96px));
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: 0 14px 36px rgb(0 0 0 / 20%);
+  color: var(--text);
+}
+
+.history-popover span,
+.history-popover strong {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-popover strong {
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.history-popover span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.history-row:hover .history-popover,
+.history-row:focus-visible .history-popover {
+  display: block;
 }
 
 .commit-panel,
@@ -1187,16 +1548,37 @@ function streamText(stream: string) {
     justify-self: start;
   }
 
-  .commit-row,
   .branch-row,
   .branch-row button {
     grid-column: auto;
   }
 
-  .commit-row,
   .branch-row,
   .repo-side-status__actions {
     grid-template-columns: 1fr;
+  }
+
+  .history-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .history-tree {
+    grid-template-columns: 1fr;
+  }
+
+  .history-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+    min-height: 42px;
+  }
+
+  .history-row__time {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .history-popover {
+    left: 32px;
+    width: calc(100vw - 64px);
   }
 
   .branch-row button {
