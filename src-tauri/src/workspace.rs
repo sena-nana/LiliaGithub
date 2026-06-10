@@ -1,7 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -14,6 +17,12 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_store::StoreExt;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 const STORE_FILE: &str = "lilia-github.json";
 const SETTINGS_KEY: &str = "workspace.settings";
 const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
@@ -21,12 +30,56 @@ const GITHUB_SCOPE: &str = "repo read:user";
 const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
+const LAUNCH_LOG_LIMIT: usize = 500;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSettings {
     pub workspace_root: Option<String>,
     pub github_binding: Option<GitHubBindingMetadata>,
+    #[serde(default)]
+    pub project_launch_configs: HashMap<String, ProjectLaunchConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLaunchConfig {
+    pub command: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub source: String,
+    #[serde(default)]
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLaunchStatus {
+    pub repo_id: String,
+    pub state: String,
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<i64>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLaunchLog {
+    pub index: u64,
+    pub repo_id: String,
+    pub stream: String,
+    pub line: String,
+    pub timestamp: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +230,11 @@ struct GitHubUserResponse {
     avatar_url: Option<String>,
 }
 
+struct LaunchEntry {
+    child: Option<Child>,
+    status: ProjectLaunchStatus,
+}
+
 struct KeyringGuard;
 
 impl Drop for KeyringGuard {
@@ -190,6 +248,82 @@ fn now_millis() -> i64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|value| value.as_millis() as i64)
         .unwrap_or_default()
+}
+
+fn launch_runtime() -> &'static Mutex<HashMap<String, LaunchEntry>> {
+    static RUNTIME: OnceLock<Mutex<HashMap<String, LaunchEntry>>> = OnceLock::new();
+    RUNTIME.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn launch_logs() -> &'static Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>> {
+    static LOGS: OnceLock<Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>>> = OnceLock::new();
+    LOGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn next_launch_log_index() -> u64 {
+    static INDEX: AtomicU64 = AtomicU64::new(1);
+    INDEX.fetch_add(1, Ordering::Relaxed)
+}
+
+fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
+    ProjectLaunchStatus {
+        repo_id: repo_id.to_string(),
+        state: "idle".to_string(),
+        pid: None,
+        command: None,
+        started_at: None,
+        exit_code: None,
+        error: None,
+    }
+}
+
+fn push_launch_log(repo_id: &str, stream: &str, line: impl Into<String>) {
+    let mut logs = launch_logs().lock().unwrap_or_else(|e| e.into_inner());
+    let repo_logs = logs.entry(repo_id.to_string()).or_default();
+    repo_logs.push_back(ProjectLaunchLog {
+        index: next_launch_log_index(),
+        repo_id: repo_id.to_string(),
+        stream: stream.to_string(),
+        line: line.into(),
+        timestamp: now_millis(),
+    });
+    while repo_logs.len() > LAUNCH_LOG_LIMIT {
+        repo_logs.pop_front();
+    }
+}
+
+fn refresh_launch_entry(repo_id: &str, entry: &mut LaunchEntry) {
+    if entry.status.state != "running" {
+        return;
+    }
+    let Some(child) = entry.child.as_mut() else {
+        entry.status.state = "idle".to_string();
+        entry.status.pid = None;
+        return;
+    };
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let exit_code = status.code();
+            entry.child = None;
+            entry.status.state = "exited".to_string();
+            entry.status.pid = None;
+            entry.status.exit_code = exit_code;
+            entry.status.error = None;
+            push_launch_log(
+                repo_id,
+                "system",
+                format!("进程已退出：exit {}", exit_code.unwrap_or(-1)),
+            );
+        }
+        Ok(None) => {}
+        Err(err) => {
+            entry.child = None;
+            entry.status.state = "error".to_string();
+            entry.status.pid = None;
+            entry.status.error = Some(err.to_string());
+            push_launch_log(repo_id, "system", format!("读取进程状态失败：{err}"));
+        }
+    }
 }
 
 fn load_settings(app: &AppHandle) -> WorkspaceSettings {
@@ -517,6 +651,222 @@ fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+fn package_manager(repo_path: &Path, package_manager_field: Option<&str>) -> &'static str {
+    if let Some(field) = package_manager_field {
+        let name = field.split('@').next().unwrap_or("").trim();
+        if name == "yarn" || name == "pnpm" || name == "npm" {
+            return match name {
+                "yarn" => "yarn",
+                "pnpm" => "pnpm",
+                _ => "npm",
+            };
+        }
+    }
+    if repo_path.join("yarn.lock").exists() {
+        "yarn"
+    } else if repo_path.join("pnpm-lock.yaml").exists() {
+        "pnpm"
+    } else {
+        "npm"
+    }
+}
+
+fn package_script_command(pm: &str, script: &str) -> String {
+    if pm == "npm" {
+        format!("npm run {script}")
+    } else {
+        format!("{pm} {script}")
+    }
+}
+
+fn infer_launch_config(repo_path: &Path) -> Option<ProjectLaunchConfig> {
+    let package_path = repo_path.join("package.json");
+    if package_path.exists() {
+        let parsed = fs::read_to_string(&package_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+        if let Some(package) = parsed {
+            let scripts = package.get("scripts").and_then(|value| value.as_object());
+            let pm = package_manager(
+                repo_path,
+                package
+                    .get("packageManager")
+                    .and_then(|value| value.as_str()),
+            );
+            if let Some(scripts) = scripts {
+                if repo_path.join("src-tauri").exists() && scripts.contains_key("tauri:dev") {
+                    return Some(ProjectLaunchConfig {
+                        command: package_script_command(pm, "tauri:dev"),
+                        cwd: None,
+                        source: "inferred".to_string(),
+                        updated_at: None,
+                    });
+                }
+                for script in ["dev", "start", "serve"] {
+                    if scripts.contains_key(script) {
+                        return Some(ProjectLaunchConfig {
+                            command: package_script_command(pm, script),
+                            cwd: None,
+                            source: "inferred".to_string(),
+                            updated_at: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    if repo_path.join("Cargo.toml").exists() {
+        return Some(ProjectLaunchConfig {
+            command: "cargo run".to_string(),
+            cwd: None,
+            source: "inferred".to_string(),
+            updated_at: None,
+        });
+    }
+    None
+}
+
+fn launch_config_for_repo(
+    app: &AppHandle,
+    repo_id: &str,
+) -> Result<Option<ProjectLaunchConfig>, String> {
+    let settings = load_settings(app);
+    if let Some(config) = settings
+        .project_launch_configs
+        .get(repo_id)
+        .filter(|config| !config.command.trim().is_empty())
+    {
+        let mut config = config.clone();
+        config.source = "manual".to_string();
+        return Ok(Some(config));
+    }
+    let path = repo_path_by_id(app, repo_id)?;
+    Ok(infer_launch_config(&path))
+}
+
+fn resolve_launch_cwd(repo_path: &Path, cwd: Option<&str>) -> Result<PathBuf, String> {
+    let Some(cwd) = cwd.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(repo_path.to_path_buf());
+    };
+    let path = PathBuf::from(cwd);
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        repo_path.join(path)
+    };
+    if !resolved.exists() || !resolved.is_dir() {
+        return Err(format!(
+            "启动工作目录不存在或不是文件夹：{}",
+            resolved.display()
+        ));
+    }
+    Ok(resolved)
+}
+
+fn spawn_launch_command(command: &str, cwd: &Path) -> Result<Child, String> {
+    #[cfg(target_os = "windows")]
+    let mut process = {
+        let mut command_process = Command::new("cmd");
+        command_process.args(["/C", command]);
+        command_process.creation_flags(CREATE_NO_WINDOW);
+        command_process
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let mut process = {
+        let mut command_process = Command::new("sh");
+        command_process.args(["-c", command]);
+        #[cfg(unix)]
+        unsafe {
+            command_process.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        command_process
+    };
+
+    process
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动项目失败：{e}"))
+}
+
+fn stop_launch_child(child: &mut Child) -> Result<i32, String> {
+    let pid = child.id();
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("停止项目进程树失败：{e}"))?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let already_exited = detail.contains("not found")
+                || detail.contains("not running")
+                || detail.contains("没有找到")
+                || detail.contains("不存在");
+            if !already_exited {
+                return Err(if detail.is_empty() {
+                    format!(
+                        "停止项目进程树失败：exit {}",
+                        output.status.code().unwrap_or(-1)
+                    )
+                } else {
+                    detail
+                });
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    unsafe {
+        let pgid = pid as libc::pid_t;
+        if libc::kill(-pgid, libc::SIGTERM) == -1 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ESRCH) {
+                return Err(format!("停止项目进程组失败：{err}"));
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", unix)))]
+    {
+        child.kill().map_err(|e| format!("停止项目失败：{e}"))?;
+    }
+
+    child
+        .wait()
+        .map(|status| status.code().unwrap_or(-1))
+        .map_err(|e| format!("等待项目退出失败：{e}"))
+}
+
+fn pipe_launch_output(
+    repo_id: String,
+    stream: &'static str,
+    reader: impl std::io::Read + Send + 'static,
+) {
+    std::thread::spawn(move || {
+        let reader = BufReader::new(reader);
+        for line in reader.lines() {
+            match line {
+                Ok(line) => push_launch_log(&repo_id, stream, line),
+                Err(err) => {
+                    push_launch_log(&repo_id, "system", format!("读取 {stream} 失败：{err}"));
+                    break;
+                }
+            }
+        }
+    });
+}
+
 #[tauri::command]
 pub fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings {
     load_settings(&app)
@@ -731,6 +1081,144 @@ pub fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, St
         commits: repo_history(&path),
         branches: repo_branches(&path),
     })
+}
+
+#[tauri::command]
+pub fn repo_get_launch_config(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<Option<ProjectLaunchConfig>, String> {
+    launch_config_for_repo(&app, &repo_id)
+}
+
+#[tauri::command]
+pub fn repo_save_launch_config(
+    app: AppHandle,
+    repo_id: String,
+    command: String,
+    cwd: Option<String>,
+) -> Result<ProjectLaunchConfig, String> {
+    repo_path_by_id(&app, &repo_id)?;
+    let command = command.trim().to_string();
+    if command.is_empty() {
+        return Err("启动命令不能为空".to_string());
+    }
+    let cwd = cwd
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let config = ProjectLaunchConfig {
+        command,
+        cwd,
+        source: "manual".to_string(),
+        updated_at: Some(now_millis()),
+    };
+    let mut settings = load_settings(&app);
+    settings
+        .project_launch_configs
+        .insert(repo_id, config.clone());
+    save_settings(&app, &settings)?;
+    Ok(config)
+}
+
+#[tauri::command]
+pub fn repo_get_launch_status(repo_id: String) -> Result<ProjectLaunchStatus, String> {
+    let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(entry) = runtime.get_mut(&repo_id) else {
+        return Ok(idle_launch_status(&repo_id));
+    };
+    refresh_launch_entry(&repo_id, entry);
+    Ok(entry.status.clone())
+}
+
+#[tauri::command]
+pub fn repo_get_launch_logs(
+    repo_id: String,
+    since: Option<u64>,
+) -> Result<Vec<ProjectLaunchLog>, String> {
+    let logs = launch_logs().lock().unwrap_or_else(|e| e.into_inner());
+    let since = since.unwrap_or(0);
+    Ok(logs
+        .get(&repo_id)
+        .map(|repo_logs| {
+            repo_logs
+                .iter()
+                .filter(|entry| entry.index > since)
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn repo_start_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
+    let repo_path = repo_path_by_id(&app, &repo_id)?;
+    let Some(config) = launch_config_for_repo(&app, &repo_id)? else {
+        return Err("未配置快速启动脚本".to_string());
+    };
+    let command = config.command.trim().to_string();
+    if command.is_empty() {
+        return Err("启动命令不能为空".to_string());
+    }
+    let cwd = resolve_launch_cwd(&repo_path, config.cwd.as_deref())?;
+
+    let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = runtime.get_mut(&repo_id) {
+        refresh_launch_entry(&repo_id, entry);
+        if entry.status.state == "running" {
+            return Ok(entry.status.clone());
+        }
+    }
+
+    let mut child = spawn_launch_command(&command, &cwd)?;
+    let pid = child.id();
+    if let Some(stdout) = child.stdout.take() {
+        pipe_launch_output(repo_id.clone(), "stdout", stdout);
+    }
+    if let Some(stderr) = child.stderr.take() {
+        pipe_launch_output(repo_id.clone(), "stderr", stderr);
+    }
+
+    let status = ProjectLaunchStatus {
+        repo_id: repo_id.clone(),
+        state: "running".to_string(),
+        pid: Some(pid),
+        command: Some(command.clone()),
+        started_at: Some(now_millis()),
+        exit_code: None,
+        error: None,
+    };
+    runtime.insert(
+        repo_id.clone(),
+        LaunchEntry {
+            child: Some(child),
+            status: status.clone(),
+        },
+    );
+    push_launch_log(&repo_id, "system", format!("启动命令：{command}"));
+    push_launch_log(&repo_id, "system", format!("工作目录：{}", cwd.display()));
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn repo_stop_launch(repo_id: String) -> Result<ProjectLaunchStatus, String> {
+    let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(entry) = runtime.get_mut(&repo_id) else {
+        return Ok(idle_launch_status(&repo_id));
+    };
+    refresh_launch_entry(&repo_id, entry);
+    if entry.status.state != "running" {
+        return Ok(entry.status.clone());
+    }
+    if let Some(child) = entry.child.as_mut() {
+        let exit_code = stop_launch_child(child)?;
+        entry.status.state = "exited".to_string();
+        entry.status.pid = None;
+        entry.status.exit_code = Some(exit_code);
+        entry.status.error = None;
+        entry.child = None;
+        push_launch_log(&repo_id, "system", "已停止快速启动进程");
+    }
+    Ok(entry.status.clone())
 }
 
 #[tauri::command]
@@ -1104,6 +1592,16 @@ pub(crate) fn parse_github_remote(remote: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn temp_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("lilia-github-{name}-{}", now_millis()));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn write_package(path: &Path, body: &str) {
+        fs::write(path.join("package.json"), body).unwrap();
+    }
+
     #[test]
     fn parses_github_remote_variants() {
         assert_eq!(
@@ -1151,5 +1649,82 @@ mod tests {
         assert_eq!(pull.blocked.len(), 1);
         let push = build_bulk_preview("push".to_string(), vec![repo]);
         assert_eq!(push.eligible.len(), 1);
+    }
+
+    #[test]
+    fn infers_tauri_dev_script_first() {
+        let path = temp_dir("tauri-dev");
+        fs::create_dir_all(path.join("src-tauri")).unwrap();
+        write_package(
+            &path,
+            r#"{
+              "packageManager": "yarn@4.14.1",
+              "scripts": {
+                "dev": "vite",
+                "tauri:dev": "tauri dev"
+              }
+            }"#,
+        );
+
+        let config = infer_launch_config(&path).unwrap();
+        assert_eq!(config.command, "yarn tauri:dev");
+        assert_eq!(config.source, "inferred");
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn infers_js_script_by_lockfile_and_priority() {
+        let path = temp_dir("js-dev");
+        fs::write(path.join("pnpm-lock.yaml"), "").unwrap();
+        write_package(
+            &path,
+            r#"{
+              "scripts": {
+                "start": "vite --host",
+                "serve": "vite preview"
+              }
+            }"#,
+        );
+
+        let config = infer_launch_config(&path).unwrap();
+        assert_eq!(config.command, "pnpm start");
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn infers_npm_dev_and_cargo_fallback() {
+        let js_path = temp_dir("npm-dev");
+        write_package(
+            &js_path,
+            r#"{
+              "scripts": {
+                "dev": "vite"
+              }
+            }"#,
+        );
+        assert_eq!(
+            infer_launch_config(&js_path).unwrap().command,
+            "npm run dev"
+        );
+        fs::remove_dir_all(js_path).unwrap();
+
+        let cargo_path = temp_dir("cargo");
+        fs::write(
+            cargo_path.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            infer_launch_config(&cargo_path).unwrap().command,
+            "cargo run"
+        );
+        fs::remove_dir_all(cargo_path).unwrap();
+    }
+
+    #[test]
+    fn returns_none_without_known_launch_entrypoint() {
+        let path = temp_dir("no-entrypoint");
+        assert!(infer_launch_config(&path).is_none());
+        fs::remove_dir_all(path).unwrap();
     }
 }

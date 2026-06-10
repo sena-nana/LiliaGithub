@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   Check,
@@ -8,7 +8,11 @@ import {
   GitBranch,
   GitCommitHorizontal,
   GitPullRequestArrow,
+  Play,
   RefreshCw,
+  Settings,
+  Square,
+  Terminal,
   Upload,
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
@@ -25,6 +29,11 @@ const commitMessage = ref("");
 const pushAfter = ref(true);
 const actionError = ref<string | null>(null);
 const actionRunning = ref(false);
+const launchEditing = ref(false);
+const launchTerminalVisible = ref(false);
+const launchCommandInput = ref("");
+const launchCwdInput = ref("");
+let launchPollTimer: number | null = null;
 
 const repoId = computed(() => String(route.params.repoId ?? ""));
 const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);
@@ -32,6 +41,12 @@ const summary = computed(() => detail.value?.summary ?? workspace.repoById(repoI
 const changes = computed(() => detail.value?.changes ?? []);
 const selectedFileList = computed(() => Array.from(selectedFiles.value));
 const canCommit = computed(() => selectedFiles.value.size > 0 && commitMessage.value.trim().length > 0);
+const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
+const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
+const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
+const launchState = computed(() => launchStatus.value?.state ?? "idle");
+const launchRunning = computed(() => launchState.value === "running");
+const hasLaunchCommand = computed(() => Boolean(launchConfig.value?.command.trim()));
 
 const tabs: Array<{ key: RepoTab; label: string }> = [
   { key: "changes", label: "变更" },
@@ -42,11 +57,24 @@ const tabs: Array<{ key: RepoTab; label: string }> = [
 
 onMounted(() => {
   void load();
+  launchPollTimer = window.setInterval(() => {
+    if (repoId.value) {
+      void refreshLaunch();
+    }
+  }, 1500);
+});
+
+onUnmounted(() => {
+  if (launchPollTimer !== null) {
+    window.clearInterval(launchPollTimer);
+  }
 });
 
 watch(repoId, () => {
   selectedFiles.value = new Set();
   commitMessage.value = "";
+  launchEditing.value = false;
+  launchTerminalVisible.value = false;
   void load();
 });
 
@@ -54,10 +82,31 @@ async function load() {
   if (!repoId.value) return;
   actionError.value = null;
   try {
-    await workspace.loadRepoDetail(repoId.value);
+    await Promise.all([
+      workspace.loadRepoDetail(repoId.value),
+      workspace.loadLaunch(repoId.value),
+    ]);
+    resetLaunchForm();
   } catch (err) {
     actionError.value = String(err);
   }
+}
+
+async function refreshLaunch() {
+  if (!repoId.value) return;
+  try {
+    const status = await workspace.refreshLaunchStatus(repoId.value);
+    if (status.state === "running" || launchTerminalVisible.value) {
+      await workspace.refreshLaunchLogs(repoId.value);
+    }
+  } catch {
+    // The explicit action path surfaces errors; polling should stay quiet.
+  }
+}
+
+function resetLaunchForm() {
+  launchCommandInput.value = launchConfig.value?.command ?? "";
+  launchCwdInput.value = launchConfig.value?.cwd ?? "";
 }
 
 function dirtyCount(changeSummary = summary.value) {
@@ -118,6 +167,34 @@ function push() {
   void runAction(() => workspace.push(repoId.value));
 }
 
+function startLaunch() {
+  void runAction(async () => {
+    await workspace.startLaunch(repoId.value);
+    launchTerminalVisible.value = true;
+  });
+}
+
+function stopLaunch() {
+  void runAction(() => workspace.stopLaunch(repoId.value));
+}
+
+function editLaunchConfig() {
+  resetLaunchForm();
+  launchEditing.value = true;
+}
+
+function cancelLaunchConfig() {
+  resetLaunchForm();
+  launchEditing.value = false;
+}
+
+function saveLaunchConfig() {
+  void runAction(async () => {
+    await workspace.saveLaunchConfig(repoId.value, launchCommandInput.value, launchCwdInput.value);
+    launchEditing.value = false;
+  });
+}
+
 function checkout(branch: string) {
   void runAction(() => workspace.checkout(repoId.value, branch));
 }
@@ -142,6 +219,23 @@ function statusText(change: RepoChange) {
 function formatTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString();
 }
+
+function launchStatusText() {
+  if (launchState.value === "running") return "运行中";
+  if (launchState.value === "exited") return `已退出${launchStatus.value?.exitCode != null ? ` · ${launchStatus.value.exitCode}` : ""}`;
+  if (launchState.value === "error") return "异常";
+  return "未运行";
+}
+
+function launchSourceText() {
+  return launchConfig.value?.source === "manual" ? "手动配置" : "自动推断";
+}
+
+function streamText(stream: string) {
+  if (stream === "stderr") return "ERR";
+  if (stream === "stdout") return "OUT";
+  return "SYS";
+}
 </script>
 
 <template>
@@ -152,6 +246,22 @@ function formatTime(timestamp: number) {
         <p>{{ summary?.path ?? repoId }}</p>
       </div>
       <div class="toolbar">
+        <button type="button" class="primary" :disabled="actionRunning || !hasLaunchCommand || launchRunning" @click="startLaunch">
+          <Play :size="14" aria-hidden="true" />
+          运行
+        </button>
+        <button type="button" class="ghost" :disabled="actionRunning || !launchRunning" @click="stopLaunch">
+          <Square :size="14" aria-hidden="true" />
+          停止
+        </button>
+        <button type="button" class="ghost" @click="launchTerminalVisible = !launchTerminalVisible">
+          <Terminal :size="14" aria-hidden="true" />
+          终端
+        </button>
+        <button type="button" class="ghost" @click="editLaunchConfig">
+          <Settings :size="14" aria-hidden="true" />
+          启动配置
+        </button>
         <button type="button" class="ghost" :disabled="actionRunning" @click="load">
           <RefreshCw :size="14" aria-hidden="true" />
           刷新
@@ -172,6 +282,63 @@ function formatTime(timestamp: number) {
           <FolderOpen :size="14" aria-hidden="true" />
           文件夹
         </button>
+      </div>
+    </div>
+
+    <div class="launch-panel card">
+      <div class="section-toolbar">
+        <div>
+          <h2>快速启动</h2>
+          <p class="muted">
+            {{ hasLaunchCommand ? launchStatusText() : "未识别启动脚本" }}
+            <template v-if="hasLaunchCommand"> · {{ launchSourceText() }}</template>
+          </p>
+        </div>
+        <div class="toolbar">
+          <button type="button" class="ghost" :disabled="workspace.state.launchLoading" @click="refreshLaunch">
+            <RefreshCw :size="14" aria-hidden="true" />
+            刷新状态
+          </button>
+        </div>
+      </div>
+
+      <div v-if="launchEditing" class="launch-form">
+        <label>
+          <span>命令</span>
+          <input v-model="launchCommandInput" type="text" placeholder="例如 yarn tauri:dev" />
+        </label>
+        <label>
+          <span>工作目录</span>
+          <input v-model="launchCwdInput" type="text" placeholder="留空使用仓库根目录" />
+        </label>
+        <div class="toolbar">
+          <button type="button" class="primary" :disabled="!launchCommandInput.trim() || actionRunning" @click="saveLaunchConfig">
+            保存配置
+          </button>
+          <button type="button" class="ghost" @click="cancelLaunchConfig">取消</button>
+        </div>
+      </div>
+      <div v-else class="launch-command">
+        <code>{{ launchConfig?.command || "暂无启动命令，请手动配置。" }}</code>
+        <span v-if="launchConfig?.cwd">cwd: {{ launchConfig.cwd }}</span>
+      </div>
+
+      <p v-if="launchStatus?.error" class="error-line">{{ launchStatus.error }}</p>
+
+      <div v-if="launchTerminalVisible" class="launch-terminal" aria-label="启动终端">
+        <div class="launch-terminal__header">
+          <span>运行输出</span>
+          <button type="button" class="ghost" @click="launchTerminalVisible = false">隐藏</button>
+        </div>
+        <div class="launch-terminal__body">
+          <p v-if="!launchLogs.length" class="muted">暂无输出。</p>
+          <pre v-else><code><span
+            v-for="entry in launchLogs"
+            :key="entry.index"
+            :class="`launch-log launch-log--${entry.stream}`"
+          >[{{ streamText(entry.stream) }}] {{ entry.line }}
+</span></code></pre>
+        </div>
       </div>
     </div>
 
@@ -315,6 +482,104 @@ function formatTime(timestamp: number) {
   gap: 12px;
 }
 
+.launch-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.launch-panel h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.launch-panel p {
+  margin: 0;
+}
+
+.launch-form {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+}
+
+.launch-form label {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.launch-form label span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.launch-form input {
+  width: 100%;
+}
+
+.launch-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.launch-command code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.launch-command span {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.launch-terminal {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-subtle);
+}
+
+.launch-terminal__header {
+  height: 34px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.launch-terminal__body {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.launch-terminal__body pre {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.launch-log {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.launch-log--stderr {
+  color: var(--err);
+}
+
+.launch-log--system {
+  color: var(--text-muted);
+}
+
 .repo-status span {
   display: block;
   color: var(--text-muted);
@@ -422,6 +687,10 @@ function formatTime(timestamp: number) {
 @media (max-width: 900px) {
   .repo-status {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .launch-form label {
+    grid-template-columns: 1fr;
   }
 }
 </style>
