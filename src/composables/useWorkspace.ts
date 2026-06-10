@@ -42,6 +42,7 @@ import {
   closeBulkPreview,
   executeBulk,
   previewBulk,
+  pushAll,
 } from "./workspace/bulk";
 import {
   openPath,
@@ -80,6 +81,7 @@ export function useWorkspace() {
     checkout,
     previewBulk,
     executeBulk,
+    pushAll,
     closeBulkPreview,
     repoById,
     openPath,

@@ -9,7 +9,7 @@ import {
   unhideRepo,
   unstage,
 } from "../src/composables/workspace/repositories";
-import { executeBulk } from "../src/composables/workspace/bulk";
+import { executeBulk, pushAll } from "../src/composables/workspace/bulk";
 import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import type { RepoDetail, RepoSummary, WorkspaceSettings } from "../src/services/workspace";
@@ -69,6 +69,16 @@ function settings(hiddenRepoIds: string[] = []): WorkspaceSettings {
     projectLaunchConfigs: {},
     hiddenRepoIds,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -137,6 +147,48 @@ describe("workspace incremental refresh", () => {
     expect(service.scanRepos).not.toHaveBeenCalled();
     expect(state.repos.find((repo) => repo.id === before.id)?.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === "Lilia")?.ahead).toBe(3);
+  });
+
+  it("一键推送并行调用单仓库 push，成功和失败状态互不影响", async () => {
+    const first = repoSummary("LiliaGithub", { ahead: 1 });
+    const second = repoSummary("Lilia", { ahead: 2 });
+    const idle = repoSummary("Docs");
+    const firstUpdated = repoSummary("LiliaGithub", { ahead: 0 });
+    const firstPush = deferred<RepoSummary>();
+    const secondPush = deferred<RepoSummary>();
+    state.repos = [first, second, idle];
+    service.pushRepo.mockImplementation((repoId: string) => {
+      if (repoId === first.id) return firstPush.promise;
+      if (repoId === second.id) return secondPush.promise;
+      throw new Error(`unexpected push: ${repoId}`);
+    });
+
+    const run = pushAll();
+
+    await vi.waitFor(() => {
+      expect(service.pushRepo).toHaveBeenCalledTimes(2);
+    });
+    expect(service.pushRepo).toHaveBeenCalledWith(first.id);
+    expect(service.pushRepo).toHaveBeenCalledWith(second.id);
+    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
+    expect(service.scanRepos).not.toHaveBeenCalled();
+    expect(state.bulkPushRunning).toBe(true);
+    expect(state.bulkPushStatuses[first.id]?.state).toBe("running");
+    expect(state.bulkPushStatuses[second.id]?.state).toBe("running");
+    expect(state.bulkPushStatuses[idle.id]).toBeUndefined();
+
+    firstPush.resolve(firstUpdated);
+    secondPush.reject(new Error("认证失败"));
+    await run;
+
+    expect(state.bulkPushRunning).toBe(false);
+    expect(state.repos.find((repo) => repo.id === first.id)?.ahead).toBe(0);
+    expect(state.repos.find((repo) => repo.id === second.id)?.ahead).toBe(2);
+    expect(state.bulkPushStatuses[first.id]).toBeUndefined();
+    expect(state.bulkPushStatuses[second.id]).toEqual({
+      state: "error",
+      message: "Error: 认证失败",
+    });
   });
 
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {

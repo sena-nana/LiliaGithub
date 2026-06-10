@@ -5,6 +5,7 @@ import { defineComponent } from "vue";
 import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
+import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 
@@ -92,6 +93,7 @@ function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
 }
 
 beforeEach(() => {
+  resetWorkspaceStateForTests();
   closeContextMenu();
   installContextMenu();
   localStorage.clear();
@@ -108,12 +110,38 @@ describe("AppShell sidebar", () => {
     expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
     expect(view.getAllByRole("button", { name: "刷新仓库" }).length).toBeGreaterThanOrEqual(1);
     expect(view.getByRole("button", { name: "拉取预检" })).toBeEnabled();
-    expect(view.getByRole("button", { name: "推送预检" })).toBeEnabled();
+    expect(view.getByRole("button", { name: "一键推送" })).toBeEnabled();
 
     await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("侧边栏一键推送运行中显示蓝底按钮和仓库行状态", async () => {
+    const view = await renderAppShell("/plugins");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.bulkPushRunning = true;
+    state.bulkPushStatuses.LiliaGithub = { state: "running" };
+
+    await waitFor(() => {
+      expect(view.getByRole("button", { name: "一键推送" })).toHaveClass("is-running");
+      expect(view.getByLabelText("正在推送")).toBeInTheDocument();
+    });
+
+    state.bulkPushRunning = false;
+    state.bulkPushStatuses.LiliaGithub = {
+      state: "error",
+      message: "认证失败",
+    };
+
+    await waitFor(() => {
+      expect(view.getByLabelText("推送失败")).toHaveAttribute("title", "认证失败");
     });
   });
 

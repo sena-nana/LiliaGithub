@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed } from "vue";
-import { EyeOff, FolderGit2, GitPullRequestArrow, RefreshCw, Upload } from "@lucide/vue";
+import { AlertCircle, EyeOff, FolderGit2, GitPullRequestArrow, LoaderCircle, RefreshCw, Upload } from "@lucide/vue";
 import {
   SIDEBAR_FOOTER_LINKS,
   SIDEBAR_NAV,
@@ -93,12 +93,14 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
       <button
         type="button"
         class="sb-action"
-        title="推送预检"
-        aria-label="推送预检"
-        :disabled="!workspace.isReady.value"
-        @click="workspace.previewBulk('push')"
+        :class="{ 'is-running': workspace.state.bulkPushRunning }"
+        title="一键推送"
+        aria-label="一键推送"
+        :disabled="!workspace.isReady.value || workspace.state.bulkPushRunning"
+        @click="workspace.pushAll"
       >
-        <Upload :size="16" aria-hidden="true" />
+        <LoaderCircle v-if="workspace.state.bulkPushRunning" :size="16" aria-hidden="true" class="sb-spin" />
+        <Upload v-else :size="16" aria-hidden="true" />
       </button>
     </div>
 
@@ -149,6 +151,22 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
         >
           <FolderGit2 :size="14" aria-hidden="true" />
           <span class="sb-tree__name">{{ repo.name }}</span>
+          <span
+            v-if="workspace.state.bulkPushStatuses[repo.id]?.state === 'running'"
+            class="sb-badge"
+            title="正在推送"
+            aria-label="正在推送"
+          >
+            <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
+          </span>
+          <span
+            v-else-if="workspace.state.bulkPushStatuses[repo.id]?.state === 'error'"
+            class="sb-badge sb-badge--error"
+            :title="workspace.state.bulkPushStatuses[repo.id]?.message ?? '推送失败'"
+            aria-label="推送失败"
+          >
+            <AlertCircle :size="11" aria-hidden="true" />
+          </span>
           <span v-if="workspace.state.launchStatuses[repo.id]?.state === 'running'" class="sb-badge sb-badge--ok">RUN</span>
           <span v-if="repoDirtyCount(repo)" class="sb-badge sb-badge--warn">{{ repoDirtyCount(repo) }}</span>
           <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
@@ -242,6 +260,18 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   filter: none;
 }
 
+.sb-action.is-running,
+.sb-action.is-running:hover,
+.sb-action.is-running:disabled {
+  background: var(--accent);
+  color: var(--accent-text);
+  opacity: 1;
+}
+
+.sb-spin {
+  animation: sb-spin 0.9s linear infinite;
+}
+
 .sb-tree {
   display: flex;
   flex-direction: column;
@@ -304,6 +334,9 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 
 .sb-badge {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 18px;
   height: 17px;
   padding: 0 5px;
@@ -324,5 +357,16 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 .sb-badge--ok {
   background: var(--ok-soft);
   color: var(--ok);
+}
+
+.sb-badge--error {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+@keyframes sb-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>
