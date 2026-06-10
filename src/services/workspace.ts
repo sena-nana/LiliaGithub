@@ -96,8 +96,34 @@ export interface CommitSummary {
   hash: string;
   shortHash: string;
   author: string;
+  authorEmail?: string | null;
   timestamp: number;
   subject: string;
+  parents: string[];
+  refs: string[];
+}
+
+export interface CommitFileChange {
+  path: string;
+  oldPath: string | null;
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface CommitDetail {
+  hash: string;
+  shortHash: string;
+  author: string;
+  authorEmail?: string | null;
+  committer: string;
+  committerEmail?: string | null;
+  timestamp: number;
+  subject: string;
+  body: string;
+  parents: string[];
+  refs: string[];
+  files: CommitFileChange[];
 }
 
 export interface BranchSummary {
@@ -390,8 +416,21 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           hash: "1234567890abcdef",
           shortHash: "1234567",
           author: "Sena",
+          authorEmail: "sena@example.com",
           timestamp: 1_785_000_000,
           subject: "搭建 LiliaGithub MVP",
+          parents: ["abcdef1234567890"],
+          refs: ["HEAD -> main", "origin/main"],
+        },
+        {
+          hash: "abcdef1234567890",
+          shortHash: "abcdef1",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          timestamp: 1_784_990_000,
+          subject: "初始化工作区扫描",
+          parents: [],
+          refs: [],
         },
       ],
       branches: [
@@ -410,6 +449,41 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           upstream: null,
           ahead: 0,
           behind: 0,
+        },
+      ],
+    };
+  });
+}
+
+export function getRepoCommitDetail(repoId: string, hash: string): Promise<CommitDetail> {
+  return call("repo_get_commit_detail", { repoId, hash }, () => {
+    const detail = fallbackRepo(repoId);
+    return {
+      hash,
+      shortHash: hash.slice(0, 7),
+      author: "Sena",
+      authorEmail: "sena@example.com",
+      committer: "Sena",
+      committerEmail: "sena@example.com",
+      timestamp: detail.lastCommitAt ?? 1_785_000_000,
+      subject: "搭建 LiliaGithub MVP",
+      body: "搭建本地仓库管理的基础视图。",
+      parents: ["abcdef1234567890"],
+      refs: ["HEAD -> main", "origin/main"],
+      files: [
+        {
+          path: "src/pages/Home.vue",
+          oldPath: null,
+          status: "modified",
+          additions: 24,
+          deletions: 8,
+        },
+        {
+          path: "src-tauri/src/workspace.rs",
+          oldPath: null,
+          status: "modified",
+          additions: 42,
+          deletions: 3,
         },
       ],
     };
@@ -535,16 +609,46 @@ export function checkoutBranch(repoId: string, branch: string): Promise<RepoSumm
 
 export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPreview> {
   const repos = visibleFallbackRepos();
-  return call("bulk_sync_preview", { operation }, () => ({
-    operation,
-    eligible: repos
-      .filter((repo) => operation === "pull" ? repo.behind > 0 : repo.ahead > 0)
-      .map((repo) => ({ repo: { ...repo }, reason: operation === "pull" ? "可拉取远端更新" : "有本地提交待推送" })),
-    blocked: repos
-      .filter((repo) => operation === "pull" && repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0)
-      .map((repo) => ({ repo: { ...repo }, reason: "存在未提交变更" })),
-    warnings: [],
-  }));
+  return call("bulk_sync_preview", { operation }, () => {
+    if (operation === "push") {
+      return {
+        operation,
+        eligible: repos
+          .filter((repo) => repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl)
+          .map((repo) => ({ repo: { ...repo }, reason: "有本地提交待推送" })),
+        blocked: repos
+          .flatMap((repo) => {
+            if (!repo.remoteUrl) return [{ repo: { ...repo }, reason: "没有 origin remote" }];
+            if (!repo.currentBranch) return [{ repo: { ...repo }, reason: "当前不是命名分支" }];
+            if (repo.behind > 0) return [{ repo: { ...repo }, reason: "当前分支落后于 upstream" }];
+            return [];
+          }),
+        warnings: repos
+          .flatMap((repo) => {
+            const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+            if (repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl && dirty > 0) {
+              return [{ repo: { ...repo }, reason: "存在未提交变更，但仍可执行 push" }];
+            }
+            if (repo.ahead <= 0 && repo.currentBranch && repo.remoteUrl) {
+              return [{ repo: { ...repo }, reason: "没有需要推送的提交" }];
+            }
+            return [];
+          }),
+      };
+    }
+    return {
+      operation,
+      eligible: repos
+        .filter((repo) => repo.behind > 0)
+        .map((repo) => ({ repo: { ...repo }, reason: "可拉取远端更新" })),
+      blocked: repos
+        .filter((repo) => repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0)
+        .map((repo) => ({ repo: { ...repo }, reason: "存在未提交变更" })),
+      warnings: repos
+        .filter((repo) => repo.behind <= 0)
+        .map((repo) => ({ repo: { ...repo }, reason: "没有需要拉取的更新" })),
+    };
+  });
 }
 
 export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {

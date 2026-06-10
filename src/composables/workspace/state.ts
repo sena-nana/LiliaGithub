@@ -12,11 +12,6 @@ import type {
   WorkspaceSettings,
 } from "../../services/workspace";
 
-export interface BulkPushStatus {
-  state: "running" | "error";
-  message?: string;
-}
-
 export interface WorkspaceState {
   settings: WorkspaceSettings | null;
   bindingStatus: GitHubBindingStatus | null;
@@ -35,8 +30,6 @@ export interface WorkspaceState {
   bulkPreview: BulkSyncPreview | null;
   bulkResults: BulkSyncResult[];
   bulkRunning: boolean;
-  bulkPushRunning: boolean;
-  bulkPushStatuses: Record<string, BulkPushStatus | undefined>;
 }
 
 export const state = reactive<WorkspaceState>({
@@ -57,8 +50,6 @@ export const state = reactive<WorkspaceState>({
   bulkPreview: null,
   bulkResults: [],
   bulkRunning: false,
-  bulkPushRunning: false,
-  bulkPushStatuses: {},
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -112,6 +103,18 @@ export function upsertRepo(summary: RepoSummary) {
   } else {
     state.repos.push(summary);
   }
+  const detail = state.repoDetails[summary.id];
+  if (detail) {
+    state.repoDetails[summary.id] = {
+      ...detail,
+      summary,
+    };
+  }
+}
+
+export function setRepoDetail(detail: RepoDetail) {
+  state.repoDetails[detail.summary.id] = detail;
+  upsertRepo(detail.summary);
 }
 
 export function repoById(repoId: string) {
@@ -136,7 +139,5 @@ export function resetWorkspaceStateForTests() {
   state.bulkPreview = null;
   state.bulkResults = [];
   state.bulkRunning = false;
-  state.bulkPushRunning = false;
-  state.bulkPushStatuses = {};
   deviceFlow.value = null;
 }

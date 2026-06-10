@@ -9,10 +9,10 @@ import {
   unhideRepo,
   unstage,
 } from "../src/composables/workspace/repositories";
-import { executeBulk, pushAll } from "../src/composables/workspace/bulk";
+import { executeBulk, previewBulk, pushAll } from "../src/composables/workspace/bulk";
 import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
-import type { RepoDetail, RepoSummary, WorkspaceSettings } from "../src/services/workspace";
+import type { BulkSyncPreview, RepoDetail, RepoSummary, WorkspaceSettings } from "../src/services/workspace";
 
 const service = {
   scanRepos: vi.fn(),
@@ -26,6 +26,7 @@ const service = {
   pullRepo: vi.fn(),
   pushRepo: vi.fn(),
   checkoutBranch: vi.fn(),
+  bulkSyncPreview: vi.fn(),
   bulkSyncExecute: vi.fn(),
 };
 
@@ -69,16 +70,6 @@ function settings(hiddenRepoIds: string[] = []): WorkspaceSettings {
     projectLaunchConfigs: {},
     hiddenRepoIds,
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((innerResolve, innerReject) => {
-    resolve = innerResolve;
-    reject = innerReject;
-  });
-  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -131,6 +122,7 @@ describe("workspace incremental refresh", () => {
   it("批量执行后只按返回的 summaries 更新相关仓库", async () => {
     const before = repoSummary("LiliaGithub", { ahead: 1 });
     const after = repoSummary("LiliaGithub", { ahead: 0 });
+    state.repoDetails[before.id] = repoDetail(before);
     state.repos = [before, repoSummary("Lilia", { ahead: 3 })];
     state.bulkPreview = {
       operation: "push",
@@ -146,49 +138,54 @@ describe("workspace incremental refresh", () => {
 
     expect(service.scanRepos).not.toHaveBeenCalled();
     expect(state.repos.find((repo) => repo.id === before.id)?.ahead).toBe(0);
+    expect(state.repoDetails[before.id]?.summary.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === "Lilia")?.ahead).toBe(3);
   });
 
-  it("一键推送并行调用单仓库 push，成功和失败状态互不影响", async () => {
+  it("一键推送先执行 push 预检，不再直接调用单仓库 push", async () => {
+    const preview: BulkSyncPreview = {
+      operation: "push",
+      eligible: [{ repo: repoSummary("LiliaGithub", { ahead: 1 }), reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    };
+    service.bulkSyncPreview.mockResolvedValue(preview);
+
+    await pushAll();
+
+    expect(service.bulkSyncPreview).toHaveBeenCalledWith("push");
+    expect(service.pushRepo).not.toHaveBeenCalled();
+    expect(state.bulkPreview).toEqual(preview);
+  });
+
+  it("push 预检和批量执行失败结果通过主流程状态保存", async () => {
     const first = repoSummary("LiliaGithub", { ahead: 1 });
     const second = repoSummary("Lilia", { ahead: 2 });
-    const idle = repoSummary("Docs");
-    const firstUpdated = repoSummary("LiliaGithub", { ahead: 0 });
-    const firstPush = deferred<RepoSummary>();
-    const secondPush = deferred<RepoSummary>();
-    state.repos = [first, second, idle];
-    service.pushRepo.mockImplementation((repoId: string) => {
-      if (repoId === first.id) return firstPush.promise;
-      if (repoId === second.id) return secondPush.promise;
-      throw new Error(`unexpected push: ${repoId}`);
+    state.repos = [first, second];
+    service.bulkSyncPreview.mockResolvedValue({
+      operation: "push",
+      eligible: [
+        { repo: first, reason: "有本地提交待推送" },
+        { repo: second, reason: "有本地提交待推送" },
+      ],
+      blocked: [],
+      warnings: [{ repo: first, reason: "存在未提交变更，但仍可执行 push" }],
     });
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: first.id, status: "success", message: "完成", summary: repoSummary(first.id, { ahead: 0 }) },
+      { repoId: second.id, status: "error", message: "认证失败", summary: null },
+    ]);
 
-    const run = pushAll();
+    await previewBulk("push");
+    await executeBulk();
 
-    await vi.waitFor(() => {
-      expect(service.pushRepo).toHaveBeenCalledTimes(2);
-    });
-    expect(service.pushRepo).toHaveBeenCalledWith(first.id);
-    expect(service.pushRepo).toHaveBeenCalledWith(second.id);
-    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
-    expect(service.scanRepos).not.toHaveBeenCalled();
-    expect(state.bulkPushRunning).toBe(true);
-    expect(state.bulkPushStatuses[first.id]?.state).toBe("running");
-    expect(state.bulkPushStatuses[second.id]?.state).toBe("running");
-    expect(state.bulkPushStatuses[idle.id]).toBeUndefined();
-
-    firstPush.resolve(firstUpdated);
-    secondPush.reject(new Error("认证失败"));
-    await run;
-
-    expect(state.bulkPushRunning).toBe(false);
+    expect(state.bulkPreview?.warnings).toHaveLength(1);
+    expect(state.bulkResults).toEqual([
+      { repoId: first.id, status: "success", message: "完成", summary: repoSummary(first.id, { ahead: 0 }) },
+      { repoId: second.id, status: "error", message: "认证失败", summary: null },
+    ]);
     expect(state.repos.find((repo) => repo.id === first.id)?.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === second.id)?.ahead).toBe(2);
-    expect(state.bulkPushStatuses[first.id]).toBeUndefined();
-    expect(state.bulkPushStatuses[second.id]).toEqual({
-      state: "error",
-      message: "Error: 认证失败",
-    });
   });
 
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {
