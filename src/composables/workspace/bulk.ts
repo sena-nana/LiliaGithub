@@ -1,6 +1,5 @@
 import type { BulkOperation } from "../../services/workspace";
-import { state } from "./state";
-import { refreshRepos } from "./repositories";
+import { state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 
 export async function previewBulk(operation: BulkOperation) {
@@ -16,7 +15,11 @@ export async function executeBulk() {
     const service = await loadWorkspaceService();
     const ids = state.bulkPreview.eligible.map((item) => item.repo.id);
     state.bulkResults = await service.bulkSyncExecute(state.bulkPreview.operation, ids);
-    await refreshRepos();
+    for (const result of state.bulkResults) {
+      if (result.summary) {
+        upsertRepo(result.summary);
+      }
+    }
   } finally {
     state.bulkRunning = false;
   }

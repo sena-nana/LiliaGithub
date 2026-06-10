@@ -134,6 +134,7 @@ export interface BulkSyncResult {
   repoId: string;
   status: "success" | "error";
   message: string;
+  summary: RepoSummary | null;
 }
 
 export interface HiddenRepo {
@@ -246,6 +247,10 @@ export function pickWorkspaceRoot(): Promise<string | null> {
 
 export function scanRepos(): Promise<RepoSummary[]> {
   return call("workspace_scan_repos", undefined, () => visibleFallbackRepos());
+}
+
+export function getRepoSummary(repoId: string): Promise<RepoSummary> {
+  return call("repo_get_summary", { repoId }, () => ({ ...fallbackRepo(repoId) }));
 }
 
 function visibleFallbackRepos() {
@@ -544,11 +549,19 @@ export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPrevi
 
 export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {
   return call("bulk_sync_execute", { operation, repoIds }, () =>
-    repoIds.map((repoId) => ({
-      repoId,
-      status: "success",
-      message: "完成",
-    })),
+    repoIds.map((repoId) => {
+      const repo = fallbackRepo(repoId);
+      return {
+        summary: {
+          ...repo,
+          ahead: operation === "push" ? 0 : repo.ahead,
+          behind: operation === "pull" ? 0 : repo.behind,
+        },
+        repoId,
+        status: "success",
+        message: "完成",
+      };
+    }),
   );
 }
 
