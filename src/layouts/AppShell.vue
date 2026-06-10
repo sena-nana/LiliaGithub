@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { RouterView } from "vue-router";
 import { APP_TITLE, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
 import { useRouteReturnTarget } from "../composables/useRouteReturnTarget";
 import { useShellSidebar } from "../composables/useShellSidebar";
+import { useWorkspace } from "../composables/useWorkspace";
 import TitleBar from "../components/TitleBar.vue";
 import SecondaryPanel from "./SecondaryPanel.vue";
 import SettingsSidebar from "./SettingsSidebar.vue";
@@ -15,6 +16,11 @@ const sidebarVariant = computed(() => route.meta.sidebar ?? "main");
 const isSettingsMode = computed(() => sidebarVariant.value === "settings");
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
 const sidebar = useShellSidebar(sidebarLocked);
+const workspace = useWorkspace();
+
+onMounted(() => {
+  void workspace.initialize();
+});
 </script>
 
 <template>

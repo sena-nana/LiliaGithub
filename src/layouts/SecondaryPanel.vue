@@ -1,41 +1,87 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
-import { Plus } from "@lucide/vue";
+import { computed } from "vue";
+import { FolderGit2, GitPullRequestArrow, RefreshCw, Upload } from "@lucide/vue";
 import {
   SIDEBAR_FOOTER_LINKS,
-  SIDEBAR_FOOTER_STATUS,
-  SIDEBAR_GLOBAL_ACTIONS,
-  SIDEBAR_GROUPS,
   SIDEBAR_NAV,
 } from "../config/appShell";
+import { useWorkspace } from "../composables/useWorkspace";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
-import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
+
+const workspace = useWorkspace();
+
+const footerStatus = computed(() => {
+  if (!workspace.workspaceRoot.value) {
+    return {
+      to: "/",
+      label: "Setup",
+      title: "尚未选择工作区。点击进入总览配置。",
+      tone: "warn" as const,
+      icon: FolderGit2,
+    };
+  }
+  if (!workspace.isAuthorized.value) {
+    return {
+      to: "/",
+      label: "Auth",
+      title: "尚未完成 GitHub 授权。点击进入总览配置。",
+      tone: "warn" as const,
+      icon: GitPullRequestArrow,
+    };
+  }
+  return {
+    to: "/settings",
+    label: workspace.githubBinding.value?.login ?? "GitHub",
+    title: "GitHub 已授权。点击进入设置。",
+    tone: "ok" as const,
+    icon: GitPullRequestArrow,
+  };
+});
+
+function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
+  return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+}
 </script>
 
 <template>
   <aside class="secondary-panel">
     <div class="sb-section sb-section--actions">
       <button
-        v-for="action in SIDEBAR_GLOBAL_ACTIONS"
-        :key="action.key"
         type="button"
         class="sb-action"
-        :title="action.label"
-        :aria-label="action.label"
-        :disabled="action.disabled"
+        title="刷新仓库"
+        aria-label="刷新仓库"
+        :disabled="workspace.state.scanning"
+        @click="workspace.refreshRepos"
       >
-        <component :is="action.icon" :size="16" aria-hidden="true" />
+        <RefreshCw :size="16" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="sb-action"
+        title="拉取预检"
+        aria-label="拉取预检"
+        :disabled="!workspace.isReady.value"
+        @click="workspace.previewBulk('pull')"
+      >
+        <GitPullRequestArrow :size="16" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="sb-action"
+        title="推送预检"
+        aria-label="推送预检"
+        :disabled="!workspace.isReady.value"
+        @click="workspace.previewBulk('push')"
+      >
+        <Upload :size="16" aria-hidden="true" />
       </button>
     </div>
 
     <div class="sb-section">
       <div class="sb-section__header">
         <span class="sb-section__title">工作区</span>
-        <div class="sb-section__tools">
-          <button type="button" class="sb-icon-btn" title="添加" aria-label="添加" disabled>
-            <Plus :size="14" aria-hidden="true" />
-          </button>
-        </div>
       </div>
       <nav class="sb-tree" aria-label="主导航">
         <RouterLink
@@ -53,45 +99,44 @@ import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
       </nav>
     </div>
 
-    <div
-      v-for="group in SIDEBAR_GROUPS"
-      :key="group.title"
-      class="sb-section"
-    >
+    <div class="sb-section">
       <div class="sb-section__header">
-        <span class="sb-section__title">{{ group.title }}</span>
-        <div v-if="group.tools?.length" class="sb-section__tools">
+        <span class="sb-section__title">仓库</span>
+        <div class="sb-section__tools">
           <button
-            v-for="tool in group.tools"
-            :key="tool.key"
             type="button"
             class="sb-icon-btn"
-            :title="tool.label"
-            :aria-label="tool.label"
-            :disabled="tool.disabled"
+            title="刷新仓库"
+            aria-label="刷新仓库"
+            :disabled="workspace.state.scanning"
+            @click="workspace.refreshRepos"
           >
-            <component :is="tool.icon" :size="14" aria-hidden="true" />
+            <RefreshCw :size="14" aria-hidden="true" />
           </button>
         </div>
       </div>
       <div class="sb-tree">
-        <div
-          v-for="item in group.items"
-          :key="item.label"
+        <RouterLink
+          v-for="repo in workspace.state.repos"
+          :key="repo.id"
+          :to="`/repos/${encodeURIComponent(repo.id)}`"
           class="sb-tree__row sb-tree__row--project"
-          :aria-disabled="item.disabled ? 'true' : undefined"
+          active-class="is-active"
         >
-          <component :is="item.icon" :size="14" aria-hidden="true" />
-          <span class="sb-tree__name">{{ item.label }}</span>
-          <SidebarRowTools v-if="item.tools?.length" :tools="item.tools" />
-        </div>
-        <p v-if="group.emptyText" class="sb-tree__empty">{{ group.emptyText }}</p>
+          <FolderGit2 :size="14" aria-hidden="true" />
+          <span class="sb-tree__name">{{ repo.name }}</span>
+          <span v-if="repoDirtyCount(repo)" class="sb-badge sb-badge--warn">{{ repoDirtyCount(repo) }}</span>
+          <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
+          <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
+        </RouterLink>
+        <p v-if="workspace.state.scanning" class="sb-tree__empty">正在扫描仓库...</p>
+        <p v-else-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
       </div>
     </div>
 
     <SidebarFooter
       :links="SIDEBAR_FOOTER_LINKS"
-      :status="SIDEBAR_FOOTER_STATUS"
+      :status="footerStatus"
     />
   </aside>
 </template>
@@ -220,11 +265,34 @@ import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
   color: var(--text-muted);
 }
 
+.sb-tree__row--project.is-active {
+  color: var(--accent);
+}
+
 .sb-tree__name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sb-badge {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+
+.sb-badge--warn {
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 </style>

@@ -1,9 +1,7 @@
 import {
   FilePlus2,
-  Folder,
   Home,
   Info,
-  MoreHorizontal,
   Palette,
   Puzzle,
   Search,
@@ -28,6 +26,7 @@ export interface SidebarActionItem {
   label: string;
   icon: Component;
   disabled?: boolean;
+  onSelect?: () => void;
 }
 
 export interface SidebarNavItem {
@@ -70,25 +69,10 @@ export const SIDEBAR_NAV: SidebarNavItem[] = [
     to: "/",
     label: "概览",
     icon: Home,
-    tools: [{ key: "new", label: "新建", icon: FilePlus2, disabled: true }],
   },
 ];
 
-export const SIDEBAR_GROUPS: SidebarGroup[] = [
-  {
-    title: "示例分组",
-    tools: [{ key: "more", label: "更多", icon: MoreHorizontal, disabled: true }],
-    items: [
-      {
-        label: "LiliaGithub Workspace",
-        icon: Folder,
-        disabled: true,
-        tools: [{ key: "more", label: "更多", icon: MoreHorizontal, disabled: true }],
-      },
-    ],
-    emptyText: "替换为你的业务导航。",
-  },
-];
+export const SIDEBAR_GROUPS: SidebarGroup[] = [];
 
 export const SIDEBAR_FOOTER_LINKS: SidebarFooterLink[] = [
   { to: "/settings", label: "设置", icon: Settings },
@@ -97,9 +81,9 @@ export const SIDEBAR_FOOTER_LINKS: SidebarFooterLink[] = [
 
 export const SIDEBAR_FOOTER_STATUS: SidebarFooterStatus = {
   to: "/settings",
-  label: "Ready",
-  title: "模板状态正常。点击进入设置。",
-  tone: "ok",
+  label: "GitHub",
+  title: "GitHub 工作区状态。点击进入设置。",
+  tone: "warn",
   icon: Sparkles,
 };
 

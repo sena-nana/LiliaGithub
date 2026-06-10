@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor, within } from "@testing-library/vue";
+import { fireEvent, render, waitFor } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SIDEBAR_CONFIG } from "../src/config/appShell";
@@ -25,6 +25,10 @@ async function renderAppShell(initialRoute = "/") {
       {
         path: "/plugins",
         component: { template: "<div>plugins</div>" },
+      },
+      {
+        path: "/repos/:repoId(.*)",
+        component: { template: "<div>repo</div>" },
       },
       {
         path: "/settings",
@@ -76,38 +80,28 @@ function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
   return row;
 }
 
-function hoverToolsIn(row: HTMLElement): HTMLElement {
-  const tools = row.querySelector(".sb-tree__hover-tools");
-  if (!(tools instanceof HTMLElement)) {
-    throw new Error("未找到行内工具按钮容器");
-  }
-  return tools;
-}
-
 beforeEach(() => {
   localStorage.clear();
 });
 
 describe("AppShell sidebar", () => {
-  it("主侧边栏行内部包含迁移自 Lilia 的悬停工具按钮", async () => {
+  it("主侧边栏显示总览、仓库列表和同步预检工具", async () => {
     const view = await renderAppShell("/plugins");
-    const overviewRow = sidebarRowForText(view.container, "概览");
-    const workspaceRow = sidebarRowForText(view.container, "LiliaGithub Workspace");
 
-    const overviewTools = hoverToolsIn(overviewRow);
-    const workspaceTools = hoverToolsIn(workspaceRow);
-    const overviewNew = within(overviewTools).getByRole("button", { name: "新建" });
-    const workspaceMore = within(workspaceTools).getByRole("button", { name: "更多" });
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
 
-    expect(overviewTools.parentElement).toBe(overviewRow);
-    expect(workspaceTools.parentElement).toBe(workspaceRow);
-    expect(overviewNew).toBeDisabled();
-    expect(workspaceMore).toBeDisabled();
+    expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
+    expect(view.getAllByRole("button", { name: "刷新仓库" }).length).toBeGreaterThanOrEqual(1);
+    expect(view.getByRole("button", { name: "拉取预检" })).toBeEnabled();
+    expect(view.getByRole("button", { name: "推送预检" })).toBeEnabled();
 
-    await fireEvent.click(overviewTools);
-    await fireEvent.click(workspaceTools);
+    await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
-    expect(view.router.currentRoute.value.fullPath).toBe("/plugins");
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
   });
 
   it("左上角按钮切换左侧栏折叠状态并写回本地存储", async () => {
