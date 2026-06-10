@@ -27,7 +27,7 @@ use std::os::unix::process::CommandExt;
 const STORE_FILE: &str = "lilia-github.json";
 const SETTINGS_KEY: &str = "workspace.settings";
 const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
-const GITHUB_SCOPE: &str = "repo read:user";
+const GITHUB_SCOPE: &str = "repo workflow read:user";
 const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_OAUTH_ACCEPT: &str = "application/json";

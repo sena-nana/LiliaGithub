@@ -74,6 +74,7 @@ describe("单应用模板工具链", () => {
     const pollDeviceFlow = workspace.slice(workspace.indexOf("pub fn github_poll_device_flow"));
 
     expect(workspace).toContain('const GITHUB_OAUTH_ACCEPT: &str = "application/json";');
+    expect(workspace).toContain('const GITHUB_SCOPE: &str = "repo workflow read:user";');
     expect(workspace).toContain("fn github_oauth_headers");
     expect(workspace).toContain("fn github_http_error");
     expect(startDeviceFlow).toContain(".post(\"https://github.com/login/device/code\")");
