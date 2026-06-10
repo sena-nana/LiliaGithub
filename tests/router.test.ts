@@ -46,20 +46,29 @@ describe("基础路由", () => {
     await renderAt("/repos/LiliaGithub");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByLabelText("仓库状态条")).toBeInTheDocument();
+    expect(screen.getByText("仓库健康")).toBeInTheDocument();
     expect(screen.getByText("快速启动")).toBeInTheDocument();
+    expect(screen.getByText("提交并推送")).toBeInTheDocument();
     expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
+    expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
+    expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("提交说明")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
+    expect(screen.getByText("未选择文件")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /src\/pages\/Home\.vue已暂存/ }));
+    const diffPreview = await screen.findByLabelText("变更预览");
+    expect(diffPreview).toBeInTheDocument();
+    expect(diffPreview).toHaveTextContent("@@ -1 +1 @@");
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
-    expect(screen.getByText("搭建 LiliaGithub MVP")).toBeInTheDocument();
+    expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
 
     await fireEvent.click(screen.getByRole("tab", { name: "分支" }));
     expect(screen.getByText("origin/main")).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("tab", { name: "提交" }));
-    expect(screen.getByPlaceholderText("提交说明")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
   });
 
   it("仓库详情页可配置、运行并查看快速启动终端", async () => {
@@ -74,7 +83,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByText("yarn dev --host 127.0.0.1")).toBeInTheDocument();
     });
-    expect(screen.getByText(/手动配置/)).toBeInTheDocument();
+    expect(screen.getAllByText(/手动配置/).length).toBeGreaterThanOrEqual(1);
 
     await fireEvent.click(screen.getByRole("button", { name: "运行" }));
 
