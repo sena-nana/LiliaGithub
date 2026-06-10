@@ -185,15 +185,30 @@ const fallbackBinding: GitHubBindingStatus = {
   },
 };
 
-let fallbackSettings: WorkspaceSettings = {
-  workspaceRoot: "C:\\Files\\workspace",
-  githubBinding: fallbackBinding.binding,
-  projectLaunchConfigs: {},
-};
+function createFallbackSettings(): WorkspaceSettings {
+  return {
+    workspaceRoot: "C:\\Files\\workspace",
+    githubBinding: fallbackBinding.binding,
+    projectLaunchConfigs: {},
+  };
+}
+
+let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
 let fallbackLaunchLogIndex = 1;
+
+export function resetWorkspaceFallbacksForTests() {
+  fallbackSettings = createFallbackSettings();
+  for (const key of Object.keys(fallbackLaunchStatuses)) {
+    delete fallbackLaunchStatuses[key];
+  }
+  for (const key of Object.keys(fallbackLaunchLogs)) {
+    delete fallbackLaunchLogs[key];
+  }
+  fallbackLaunchLogIndex = 1;
+}
 
 function canInvoke() {
   return !isTest && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

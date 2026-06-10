@@ -180,4 +180,25 @@ describe("Lilia 外壳样式迁移", () => {
     expect(secondaryPanel).toContain("推送预检");
     expect(secondaryPanel).toContain("workspace.state.repos");
   });
+
+  it("工作区 composable 保持兼容门面，领域逻辑拆分并懒加载 Tauri 服务", () => {
+    const facade = readFileSync(resolve("src/composables/useWorkspace.ts"), "utf-8");
+    const serviceLoader = readFileSync(resolve("src/composables/workspace/serviceLoader.ts"), "utf-8");
+    const workspaceModules = [
+      "state",
+      "lifecycle",
+      "auth",
+      "repositories",
+      "launch",
+      "bulk",
+      "system",
+    ];
+
+    for (const module of workspaceModules) {
+      expect(readFileSync(resolve(`src/composables/workspace/${module}.ts`), "utf-8")).toBeTruthy();
+      expect(facade).toContain(`./workspace/${module}`);
+    }
+    expect(serviceLoader).toContain('import("../../services/workspace")');
+    expect(facade).not.toContain("../services/workspace");
+  });
 });

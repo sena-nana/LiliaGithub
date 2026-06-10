@@ -1,0 +1,64 @@
+import { state, upsertRepo } from "./state";
+import { loadWorkspaceService } from "./serviceLoader";
+
+export async function refreshRepos() {
+  state.scanning = true;
+  state.error = null;
+  try {
+    const service = await loadWorkspaceService();
+    state.repos = await service.scanRepos();
+  } catch (err) {
+    state.error = String(err);
+  } finally {
+    state.scanning = false;
+  }
+}
+
+export async function loadRepoDetail(repoId: string) {
+  state.error = null;
+  const service = await loadWorkspaceService();
+  const detail = await service.getRepoDetail(repoId);
+  state.repoDetails[repoId] = detail;
+  upsertRepo(detail.summary);
+  return detail;
+}
+
+export async function stage(repoId: string, files: string[]) {
+  const service = await loadWorkspaceService();
+  await service.stageFiles(repoId, files);
+  await loadRepoDetail(repoId);
+}
+
+export async function unstage(repoId: string, files: string[]) {
+  const service = await loadWorkspaceService();
+  await service.unstageFiles(repoId, files);
+  await loadRepoDetail(repoId);
+}
+
+export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
+  const service = await loadWorkspaceService();
+  const summary = await service.commitRepo(repoId, files, message, pushAfter);
+  upsertRepo(summary);
+  await loadRepoDetail(repoId);
+}
+
+export async function pull(repoId: string) {
+  const service = await loadWorkspaceService();
+  const summary = await service.pullRepo(repoId);
+  upsertRepo(summary);
+  await loadRepoDetail(repoId);
+}
+
+export async function push(repoId: string) {
+  const service = await loadWorkspaceService();
+  const summary = await service.pushRepo(repoId);
+  upsertRepo(summary);
+  await loadRepoDetail(repoId);
+}
+
+export async function checkout(repoId: string, branch: string) {
+  const service = await loadWorkspaceService();
+  const summary = await service.checkoutBranch(repoId, branch);
+  upsertRepo(summary);
+  await loadRepoDetail(repoId);
+}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed } from "vue";
 import { RouterView } from "vue-router";
 import { APP_TITLE, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
 import { useRouteReturnTarget } from "../composables/useRouteReturnTarget";
@@ -17,11 +17,11 @@ const isSettingsMode = computed(() => sidebarVariant.value === "settings");
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
 const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
-const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.value);
+void workspace.initialize();
 
-onMounted(() => {
-  void workspace.initialize();
-});
+const isSetupOverlay = computed(() =>
+  route.path === "/" && !workspace.state.loading && !workspace.isReady.value
+);
 </script>
 
 <template>

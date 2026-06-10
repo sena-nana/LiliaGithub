@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::thread;
 use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -630,6 +631,19 @@ fn collect_repos(root: &Path) -> Vec<PathBuf> {
     repos
 }
 
+fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
+    thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .into_iter()
+            .map(|path| scope.spawn(move || summarize_repo(root, &path)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("repo summary worker panicked"))
+            .collect()
+    })
+}
+
 fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
     let settings = load_settings(app);
     let Some(root) = settings.workspace_root else {
@@ -900,10 +914,7 @@ pub fn workspace_pick_root(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 pub fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     let root = workspace_root(&app)?;
-    let mut repos: Vec<_> = collect_repos(&root)
-        .into_iter()
-        .map(|path| summarize_repo(&root, &path))
-        .collect();
+    let mut repos = summarize_repos(&root, collect_repos(&root));
     repos.sort_by(|a, b| {
         b.last_commit_at
             .cmp(&a.last_commit_at)
@@ -1075,11 +1086,23 @@ pub fn repo_get_branches(app: AppHandle, repo_id: String) -> Result<Vec<BranchSu
 pub fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, String> {
     let root = workspace_root(&app)?;
     let path = repo_path_by_id(&app, &repo_id)?;
+    let (summary, changes, commits, branches) = thread::scope(|scope| {
+        let summary = scope.spawn(|| summarize_repo(&root, &path));
+        let changes = scope.spawn(|| repo_changes(&path));
+        let commits = scope.spawn(|| repo_history(&path));
+        let branches = scope.spawn(|| repo_branches(&path));
+        (
+            summary.join().expect("repo summary worker panicked"),
+            changes.join().expect("repo changes worker panicked"),
+            commits.join().expect("repo history worker panicked"),
+            branches.join().expect("repo branches worker panicked"),
+        )
+    });
     Ok(RepoDetail {
-        summary: summarize_repo(&root, &path),
-        changes: repo_changes(&path),
-        commits: repo_history(&path),
-        branches: repo_branches(&path),
+        summary,
+        changes,
+        commits,
+        branches,
     })
 }
 
@@ -1376,34 +1399,51 @@ pub fn system_open_url(app: AppHandle, url: String) -> Result<(), String> {
 
 fn repo_changes(path: &Path) -> Vec<RepoChange> {
     let status = git_command_lossy(path, &["status", "--porcelain=v1"]).unwrap_or_default();
-    status
+    let entries: Vec<_> = status
         .lines()
         .filter(|line| line.len() >= 3)
         .map(|line| {
             let (index, worktree) = status_pair(line);
             let (old_path, file_path) = parse_status_path(line);
-            let untracked = index == "?" && worktree == "?";
-            let staged = !untracked && index != " ";
-            let unstaged = !untracked && worktree != " ";
-            let diff = if untracked {
-                String::new()
-            } else if staged {
-                git_command_lossy(path, &["diff", "--cached", "--", &file_path]).unwrap_or_default()
-            } else {
-                git_command_lossy(path, &["diff", "--", &file_path]).unwrap_or_default()
-            };
-            RepoChange {
-                path: file_path,
-                old_path,
-                index_status: index,
-                worktree_status: worktree,
-                staged,
-                unstaged,
-                untracked,
-                diff,
-            }
+            (index, worktree, old_path, file_path)
         })
-        .collect()
+        .collect();
+
+    thread::scope(|scope| {
+        let handles: Vec<_> = entries
+            .into_iter()
+            .map(|(index, worktree, old_path, file_path)| {
+                scope.spawn(move || {
+                    let untracked = index == "?" && worktree == "?";
+                    let staged = !untracked && index != " ";
+                    let unstaged = !untracked && worktree != " ";
+                    let diff = if untracked {
+                        String::new()
+                    } else if staged {
+                        git_command_lossy(path, &["diff", "--cached", "--", &file_path])
+                            .unwrap_or_default()
+                    } else {
+                        git_command_lossy(path, &["diff", "--", &file_path]).unwrap_or_default()
+                    };
+                    RepoChange {
+                        path: file_path,
+                        old_path,
+                        index_status: index,
+                        worktree_status: worktree,
+                        staged,
+                        unstaged,
+                        untracked,
+                        diff,
+                    }
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("repo diff worker panicked"))
+            .collect()
+    })
 }
 
 fn repo_history(path: &Path) -> Vec<CommitSummary> {
