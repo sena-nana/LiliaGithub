@@ -44,6 +44,10 @@ const authRemainingText = computed(() => {
   return `${minutes}:${String(rest).padStart(2, "0")}`;
 });
 
+const commitChartMax = computed(() =>
+  Math.max(1, ...workspace.overviewStats.value.commitsByDay.map((point) => point.count)),
+);
+
 function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
 }
@@ -174,7 +178,7 @@ function formatTime(timestamp: number | null) {
       </div>
 
       <div class="overview-grid">
-        <div class="card">
+        <div class="card chart-card">
           <h2>最近工作结果</h2>
           <div class="chart-row">
             <div
@@ -183,7 +187,7 @@ function formatTime(timestamp: number | null) {
               class="chart-bar"
             >
               <div class="chart-bar__track">
-                <span :style="{ height: `${Math.max(10, point.count * 22)}px` }" />
+                <span :style="{ height: `${(point.count / commitChartMax) * 100}%` }" />
               </div>
               <small>{{ point.day }}</small>
             </div>
@@ -414,10 +418,6 @@ function formatTime(timestamp: number | null) {
   color: var(--err);
 }
 
-.metric {
-  margin: 0;
-}
-
 .metric span {
   color: var(--text-muted);
   font-size: 12px;
@@ -434,8 +434,18 @@ function formatTime(timestamp: number | null) {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 8px;
+  align-content: end;
   align-items: end;
   min-height: 150px;
+}
+
+.chart-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-card .chart-row {
+  flex: 1;
 }
 
 .chart-bar {
@@ -457,6 +467,7 @@ function formatTime(timestamp: number | null) {
 .chart-bar__track span {
   width: 60%;
   max-width: 34px;
+  min-height: 10px;
   border-radius: 4px 4px 0 0;
   background: var(--accent);
 }
