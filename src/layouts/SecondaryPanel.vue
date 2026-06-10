@@ -11,6 +11,7 @@ import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import type { ContextMenuItem } from "../composables/useContextMenu";
 import type { RepoSummary } from "../services/workspace";
+import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -147,10 +148,11 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
           :to="`/repos/${encodeURIComponent(repo.id)}`"
           class="sb-tree__row sb-tree__row--project"
           active-class="is-active"
+          :title="repoDisplayTitle(repo)"
           v-context-menu="repoContextMenu(repo)"
         >
           <FolderGit2 :size="14" aria-hidden="true" />
-          <span class="sb-tree__name">{{ repo.name }}</span>
+          <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
           <span
             v-if="workspace.state.bulkPushStatuses[repo.id]?.state === 'running'"
             class="sb-badge"
