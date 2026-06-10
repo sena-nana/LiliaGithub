@@ -8,6 +8,7 @@ import {
 } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
+import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 
 const workspace = useWorkspace();
 
@@ -125,6 +126,7 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
         >
           <FolderGit2 :size="14" aria-hidden="true" />
           <span class="sb-tree__name">{{ repo.name }}</span>
+          <span v-if="workspace.state.launchStatuses[repo.id]?.state === 'running'" class="sb-badge sb-badge--ok">RUN</span>
           <span v-if="repoDirtyCount(repo)" class="sb-badge sb-badge--warn">{{ repoDirtyCount(repo) }}</span>
           <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
           <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
@@ -294,5 +296,10 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
 .sb-badge--warn {
   background: var(--warn-soft);
   color: var(--warn);
+}
+
+.sb-badge--ok {
+  background: var(--ok-soft);
+  color: var(--ok);
 }
 </style>

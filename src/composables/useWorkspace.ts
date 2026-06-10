@@ -6,6 +6,9 @@ import {
   commitRepo,
   getGitHubBindingStatus,
   getRepoDetail,
+  getRepoLaunchConfig,
+  getRepoLaunchLogs,
+  getRepoLaunchStatus,
   getWorkspaceSettings,
   openPath,
   openUrl,
@@ -14,15 +17,21 @@ import {
   pullRepo,
   pushRepo,
   scanRepos,
+  saveRepoLaunchConfig,
   setWorkspaceRoot,
   stageFiles,
+  startRepoLaunch,
   startGitHubDeviceFlow,
+  stopRepoLaunch,
   unstageFiles,
   type BulkOperation,
   type BulkSyncPreview,
   type BulkSyncResult,
   type GitHubBindingStatus,
   type GitHubDeviceFlowStart,
+  type ProjectLaunchConfig,
+  type ProjectLaunchLog,
+  type ProjectLaunchStatus,
   type RepoDetail,
   type RepoSummary,
   type WorkspaceSettings,
@@ -33,9 +42,13 @@ interface WorkspaceState {
   bindingStatus: GitHubBindingStatus | null;
   repos: RepoSummary[];
   repoDetails: Record<string, RepoDetail | undefined>;
+  launchConfigs: Record<string, ProjectLaunchConfig | null | undefined>;
+  launchStatuses: Record<string, ProjectLaunchStatus | undefined>;
+  launchLogs: Record<string, ProjectLaunchLog[] | undefined>;
   loading: boolean;
   scanning: boolean;
   authLoading: boolean;
+  launchLoading: boolean;
   error: string | null;
   bulkPreview: BulkSyncPreview | null;
   bulkResults: BulkSyncResult[];
@@ -47,9 +60,13 @@ const state = reactive<WorkspaceState>({
   bindingStatus: null,
   repos: [],
   repoDetails: {},
+  launchConfigs: {},
+  launchStatuses: {},
+  launchLogs: {},
   loading: false,
   scanning: false,
   authLoading: false,
+  launchLoading: false,
   error: null,
   bulkPreview: null,
   bulkResults: [],
@@ -181,6 +198,65 @@ async function loadRepoDetail(repoId: string) {
   return detail;
 }
 
+async function loadLaunch(repoId: string) {
+  state.launchLoading = true;
+  state.error = null;
+  try {
+    const [config, status, logs] = await Promise.all([
+      getRepoLaunchConfig(repoId),
+      getRepoLaunchStatus(repoId),
+      getRepoLaunchLogs(repoId),
+    ]);
+    state.launchConfigs[repoId] = config;
+    state.launchStatuses[repoId] = status;
+    state.launchLogs[repoId] = logs;
+    return { config, status, logs };
+  } catch (err) {
+    state.error = String(err);
+    throw err;
+  } finally {
+    state.launchLoading = false;
+  }
+}
+
+async function saveLaunchConfig(repoId: string, command: string, cwd?: string | null) {
+  const config = await saveRepoLaunchConfig(repoId, command, cwd);
+  state.launchConfigs[repoId] = config;
+  return config;
+}
+
+async function refreshLaunchStatus(repoId: string) {
+  const status = await getRepoLaunchStatus(repoId);
+  state.launchStatuses[repoId] = status;
+  return status;
+}
+
+async function refreshLaunchLogs(repoId: string) {
+  const current = state.launchLogs[repoId] ?? [];
+  const since = current.length ? current[current.length - 1].index : null;
+  const next = await getRepoLaunchLogs(repoId, since);
+  if (next.length) {
+    state.launchLogs[repoId] = [...current, ...next].slice(-500);
+  } else {
+    state.launchLogs[repoId] = current;
+  }
+  return state.launchLogs[repoId] ?? [];
+}
+
+async function startLaunch(repoId: string) {
+  const status = await startRepoLaunch(repoId);
+  state.launchStatuses[repoId] = status;
+  await refreshLaunchLogs(repoId);
+  return status;
+}
+
+async function stopLaunch(repoId: string) {
+  const status = await stopRepoLaunch(repoId);
+  state.launchStatuses[repoId] = status;
+  await refreshLaunchLogs(repoId);
+  return status;
+}
+
 function upsertRepo(summary: RepoSummary) {
   const index = state.repos.findIndex((repo) => repo.id === summary.id);
   if (index >= 0) state.repos[index] = summary;
@@ -261,6 +337,12 @@ export function useWorkspace() {
     startAuthFlow,
     pollAuthFlow,
     loadRepoDetail,
+    loadLaunch,
+    saveLaunchConfig,
+    refreshLaunchStatus,
+    refreshLaunchLogs,
+    startLaunch,
+    stopLaunch,
     stage,
     unstage,
     commit,

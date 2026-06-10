@@ -42,6 +42,8 @@ describe("基础路由", () => {
     await renderAt("/repos/LiliaGithub");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByText("快速启动")).toBeInTheDocument();
+    expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
 
@@ -54,6 +56,29 @@ describe("基础路由", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "提交" }));
     expect(screen.getByPlaceholderText("提交说明")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
+  });
+
+  it("仓库详情页可配置、运行并查看快速启动终端", async () => {
+    await renderAt("/repos/LiliaGithub");
+
+    expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "启动配置" }));
+    await fireEvent.update(screen.getByPlaceholderText("例如 yarn tauri:dev"), "yarn dev --host 127.0.0.1");
+    await fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("yarn dev --host 127.0.0.1")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/手动配置/)).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "运行" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/启动命令：yarn dev --host 127.0.0.1/)).toBeInTheDocument();
+      expect(screen.getByText(/开发服务已启动/)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
   });
 
   it("总览页批量同步先展示预检再执行", async () => {

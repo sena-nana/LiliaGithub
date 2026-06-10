@@ -3,6 +3,34 @@ import { invoke } from "@tauri-apps/api/core";
 export interface WorkspaceSettings {
   workspaceRoot: string | null;
   githubBinding: GitHubBindingMetadata | null;
+  projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
+}
+
+export interface ProjectLaunchConfig {
+  command: string;
+  cwd: string | null;
+  source: "inferred" | "manual";
+  updatedAt: number | null;
+}
+
+export type ProjectLaunchState = "idle" | "running" | "exited" | "error";
+
+export interface ProjectLaunchStatus {
+  repoId: string;
+  state: ProjectLaunchState;
+  pid: number | null;
+  command: string | null;
+  startedAt: number | null;
+  exitCode: number | null;
+  error: string | null;
+}
+
+export interface ProjectLaunchLog {
+  index: number;
+  repoId: string;
+  stream: "stdout" | "stderr" | "system";
+  line: string;
+  timestamp: number;
 }
 
 export interface GitHubBindingMetadata {
@@ -160,7 +188,12 @@ const fallbackBinding: GitHubBindingStatus = {
 let fallbackSettings: WorkspaceSettings = {
   workspaceRoot: "C:\\Files\\workspace",
   githubBinding: fallbackBinding.binding,
+  projectLaunchConfigs: {},
 };
+
+const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
+const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
+let fallbackLaunchLogIndex = 1;
 
 function canInvoke() {
   return !isTest && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -223,6 +256,40 @@ function fallbackRepo(repoId: string): RepoSummary {
   return fallbackRepos.find((repo) => repo.id === repoId) ?? fallbackRepos[0];
 }
 
+function fallbackLaunchConfig(repoId: string): ProjectLaunchConfig | null {
+  return fallbackSettings.projectLaunchConfigs[repoId] ?? {
+    command: repoId === "LiliaGithub" ? "yarn tauri:dev" : "yarn dev",
+    cwd: null,
+    source: "inferred",
+    updatedAt: null,
+  };
+}
+
+function fallbackIdleStatus(repoId: string): ProjectLaunchStatus {
+  return {
+    repoId,
+    state: "idle",
+    pid: null,
+    command: null,
+    startedAt: null,
+    exitCode: null,
+    error: null,
+  };
+}
+
+function pushFallbackLaunchLog(repoId: string, stream: ProjectLaunchLog["stream"], line: string) {
+  fallbackLaunchLogs[repoId] = [
+    ...(fallbackLaunchLogs[repoId] ?? []),
+    {
+      index: fallbackLaunchLogIndex++,
+      repoId,
+      stream,
+      line,
+      timestamp: Date.now(),
+    },
+  ].slice(-500);
+}
+
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => {
     const summary = fallbackRepo(repoId);
@@ -278,6 +345,82 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
         },
       ],
     };
+  });
+}
+
+export function getRepoLaunchConfig(repoId: string): Promise<ProjectLaunchConfig | null> {
+  return call("repo_get_launch_config", { repoId }, () => fallbackLaunchConfig(repoId));
+}
+
+export function saveRepoLaunchConfig(
+  repoId: string,
+  command: string,
+  cwd?: string | null,
+): Promise<ProjectLaunchConfig> {
+  return call("repo_save_launch_config", { repoId, command, cwd: cwd ?? null }, () => {
+    const config: ProjectLaunchConfig = {
+      command: command.trim(),
+      cwd: cwd?.trim() ? cwd.trim() : null,
+      source: "manual",
+      updatedAt: Date.now(),
+    };
+    fallbackSettings = {
+      ...fallbackSettings,
+      projectLaunchConfigs: {
+        ...fallbackSettings.projectLaunchConfigs,
+        [repoId]: config,
+      },
+    };
+    return config;
+  });
+}
+
+export function getRepoLaunchStatus(repoId: string): Promise<ProjectLaunchStatus> {
+  return call("repo_get_launch_status", { repoId }, () => fallbackLaunchStatuses[repoId] ?? fallbackIdleStatus(repoId));
+}
+
+export function getRepoLaunchLogs(repoId: string, since?: number | null): Promise<ProjectLaunchLog[]> {
+  return call("repo_get_launch_logs", { repoId, since: since ?? null }, () =>
+    (fallbackLaunchLogs[repoId] ?? []).filter((entry) => entry.index > (since ?? 0)),
+  );
+}
+
+export function startRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
+  return call("repo_start_launch", { repoId }, () => {
+    const config = fallbackLaunchConfig(repoId);
+    if (!config?.command.trim()) {
+      throw new Error("未配置快速启动脚本");
+    }
+    const status: ProjectLaunchStatus = {
+      repoId,
+      state: "running",
+      pid: 4321,
+      command: config.command,
+      startedAt: Date.now(),
+      exitCode: null,
+      error: null,
+    };
+    fallbackLaunchStatuses[repoId] = status;
+    pushFallbackLaunchLog(repoId, "system", `启动命令：${config.command}`);
+    pushFallbackLaunchLog(repoId, "stdout", "开发服务已启动");
+    return status;
+  });
+}
+
+export function stopRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
+  return call("repo_stop_launch", { repoId }, () => {
+    const current = fallbackLaunchStatuses[repoId] ?? fallbackIdleStatus(repoId);
+    const status: ProjectLaunchStatus = {
+      ...current,
+      state: current.state === "idle" ? "idle" : "exited",
+      pid: null,
+      exitCode: current.state === "idle" ? null : 0,
+    };
+    fallbackLaunchStatuses[repoId] = status;
+    if (status.state === "exited") {
+      pushFallbackLaunchLog(repoId, "system", "已停止快速启动进程");
+    }
+    return status;
   });
 }
 
