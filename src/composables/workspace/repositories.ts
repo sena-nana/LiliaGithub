@@ -14,6 +14,27 @@ export async function refreshRepos() {
   }
 }
 
+export async function hideRepo(repoId: string) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.hideRepo(repoId);
+  delete state.repoDetails[repoId];
+  delete state.launchConfigs[repoId];
+  delete state.launchStatuses[repoId];
+  delete state.launchLogs[repoId];
+  await refreshRepos();
+}
+
+export async function unhideRepo(repoId: string) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.unhideRepo(repoId);
+  await refreshRepos();
+}
+
+export async function listHiddenRepos() {
+  const service = await loadWorkspaceService();
+  return service.listHiddenRepos();
+}
+
 export async function loadRepoDetail(repoId: string) {
   state.error = null;
   const service = await loadWorkspaceService();

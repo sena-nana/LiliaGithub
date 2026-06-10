@@ -44,6 +44,8 @@ pub struct WorkspaceSettings {
     pub github_binding: Option<GitHubBindingMetadata>,
     #[serde(default)]
     pub project_launch_configs: HashMap<String, ProjectLaunchConfig>,
+    #[serde(default)]
+    pub hidden_repo_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +209,13 @@ pub struct BulkSyncResult {
     pub repo_id: String,
     pub status: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenRepo {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -681,6 +690,17 @@ fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
     })
 }
 
+fn filter_hidden_repos(repos: Vec<RepoSummary>, hidden_repo_ids: &[String]) -> Vec<RepoSummary> {
+    if hidden_repo_ids.is_empty() {
+        return repos;
+    }
+    let hidden: HashSet<&str> = hidden_repo_ids.iter().map(String::as_str).collect();
+    repos
+        .into_iter()
+        .filter(|repo| !hidden.contains(repo.id.as_str()))
+        .collect()
+}
+
 fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
     let settings = load_settings(app);
     let Some(root) = settings.workspace_root else {
@@ -951,13 +971,65 @@ pub fn workspace_pick_root(app: AppHandle) -> Result<Option<String>, String> {
 #[tauri::command]
 pub fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     let root = workspace_root(&app)?;
-    let mut repos = summarize_repos(&root, collect_repos(&root));
+    let settings = load_settings(&app);
+    let mut repos = filter_hidden_repos(
+        summarize_repos(&root, collect_repos(&root)),
+        &settings.hidden_repo_ids,
+    );
     repos.sort_by(|a, b| {
         b.last_commit_at
             .cmp(&a.last_commit_at)
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(repos)
+}
+
+#[tauri::command]
+pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceSettings, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    repo_path_by_id(&app, normalized)?;
+    let mut settings = load_settings(&app);
+    if !settings.hidden_repo_ids.iter().any(|id| id == normalized) {
+        settings.hidden_repo_ids.push(normalized.to_string());
+        settings.hidden_repo_ids.sort();
+    }
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceSettings, String> {
+    let normalized = repo_id.trim();
+    let mut settings = load_settings(&app);
+    settings.hidden_repo_ids.retain(|id| id != normalized);
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo> {
+    let settings = load_settings(&app);
+    let root = workspace_root(&app).ok();
+    settings
+        .hidden_repo_ids
+        .into_iter()
+        .map(|id| {
+            let name = root
+                .as_ref()
+                .map(|root| root.join(id.replace('/', std::path::MAIN_SEPARATOR_STR)))
+                .and_then(|path| {
+                    path.file_name()
+                        .and_then(|value| value.to_str())
+                        .map(|value| value.to_string())
+                })
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| id.clone());
+            HiddenRepo { id, name }
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -1720,6 +1792,47 @@ mod tests {
         assert_eq!(pull.blocked.len(), 1);
         let push = build_bulk_preview("push".to_string(), vec![repo]);
         assert_eq!(push.eligible.len(), 1);
+    }
+
+    #[test]
+    fn filters_hidden_repositories_by_id() {
+        let visible = RepoSummary {
+            id: "visible".to_string(),
+            name: "visible".to_string(),
+            path: "C:/visible".to_string(),
+            relative_path: "visible".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: None,
+            github_full_name: None,
+            ahead: 0,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+        let hidden = RepoSummary {
+            id: "hidden".to_string(),
+            name: "hidden".to_string(),
+            path: "C:/hidden".to_string(),
+            relative_path: "hidden".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: None,
+            github_full_name: None,
+            ahead: 0,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+
+        let repos = filter_hidden_repos(vec![visible.clone(), hidden], &["hidden".to_string()]);
+
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].id, visible.id);
     }
 
     #[test]

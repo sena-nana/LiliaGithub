@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed } from "vue";
-import { FolderGit2, GitPullRequestArrow, RefreshCw, Upload } from "@lucide/vue";
+import { EyeOff, FolderGit2, GitPullRequestArrow, RefreshCw, Upload } from "@lucide/vue";
 import {
   SIDEBAR_FOOTER_LINKS,
   SIDEBAR_NAV,
@@ -9,8 +9,12 @@ import {
 import { useWorkspace } from "../composables/useWorkspace";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
+import type { ContextMenuItem } from "../composables/useContextMenu";
+import type { RepoSummary } from "../services/workspace";
 
 const workspace = useWorkspace();
+const route = useRoute();
+const router = useRouter();
 
 const footerStatus = computed(() => {
   if (!workspace.workspaceRoot.value) {
@@ -42,6 +46,24 @@ const footerStatus = computed(() => {
 
 function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+}
+
+function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
+  return [
+    {
+      id: `hide-repo-${repo.id}`,
+      label: "隐藏仓库",
+      icon: EyeOff,
+      danger: true,
+      confirmLabel: "确认隐藏？再点一次",
+      async onSelect() {
+        await workspace.hideRepo(repo.id);
+        if (route.path.startsWith("/repos/") && String(route.params.repoId ?? "") === repo.id) {
+          await router.push("/");
+        }
+      },
+    },
+  ];
 }
 </script>
 
@@ -123,6 +145,7 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
           :to="`/repos/${encodeURIComponent(repo.id)}`"
           class="sb-tree__row sb-tree__row--project"
           active-class="is-active"
+          v-context-menu="repoContextMenu(repo)"
         >
           <FolderGit2 :size="14" aria-hidden="true" />
           <span class="sb-tree__name">{{ repo.name }}</span>
