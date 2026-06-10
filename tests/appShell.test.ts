@@ -119,6 +119,41 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("仓库行优先显示 GitHub repo 名称，缺失时回退本地目录名", async () => {
+    const view = await renderAppShell("/plugins");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.repos = [
+      {
+        ...state.repos[0],
+        id: "workspace/local-folder",
+        name: "local-folder",
+        path: "C:\\Files\\workspace\\local-folder",
+        relativePath: "workspace/local-folder",
+        githubFullName: "sena-nana/remote-repo",
+      },
+      {
+        ...state.repos[0],
+        id: "workspace/local-only",
+        name: "local-only",
+        path: "C:\\Files\\workspace\\local-only",
+        relativePath: "workspace/local-only",
+        githubFullName: null,
+      },
+    ];
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "remote-repo")).toHaveAttribute(
+        "title",
+        "sena-nana/remote-repo · C:\\Files\\workspace\\local-folder",
+      );
+      expect(sidebarRowForText(view.container, "local-only")).toBeInTheDocument();
+    });
+  });
+
   it("侧边栏一键推送运行中显示蓝底按钮和仓库行状态", async () => {
     const view = await renderAppShell("/plugins");
 
