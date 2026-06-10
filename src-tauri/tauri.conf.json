@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Tauri Template",
+  "productName": "LiliaGithub",
   "version": "0.1.0",
-  "identifier": "com.tauritemplate.desktop",
+  "identifier": "com.liliagithub.desktop",
   "build": {
     "beforeDevCommand": "yarn dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Tauri Template",
+        "title": "LiliaGithub",
         "width": 1200,
         "height": 800,
         "minWidth": 960,

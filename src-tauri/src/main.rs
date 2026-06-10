@@ -1,3 +1,3 @@
 fn main() {
-    tauri_template_lib::run()
+    lilia_github_lib::run()
 }

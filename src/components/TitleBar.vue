@@ -1,13 +1,26 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { Copy, Minus, Square, X } from "lucide-vue-next";
+import {
+  Copy,
+  Minus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Square,
+  X,
+} from "lucide-vue-next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface Props {
   title?: string;
+  leftSidebarCollapsed?: boolean;
+  sidebarTogglesDisabled?: boolean;
 }
 
-withDefaults(defineProps<Props>(), { title: "Tauri Template" });
+withDefaults(defineProps<Props>(), { title: "LiliaGithub" });
+
+defineEmits<{
+  toggleLeftSidebar: [];
+}>();
 
 const isMaximized = ref(false);
 const appWindow = safeCurrentWindow();
@@ -61,7 +74,28 @@ async function onClose() {
 
 <template>
   <header class="titlebar" data-tauri-drag-region>
-    <div class="titlebar__spacer" data-tauri-drag-region></div>
+    <div class="titlebar__left-controls">
+      <button
+        type="button"
+        class="titlebar__btn titlebar__left-sidebar-btn"
+        :aria-label="leftSidebarCollapsed ? '展开左侧栏' : '折叠左侧栏'"
+        :title="leftSidebarCollapsed ? '展开左侧栏' : '折叠左侧栏'"
+        :aria-pressed="leftSidebarCollapsed"
+        :disabled="sidebarTogglesDisabled"
+        @click="$emit('toggleLeftSidebar')"
+      >
+        <PanelLeftOpen
+          v-if="leftSidebarCollapsed"
+          :size="15"
+          aria-hidden="true"
+        />
+        <PanelLeftClose
+          v-else
+          :size="15"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
     <div class="titlebar__brand" data-tauri-drag-region>{{ title }}</div>
     <div class="titlebar__controls">
       <button
@@ -92,3 +126,75 @@ async function onClose() {
     </div>
   </header>
 </template>
+
+<style scoped>
+.titlebar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: stretch;
+  height: 36px;
+  background: var(--bg-elev);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.titlebar__left-controls {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  gap: 2px;
+  padding: 0 6px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  min-width: 0;
+  max-width: min(420px, 44vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text);
+}
+
+.titlebar__controls {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 2px;
+  padding: 0 6px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.titlebar__btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.titlebar__btn--danger:hover {
+  background: var(--err-soft);
+  color: var(--err);
+}
+</style>

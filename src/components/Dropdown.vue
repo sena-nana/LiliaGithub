@@ -105,3 +105,90 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.dd {
+  position: relative;
+  display: inline-flex;
+}
+
+.chat-chip {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chat-chip:hover:not(.is-disabled):not(:disabled),
+.chat-chip.is-open {
+  background: var(--bg-hover);
+  color: var(--text);
+  filter: none;
+}
+
+.chat-chip__label {
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dd__menu {
+  position: absolute;
+  left: 0;
+  min-width: 180px;
+  max-width: 280px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+}
+
+.dd__menu--top {
+  bottom: calc(100% + 6px);
+}
+
+.dd__menu--bottom {
+  top: calc(100% + 6px);
+}
+
+.dd__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  height: auto;
+  font-weight: 500;
+}
+
+.dd__item:hover,
+.dd__item.is-active {
+  background: var(--bg-hover);
+  filter: none;
+}
+
+.dd__item-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+</style>

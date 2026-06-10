@@ -1,12 +1,12 @@
 [package]
-name = "tauri_template"
+name = "lilia_github"
 version = "0.1.0"
 description = "A minimal Tauri application template"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "tauri_template_lib"
+name = "lilia_github_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

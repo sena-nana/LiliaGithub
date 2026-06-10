@@ -4,10 +4,12 @@ import {
   type RouterHistory,
 } from "vue-router";
 import AppShell from "./layouts/AppShell.vue";
-import Home from "./pages/Home.vue";
-import Settings from "./pages/Settings.vue";
 
-export function createTemplateRouter(history: RouterHistory = createWebHistory()) {
+const HomePage = () => import("./pages/Home.vue");
+const PluginsPage = () => import("./pages/Plugins.vue");
+const SettingsPage = () => import("./pages/Settings.vue");
+
+export function createLiliaGithubRouter(history: RouterHistory = createWebHistory()) {
   return createRouter({
     history,
     routes: [
@@ -15,8 +17,13 @@ export function createTemplateRouter(history: RouterHistory = createWebHistory()
         path: "/",
         component: AppShell,
         children: [
-          { path: "", component: Home },
-          { path: "settings", component: Settings },
+          { path: "", component: HomePage },
+          { path: "plugins", component: PluginsPage },
+          {
+            path: "settings",
+            component: SettingsPage,
+            meta: { sidebar: "settings", lockSidebar: true, returnable: false },
+          },
         ],
       },
       { path: "/:pathMatch(.*)*", redirect: "/" },
@@ -24,4 +31,4 @@ export function createTemplateRouter(history: RouterHistory = createWebHistory()
   });
 }
 
-export const router = createTemplateRouter();
+export const router = createLiliaGithubRouter();

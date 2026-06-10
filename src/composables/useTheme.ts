@@ -2,7 +2,7 @@ import { ref, watch } from "vue";
 
 export type Theme = "dark" | "light";
 
-const STORAGE_KEY = "tauri-template.theme";
+const STORAGE_KEY = "lilia-github.theme";
 const DEFAULT_THEME: Theme = "dark";
 
 function loadInitial(): Theme {
