@@ -90,7 +90,7 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
           :key="item.label"
           :to="item.to ?? '/'"
           class="sb-tree__row"
-          active-class="is-active"
+          exact-active-class="is-active"
           :aria-disabled="item.disabled ? 'true' : undefined"
         >
           <component :is="item.icon" :size="14" aria-hidden="true" />
