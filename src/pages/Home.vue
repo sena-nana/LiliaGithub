@@ -34,7 +34,7 @@ function formatTime(timestamp: number | null) {
 </script>
 
 <template>
-  <section>
+  <section :class="{ 'setup-page': !workspace.isReady.value }">
     <div v-if="!workspace.isReady.value" class="setup-screen">
       <div class="page-header">
         <div>
@@ -43,16 +43,18 @@ function formatTime(timestamp: number | null) {
         </div>
       </div>
 
-      <div class="setup-grid">
-        <div class="card setup-step" :class="{ 'is-done': workspace.workspaceRoot.value }">
+      <div class="setup-list">
+        <div class="setup-step" :class="{ 'is-done': workspace.workspaceRoot.value }">
           <div class="setup-step__icon">
             <FolderOpen :size="18" aria-hidden="true" />
           </div>
-          <div>
+          <div class="setup-step__content">
             <h2>工作区文件夹</h2>
             <p class="muted">
               {{ workspace.workspaceRoot.value ?? "尚未选择。本应用会扫描该文件夹下的 Git 仓库。" }}
             </p>
+          </div>
+          <div class="setup-step__action">
             <button type="button" class="primary" @click="workspace.chooseWorkspaceRoot">
               <FolderOpen :size="14" aria-hidden="true" />
               选择工作区
@@ -60,11 +62,11 @@ function formatTime(timestamp: number | null) {
           </div>
         </div>
 
-        <div class="card setup-step" :class="{ 'is-done': workspace.isAuthorized.value }">
+        <div class="setup-step" :class="{ 'is-done': workspace.isAuthorized.value }">
           <div class="setup-step__icon">
             <ShieldCheck :size="18" aria-hidden="true" />
           </div>
-          <div>
+          <div class="setup-step__content">
             <h2>GitHub 授权</h2>
             <p class="muted">
               <template v-if="workspace.githubBinding.value">
@@ -74,6 +76,11 @@ function formatTime(timestamp: number | null) {
                 复用 LiliaCode 的 GitHub 设备码授权和系统钥匙串凭证。
               </template>
             </p>
+            <p v-if="workspace.deviceFlow.value" class="setup-code">
+              设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
+            </p>
+          </div>
+          <div class="setup-step__action">
             <div class="setup-actions">
               <button
                 type="button"
@@ -94,9 +101,6 @@ function formatTime(timestamp: number | null) {
                 检查授权
               </button>
             </div>
-            <p v-if="workspace.deviceFlow.value" class="setup-code">
-              设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
-            </p>
           </div>
         </div>
       </div>
@@ -259,19 +263,32 @@ function formatTime(timestamp: number | null) {
 </template>
 
 <style scoped>
-.setup-screen {
-  max-width: 860px;
-}
-
-.setup-grid,
 .overview-grid,
 .metric-grid {
   display: grid;
   gap: 12px;
 }
 
-.setup-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.setup-screen {
+  width: min(920px, 100%);
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.setup-page {
+  min-height: 100%;
+}
+
+.setup-screen .page-header {
+  margin-bottom: 24px;
+}
+
+.setup-list {
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .overview-grid {
@@ -284,12 +301,16 @@ function formatTime(timestamp: number | null) {
 
 .setup-step {
   display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 12px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 96px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border-soft);
 }
 
-.setup-step.is-done {
-  border-color: color-mix(in srgb, var(--ok) 34%, var(--border));
+.setup-step:last-child {
+  border-bottom: 0;
 }
 
 .setup-step__icon {
@@ -301,6 +322,31 @@ function formatTime(timestamp: number | null) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.setup-step.is-done .setup-step__icon {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.setup-step__content {
+  min-width: 0;
+}
+
+.setup-step__content h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.setup-step__content p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.setup-step__action {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .setup-actions,
@@ -489,11 +535,19 @@ function formatTime(timestamp: number | null) {
 }
 
 @media (max-width: 900px) {
-  .setup-grid,
   .overview-grid,
   .metric-grid,
   .sync-columns {
     grid-template-columns: 1fr;
+  }
+
+  .setup-step {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .setup-step__action {
+    grid-column: 2;
+    justify-content: flex-start;
   }
 }
 </style>

@@ -17,6 +17,7 @@ const isSettingsMode = computed(() => sidebarVariant.value === "settings");
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
 const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
+const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.value);
 
 onMounted(() => {
   void workspace.initialize();
@@ -30,23 +31,25 @@ onMounted(() => {
       'is-resizing': sidebar.isResizing.value,
       'is-sidebar-collapsed': sidebar.effectiveCollapsed.value,
       'is-settings-mode': isSettingsMode,
+      'is-setup-overlay': isSetupOverlay,
     }"
     :style="{ '--sidebar-width': sidebar.widthStyle.value }"
   >
     <TitleBar
       :title="APP_TITLE"
       :left-sidebar-collapsed="sidebar.effectiveCollapsed.value"
-      :sidebar-toggles-disabled="sidebarLocked"
+      :sidebar-toggles-disabled="sidebarLocked || isSetupOverlay"
       @toggle-left-sidebar="sidebar.toggleCollapsed"
     />
     <SettingsSidebar
-      v-if="isSettingsMode"
+      v-if="isSettingsMode && !isSetupOverlay"
       :tabs="SETTINGS_TABS"
       :active-key="activeSettingsTab"
       :return-to="returnTo"
     />
-    <SecondaryPanel v-else />
+    <SecondaryPanel v-else-if="!isSetupOverlay" />
     <div
+      v-if="!isSetupOverlay"
       class="shell__resizer"
       role="separator"
       aria-orientation="vertical"
