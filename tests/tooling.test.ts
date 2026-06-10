@@ -197,7 +197,7 @@ describe("Lilia 外壳样式迁移", () => {
     expect(rowTools).toContain("opacity: 0");
     expect(rowTools).toContain("pointer-events: none");
     expect(secondaryPanel).toContain("拉取预检");
-    expect(secondaryPanel).toContain("推送预检");
+    expect(secondaryPanel).toContain("一键推送");
     expect(secondaryPanel).toContain("workspace.state.repos");
   });
 

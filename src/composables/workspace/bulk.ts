@@ -25,6 +25,53 @@ export async function executeBulk() {
   }
 }
 
+export async function pushAll() {
+  if (state.bulkPushRunning) return;
+
+  const targets = state.repos.filter((repo) => repo.ahead > 0);
+  state.bulkPreview = null;
+  state.bulkResults = [];
+  state.bulkPushStatuses = {};
+  if (!targets.length) return;
+
+  state.bulkPushRunning = true;
+  for (const repo of targets) {
+    state.bulkPushStatuses[repo.id] = { state: "running" };
+  }
+
+  try {
+    const service = await loadWorkspaceService();
+    await Promise.all(
+      targets.map(async (repo) => {
+        try {
+          const summary = await service.pushRepo(repo.id);
+          upsertRepo(summary);
+          delete state.bulkPushStatuses[repo.id];
+        } catch (err) {
+          state.bulkPushStatuses[repo.id] = {
+            state: "error",
+            message: String(err),
+          };
+        }
+      }),
+    );
+  } catch (err) {
+    for (const repo of targets) {
+      state.bulkPushStatuses[repo.id] = {
+        state: "error",
+        message: String(err),
+      };
+    }
+  } finally {
+    state.bulkPushRunning = false;
+    for (const repo of targets) {
+      if (state.bulkPushStatuses[repo.id]?.state === "running") {
+        delete state.bulkPushStatuses[repo.id];
+      }
+    }
+  }
+}
+
 export function closeBulkPreview() {
   state.bulkPreview = null;
   state.bulkResults = [];

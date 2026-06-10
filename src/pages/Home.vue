@@ -151,7 +151,7 @@ function formatTime(timestamp: number | null) {
             <GitPullRequestArrow :size="14" aria-hidden="true" />
             一键拉取
           </button>
-          <button type="button" class="primary" @click="workspace.previewBulk('push')">
+          <button type="button" class="primary" :disabled="workspace.state.bulkPushRunning" @click="workspace.pushAll">
             <Upload :size="14" aria-hidden="true" />
             一键推送
           </button>

@@ -29,7 +29,7 @@ describe("基础路由", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "一键拉取" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "一键推送" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "一键推送" })).toHaveLength(2);
   });
 
   it("侧边栏左下角提供设置、扩展和 GitHub 状态入口", async () => {
@@ -85,19 +85,16 @@ describe("基础路由", () => {
     expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
   });
 
-  it("总览页批量同步先展示预检再执行", async () => {
+  it("总览页一键推送直接执行并更新仓库状态", async () => {
     await renderAt("/");
 
-    await fireEvent.click(await screen.findByRole("button", { name: "一键推送" }));
+    const pushButtons = await screen.findAllByRole("button", { name: "一键推送" });
+    await fireEvent.click(pushButtons[1]);
 
-    expect(await screen.findByRole("dialog", { name: "批量同步预检" })).toBeInTheDocument();
-    expect(screen.getByText("一键推送预检")).toBeInTheDocument();
-    expect(screen.getByText("有本地提交待推送")).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    expect(screen.queryByRole("dialog", { name: "批量同步预检" })).not.toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText(/LiliaGithub · success · 完成/)).toBeInTheDocument();
+      expect(screen.getByText("↑0 / ↓0")).toBeInTheDocument();
     });
   });
 

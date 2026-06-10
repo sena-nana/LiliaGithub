@@ -12,6 +12,11 @@ import type {
   WorkspaceSettings,
 } from "../../services/workspace";
 
+export interface BulkPushStatus {
+  state: "running" | "error";
+  message?: string;
+}
+
 export interface WorkspaceState {
   settings: WorkspaceSettings | null;
   bindingStatus: GitHubBindingStatus | null;
@@ -30,6 +35,8 @@ export interface WorkspaceState {
   bulkPreview: BulkSyncPreview | null;
   bulkResults: BulkSyncResult[];
   bulkRunning: boolean;
+  bulkPushRunning: boolean;
+  bulkPushStatuses: Record<string, BulkPushStatus | undefined>;
 }
 
 export const state = reactive<WorkspaceState>({
@@ -50,6 +57,8 @@ export const state = reactive<WorkspaceState>({
   bulkPreview: null,
   bulkResults: [],
   bulkRunning: false,
+  bulkPushRunning: false,
+  bulkPushStatuses: {},
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -127,5 +136,7 @@ export function resetWorkspaceStateForTests() {
   state.bulkPreview = null;
   state.bulkResults = [];
   state.bulkRunning = false;
+  state.bulkPushRunning = false;
+  state.bulkPushStatuses = {};
   deviceFlow.value = null;
 }
