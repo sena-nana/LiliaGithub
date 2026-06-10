@@ -104,6 +104,26 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("只有进入首页时工作区概览才处于选中状态", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "概览")).toHaveClass("is-active");
+    });
+
+    await view.router.push("/plugins");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "概览")).not.toHaveClass("is-active");
+    });
+
+    await view.router.push("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "概览")).not.toHaveClass("is-active");
+    });
+  });
+
   it("左上角按钮切换左侧栏折叠状态并写回本地存储", async () => {
     const view = await renderAppShell("/plugins");
     const shell = shellElement(view.container);
