@@ -1,5 +1,10 @@
-import { state, upsertRepo } from "./state";
+import { setRepoDetail, state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
+
+async function applyRepoMutation(repoId: string, loadSummary: () => Promise<import("../../services/workspace").RepoSummary>) {
+  upsertRepo(await loadSummary());
+  await loadRepoDetail(repoId);
+}
 
 export async function refreshRepos() {
   state.scanning = true;
@@ -39,8 +44,7 @@ export async function loadRepoDetail(repoId: string) {
   state.error = null;
   const service = await loadWorkspaceService();
   const detail = await service.getRepoDetail(repoId);
-  state.repoDetails[repoId] = detail;
-  upsertRepo(detail.summary);
+  setRepoDetail(detail);
   return detail;
 }
 
@@ -58,28 +62,20 @@ export async function unstage(repoId: string, files: string[]) {
 
 export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
   const service = await loadWorkspaceService();
-  const summary = await service.commitRepo(repoId, files, message, pushAfter);
-  upsertRepo(summary);
-  await loadRepoDetail(repoId);
+  await applyRepoMutation(repoId, () => service.commitRepo(repoId, files, message, pushAfter));
 }
 
 export async function pull(repoId: string) {
   const service = await loadWorkspaceService();
-  const summary = await service.pullRepo(repoId);
-  upsertRepo(summary);
-  await loadRepoDetail(repoId);
+  await applyRepoMutation(repoId, () => service.pullRepo(repoId));
 }
 
 export async function push(repoId: string) {
   const service = await loadWorkspaceService();
-  const summary = await service.pushRepo(repoId);
-  upsertRepo(summary);
-  await loadRepoDetail(repoId);
+  await applyRepoMutation(repoId, () => service.pushRepo(repoId));
 }
 
 export async function checkout(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
-  const summary = await service.checkoutBranch(repoId, branch);
-  upsertRepo(summary);
-  await loadRepoDetail(repoId);
+  await applyRepoMutation(repoId, () => service.checkoutBranch(repoId, branch));
 }

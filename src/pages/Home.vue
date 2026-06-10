@@ -2,8 +2,11 @@
 import { computed } from "vue";
 import {
   CheckCircle2,
+  AlertCircle,
   FolderOpen,
   GitPullRequestArrow,
+  Info,
+  LoaderCircle,
   RefreshCw,
   ShieldCheck,
   Upload,
@@ -55,6 +58,10 @@ function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untracke
 function formatTime(timestamp: number | null) {
   if (!timestamp) return "无提交";
   return new Date(timestamp * 1000).toLocaleString();
+}
+
+function bulkResultTone(result: { status: string }) {
+  return result.status === "success" ? "sync-results__item--success" : "sync-results__item--error";
 }
 </script>
 
@@ -151,8 +158,14 @@ function formatTime(timestamp: number | null) {
             <GitPullRequestArrow :size="14" aria-hidden="true" />
             一键拉取
           </button>
-          <button type="button" class="primary" :disabled="workspace.state.bulkPushRunning" @click="workspace.pushAll">
-            <Upload :size="14" aria-hidden="true" />
+          <button type="button" class="primary" :disabled="workspace.state.bulkRunning" @click="workspace.pushAll">
+            <LoaderCircle
+              v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push'"
+              :size="14"
+              aria-hidden="true"
+              class="sb-spin"
+            />
+            <Upload v-else :size="14" aria-hidden="true" />
             一键推送
           </button>
         </div>
@@ -265,13 +278,34 @@ function formatTime(timestamp: number | null) {
               </li>
             </ul>
           </div>
+          <div>
+            <h3>提示</h3>
+            <p v-if="!workspace.state.bulkPreview.warnings.length" class="muted">没有提示项。</p>
+            <ul>
+              <li v-for="item in workspace.state.bulkPreview.warnings" :key="item.repo.id">
+                <Info :size="13" aria-hidden="true" />
+                <span>{{ item.repo.name }}</span>
+                <em>{{ item.reason }}</em>
+              </li>
+            </ul>
+          </div>
         </div>
 
         <div v-if="workspace.state.bulkResults.length" class="sync-results">
           <h3>执行结果</h3>
-          <p v-for="result in workspace.state.bulkResults" :key="result.repoId">
-            {{ result.repoId }} · {{ result.status }} · {{ result.message }}
-          </p>
+          <ul>
+            <li
+              v-for="result in workspace.state.bulkResults"
+              :key="result.repoId"
+              :class="bulkResultTone(result)"
+              class="sync-results__item"
+            >
+              <CheckCircle2 v-if="result.status === 'success'" :size="13" aria-hidden="true" />
+              <AlertCircle v-else :size="13" aria-hidden="true" />
+              <span>{{ result.repoId }}</span>
+              <em>{{ result.message }}</em>
+            </li>
+          </ul>
         </div>
 
         <div class="modal__footer">
@@ -559,7 +593,7 @@ function formatTime(timestamp: number | null) {
 
 .sync-columns {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -588,9 +622,36 @@ function formatTime(timestamp: number | null) {
   margin-top: 14px;
 }
 
-.sync-results p {
-  margin: 4px 0;
+.sync-results ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sync-results__item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, auto) 1fr;
+  gap: 4px 6px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.sync-results__item:last-child {
+  border-bottom: 0;
+}
+
+.sync-results__item em {
   color: var(--text-muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.sync-results__item--success {
+  color: var(--ok);
+}
+
+.sync-results__item--error {
+  color: var(--err);
 }
 
 @media (max-width: 900px) {

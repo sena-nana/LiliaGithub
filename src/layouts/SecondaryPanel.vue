@@ -49,6 +49,24 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
 }
 
+const bulkPushRunningRepoIds = computed(() => {
+  if (!workspace.state.bulkRunning || workspace.state.bulkPreview?.operation !== "push") {
+    return new Set<string>();
+  }
+  return new Set(workspace.state.bulkPreview.eligible.map((item) => item.repo.id));
+});
+
+const bulkPushErrorByRepoId = computed(() => {
+  if (workspace.state.bulkPreview?.operation !== "push") {
+    return new Map<string, string>();
+  }
+  return new Map(
+    workspace.state.bulkResults
+      .filter((result) => result.status === "error")
+      .map((result) => [result.repoId, result.message]),
+  );
+});
+
 function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   return [
     {
@@ -94,13 +112,18 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
       <button
         type="button"
         class="sb-action"
-        :class="{ 'is-running': workspace.state.bulkPushRunning }"
+        :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push' }"
         title="一键推送"
         aria-label="一键推送"
-        :disabled="!workspace.isReady.value || workspace.state.bulkPushRunning"
+        :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
         @click="workspace.pushAll"
       >
-        <LoaderCircle v-if="workspace.state.bulkPushRunning" :size="16" aria-hidden="true" class="sb-spin" />
+        <LoaderCircle
+          v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push'"
+          :size="16"
+          aria-hidden="true"
+          class="sb-spin"
+        />
         <Upload v-else :size="16" aria-hidden="true" />
       </button>
     </div>
@@ -154,7 +177,7 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
           <FolderGit2 :size="14" aria-hidden="true" />
           <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
           <span
-            v-if="workspace.state.bulkPushStatuses[repo.id]?.state === 'running'"
+            v-if="bulkPushRunningRepoIds.has(repo.id)"
             class="sb-badge"
             title="正在推送"
             aria-label="正在推送"
@@ -162,9 +185,9 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
             <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
           </span>
           <span
-            v-else-if="workspace.state.bulkPushStatuses[repo.id]?.state === 'error'"
+            v-else-if="bulkPushErrorByRepoId.has(repo.id)"
             class="sb-badge sb-badge--error"
-            :title="workspace.state.bulkPushStatuses[repo.id]?.message ?? '推送失败'"
+            :title="bulkPushErrorByRepoId.get(repo.id) ?? '推送失败'"
             aria-label="推送失败"
           >
             <AlertCircle :size="11" aria-hidden="true" />

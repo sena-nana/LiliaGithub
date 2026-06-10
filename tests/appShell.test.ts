@@ -161,19 +161,28 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    state.bulkPushRunning = true;
-    state.bulkPushStatuses.LiliaGithub = { state: "running" };
+    state.bulkPreview = {
+      operation: "push",
+      eligible: [{ repo: state.repos[0], reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    };
+    state.bulkRunning = true;
 
     await waitFor(() => {
       expect(view.getByRole("button", { name: "一键推送" })).toHaveClass("is-running");
       expect(view.getByLabelText("正在推送")).toBeInTheDocument();
     });
 
-    state.bulkPushRunning = false;
-    state.bulkPushStatuses.LiliaGithub = {
-      state: "error",
-      message: "认证失败",
-    };
+    state.bulkRunning = false;
+    state.bulkResults = [
+      {
+        repoId: "LiliaGithub",
+        status: "error",
+        message: "认证失败",
+        summary: null,
+      },
+    ];
 
     await waitFor(() => {
       expect(view.getByLabelText("推送失败")).toHaveAttribute("title", "认证失败");

@@ -163,8 +163,46 @@ pub struct CommitSummary {
     pub hash: String,
     pub short_hash: String,
     pub author: String,
+    #[serde(default)]
+    pub author_email: Option<String>,
     pub timestamp: i64,
     pub subject: String,
+    #[serde(default)]
+    pub parents: Vec<String>,
+    #[serde(default)]
+    pub refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitFileChange {
+    pub path: String,
+    #[serde(default)]
+    pub old_path: Option<String>,
+    pub status: String,
+    pub additions: i32,
+    pub deletions: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDetail {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    #[serde(default)]
+    pub author_email: Option<String>,
+    pub committer: String,
+    #[serde(default)]
+    pub committer_email: Option<String>,
+    pub timestamp: i64,
+    pub subject: String,
+    pub body: String,
+    #[serde(default)]
+    pub parents: Vec<String>,
+    #[serde(default)]
+    pub refs: Vec<String>,
+    pub files: Vec<CommitFileChange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1181,6 +1219,16 @@ pub fn repo_get_history(app: AppHandle, repo_id: String) -> Result<Vec<CommitSum
 }
 
 #[tauri::command]
+pub fn repo_get_commit_detail(
+    app: AppHandle,
+    repo_id: String,
+    hash: String,
+) -> Result<CommitDetail, String> {
+    let path = repo_path_by_id(&app, &repo_id)?;
+    repo_commit_detail(&path, &hash)
+}
+
+#[tauri::command]
 pub fn repo_get_branches(app: AppHandle, repo_id: String) -> Result<Vec<BranchSummary>, String> {
     let path = repo_path_by_id(&app, &repo_id)?;
     Ok(repo_branches(&path))
@@ -1458,7 +1506,15 @@ pub fn bulk_sync_execute(
                         run_pull(&app, &path)
                     }
                 } else {
-                    run_push(&app, &path)
+                    if let Some(reason) =
+                        push_block_reason(&summary, current_branch_upstream(&path).is_some())
+                    {
+                        Err(format!("{reason}，已跳过 push"))
+                    } else if summary.ahead <= 0 {
+                        Err("没有需要推送的提交，已跳过 push".to_string())
+                    } else {
+                        run_push(&app, &path)
+                    }
                 };
                 match run {
                     Ok(()) => BulkSyncResult {
@@ -1549,7 +1605,8 @@ fn repo_history(path: &Path) -> Vec<CommitSummary> {
         &[
             "log",
             "--max-count=80",
-            "--format=%H%x1f%h%x1f%an%x1f%ct%x1f%s",
+            "--decorate=short",
+            "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%ct%x1f%P%x1f%D%x1f%s",
         ],
     )
     .unwrap_or_default();
@@ -1560,16 +1617,193 @@ fn repo_history(path: &Path) -> Vec<CommitSummary> {
             let hash = parts.next()?.to_string();
             let short_hash = parts.next()?.to_string();
             let author = parts.next()?.to_string();
+            let author_email = optional_text(parts.next().unwrap_or(""));
             let timestamp = parts.next()?.parse::<i64>().ok()?;
+            let parents = split_words(parts.next().unwrap_or(""));
+            let refs = split_refs(parts.next().unwrap_or(""));
             let subject = parts.next().unwrap_or("").to_string();
             Some(CommitSummary {
                 hash,
                 short_hash,
                 author,
+                author_email,
                 timestamp,
                 subject,
+                parents,
+                refs,
             })
         })
+        .collect()
+}
+
+fn repo_commit_detail(path: &Path, hash: &str) -> Result<CommitDetail, String> {
+    let normalized = hash.trim();
+    if normalized.is_empty() {
+        return Err("提交 hash 不能为空".to_string());
+    }
+    let format = "%H%x1f%h%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%ct%x1f%P%x1f%D%x1f%s%x1f%b";
+    let output = git_command(
+        path,
+        &[
+            "show",
+            "--no-patch",
+            "--decorate=short",
+            &format!("--format={format}"),
+            normalized,
+        ],
+        None,
+    )?;
+    let mut parts = output.trim_end().splitn(11, '\x1f');
+    let hash = parts.next().unwrap_or("").to_string();
+    if hash.is_empty() {
+        return Err("未找到提交".to_string());
+    }
+    let short_hash = parts.next().unwrap_or("").to_string();
+    let author = parts.next().unwrap_or("").to_string();
+    let author_email = optional_text(parts.next().unwrap_or(""));
+    let committer = parts.next().unwrap_or("").to_string();
+    let committer_email = optional_text(parts.next().unwrap_or(""));
+    let timestamp = parts
+        .next()
+        .unwrap_or("")
+        .parse::<i64>()
+        .map_err(|_| "提交时间解析失败".to_string())?;
+    let parents = split_words(parts.next().unwrap_or(""));
+    let refs = split_refs(parts.next().unwrap_or(""));
+    let subject = parts.next().unwrap_or("").to_string();
+    let body = parts.next().unwrap_or("").trim().to_string();
+    let files = repo_commit_file_changes(path, &hash, parents.first().map(String::as_str));
+    Ok(CommitDetail {
+        hash,
+        short_hash,
+        author,
+        author_email,
+        committer,
+        committer_email,
+        timestamp,
+        subject,
+        body,
+        parents,
+        refs,
+        files,
+    })
+}
+
+fn repo_commit_file_changes(path: &Path, hash: &str, first_parent: Option<&str>) -> Vec<CommitFileChange> {
+    let status_args = commit_diff_args("--name-status", hash, first_parent);
+    let status_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let status_output = git_command_lossy(path, &status_refs).unwrap_or_default();
+    let statuses = commit_file_statuses(&status_output);
+    let numstat_args = commit_diff_args("--numstat", hash, first_parent);
+    let numstat_refs = numstat_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = git_command_lossy(path, &numstat_refs).unwrap_or_default();
+    output
+        .lines()
+        .filter_map(|line| parse_commit_file_change(line, &statuses))
+        .collect()
+}
+
+fn commit_diff_args(format_arg: &str, hash: &str, first_parent: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "diff-tree".to_string(),
+        "--no-commit-id".to_string(),
+        format_arg.to_string(),
+        "--find-renames".to_string(),
+        "-r".to_string(),
+    ];
+    if let Some(parent) = first_parent {
+        args.push(parent.to_string());
+    } else {
+        args.push("--root".to_string());
+    }
+    args.push(hash.to_string());
+    args
+}
+
+fn commit_file_statuses(output: &str) -> HashMap<String, String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let status_code = parts.next()?.trim();
+            let first_path = parts.next()?.trim();
+            let second_path = parts.next().map(str::trim).filter(|value| !value.is_empty());
+            let path = second_path.unwrap_or(first_path);
+            if path.is_empty() {
+                return None;
+            }
+            Some((path.to_string(), status_text(status_code).to_string()))
+        })
+        .collect()
+}
+
+fn status_text(status_code: &str) -> &str {
+    match status_code.chars().next().unwrap_or('M') {
+        'A' => "added",
+        'D' => "deleted",
+        'R' => "renamed",
+        'C' => "copied",
+        _ => "modified",
+    }
+}
+
+fn parse_commit_file_change(
+    line: &str,
+    statuses: &HashMap<String, String>,
+) -> Option<CommitFileChange> {
+    let mut parts = line.split('\t');
+    let additions = parse_numstat_count(parts.next().unwrap_or(""));
+    let deletions = parse_numstat_count(parts.next().unwrap_or(""));
+    let path = parts.next()?.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let extra = parts.next().map(str::trim).filter(|value| !value.is_empty());
+    let (old_path, next_path) = if let Some(next) = extra {
+        (Some(path.to_string()), next.to_string())
+    } else {
+        (None, path.to_string())
+    };
+    let status = statuses
+        .get(&next_path)
+        .cloned()
+        .unwrap_or_else(|| if old_path.is_some() { "renamed" } else { "modified" }.to_string());
+    Some(CommitFileChange {
+        status,
+        path: next_path,
+        old_path,
+        additions,
+        deletions,
+    })
+}
+
+fn parse_numstat_count(value: &str) -> i32 {
+    value.parse::<i32>().unwrap_or(0)
+}
+
+fn optional_text(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn split_words(value: &str) -> Vec<String> {
+    value
+        .split_whitespace()
+        .filter(|part| !part.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn split_refs(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToOwned::to_owned)
         .collect()
 }
 
@@ -1644,7 +1878,79 @@ fn run_push(app: &AppHandle, path: &Path) -> Result<(), String> {
     git_command(path, &["push"], auth.as_deref()).map(|_| ())
 }
 
+fn current_branch_upstream(path: &Path) -> Option<String> {
+    git_command_lossy(path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+        .filter(|value| !value.is_empty())
+}
+
+fn push_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<String> {
+    if summary.remote_url.is_none() {
+        Some("没有 origin remote".to_string())
+    } else if summary.current_branch.is_none() {
+        Some("当前不是命名分支".to_string())
+    } else if !has_upstream {
+        Some("当前分支没有 upstream".to_string())
+    } else if summary.behind > 0 {
+        Some("当前分支落后于 upstream".to_string())
+    } else {
+        None
+    }
+}
+
+fn build_bulk_push_preview_with_lookup<F>(repos: Vec<RepoSummary>, has_upstream: F) -> BulkSyncPreview
+where
+    F: Fn(&RepoSummary) -> bool,
+{
+    let mut eligible = Vec::new();
+    let mut blocked = Vec::new();
+    let mut warnings = Vec::new();
+
+    for repo in repos {
+        if let Some(reason) = push_block_reason(&repo, has_upstream(&repo)) {
+            blocked.push(BulkSyncRepo {
+                repo,
+                reason,
+            });
+            continue;
+        }
+        let dirty = repo.staged_count + repo.unstaged_count + repo.untracked_count;
+        if repo.ahead > 0 {
+            eligible.push(BulkSyncRepo {
+                repo: repo.clone(),
+                reason: "有本地提交待推送".to_string(),
+            });
+            if dirty > 0 {
+                warnings.push(BulkSyncRepo {
+                    repo,
+                    reason: "存在未提交变更，但仍可执行 push".to_string(),
+                });
+            }
+        } else {
+            warnings.push(BulkSyncRepo {
+                repo,
+                reason: "没有需要推送的提交".to_string(),
+            });
+        }
+    }
+
+    BulkSyncPreview {
+        operation: "push".to_string(),
+        eligible,
+        blocked,
+        warnings,
+    }
+}
+
+fn build_bulk_push_preview(repos: Vec<RepoSummary>) -> BulkSyncPreview {
+    build_bulk_push_preview_with_lookup(repos, |repo| {
+        current_branch_upstream(&PathBuf::from(&repo.path)).is_some()
+    })
+}
+
 fn build_bulk_preview(operation: String, repos: Vec<RepoSummary>) -> BulkSyncPreview {
+    if operation == "push" {
+        return build_bulk_push_preview(repos);
+    }
     let mut eligible = Vec::new();
     let mut blocked = Vec::new();
     let mut warnings = Vec::new();
@@ -1775,7 +2081,7 @@ mod tests {
 
     #[test]
     fn bulk_preview_blocks_dirty_pull_and_allows_push() {
-        let repo = RepoSummary {
+        let dirty_pull_repo = RepoSummary {
             id: "app".to_string(),
             name: "app".to_string(),
             path: "C:/app".to_string(),
@@ -1791,10 +2097,170 @@ mod tests {
             last_commit_at: None,
             last_commit_message: None,
         };
-        let pull = build_bulk_preview("pull".to_string(), vec![repo.clone()]);
+        let pull = build_bulk_preview("pull".to_string(), vec![dirty_pull_repo]);
         assert_eq!(pull.blocked.len(), 1);
-        let push = build_bulk_preview("push".to_string(), vec![repo]);
+
+        let push_repo = RepoSummary {
+            id: "push".to_string(),
+            name: "push".to_string(),
+            path: "C:/push".to_string(),
+            relative_path: "push".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: Some("https://github.com/a/b.git".to_string()),
+            github_full_name: Some("a/b".to_string()),
+            ahead: 1,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 1,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+        let push = build_bulk_push_preview_with_lookup(vec![push_repo], |_| true);
         assert_eq!(push.eligible.len(), 1);
+        assert_eq!(push.warnings.len(), 1);
+    }
+
+    #[test]
+    fn push_preview_blocks_missing_remote_detached_and_behind() {
+        let no_remote = RepoSummary {
+            id: "no-remote".to_string(),
+            name: "no-remote".to_string(),
+            path: "C:/no-remote".to_string(),
+            relative_path: "no-remote".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: None,
+            github_full_name: None,
+            ahead: 1,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+        let detached = RepoSummary {
+            id: "detached".to_string(),
+            name: "detached".to_string(),
+            path: "C:/detached".to_string(),
+            relative_path: "detached".to_string(),
+            current_branch: None,
+            remote_url: Some("https://github.com/a/b.git".to_string()),
+            github_full_name: Some("a/b".to_string()),
+            ahead: 1,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+        let behind = RepoSummary {
+            id: "behind".to_string(),
+            name: "behind".to_string(),
+            path: "C:/behind".to_string(),
+            relative_path: "behind".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: Some("https://github.com/a/b.git".to_string()),
+            github_full_name: Some("a/b".to_string()),
+            ahead: 1,
+            behind: 2,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+
+        let preview = build_bulk_push_preview_with_lookup(vec![no_remote, detached, behind], |_| true);
+
+        assert_eq!(preview.blocked.len(), 3);
+        assert!(preview
+            .blocked
+            .iter()
+            .any(|item| item.reason == "没有 origin remote"));
+        assert!(preview
+            .blocked
+            .iter()
+            .any(|item| item.reason == "当前不是命名分支"));
+        assert!(preview
+            .blocked
+            .iter()
+            .any(|item| item.reason == "当前分支落后于 upstream"));
+    }
+
+    #[test]
+    fn push_preview_warns_dirty_push_and_idle_repos() {
+        let ready = RepoSummary {
+            id: "ready".to_string(),
+            name: "ready".to_string(),
+            path: "C:/ready".to_string(),
+            relative_path: "ready".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: Some("https://github.com/a/b.git".to_string()),
+            github_full_name: Some("a/b".to_string()),
+            ahead: 1,
+            behind: 0,
+            staged_count: 1,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+        let idle = RepoSummary {
+            id: "idle".to_string(),
+            name: "idle".to_string(),
+            path: "C:/idle".to_string(),
+            relative_path: "idle".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: Some("https://github.com/a/b.git".to_string()),
+            github_full_name: Some("a/b".to_string()),
+            ahead: 0,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+
+        let preview = build_bulk_push_preview_with_lookup(vec![ready.clone(), idle.clone()], |_| true);
+
+        assert_eq!(preview.eligible.len(), 1);
+        assert_eq!(preview.eligible[0].repo.id, ready.id);
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|item| item.repo.id == ready.id && item.reason == "存在未提交变更，但仍可执行 push"));
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|item| item.repo.id == idle.id && item.reason == "没有需要推送的提交"));
+    }
+
+    #[test]
+    fn push_preview_blocks_repo_without_upstream() {
+        let repo = RepoSummary {
+            id: "no-upstream".to_string(),
+            name: "no-upstream".to_string(),
+            path: "C:/no-upstream".to_string(),
+            relative_path: "no-upstream".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: Some("https://github.com/a/b.git".to_string()),
+            github_full_name: Some("a/b".to_string()),
+            ahead: 1,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+
+        let preview = build_bulk_push_preview_with_lookup(vec![repo], |_| false);
+
+        assert_eq!(preview.blocked.len(), 1);
+        assert_eq!(preview.blocked[0].reason, "当前分支没有 upstream");
     }
 
     #[test]

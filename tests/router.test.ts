@@ -66,9 +66,39 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByLabelText("提交历史和分支树")).toBeInTheDocument();
+    expect(screen.getByLabelText("历史和分支树")).toBeInTheDocument();
+    expect(screen.getByLabelText("提交历史密集列表")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("提交图谱").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("1234567")).toBeInTheDocument();
+    expect(screen.getAllByText("HEAD -> main").length).toBeGreaterThanOrEqual(1);
 
     await fireEvent.click(screen.getByRole("tab", { name: "分支" }));
     expect(screen.getByText("origin/main")).toBeInTheDocument();
+  });
+
+  it("提交历史行点击后进入提交详情页", async () => {
+    await renderAt("/repos/LiliaGithub");
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "历史" }));
+    await fireEvent.click(screen.getByRole("button", { name: /搭建 LiliaGithub MVP/ }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "搭建 LiliaGithub MVP" })).toBeInTheDocument();
+    expect(screen.getByLabelText("提交元数据")).toHaveTextContent("1234567890abcdef");
+    expect(screen.getByLabelText("改动文件列表")).toHaveTextContent("src-tauri/src/workspace.rs");
+  });
+
+  it("提交详情页可通过独立路由打开并返回仓库历史", async () => {
+    await renderAt("/repos/LiliaGithub/commits/1234567890abcdef");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "搭建 LiliaGithub MVP" })).toBeInTheDocument();
+    expect(screen.getByText("改动文件")).toBeInTheDocument();
+    expect(screen.getByText("+42")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("link", { name: "返回历史" }));
+
+    expect(await screen.findByRole("tab", { name: "历史" })).toHaveClass("is-active");
+    expect(await screen.findByLabelText("提交历史密集列表")).toBeInTheDocument();
   });
 
   it("仓库详情页可配置、运行并查看快速启动终端", async () => {
@@ -94,17 +124,17 @@ describe("基础路由", () => {
     expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
   });
 
-  it("总览页一键推送直接执行并更新仓库状态", async () => {
+  it("总览页一键推送先打开预检弹层并展示 push 可执行项", async () => {
     await renderAt("/");
 
     const pushButtons = await screen.findAllByRole("button", { name: "一键推送" });
     await fireEvent.click(pushButtons[1]);
 
-    expect(screen.queryByRole("dialog", { name: "批量同步预检" })).not.toBeInTheDocument();
-
-    await waitFor(() => {
-      expect(screen.getByText("↑0 / ↓0")).toBeInTheDocument();
-    });
+    expect(await screen.findByRole("dialog", { name: "批量同步预检" })).toBeInTheDocument();
+    expect(screen.getByText("一键推送预检")).toBeInTheDocument();
+    expect(screen.getByText("可执行")).toBeInTheDocument();
+    expect(screen.getByText("阻止")).toBeInTheDocument();
+    expect(screen.getByText("提示")).toBeInTheDocument();
   });
 
   it("设置页默认显示外观设置并使用设置侧栏", async () => {
