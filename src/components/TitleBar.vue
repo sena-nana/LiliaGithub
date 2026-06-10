@@ -7,7 +7,7 @@ import {
   PanelLeftOpen,
   Square,
   X,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface Props {

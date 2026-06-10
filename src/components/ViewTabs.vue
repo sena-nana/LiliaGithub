@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckSquare, LayoutDashboard, MessagesSquare } from "lucide-vue-next";
+import { CheckSquare, LayoutDashboard, MessagesSquare } from "@lucide/vue";
 
 export type ViewKey = "overview" | "board" | "todo";
 

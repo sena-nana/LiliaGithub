@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Copy, FolderOpen, MousePointer2, Pencil, Trash2 } from "lucide-vue-next";
+import { Copy, FolderOpen, MousePointer2, Pencil, Trash2 } from "@lucide/vue";
 import ViewTabs from "../components/ViewTabs.vue";
 import "../styles/page.css";
 
