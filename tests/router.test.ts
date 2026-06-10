@@ -31,11 +31,11 @@ describe("基础路由", () => {
   it("侧边栏左下角提供设置、扩展和 GitHub 状态入口", async () => {
     await renderAt("/");
 
-    expect(screen.getAllByRole("link", { name: "设置" })).toHaveLength(1);
-    expect(screen.getByRole("link", { name: "扩展" })).toBeInTheDocument();
     expect(
       await screen.findByRole("link", { name: "GitHub 已授权。点击进入设置。" }),
     ).toHaveClass("sb-conn--ok");
+    expect(screen.getAllByRole("link", { name: "设置" })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "扩展" })).toBeInTheDocument();
   });
 
   it("仓库详情页提供变更、历史、分支和提交视图", async () => {

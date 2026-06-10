@@ -23,6 +23,8 @@ export interface WorkspaceState {
   loading: boolean;
   scanning: boolean;
   authLoading: boolean;
+  authFlowStatus: "idle" | "pending" | "expired" | "error";
+  authRemainingSeconds: number | null;
   launchLoading: boolean;
   error: string | null;
   bulkPreview: BulkSyncPreview | null;
@@ -41,6 +43,8 @@ export const state = reactive<WorkspaceState>({
   loading: false,
   scanning: false,
   authLoading: false,
+  authFlowStatus: "idle",
+  authRemainingSeconds: null,
   launchLoading: false,
   error: null,
   bulkPreview: null,
@@ -112,6 +116,8 @@ export function resetWorkspaceStateForTests() {
   state.loading = false;
   state.scanning = false;
   state.authLoading = false;
+  state.authFlowStatus = "idle";
+  state.authRemainingSeconds = null;
   state.launchLoading = false;
   state.error = null;
   state.bulkPreview = null;
