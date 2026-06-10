@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
 import { describe, expect, it } from "vitest";
 import App from "../src/App.vue";
+import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
 
 async function renderAt(path: string) {
@@ -12,6 +13,9 @@ async function renderAt(path: string) {
   render(App, {
     global: {
       plugins: [router],
+      directives: {
+        contextMenu: vContextMenu,
+      },
     },
   });
 }
@@ -111,6 +115,23 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "关于" })).toBeInTheDocument();
     expect(await screen.findByText("Tauri 2 + Vue 3")).toBeInTheDocument();
+  });
+
+  it("设置页仓库 tab 可恢复隐藏仓库", async () => {
+    const service = await import("../src/services/workspace");
+    await service.hideRepo("LiliaGithub");
+
+    await renderAt("/settings?tab=repositories");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "仓库" })).toBeInTheDocument();
+    expect(await screen.findByText("LiliaGithub")).toBeInTheDocument();
+
+    await fireEvent.click(await screen.findByRole("button", { name: "恢复管理" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("没有隐藏仓库。")).toBeInTheDocument();
+    });
+    expect((await service.scanRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
   });
 
   it("扩展页显示模板占位内容", async () => {

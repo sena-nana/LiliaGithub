@@ -1,7 +1,11 @@
 import { fireEvent, render, waitFor } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { defineComponent } from "vue";
 import { SIDEBAR_CONFIG } from "../src/config/appShell";
+import ContextMenuHost from "../src/components/ContextMenuHost.vue";
+import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
+import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -15,6 +19,10 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 async function renderAppShell(initialRoute = "/") {
+  const Wrapper = defineComponent({
+    components: { AppShell, ContextMenuHost },
+    template: "<AppShell /><ContextMenuHost />",
+  });
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -41,9 +49,12 @@ async function renderAppShell(initialRoute = "/") {
   await router.push(initialRoute);
   await router.isReady();
 
-  const view = render(AppShell, {
+  const view = render(Wrapper, {
     global: {
       plugins: [router],
+      directives: {
+        contextMenu: vContextMenu,
+      },
     },
   });
 
@@ -81,6 +92,8 @@ function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
 }
 
 beforeEach(() => {
+  closeContextMenu();
+  installContextMenu();
   localStorage.clear();
 });
 
@@ -101,6 +114,27 @@ describe("AppShell sidebar", () => {
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("仓库右键菜单可隐藏仓库并从详情页返回总览", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.contextMenu(sidebarRowForText(view.container, "LiliaGithub"));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "隐藏仓库" }));
+
+    expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("menuitem", { name: "确认隐藏？再点一次" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/");
+    });
+    await waitFor(() => {
+      expect(() => sidebarRowForText(view.container, "LiliaGithub")).toThrow("未找到侧边栏行: LiliaGithub");
     });
   });
 

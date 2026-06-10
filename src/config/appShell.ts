@@ -1,5 +1,6 @@
 import {
   FilePlus2,
+  FolderGit2,
   Home,
   Info,
   Palette,
@@ -87,7 +88,7 @@ export const SIDEBAR_FOOTER_STATUS: SidebarFooterStatus = {
   icon: Sparkles,
 };
 
-export type SettingsTabKey = "appearance" | "about";
+export type SettingsTabKey = "appearance" | "repositories" | "about";
 
 export interface SettingsTab {
   key: SettingsTabKey;
@@ -104,6 +105,12 @@ export const SETTINGS_TABS: SettingsTab[] = [
     to: { path: "/settings", query: { tab: "appearance" } },
   },
   {
+    key: "repositories",
+    label: "仓库",
+    icon: FolderGit2,
+    to: { path: "/settings", query: { tab: "repositories" } },
+  },
+  {
     key: "about",
     label: "关于",
     icon: Info,
@@ -115,6 +122,7 @@ export const DEFAULT_SETTINGS_TAB: SettingsTabKey = "appearance";
 
 export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
   appearance: defineAsyncComponent(() => import("../pages/settings/AppearanceSection.vue")),
+  repositories: defineAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue")),
   about: defineAsyncComponent(() => import("../pages/settings/AboutSection.vue")),
 };
 

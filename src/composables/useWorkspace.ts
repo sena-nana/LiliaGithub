@@ -20,12 +20,15 @@ import {
 import {
   checkout,
   commit,
+  hideRepo,
+  listHiddenRepos,
   loadRepoDetail,
   pull,
   push,
   refreshRepos,
   stage,
   unstage,
+  unhideRepo,
 } from "./workspace/repositories";
 import {
   loadLaunch,
@@ -57,6 +60,9 @@ export function useWorkspace() {
     initialize,
     chooseWorkspaceRoot,
     refreshRepos,
+    hideRepo,
+    unhideRepo,
+    listHiddenRepos,
     startAuthFlow,
     pollAuthFlow,
     loadRepoDetail,

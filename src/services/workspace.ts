@@ -4,6 +4,7 @@ export interface WorkspaceSettings {
   workspaceRoot: string | null;
   githubBinding: GitHubBindingMetadata | null;
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
+  hiddenRepoIds: string[];
 }
 
 export interface ProjectLaunchConfig {
@@ -135,6 +136,11 @@ export interface BulkSyncResult {
   message: string;
 }
 
+export interface HiddenRepo {
+  id: string;
+  name: string;
+}
+
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
 
 const fallbackRepos: RepoSummary[] = [
@@ -190,6 +196,7 @@ function createFallbackSettings(): WorkspaceSettings {
     workspaceRoot: "C:\\Files\\workspace",
     githubBinding: fallbackBinding.binding,
     projectLaunchConfigs: {},
+    hiddenRepoIds: [],
   };
 }
 
@@ -238,7 +245,48 @@ export function pickWorkspaceRoot(): Promise<string | null> {
 }
 
 export function scanRepos(): Promise<RepoSummary[]> {
-  return call("workspace_scan_repos", undefined, () => fallbackRepos.map((repo) => ({ ...repo })));
+  return call("workspace_scan_repos", undefined, () => visibleFallbackRepos());
+}
+
+function visibleFallbackRepos() {
+  const hidden = new Set(fallbackSettings.hiddenRepoIds);
+  return fallbackRepos
+    .filter((repo) => !hidden.has(repo.id))
+    .map((repo) => ({ ...repo }));
+}
+
+export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
+  return call("workspace_hide_repo", { repoId }, () => {
+    if (!fallbackRepos.some((repo) => repo.id === repoId)) {
+      throw new Error(`未找到 Git 仓库：${repoId}`);
+    }
+    if (!fallbackSettings.hiddenRepoIds.includes(repoId)) {
+      fallbackSettings = {
+        ...fallbackSettings,
+        hiddenRepoIds: [...fallbackSettings.hiddenRepoIds, repoId].sort(),
+      };
+    }
+    return { ...fallbackSettings };
+  });
+}
+
+export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
+  return call("workspace_unhide_repo", { repoId }, () => {
+    fallbackSettings = {
+      ...fallbackSettings,
+      hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
+    };
+    return { ...fallbackSettings };
+  });
+}
+
+export function listHiddenRepos(): Promise<HiddenRepo[]> {
+  return call("workspace_list_hidden_repos", undefined, () =>
+    fallbackSettings.hiddenRepoIds.map((id) => ({
+      id,
+      name: fallbackRepos.find((repo) => repo.id === id)?.name ?? id,
+    })),
+  );
 }
 
 export function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
@@ -481,12 +529,13 @@ export function checkoutBranch(repoId: string, branch: string): Promise<RepoSumm
 }
 
 export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPreview> {
+  const repos = visibleFallbackRepos();
   return call("bulk_sync_preview", { operation }, () => ({
     operation,
-    eligible: fallbackRepos
+    eligible: repos
       .filter((repo) => operation === "pull" ? repo.behind > 0 : repo.ahead > 0)
       .map((repo) => ({ repo: { ...repo }, reason: operation === "pull" ? "可拉取远端更新" : "有本地提交待推送" })),
-    blocked: fallbackRepos
+    blocked: repos
       .filter((repo) => operation === "pull" && repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0)
       .map((repo) => ({ repo: { ...repo }, reason: "存在未提交变更" })),
     warnings: [],
