@@ -17,9 +17,10 @@ import {
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
 import type { RepoChange } from "../services/workspace";
+import { repoDisplayName } from "../utils/repoDisplay";
 import "../styles/page.css";
 
-type RepoTab = "changes" | "history" | "branches" | "commit";
+type RepoTab = "changes" | "history" | "branches";
 
 const route = useRoute();
 const workspace = useWorkspace();
@@ -33,13 +34,32 @@ const launchEditing = ref(false);
 const launchTerminalVisible = ref(false);
 const launchCommandInput = ref("");
 const launchCwdInput = ref("");
+const focusedChangePath = ref<string | null>(null);
 let launchPollTimer: number | null = null;
 
 const repoId = computed(() => String(route.params.repoId ?? ""));
 const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);
 const summary = computed(() => detail.value?.summary ?? workspace.repoById(repoId.value));
+const repoTitle = computed(() => repoDisplayName(summary.value));
+const repoMetaItems = computed(() => {
+  const repo = summary.value;
+  if (!repo) return [repoId.value];
+  return [
+    repo.githubFullName ?? "未识别 GitHub",
+    repo.currentBranch ?? "detached",
+    repo.path,
+  ].filter(Boolean);
+});
 const changes = computed(() => detail.value?.changes ?? []);
 const selectedFileList = computed(() => Array.from(selectedFiles.value));
+const focusedChange = computed(() =>
+  changes.value.find((change) => change.path === focusedChangePath.value) ?? null,
+);
+const previewChange = computed(() => {
+  if (focusedChange.value) return focusedChange.value;
+  if (selectedFileList.value.length !== 1) return null;
+  return changes.value.find((change) => change.path === selectedFileList.value[0]) ?? null;
+});
 const canCommit = computed(() => selectedFiles.value.size > 0 && commitMessage.value.trim().length > 0);
 const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
 const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
@@ -47,12 +67,17 @@ const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []
 const launchState = computed(() => launchStatus.value?.state ?? "idle");
 const launchRunning = computed(() => launchState.value === "running");
 const hasLaunchCommand = computed(() => Boolean(launchConfig.value?.command.trim()));
+const selectedSummaryText = computed(() => {
+  if (!selectedFileList.value.length) return "未选择文件";
+  if (selectedFileList.value.length === 1) return `已选 1 个文件`;
+  return `已选 ${selectedFileList.value.length} 个文件`;
+});
+const selectedFilePreview = computed(() => selectedFileList.value.slice(0, 3));
 
 const tabs: Array<{ key: RepoTab; label: string }> = [
   { key: "changes", label: "变更" },
   { key: "history", label: "历史" },
   { key: "branches", label: "分支" },
-  { key: "commit", label: "提交" },
 ];
 
 onMounted(() => {
@@ -75,7 +100,12 @@ watch(repoId, () => {
   commitMessage.value = "";
   launchEditing.value = false;
   launchTerminalVisible.value = false;
+  focusedChangePath.value = null;
   void load();
+});
+
+watch(changes, () => {
+  syncFocusedChange();
 });
 
 async function load() {
@@ -87,6 +117,7 @@ async function load() {
       workspace.loadLaunch(repoId.value),
     ]);
     resetLaunchForm();
+    syncFocusedChange();
   } catch (err) {
     actionError.value = String(err);
   }
@@ -114,15 +145,28 @@ function dirtyCount(changeSummary = summary.value) {
   return changeSummary.stagedCount + changeSummary.unstagedCount + changeSummary.untrackedCount;
 }
 
+function syncFocusedChange() {
+  if (!focusedChangePath.value) return;
+  if (!changes.value.some((change) => change.path === focusedChangePath.value)) {
+    focusedChangePath.value = null;
+  }
+}
+
+function focusChange(path: string) {
+  focusedChangePath.value = path;
+}
+
 function toggleFile(path: string) {
   const next = new Set(selectedFiles.value);
   if (next.has(path)) next.delete(path);
   else next.add(path);
   selectedFiles.value = next;
+  focusedChangePath.value = path;
 }
 
 function selectAll() {
   selectedFiles.value = new Set(changes.value.map((change) => change.path));
+  focusedChangePath.value = changes.value[0]?.path ?? null;
 }
 
 async function runAction(action: () => Promise<unknown>) {
@@ -216,8 +260,35 @@ function statusText(change: RepoChange) {
   return "未暂存";
 }
 
+function statusTone(change: RepoChange) {
+  if (change.untracked) return "change-badge--warn";
+  if (change.staged && change.unstaged) return "change-badge--accent";
+  if (change.staged) return "change-badge--ok";
+  return "change-badge--muted";
+}
+
 function formatTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString();
+}
+
+function lastCommitText() {
+  const latestCommit = detail.value?.commits[0];
+  if (latestCommit) return latestCommit.subject;
+  if (summary.value?.lastCommitMessage) return summary.value.lastCommitMessage;
+  return "无提交";
+}
+
+function syncStatusText() {
+  if (!summary.value) return "未知";
+  if (!summary.value.ahead && !summary.value.behind) return "已同步";
+  return `↑${summary.value.ahead} / ↓${summary.value.behind}`;
+}
+
+function syncStatusTone() {
+  if (!summary.value) return "";
+  if (summary.value.behind > 0) return "repo-status-strip__value--warn";
+  if (summary.value.ahead > 0) return "repo-status-strip__value--accent";
+  return "repo-status-strip__value--ok";
 }
 
 function launchStatusText() {
@@ -239,29 +310,15 @@ function streamText(stream: string) {
 </script>
 
 <template>
-  <section>
-    <div class="page-header">
-      <div>
-        <h1>{{ summary?.name ?? "仓库" }}</h1>
-        <p>{{ summary?.path ?? repoId }}</p>
+  <section class="repo-workbench">
+    <header class="repo-header">
+      <div class="repo-header__identity">
+        <h1>{{ repoTitle }}</h1>
+        <div class="repo-header__meta" :title="repoMetaItems.join(' · ')">
+          <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
+        </div>
       </div>
-      <div class="toolbar">
-        <button type="button" class="primary" :disabled="actionRunning || !hasLaunchCommand || launchRunning" @click="startLaunch">
-          <Play :size="14" aria-hidden="true" />
-          运行
-        </button>
-        <button type="button" class="ghost" :disabled="actionRunning || !launchRunning" @click="stopLaunch">
-          <Square :size="14" aria-hidden="true" />
-          停止
-        </button>
-        <button type="button" class="ghost" @click="launchTerminalVisible = !launchTerminalVisible">
-          <Terminal :size="14" aria-hidden="true" />
-          终端
-        </button>
-        <button type="button" class="ghost" @click="editLaunchConfig">
-          <Settings :size="14" aria-hidden="true" />
-          启动配置
-        </button>
+      <div class="repo-header__actions" aria-label="仓库操作">
         <button type="button" class="ghost" :disabled="actionRunning" @click="load">
           <RefreshCw :size="14" aria-hidden="true" />
           刷新
@@ -283,191 +340,416 @@ function streamText(stream: string) {
           文件夹
         </button>
       </div>
-    </div>
+    </header>
 
-    <div class="launch-panel card">
-      <div class="section-toolbar">
-        <div>
-          <h2>快速启动</h2>
-          <p class="muted">
-            {{ hasLaunchCommand ? launchStatusText() : "未识别启动脚本" }}
-            <template v-if="hasLaunchCommand"> · {{ launchSourceText() }}</template>
-          </p>
-        </div>
-        <div class="toolbar">
-          <button type="button" class="ghost" :disabled="workspace.state.launchLoading" @click="refreshLaunch">
-            <RefreshCw :size="14" aria-hidden="true" />
-            刷新状态
-          </button>
-        </div>
-      </div>
-
-      <div v-if="launchEditing" class="launch-form">
-        <label>
-          <span>命令</span>
-          <input v-model="launchCommandInput" type="text" placeholder="例如 yarn tauri:dev" />
-        </label>
-        <label>
-          <span>工作目录</span>
-          <input v-model="launchCwdInput" type="text" placeholder="留空使用仓库根目录" />
-        </label>
-        <div class="toolbar">
-          <button type="button" class="primary" :disabled="!launchCommandInput.trim() || actionRunning" @click="saveLaunchConfig">
-            保存配置
-          </button>
-          <button type="button" class="ghost" @click="cancelLaunchConfig">取消</button>
-        </div>
-      </div>
-      <div v-else class="launch-command">
-        <code>{{ launchConfig?.command || "暂无启动命令，请手动配置。" }}</code>
-        <span v-if="launchConfig?.cwd">cwd: {{ launchConfig.cwd }}</span>
-      </div>
-
-      <p v-if="launchStatus?.error" class="error-line">{{ launchStatus.error }}</p>
-
-      <div v-if="launchTerminalVisible" class="launch-terminal" aria-label="启动终端">
-        <div class="launch-terminal__header">
-          <span>运行输出</span>
-          <button type="button" class="ghost" @click="launchTerminalVisible = false">隐藏</button>
-        </div>
-        <div class="launch-terminal__body">
-          <p v-if="!launchLogs.length" class="muted">暂无输出。</p>
-          <pre v-else><code><span
-            v-for="entry in launchLogs"
-            :key="entry.index"
-            :class="`launch-log launch-log--${entry.stream}`"
-          >[{{ streamText(entry.stream) }}] {{ entry.line }}
-</span></code></pre>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="summary" class="repo-status card">
-      <div>
-        <span>当前分支</span>
+    <section v-if="summary" class="repo-status-strip" aria-label="仓库状态条">
+      <div class="repo-status-strip__item">
+        <span>分支</span>
         <strong>{{ summary.currentBranch ?? "detached" }}</strong>
       </div>
-      <div>
-        <span>同步状态</span>
-        <strong>↑{{ summary.ahead }} / ↓{{ summary.behind }}</strong>
+      <div class="repo-status-strip__item">
+        <span>同步</span>
+        <strong :class="syncStatusTone()">{{ syncStatusText() }}</strong>
       </div>
-      <div>
+      <div class="repo-status-strip__item">
         <span>变更</span>
-        <strong>{{ dirtyCount(summary) }}</strong>
+        <strong :class="{ 'repo-status-strip__value--warn': dirtyCount(summary) > 0 }">{{ dirtyCount(summary) }}</strong>
       </div>
-      <div>
-        <span>GitHub</span>
-        <strong>{{ summary.githubFullName ?? "未识别" }}</strong>
+      <div class="repo-status-strip__item">
+        <span>最近提交</span>
+        <strong :title="lastCommitText()">{{ lastCommitText() }}</strong>
       </div>
-    </div>
+      <div class="repo-status-strip__item">
+        <span>启动</span>
+        <strong :class="{ 'repo-status-strip__value--accent': launchRunning, 'repo-status-strip__value--warn': launchState === 'error' }">
+          {{ hasLaunchCommand ? launchStatusText() : "未配置" }}
+        </strong>
+      </div>
+      <div class="repo-status-strip__item">
+        <span>远端</span>
+        <strong>{{ summary.githubFullName ?? "未识别 GitHub" }}</strong>
+      </div>
+    </section>
 
     <p v-if="actionError" class="error-line">{{ actionError }}</p>
 
-    <div class="repo-tabs" role="tablist" aria-label="仓库视图">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        type="button"
-        class="repo-tabs__tab"
-        :class="{ 'is-active': activeTab === tab.key }"
-        role="tab"
-        :aria-selected="activeTab === tab.key"
-        @click="activeTab = tab.key"
-      >
-        {{ tab.label }}
-      </button>
-    </div>
-
-    <div v-if="activeTab === 'changes'" class="card">
-      <div class="section-toolbar">
-        <h2>工作区变更</h2>
-        <div class="toolbar">
-          <button type="button" class="ghost" :disabled="!changes.length" @click="selectAll">全选</button>
-          <button type="button" class="ghost" :disabled="!selectedFiles.size" @click="stageSelected">暂存</button>
-          <button type="button" class="ghost" :disabled="!selectedFiles.size" @click="unstageSelected">取消暂存</button>
+    <div class="workbench-grid">
+      <main class="workbench-main card">
+        <div class="repo-tabs" role="tablist" aria-label="仓库视图">
+          <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            type="button"
+            class="repo-tabs__tab"
+            :class="{ 'is-active': activeTab === tab.key }"
+            role="tab"
+            :aria-selected="activeTab === tab.key"
+            @click="activeTab = tab.key"
+          >
+            {{ tab.label }}
+          </button>
         </div>
-      </div>
-      <p v-if="!changes.length" class="muted">没有本地变更。</p>
-      <div v-for="change in changes" :key="change.path" class="change-row">
-        <label>
-          <input
-            type="checkbox"
-            :checked="selectedFiles.has(change.path)"
-            @change="toggleFile(change.path)"
-          />
-          <span>{{ change.path }}</span>
-        </label>
-        <em>{{ statusText(change) }}</em>
-        <pre v-if="change.diff"><code>{{ change.diff }}</code></pre>
-      </div>
-    </div>
 
-    <div v-else-if="activeTab === 'history'" class="card">
-      <h2>提交历史</h2>
-      <p v-if="!detail?.commits.length" class="muted">没有提交历史。</p>
-      <div v-for="commit in detail?.commits" :key="commit.hash" class="commit-row">
-        <GitCommitHorizontal :size="14" aria-hidden="true" />
-        <div>
-          <strong>{{ commit.subject }}</strong>
-          <span>{{ commit.shortHash }} · {{ commit.author }} · {{ formatTime(commit.timestamp) }}</span>
-        </div>
-      </div>
-    </div>
+        <section v-if="activeTab === 'changes'" class="repo-panel">
+          <div class="section-toolbar section-toolbar--compact">
+            <div class="repo-panel__title">
+              <h2>工作区变更</h2>
+              <p class="muted">共 {{ changes.length }} 个文件，{{ selectedSummaryText }}</p>
+            </div>
+            <div class="toolbar">
+              <button type="button" class="ghost" :disabled="!changes.length" @click="selectAll">全选</button>
+              <button type="button" class="ghost" :disabled="!selectedFiles.size" @click="stageSelected">暂存</button>
+              <button type="button" class="ghost" :disabled="!selectedFiles.size" @click="unstageSelected">取消暂存</button>
+            </div>
+          </div>
 
-    <div v-else-if="activeTab === 'branches'" class="card">
-      <h2>分支</h2>
-      <p v-if="!detail?.branches.length" class="muted">没有分支信息。</p>
-      <div v-for="branch in detail?.branches" :key="`${branch.remote}:${branch.name}`" class="branch-row">
-        <GitBranch :size="14" aria-hidden="true" />
-        <div>
-          <strong>{{ branch.name }}</strong>
-          <span>{{ branch.remote ? "远端" : "本地" }} · ↑{{ branch.ahead }} / ↓{{ branch.behind }}</span>
-        </div>
-        <button
-          type="button"
-          class="ghost"
-          :disabled="branch.current || branch.remote"
-          @click="checkout(branch.name)"
-        >
-          <Check :size="14" aria-hidden="true" />
-          Checkout
-        </button>
-      </div>
-    </div>
+          <p v-if="!changes.length" class="muted repo-empty">没有本地变更。</p>
+          <div v-else class="change-workspace">
+            <div class="change-list" role="list" aria-label="工作区变更列表">
+              <div
+                v-for="change in changes"
+                :key="change.path"
+                class="change-row"
+                :class="{ 'is-focused': previewChange?.path === change.path }"
+                role="button"
+                tabindex="0"
+                @click="focusChange(change.path)"
+                @keydown.enter.prevent="focusChange(change.path)"
+                @keydown.space.prevent="focusChange(change.path)"
+              >
+                <span class="change-row__select" @click.stop>
+                  <input
+                    type="checkbox"
+                    :checked="selectedFiles.has(change.path)"
+                    @change="toggleFile(change.path)"
+                  />
+                </span>
+                <span class="change-row__path" :title="change.oldPath ? `${change.oldPath} -> ${change.path}` : change.path">
+                  <span>{{ change.path }}</span>
+                  <small v-if="change.oldPath">来自 {{ change.oldPath }}</small>
+                </span>
+                <span class="change-badge" :class="statusTone(change)">{{ statusText(change) }}</span>
+              </div>
+            </div>
 
-    <div v-else class="card commit-panel">
-      <h2>提交并推送</h2>
-      <p class="muted">选择文件、填写提交说明后创建提交。默认提交成功后立即推送当前分支。</p>
-      <div class="commit-files">
-        <label v-for="change in changes" :key="change.path">
-          <input
-            type="checkbox"
-            :checked="selectedFiles.has(change.path)"
-            @change="toggleFile(change.path)"
-          />
-          <span>{{ change.path }}</span>
-        </label>
-      </div>
-      <input v-model="commitMessage" type="text" placeholder="提交说明" />
-      <label class="checkbox-line">
-        <input v-model="pushAfter" type="checkbox" />
-        <span>提交后立即 push</span>
-      </label>
-      <button type="button" class="primary" :disabled="!canCommit || actionRunning" @click="commitSelected">
-        <GitCommitHorizontal :size="14" aria-hidden="true" />
-        提交
-      </button>
+            <section class="diff-preview" aria-label="变更预览">
+              <div class="section-toolbar section-toolbar--compact">
+                <div class="repo-panel__title">
+                  <h2>差异预览</h2>
+                  <p class="muted">{{ previewChange?.path ?? "选择一个文件查看差异" }}</p>
+                </div>
+              </div>
+              <div v-if="previewChange?.diff" class="diff-preview__body">
+                <pre><code>{{ previewChange.diff }}</code></pre>
+              </div>
+              <p v-else class="muted diff-preview__empty">当前没有可展示的差异内容。</p>
+            </section>
+          </div>
+        </section>
+
+        <section v-else-if="activeTab === 'history'" class="repo-panel">
+          <div class="section-toolbar section-toolbar--compact">
+            <div class="repo-panel__title">
+              <h2>提交历史</h2>
+              <p class="muted">按时间倒序展示最近提交</p>
+            </div>
+          </div>
+          <p v-if="!detail?.commits.length" class="muted repo-empty">没有提交历史。</p>
+          <div v-else class="repo-list-panel">
+            <div v-for="commit in detail?.commits" :key="commit.hash" class="commit-row">
+              <GitCommitHorizontal :size="14" aria-hidden="true" />
+              <div>
+                <strong>{{ commit.subject }}</strong>
+                <span>{{ commit.shortHash }} · {{ commit.author }} · {{ formatTime(commit.timestamp) }}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-else class="repo-panel">
+          <div class="section-toolbar section-toolbar--compact">
+            <div class="repo-panel__title">
+              <h2>分支</h2>
+              <p class="muted">巡检当前和远端分支状态</p>
+            </div>
+          </div>
+          <p v-if="!detail?.branches.length" class="muted repo-empty">没有分支信息。</p>
+          <div v-else class="repo-list-panel">
+            <div v-for="branch in detail?.branches" :key="`${branch.remote}:${branch.name}`" class="branch-row">
+              <GitBranch :size="14" aria-hidden="true" />
+              <div>
+                <strong>{{ branch.name }}</strong>
+                <span>{{ branch.remote ? "远端" : "本地" }} · ↑{{ branch.ahead }} / ↓{{ branch.behind }}</span>
+              </div>
+              <button
+                type="button"
+                class="ghost"
+                :disabled="branch.current || branch.remote"
+                @click="checkout(branch.name)"
+              >
+                <Check :size="14" aria-hidden="true" />
+                Checkout
+              </button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="workbench-side">
+        <section v-if="summary" class="card repo-side-status" aria-label="仓库健康与执行状态">
+          <div class="section-toolbar section-toolbar--compact">
+            <div class="repo-panel__title">
+              <h2>仓库健康</h2>
+              <p class="muted">当前仓库的关键巡检信号</p>
+            </div>
+          </div>
+          <dl class="side-kv">
+            <div>
+              <dt>当前分支</dt>
+              <dd>{{ summary.currentBranch ?? "detached" }}</dd>
+            </div>
+            <div>
+              <dt>同步状态</dt>
+              <dd :class="syncStatusTone()">{{ syncStatusText() }}</dd>
+            </div>
+            <div>
+              <dt>工作区变更</dt>
+              <dd :class="{ 'repo-status-strip__value--warn': dirtyCount(summary) > 0 }">{{ dirtyCount(summary) }}</dd>
+            </div>
+            <div>
+              <dt>启动状态</dt>
+              <dd>{{ hasLaunchCommand ? launchStatusText() : "未配置" }}</dd>
+            </div>
+            <div>
+              <dt>启动来源</dt>
+              <dd>{{ hasLaunchCommand ? launchSourceText() : "无" }}</dd>
+            </div>
+          </dl>
+          <div class="repo-side-status__actions">
+            <button type="button" class="primary" :disabled="actionRunning || !hasLaunchCommand || launchRunning" @click="startLaunch">
+              <Play :size="14" aria-hidden="true" />
+              运行
+            </button>
+            <button type="button" class="ghost" :disabled="actionRunning || !launchRunning" @click="stopLaunch">
+              <Square :size="14" aria-hidden="true" />
+              停止
+            </button>
+            <button type="button" class="ghost" @click="launchTerminalVisible = !launchTerminalVisible">
+              <Terminal :size="14" aria-hidden="true" />
+              终端
+            </button>
+            <button type="button" class="ghost" @click="editLaunchConfig">
+              <Settings :size="14" aria-hidden="true" />
+              启动配置
+            </button>
+          </div>
+        </section>
+
+        <section class="card commit-panel" aria-label="提交并推送">
+          <div class="section-toolbar section-toolbar--compact">
+            <div class="repo-panel__title">
+              <h2>提交并推送</h2>
+              <p class="muted">从左侧变更列表选择文件后执行提交</p>
+            </div>
+          </div>
+          <div class="commit-summary">
+            <strong>{{ selectedSummaryText }}</strong>
+            <p v-if="selectedFilePreview.length" class="muted">
+              {{ selectedFilePreview.join(" · ") }}<template v-if="selectedFileList.length > selectedFilePreview.length"> 等 {{ selectedFileList.length }} 个</template>
+            </p>
+            <p v-else class="muted">先在左侧勾选需要提交的文件。</p>
+          </div>
+          <input v-model="commitMessage" type="text" placeholder="提交说明" />
+          <label class="checkbox-line">
+            <input v-model="pushAfter" type="checkbox" />
+            <span>提交后立即 push</span>
+          </label>
+          <button type="button" class="primary" :disabled="!canCommit || actionRunning" @click="commitSelected">
+            <GitCommitHorizontal :size="14" aria-hidden="true" />
+            提交
+          </button>
+        </section>
+
+        <section class="launch-panel card">
+          <div class="section-toolbar section-toolbar--compact">
+            <div>
+              <h2>快速启动</h2>
+              <p class="muted">
+                {{ hasLaunchCommand ? launchStatusText() : "未识别启动脚本" }}
+                <template v-if="hasLaunchCommand"> · {{ launchSourceText() }}</template>
+              </p>
+            </div>
+            <button type="button" class="ghost" :disabled="workspace.state.launchLoading" @click="refreshLaunch">
+              <RefreshCw :size="14" aria-hidden="true" />
+              刷新状态
+            </button>
+          </div>
+
+          <div v-if="launchEditing" class="launch-form">
+            <label>
+              <span>命令</span>
+              <input v-model="launchCommandInput" type="text" placeholder="例如 yarn tauri:dev" />
+            </label>
+            <label>
+              <span>工作目录</span>
+              <input v-model="launchCwdInput" type="text" placeholder="留空使用仓库根目录" />
+            </label>
+            <div class="toolbar">
+              <button type="button" class="primary" :disabled="!launchCommandInput.trim() || actionRunning" @click="saveLaunchConfig">
+                保存配置
+              </button>
+              <button type="button" class="ghost" @click="cancelLaunchConfig">取消</button>
+            </div>
+          </div>
+          <div v-else class="launch-command">
+            <code>{{ launchConfig?.command || "暂无启动命令，请手动配置。" }}</code>
+            <span v-if="launchConfig?.cwd">cwd: {{ launchConfig.cwd }}</span>
+          </div>
+
+          <p v-if="launchStatus?.error" class="error-line">{{ launchStatus.error }}</p>
+
+          <div v-if="launchTerminalVisible" class="launch-terminal" aria-label="启动终端">
+            <div class="launch-terminal__header">
+              <span>运行输出</span>
+              <button type="button" class="ghost" @click="launchTerminalVisible = false">隐藏</button>
+            </div>
+            <div class="launch-terminal__body">
+              <p v-if="!launchLogs.length" class="muted">暂无输出。</p>
+              <pre v-else><code><span
+                v-for="entry in launchLogs"
+                :key="entry.index"
+                :class="`launch-log launch-log--${entry.stream}`"
+              >[{{ streamText(entry.stream) }}] {{ entry.line }}
+</span></code></pre>
+            </div>
+          </div>
+        </section>
+      </aside>
     </div>
   </section>
 </template>
 
 <style scoped>
+.repo-workbench {
+  display: grid;
+  gap: 14px;
+}
+
+.repo-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.repo-header__identity {
+  min-width: 0;
+}
+
+.repo-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.repo-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.repo-header__meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.repo-header__meta span:not(:last-child)::after {
+  content: "·";
+  margin-left: 8px;
+  color: var(--text-faint);
+}
+
+.repo-header__actions,
 .toolbar,
 .section-toolbar {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.repo-header__actions {
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.repo-status-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.repo-status-strip__item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+
+.repo-status-strip__item span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.repo-status-strip__item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.repo-status-strip__value--ok {
+  color: var(--ok);
+}
+
+.repo-status-strip__value--accent {
+  color: var(--accent);
+}
+
+.repo-status-strip__value--warn {
+  color: var(--warn);
+}
+
+.workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  align-items: start;
+  gap: 14px;
+}
+
+.workbench-main {
+  min-width: 0;
+  padding: 0;
+}
+
+.workbench-side {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
 }
 
 .section-toolbar {
@@ -476,37 +758,296 @@ function streamText(stream: string) {
   margin-bottom: 10px;
 }
 
-.repo-status {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+.section-toolbar--compact {
+  align-items: flex-start;
 }
 
-.launch-panel {
-  display: grid;
-  gap: 12px;
+.repo-panel__title {
+  min-width: 0;
 }
 
-.launch-panel h2 {
-  margin: 0 0 4px;
-  font-size: 14px;
-}
-
-.launch-panel p {
+.section-toolbar h2,
+.repo-panel h2,
+.commit-panel h2,
+.launch-panel h2,
+.repo-side-status h2 {
   margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.section-toolbar p,
+.launch-panel p,
+.repo-panel__title p {
+  margin: 4px 0 0;
+}
+
+.repo-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.repo-tabs__tab {
+  height: 34px;
+  padding: 0 12px;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  color: var(--text-muted);
+}
+
+.repo-tabs__tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.repo-panel {
+  padding: 14px 16px 16px;
+}
+
+.repo-empty {
+  margin: 0;
+}
+
+.change-list,
+.repo-list-panel {
+  display: grid;
+}
+
+.change-workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 0.9fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.change-list {
+  align-content: start;
+}
+
+.change-row,
+.commit-row,
+.branch-row {
+  border-top: 1px solid var(--border-soft);
+}
+
+.change-row:first-of-type,
+.commit-row:first-of-type,
+.branch-row:first-of-type {
+  border-top: 0;
+}
+
+.change-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.change-row:hover {
+  background: var(--bg-hover);
+}
+
+.change-row.is-focused {
+  background: var(--bg-active);
+}
+
+.change-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.change-row__select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.change-row__path,
+.checkbox-line {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.change-row__path span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-row__path small {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.change-row input,
+.change-row__select input,
+.checkbox-line input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.change-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.change-badge--ok {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.change-badge--warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.change-badge--accent {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.change-badge--muted {
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+}
+
+.diff-preview {
+  display: grid;
+  gap: 10px;
+  min-height: 100%;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.diff-preview__body,
+.diff-preview__body pre {
+  height: 100%;
+}
+
+.diff-preview pre {
+  max-height: 320px;
+}
+
+.diff-preview__empty {
+  margin: 0;
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+}
+
+.commit-row,
+.branch-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.commit-row span,
+.branch-row span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.commit-row strong,
+.branch-row strong {
+  overflow-wrap: anywhere;
+}
+
+.commit-panel,
+.launch-panel,
+.repo-side-status {
+  display: grid;
+  gap: 12px;
+}
+
+.commit-summary strong {
+  display: block;
+  font-size: 13px;
+}
+
+.commit-summary p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.commit-panel input[type="text"] {
+  width: 100%;
+}
+
+.commit-panel > button.primary {
+  justify-self: stretch;
+}
+
+.side-kv {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.side-kv div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.side-kv div:last-child {
+  border-bottom: 0;
+}
+
+.side-kv dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.side-kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.repo-side-status__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .launch-form {
   display: grid;
   gap: 10px;
-  max-width: 760px;
 }
 
 .launch-form label {
   display: grid;
-  grid-template-columns: 84px 1fr;
-  align-items: center;
-  gap: 8px;
+  gap: 5px;
 }
 
 .launch-form label span {
@@ -580,117 +1121,86 @@ function streamText(stream: string) {
   color: var(--text-muted);
 }
 
-.repo-status span {
-  display: block;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.repo-status strong {
-  display: block;
-  margin-top: 4px;
-  overflow-wrap: anywhere;
-}
-
-.repo-tabs {
-  display: flex;
-  gap: 2px;
-  margin: 0 0 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.repo-tabs__tab {
-  height: 34px;
-  padding: 0 12px;
-  border-bottom: 2px solid transparent;
-  border-radius: 6px 6px 0 0;
-  color: var(--text-muted);
-}
-
-.repo-tabs__tab.is-active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.change-row,
-.commit-row,
-.branch-row {
-  border-top: 1px solid var(--border-soft);
-  padding: 10px 0;
-}
-
-.change-row:first-of-type,
-.commit-row:first-of-type,
-.branch-row:first-of-type {
-  border-top: 0;
-}
-
-.change-row label,
-.commit-files label,
-.checkbox-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.change-row input,
-.commit-files input,
-.checkbox-line input {
-  width: 16px;
-  height: 16px;
-  padding: 0;
-}
-
-.change-row em {
-  display: block;
-  margin: 4px 0 8px 24px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-style: normal;
-}
-
-.change-row pre {
-  max-height: 260px;
-  margin-left: 24px;
-}
-
-.commit-row,
-.branch-row {
-  display: grid;
-  grid-template-columns: 18px 1fr auto;
-  align-items: center;
-  gap: 8px;
-}
-
-.commit-row span,
-.branch-row span {
-  display: block;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.commit-panel {
-  display: grid;
-  gap: 12px;
-  max-width: 720px;
-}
-
-.commit-files {
-  display: grid;
-  gap: 8px;
-}
-
 .error-line {
+  margin: 0;
   color: var(--err);
 }
 
-@media (max-width: 900px) {
-  .repo-status {
-    grid-template-columns: 1fr 1fr;
+@media (max-width: 1180px) {
+  .repo-status-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .launch-form label {
+  .workbench-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workbench-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .change-workspace {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .repo-header,
+  .repo-status-strip,
+  .workbench-side {
+    grid-template-columns: 1fr;
+  }
+
+  .repo-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .repo-header__actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-content: flex-start;
+  }
+
+  .repo-header__meta {
+    display: grid;
+    gap: 2px;
+  }
+
+  .repo-header__meta span:not(:last-child)::after {
+    content: "";
+    margin-left: 0;
+  }
+
+  .repo-header__actions button,
+  .repo-side-status__actions button {
+    justify-content: flex-start;
+  }
+
+  .change-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+    padding: 8px 10px;
+  }
+
+  .change-badge {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .commit-row,
+  .branch-row,
+  .branch-row button {
+    grid-column: auto;
+  }
+
+  .commit-row,
+  .branch-row,
+  .repo-side-status__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .branch-row button {
+    justify-self: start;
   }
 }
 </style>
