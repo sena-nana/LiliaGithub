@@ -63,3 +63,75 @@ watch(
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.ctx-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 8px));
+  padding: 4px;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  user-select: none;
+}
+
+.ctx-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.ctx-menu__item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  filter: none;
+}
+
+.ctx-menu__item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.ctx-menu__item:disabled:hover {
+  background: transparent;
+}
+
+.ctx-menu__item--danger {
+  color: var(--err);
+}
+
+.ctx-menu__item--danger:hover:not(:disabled) {
+  background: var(--err-soft);
+}
+
+.ctx-menu__item--pending {
+  background: var(--err-soft);
+  font-weight: 600;
+}
+
+.ctx-menu__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+</style>

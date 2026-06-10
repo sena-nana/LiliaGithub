@@ -34,3 +34,50 @@ const tabs: Array<{ key: ViewKey; label: string; icon: unknown; disabled: boolea
     </button>
   </div>
 </template>
+
+<style scoped>
+.view-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  margin: -8px -4px 16px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.view-tabs__tab {
+  position: relative;
+  height: 34px;
+  padding: 0 12px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.view-tabs__tab:hover:not(:disabled):not(.is-active) {
+  background: var(--bg-hover);
+  color: var(--text);
+  filter: none;
+}
+
+.view-tabs__tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  background: transparent;
+}
+
+.view-tabs__tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+</style>

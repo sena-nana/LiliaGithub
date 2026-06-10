@@ -1,0 +1,105 @@
+.shell {
+  --sidebar-width: 220px;
+  --sidebar-easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: 36px 1fr;
+  grid-template-areas:
+    "titlebar titlebar"
+    "secondary main";
+  height: 100%;
+  background: var(--bg-elev);
+  position: relative;
+  transition: grid-template-columns 0.24s var(--sidebar-easing);
+}
+
+.shell > .titlebar {
+  grid-area: titlebar;
+}
+
+.shell__main {
+  grid-area: main;
+  overflow: auto;
+  padding: 20px 24px;
+  background: var(--bg);
+  border-top-left-radius: 10px;
+}
+
+.shell__resizer {
+  position: absolute;
+  top: 36px;
+  bottom: 0;
+  left: var(--sidebar-width);
+  width: 1px;
+  margin-left: -0.5px;
+  background: transparent;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+  user-select: none;
+  transition:
+    left 0.24s var(--sidebar-easing),
+    visibility 0s linear 0s;
+}
+
+.shell__resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.shell.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+  transition: none;
+}
+
+.shell.is-resizing .shell__resizer {
+  transition: none;
+}
+
+.shell.is-resizing .shell__main,
+.shell.is-resizing .secondary-panel {
+  pointer-events: none;
+}
+
+.shell.is-sidebar-collapsed .shell__resizer {
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.secondary-panel {
+  grid-area: secondary;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px 10px 12px;
+  gap: 14px;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  transition:
+    opacity 0.2s var(--sidebar-easing),
+    transform 0.24s var(--sidebar-easing),
+    visibility 0s linear 0s;
+}
+
+.shell.is-sidebar-collapsed .secondary-panel {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-12px);
+  pointer-events: none;
+  transition-delay: 0s, 0s, 0.22s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell,
+  .shell__resizer,
+  .secondary-panel {
+    transition: none;
+  }
+
+  .shell.is-sidebar-collapsed .secondary-panel {
+    transform: none;
+  }
+}

@@ -1,4 +1,4 @@
-# Tauri Template
+# LiliaGithub
 
 一个从 Lilia 当前桌面端外壳提取出的最小 Tauri 2 + Vue 3 + TypeScript 应用模板。
 

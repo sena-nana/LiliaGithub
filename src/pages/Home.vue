@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Copy, FolderOpen, MousePointer2, Pencil, Trash2 } from "lucide-vue-next";
 import ViewTabs from "../components/ViewTabs.vue";
+import "../styles/page.css";
 
 const cardMenu = [
   { id: "rename", label: "重命名", icon: Pencil, onSelect: () => {} },
@@ -55,3 +56,17 @@ const cardMenu = [
     </div>
   </section>
 </template>
+
+<style scoped>
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .template-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
