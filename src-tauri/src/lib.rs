@@ -56,6 +56,7 @@ pub fn run() {
             workspace::repo_get_summary,
             workspace::repo_get_changes,
             workspace::repo_get_history,
+            workspace::repo_get_commit_detail,
             workspace::repo_get_branches,
             workspace::repo_get_detail,
             workspace::repo_get_launch_config,
