@@ -23,6 +23,27 @@ const sortedDirtyRepos = computed(() =>
     .slice(0, 6),
 );
 
+const authStatusText = computed(() => {
+  switch (workspace.state.authFlowStatus) {
+    case "pending":
+      return "等待 GitHub 授权确认";
+    case "expired":
+      return "设备码已过期";
+    case "error":
+      return "授权检查失败";
+    default:
+      return null;
+  }
+});
+
+const authRemainingText = computed(() => {
+  const seconds = workspace.state.authRemainingSeconds;
+  if (seconds == null) return null;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+});
+
 function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
 }
@@ -76,9 +97,21 @@ function formatTime(timestamp: number | null) {
                 复用 LiliaCode 的 GitHub 设备码授权和系统钥匙串凭证。
               </template>
             </p>
-            <p v-if="workspace.deviceFlow.value" class="setup-code">
-              设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
-            </p>
+            <div v-if="workspace.deviceFlow.value" class="auth-flow">
+              <p class="setup-code">
+                设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
+              </p>
+              <p
+                class="auth-flow__status"
+                :class="{
+                  'is-error': workspace.state.authFlowStatus === 'error',
+                  'is-expired': workspace.state.authFlowStatus === 'expired',
+                }"
+              >
+                <span>{{ authStatusText }}</span>
+                <span v-if="authRemainingText">剩余 {{ authRemainingText }}</span>
+              </p>
+            </div>
           </div>
           <div class="setup-step__action">
             <div class="setup-actions">
@@ -89,16 +122,7 @@ function formatTime(timestamp: number | null) {
                 @click="workspace.startAuthFlow"
               >
                 <ShieldCheck :size="14" aria-hidden="true" />
-                绑定 GitHub
-              </button>
-              <button
-                v-if="workspace.deviceFlow.value"
-                type="button"
-                class="ghost"
-                :disabled="workspace.state.authLoading"
-                @click="workspace.pollAuthFlow"
-              >
-                检查授权
+                {{ workspace.deviceFlow.value ? "重新绑定 GitHub" : "绑定 GitHub" }}
               </button>
             </div>
           </div>
@@ -360,6 +384,30 @@ function formatTime(timestamp: number | null) {
 .setup-code,
 .error-line {
   margin: 10px 0 0;
+}
+
+.auth-flow {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.auth-flow .setup-code {
+  margin: 0;
+}
+
+.auth-flow__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.auth-flow__status.is-expired,
+.auth-flow__status.is-error {
+  color: var(--err);
 }
 
 .error-line {

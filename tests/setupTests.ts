@@ -4,8 +4,10 @@ import { afterEach } from "vitest";
 import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
 import { resetWorkspaceFallbacksForTests } from "../src/services/workspace";
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  const { resetAuthFlowRuntimeForTests } = await import("../src/composables/workspace/auth");
+  resetAuthFlowRuntimeForTests();
   resetWorkspaceStateForTests();
   resetWorkspaceFallbacksForTests();
   localStorage.clear();
