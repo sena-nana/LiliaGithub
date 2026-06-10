@@ -68,6 +68,19 @@
   visibility: hidden;
 }
 
+.shell.is-setup-overlay {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "titlebar"
+    "main";
+  background: var(--bg);
+}
+
+.shell.is-setup-overlay .shell__main {
+  border-top-left-radius: 0;
+  padding: 32px 48px;
+}
+
 .secondary-panel {
   grid-area: secondary;
   background: var(--bg-elev);
