@@ -98,7 +98,11 @@ export function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
 
 export function upsertRepo(summary: RepoSummary) {
   const index = state.repos.findIndex((repo) => repo.id === summary.id);
-  if (index >= 0) state.repos[index] = summary;
+  if (index >= 0) {
+    state.repos[index] = summary;
+  } else {
+    state.repos.push(summary);
+  }
 }
 
 export function repoById(repoId: string) {

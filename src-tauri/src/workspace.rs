@@ -209,6 +209,7 @@ pub struct BulkSyncResult {
     pub repo_id: String,
     pub status: String,
     pub message: String,
+    pub summary: Option<RepoSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1461,22 +1462,15 @@ pub fn bulk_sync_execute(
                 };
                 match run {
                     Ok(()) => BulkSyncResult {
+                        summary: Some(summarize_repo(&root, &path)),
                         repo_id,
                         status: "success".to_string(),
                         message: "完成".to_string(),
                     },
-                    Err(err) => BulkSyncResult {
-                        repo_id,
-                        status: "error".to_string(),
-                        message: err,
-                    },
+                    Err(err) => bulk_error_result(repo_id, err),
                 }
             }
-            Err(err) => BulkSyncResult {
-                repo_id,
-                status: "error".to_string(),
-                message: err,
-            },
+            Err(err) => bulk_error_result(repo_id, err),
         };
         results.push(result);
     }
@@ -1707,6 +1701,15 @@ fn build_bulk_preview(operation: String, repos: Vec<RepoSummary>) -> BulkSyncPre
         eligible,
         blocked,
         warnings,
+    }
+}
+
+fn bulk_error_result(repo_id: String, message: String) -> BulkSyncResult {
+    BulkSyncResult {
+        repo_id,
+        status: "error".to_string(),
+        message,
+        summary: None,
     }
 }
 
