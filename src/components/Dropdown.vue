@@ -1,6 +1,6 @@
 <script setup lang="ts" generic="T extends string | number">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { ChevronDown } from "lucide-vue-next";
+import { ChevronDown } from "@lucide/vue";
 
 interface Option {
   value: T;

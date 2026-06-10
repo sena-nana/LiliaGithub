@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
-import { Plus } from "lucide-vue-next";
+import { Plus } from "@lucide/vue";
 import {
   SIDEBAR_FOOTER_LINKS,
   SIDEBAR_FOOTER_STATUS,

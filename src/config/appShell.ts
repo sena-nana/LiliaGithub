@@ -9,7 +9,7 @@ import {
   Search,
   Settings,
   Sparkles,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { defineAsyncComponent, type Component } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 
