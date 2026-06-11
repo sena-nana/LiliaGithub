@@ -8,6 +8,7 @@ import { closeContextMenu, installContextMenu } from "../src/composables/useCont
 import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
+import { repoSummary } from "./fixtures/workspace";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -127,22 +128,18 @@ describe("AppShell sidebar", () => {
     });
 
     state.repos = [
-      {
-        ...state.repos[0],
-        id: "workspace/local-folder",
+      repoSummary("workspace/local-folder", {
         name: "local-folder",
         path: "C:\\Files\\workspace\\local-folder",
         relativePath: "workspace/local-folder",
         githubFullName: "sena-nana/remote-repo",
-      },
-      {
-        ...state.repos[0],
-        id: "workspace/local-only",
+      }),
+      repoSummary("workspace/local-only", {
         name: "local-only",
         path: "C:\\Files\\workspace\\local-only",
         relativePath: "workspace/local-only",
         githubFullName: null,
-      },
+      }),
     ];
 
     await waitFor(() => {
