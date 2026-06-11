@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { RouterLink } from "vue-router";
 import {
   CheckCircle2,
   AlertCircle,
@@ -12,10 +13,26 @@ import {
   X,
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
+import { syncErrorByRepoId } from "../composables/workspace/state";
+import type { RepoSummary } from "../services/workspace";
 import { bulkResultTone, formatNullableRepoTime } from "../utils/repoDisplay";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
+const syncErrors = computed(() => syncErrorByRepoId());
+
+type RepoAction = {
+  status: string;
+  label: string;
+  tone: "error" | "warn";
+  title: string;
+  to: string;
+};
+
+type RepoStatusRow = {
+  repo: RepoSummary;
+  action: RepoAction | null;
+};
 
 const sortedDirtyRepos = computed(() =>
   [...workspace.state.repos]
@@ -24,6 +41,13 @@ const sortedDirtyRepos = computed(() =>
       (a.stagedCount + a.unstagedCount + a.untrackedCount)
     )
     .slice(0, 6),
+);
+
+const repoStatusRows = computed<RepoStatusRow[]>(() =>
+  workspace.state.repos.map((repo) => ({
+    repo,
+    action: repoAction(repo),
+  })),
 );
 
 const authStatusText = computed(() => {
@@ -53,6 +77,43 @@ const commitChartMax = computed(() =>
 
 function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+}
+
+function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
+  const path = `/repos/${encodeURIComponent(repo.id)}`;
+  return tab ? `${path}?tab=${tab}` : path;
+}
+
+function repoAction(repo: RepoSummary): RepoAction | null {
+  const syncError = syncErrors.value.get(repo.id);
+  if (syncError) {
+    return {
+      status: "同步失败",
+      label: "处理失败",
+      tone: "error",
+      title: syncError,
+      to: repoDetailPath(repo),
+    };
+  }
+  if (repo.conflictCount > 0) {
+    return {
+      status: "存在冲突",
+      label: "处理冲突",
+      tone: "error",
+      title: `${repo.conflictCount} 个冲突待处理`,
+      to: repoDetailPath(repo, "conflicts"),
+    };
+  }
+  if (repo.behind > 0) {
+    return {
+      status: "待拉取",
+      label: "继续处理",
+      tone: "warn",
+      title: `远端领先 ${repo.behind} 个提交`,
+      to: repoDetailPath(repo),
+    };
+  }
+  return null;
 }
 
 </script>
@@ -215,15 +276,38 @@ function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untracke
               <th>分支</th>
               <th>变更</th>
               <th>同步</th>
+              <th>状态</th>
+              <th>处理</th>
               <th>最近提交</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="repo in workspace.state.repos" :key="repo.id">
+            <tr v-for="{ repo, action } in repoStatusRows" :key="repo.id">
               <td>{{ repo.name }}</td>
               <td>{{ repo.currentBranch ?? "detached" }}</td>
               <td>{{ dirtyCount(repo) }}</td>
               <td>↑{{ repo.ahead }} / ↓{{ repo.behind }}</td>
+              <td>
+                <span
+                  v-if="action"
+                  class="repo-action-status"
+                  :class="`repo-action-status--${action.tone}`"
+                  :title="action.title"
+                >
+                  {{ action.status }}
+                </span>
+                <span v-else class="repo-action-status repo-action-status--muted">正常</span>
+              </td>
+              <td>
+                <RouterLink
+                  v-if="action"
+                  class="repo-action-link"
+                  :to="action.to"
+                  :title="action.title"
+                >
+                  {{ action.label }}
+                </RouterLink>
+              </td>
               <td>{{ formatNullableRepoTime(repo.lastCommitAt) }}</td>
             </tr>
           </tbody>
@@ -533,6 +617,54 @@ function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untracke
 .repo-table th {
   color: var(--text-muted);
   font-weight: 600;
+}
+
+.repo-action-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.repo-action-status--error {
+  color: var(--err);
+  background: var(--err-soft);
+}
+
+.repo-action-status--warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.repo-action-status--muted {
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+}
+
+.repo-action-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--bg-subtle);
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.repo-action-link:hover,
+.repo-action-link:focus-visible {
+  border-color: var(--border);
+  background: var(--bg-hover);
 }
 
 .modal-backdrop {
