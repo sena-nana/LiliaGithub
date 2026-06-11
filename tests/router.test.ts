@@ -77,6 +77,39 @@ describe("基础路由", () => {
     expect(screen.getByText("origin/main")).toBeInTheDocument();
   });
 
+  it("冲突仓库默认进入冲突视图并支持分段处理入口", async () => {
+    await renderAt("/repos/Lilia");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "处理冲突" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "冲突" })).toHaveClass("is-active");
+    });
+    const conflictPanel = screen.getByLabelText("冲突分段处理");
+    expect(screen.getByText("合并冲突")).toBeInTheDocument();
+    expect(within(conflictPanel).getByText("src/pages/TaskDetail.vue")).toBeInTheDocument();
+    expect(within(conflictPanel).getByText("hunk-1")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "采用此段" }).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "解决并暂存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
+
+    await fireEvent.click(screen.getAllByRole("button", { name: "采用此段" })[0]);
+    await fireEvent.click(screen.getAllByRole("button", { name: "采用此段" })[3]);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "解决并暂存" })).toBeEnabled();
+    });
+  });
+
+  it("整文件采用 ours 需要二次确认", async () => {
+    await renderAt("/repos/Lilia");
+
+    const firstButton = await screen.findByRole("button", { name: "整文件采用 ours" });
+    await fireEvent.click(firstButton);
+
+    expect(screen.getByRole("button", { name: "确认整文件采用 ours 并暂存" })).toBeInTheDocument();
+  });
+
   it("提交历史行点击后进入提交详情页", async () => {
     await renderAt("/repos/LiliaGithub");
 
@@ -130,20 +163,19 @@ describe("基础路由", () => {
     expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
   });
 
-  it("总览页一键推送先打开预检弹层并展示 push 可执行项", async () => {
+  it("总览页一键推送直接执行且不打开 push 预检弹层", async () => {
     await renderAt("/");
 
     const pushButtons = await screen.findAllByRole("button", { name: "一键推送" });
     await fireEvent.click(pushButtons[1]);
 
-    expect(await screen.findByRole("dialog", { name: "批量同步预检" })).toBeInTheDocument();
-    expect(screen.getByText("一键推送预检")).toBeInTheDocument();
-    expect(screen.getByText("可执行")).toBeInTheDocument();
-    expect(screen.getByText("阻止")).toBeInTheDocument();
-    expect(screen.getByText("提示")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
+    });
+    expect(screen.queryByText("一键推送预检")).toBeNull();
   });
 
-  it("批量推送失败关闭预检后仍可从总览处理失败仓库", async () => {
+  it("批量推送失败后从侧边栏进入项目详情处理失败仓库", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
       repoIds.map((repoId) => ({
@@ -163,6 +195,7 @@ describe("基础路由", () => {
           stagedCount: 0,
           unstagedCount: 0,
           untrackedCount: 0,
+          conflictCount: 0,
           lastCommitAt: null,
           lastCommitMessage: null,
         },
@@ -172,27 +205,21 @@ describe("基础路由", () => {
 
     const pushButtons = await screen.findAllByRole("button", { name: "一键推送" });
     await fireEvent.click(pushButtons[1]);
-    await fireEvent.click(await screen.findByRole("button", { name: "确认执行" }));
 
-    const dialog = await screen.findByRole("dialog", { name: "批量同步预检" });
-    expect(await within(dialog).findByText("认证失败")).toBeInTheDocument();
-    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
+      expect(screen.queryByLabelText("最近推送失败")).toBeNull();
+      expect(screen.getByLabelText("推送失败")).toHaveAttribute("title", "认证失败");
+    });
 
-    expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
-    expect(screen.getByLabelText("最近推送失败")).toHaveTextContent("认证失败");
-    expect(screen.getByLabelText("最近推送失败")).toHaveTextContent("执行失败");
-
-    const failedRow = screen.getByText("执行失败 · 认证失败").closest("li");
-    if (!(failedRow instanceof HTMLElement)) throw new Error("未找到推送失败行");
-    await fireEvent.click(within(failedRow).getByRole("link", { name: "详情" }));
+    const failedLink = screen.getByLabelText("推送失败").closest("a");
+    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到推送失败仓库入口");
+    await fireEvent.click(failedLink);
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByLabelText("最近推送失败")).toHaveTextContent("认证失败");
 
-    await fireEvent.click(screen.getByRole("link", { name: "概览" }));
-    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
     service.setFallbackBulkExecuteOverrideForTests(null);
-    const retryRow = screen.getByText("执行失败 · 认证失败").closest("li");
-    if (!(retryRow instanceof HTMLElement)) throw new Error("未找到可重试推送失败行");
-    await fireEvent.click(within(retryRow).getByRole("button", { name: "重试" }));
+    await fireEvent.click(within(screen.getByLabelText("最近推送失败")).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
       expect(screen.queryByText("认证失败")).toBeNull();

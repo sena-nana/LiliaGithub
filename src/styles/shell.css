@@ -116,3 +116,22 @@
     transform: none;
   }
 }
+
+@media (max-width: 760px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "titlebar"
+      "main";
+  }
+
+  .shell__main {
+    padding: 12px;
+    border-top-left-radius: 0;
+  }
+
+  .shell__resizer,
+  .secondary-panel {
+    display: none;
+  }
+}

@@ -6,6 +6,7 @@ import {
   upsertRepo,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
+import type { RepoConflictChoice } from "../../services/workspace";
 
 async function applyRepoMutation(repoId: string, loadSummary: () => Promise<import("../../services/workspace").RepoSummary>) {
   upsertRepo(await loadSummary());
@@ -76,6 +77,14 @@ export async function pull(repoId: string) {
   await applyRepoMutation(repoId, () => service.pullRepo(repoId));
 }
 
+export async function mergePull(repoId: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, async () => {
+    const result = await service.mergePullRepo(repoId);
+    return result.summary;
+  });
+}
+
 export async function push(repoId: string) {
   const service = await loadWorkspaceService();
   const updateRecentPush = beginRecentPushRetry(repoId);
@@ -108,4 +117,34 @@ export async function push(repoId: string) {
 export async function checkout(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.checkoutBranch(repoId, branch));
+}
+
+export async function acceptConflictFile(
+  repoId: string,
+  path: string,
+  side: "ours" | "theirs",
+  stage = true,
+) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.acceptConflictFile(repoId, path, side, stage));
+}
+
+export async function resolveConflictFile(
+  repoId: string,
+  path: string,
+  choices: RepoConflictChoice[],
+  stage = true,
+) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.resolveConflictFile(repoId, path, choices, stage));
+}
+
+export async function markConflictFileResolved(repoId: string, path: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.markFileResolved(repoId, path));
+}
+
+export async function abortConflictOperation(repoId: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.abortConflictOperation(repoId));
 }
