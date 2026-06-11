@@ -175,6 +175,28 @@ pub struct CommitSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CommitDiffLine {
+    pub kind: String,
+    pub content: String,
+    #[serde(default)]
+    pub old_line: Option<i32>,
+    #[serde(default)]
+    pub new_line: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDiffHunk {
+    pub header: String,
+    pub old_start: i32,
+    pub old_lines: i32,
+    pub new_start: i32,
+    pub new_lines: i32,
+    pub lines: Vec<CommitDiffLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommitFileChange {
     pub path: String,
     #[serde(default)]
@@ -182,6 +204,8 @@ pub struct CommitFileChange {
     pub status: String,
     pub additions: i32,
     pub deletions: i32,
+    pub patch: String,
+    pub hunks: Vec<CommitDiffHunk>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1697,10 +1721,21 @@ fn repo_commit_file_changes(path: &Path, hash: &str, first_parent: Option<&str>)
     let numstat_args = commit_diff_args("--numstat", hash, first_parent);
     let numstat_refs = numstat_args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = git_command_lossy(path, &numstat_refs).unwrap_or_default();
-    output
-        .lines()
-        .filter_map(|line| parse_commit_file_change(line, &statuses))
-        .collect()
+    let stats = commit_file_numstats(&output);
+    let mut files = statuses
+        .into_iter()
+        .map(|status| commit_file_change_from_status(status, &stats))
+        .collect::<Vec<_>>();
+    let patch_args = commit_diff_args("--patch", hash, first_parent);
+    let patch_refs = patch_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let patches = commit_file_patches(&git_command_lossy(path, &patch_refs).unwrap_or_default());
+    for file in &mut files {
+        if let Some(parsed) = patches.get(&file.path) {
+            file.patch = parsed.patch.clone();
+            file.hunks = parsed.hunks.clone();
+        }
+    }
+    files
 }
 
 fn commit_diff_args(format_arg: &str, hash: &str, first_parent: Option<&str>) -> Vec<String> {
@@ -1720,7 +1755,14 @@ fn commit_diff_args(format_arg: &str, hash: &str, first_parent: Option<&str>) ->
     args
 }
 
-fn commit_file_statuses(output: &str) -> HashMap<String, String> {
+#[derive(Debug, Clone)]
+struct CommitFileStatus {
+    path: String,
+    old_path: Option<String>,
+    status: String,
+}
+
+fn commit_file_statuses(output: &str) -> Vec<CommitFileStatus> {
     output
         .lines()
         .filter_map(|line| {
@@ -1728,11 +1770,15 @@ fn commit_file_statuses(output: &str) -> HashMap<String, String> {
             let status_code = parts.next()?.trim();
             let first_path = parts.next()?.trim();
             let second_path = parts.next().map(str::trim).filter(|value| !value.is_empty());
-            let path = second_path.unwrap_or(first_path);
+            let path = second_path.unwrap_or(first_path).to_string();
             if path.is_empty() {
                 return None;
             }
-            Some((path.to_string(), status_text(status_code).to_string()))
+            Some(CommitFileStatus {
+                path,
+                old_path: second_path.map(|_| first_path.to_string()),
+                status: status_text(status_code).to_string(),
+            })
         })
         .collect()
 }
@@ -1747,10 +1793,31 @@ fn status_text(status_code: &str) -> &str {
     }
 }
 
-fn parse_commit_file_change(
-    line: &str,
-    statuses: &HashMap<String, String>,
-) -> Option<CommitFileChange> {
+fn commit_file_change_from_status(
+    status: CommitFileStatus,
+    stats: &HashMap<String, (i32, i32)>,
+) -> CommitFileChange {
+    let (additions, deletions) = stats.get(&status.path).copied().unwrap_or((0, 0));
+    CommitFileChange {
+        path: status.path,
+        old_path: status.old_path,
+        status: status.status,
+        additions,
+        deletions,
+        patch: String::new(),
+        hunks: Vec::new(),
+    }
+}
+
+fn commit_file_numstats(output: &str) -> HashMap<String, (i32, i32)> {
+    output
+        .lines()
+        .filter_map(parse_commit_file_numstat)
+        .map(|(path, additions, deletions)| (path, (additions, deletions)))
+        .collect()
+}
+
+fn parse_commit_file_numstat(line: &str) -> Option<(String, i32, i32)> {
     let mut parts = line.split('\t');
     let additions = parse_numstat_count(parts.next().unwrap_or(""));
     let deletions = parse_numstat_count(parts.next().unwrap_or(""));
@@ -1759,26 +1826,175 @@ fn parse_commit_file_change(
         return None;
     }
     let extra = parts.next().map(str::trim).filter(|value| !value.is_empty());
-    let (old_path, next_path) = if let Some(next) = extra {
-        (Some(path.to_string()), next.to_string())
+    let next_path = if let Some(next) = extra {
+        next.to_string()
     } else {
-        (None, path.to_string())
+        normalize_numstat_path(path)
     };
-    let status = statuses
-        .get(&next_path)
-        .cloned()
-        .unwrap_or_else(|| if old_path.is_some() { "renamed" } else { "modified" }.to_string());
-    Some(CommitFileChange {
-        status,
-        path: next_path,
-        old_path,
-        additions,
-        deletions,
-    })
+    Some((next_path, additions, deletions))
+}
+
+fn normalize_numstat_path(path: &str) -> String {
+    let Some(arrow_index) = path.find(" => ") else {
+        return path.to_string();
+    };
+    let before_arrow = &path[..arrow_index];
+    let after_arrow = &path[arrow_index + 4..];
+    if let Some(open_index) = before_arrow.rfind('{') {
+        if let Some(close_index) = after_arrow.find('}') {
+            let prefix = &before_arrow[..open_index];
+            let changed = &after_arrow[..close_index];
+            let suffix = &after_arrow[close_index + 1..];
+            return format!("{prefix}{changed}{suffix}");
+        }
+    }
+    after_arrow.replace('}', "")
 }
 
 fn parse_numstat_count(value: &str) -> i32 {
     value.parse::<i32>().unwrap_or(0)
+}
+
+#[derive(Debug, Clone)]
+struct ParsedCommitPatch {
+    path: String,
+    patch: String,
+    hunks: Vec<CommitDiffHunk>,
+}
+
+fn commit_file_patches(output: &str) -> HashMap<String, ParsedCommitPatch> {
+    split_commit_patch_blocks(output)
+        .into_iter()
+        .filter_map(|block| parse_commit_patch_block(&block))
+        .map(|patch| (patch.path.clone(), patch))
+        .collect()
+}
+
+fn split_commit_patch_blocks(output: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+    for line in output.lines() {
+        if line.starts_with("diff --git ") && !current.is_empty() {
+            blocks.push(current.join("\n"));
+            current.clear();
+        }
+        if line.starts_with("diff --git ") || !current.is_empty() {
+            current.push(line.to_string());
+        }
+    }
+    if !current.is_empty() {
+        blocks.push(current.join("\n"));
+    }
+    blocks
+}
+
+fn parse_commit_patch_block(block: &str) -> Option<ParsedCommitPatch> {
+    let path = patch_target_path(block)?;
+    Some(ParsedCommitPatch {
+        path,
+        patch: block.to_string(),
+        hunks: parse_commit_diff_hunks(block),
+    })
+}
+
+fn patch_target_path(block: &str) -> Option<String> {
+    for line in block.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            return Some(path.to_string());
+        }
+    }
+    block
+        .lines()
+        .find_map(|line| line.strip_prefix("diff --git "))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|path| path.strip_prefix("b/").or_else(|| path.strip_prefix("a/")))
+        .map(ToOwned::to_owned)
+}
+
+fn parse_commit_diff_hunks(block: &str) -> Vec<CommitDiffHunk> {
+    let mut hunks = Vec::new();
+    let mut current: Option<CommitDiffHunk> = None;
+    let mut old_line = 0;
+    let mut new_line = 0;
+    for line in block.lines() {
+        if line.starts_with("@@ ") {
+            if let Some(hunk) = current.take() {
+                hunks.push(hunk);
+            }
+            let Some((old_start, old_lines, new_start, new_lines)) = parse_hunk_header(line) else {
+                current = Some(CommitDiffHunk {
+                    header: line.to_string(),
+                    old_start: 0,
+                    old_lines: 0,
+                    new_start: 0,
+                    new_lines: 0,
+                    lines: Vec::new(),
+                });
+                continue;
+            };
+            old_line = old_start;
+            new_line = new_start;
+            current = Some(CommitDiffHunk {
+                header: line.to_string(),
+                old_start,
+                old_lines,
+                new_start,
+                new_lines,
+                lines: Vec::new(),
+            });
+            continue;
+        }
+        let Some(hunk) = current.as_mut() else {
+            continue;
+        };
+        let (kind, content, old_number, new_number) = if let Some(content) = line.strip_prefix('+') {
+            let number = new_line;
+            new_line += 1;
+            ("added", content.to_string(), None, Some(number))
+        } else if let Some(content) = line.strip_prefix('-') {
+            let number = old_line;
+            old_line += 1;
+            ("deleted", content.to_string(), Some(number), None)
+        } else if let Some(content) = line.strip_prefix(' ') {
+            let old_number = old_line;
+            let new_number = new_line;
+            old_line += 1;
+            new_line += 1;
+            ("context", content.to_string(), Some(old_number), Some(new_number))
+        } else {
+            ("meta", line.to_string(), None, None)
+        };
+        hunk.lines.push(CommitDiffLine {
+            kind: kind.to_string(),
+            content,
+            old_line: old_number,
+            new_line: new_number,
+        });
+    }
+    if let Some(hunk) = current {
+        hunks.push(hunk);
+    }
+    hunks
+}
+
+fn parse_hunk_header(header: &str) -> Option<(i32, i32, i32, i32)> {
+    let body = header.strip_prefix("@@ ")?;
+    let body = body.split(" @@").next()?;
+    let mut parts = body.split_whitespace();
+    let old = parse_hunk_range(parts.next()?, '-')?;
+    let new = parse_hunk_range(parts.next()?, '+')?;
+    Some((old.0, old.1, new.0, new.1))
+}
+
+fn parse_hunk_range(value: &str, prefix: char) -> Option<(i32, i32)> {
+    let value = value.strip_prefix(prefix)?;
+    let mut parts = value.splitn(2, ',');
+    let start = parts.next()?.parse::<i32>().ok()?;
+    let lines = parts
+        .next()
+        .map(|part| part.parse::<i32>().ok())
+        .unwrap_or(Some(1))?;
+    Some((start, lines))
 }
 
 fn optional_text(value: &str) -> Option<String> {
@@ -2077,6 +2293,100 @@ mod tests {
             parse_status_path("R  old.ts -> new.ts"),
             (Some("old.ts".to_string()), "new.ts".to_string())
         );
+    }
+
+    #[test]
+    fn parses_commit_patch_hunks_and_line_numbers() {
+        let patch = "\
+diff --git a/src/app.ts b/src/app.ts
+index 1111111..2222222 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1,3 +1,4 @@
+ import app from './app'
+-console.log('old')
++console.log('new')
++console.log('ready')
+ export default app";
+
+        let patches = commit_file_patches(patch);
+        let parsed = patches.get("src/app.ts").expect("patch should be parsed");
+
+        assert_eq!(parsed.hunks.len(), 1);
+        let hunk = &parsed.hunks[0];
+        assert_eq!(hunk.header, "@@ -1,3 +1,4 @@");
+        assert_eq!((hunk.old_start, hunk.old_lines), (1, 3));
+        assert_eq!((hunk.new_start, hunk.new_lines), (1, 4));
+        assert_eq!(hunk.lines[0].kind, "context");
+        assert_eq!((hunk.lines[0].old_line, hunk.lines[0].new_line), (Some(1), Some(1)));
+        assert_eq!(hunk.lines[1].kind, "deleted");
+        assert_eq!((hunk.lines[1].old_line, hunk.lines[1].new_line), (Some(2), None));
+        assert_eq!(hunk.lines[2].kind, "added");
+        assert_eq!((hunk.lines[2].old_line, hunk.lines[2].new_line), (None, Some(2)));
+        assert_eq!(hunk.lines[3].kind, "added");
+        assert_eq!((hunk.lines[3].old_line, hunk.lines[3].new_line), (None, Some(3)));
+        assert_eq!((hunk.lines[4].old_line, hunk.lines[4].new_line), (Some(3), Some(4)));
+    }
+
+    #[test]
+    fn binds_renamed_commit_patch_to_new_path() {
+        let status = commit_file_statuses("R072\tsrc/old.ts\tsrc/new.ts")
+            .into_iter()
+            .next()
+            .expect("rename status should parse");
+        let stats = commit_file_numstats("1\t1\tsrc/{old => new}.ts");
+        let mut file = commit_file_change_from_status(status, &stats);
+        let patches = commit_file_patches(
+            "\
+diff --git a/src/old.ts b/src/new.ts
+similarity index 72%
+rename from src/old.ts
+rename to src/new.ts
+--- a/src/old.ts
++++ b/src/new.ts
+@@ -1 +1 @@
+-oldName()
++newName()",
+        );
+
+        if let Some(parsed) = patches.get(&file.path) {
+            file.patch = parsed.patch.clone();
+            file.hunks = parsed.hunks.clone();
+        }
+
+        assert_eq!(file.status, "renamed");
+        assert_eq!(file.old_path.as_deref(), Some("src/old.ts"));
+        assert_eq!(file.path, "src/new.ts");
+        assert_eq!((file.additions, file.deletions), (1, 1));
+        assert!(file.patch.contains("rename to src/new.ts"));
+        assert_eq!(file.hunks.len(), 1);
+        assert_eq!(file.hunks[0].lines[0].content, "oldName()");
+        assert_eq!(file.hunks[0].lines[1].content, "newName()");
+    }
+
+    #[test]
+    fn binds_pure_rename_patch_without_hunks() {
+        let status = commit_file_statuses("R100\tdocs/old.md\tdocs/new.md")
+            .into_iter()
+            .next()
+            .expect("pure rename status should parse");
+        let patches = commit_file_patches(
+            "\
+diff --git a/docs/old.md b/docs/new.md
+similarity index 100%
+rename from docs/old.md
+rename to docs/new.md",
+        );
+
+        let parsed = patches
+            .get(&status.path)
+            .expect("pure rename patch should bind to new path");
+
+        assert_eq!(status.status, "renamed");
+        assert_eq!(status.old_path.as_deref(), Some("docs/old.md"));
+        assert_eq!(status.path, "docs/new.md");
+        assert!(parsed.patch.contains("rename to docs/new.md"));
+        assert!(parsed.hunks.is_empty());
     }
 
     #[test]
