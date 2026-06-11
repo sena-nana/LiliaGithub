@@ -4,7 +4,7 @@ import { loadWorkspaceService } from "./serviceLoader";
 
 export async function previewBulk(operation: BulkOperation) {
   const service = await loadWorkspaceService();
-  applyBulkPreview(await service.bulkSyncPreview(operation));
+  applyBulkPreview(await service.bulkSyncPreview(operation, state.repos));
 }
 
 function bulkExecutionRepoIds() {
@@ -31,7 +31,7 @@ export async function syncAll() {
   state.bulkRunning = true;
   try {
     const service = await loadWorkspaceService();
-    applyBulkPreview(await service.bulkSyncPreview("sync"));
+    applyBulkPreview(await service.bulkSyncPreview("sync", state.repos));
     applyBulkResults(await service.bulkSyncExecute("sync", bulkExecutionRepoIds() ?? []));
   } finally {
     state.bulkRunning = false;

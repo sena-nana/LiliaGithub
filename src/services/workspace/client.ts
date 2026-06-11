@@ -199,8 +199,8 @@ export function continueConflictOperation(repoId: string): Promise<RepoSummary> 
   return call("repo_continue_conflict_operation", { repoId }, () => fallback.continueConflictOperation(repoId));
 }
 
-export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPreview> {
-  return call("bulk_sync_preview", { operation }, () => fallback.bulkSyncPreview(operation));
+export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]): Promise<BulkSyncPreview> {
+  return call("bulk_sync_preview", { operation, repos }, () => fallback.bulkSyncPreview(operation, repos));
 }
 
 export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {
