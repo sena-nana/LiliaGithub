@@ -891,30 +891,28 @@ fn github_full_name_from_remote(remote: &str) -> Option<String> {
 }
 
 fn repo_language_stats(path: &Path) -> Vec<LanguageStat> {
-    let output = git_command(path, &["ls-files", "-z"], None).unwrap_or_default();
+    let output = git_command(path, &["ls-tree", "-r", "-z", "-l", "HEAD"], None).unwrap_or_default();
     let mut stats: HashMap<String, u64> = HashMap::new();
-    for raw_path in output.split('\0').filter(|value| !value.is_empty()) {
+    for entry in output.split('\0').filter(|value| !value.is_empty()) {
+        let Some((metadata, raw_path)) = entry.split_once('\t') else {
+            continue;
+        };
+        let Some(bytes) = metadata
+            .split_whitespace()
+            .last()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|bytes| *bytes > 0)
+        else {
+            continue;
+        };
         let relative = Path::new(raw_path);
         if should_skip_language_path(relative) {
             continue;
         }
-        let language = language_for_path(relative).or_else(|| {
-            let full_path = path.join(relative);
-            if looks_like_text_file(&full_path) {
-                Some("Other")
-            } else {
-                None
-            }
-        });
-        let Some(language) = language else {
+        let Some(language) = language_for_path(relative) else {
             continue;
         };
-        let bytes = fs::metadata(path.join(relative))
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        if bytes > 0 {
-            *stats.entry(language.to_string()).or_default() += bytes;
-        }
+        *stats.entry(language.to_string()).or_default() += bytes;
     }
     let mut items = stats
         .into_iter()
@@ -1032,13 +1030,6 @@ fn language_for_path(path: &Path) -> Option<&'static str> {
         "yaml" | "yml" => Some("YAML"),
         _ => None,
     }
-}
-
-fn looks_like_text_file(path: &Path) -> bool {
-    let Ok(bytes) = fs::read(path) else {
-        return false;
-    };
-    !bytes.iter().take(8192).any(|byte| *byte == 0)
 }
 
 fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
@@ -3451,9 +3442,11 @@ mod tests {
     }
 
     #[test]
-    fn aggregates_language_stats_from_tracked_files() {
+    fn aggregates_language_stats_from_head_tree() {
         let path = temp_dir("language-stats");
         run_git(&path, &["init"]);
+        run_git(&path, &["config", "user.email", "test@example.com"]);
+        run_git(&path, &["config", "user.name", "Test User"]);
         fs::create_dir_all(path.join("src")).unwrap();
         fs::create_dir_all(path.join("dist")).unwrap();
         fs::write(path.join("src").join("app.ts"), "console.log('typescript');\n").unwrap();
@@ -3472,6 +3465,9 @@ mod tests {
                 "binary.dat",
             ],
         );
+        run_git(&path, &["commit", "-m", "initial"]);
+        fs::write(path.join("src").join("app.ts"), "changed\n").unwrap();
+        fs::remove_file(path.join("src").join("view.vue")).unwrap();
 
         let stats = repo_language_stats(&path);
 
@@ -3485,10 +3481,6 @@ mod tests {
                 LanguageStat {
                     language: "Vue".to_string(),
                     bytes: 25,
-                },
-                LanguageStat {
-                    language: "Other".to_string(),
-                    bytes: 11,
                 },
             ]
         );
