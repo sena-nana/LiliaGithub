@@ -53,7 +53,11 @@ const bulkPushRunningRepoIds = computed(() => {
   if (!workspace.state.bulkRunning || workspace.state.bulkPreview?.operation !== "push") {
     return new Set<string>();
   }
-  return new Set(workspace.state.bulkPreview.eligible.map((item) => item.repo.id));
+  return new Set(
+    [...workspace.state.bulkPreview.eligible, ...workspace.state.bulkPreview.blocked]
+      .filter((item) => item.repo.ahead > 0)
+      .map((item) => item.repo.id),
+  );
 });
 
 const bulkPushErrorByRepoId = computed(() => {
@@ -61,9 +65,6 @@ const bulkPushErrorByRepoId = computed(() => {
     const errors = new Map<string, string>();
     for (const result of workspace.state.recentPush.results) {
       if (result.status === "error") errors.set(result.repoId, result.message);
-    }
-    for (const item of workspace.state.recentPush.preview.blocked) {
-      if (!errors.has(item.repo.id)) errors.set(item.repo.id, item.reason);
     }
     if (errors.size) return errors;
   }

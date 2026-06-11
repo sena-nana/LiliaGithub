@@ -175,14 +175,40 @@ describe("AppShell sidebar", () => {
     });
 
     state.bulkRunning = false;
-    state.bulkResults = [
-      {
-        repoId: "LiliaGithub",
-        status: "error",
-        message: "认证失败",
-        summary: null,
+    state.recentPush = {
+      preview: {
+        operation: "push",
+        eligible: [],
+        blocked: [{ repo: state.repos[0], reason: "当前分支落后于 upstream" }],
+        warnings: [],
       },
-    ];
+      results: [],
+      retryingRepoIds: [],
+      updatedAt: 1,
+    };
+
+    await waitFor(() => {
+      expect(view.queryByLabelText("推送失败")).toBeNull();
+    });
+
+    state.recentPush = {
+      preview: {
+        operation: "push",
+        eligible: [],
+        blocked: [{ repo: state.repos[0], reason: "当前分支落后于 upstream" }],
+        warnings: [],
+      },
+      results: [
+        {
+          repoId: "LiliaGithub",
+          status: "error",
+          message: "认证失败",
+          summary: null,
+        },
+      ],
+      retryingRepoIds: [],
+      updatedAt: 2,
+    };
 
     await waitFor(() => {
       expect(view.getByLabelText("推送失败")).toHaveAttribute("title", "认证失败");

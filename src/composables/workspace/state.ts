@@ -172,10 +172,7 @@ export function finishRecentPushRetry(result: BulkSyncResult) {
 function isRecentPushIssue(repoId: string) {
   const recentPush = state.recentPush;
   if (!recentPush) return false;
-  return (
-    recentPush.results.some((result) => result.repoId === repoId && result.status === "error") ||
-    recentPush.preview.blocked.some((item) => item.repo.id === repoId)
-  );
+  return recentPush.results.some((result) => result.repoId === repoId && result.status === "error");
 }
 
 export function resetWorkspaceStateForTests() {
