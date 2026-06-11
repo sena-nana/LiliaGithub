@@ -33,6 +33,10 @@ const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_OAUTH_ACCEPT: &str = "application/json";
 const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
 const LAUNCH_LOG_LIMIT: usize = 500;
+const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
+const GITHUB_CONTRIBUTION_DAYS: usize = 371;
+const GITHUB_COMMITS_PER_PAGE: usize = 100;
+const GITHUB_COMMITS_MAX_PAGES: usize = 10;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -123,6 +127,13 @@ pub struct GitHubDeviceFlowPollResult {
     pub interval_seconds: i64,
     pub binding_status: Option<GitHubBindingStatus>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubContributionDay {
+    pub date: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,6 +371,21 @@ struct GitHubUserResponse {
     avatar_url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct GitHubCommitResponse {
+    commit: GitHubCommitPayload,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubCommitPayload {
+    author: Option<GitHubCommitAuthor>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubCommitAuthor {
+    date: Option<String>,
+}
+
 struct LaunchEntry {
     child: Option<Child>,
     status: ProjectLaunchStatus,
@@ -594,6 +620,133 @@ fn github_http_error(prefix: &str, response: Response) -> String {
 fn github_auth_header(token: &str) -> String {
     let encoded = STANDARD.encode(format!("x-access-token:{token}"));
     format!("AUTHORIZATION: basic {encoded}")
+}
+
+fn normalize_github_contribution_repos(repo_full_names: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut repos = Vec::new();
+    for name in repo_full_names {
+        let trimmed = name.trim().trim_matches('/').to_string();
+        if trimmed.is_empty() || !trimmed.contains('/') || !seen.insert(trimmed.clone()) {
+            continue;
+        }
+        repos.push(trimmed);
+        if repos.len() >= GITHUB_CONTRIBUTIONS_REPO_LIMIT {
+            break;
+        }
+    }
+    repos
+}
+
+fn github_api_repo_path(repo_full_name: &str) -> String {
+    repo_full_name
+        .split('/')
+        .map(url_encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn url_encode_path_segment(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn current_utc_day_index() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| (value.as_secs() / 86_400) as i64)
+        .unwrap_or_default()
+}
+
+fn format_day_index(day_index: i64) -> String {
+    let (year, month, day) = civil_from_days(day_index);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn parse_github_date_day(date: &str) -> Option<i64> {
+    if date.len() < 10 {
+        return None;
+    }
+    let year = date.get(0..4)?.parse::<i32>().ok()?;
+    let month = date.get(5..7)?.parse::<u32>().ok()?;
+    let day = date.get(8..10)?.parse::<u32>().ok()?;
+    if date.as_bytes().get(4) != Some(&b'-') || date.as_bytes().get(7) != Some(&b'-') {
+        return None;
+    }
+    Some(days_from_civil(year, month, day))
+}
+
+fn github_contribution_days(
+    counts: &HashMap<String, usize>,
+    end_day_index: i64,
+) -> Vec<GitHubContributionDay> {
+    let start = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
+    (0..GITHUB_CONTRIBUTION_DAYS)
+        .map(|offset| {
+            let date = format_day_index(start + offset as i64);
+            GitHubContributionDay {
+                count: counts.get(&date).copied().unwrap_or_default(),
+                date,
+            }
+        })
+        .collect()
+}
+
+fn add_commit_contributions(
+    counts: &mut HashMap<String, usize>,
+    commits: &[GitHubCommitResponse],
+    start_day_index: i64,
+    end_day_index: i64,
+) {
+    for commit in commits {
+        let Some(date) = commit
+            .commit
+            .author
+            .as_ref()
+            .and_then(|author| author.date.as_deref())
+        else {
+            continue;
+        };
+        let Some(day_index) = parse_github_date_day(date) else {
+            continue;
+        };
+        if day_index < start_day_index || day_index > end_day_index {
+            continue;
+        }
+        *counts.entry(format_day_index(day_index)).or_default() += 1;
+    }
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let year = year - if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month as i32;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i32 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146_097 + doe - 719_468) as i64
+}
+
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let days = days + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let doe = days - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    (year as i32, month as u32, day as u32)
 }
 
 fn token_for_binding(app: &AppHandle) -> Result<Option<String>, String> {
@@ -1372,6 +1525,52 @@ pub fn github_unbind(app: AppHandle) -> Result<(), String> {
     let mut settings = load_settings(&app);
     settings.github_binding = None;
     save_settings(&app, &settings)
+}
+
+#[tauri::command]
+pub async fn github_list_repo_contributions(
+    app: AppHandle,
+    repo_full_names: Vec<String>,
+) -> Result<Vec<GitHubContributionDay>, String> {
+    tokio::task::spawn_blocking(move || {
+        let repos = normalize_github_contribution_repos(repo_full_names);
+        let end_day_index = current_utc_day_index();
+        let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
+        if repos.is_empty() {
+            return Ok(github_contribution_days(&HashMap::new(), end_day_index));
+        }
+        let token = token_for_binding(&app)?;
+        let client = build_client()?;
+        let since = format!("{}T00:00:00Z", format_day_index(start_day_index));
+        let until = format!("{}T23:59:59Z", format_day_index(end_day_index));
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for repo in repos {
+            for page in 1..=GITHUB_COMMITS_MAX_PAGES {
+                let url = format!(
+                    "https://api.github.com/repos/{}/commits?since={since}&until={until}&per_page={}&page={page}",
+                    github_api_repo_path(&repo),
+                    GITHUB_COMMITS_PER_PAGE,
+                );
+                let response = github_headers(client.get(url), token.as_deref())
+                    .send()
+                    .map_err(|e| format!("读取 GitHub 提交贡献失败：{e}"))?;
+                if !response.status().is_success() {
+                    return Err(github_http_error("读取 GitHub 提交贡献失败", response));
+                }
+                let commits = response
+                    .json::<Vec<GitHubCommitResponse>>()
+                    .map_err(|e| format!("解析 GitHub 提交贡献失败：{e}"))?;
+                let is_last_page = commits.len() < GITHUB_COMMITS_PER_PAGE;
+                add_commit_contributions(&mut counts, &commits, start_day_index, end_day_index);
+                if is_last_page {
+                    break;
+                }
+            }
+        }
+        Ok(github_contribution_days(&counts, end_day_index))
+    })
+    .await
+    .map_err(|e| format!("读取 GitHub 提交贡献后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -3041,6 +3240,64 @@ mod tests {
             Some("sena-nana/Lilia".to_string())
         );
         assert_eq!(parse_github_remote("https://example.com/a/b.git"), None);
+    }
+
+    #[test]
+    fn normalizes_github_contribution_repo_inputs() {
+        let repos = normalize_github_contribution_repos(vec![
+            " sena-nana/LiliaGithub ".to_string(),
+            "".to_string(),
+            "invalid".to_string(),
+            "sena-nana/LiliaGithub".to_string(),
+            "sena-nana/Lilia".to_string(),
+        ]);
+
+        assert_eq!(repos, vec!["sena-nana/LiliaGithub", "sena-nana/Lilia"]);
+    }
+
+    #[test]
+    fn aggregates_github_commit_contribution_days() {
+        let mut counts = HashMap::new();
+        let commits = vec![
+            GitHubCommitResponse {
+                commit: GitHubCommitPayload {
+                    author: Some(GitHubCommitAuthor {
+                        date: Some("2026-06-11T08:00:00Z".to_string()),
+                    }),
+                },
+            },
+            GitHubCommitResponse {
+                commit: GitHubCommitPayload {
+                    author: Some(GitHubCommitAuthor {
+                        date: Some("2026-06-11T12:00:00Z".to_string()),
+                    }),
+                },
+            },
+            GitHubCommitResponse {
+                commit: GitHubCommitPayload {
+                    author: Some(GitHubCommitAuthor {
+                        date: Some("2026-06-10T12:00:00Z".to_string()),
+                    }),
+                },
+            },
+        ];
+        let end = days_from_civil(2026, 6, 11);
+        add_commit_contributions(&mut counts, &commits, end - 2, end);
+        let days = github_contribution_days(&counts, end);
+
+        assert_eq!(days.len(), GITHUB_CONTRIBUTION_DAYS);
+        assert_eq!(days.last().unwrap().date, "2026-06-11");
+        assert_eq!(days.last().unwrap().count, 2);
+        assert_eq!(days[days.len() - 2].date, "2026-06-10");
+        assert_eq!(days[days.len() - 2].count, 1);
+    }
+
+    #[test]
+    fn converts_civil_dates_for_github_contributions() {
+        let day = days_from_civil(2026, 6, 11);
+        assert_eq!(format_day_index(day), "2026-06-11");
+        assert_eq!(parse_github_date_day("2026-06-11T08:00:00Z"), Some(day));
+        assert_eq!(parse_github_date_day("bad-date"), None);
     }
 
     #[test]

@@ -6,6 +6,7 @@ import type {
   BulkSyncResult,
   CommitDetail,
   GitHubBindingStatus,
+  GitHubContributionDay,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   HiddenRepo,
@@ -85,6 +86,12 @@ export function pollGitHubDeviceFlow(
 ): Promise<GitHubDeviceFlowPollResult> {
   return call("github_poll_device_flow", { deviceCode, intervalSeconds: intervalSeconds ?? null }, () =>
     fallback.pollGitHubDeviceFlow(deviceCode, intervalSeconds),
+  );
+}
+
+export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionDay[]> {
+  return call("github_list_repo_contributions", { repoFullNames }, () =>
+    fallback.listRepoContributions(repoFullNames),
   );
 }
 

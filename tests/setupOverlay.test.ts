@@ -12,6 +12,12 @@ const state = reactive({
   loading: true,
   authLoading: false,
   error: null,
+  githubContributions: {
+    days: [],
+    loading: false,
+    error: null,
+    updatedAt: null,
+  },
 });
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -37,10 +43,10 @@ vi.mock("../src/composables/useWorkspace", () => ({
       dirtyRepos: 0,
       pullable: 0,
       pushable: 0,
-      commitsByDay: [],
     })),
     initialize: vi.fn(async () => undefined),
     chooseWorkspaceRoot: vi.fn(async () => null),
+    refreshRepoContributions: vi.fn(async () => undefined),
     startAuthFlow: vi.fn(async () => undefined),
     pollAuthFlow: vi.fn(async () => null),
   }),

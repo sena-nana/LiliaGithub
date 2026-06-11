@@ -19,10 +19,39 @@ export async function refreshRepos() {
   try {
     const service = await loadWorkspaceService();
     state.repos = await service.scanRepos();
+    await refreshRepoContributions();
   } catch (err) {
     state.error = String(err);
   } finally {
     state.scanning = false;
+  }
+}
+
+function repoFullNames() {
+  return Array.from(new Set(
+    state.repos
+      .map((repo) => repo.githubFullName?.trim())
+      .filter((name): name is string => Boolean(name)),
+  ));
+}
+
+export async function refreshRepoContributions() {
+  const fullNames = repoFullNames();
+  state.githubContributions.loading = true;
+  state.githubContributions.error = null;
+  try {
+    if (!fullNames.length) {
+      state.githubContributions.days = [];
+      state.githubContributions.updatedAt = Date.now();
+      return;
+    }
+    const service = await loadWorkspaceService();
+    state.githubContributions.days = await service.listRepoContributions(fullNames);
+    state.githubContributions.updatedAt = Date.now();
+  } catch (err) {
+    state.githubContributions.error = String(err);
+  } finally {
+    state.githubContributions.loading = false;
   }
 }
 

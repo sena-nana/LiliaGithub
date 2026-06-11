@@ -33,6 +33,7 @@ const service = {
   unhideRepo: vi.fn(),
   getRepoSummary: vi.fn(),
   getRepoDetail: vi.fn(),
+  listRepoContributions: vi.fn(),
   stageFiles: vi.fn(),
   unstageFiles: vi.fn(),
   commitRepo: vi.fn(),
@@ -56,9 +57,42 @@ vi.mock("../src/composables/workspace/serviceLoader", () => ({
 beforeEach(() => {
   resetWorkspaceStateForTests();
   vi.clearAllMocks();
+  service.listRepoContributions.mockResolvedValue([]);
 });
 
 describe("workspace incremental refresh", () => {
+  it("全量刷新成功后按 GitHub 仓库列表刷新贡献图", async () => {
+    service.scanRepos.mockResolvedValue([
+      repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" }),
+      repoSummary("Lilia", { githubFullName: "sena-nana/Lilia" }),
+      repoSummary("LocalOnly", { githubFullName: null }),
+      repoSummary("LiliaDuplicate", { githubFullName: "sena-nana/Lilia" }),
+    ]);
+    service.listRepoContributions.mockResolvedValue([{ date: "2026-06-11", count: 3 }]);
+
+    const { refreshRepos } = await import("../src/composables/workspace/repositories");
+    await refreshRepos();
+
+    expect(service.listRepoContributions).toHaveBeenCalledWith(
+      ["sena-nana/LiliaGithub", "sena-nana/Lilia"],
+    );
+    expect(state.githubContributions.days).toEqual([{ date: "2026-06-11", count: 3 }]);
+    expect(state.githubContributions.error).toBeNull();
+  });
+
+  it("GitHub 贡献图失败不覆盖仓库扫描结果", async () => {
+    const repo = repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" });
+    service.scanRepos.mockResolvedValue([repo]);
+    service.listRepoContributions.mockRejectedValue(new Error("rate limited"));
+
+    const { refreshRepos } = await import("../src/composables/workspace/repositories");
+    await refreshRepos();
+
+    expect(state.repos).toEqual([repo]);
+    expect(state.error).toBeNull();
+    expect(state.githubContributions.error).toBe("Error: rate limited");
+  });
+
   it("隐藏仓库只移除目标仓库和缓存，不触发全量扫描", async () => {
     const target = repoSummary("LiliaGithub");
     state.repos = [target, repoSummary("Lilia")];

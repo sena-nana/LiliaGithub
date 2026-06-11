@@ -14,7 +14,7 @@ import {
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
 import { syncErrorByRepoId } from "../composables/workspace/state";
-import type { RepoSummary } from "../services/workspace";
+import type { GitHubContributionDay, RepoSummary } from "../services/workspace";
 import { bulkResultTone, formatNullableRepoTime } from "../utils/repoDisplay";
 import "../styles/page.css";
 
@@ -33,6 +33,16 @@ type RepoStatusRow = {
   repo: RepoSummary;
   action: RepoAction | null;
 };
+
+type ContributionCell = GitHubContributionDay & {
+  level: number;
+};
+
+const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
+
+const totalContributions = computed(() =>
+  workspace.state.githubContributions.days.reduce((total, day) => total + day.count, 0),
+);
 
 const sortedDirtyRepos = computed(() =>
   [...workspace.state.repos]
@@ -70,10 +80,6 @@ const authRemainingText = computed(() => {
   const rest = seconds % 60;
   return `${minutes}:${String(rest).padStart(2, "0")}`;
 });
-
-const commitChartMax = computed(() =>
-  Math.max(1, ...workspace.overviewStats.value.commitsByDay.map((point) => point.count)),
-);
 
 function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
@@ -114,6 +120,46 @@ function repoAction(repo: RepoSummary): RepoAction | null {
     };
   }
   return null;
+}
+
+function buildContributionWeeks(days: readonly GitHubContributionDay[]) {
+  if (!days.length) return [];
+  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  const maxCount = Math.max(1, ...sorted.map((day) => day.count));
+  const start = parseDateOnly(sorted[0].date);
+  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+  const end = parseDateOnly(sorted[sorted.length - 1].date);
+  end.setUTCDate(end.getUTCDate() + (6 - end.getUTCDay()));
+  const byDate = new Map(sorted.map((day) => [day.date, day]));
+  const weeks: ContributionCell[][] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 7)) {
+    const week: ContributionCell[] = [];
+    for (let offset = 0; offset < 7; offset += 1) {
+      const date = new Date(cursor);
+      date.setUTCDate(cursor.getUTCDate() + offset);
+      const key = date.toISOString().slice(0, 10);
+      const day = byDate.get(key) ?? { date: key, count: 0 };
+      week.push({
+        ...day,
+        level: contributionLevel(day.count, maxCount),
+      });
+    }
+    weeks.push(week);
+  }
+  return weeks;
+}
+
+function parseDateOnly(date: string) {
+  return new Date(`${date}T00:00:00Z`);
+}
+
+function contributionLevel(count: number, maxCount: number) {
+  if (count <= 0) return 0;
+  return Math.min(4, Math.max(1, Math.ceil((count / maxCount) * 4)));
+}
+
+function contributionTitle(day: GitHubContributionDay) {
+  return `${day.date}：${day.count} 次提交`;
 }
 
 </script>
@@ -240,18 +286,64 @@ function repoAction(repo: RepoSummary): RepoAction | null {
       </div>
 
       <div class="overview-grid">
-        <div class="card chart-card">
-          <h2>最近工作结果</h2>
-          <div class="chart-row">
-            <div
-              v-for="point in workspace.overviewStats.value.commitsByDay"
-              :key="point.day"
-              class="chart-bar"
+        <div class="card contribution-card">
+          <div class="card-heading">
+            <div>
+              <h2>最近工作结果</h2>
+              <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
+            </div>
+            <button
+              v-if="workspace.state.githubContributions.error"
+              type="button"
+              class="ghost contribution-retry"
+              :disabled="workspace.state.githubContributions.loading"
+              @click="workspace.refreshRepoContributions"
             >
-              <div class="chart-bar__track">
-                <span :style="{ height: `${(point.count / commitChartMax) * 100}%` }" />
+              <RefreshCw :size="13" aria-hidden="true" />
+              重试
+            </button>
+          </div>
+          <p v-if="workspace.state.githubContributions.error" class="contribution-error">
+            {{ workspace.state.githubContributions.error }}
+          </p>
+          <div
+            v-if="workspace.state.githubContributions.loading"
+            class="contribution-loading"
+            aria-label="GitHub 提交贡献加载中"
+          >
+            <span v-for="index in 84" :key="index" />
+          </div>
+          <p
+            v-else-if="!workspace.state.githubContributions.days.length && !workspace.state.githubContributions.error"
+            class="contribution-empty"
+          >
+            暂无 GitHub 提交
+          </p>
+          <div v-else class="contribution-chart" aria-label="GitHub 提交贡献图">
+            <div class="contribution-week-labels" aria-hidden="true">
+              <span />
+              <span>Mon</span>
+              <span />
+              <span>Wed</span>
+              <span />
+              <span>Fri</span>
+              <span />
+            </div>
+            <div class="contribution-weeks">
+              <div
+                v-for="(week, weekIndex) in contributionWeeks"
+                :key="weekIndex"
+                class="contribution-week"
+              >
+                <span
+                  v-for="day in week"
+                  :key="day.date"
+                  class="contribution-day"
+                  :class="`contribution-day--${day.level}`"
+                  :title="contributionTitle(day)"
+                  :aria-label="contributionTitle(day)"
+                />
               </div>
-              <small>{{ point.day }}</small>
             </div>
           </div>
         </div>
@@ -536,51 +628,113 @@ function repoAction(repo: RepoSummary): RepoAction | null {
   line-height: 1;
 }
 
-.chart-row {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 8px;
-  align-content: end;
-  align-items: end;
-  min-height: 150px;
-}
-
-.chart-card {
+.contribution-card {
   display: flex;
   flex-direction: column;
 }
 
-.chart-card .chart-row {
-  flex: 1;
-}
-
-.chart-bar {
+.card-heading {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
-.chart-bar__track {
-  width: 100%;
-  height: 110px;
-  display: flex;
-  align-items: end;
-  justify-content: center;
-  border-bottom: 1px solid var(--border-soft);
+.card-heading h2 {
+  margin: 0;
 }
 
-.chart-bar__track span {
-  width: 60%;
-  max-width: 34px;
-  min-height: 10px;
-  border-radius: 4px 4px 0 0;
-  background: var(--accent);
+.contribution-total {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.chart-bar small {
-  color: var(--text-faint);
+.contribution-retry {
+  height: 26px;
+  padding: 0 7px;
+  color: var(--ok);
+}
+
+.contribution-error,
+.contribution-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.contribution-error {
+  color: var(--err);
+  margin-bottom: 8px;
+}
+
+.contribution-chart {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.contribution-week-labels {
+  display: grid;
+  grid-template-rows: repeat(7, 11px);
+  gap: 3px;
+  color: var(--text-muted);
   font-size: 11px;
+  line-height: 11px;
+}
+
+.contribution-weeks {
+  display: flex;
+  gap: 3px;
+  min-width: max-content;
+}
+
+.contribution-week {
+  display: grid;
+  grid-template-rows: repeat(7, 11px);
+  gap: 3px;
+}
+
+.contribution-day {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--bg) 20%, transparent);
+  background: var(--bg-subtle);
+}
+
+.contribution-day--1 {
+  background: color-mix(in srgb, var(--ok) 30%, var(--bg-subtle));
+}
+
+.contribution-day--2 {
+  background: color-mix(in srgb, var(--ok) 55%, var(--bg-subtle));
+}
+
+.contribution-day--3 {
+  background: color-mix(in srgb, var(--ok) 78%, var(--bg-subtle));
+}
+
+.contribution-day--4 {
+  background: #3fb950;
+}
+
+.contribution-loading {
+  display: grid;
+  grid-template-columns: repeat(21, 11px);
+  gap: 3px;
+  min-height: 98px;
+}
+
+.contribution-loading span {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--ok) 14%, var(--bg-subtle));
 }
 
 .repo-list {
