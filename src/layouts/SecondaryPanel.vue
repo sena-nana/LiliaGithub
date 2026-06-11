@@ -7,6 +7,10 @@ import {
   SIDEBAR_NAV,
 } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
+import {
+  bulkPushRunningRepoIds as getBulkPushRunningRepoIds,
+  pushErrorByRepoId,
+} from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import type { ContextMenuItem } from "../composables/useContextMenu";
@@ -59,30 +63,11 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
 }
 
 const bulkPushRunningRepoIds = computed(() => {
-  if (!workspace.state.bulkRunning || workspace.state.bulkPreview?.operation !== "push") {
-    return new Set<string>();
-  }
-  return new Set(
-    [...workspace.state.bulkPreview.eligible, ...workspace.state.bulkPreview.blocked]
-      .filter((item) => item.repo.ahead > 0)
-      .map((item) => item.repo.id),
-  );
+  return getBulkPushRunningRepoIds();
 });
 
 const bulkPushErrorByRepoId = computed(() => {
-  if (workspace.state.recentPush) {
-    const errors = new Map<string, string>();
-    for (const result of workspace.state.recentPush.results) {
-      if (result.status === "error") errors.set(result.repoId, result.message);
-    }
-    if (errors.size) return errors;
-  }
-  if (workspace.state.bulkPreview?.operation !== "push") return new Map<string, string>();
-  return new Map(
-    workspace.state.bulkResults
-      .filter((result) => result.status === "error")
-      .map((result) => [result.repoId, result.message]),
-  );
+  return pushErrorByRepoId();
 });
 
 const filteredRepos = computed(() => {

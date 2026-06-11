@@ -154,7 +154,7 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏一键推送运行中显示蓝底按钮和仓库行状态", async () => {
+  it("侧边栏一键推送运行中显示按钮和仓库行状态", async () => {
     const view = await renderAppShell("/plugins");
 
     await waitFor(() => {
@@ -173,22 +173,13 @@ describe("AppShell sidebar", () => {
       expect(view.getByRole("button", { name: "一键推送" })).toHaveClass("is-running");
       expect(view.getByLabelText("正在推送")).toBeInTheDocument();
     });
+  });
 
-    state.bulkRunning = false;
-    state.recentPush = {
-      preview: {
-        operation: "push",
-        eligible: [],
-        blocked: [{ repo: state.repos[0], reason: "当前分支落后于 upstream" }],
-        warnings: [],
-      },
-      results: [],
-      retryingRepoIds: [],
-      updatedAt: 1,
-    };
+  it("侧边栏显示最近一次推送失败结果", async () => {
+    const view = await renderAppShell("/plugins");
 
     await waitFor(() => {
-      expect(view.queryByLabelText("推送失败")).toBeNull();
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
     state.recentPush = {

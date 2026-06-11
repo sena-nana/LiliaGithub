@@ -130,6 +130,40 @@ export function repoById(repoId: string) {
   return state.repos.find((repo) => repo.id === repoId) ?? null;
 }
 
+export function bulkPushRepoIds(preview: BulkSyncPreview | null = state.bulkPreview) {
+  if (!preview || preview.operation !== "push") return new Set<string>();
+  const ids = new Set<string>();
+  for (const item of [...preview.eligible, ...preview.blocked]) {
+    if (item.repo.ahead > 0) ids.add(item.repo.id);
+  }
+  return ids;
+}
+
+export function bulkPushRunningRepoIds() {
+  if (!state.bulkRunning) return new Set<string>();
+  return bulkPushRepoIds();
+}
+
+export function pushErrorByRepoId() {
+  const recentErrors = recentPushErrorMap();
+  if (recentErrors.size) return recentErrors;
+  if (state.bulkPreview?.operation !== "push") return new Map<string, string>();
+  return new Map(
+    state.bulkResults
+      .filter((result) => result.status === "error")
+      .map((result) => [result.repoId, result.message]),
+  );
+}
+
+export function recentPushErrorForRepo(repoId: string) {
+  const result = state.recentPush?.results.find((item) => item.repoId === repoId && item.status === "error");
+  if (!result) return null;
+  return {
+    message: result.message,
+    retrying: state.recentPush?.retryingRepoIds.includes(repoId) ?? false,
+  };
+}
+
 export function rememberRecentPush(preview: BulkSyncPreview, results: BulkSyncResult[]) {
   if (preview.operation !== "push") return;
   state.recentPush = {
@@ -170,9 +204,15 @@ export function finishRecentPushRetry(result: BulkSyncResult) {
 }
 
 function isRecentPushIssue(repoId: string) {
-  const recentPush = state.recentPush;
-  if (!recentPush) return false;
-  return recentPush.results.some((result) => result.repoId === repoId && result.status === "error");
+  return Boolean(recentPushErrorForRepo(repoId));
+}
+
+function recentPushErrorMap() {
+  const errors = new Map<string, string>();
+  for (const result of state.recentPush?.results ?? []) {
+    if (result.status === "error") errors.set(result.repoId, result.message);
+  }
+  return errors;
 }
 
 export function resetWorkspaceStateForTests() {
