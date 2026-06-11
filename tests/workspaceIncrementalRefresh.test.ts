@@ -4,6 +4,7 @@ import {
   acceptConflictFile,
   checkout,
   commit,
+  continueConflictOperation,
   hideRepo,
   markConflictFileResolved,
   mergePull,
@@ -36,6 +37,7 @@ const service = {
   resolveConflictFile: vi.fn(),
   markFileResolved: vi.fn(),
   abortConflictOperation: vi.fn(),
+  continueConflictOperation: vi.fn(),
   bulkSyncPreview: vi.fn(),
   bulkSyncExecute: vi.fn(),
 };
@@ -334,15 +336,17 @@ describe("workspace incremental refresh", () => {
     service.resolveConflictFile.mockResolvedValue(updated);
     service.markFileResolved.mockResolvedValue(updated);
     service.abortConflictOperation.mockResolvedValue(updated);
+    service.continueConflictOperation.mockResolvedValue(updated);
 
     await mergePull(initial.id);
     await acceptConflictFile(initial.id, "src/main.ts", "ours", true);
     await resolveConflictFile(initial.id, "src/main.ts", [{ hunkId: "hunk-1", side: "ours" }], true);
     await markConflictFileResolved(initial.id, "src/main.ts");
+    await continueConflictOperation(initial.id);
     await abortConflictOperation(initial.id);
 
     expect(service.scanRepos).not.toHaveBeenCalled();
-    expect(service.getRepoDetail).toHaveBeenCalledTimes(5);
+    expect(service.getRepoDetail).toHaveBeenCalledTimes(6);
     expect(state.repos).toEqual([updated]);
   });
 });

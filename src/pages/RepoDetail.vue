@@ -72,6 +72,12 @@ const repoMetaItems = computed(() => {
 });
 const changes = computed(() => detail.value?.changes ?? []);
 const conflicts = computed(() => detail.value?.conflicts ?? { operation: "none", files: [], allResolved: true });
+const conflictOperationActive = computed(() => conflicts.value.operation !== "none");
+const supportedConflictOperation = computed(() =>
+  conflicts.value.operation === "merge" ||
+  conflicts.value.operation === "rebase" ||
+  conflicts.value.operation === "cherry-pick",
+);
 const selectedFileList = computed(() => Array.from(selectedFiles.value));
 const focusedChange = computed(() =>
   changes.value.find((change) => change.path === focusedChangePath.value) ?? null,
@@ -94,6 +100,7 @@ const canResolveSelectedConflict = computed(() =>
     focusedConflict.value.hunks.every((hunk) => Boolean(conflictChoices.value[hunk.id])),
   ),
 );
+const canContinueConflictOperation = computed(() => supportedConflictOperation.value && !conflictFiles.value.length);
 const canCommit = computed(() => selectedFiles.value.size > 0 && commitMessage.value.trim().length > 0);
 const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
 const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
@@ -128,8 +135,11 @@ const recentPushError = computed(() => {
     retrying: recent.retryingRepoIds.includes(repoId.value),
   };
 });
-const hasConflicts = computed(() => Boolean(summary.value?.conflictCount || conflictFiles.value.length));
+const hasConflicts = computed(() =>
+  Boolean(summary.value?.conflictCount || conflictFiles.value.length || conflictOperationActive.value),
+);
 const conflictSummaryText = computed(() => {
+  if (!conflictFiles.value.length && conflictOperationActive.value) return "冲突文件已处理，等待继续操作";
   if (!conflictFiles.value.length) return "没有待处理冲突";
   return `已处理 ${conflictResolvedCount.value} / ${conflictFiles.value.length}`;
 });
@@ -139,11 +149,17 @@ const conflictOperationText = computed(() => {
   if (conflicts.value.operation === "cherry-pick") return "cherry-pick 冲突";
   return "冲突处理";
 });
-const unsupportedConflictText = computed(() => {
-  if (!conflictFiles.value.length || conflicts.value.operation === "merge") return "";
-  if (conflicts.value.operation === "rebase") return "当前检测到 rebase 冲突，第一版暂不支持在应用内继续 rebase。请在外部 Git 工具完成后返回标记解决。";
-  if (conflicts.value.operation === "cherry-pick") return "当前检测到 cherry-pick 冲突，第一版暂不支持在应用内继续 cherry-pick。请在外部 Git 工具完成后返回标记解决。";
-  return "当前冲突操作暂不支持在应用内继续，请在外部 Git 工具完成后返回标记解决。";
+const conflictAbortText = computed(() => {
+  if (conflicts.value.operation === "rebase") return conflictAbortConfirm.value ? "确认终止 rebase" : "终止 rebase";
+  if (conflicts.value.operation === "cherry-pick") return conflictAbortConfirm.value ? "确认终止 cherry-pick" : "终止 cherry-pick";
+  if (conflicts.value.operation !== "merge") return "终止操作";
+  return conflictAbortConfirm.value ? "确认终止合并" : "终止合并";
+});
+const conflictContinueText = computed(() => {
+  if (conflicts.value.operation === "rebase") return "继续 rebase";
+  if (conflicts.value.operation === "cherry-pick") return "继续 cherry-pick";
+  if (conflicts.value.operation !== "merge") return "继续操作";
+  return "完成合并";
 });
 
 const tabs: Array<{ key: RepoTab; label: string }> = [
@@ -209,7 +225,12 @@ async function load() {
     resetLaunchForm();
     syncFocusedChange();
     syncFocusedConflict();
-    if ((nextDetail.summary.conflictCount > 0 || nextDetail.conflicts.files.length > 0) && activeTab.value !== "conflicts") {
+    if (
+      (nextDetail.summary.conflictCount > 0 ||
+        nextDetail.conflicts.files.length > 0 ||
+        nextDetail.conflicts.operation !== "none") &&
+      activeTab.value !== "conflicts"
+    ) {
       activeTab.value = "conflicts";
     }
   } catch (err) {
@@ -406,6 +427,13 @@ function abortConflict() {
   }
   void runAction(async () => {
     await workspace.abortConflictOperation(repoId.value);
+    resetConflictConfirmation();
+  });
+}
+
+function continueConflict() {
+  void runAction(async () => {
+    await workspace.continueConflictOperation(repoId.value);
     resetConflictConfirmation();
   });
 }
@@ -744,22 +772,28 @@ function streamText(stream: string) {
             <div class="toolbar">
               <button
                 type="button"
+                class="primary"
+                :disabled="actionRunning || !canContinueConflictOperation"
+                @click="continueConflict"
+              >
+                <Check :size="14" aria-hidden="true" />
+                {{ conflictContinueText }}
+              </button>
+              <button
+                type="button"
                 class="ghost danger"
-                :disabled="actionRunning || conflicts.operation !== 'merge'"
+                :disabled="actionRunning || !supportedConflictOperation"
                 @click="abortConflict"
               >
                 <TriangleAlert :size="14" aria-hidden="true" />
-                {{ conflictAbortConfirm ? "确认终止合并" : "终止合并" }}
+                {{ conflictAbortText }}
               </button>
             </div>
           </div>
 
-          <p v-if="!conflictFiles.length" class="muted repo-empty">当前没有需要处理的冲突。</p>
+          <p v-if="!conflictFiles.length && conflictOperationActive" class="muted repo-empty">冲突文件已处理，可继续当前操作。</p>
+          <p v-else-if="!conflictFiles.length" class="muted repo-empty">当前没有需要处理的冲突。</p>
           <div v-else class="conflict-flow">
-            <p v-if="unsupportedConflictText" class="conflict-warning">
-              <TriangleAlert :size="14" aria-hidden="true" />
-              <span>{{ unsupportedConflictText }}</span>
-            </p>
           <div class="conflict-workspace">
             <div class="conflict-list" role="list" aria-label="冲突文件列表">
               <button

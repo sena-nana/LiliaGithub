@@ -77,6 +77,7 @@ pub fn run() {
             workspace::repo_resolve_conflict_file,
             workspace::repo_mark_file_resolved,
             workspace::repo_abort_conflict_operation,
+            workspace::repo_continue_conflict_operation,
             workspace::bulk_sync_preview,
             workspace::bulk_sync_execute,
             workspace::system_open_path,
