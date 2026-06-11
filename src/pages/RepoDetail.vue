@@ -21,8 +21,23 @@ import {
   Upload,
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
-import type { RepoChange, RepoConflictChoice } from "../services/workspace";
-import { repoDisplayName } from "../utils/repoDisplay";
+import { recentPushErrorForRepo } from "../composables/workspace/state";
+import type { RepoConflictChoice } from "../services/workspace";
+import {
+  changeStatusText,
+  changeStatusTone,
+  conflictStatusText,
+  conflictStatusTone,
+  formatCompactRepoTime,
+  formatRepoTime,
+  lastCommitText as repoLastCommitText,
+  launchSourceText,
+  launchStatusText,
+  repoDisplayName,
+  streamLabel,
+  syncStatusText,
+  syncStatusTone,
+} from "../utils/repoDisplay";
 import "../styles/page.css";
 
 type RepoTab = "conflicts" | "changes" | "history" | "branches";
@@ -126,14 +141,7 @@ const historyRefNames = computed(() => {
   return Array.from(refs);
 });
 const recentPushError = computed(() => {
-  const recent = workspace.state.recentPush;
-  if (!recent) return null;
-  const result = recent.results.find((item) => item.repoId === repoId.value && item.status === "error");
-  if (!result) return null;
-  return {
-    message: result.message,
-    retrying: recent.retryingRepoIds.includes(repoId.value),
-  };
+  return recentPushErrorForRepo(repoId.value);
 });
 const hasConflicts = computed(() =>
   Boolean(summary.value?.conflictCount || conflictFiles.value.length || conflictOperationActive.value),
@@ -491,103 +499,14 @@ function openConflictFolder() {
   void workspace.openPath(path);
 }
 
-function statusText(change: RepoChange) {
-  if (change.conflicted) return "冲突";
-  if (change.untracked) return "未跟踪";
-  if (change.staged && change.unstaged) return "已暂存/有修改";
-  if (change.staged) return "已暂存";
-  return "未暂存";
-}
-
-function statusTone(change: RepoChange) {
-  if (change.conflicted) return "change-badge--err";
-  if (change.untracked) return "change-badge--warn";
-  if (change.staged && change.unstaged) return "change-badge--accent";
-  if (change.staged) return "change-badge--ok";
-  return "change-badge--muted";
-}
-
-function formatTime(timestamp: number) {
-  return new Date(timestamp * 1000).toLocaleString();
-}
-
-function formatCompactTime(timestamp: number) {
-  return new Date(timestamp * 1000).toLocaleString(undefined, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function commitMetaTitle(commit: HistoryCommit) {
   return [
     commit.hash,
     commit.authorEmail ? `${commit.author} <${commit.authorEmail}>` : commit.author,
-    formatTime(commit.timestamp),
+    formatRepoTime(commit.timestamp),
     commit.parents.length ? `parents: ${commit.parents.join(", ")}` : "root commit",
     commit.refs.length ? `refs: ${commit.refs.join(", ")}` : "",
   ].filter(Boolean).join("\n");
-}
-
-function lastCommitText() {
-  const latestCommit = detail.value?.commits[0];
-  if (latestCommit) return latestCommit.subject;
-  if (summary.value?.lastCommitMessage) return summary.value.lastCommitMessage;
-  return "无提交";
-}
-
-function syncStatusText() {
-  if (!summary.value) return "未知";
-  if (!summary.value.ahead && !summary.value.behind) return "已同步";
-  return `↑${summary.value.ahead} / ↓${summary.value.behind}`;
-}
-
-function syncStatusTone() {
-  if (!summary.value) return "";
-  if (summary.value.conflictCount > 0) return "repo-status-strip__value--err";
-  if (summary.value.behind > 0) return "repo-status-strip__value--warn";
-  if (summary.value.ahead > 0) return "repo-status-strip__value--accent";
-  return "repo-status-strip__value--ok";
-}
-
-function conflictStatusText(file: {
-  binary: boolean;
-  hunks: readonly unknown[];
-  resolved: boolean;
-  status: string;
-}) {
-  if (file.binary) return "二进制 / 不可解析";
-  if (!file.hunks.length) return "文件级处理";
-  if (file.resolved) return "已解决";
-  return `${file.hunks.length} 个分段`;
-}
-
-function conflictStatusTone(file: {
-  binary: boolean;
-  hunks: readonly unknown[];
-  resolved: boolean;
-}) {
-  if (file.resolved) return "change-badge--ok";
-  if (file.binary || !file.hunks.length) return "change-badge--warn";
-  return "change-badge--err";
-}
-
-function launchStatusText() {
-  if (launchState.value === "running") return "运行中";
-  if (launchState.value === "exited") return `已退出${launchStatus.value?.exitCode != null ? ` · ${launchStatus.value.exitCode}` : ""}`;
-  if (launchState.value === "error") return "异常";
-  return "未运行";
-}
-
-function launchSourceText() {
-  return launchConfig.value?.source === "manual" ? "手动配置" : "自动推断";
-}
-
-function streamText(stream: string) {
-  if (stream === "stderr") return "ERR";
-  if (stream === "stdout") return "OUT";
-  return "SYS";
 }
 </script>
 
@@ -644,7 +563,7 @@ function streamText(stream: string) {
       </div>
       <div class="repo-status-strip__item">
         <span>同步</span>
-        <strong :class="syncStatusTone()">{{ syncStatusText() }}</strong>
+        <strong :class="syncStatusTone(summary)">{{ syncStatusText(summary) }}</strong>
       </div>
       <div class="repo-status-strip__item">
         <span>冲突</span>
@@ -656,12 +575,12 @@ function streamText(stream: string) {
       </div>
       <div class="repo-status-strip__item">
         <span>最近提交</span>
-        <strong :title="lastCommitText()">{{ lastCommitText() }}</strong>
+        <strong :title="repoLastCommitText(detail?.commits, summary)">{{ repoLastCommitText(detail?.commits, summary) }}</strong>
       </div>
       <div class="repo-status-strip__item">
         <span>启动</span>
         <strong :class="{ 'repo-status-strip__value--accent': launchRunning, 'repo-status-strip__value--warn': launchState === 'error' }">
-          {{ hasLaunchCommand ? launchStatusText() : "未配置" }}
+          {{ hasLaunchCommand ? launchStatusText(launchStatus) : "未配置" }}
         </strong>
       </div>
       <div class="repo-status-strip__item">
@@ -744,7 +663,7 @@ function streamText(stream: string) {
                   <span>{{ change.path }}</span>
                   <small v-if="change.oldPath">来自 {{ change.oldPath }}</small>
                 </span>
-                <span class="change-badge" :class="statusTone(change)">{{ statusText(change) }}</span>
+                <span class="change-badge" :class="changeStatusTone(change)">{{ changeStatusText(change) }}</span>
               </div>
             </div>
 
@@ -956,13 +875,13 @@ function streamText(stream: string) {
                   </span>
                 </span>
                 <time class="history-row__time" :datetime="new Date(commit.timestamp * 1000).toISOString()">
-                  {{ formatCompactTime(commit.timestamp) }}
+                  {{ formatCompactRepoTime(commit.timestamp) }}
                 </time>
                 <span class="history-popover" role="tooltip">
                   <strong>{{ commit.subject }}</strong>
                   <span>{{ commit.hash }}</span>
                   <span>{{ commit.authorEmail ? `${commit.author} <${commit.authorEmail}>` : commit.author }}</span>
-                  <span>{{ formatTime(commit.timestamp) }}</span>
+                  <span>{{ formatRepoTime(commit.timestamp) }}</span>
                   <span>{{ commit.parents.length ? `父提交 ${commit.parents.join(", ")}` : "根提交" }}</span>
                   <span v-if="commit.refs.length">引用 {{ commit.refs.join(", ") }}</span>
                 </span>
@@ -1015,7 +934,7 @@ function streamText(stream: string) {
             </div>
             <div>
               <dt>同步状态</dt>
-              <dd :class="syncStatusTone()">{{ syncStatusText() }}</dd>
+              <dd :class="syncStatusTone(summary)">{{ syncStatusText(summary) }}</dd>
             </div>
             <div>
               <dt>冲突数量</dt>
@@ -1027,11 +946,11 @@ function streamText(stream: string) {
             </div>
             <div>
               <dt>启动状态</dt>
-              <dd>{{ hasLaunchCommand ? launchStatusText() : "未配置" }}</dd>
+              <dd>{{ hasLaunchCommand ? launchStatusText(launchStatus) : "未配置" }}</dd>
             </div>
             <div>
               <dt>启动来源</dt>
-              <dd>{{ hasLaunchCommand ? launchSourceText() : "无" }}</dd>
+              <dd>{{ hasLaunchCommand ? launchSourceText(launchConfig) : "无" }}</dd>
             </div>
           </dl>
           <div class="repo-side-status__actions">
@@ -1085,8 +1004,8 @@ function streamText(stream: string) {
             <div>
               <h2>快速启动</h2>
               <p class="muted">
-                {{ hasLaunchCommand ? launchStatusText() : "未识别启动脚本" }}
-                <template v-if="hasLaunchCommand"> · {{ launchSourceText() }}</template>
+                {{ hasLaunchCommand ? launchStatusText(launchStatus) : "未识别启动脚本" }}
+                <template v-if="hasLaunchCommand"> · {{ launchSourceText(launchConfig) }}</template>
               </p>
             </div>
             <button type="button" class="ghost" :disabled="workspace.state.launchLoading" @click="refreshLaunch">
@@ -1129,7 +1048,7 @@ function streamText(stream: string) {
                 v-for="entry in launchLogs"
                 :key="entry.index"
                 :class="`launch-log launch-log--${entry.stream}`"
-              >[{{ streamText(entry.stream) }}] {{ entry.line }}
+              >[{{ streamLabel(entry.stream) }}] {{ entry.line }}
 </span></code></pre>
             </div>
           </div>

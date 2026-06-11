@@ -4,7 +4,12 @@ import { RouterLink, useRoute } from "vue-router";
 import { ArrowLeft, GitCommitHorizontal } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
 import { getRepoCommitDetail, type CommitDetail } from "../services/workspace";
-import { repoDisplayName } from "../utils/repoDisplay";
+import {
+  commitDiffLineMark,
+  commitFileStatusText,
+  formatRepoTime,
+  repoDisplayName,
+} from "../utils/repoDisplay";
 import "../styles/page.css";
 
 const route = useRoute();
@@ -45,23 +50,6 @@ async function load() {
   }
 }
 
-function formatTime(timestamp: number) {
-  return new Date(timestamp * 1000).toLocaleString();
-}
-
-function fileStatusText(status: string) {
-  if (status === "renamed") return "重命名";
-  if (status === "added") return "新增";
-  if (status === "deleted") return "删除";
-  if (status === "copied") return "复制";
-  return "修改";
-}
-
-function lineMark(kind: string) {
-  if (kind === "added") return "+";
-  if (kind === "deleted") return "-";
-  return "";
-}
 </script>
 
 <template>
@@ -103,7 +91,7 @@ function lineMark(kind: string) {
             </div>
             <div>
               <dt>时间</dt>
-              <dd>{{ formatTime(detail.timestamp) }}</dd>
+              <dd>{{ formatRepoTime(detail.timestamp) }}</dd>
             </div>
             <div>
               <dt>父提交</dt>
@@ -130,7 +118,7 @@ function lineMark(kind: string) {
         <div v-else class="commit-file-list">
           <article v-for="file in detail.files" :key="`${file.oldPath ?? ''}:${file.path}`" class="commit-file-diff">
             <header class="commit-file-diff__header">
-              <span class="commit-file-diff__status">{{ fileStatusText(file.status) }}</span>
+              <span class="commit-file-diff__status">{{ commitFileStatusText(file.status) }}</span>
               <span class="commit-file-diff__path" :title="file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path">
                 <template v-if="file.oldPath">{{ file.oldPath }} -> </template>{{ file.path }}
               </span>
@@ -151,7 +139,7 @@ function lineMark(kind: string) {
                 >
                   <span class="commit-diff-line__number">{{ line.oldLine ?? "" }}</span>
                   <span class="commit-diff-line__number">{{ line.newLine ?? "" }}</span>
-                  <span class="commit-diff-line__mark">{{ lineMark(line.kind) }}</span>
+                  <span class="commit-diff-line__mark">{{ commitDiffLineMark(line.kind) }}</span>
                   <code class="commit-diff-line__content">{{ line.content || " " }}</code>
                 </div>
               </template>

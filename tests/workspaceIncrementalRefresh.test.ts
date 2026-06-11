@@ -16,7 +16,13 @@ import {
   unstage,
 } from "../src/composables/workspace/repositories";
 import { closeBulkPreview, executeBulk, previewBulk, pushAll } from "../src/composables/workspace/bulk";
-import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
+import {
+  bulkPushRepoIds,
+  pushErrorByRepoId,
+  recentPushErrorForRepo,
+  resetWorkspaceStateForTests,
+  state,
+} from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import type { BulkSyncPreview, RepoConflictState, RepoDetail, RepoSummary, WorkspaceSettings } from "../src/services/workspace";
 
@@ -190,6 +196,39 @@ describe("workspace incremental refresh", () => {
       { repoId: first.id, status: "success", message: "完成", summary: repoSummary(first.id, { ahead: 0 }) },
       { repoId: blocked.id, status: "error", message: "当前分支落后于 upstream，已跳过 push", summary: null },
     ]);
+  });
+
+  it("push 状态 helper 只暴露真实执行仓库和失败结果", () => {
+    const ready = repoSummary("LiliaGithub", { ahead: 1 });
+    const blocked = repoSummary("Lilia", { ahead: 1, behind: 1 });
+    state.bulkPreview = {
+      operation: "push",
+      eligible: [{ repo: ready, reason: "有本地提交待推送" }],
+      blocked: [{ repo: blocked, reason: "当前分支落后于 upstream" }],
+      warnings: [],
+    };
+    state.recentPush = {
+      preview: state.bulkPreview,
+      results: [],
+      retryingRepoIds: [],
+      updatedAt: 1,
+    };
+
+    expect(Array.from(bulkPushRepoIds())).toEqual(["LiliaGithub", "Lilia"]);
+    expect(pushErrorByRepoId().size).toBe(0);
+    expect(recentPushErrorForRepo(blocked.id)).toBeNull();
+
+    state.recentPush = {
+      ...state.recentPush,
+      results: [{ repoId: blocked.id, status: "error", message: "当前分支落后于 upstream，已跳过 push", summary: null }],
+      retryingRepoIds: [blocked.id],
+    };
+
+    expect(pushErrorByRepoId().get(blocked.id)).toBe("当前分支落后于 upstream，已跳过 push");
+    expect(recentPushErrorForRepo(blocked.id)).toEqual({
+      message: "当前分支落后于 upstream，已跳过 push",
+      retrying: true,
+    });
   });
 
   it("push 预检和批量执行失败结果通过主流程状态保存", async () => {

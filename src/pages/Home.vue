@@ -13,6 +13,7 @@ import {
   X,
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
+import { bulkResultTone, formatNullableRepoTime } from "../utils/repoDisplay";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
@@ -53,15 +54,6 @@ const commitChartMax = computed(() =>
 
 function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
-}
-
-function formatTime(timestamp: number | null) {
-  if (!timestamp) return "无提交";
-  return new Date(timestamp * 1000).toLocaleString();
-}
-
-function bulkResultTone(result: { status: string }) {
-  return result.status === "success" ? "sync-results__item--success" : "sync-results__item--error";
 }
 
 </script>
@@ -237,7 +229,7 @@ function bulkResultTone(result: { status: string }) {
               <td>{{ repo.currentBranch ?? "detached" }}</td>
               <td>{{ dirtyCount(repo) }}</td>
               <td>↑{{ repo.ahead }} / ↓{{ repo.behind }}</td>
-              <td>{{ formatTime(repo.lastCommitAt) }}</td>
+              <td>{{ formatNullableRepoTime(repo.lastCommitAt) }}</td>
             </tr>
           </tbody>
         </table>
