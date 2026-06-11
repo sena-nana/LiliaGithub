@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { computed } from "vue";
-import { AlertCircle, EyeOff, FolderGit2, GitPullRequestArrow, LoaderCircle, RefreshCw, Upload } from "@lucide/vue";
+import { computed, nextTick, ref, watch } from "vue";
+import { AlertCircle, EyeOff, FilePlus2, FolderGit2, GitPullRequestArrow, LoaderCircle, RefreshCw, Search, Upload, X } from "@lucide/vue";
 import {
   SIDEBAR_FOOTER_LINKS,
   SIDEBAR_NAV,
@@ -16,6 +16,15 @@ import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
+const searchOpen = ref(false);
+const searchQuery = ref("");
+const searchInput = ref<HTMLInputElement | null>(null);
+const cloneOpen = ref(false);
+const cloneRemoteUrl = ref("");
+const cloneDirectoryName = ref("");
+const cloneTouchedDirectory = ref(false);
+const cloneBusy = ref(false);
+const cloneError = ref<string | null>(null);
 
 const footerStatus = computed(() => {
   if (!workspace.workspaceRoot.value) {
@@ -76,6 +85,88 @@ const bulkPushErrorByRepoId = computed(() => {
   );
 });
 
+const filteredRepos = computed(() => {
+  const query = searchQuery.value.trim().toLocaleLowerCase();
+  if (!query) return workspace.state.repos;
+  return workspace.state.repos.filter((repo) =>
+    [
+      repoDisplayName(repo),
+      repo.name,
+      repo.githubFullName,
+      repo.relativePath,
+      repo.path,
+    ].some((value) => value?.toLocaleLowerCase().includes(query)),
+  );
+});
+
+const canSubmitClone = computed(() => cloneRemoteUrl.value.trim().length > 0 && !cloneBusy.value);
+
+watch(cloneRemoteUrl, (value) => {
+  if (cloneTouchedDirectory.value) return;
+  cloneDirectoryName.value = inferCloneDirectoryName(value);
+});
+
+function toggleSearch() {
+  searchOpen.value = !searchOpen.value;
+  if (searchOpen.value) {
+    void nextTick(() => searchInput.value?.focus());
+  } else {
+    searchQuery.value = "";
+  }
+}
+
+function closeSearch() {
+  searchOpen.value = false;
+  searchQuery.value = "";
+}
+
+async function openFirstSearchResult() {
+  const repo = filteredRepos.value[0];
+  if (!repo) return;
+  await router.push(`/repos/${encodeURIComponent(repo.id)}`);
+}
+
+function openCloneDialog() {
+  cloneOpen.value = true;
+  cloneRemoteUrl.value = "";
+  cloneDirectoryName.value = "";
+  cloneTouchedDirectory.value = false;
+  cloneError.value = null;
+}
+
+function closeCloneDialog() {
+  if (cloneBusy.value) return;
+  cloneOpen.value = false;
+  cloneError.value = null;
+}
+
+function inferCloneDirectoryName(remoteUrl: string) {
+  const trimmed = remoteUrl.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
+  const scpPath = trimmed.match(/^[\w.-]+@[^:]+:(.+)$/)?.[1];
+  const source = scpPath ?? trimmed;
+  const parts = source.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+async function submitClone() {
+  if (!canSubmitClone.value) return;
+  cloneBusy.value = true;
+  cloneError.value = null;
+  try {
+    const summary = await workspace.cloneRepo(
+      cloneRemoteUrl.value.trim(),
+      cloneDirectoryName.value.trim() || null,
+    );
+    cloneOpen.value = false;
+    await workspace.refreshRepos();
+    await router.push(`/repos/${encodeURIComponent(summary.id)}`);
+  } catch (err) {
+    cloneError.value = String(err);
+  } finally {
+    cloneBusy.value = false;
+  }
+}
+
 function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   return [
     {
@@ -98,6 +189,27 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 <template>
   <aside class="secondary-panel">
     <div class="sb-section sb-section--actions">
+      <button
+        type="button"
+        class="sb-action"
+        title="新建"
+        aria-label="新建"
+        :disabled="!workspace.workspaceRoot.value"
+        @click="openCloneDialog"
+      >
+        <FilePlus2 :size="16" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="sb-action"
+        :class="{ 'is-active': searchOpen }"
+        title="搜索"
+        aria-label="搜索"
+        :disabled="!workspace.state.repos.length"
+        @click="toggleSearch"
+      >
+        <Search :size="16" aria-hidden="true" />
+      </button>
       <button
         type="button"
         class="sb-action"
@@ -173,9 +285,24 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
           </button>
         </div>
       </div>
+      <div v-if="searchOpen" class="sb-search">
+        <Search :size="13" aria-hidden="true" />
+        <input
+          ref="searchInput"
+          v-model="searchQuery"
+          type="search"
+          aria-label="搜索仓库"
+          placeholder="搜索仓库"
+          @keydown.enter.prevent="openFirstSearchResult"
+          @keydown.esc.prevent="closeSearch"
+        />
+        <button type="button" aria-label="关闭搜索" title="关闭搜索" @click="closeSearch">
+          <X :size="13" aria-hidden="true" />
+        </button>
+      </div>
       <div class="sb-tree">
         <RouterLink
-          v-for="repo in workspace.state.repos"
+          v-for="repo in filteredRepos"
           :key="repo.id"
           :to="`/repos/${encodeURIComponent(repo.id)}`"
           class="sb-tree__row sb-tree__row--project"
@@ -208,6 +335,7 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
         </RouterLink>
         <p v-if="workspace.state.scanning" class="sb-tree__empty">正在扫描仓库...</p>
         <p v-else-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
+        <p v-else-if="searchOpen && !filteredRepos.length" class="sb-tree__empty">没有匹配的仓库。</p>
       </div>
     </div>
 
@@ -215,6 +343,37 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
       :links="SIDEBAR_FOOTER_LINKS"
       :status="footerStatus"
     />
+    <div v-if="cloneOpen" class="sb-modal-backdrop" role="presentation">
+      <form class="sb-clone-dialog" role="dialog" aria-modal="true" aria-label="克隆仓库" @submit.prevent="submitClone">
+        <div class="sb-clone-dialog__header">
+          <h2>克隆仓库</h2>
+          <button type="button" class="sb-icon-btn" aria-label="关闭" title="关闭" :disabled="cloneBusy" @click="closeCloneDialog">
+            <X :size="14" aria-hidden="true" />
+          </button>
+        </div>
+        <label>
+          <span>远端 URL</span>
+          <input v-model="cloneRemoteUrl" type="text" placeholder="https://github.com/user/repo.git" autofocus />
+        </label>
+        <label>
+          <span>目录名（可选）</span>
+          <input
+            v-model="cloneDirectoryName"
+            type="text"
+            placeholder="默认从 URL 推导"
+            @input="cloneTouchedDirectory = true"
+          />
+        </label>
+        <p v-if="cloneError" class="sb-clone-dialog__error">{{ cloneError }}</p>
+        <div class="sb-clone-dialog__actions">
+          <button type="button" class="ghost" :disabled="cloneBusy" @click="closeCloneDialog">取消</button>
+          <button type="submit" class="primary" :disabled="!canSubmitClone">
+            <LoaderCircle v-if="cloneBusy" :size="14" aria-hidden="true" class="sb-spin" />
+            克隆
+          </button>
+        </div>
+      </form>
+    </div>
   </aside>
 </template>
 
@@ -294,6 +453,11 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   filter: none;
 }
 
+.sb-action.is-active {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
 .sb-action.is-running,
 .sb-action.is-running:hover,
 .sb-action.is-running:disabled {
@@ -354,6 +518,35 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   color: var(--text-muted);
 }
 
+.sb-search {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 4px;
+  margin: 0 6px 4px;
+  padding: 0 4px;
+  height: 30px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  color: var(--text-faint);
+  background: var(--bg-subtle);
+}
+
+.sb-search input {
+  width: 100%;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.sb-search button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-muted);
+}
+
 .sb-tree__row--project.is-active {
   color: var(--accent);
 }
@@ -396,6 +589,62 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 .sb-badge--error {
   background: var(--err-soft);
   color: var(--err);
+}
+
+.sb-modal-backdrop {
+  position: fixed;
+  inset: 36px 0 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 72px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.sb-clone-dialog {
+  width: min(420px, calc(100vw - 48px));
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+}
+
+.sb-clone-dialog__header,
+.sb-clone-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sb-clone-dialog h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.sb-clone-dialog label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sb-clone-dialog input {
+  width: 100%;
+}
+
+.sb-clone-dialog__error {
+  margin: 0;
+  color: var(--err);
+  font-size: 12px;
+}
+
+.sb-clone-dialog__actions {
+  justify-content: flex-end;
 }
 
 @keyframes sb-spin {

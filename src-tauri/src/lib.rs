@@ -46,6 +46,7 @@ pub fn run() {
             workspace::workspace_set_root,
             workspace::workspace_pick_root,
             workspace::workspace_scan_repos,
+            workspace::workspace_clone_repo,
             workspace::workspace_hide_repo,
             workspace::workspace_unhide_repo,
             workspace::workspace_list_hidden_repos,

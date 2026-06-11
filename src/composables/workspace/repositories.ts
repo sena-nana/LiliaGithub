@@ -26,6 +26,14 @@ export async function refreshRepos() {
   }
 }
 
+export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {
+  state.error = null;
+  const service = await loadWorkspaceService();
+  const summary = await service.cloneRepo(remoteUrl, directoryName);
+  upsertRepo(summary);
+  return summary;
+}
+
 export async function hideRepo(repoId: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.hideRepo(repoId);
