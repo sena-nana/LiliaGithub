@@ -215,6 +215,55 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("侧边栏搜索可过滤仓库并回车跳转首个结果", async () => {
+    const view = await renderAppShell("/plugins");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+      expect(sidebarRowForText(view.container, "Lilia")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "搜索" }));
+    const search = view.getByRole("searchbox", { name: "搜索仓库" });
+    await fireEvent.update(search, "sena-nana/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+      expect(() => sidebarRowForText(view.container, "Lilia")).toThrow("未找到侧边栏行: Lilia");
+    });
+
+    await fireEvent.keyDown(search, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("侧边栏新建可克隆远端仓库并跳转详情", async () => {
+    const view = await renderAppShell("/plugins");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "新建" }));
+    expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
+
+    await fireEvent.update(
+      view.getByPlaceholderText("https://github.com/user/repo.git"),
+      "https://github.com/sena-nana/NewRepo.git",
+    );
+    await waitFor(() => {
+      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("NewRepo");
+    });
+    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
+      expect(sidebarRowForText(view.container, "NewRepo")).toBeInTheDocument();
+    });
+  });
+
   it("仓库右键菜单可隐藏仓库并从详情页返回总览", async () => {
     const view = await renderAppShell("/repos/LiliaGithub");
 

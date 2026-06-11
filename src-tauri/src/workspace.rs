@@ -671,6 +671,59 @@ fn repo_id(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn infer_clone_directory_name(remote_url: &str) -> Result<String, String> {
+    let trimmed = remote_url.trim().trim_end_matches('/').trim_end_matches(".git");
+    if trimmed.is_empty() {
+        return Err("远端 URL 不能为空".to_string());
+    }
+    if let Some(full_name) = parse_github_remote(trimmed) {
+        if let Some(name) = full_name.rsplit('/').next().filter(|value| !value.is_empty()) {
+            return Ok(name.to_string());
+        }
+    }
+    let source = trimmed
+        .split_once(':')
+        .filter(|(prefix, _)| prefix.contains('@') && !prefix.contains('/'))
+        .map(|(_, path)| path)
+        .unwrap_or(trimmed);
+    source
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .last()
+        .map(|value| value.to_string())
+        .ok_or_else(|| "无法从远端 URL 推导目录名".to_string())
+}
+
+fn normalize_clone_directory_name(
+    remote_url: &str,
+    directory_name: Option<String>,
+) -> Result<String, String> {
+    let name = directory_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .map(Ok)
+        .unwrap_or_else(|| infer_clone_directory_name(remote_url))?;
+    validate_clone_directory_name(&name)?;
+    Ok(name)
+}
+
+fn validate_clone_directory_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("目录名不能为空".to_string());
+    }
+    if trimmed != name || trimmed.contains('/') || trimmed.contains('\\') {
+        return Err("目录名只能是单层目录名".to_string());
+    }
+    let mut components = Path::new(trimmed).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(value)), None) if value.to_string_lossy() != ".." => Ok(()),
+        _ => Err("目录名只能是单层目录名".to_string()),
+    }
+}
+
 fn github_full_name_from_remote(remote: &str) -> Option<String> {
     parse_github_remote(remote)
 }
@@ -1111,6 +1164,38 @@ pub fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> 
             .then_with(|| a.name.cmp(&b.name))
     });
     Ok(repos)
+}
+
+#[tauri::command]
+pub fn workspace_clone_repo(
+    app: AppHandle,
+    remote_url: String,
+    directory_name: Option<String>,
+) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let remote = remote_url.trim();
+    if remote.is_empty() {
+        return Err("远端 URL 不能为空".to_string());
+    }
+    let directory = normalize_clone_directory_name(remote, directory_name)?;
+    let target = root.join(&directory);
+    if target.exists() {
+        return Err(format!("目标目录已存在：{}", target.display()));
+    }
+    if target.parent() != Some(root.as_path()) {
+        return Err("目标目录必须位于工作区内".to_string());
+    }
+    let auth_header = if parse_github_remote(remote).is_some() {
+        token_for_binding(&app)?.map(|token| github_auth_header(&token))
+    } else {
+        None
+    };
+    git_command(
+        &root,
+        &["clone", remote, directory.as_str()],
+        auth_header.as_deref(),
+    )?;
+    Ok(summarize_repo(&root, &target))
 }
 
 #[tauri::command]
@@ -2767,6 +2852,50 @@ mod tests {
             Some("sena-nana/Lilia".to_string())
         );
         assert_eq!(parse_github_remote("https://example.com/a/b.git"), None);
+    }
+
+    #[test]
+    fn infers_clone_directory_from_remote_url() {
+        assert_eq!(
+            infer_clone_directory_name("https://github.com/sena-nana/LiliaGithub.git").unwrap(),
+            "LiliaGithub"
+        );
+        assert_eq!(
+            infer_clone_directory_name("git@github.com:sena-nana/Lilia.git").unwrap(),
+            "Lilia"
+        );
+        assert_eq!(
+            infer_clone_directory_name("ssh://git@example.com/tools/example-repo.git").unwrap(),
+            "example-repo"
+        );
+    }
+
+    #[test]
+    fn validates_clone_directory_name_as_single_segment() {
+        assert!(validate_clone_directory_name("new-repo").is_ok());
+        assert!(validate_clone_directory_name("nested/repo").is_err());
+        assert!(validate_clone_directory_name("nested\\repo").is_err());
+        assert!(validate_clone_directory_name("../repo").is_err());
+        assert!(validate_clone_directory_name("..").is_err());
+        assert!(validate_clone_directory_name(" repo ").is_err());
+        assert!(validate_clone_directory_name("").is_err());
+    }
+
+    #[test]
+    fn normalizes_clone_directory_name_with_user_override() {
+        assert_eq!(
+            normalize_clone_directory_name(
+                "https://github.com/sena-nana/source-name.git",
+                Some("target-name".to_string())
+            )
+            .unwrap(),
+            "target-name"
+        );
+        assert!(normalize_clone_directory_name(
+            "https://github.com/sena-nana/source-name.git",
+            Some("../target".to_string())
+        )
+        .is_err());
     }
 
     #[test]

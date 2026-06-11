@@ -289,6 +289,8 @@ function createFallbackSettings(): WorkspaceSettings {
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
+let fallbackCloneIndex = 1;
+let fallbackClonedRepos: RepoSummary[] = [];
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
@@ -298,6 +300,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
+  fallbackCloneIndex = 1;
+  fallbackClonedRepos = [];
   for (const key of Object.keys(fallbackLaunchStatuses)) {
     delete fallbackLaunchStatuses[key];
   }
@@ -350,20 +354,57 @@ export function scanRepos(): Promise<RepoSummary[]> {
   return call("workspace_scan_repos", undefined, () => visibleFallbackRepos());
 }
 
+function inferRepoDirectoryName(remoteUrl: string) {
+  const trimmed = remoteUrl.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
+  const [, scpPath] = trimmed.match(/^[\w.-]+@[^:]+:(.+)$/) ?? [];
+  const source = scpPath ?? trimmed;
+  const parts = source.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || `cloned-repo-${fallbackCloneIndex++}`;
+}
+
+export function cloneRepo(remoteUrl: string, directoryName?: string | null): Promise<RepoSummary> {
+  return call("workspace_clone_repo", { remoteUrl, directoryName: directoryName ?? null }, () => {
+    const name = directoryName?.trim() || inferRepoDirectoryName(remoteUrl);
+    const repo: RepoSummary = {
+      id: name,
+      name,
+      path: `C:\\Files\\workspace\\${name}`,
+      relativePath: name,
+      currentBranch: "main",
+      remoteUrl,
+      githubFullName: remoteUrl.includes("github.com") ? `sena-nana/${name}` : null,
+      ahead: 0,
+      behind: 0,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      conflictCount: 0,
+      lastCommitAt: null,
+      lastCommitMessage: null,
+    };
+    fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
+    return { ...repo };
+  });
+}
+
 export function getRepoSummary(repoId: string): Promise<RepoSummary> {
   return call("repo_get_summary", { repoId }, () => ({ ...fallbackRepo(repoId) }));
 }
 
+function allFallbackRepos() {
+  return [...fallbackRepos, ...fallbackClonedRepos];
+}
+
 function visibleFallbackRepos() {
   const hidden = new Set(fallbackSettings.hiddenRepoIds);
-  return fallbackRepos
+  return allFallbackRepos()
     .filter((repo) => !hidden.has(repo.id))
     .map((repo) => ({ ...repo }));
 }
 
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_hide_repo", { repoId }, () => {
-    if (!fallbackRepos.some((repo) => repo.id === repoId)) {
+    if (!allFallbackRepos().some((repo) => repo.id === repoId)) {
       throw new Error(`未找到 Git 仓库：${repoId}`);
     }
     if (!fallbackSettings.hiddenRepoIds.includes(repoId)) {
@@ -390,7 +431,7 @@ export function listHiddenRepos(): Promise<HiddenRepo[]> {
   return call("workspace_list_hidden_repos", undefined, () =>
     fallbackSettings.hiddenRepoIds.map((id) => ({
       id,
-      name: fallbackRepos.find((repo) => repo.id === id)?.name ?? id,
+      name: allFallbackRepos().find((repo) => repo.id === id)?.name ?? id,
     })),
   );
 }
@@ -422,7 +463,7 @@ export function pollGitHubDeviceFlow(
 }
 
 function fallbackRepo(repoId: string): RepoSummary {
-  return fallbackRepos.find((repo) => repo.id === repoId) ?? fallbackRepos[0];
+  return allFallbackRepos().find((repo) => repo.id === repoId) ?? fallbackRepos[0];
 }
 
 function emptyConflictState(): RepoConflictState {

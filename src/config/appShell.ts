@@ -1,11 +1,9 @@
 import {
-  FilePlus2,
   FolderGit2,
   Home,
   Info,
   Palette,
   Puzzle,
-  Search,
   Settings,
   Sparkles,
 } from "@lucide/vue";
@@ -59,11 +57,6 @@ export interface SidebarFooterStatus {
   tone: "ok" | "warn" | "error";
   icon: Component;
 }
-
-export const SIDEBAR_GLOBAL_ACTIONS: SidebarActionItem[] = [
-  { key: "new", label: "新建", icon: FilePlus2, disabled: true },
-  { key: "search", label: "搜索", icon: Search, disabled: true },
-];
 
 export const SIDEBAR_NAV: SidebarNavItem[] = [
   {
