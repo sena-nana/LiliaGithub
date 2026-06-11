@@ -136,6 +136,13 @@ pub struct GitHubContributionDay {
     pub count: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageStat {
+    pub language: String,
+    pub bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoSummary {
@@ -154,6 +161,8 @@ pub struct RepoSummary {
     pub conflict_count: usize,
     pub last_commit_at: Option<i64>,
     pub last_commit_message: Option<String>,
+    #[serde(default)]
+    pub language_stats: Vec<LanguageStat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -881,6 +890,157 @@ fn github_full_name_from_remote(remote: &str) -> Option<String> {
     parse_github_remote(remote)
 }
 
+fn repo_language_stats(path: &Path) -> Vec<LanguageStat> {
+    let output = git_command(path, &["ls-files", "-z"], None).unwrap_or_default();
+    let mut stats: HashMap<String, u64> = HashMap::new();
+    for raw_path in output.split('\0').filter(|value| !value.is_empty()) {
+        let relative = Path::new(raw_path);
+        if should_skip_language_path(relative) {
+            continue;
+        }
+        let language = language_for_path(relative).or_else(|| {
+            let full_path = path.join(relative);
+            if looks_like_text_file(&full_path) {
+                Some("Other")
+            } else {
+                None
+            }
+        });
+        let Some(language) = language else {
+            continue;
+        };
+        let bytes = fs::metadata(path.join(relative))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        if bytes > 0 {
+            *stats.entry(language.to_string()).or_default() += bytes;
+        }
+    }
+    let mut items = stats
+        .into_iter()
+        .map(|(language, bytes)| LanguageStat { language, bytes })
+        .collect::<Vec<_>>();
+    items.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.language.cmp(&b.language)));
+    items
+}
+
+fn should_skip_language_path(path: &Path) -> bool {
+    if path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .map(|name| is_skipped_language_dir(&name.to_ascii_lowercase()))
+            .unwrap_or(false)
+    }) {
+        return true;
+    }
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    is_skipped_language_file(&name)
+}
+
+fn is_skipped_language_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".cache"
+            | ".next"
+            | ".nuxt"
+            | ".parcel-cache"
+            | ".svelte-kit"
+            | ".tauri"
+            | ".yarn"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "node_modules"
+            | "out"
+            | "target"
+            | "vendor"
+    )
+}
+
+fn is_skipped_language_file(name: &str) -> bool {
+    matches!(
+        name,
+        "bun.lock"
+            | "cargo.lock"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "yarn.lock"
+    ) || name.ends_with(".lock")
+        || matches!(
+            Path::new(name)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or(""),
+            "7z" | "avif"
+                | "bmp"
+                | "dll"
+                | "dylib"
+                | "exe"
+                | "gif"
+                | "ico"
+                | "jar"
+                | "jpeg"
+                | "jpg"
+                | "mp3"
+                | "mp4"
+                | "otf"
+                | "pdf"
+                | "png"
+                | "so"
+                | "ttf"
+                | "webp"
+                | "woff"
+                | "woff2"
+                | "zip"
+        )
+}
+
+fn language_for_path(path: &Path) -> Option<&'static str> {
+    let file_name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    match file_name.as_str() {
+        "dockerfile" => return Some("Dockerfile"),
+        "makefile" => return Some("Makefile"),
+        _ => {}
+    }
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "c" => Some("C"),
+        "cc" | "cpp" | "cxx" | "h" | "hpp" | "hxx" => Some("C++"),
+        "cs" => Some("C#"),
+        "css" | "scss" | "sass" | "less" => Some("CSS"),
+        "go" => Some("Go"),
+        "html" | "htm" => Some("HTML"),
+        "java" => Some("Java"),
+        "js" | "cjs" | "mjs" | "jsx" => Some("JavaScript"),
+        "json" | "jsonc" => Some("JSON"),
+        "kt" | "kts" => Some("Kotlin"),
+        "md" | "mdx" => Some("Markdown"),
+        "ps1" | "psm1" | "psd1" => Some("PowerShell"),
+        "py" | "pyw" => Some("Python"),
+        "rs" => Some("Rust"),
+        "sh" | "bash" | "zsh" | "fish" => Some("Shell"),
+        "swift" => Some("Swift"),
+        "toml" => Some("TOML"),
+        "ts" | "tsx" | "mts" | "cts" => Some("TypeScript"),
+        "vue" => Some("Vue"),
+        "yaml" | "yml" => Some("YAML"),
+        _ => None,
+    }
+}
+
+fn looks_like_text_file(path: &Path) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    !bytes.iter().take(8192).any(|byte| *byte == 0)
+}
+
 fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
     let status = git_command_lossy(path, &["status", "--porcelain=v1", "-b", "--ahead-behind"])
         .unwrap_or_default();
@@ -955,6 +1115,7 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
         conflict_count,
         last_commit_at,
         last_commit_message,
+        language_stats: repo_language_stats(path),
     }
 }
 
@@ -3207,6 +3368,20 @@ mod tests {
         fs::write(path.join("package.json"), body).unwrap();
     }
 
+    fn run_git(path: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         let mut summary = RepoSummary {
             id: "repo".to_string(),
@@ -3224,6 +3399,7 @@ mod tests {
             conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
+            language_stats: Vec::new(),
         };
         overrides(&mut summary);
         summary
@@ -3253,6 +3429,70 @@ mod tests {
         ]);
 
         assert_eq!(repos, vec!["sena-nana/LiliaGithub", "sena-nana/Lilia"]);
+    }
+
+    #[test]
+    fn detects_source_languages_by_path() {
+        assert_eq!(language_for_path(Path::new("src/app.ts")), Some("TypeScript"));
+        assert_eq!(language_for_path(Path::new("src/App.vue")), Some("Vue"));
+        assert_eq!(language_for_path(Path::new("src/main.rs")), Some("Rust"));
+        assert_eq!(language_for_path(Path::new("scripts/build.ps1")), Some("PowerShell"));
+        assert_eq!(language_for_path(Path::new("Dockerfile")), Some("Dockerfile"));
+        assert_eq!(language_for_path(Path::new("assets/icon.png")), None);
+    }
+
+    #[test]
+    fn skips_generated_lock_and_binary_language_paths() {
+        assert!(should_skip_language_path(Path::new("dist/app.ts")));
+        assert!(should_skip_language_path(Path::new("node_modules/pkg/index.js")));
+        assert!(should_skip_language_path(Path::new("package-lock.json")));
+        assert!(should_skip_language_path(Path::new("assets/icon.png")));
+        assert!(!should_skip_language_path(Path::new("src/app.ts")));
+    }
+
+    #[test]
+    fn aggregates_language_stats_from_tracked_files() {
+        let path = temp_dir("language-stats");
+        run_git(&path, &["init"]);
+        fs::create_dir_all(path.join("src")).unwrap();
+        fs::create_dir_all(path.join("dist")).unwrap();
+        fs::write(path.join("src").join("app.ts"), "console.log('typescript');\n").unwrap();
+        fs::write(path.join("src").join("view.vue"), "<template>Vue</template>\n").unwrap();
+        fs::write(path.join("README.unknown"), "plain text\n").unwrap();
+        fs::write(path.join("dist").join("generated.ts"), "ignored\n").unwrap();
+        fs::write(path.join("binary.dat"), [0_u8, 159, 146, 150]).unwrap();
+        run_git(
+            &path,
+            &[
+                "add",
+                "src/app.ts",
+                "src/view.vue",
+                "README.unknown",
+                "dist/generated.ts",
+                "binary.dat",
+            ],
+        );
+
+        let stats = repo_language_stats(&path);
+
+        assert_eq!(
+            stats,
+            vec![
+                LanguageStat {
+                    language: "TypeScript".to_string(),
+                    bytes: 27,
+                },
+                LanguageStat {
+                    language: "Vue".to_string(),
+                    bytes: 25,
+                },
+                LanguageStat {
+                    language: "Other".to_string(),
+                    bytes: 11,
+                },
+            ]
+        );
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]
@@ -3605,43 +3845,20 @@ rename to docs/new.md",
 
     #[test]
     fn bulk_preview_blocks_dirty_pull_and_allows_push() {
-        let dirty_pull_repo = RepoSummary {
-            id: "app".to_string(),
-            name: "app".to_string(),
-            path: "C:/app".to_string(),
-            relative_path: "app".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: Some("https://github.com/a/b.git".to_string()),
-            github_full_name: Some("a/b".to_string()),
-            ahead: 1,
-            behind: 2,
-            staged_count: 0,
-            unstaged_count: 1,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
+        let dirty_pull_repo = test_repo_summary(|summary| {
+            summary.id = "app".to_string();
+            summary.ahead = 1;
+            summary.behind = 2;
+            summary.unstaged_count = 1;
+        });
         let pull = build_bulk_preview("pull".to_string(), vec![dirty_pull_repo]);
         assert_eq!(pull.blocked.len(), 1);
 
-        let push_repo = RepoSummary {
-            id: "push".to_string(),
-            name: "push".to_string(),
-            path: "C:/push".to_string(),
-            relative_path: "push".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: Some("https://github.com/a/b.git".to_string()),
-            github_full_name: Some("a/b".to_string()),
-            ahead: 1,
-            behind: 0,
-            staged_count: 0,
-            unstaged_count: 1,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
+        let push_repo = test_repo_summary(|summary| {
+            summary.id = "push".to_string();
+            summary.ahead = 1;
+            summary.unstaged_count = 1;
+        });
         let push = build_bulk_push_preview_with_lookup(vec![push_repo], |_| true);
         assert_eq!(push.eligible.len(), 1);
         assert_eq!(push.warnings.len(), 1);
@@ -3649,57 +3866,22 @@ rename to docs/new.md",
 
     #[test]
     fn push_preview_blocks_missing_remote_detached_and_behind() {
-        let no_remote = RepoSummary {
-            id: "no-remote".to_string(),
-            name: "no-remote".to_string(),
-            path: "C:/no-remote".to_string(),
-            relative_path: "no-remote".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: None,
-            github_full_name: None,
-            ahead: 1,
-            behind: 0,
-            staged_count: 0,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
-        let detached = RepoSummary {
-            id: "detached".to_string(),
-            name: "detached".to_string(),
-            path: "C:/detached".to_string(),
-            relative_path: "detached".to_string(),
-            current_branch: None,
-            remote_url: Some("https://github.com/a/b.git".to_string()),
-            github_full_name: Some("a/b".to_string()),
-            ahead: 1,
-            behind: 0,
-            staged_count: 0,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
-        let behind = RepoSummary {
-            id: "behind".to_string(),
-            name: "behind".to_string(),
-            path: "C:/behind".to_string(),
-            relative_path: "behind".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: Some("https://github.com/a/b.git".to_string()),
-            github_full_name: Some("a/b".to_string()),
-            ahead: 1,
-            behind: 2,
-            staged_count: 0,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
+        let no_remote = test_repo_summary(|summary| {
+            summary.id = "no-remote".to_string();
+            summary.remote_url = None;
+            summary.github_full_name = None;
+            summary.ahead = 1;
+        });
+        let detached = test_repo_summary(|summary| {
+            summary.id = "detached".to_string();
+            summary.current_branch = None;
+            summary.ahead = 1;
+        });
+        let behind = test_repo_summary(|summary| {
+            summary.id = "behind".to_string();
+            summary.ahead = 1;
+            summary.behind = 2;
+        });
 
         let preview = build_bulk_push_preview_with_lookup(vec![no_remote, detached, behind], |_| true);
 
@@ -3720,40 +3902,14 @@ rename to docs/new.md",
 
     #[test]
     fn push_preview_warns_dirty_push_and_idle_repos() {
-        let ready = RepoSummary {
-            id: "ready".to_string(),
-            name: "ready".to_string(),
-            path: "C:/ready".to_string(),
-            relative_path: "ready".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: Some("https://github.com/a/b.git".to_string()),
-            github_full_name: Some("a/b".to_string()),
-            ahead: 1,
-            behind: 0,
-            staged_count: 1,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
-        let idle = RepoSummary {
-            id: "idle".to_string(),
-            name: "idle".to_string(),
-            path: "C:/idle".to_string(),
-            relative_path: "idle".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: Some("https://github.com/a/b.git".to_string()),
-            github_full_name: Some("a/b".to_string()),
-            ahead: 0,
-            behind: 0,
-            staged_count: 0,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
+        let ready = test_repo_summary(|summary| {
+            summary.id = "ready".to_string();
+            summary.ahead = 1;
+            summary.staged_count = 1;
+        });
+        let idle = test_repo_summary(|summary| {
+            summary.id = "idle".to_string();
+        });
 
         let preview = build_bulk_push_preview_with_lookup(vec![ready.clone(), idle.clone()], |_| true);
 
@@ -3771,23 +3927,10 @@ rename to docs/new.md",
 
     #[test]
     fn push_preview_blocks_repo_without_upstream() {
-        let repo = RepoSummary {
-            id: "no-upstream".to_string(),
-            name: "no-upstream".to_string(),
-            path: "C:/no-upstream".to_string(),
-            relative_path: "no-upstream".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: Some("https://github.com/a/b.git".to_string()),
-            github_full_name: Some("a/b".to_string()),
-            ahead: 1,
-            behind: 0,
-            staged_count: 0,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
+        let repo = test_repo_summary(|summary| {
+            summary.id = "no-upstream".to_string();
+            summary.ahead = 1;
+        });
 
         let preview = build_bulk_push_preview_with_lookup(vec![repo], |_| false);
 
@@ -3903,40 +4046,16 @@ rename to docs/new.md",
 
     #[test]
     fn filters_hidden_repositories_by_id() {
-        let visible = RepoSummary {
-            id: "visible".to_string(),
-            name: "visible".to_string(),
-            path: "C:/visible".to_string(),
-            relative_path: "visible".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: None,
-            github_full_name: None,
-            ahead: 0,
-            behind: 0,
-            staged_count: 0,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
-        let hidden = RepoSummary {
-            id: "hidden".to_string(),
-            name: "hidden".to_string(),
-            path: "C:/hidden".to_string(),
-            relative_path: "hidden".to_string(),
-            current_branch: Some("main".to_string()),
-            remote_url: None,
-            github_full_name: None,
-            ahead: 0,
-            behind: 0,
-            staged_count: 0,
-            unstaged_count: 0,
-            untracked_count: 0,
-            conflict_count: 0,
-            last_commit_at: None,
-            last_commit_message: None,
-        };
+        let visible = test_repo_summary(|summary| {
+            summary.id = "visible".to_string();
+            summary.remote_url = None;
+            summary.github_full_name = None;
+        });
+        let hidden = test_repo_summary(|summary| {
+            summary.id = "hidden".to_string();
+            summary.remote_url = None;
+            summary.github_full_name = None;
+        });
 
         let repos = filter_hidden_repos(vec![visible.clone(), hidden], &["hidden".to_string()]);
 

@@ -17,6 +17,7 @@ export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): R
     conflictCount: 0,
     lastCommitAt: null,
     lastCommitMessage: null,
+    languageStats: [],
     ...overrides,
   };
 }

@@ -68,6 +68,11 @@ export interface GitHubContributionDay {
   count: number;
 }
 
+export interface LanguageStat {
+  language: string;
+  bytes: number;
+}
+
 export interface RepoSummary {
   id: string;
   name: string;
@@ -84,6 +89,7 @@ export interface RepoSummary {
   conflictCount: number;
   lastCommitAt: number | null;
   lastCommitMessage: string | null;
+  languageStats: readonly LanguageStat[];
 }
 
 export interface RepoChange {
