@@ -9,7 +9,7 @@ import {
   unhideRepo,
   unstage,
 } from "../src/composables/workspace/repositories";
-import { executeBulk, previewBulk, pushAll } from "../src/composables/workspace/bulk";
+import { closeBulkPreview, executeBulk, previewBulk, pushAll } from "../src/composables/workspace/bulk";
 import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import type { BulkSyncPreview, RepoDetail, RepoSummary, WorkspaceSettings } from "../src/services/workspace";
@@ -186,6 +186,58 @@ describe("workspace incremental refresh", () => {
     ]);
     expect(state.repos.find((repo) => repo.id === first.id)?.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === second.id)?.ahead).toBe(2);
+    expect(state.recentPush?.results).toEqual(state.bulkResults);
+  });
+
+  it("关闭预检弹层后仍保留最近一次 push 失败工作流", async () => {
+    const blocked = repoSummary("Lilia", { ahead: 1, behind: 1 });
+    const failed = repoSummary("LiliaGithub", { ahead: 1 });
+    service.bulkSyncPreview.mockResolvedValue({
+      operation: "push",
+      eligible: [{ repo: failed, reason: "有本地提交待推送" }],
+      blocked: [{ repo: blocked, reason: "当前分支落后于 upstream" }],
+      warnings: [],
+    });
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: failed.id, status: "error", message: "认证失败", summary: null },
+    ]);
+
+    await previewBulk("push");
+    await executeBulk();
+    closeBulkPreview();
+
+    expect(state.bulkPreview).toBeNull();
+    expect(state.recentPush?.preview.blocked).toEqual([{ repo: blocked, reason: "当前分支落后于 upstream" }]);
+    expect(state.recentPush?.results).toEqual([
+      { repoId: failed.id, status: "error", message: "认证失败", summary: null },
+    ]);
+  });
+
+  it("单仓库 push 重试会更新最近一次 push 失败状态", async () => {
+    const failed = repoSummary("LiliaGithub", { ahead: 1 });
+    const updated = repoSummary("LiliaGithub", { ahead: 0 });
+    state.repos = [failed];
+    state.recentPush = {
+      preview: {
+        operation: "push",
+        eligible: [{ repo: failed, reason: "有本地提交待推送" }],
+        blocked: [],
+        warnings: [],
+      },
+      results: [{ repoId: failed.id, status: "error", message: "认证失败", summary: null }],
+      retryingRepoIds: [],
+      updatedAt: 1,
+    };
+    service.pushRepo.mockResolvedValue(updated);
+    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+
+    await push(failed.id);
+
+    expect(state.recentPush?.results).toEqual([
+      { repoId: failed.id, status: "success", message: "完成", summary: updated },
+    ]);
+    expect(state.recentPush?.retryingRepoIds).toEqual([]);
+    expect(state.repos[0].ahead).toBe(0);
   });
 
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {

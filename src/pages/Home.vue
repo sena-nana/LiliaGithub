@@ -3,15 +3,18 @@ import { computed } from "vue";
 import {
   CheckCircle2,
   AlertCircle,
+  ArrowRight,
   FolderOpen,
   GitPullRequestArrow,
   Info,
   LoaderCircle,
   RefreshCw,
+  RotateCw,
   ShieldCheck,
   Upload,
   X,
 } from "@lucide/vue";
+import type { RepoSummary } from "../services/workspace";
 import { useWorkspace } from "../composables/useWorkspace";
 import "../styles/page.css";
 
@@ -51,6 +54,36 @@ const commitChartMax = computed(() =>
   Math.max(1, ...workspace.overviewStats.value.commitsByDay.map((point) => point.count)),
 );
 
+const recentPushIssueRows = computed(() => {
+  const recent = workspace.state.recentPush;
+  if (!recent) return [];
+  const repos = new Map<string, RepoSummary>();
+  for (const repo of workspace.state.repos) repos.set(repo.id, repo);
+  for (const item of [...recent.preview.eligible, ...recent.preview.blocked, ...recent.preview.warnings]) {
+    repos.set(item.repo.id, item.repo);
+  }
+  const rows = recent.results
+    .filter((result) => result.status === "error")
+    .map((result) => ({
+      repoId: result.repoId,
+      repoName: repos.get(result.repoId)?.name ?? result.repoId,
+      reason: result.message,
+      source: "执行失败",
+      retrying: recent.retryingRepoIds.includes(result.repoId),
+    }));
+  for (const item of recent.preview.blocked) {
+    if (rows.some((row) => row.repoId === item.repo.id)) continue;
+    rows.push({
+      repoId: item.repo.id,
+      repoName: repos.get(item.repo.id)?.name ?? item.repo.name,
+      reason: item.reason,
+      source: "预检阻止",
+      retrying: recent.retryingRepoIds.includes(item.repo.id),
+    });
+  }
+  return rows;
+});
+
 function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
 }
@@ -62,6 +95,13 @@ function formatTime(timestamp: number | null) {
 
 function bulkResultTone(result: { status: string }) {
   return result.status === "success" ? "sync-results__item--success" : "sync-results__item--error";
+}
+
+async function retryRecentPush(repoId: string) {
+  try {
+    await workspace.push(repoId);
+  } catch {
+  }
 }
 </script>
 
@@ -188,6 +228,42 @@ function bulkResultTone(result: { status: string }) {
           <span>待推送</span>
           <strong>{{ workspace.overviewStats.value.pushable }}</strong>
         </div>
+      </div>
+
+      <div v-if="recentPushIssueRows.length" class="card push-workflow" aria-label="最近推送失败">
+        <div class="push-workflow__header">
+          <div>
+            <h2>最近推送失败</h2>
+            <p>{{ recentPushIssueRows.length }} 个仓库需要处理</p>
+          </div>
+          <button type="button" class="ghost" :disabled="workspace.state.bulkRunning" @click="workspace.pushAll">
+            <Upload :size="14" aria-hidden="true" />
+            重新预检
+          </button>
+        </div>
+        <ul class="push-workflow__list">
+          <li v-for="row in recentPushIssueRows" :key="row.repoId">
+            <AlertCircle :size="14" aria-hidden="true" />
+            <div class="push-workflow__repo">
+              <strong>{{ row.repoName }}</strong>
+              <span>{{ row.source }} · {{ row.reason }}</span>
+            </div>
+            <RouterLink class="ghost push-workflow__action" :to="`/repos/${encodeURIComponent(row.repoId)}`">
+              <ArrowRight :size="14" aria-hidden="true" />
+              详情
+            </RouterLink>
+            <button
+              type="button"
+              class="primary push-workflow__action"
+              :disabled="row.retrying"
+              @click="retryRecentPush(row.repoId)"
+            >
+              <LoaderCircle v-if="row.retrying" :size="14" aria-hidden="true" class="sb-spin" />
+              <RotateCw v-else :size="14" aria-hidden="true" />
+              重试
+            </button>
+          </li>
+        </ul>
       </div>
 
       <div class="overview-grid">
@@ -464,6 +540,85 @@ function bulkResultTone(result: { status: string }) {
   line-height: 1;
 }
 
+.push-workflow__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.push-workflow__header h2 {
+  margin-bottom: 4px;
+}
+
+.push-workflow__header p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.push-workflow__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.push-workflow__list li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--err);
+}
+
+.push-workflow__list li:last-child {
+  border-bottom: 0;
+}
+
+.push-workflow__repo {
+  min-width: 0;
+  color: var(--text);
+}
+
+.push-workflow__repo strong,
+.push-workflow__repo span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.push-workflow__repo strong {
+  font-size: 13px;
+}
+
+.push-workflow__repo span {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.push-workflow__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.push-workflow__action.ghost:hover {
+  background: var(--bg-hover);
+}
+
 .chart-row {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -659,6 +814,15 @@ function bulkResultTone(result: { status: string }) {
   .metric-grid,
   .sync-columns {
     grid-template-columns: 1fr;
+  }
+
+  .push-workflow__list li {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .push-workflow__action {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .setup-step {

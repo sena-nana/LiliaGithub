@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
 import { describe, expect, it } from "vitest";
 import App from "../src/App.vue";
@@ -135,6 +135,62 @@ describe("基础路由", () => {
     expect(screen.getByText("可执行")).toBeInTheDocument();
     expect(screen.getByText("阻止")).toBeInTheDocument();
     expect(screen.getByText("提示")).toBeInTheDocument();
+  });
+
+  it("批量推送失败关闭预检后仍可从总览处理失败仓库", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
+      repoIds.map((repoId) => ({
+        repoId,
+        status: repoId === "LiliaGithub" && operation === "push" ? "error" : "success",
+        message: repoId === "LiliaGithub" && operation === "push" ? "认证失败" : "完成",
+        summary: repoId === "LiliaGithub" && operation === "push" ? null : {
+          id: repoId,
+          name: repoId,
+          path: `C:\\Files\\workspace\\${repoId}`,
+          relativePath: repoId,
+          currentBranch: "main",
+          remoteUrl: `https://github.com/sena-nana/${repoId}.git`,
+          githubFullName: `sena-nana/${repoId}`,
+          ahead: 0,
+          behind: 0,
+          stagedCount: 0,
+          unstagedCount: 0,
+          untrackedCount: 0,
+          lastCommitAt: null,
+          lastCommitMessage: null,
+        },
+      })),
+    );
+    await renderAt("/");
+
+    const pushButtons = await screen.findAllByRole("button", { name: "一键推送" });
+    await fireEvent.click(pushButtons[1]);
+    await fireEvent.click(await screen.findByRole("button", { name: "确认执行" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "批量同步预检" });
+    expect(await within(dialog).findByText("认证失败")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+
+    expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
+    expect(screen.getByLabelText("最近推送失败")).toHaveTextContent("认证失败");
+    expect(screen.getByLabelText("最近推送失败")).toHaveTextContent("执行失败");
+
+    const failedRow = screen.getByText("执行失败 · 认证失败").closest("li");
+    if (!(failedRow instanceof HTMLElement)) throw new Error("未找到推送失败行");
+    await fireEvent.click(within(failedRow).getByRole("link", { name: "详情" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("link", { name: "概览" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    service.setFallbackBulkExecuteOverrideForTests(null);
+    const retryRow = screen.getByText("执行失败 · 认证失败").closest("li");
+    if (!(retryRow instanceof HTMLElement)) throw new Error("未找到可重试推送失败行");
+    await fireEvent.click(within(retryRow).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("认证失败")).toBeNull();
+    });
   });
 
   it("设置页默认显示外观设置并使用设置侧栏", async () => {
