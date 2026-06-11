@@ -1,7 +1,7 @@
 ﻿import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useWorkspace } from "./useWorkspace";
-import { recentPushErrorForRepo } from "./workspace/state";
+import { recentSyncErrorForRepo } from "./workspace/state";
 import type { CommitSummary, RepoConflictChoice, RepoConflictFile, RepoConflictState } from "../services/workspace";
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 
@@ -132,8 +132,8 @@ export function useRepoDetailController() {
     }
     return Array.from(refs);
   });
-  const recentPushError = computed(() => {
-    return recentPushErrorForRepo(repoId.value);
+  const recentSyncError = computed(() => {
+    return recentSyncErrorForRepo(repoId.value);
   });
   const hasConflicts = computed(() =>
     Boolean(summary.value?.conflictCount || conflictFiles.value.length || conflictOperationActive.value),
@@ -547,7 +547,7 @@ export function useRepoDetailController() {
       panelFocusedConflict,
       historyBranches,
       historyRefNames,
-      recentPushError,
+      recentSyncError,
       hasConflicts,
       conflictSummaryText,
       conflictOperationText,

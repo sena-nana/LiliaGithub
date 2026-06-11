@@ -61,7 +61,7 @@ const {
   panelFocusedConflict,
   historyBranches,
   historyRefNames,
-  recentPushError,
+  recentSyncError,
   hasConflicts,
   conflictSummaryText,
   conflictOperationText,
@@ -160,9 +160,9 @@ const {
 
     <p v-if="actionError" class="error-line">{{ actionError }}</p>
     <RepoPushError
-      v-if="recentPushError"
-      :message="recentPushError.message"
-      :retrying="recentPushError.retrying"
+      v-if="recentSyncError"
+      :message="recentSyncError.message"
+      :retrying="recentSyncError.retrying"
       :action-running="actionRunning"
       @retry="push"
     />

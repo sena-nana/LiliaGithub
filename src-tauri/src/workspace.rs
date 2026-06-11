@@ -1634,7 +1634,7 @@ pub fn repo_pull(app: AppHandle, repo_id: String) -> Result<RepoSummary, String>
     let root = workspace_root(&app)?;
     let path = repo_path_by_id(&app, &repo_id)?;
     let summary = summarize_repo(&root, &path);
-    if summary.staged_count + summary.unstaged_count + summary.untracked_count > 0 {
+    if repo_dirty_count(&summary) > 0 {
         return Err("存在未提交变更，已阻止 pull".to_string());
     }
     run_pull(&app, &path)?;
@@ -2574,6 +2574,10 @@ fn current_branch_upstream(path: &Path) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn repo_dirty_count(summary: &RepoSummary) -> usize {
+    summary.staged_count + summary.unstaged_count + summary.untracked_count
+}
+
 fn push_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<String> {
     if summary.remote_url.is_none() {
         Some("没有 origin remote".to_string())
@@ -2591,7 +2595,7 @@ fn push_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<String
 fn merge_pull_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<String> {
     if summary.conflict_count > 0 {
         Some("已有冲突需要先处理".to_string())
-    } else if summary.staged_count + summary.unstaged_count + summary.untracked_count > 0 {
+    } else if repo_dirty_count(summary) > 0 {
         Some("存在未提交变更，已阻止合并拉取".to_string())
     } else if !has_upstream {
         Some("当前分支没有 upstream".to_string())
@@ -2610,13 +2614,10 @@ where
 
     for repo in repos {
         if let Some(reason) = push_block_reason(&repo, has_upstream(&repo)) {
-            blocked.push(BulkSyncRepo {
-                repo,
-                reason,
-            });
+            blocked.push(BulkSyncRepo { repo, reason });
             continue;
         }
-        let dirty = repo.staged_count + repo.unstaged_count + repo.untracked_count;
+        let dirty = repo_dirty_count(&repo);
         if repo.ahead > 0 {
             eligible.push(BulkSyncRepo {
                 repo: repo.clone(),
@@ -2650,9 +2651,108 @@ fn build_bulk_push_preview(repos: Vec<RepoSummary>) -> BulkSyncPreview {
     })
 }
 
+fn build_bulk_sync_preview_with_lookup<F>(
+    repos: Vec<RepoSummary>,
+    has_upstream: F,
+) -> BulkSyncPreview
+where
+    F: Fn(&RepoSummary) -> bool,
+{
+    let mut eligible = Vec::new();
+    let mut blocked = Vec::new();
+    let mut warnings = Vec::new();
+
+    for repo in repos {
+        if repo.remote_url.is_none() {
+            blocked.push(BulkSyncRepo {
+                repo,
+                reason: "没有 origin remote".to_string(),
+            });
+            continue;
+        }
+        if repo.current_branch.is_none() {
+            blocked.push(BulkSyncRepo {
+                repo,
+                reason: "当前不是命名分支".to_string(),
+            });
+            continue;
+        }
+
+        let has_upstream = has_upstream(&repo);
+        let dirty = repo_dirty_count(&repo);
+        if repo.behind > 0 {
+            if repo.conflict_count > 0 {
+                blocked.push(BulkSyncRepo {
+                    repo,
+                    reason: "已有冲突需要先处理".to_string(),
+                });
+            } else if dirty > 0 {
+                blocked.push(BulkSyncRepo {
+                    repo,
+                    reason: "存在未提交变更".to_string(),
+                });
+            } else if !has_upstream {
+                blocked.push(BulkSyncRepo {
+                    repo,
+                    reason: "当前分支没有 upstream".to_string(),
+                });
+            } else if repo.ahead > 0 {
+                eligible.push(BulkSyncRepo {
+                    repo,
+                    reason: "需先拉取合并后推送".to_string(),
+                });
+            } else {
+                eligible.push(BulkSyncRepo {
+                    repo,
+                    reason: "可拉取远端更新".to_string(),
+                });
+            }
+            continue;
+        }
+
+        if repo.ahead > 0 {
+            if let Some(reason) = push_block_reason(&repo, has_upstream) {
+                blocked.push(BulkSyncRepo { repo, reason });
+            } else {
+                eligible.push(BulkSyncRepo {
+                    repo: repo.clone(),
+                    reason: "有本地提交待推送".to_string(),
+                });
+                if dirty > 0 {
+                    warnings.push(BulkSyncRepo {
+                        repo,
+                        reason: "存在未提交变更，但仍可执行 push".to_string(),
+                    });
+                }
+            }
+        } else {
+            warnings.push(BulkSyncRepo {
+                repo,
+                reason: "没有需要同步的更新".to_string(),
+            });
+        }
+    }
+
+    BulkSyncPreview {
+        operation: "sync".to_string(),
+        eligible,
+        blocked,
+        warnings,
+    }
+}
+
+fn build_bulk_sync_preview(repos: Vec<RepoSummary>) -> BulkSyncPreview {
+    build_bulk_sync_preview_with_lookup(repos, |repo| {
+        current_branch_upstream(&PathBuf::from(&repo.path)).is_some()
+    })
+}
+
 fn build_bulk_preview(operation: String, repos: Vec<RepoSummary>) -> BulkSyncPreview {
     if operation == "push" {
         return build_bulk_push_preview(repos);
+    }
+    if operation == "sync" {
+        return build_bulk_sync_preview(repos);
     }
     let mut eligible = Vec::new();
     let mut blocked = Vec::new();
@@ -2674,7 +2774,7 @@ fn build_bulk_preview(operation: String, repos: Vec<RepoSummary>) -> BulkSyncPre
             });
             continue;
         }
-        let dirty = repo.staged_count + repo.unstaged_count + repo.untracked_count;
+        let dirty = repo_dirty_count(&repo);
         if op == "pull" {
             if dirty > 0 {
                 blocked.push(BulkSyncRepo {
@@ -2724,8 +2824,11 @@ fn bulk_sync_repo(
         Err(err) => return bulk_error_result(repo_id, err),
     };
     let summary = summarize_repo(root, &path);
+    if operation == "sync" {
+        return sync_repo(app, root, repo_id, &path, &summary);
+    }
     let run = if operation == "pull" {
-        if summary.staged_count + summary.unstaged_count + summary.untracked_count > 0 {
+        if repo_dirty_count(&summary) > 0 {
             Err("存在未提交变更，已跳过 pull".to_string())
         } else {
             run_pull(app, &path)
@@ -2751,6 +2854,81 @@ fn bulk_sync_repo(
     }
 }
 
+fn sync_repo(
+    app: &AppHandle,
+    root: &Path,
+    repo_id: String,
+    path: &Path,
+    summary: &RepoSummary,
+) -> BulkSyncResult {
+    let has_upstream = current_branch_upstream(path).is_some();
+    let dirty = repo_dirty_count(summary);
+    let skip = |message: &str| bulk_error_result_for(&repo_id, message);
+    let run: Result<(), BulkSyncResult> = if summary.behind > 0 {
+        if summary.remote_url.is_none() {
+            Err(skip("没有 origin remote，已跳过同步"))
+        } else if summary.current_branch.is_none() {
+            Err(skip("当前不是命名分支，已跳过同步"))
+        } else if summary.conflict_count > 0 {
+            Err(skip("已有冲突需要先处理，已跳过同步"))
+        } else if dirty > 0 {
+            Err(skip("存在未提交变更，已跳过同步"))
+        } else if !has_upstream {
+            Err(skip("当前分支没有 upstream，已跳过同步"))
+        } else if summary.ahead > 0 {
+            run_merge_pull_then_push(app, root, repo_id.clone(), path)
+        } else {
+            run_pull(app, path).map_err(|err| bulk_error_result_for(&repo_id, err))
+        }
+    } else if summary.ahead > 0 {
+        if let Some(reason) = push_block_reason(summary, has_upstream) {
+            Err(bulk_error_result_for(
+                &repo_id,
+                format!("{reason}，已跳过同步"),
+            ))
+        } else {
+            run_push(app, path).map_err(|err| bulk_error_result_for(&repo_id, err))
+        }
+    } else {
+        Err(skip("没有需要同步的更新，已跳过同步"))
+    };
+
+    match run {
+        Ok(()) => BulkSyncResult {
+            summary: Some(summarize_repo(root, path)),
+            repo_id,
+            status: "success".to_string(),
+            message: "完成".to_string(),
+        },
+        Err(result) => result,
+    }
+}
+
+fn run_merge_pull_then_push(
+    app: &AppHandle,
+    root: &Path,
+    repo_id: String,
+    path: &Path,
+) -> Result<(), BulkSyncResult> {
+    run_fetch(app, path).map_err(|err| bulk_error_result_for(&repo_id, err))?;
+    match git_command(path, &["merge", "--no-edit", "@{u}"], None) {
+        Ok(_) => run_push(app, path).map_err(|err| bulk_error_result(repo_id, err)),
+        Err(err) => {
+            let conflicts = repo_conflicts(path);
+            if conflicts.files.is_empty() {
+                Err(bulk_error_result_for(&repo_id, err))
+            } else {
+                Err(BulkSyncResult {
+                    repo_id,
+                    status: "error".to_string(),
+                    message: "合并产生冲突，请处理后推送".to_string(),
+                    summary: Some(summarize_repo(root, path)),
+                })
+            }
+        }
+    }
+}
+
 fn run_bulk_sync_parallel<F>(repo_ids: Vec<String>, run: F) -> Vec<BulkSyncResult>
 where
     F: Fn(String) -> BulkSyncResult + Sync,
@@ -2765,9 +2943,9 @@ where
         handles
             .into_iter()
             .map(|handle| {
-                handle.join().unwrap_or_else(|_| {
-                    bulk_error_result("unknown".to_string(), "批量执行线程异常".to_string())
-                })
+                handle
+                    .join()
+                    .unwrap_or_else(|_| bulk_error_result_for("unknown", "批量执行线程异常"))
             })
             .collect()
     })
@@ -2780,6 +2958,10 @@ fn bulk_error_result(repo_id: String, message: String) -> BulkSyncResult {
         message,
         summary: None,
     }
+}
+
+fn bulk_error_result_for(repo_id: &str, message: impl Into<String>) -> BulkSyncResult {
+    bulk_error_result(repo_id.to_string(), message.into())
 }
 
 pub(crate) fn parse_github_remote(remote: &str) -> Option<String> {
@@ -3347,6 +3529,81 @@ rename to docs/new.md",
 
         assert_eq!(preview.blocked.len(), 1);
         assert_eq!(preview.blocked[0].reason, "当前分支没有 upstream");
+    }
+
+    #[test]
+    fn sync_preview_classifies_pull_push_merge_and_idle_repos() {
+        let pull_only = test_repo_summary(|summary| {
+            summary.id = "pull-only".to_string();
+            summary.behind = 2;
+        });
+        let push_only = test_repo_summary(|summary| {
+            summary.id = "push-only".to_string();
+            summary.ahead = 1;
+        });
+        let diverged = test_repo_summary(|summary| {
+            summary.id = "diverged".to_string();
+            summary.ahead = 1;
+            summary.behind = 1;
+        });
+        let idle = test_repo_summary(|summary| {
+            summary.id = "idle".to_string();
+        });
+
+        let preview =
+            build_bulk_sync_preview_with_lookup(vec![pull_only, push_only, diverged, idle], |_| {
+                true
+            });
+
+        assert_eq!(preview.operation, "sync");
+        assert!(preview
+            .eligible
+            .iter()
+            .any(|item| { item.repo.id == "pull-only" && item.reason == "可拉取远端更新" }));
+        assert!(preview.eligible.iter().any(|item| {
+            item.repo.id == "push-only" && item.reason == "有本地提交待推送"
+        }));
+        assert!(preview.eligible.iter().any(|item| {
+            item.repo.id == "diverged" && item.reason == "需先拉取合并后推送"
+        }));
+        assert!(preview.warnings.iter().any(|item| {
+            item.repo.id == "idle" && item.reason == "没有需要同步的更新"
+        }));
+    }
+
+    #[test]
+    fn sync_preview_blocks_unsafe_merge_states() {
+        let dirty = test_repo_summary(|summary| {
+            summary.id = "dirty".to_string();
+            summary.behind = 1;
+            summary.unstaged_count = 1;
+        });
+        let conflicted = test_repo_summary(|summary| {
+            summary.id = "conflicted".to_string();
+            summary.behind = 1;
+            summary.conflict_count = 1;
+        });
+        let no_upstream = test_repo_summary(|summary| {
+            summary.id = "no-upstream".to_string();
+            summary.behind = 1;
+        });
+
+        let preview =
+            build_bulk_sync_preview_with_lookup(vec![dirty, conflicted, no_upstream], |repo| {
+                repo.id != "no-upstream"
+            });
+
+        assert_eq!(preview.eligible.len(), 0);
+        assert!(preview
+            .blocked
+            .iter()
+            .any(|item| { item.repo.id == "dirty" && item.reason == "存在未提交变更" }));
+        assert!(preview.blocked.iter().any(|item| {
+            item.repo.id == "conflicted" && item.reason == "已有冲突需要先处理"
+        }));
+        assert!(preview.blocked.iter().any(|item| {
+            item.repo.id == "no-upstream" && item.reason == "当前分支没有 upstream"
+        }));
     }
 
     #[test]

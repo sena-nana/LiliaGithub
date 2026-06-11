@@ -670,6 +670,45 @@ export function continueConflictOperation(repoId: string): Promise<RepoSummary> 
 export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPreview> {
   const repos = visibleFallbackRepos();
   return call("bulk_sync_preview", { operation }, () => {
+    if (operation === "sync") {
+      return {
+        operation,
+        eligible: repos
+          .filter((repo) => repo.remoteUrl && repo.currentBranch && repo.conflictCount <= 0)
+          .filter((repo) => {
+            const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+            return (repo.behind > 0 && dirty === 0) || (repo.ahead > 0 && repo.behind === 0);
+          })
+          .map((repo) => ({
+            repo: { ...repo },
+            reason: repo.ahead > 0 && repo.behind > 0
+              ? "需先拉取合并后推送"
+              : repo.behind > 0
+                ? "可拉取远端更新"
+                : "有本地提交待推送",
+          })),
+        blocked: repos
+          .flatMap((repo) => {
+            const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+            if (!repo.remoteUrl) return [{ repo: { ...repo }, reason: "没有 origin remote" }];
+            if (!repo.currentBranch) return [{ repo: { ...repo }, reason: "当前不是命名分支" }];
+            if (repo.behind > 0 && repo.conflictCount > 0) return [{ repo: { ...repo }, reason: "已有冲突需要先处理" }];
+            if (repo.behind > 0 && dirty > 0) return [{ repo: { ...repo }, reason: "存在未提交变更" }];
+            return [];
+          }),
+        warnings: repos
+          .flatMap((repo) => {
+            const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
+            if (repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl && dirty > 0) {
+              return [{ repo: { ...repo }, reason: "存在未提交变更，但仍可执行 push" }];
+            }
+            if (repo.ahead <= 0 && repo.behind <= 0 && repo.currentBranch && repo.remoteUrl) {
+              return [{ repo: { ...repo }, reason: "没有需要同步的更新" }];
+            }
+            return [];
+          }),
+      };
+    }
     if (operation === "push") {
       return {
         operation,
@@ -718,8 +757,8 @@ export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Pr
       return {
         summary: {
           ...repo,
-          ahead: operation === "push" ? 0 : repo.ahead,
-          behind: operation === "pull" ? 0 : repo.behind,
+          ahead: operation === "push" || operation === "sync" ? 0 : repo.ahead,
+          behind: operation === "pull" || operation === "sync" ? 0 : repo.behind,
         },
         repoId,
         status: "success",

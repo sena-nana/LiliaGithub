@@ -101,7 +101,7 @@ beforeEach(() => {
 });
 
 describe("AppShell sidebar", () => {
-  it("主侧边栏显示总览、仓库列表和同步预检工具", async () => {
+  it("主侧边栏显示总览、仓库列表和一键同步工具", async () => {
     const view = await renderAppShell("/plugins");
 
     await waitFor(() => {
@@ -110,8 +110,7 @@ describe("AppShell sidebar", () => {
 
     expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
     expect(view.getAllByRole("button", { name: "刷新仓库" }).length).toBeGreaterThanOrEqual(1);
-    expect(view.getByRole("button", { name: "拉取预检" })).toBeEnabled();
-    expect(view.getByRole("button", { name: "一键推送" })).toBeEnabled();
+    expect(view.getByRole("button", { name: "一键同步" })).toBeEnabled();
 
     await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
@@ -151,7 +150,7 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏一键推送运行中显示按钮和仓库行状态", async () => {
+  it("侧边栏一键同步运行中显示按钮和仓库行状态", async () => {
     const view = await renderAppShell("/plugins");
 
     await waitFor(() => {
@@ -159,7 +158,7 @@ describe("AppShell sidebar", () => {
     });
 
     state.bulkPreview = {
-      operation: "push",
+      operation: "sync",
       eligible: [{ repo: state.repos[0], reason: "有本地提交待推送" }],
       blocked: [],
       warnings: [],
@@ -167,23 +166,23 @@ describe("AppShell sidebar", () => {
     state.bulkRunning = true;
 
     await waitFor(() => {
-      expect(view.getByRole("button", { name: "一键推送" })).toHaveClass("is-running");
-      expect(view.getByLabelText("正在推送")).toBeInTheDocument();
+      expect(view.getByRole("button", { name: "一键同步" })).toHaveClass("is-running");
+      expect(view.getByLabelText("正在同步")).toBeInTheDocument();
     });
   });
 
-  it("侧边栏显示最近一次推送失败结果", async () => {
+  it("侧边栏显示最近一次同步失败结果", async () => {
     const view = await renderAppShell("/plugins");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    state.recentPush = {
+    state.recentSync = {
       preview: {
-        operation: "push",
+        operation: "sync",
         eligible: [],
-        blocked: [{ repo: state.repos[0], reason: "当前分支落后于 upstream" }],
+        blocked: [{ repo: state.repos[0], reason: "需先拉取合并后推送" }],
         warnings: [],
       },
       results: [
@@ -199,7 +198,7 @@ describe("AppShell sidebar", () => {
     };
 
     await waitFor(() => {
-      expect(view.getByLabelText("推送失败")).toHaveAttribute("title", "认证失败");
+      expect(view.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
     });
   });
 

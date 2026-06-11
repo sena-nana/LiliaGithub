@@ -49,7 +49,7 @@ import {
   closeBulkPreview,
   executeBulk,
   previewBulk,
-  pushAll,
+  syncAll,
 } from "./workspace/bulk";
 import {
   openPath,
@@ -95,7 +95,7 @@ export function useWorkspace() {
     continueConflictOperation,
     previewBulk,
     executeBulk,
-    pushAll,
+    syncAll,
     closeBulkPreview,
     repoById,
     openPath,

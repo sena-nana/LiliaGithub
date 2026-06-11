@@ -30,10 +30,10 @@ export interface WorkspaceState {
   bulkPreview: BulkSyncPreview | null;
   bulkResults: BulkSyncResult[];
   bulkRunning: boolean;
-  recentPush: RecentBulkPushState | null;
+  recentSync: RecentBulkSyncState | null;
 }
 
-export interface RecentBulkPushState {
+export interface RecentBulkSyncState {
   preview: BulkSyncPreview;
   results: BulkSyncResult[];
   retryingRepoIds: string[];
@@ -58,7 +58,7 @@ export const state = reactive<WorkspaceState>({
   bulkPreview: null,
   bulkResults: [],
   bulkRunning: false,
-  recentPush: null,
+  recentSync: null,
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -130,24 +130,27 @@ export function repoById(repoId: string) {
   return state.repos.find((repo) => repo.id === repoId) ?? null;
 }
 
-export function bulkPushRepoIds(preview: BulkSyncPreview | null = state.bulkPreview) {
-  if (!preview || preview.operation !== "push") return new Set<string>();
+export function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPreview) {
+  if (!preview || !["push", "sync"].includes(preview.operation)) return new Set<string>();
   const ids = new Set<string>();
-  for (const item of [...preview.eligible, ...preview.blocked]) {
-    if (item.repo.ahead > 0) ids.add(item.repo.id);
+  const items = preview.operation === "push" ? [...preview.eligible, ...preview.blocked] : preview.eligible;
+  for (const item of items) {
+    if (item.repo.ahead > 0 || item.repo.behind > 0) ids.add(item.repo.id);
   }
   return ids;
 }
 
-export function bulkPushRunningRepoIds() {
+export function bulkSyncRunningRepoIds() {
   if (!state.bulkRunning) return new Set<string>();
-  return bulkPushRepoIds();
+  return bulkSyncRepoIds();
 }
 
-export function pushErrorByRepoId() {
-  const recentErrors = recentPushErrorMap();
+export function syncErrorByRepoId() {
+  const recentErrors = recentSyncErrorMap();
   if (recentErrors.size) return recentErrors;
-  if (state.bulkPreview?.operation !== "push") return new Map<string, string>();
+  if (!state.bulkPreview || !["push", "sync"].includes(state.bulkPreview.operation)) {
+    return new Map<string, string>();
+  }
   return new Map(
     state.bulkResults
       .filter((result) => result.status === "error")
@@ -155,61 +158,61 @@ export function pushErrorByRepoId() {
   );
 }
 
-export function recentPushErrorForRepo(repoId: string) {
-  const result = state.recentPush?.results.find((item) => item.repoId === repoId && item.status === "error");
+export function recentSyncErrorForRepo(repoId: string) {
+  const result = state.recentSync?.results.find((item) => item.repoId === repoId && item.status === "error");
   if (!result) return null;
   return {
     message: result.message,
-    retrying: state.recentPush?.retryingRepoIds.includes(repoId) ?? false,
+    retrying: state.recentSync?.retryingRepoIds.includes(repoId) ?? false,
   };
 }
 
-export function rememberRecentPush(preview: BulkSyncPreview, results: BulkSyncResult[]) {
-  if (preview.operation !== "push") return;
-  state.recentPush = {
+export function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncResult[]) {
+  if (!["push", "sync"].includes(preview.operation)) return;
+  state.recentSync = {
     preview,
     results,
-    retryingRepoIds: state.recentPush?.retryingRepoIds.filter((id) =>
+    retryingRepoIds: state.recentSync?.retryingRepoIds.filter((id) =>
       results.some((result) => result.repoId === id && result.status === "error"),
     ) ?? [],
     updatedAt: Date.now(),
   };
 }
 
-export function beginRecentPushRetry(repoId: string) {
-  if (!state.recentPush) return false;
-  if (!isRecentPushIssue(repoId)) return false;
-  if (!state.recentPush.retryingRepoIds.includes(repoId)) {
-    state.recentPush.retryingRepoIds = [...state.recentPush.retryingRepoIds, repoId];
+export function beginRecentSyncRetry(repoId: string) {
+  if (!state.recentSync) return false;
+  if (!isRecentSyncIssue(repoId)) return false;
+  if (!state.recentSync.retryingRepoIds.includes(repoId)) {
+    state.recentSync.retryingRepoIds = [...state.recentSync.retryingRepoIds, repoId];
   }
   return true;
 }
 
-export function finishRecentPushRetry(result: BulkSyncResult) {
-  if (!state.recentPush) return;
-  const existingResult = state.recentPush.results.some((item) => item.repoId === result.repoId);
+export function finishRecentSyncRetry(result: BulkSyncResult) {
+  if (!state.recentSync) return;
+  const existingResult = state.recentSync.results.some((item) => item.repoId === result.repoId);
   const nextResults = existingResult
-    ? state.recentPush.results.map((item) => (item.repoId === result.repoId ? result : item))
-    : [...state.recentPush.results, result];
-  state.recentPush = {
-    ...state.recentPush,
+    ? state.recentSync.results.map((item) => (item.repoId === result.repoId ? result : item))
+    : [...state.recentSync.results, result];
+  state.recentSync = {
+    ...state.recentSync,
     preview: {
-      ...state.recentPush.preview,
-      blocked: state.recentPush.preview.blocked.filter((item) => item.repo.id !== result.repoId),
+      ...state.recentSync.preview,
+      blocked: state.recentSync.preview.blocked.filter((item) => item.repo.id !== result.repoId),
     },
     results: nextResults,
-    retryingRepoIds: state.recentPush.retryingRepoIds.filter((id) => id !== result.repoId),
+    retryingRepoIds: state.recentSync.retryingRepoIds.filter((id) => id !== result.repoId),
     updatedAt: Date.now(),
   };
 }
 
-function isRecentPushIssue(repoId: string) {
-  return Boolean(recentPushErrorForRepo(repoId));
+function isRecentSyncIssue(repoId: string) {
+  return Boolean(recentSyncErrorForRepo(repoId));
 }
 
-function recentPushErrorMap() {
+function recentSyncErrorMap() {
   const errors = new Map<string, string>();
-  for (const result of state.recentPush?.results ?? []) {
+  for (const result of state.recentSync?.results ?? []) {
     if (result.status === "error") errors.set(result.repoId, result.message);
   }
   return errors;
@@ -233,6 +236,6 @@ export function resetWorkspaceStateForTests() {
   state.bulkPreview = null;
   state.bulkResults = [];
   state.bulkRunning = false;
-  state.recentPush = null;
+  state.recentSync = null;
   deviceFlow.value = null;
 }

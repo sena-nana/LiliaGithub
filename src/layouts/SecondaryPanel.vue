@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
-import { AlertCircle, EyeOff, FilePlus2, FolderGit2, GitPullRequestArrow, LoaderCircle, RefreshCw, Search, Upload, X } from "@lucide/vue";
+import { AlertCircle, EyeOff, FilePlus2, FolderGit2, GitPullRequestArrow, LoaderCircle, RefreshCw, Search, X } from "@lucide/vue";
 import {
   SIDEBAR_FOOTER_LINKS,
   SIDEBAR_NAV,
 } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
-  bulkPushRunningRepoIds as getBulkPushRunningRepoIds,
-  pushErrorByRepoId,
+  bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
+  syncErrorByRepoId,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
@@ -62,12 +62,12 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
   return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
 }
 
-const bulkPushRunningRepoIds = computed(() => {
-  return getBulkPushRunningRepoIds();
+const bulkSyncRunningRepoIds = computed(() => {
+  return getBulkSyncRunningRepoIds();
 });
 
-const bulkPushErrorByRepoId = computed(() => {
-  return pushErrorByRepoId();
+const bulkSyncErrorByRepoId = computed(() => {
+  return syncErrorByRepoId();
 });
 
 const filteredRepos = computed(() => {
@@ -208,29 +208,19 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
       <button
         type="button"
         class="sb-action"
-        title="拉取预检"
-        aria-label="拉取预检"
-        :disabled="!workspace.isReady.value"
-        @click="workspace.previewBulk('pull')"
-      >
-        <GitPullRequestArrow :size="16" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        class="sb-action"
-        :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push' }"
-        title="一键推送"
-        aria-label="一键推送"
+        :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync' }"
+        title="一键同步"
+        aria-label="一键同步"
         :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
-        @click="workspace.pushAll"
+        @click="workspace.syncAll"
       >
         <LoaderCircle
-          v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push'"
+          v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync'"
           :size="16"
           aria-hidden="true"
           class="sb-spin"
         />
-        <Upload v-else :size="16" aria-hidden="true" />
+        <GitPullRequestArrow v-else :size="16" aria-hidden="true" />
       </button>
     </div>
 
@@ -298,18 +288,18 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
           <FolderGit2 :size="14" aria-hidden="true" />
           <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
           <span
-            v-if="bulkPushRunningRepoIds.has(repo.id)"
+            v-if="bulkSyncRunningRepoIds.has(repo.id)"
             class="sb-badge"
-            title="正在推送"
-            aria-label="正在推送"
+            title="正在同步"
+            aria-label="正在同步"
           >
             <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
           </span>
           <span
-            v-else-if="bulkPushErrorByRepoId.has(repo.id)"
+            v-else-if="bulkSyncErrorByRepoId.has(repo.id)"
             class="sb-badge sb-badge--error"
-            :title="bulkPushErrorByRepoId.get(repo.id) ?? '推送失败'"
-            aria-label="推送失败"
+            :title="bulkSyncErrorByRepoId.get(repo.id) ?? '同步失败'"
+            aria-label="同步失败"
           >
             <AlertCircle :size="11" aria-hidden="true" />
           </span>

@@ -198,7 +198,7 @@ export interface RepoDetail {
   conflicts: RepoConflictState;
 }
 
-export type BulkOperation = "pull" | "push";
+export type BulkOperation = "pull" | "push" | "sync";
 
 export interface BulkSyncRepo {
   repo: RepoSummary;

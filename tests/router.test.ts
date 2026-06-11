@@ -35,8 +35,7 @@ describe("基础路由", () => {
       await screen.findByRole("heading", { level: 1, name: "项目总览" }),
     ).toBeInTheDocument();
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "一键拉取" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "一键推送" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
   });
 
   it("侧边栏左下角提供设置、扩展和 GitHub 状态入口", async () => {
@@ -219,47 +218,47 @@ describe("基础路由", () => {
     expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
   });
 
-  it("总览页一键推送直接执行且不打开 push 预检弹层", async () => {
+  it("总览页一键同步直接执行且不打开预检弹层", async () => {
     await renderAt("/");
 
-    const pushButtons = await screen.findAllByRole("button", { name: "一键推送" });
-    await fireEvent.click(pushButtons[1]);
+    const syncButtons = await screen.findAllByRole("button", { name: "一键同步" });
+    await fireEvent.click(syncButtons[1]);
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
     });
-    expect(screen.queryByText("一键推送预检")).toBeNull();
+    expect(screen.queryByText("一键拉取预检")).toBeNull();
   });
 
-  it("批量推送失败后从侧边栏进入项目详情处理失败仓库", async () => {
+  it("批量同步失败后从侧边栏进入项目详情处理失败仓库", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
       repoIds.map((repoId) => ({
         repoId,
-        status: repoId === "LiliaGithub" && operation === "push" ? "error" : "success",
-        message: repoId === "LiliaGithub" && operation === "push" ? "认证失败" : "完成",
-        summary: repoId === "LiliaGithub" && operation === "push" ? null : repoSummary(repoId),
+        status: repoId === "LiliaGithub" && operation === "sync" ? "error" : "success",
+        message: repoId === "LiliaGithub" && operation === "sync" ? "认证失败" : "完成",
+        summary: repoId === "LiliaGithub" && operation === "sync" ? null : repoSummary(repoId),
       })),
     );
     await renderAt("/");
 
-    const pushButtons = await screen.findAllByRole("button", { name: "一键推送" });
-    await fireEvent.click(pushButtons[1]);
+    const syncButtons = await screen.findAllByRole("button", { name: "一键同步" });
+    await fireEvent.click(syncButtons[1]);
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
-      expect(screen.queryByLabelText("最近推送失败")).toBeNull();
-      expect(screen.getByLabelText("推送失败")).toHaveAttribute("title", "认证失败");
+      expect(screen.queryByLabelText("最近同步失败")).toBeNull();
+      expect(screen.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
     });
 
-    const failedLink = screen.getByLabelText("推送失败").closest("a");
-    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到推送失败仓库入口");
+    const failedLink = screen.getByLabelText("同步失败").closest("a");
+    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到同步失败仓库入口");
     await fireEvent.click(failedLink);
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(screen.getByLabelText("最近推送失败")).toHaveTextContent("认证失败");
+    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
 
     service.setFallbackBulkExecuteOverrideForTests(null);
-    await fireEvent.click(within(screen.getByLabelText("最近推送失败")).getByRole("button", { name: "重试" }));
+    await fireEvent.click(within(screen.getByLabelText("最近同步失败")).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
       expect(screen.queryByText("认证失败")).toBeNull();

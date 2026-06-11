@@ -13,10 +13,10 @@ defineEmits<{
 </script>
 
 <template>
-  <section class="repo-push-error" aria-label="最近推送失败">
+  <section class="repo-push-error" aria-label="最近同步失败">
     <AlertCircle :size="16" aria-hidden="true" />
     <div>
-      <strong>最近推送失败</strong>
+      <strong>最近同步失败</strong>
       <p>{{ message }}</p>
     </div>
     <button
