@@ -58,6 +58,11 @@ describe("基础路由", () => {
     expect(await screen.findByLabelText("GitHub 提交贡献图")).toBeInTheDocument();
     expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
     expect(document.querySelector(".contribution-day[title$='次提交']")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
+    expect(screen.getByLabelText("编程语言占比图")).toBeInTheDocument();
+    expect(screen.getByText("TypeScript")).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
   });
 

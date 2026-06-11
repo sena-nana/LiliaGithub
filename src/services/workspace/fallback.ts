@@ -36,6 +36,12 @@ const fallbackRepos: RepoSummary[] = [
     conflictCount: 0,
     lastCommitAt: 1_785_000_000,
     lastCommitMessage: "搭建 LiliaGithub MVP",
+    languageStats: [
+      { language: "TypeScript", bytes: 66_000 },
+      { language: "Vue", bytes: 42_000 },
+      { language: "Rust", bytes: 32_000 },
+      { language: "CSS", bytes: 10_000 },
+    ],
   },
   {
     id: "Lilia",
@@ -53,6 +59,11 @@ const fallbackRepos: RepoSummary[] = [
     conflictCount: 1,
     lastCommitAt: 1_784_990_000,
     lastCommitMessage: "完善 GitHub 授权",
+    languageStats: [
+      { language: "TypeScript", bytes: 52_000 },
+      { language: "Vue", bytes: 28_000 },
+      { language: "CSS", bytes: 8_000 },
+    ],
   },
 ];
 
@@ -176,6 +187,7 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
       conflictCount: 0,
       lastCommitAt: null,
       lastCommitMessage: null,
+      languageStats: [],
     };
     fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
     return { ...repo };

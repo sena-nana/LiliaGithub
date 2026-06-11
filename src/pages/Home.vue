@@ -38,20 +38,56 @@ type ContributionCell = GitHubContributionDay & {
   level: number;
 };
 
+type LanguageSlice = {
+  language: string;
+  bytes: number;
+  percent: number;
+  color: string;
+  offset: number;
+};
+
+type LanguageOverview = {
+  totalBytes: number;
+  slices: LanguageSlice[];
+};
+
+const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
+
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 
 const totalContributions = computed(() =>
   workspace.state.githubContributions.days.reduce((total, day) => total + day.count, 0),
 );
 
-const sortedDirtyRepos = computed(() =>
-  [...workspace.state.repos]
-    .sort((a, b) =>
-      (b.stagedCount + b.unstagedCount + b.untrackedCount) -
-      (a.stagedCount + a.unstagedCount + a.untrackedCount)
-    )
-    .slice(0, 6),
-);
+const languageOverview = computed<LanguageOverview>(() => {
+  const totals = new Map<string, number>();
+  for (const repo of workspace.state.repos) {
+    for (const stat of repo.languageStats) {
+      totals.set(stat.language, (totals.get(stat.language) ?? 0) + stat.bytes);
+    }
+  }
+  const sorted = [...totals.entries()]
+    .map(([language, bytes]) => ({ language, bytes }))
+    .filter((item) => item.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes || a.language.localeCompare(b.language));
+  const top = sorted.slice(0, 6);
+  const restBytes = sorted.slice(6).reduce((total, item) => total + item.bytes, 0);
+  const items = restBytes > 0 ? [...top, { language: "Other", bytes: restBytes }] : top;
+  const totalBytes = items.reduce((total, item) => total + item.bytes, 0);
+  let offset = 0;
+  const slices = items.map((item, index) => {
+    const percent = totalBytes > 0 ? (item.bytes / totalBytes) * 100 : 0;
+    const slice = {
+      ...item,
+      percent,
+      color: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length],
+      offset,
+    };
+    offset += percent;
+    return slice;
+  });
+  return { totalBytes, slices };
+});
 
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   workspace.state.repos.map((repo) => ({
@@ -160,6 +196,16 @@ function contributionLevel(count: number, maxCount: number) {
 
 function contributionTitle(day: GitHubContributionDay) {
   return `${day.date}：${day.count} 次提交`;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatPercent(percent: number) {
+  return `${Math.round(percent)}%`;
 }
 
 </script>
@@ -348,14 +394,39 @@ function contributionTitle(day: GitHubContributionDay) {
           </div>
         </div>
 
-        <div class="card">
-          <h2>变更量排行</h2>
-          <ul class="repo-list">
-            <li v-for="repo in sortedDirtyRepos" :key="repo.id">
-              <span>{{ repo.name }}</span>
-              <strong>{{ dirtyCount(repo) }}</strong>
-            </li>
-          </ul>
+        <div class="card language-card">
+          <div class="card-heading">
+            <div>
+              <h2>编程语言占比</h2>
+              <p class="language-total">{{ formatBytes(languageOverview.totalBytes) }} 代码量</p>
+            </div>
+          </div>
+          <p v-if="!languageOverview.slices.length" class="language-empty">暂无语言数据</p>
+          <div v-else class="language-chart" aria-label="编程语言占比图">
+            <svg class="language-pie" viewBox="0 0 42 42" role="img" aria-label="编程语言占比饼图">
+              <circle class="language-pie__track" cx="21" cy="21" r="15.9155" />
+              <circle
+                v-for="slice in languageOverview.slices"
+                :key="slice.language"
+                class="language-pie__slice"
+                cx="21"
+                cy="21"
+                r="15.9155"
+                :stroke="slice.color"
+                :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
+                :stroke-dashoffset="-slice.offset"
+              >
+                <title>{{ slice.language }}：{{ formatPercent(slice.percent) }}，{{ formatBytes(slice.bytes) }}</title>
+              </circle>
+            </svg>
+            <ul class="language-list">
+              <li v-for="slice in languageOverview.slices" :key="slice.language">
+                <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
+                <span class="language-name">{{ slice.language }}</span>
+                <strong>{{ formatPercent(slice.percent) }}</strong>
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -737,22 +808,81 @@ function contributionTitle(day: GitHubContributionDay) {
   background: color-mix(in srgb, var(--ok) 14%, var(--bg-subtle));
 }
 
-.repo-list {
+.language-card {
+  min-width: 0;
+}
+
+.language-total {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.language-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.language-chart {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.language-pie {
+  width: 132px;
+  height: 132px;
+  transform: rotate(-90deg);
+}
+
+.language-pie__track,
+.language-pie__slice {
+  fill: none;
+  stroke-width: 10;
+}
+
+.language-pie__track {
+  stroke: var(--bg-subtle);
+}
+
+.language-pie__slice {
+  transition: stroke-dasharray 0.2s ease;
+}
+
+.language-list {
   list-style: none;
   padding: 0;
   margin: 0;
+  min-width: 0;
 }
 
-.repo-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 0;
+.language-list li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
   border-bottom: 1px solid var(--border-soft);
 }
 
-.repo-list li:last-child {
+.language-list li:last-child {
   border-bottom: 0;
+}
+
+.language-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.language-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-table {
