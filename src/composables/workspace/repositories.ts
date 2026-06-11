@@ -1,6 +1,6 @@
 import {
-  beginRecentPushRetry,
-  finishRecentPushRetry,
+  beginRecentSyncRetry,
+  finishRecentSyncRetry,
   setRepoDetail,
   state,
   upsertRepo,
@@ -95,12 +95,12 @@ export async function mergePull(repoId: string) {
 
 export async function push(repoId: string) {
   const service = await loadWorkspaceService();
-  const updateRecentPush = beginRecentPushRetry(repoId);
+  const updateRecentSync = beginRecentSyncRetry(repoId);
   try {
     await applyRepoMutation(repoId, async () => {
       const summary = await service.pushRepo(repoId);
-      if (updateRecentPush) {
-        finishRecentPushRetry({
+      if (updateRecentSync) {
+        finishRecentSyncRetry({
           repoId,
           status: "success",
           message: "完成",
@@ -110,8 +110,8 @@ export async function push(repoId: string) {
       return summary;
     });
   } catch (err) {
-    if (updateRecentPush) {
-      finishRecentPushRetry({
+    if (updateRecentSync) {
+      finishRecentSyncRetry({
         repoId,
         status: "error",
         message: String(err),

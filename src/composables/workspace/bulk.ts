@@ -1,5 +1,5 @@
 import type { BulkOperation } from "../../services/workspace";
-import { bulkPushRepoIds, rememberRecentPush, state, upsertRepo } from "./state";
+import { bulkSyncRepoIds, rememberRecentSync, state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 
 export async function previewBulk(operation: BulkOperation) {
@@ -9,8 +9,8 @@ export async function previewBulk(operation: BulkOperation) {
 
 function bulkExecutionRepoIds() {
   if (!state.bulkPreview) return;
-  if (state.bulkPreview.operation === "push") {
-    return Array.from(bulkPushRepoIds(state.bulkPreview));
+  if (state.bulkPreview.operation === "push" || state.bulkPreview.operation === "sync") {
+    return Array.from(bulkSyncRepoIds(state.bulkPreview));
   }
   return state.bulkPreview.eligible.map((item) => item.repo.id);
 }
@@ -26,13 +26,13 @@ export async function executeBulk(repoIds = bulkExecutionRepoIds()) {
   }
 }
 
-export async function pushAll() {
+export async function syncAll() {
   if (state.bulkRunning) return;
   state.bulkRunning = true;
   try {
     const service = await loadWorkspaceService();
-    applyBulkPreview(await service.bulkSyncPreview("push"));
-    applyBulkResults(await service.bulkSyncExecute("push", bulkExecutionRepoIds() ?? []));
+    applyBulkPreview(await service.bulkSyncPreview("sync"));
+    applyBulkResults(await service.bulkSyncExecute("sync", bulkExecutionRepoIds() ?? []));
   } finally {
     state.bulkRunning = false;
   }
@@ -45,7 +45,7 @@ export function closeBulkPreview() {
 function applyBulkPreview(preview: NonNullable<typeof state.bulkPreview>) {
   state.bulkPreview = preview;
   state.bulkResults = [];
-  rememberRecentPush(preview, []);
+  rememberRecentSync(preview, []);
 }
 
 function applyBulkResults(results: typeof state.bulkResults) {
@@ -56,6 +56,6 @@ function applyBulkResults(results: typeof state.bulkResults) {
     }
   }
   if (state.bulkPreview) {
-    rememberRecentPush(state.bulkPreview, results);
+    rememberRecentSync(state.bulkPreview, results);
   }
 }

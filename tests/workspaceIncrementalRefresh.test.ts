@@ -15,11 +15,11 @@ import {
   unhideRepo,
   unstage,
 } from "../src/composables/workspace/repositories";
-import { closeBulkPreview, executeBulk, previewBulk, pushAll } from "../src/composables/workspace/bulk";
+import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/composables/workspace/bulk";
 import {
-  bulkPushRepoIds,
-  pushErrorByRepoId,
-  recentPushErrorForRepo,
+  bulkSyncRepoIds,
+  syncErrorByRepoId,
+  recentSyncErrorForRepo,
   resetWorkspaceStateForTests,
   state,
 } from "../src/composables/workspace/state";
@@ -123,62 +123,68 @@ describe("workspace incremental refresh", () => {
     expect(state.repos.find((repo) => repo.id === "Lilia")?.ahead).toBe(3);
   });
 
-  it("一键推送直接预检并执行待推送仓库，不再调用单仓库 push", async () => {
+  it("一键同步直接预检并执行可同步仓库，不再调用单仓库 push", async () => {
     const first = repoSummary("LiliaGithub", { ahead: 1 });
-    const blocked = repoSummary("Lilia", { ahead: 1, behind: 1 });
+    const both = repoSummary("Lilia", { ahead: 1, behind: 1 });
     const preview: BulkSyncPreview = {
-      operation: "push",
-      eligible: [{ repo: first, reason: "有本地提交待推送" }],
-      blocked: [{ repo: blocked, reason: "当前分支落后于 upstream" }],
+      operation: "sync",
+      eligible: [
+        { repo: first, reason: "有本地提交待推送" },
+        { repo: both, reason: "需先拉取合并后推送" },
+      ],
+      blocked: [],
       warnings: [],
     };
     service.bulkSyncPreview.mockResolvedValue(preview);
     service.bulkSyncExecute.mockResolvedValue([
       { repoId: first.id, status: "success", message: "完成", summary: repoSummary(first.id, { ahead: 0 }) },
-      { repoId: blocked.id, status: "error", message: "当前分支落后于 upstream，已跳过 push", summary: null },
+      { repoId: both.id, status: "error", message: "合并产生冲突，请处理后推送", summary: repoSummary(both.id, { conflictCount: 1 }) },
     ]);
 
-    await pushAll();
+    await syncAll();
 
-    expect(service.bulkSyncPreview).toHaveBeenCalledWith("push");
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [first.id, blocked.id]);
+    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync");
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, both.id]);
     expect(service.pushRepo).not.toHaveBeenCalled();
     expect(state.bulkPreview).toEqual(preview);
     expect(state.bulkResults).toEqual([
       { repoId: first.id, status: "success", message: "完成", summary: repoSummary(first.id, { ahead: 0 }) },
-      { repoId: blocked.id, status: "error", message: "当前分支落后于 upstream，已跳过 push", summary: null },
+      { repoId: both.id, status: "error", message: "合并产生冲突，请处理后推送", summary: repoSummary(both.id, { conflictCount: 1 }) },
     ]);
   });
 
-  it("push 状态 helper 只暴露真实执行仓库和失败结果", () => {
+  it("sync 状态 helper 只暴露真实执行仓库和失败结果", () => {
     const ready = repoSummary("LiliaGithub", { ahead: 1 });
-    const blocked = repoSummary("Lilia", { ahead: 1, behind: 1 });
+    const diverged = repoSummary("Lilia", { ahead: 1, behind: 1 });
     state.bulkPreview = {
-      operation: "push",
-      eligible: [{ repo: ready, reason: "有本地提交待推送" }],
-      blocked: [{ repo: blocked, reason: "当前分支落后于 upstream" }],
+      operation: "sync",
+      eligible: [
+        { repo: ready, reason: "有本地提交待推送" },
+        { repo: diverged, reason: "需先拉取合并后推送" },
+      ],
+      blocked: [],
       warnings: [],
     };
-    state.recentPush = {
+    state.recentSync = {
       preview: state.bulkPreview,
       results: [],
       retryingRepoIds: [],
       updatedAt: 1,
     };
 
-    expect(Array.from(bulkPushRepoIds())).toEqual(["LiliaGithub", "Lilia"]);
-    expect(pushErrorByRepoId().size).toBe(0);
-    expect(recentPushErrorForRepo(blocked.id)).toBeNull();
+    expect(Array.from(bulkSyncRepoIds())).toEqual(["LiliaGithub", "Lilia"]);
+    expect(syncErrorByRepoId().size).toBe(0);
+    expect(recentSyncErrorForRepo(diverged.id)).toBeNull();
 
-    state.recentPush = {
-      ...state.recentPush,
-      results: [{ repoId: blocked.id, status: "error", message: "当前分支落后于 upstream，已跳过 push", summary: null }],
-      retryingRepoIds: [blocked.id],
+    state.recentSync = {
+      ...state.recentSync,
+      results: [{ repoId: diverged.id, status: "error", message: "合并产生冲突，请处理后推送", summary: null }],
+      retryingRepoIds: [diverged.id],
     };
 
-    expect(pushErrorByRepoId().get(blocked.id)).toBe("当前分支落后于 upstream，已跳过 push");
-    expect(recentPushErrorForRepo(blocked.id)).toEqual({
-      message: "当前分支落后于 upstream，已跳过 push",
+    expect(syncErrorByRepoId().get(diverged.id)).toBe("合并产生冲突，请处理后推送");
+    expect(recentSyncErrorForRepo(diverged.id)).toEqual({
+      message: "合并产生冲突，请处理后推送",
       retrying: true,
     });
   });
@@ -211,41 +217,41 @@ describe("workspace incremental refresh", () => {
     ]);
     expect(state.repos.find((repo) => repo.id === first.id)?.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === second.id)?.ahead).toBe(2);
-    expect(state.recentPush?.results).toEqual(state.bulkResults);
+    expect(state.recentSync?.results).toEqual(state.bulkResults);
   });
 
-  it("关闭内部 push 快照后仍保留最近一次执行失败结果", async () => {
+  it("关闭内部 sync 快照后仍保留最近一次执行失败结果", async () => {
     const blocked = repoSummary("Lilia", { ahead: 1, behind: 1 });
     const failed = repoSummary("LiliaGithub", { ahead: 1 });
     service.bulkSyncPreview.mockResolvedValue({
-      operation: "push",
+      operation: "sync",
       eligible: [{ repo: failed, reason: "有本地提交待推送" }],
-      blocked: [{ repo: blocked, reason: "当前分支落后于 upstream" }],
+      blocked: [{ repo: blocked, reason: "存在未提交变更" }],
       warnings: [],
     });
     service.bulkSyncExecute.mockResolvedValue([
       { repoId: failed.id, status: "error", message: "认证失败", summary: null },
-      { repoId: blocked.id, status: "error", message: "当前分支落后于 upstream，已跳过 push", summary: null },
+      { repoId: blocked.id, status: "error", message: "合并产生冲突，请处理后推送", summary: null },
     ]);
 
-    await pushAll();
+    await syncAll();
     closeBulkPreview();
 
     expect(state.bulkPreview).toBeNull();
-    expect(state.recentPush?.preview.blocked).toEqual([{ repo: blocked, reason: "当前分支落后于 upstream" }]);
-    expect(state.recentPush?.results).toEqual([
+    expect(state.recentSync?.preview.blocked).toEqual([{ repo: blocked, reason: "存在未提交变更" }]);
+    expect(state.recentSync?.results).toEqual([
       { repoId: failed.id, status: "error", message: "认证失败", summary: null },
-      { repoId: blocked.id, status: "error", message: "当前分支落后于 upstream，已跳过 push", summary: null },
+      { repoId: blocked.id, status: "error", message: "合并产生冲突，请处理后推送", summary: null },
     ]);
   });
 
-  it("单仓库 push 重试会更新最近一次 push 失败状态", async () => {
+  it("单仓库 push 重试会更新最近一次同步失败状态", async () => {
     const failed = repoSummary("LiliaGithub", { ahead: 1 });
     const updated = repoSummary("LiliaGithub", { ahead: 0 });
     state.repos = [failed];
-    state.recentPush = {
+    state.recentSync = {
       preview: {
-        operation: "push",
+        operation: "sync",
         eligible: [{ repo: failed, reason: "有本地提交待推送" }],
         blocked: [],
         warnings: [],
@@ -259,10 +265,10 @@ describe("workspace incremental refresh", () => {
 
     await push(failed.id);
 
-    expect(state.recentPush?.results).toEqual([
+    expect(state.recentSync?.results).toEqual([
       { repoId: failed.id, status: "success", message: "完成", summary: updated },
     ]);
-    expect(state.recentPush?.retryingRepoIds).toEqual([]);
+    expect(state.recentSync?.retryingRepoIds).toEqual([]);
     expect(state.repos[0].ahead).toBe(0);
   });
 

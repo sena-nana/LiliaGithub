@@ -9,7 +9,6 @@ import {
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
-  Upload,
   X,
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
@@ -147,19 +146,15 @@ function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untracke
             <RefreshCw :size="14" aria-hidden="true" />
             刷新
           </button>
-          <button type="button" class="ghost" @click="workspace.previewBulk('pull')">
-            <GitPullRequestArrow :size="14" aria-hidden="true" />
-            一键拉取
-          </button>
-          <button type="button" class="primary" :disabled="workspace.state.bulkRunning" @click="workspace.pushAll">
+          <button type="button" class="primary" :disabled="workspace.state.bulkRunning" @click="workspace.syncAll">
             <LoaderCircle
-              v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push'"
+              v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync'"
               :size="14"
               aria-hidden="true"
               class="sb-spin"
             />
-            <Upload v-else :size="14" aria-hidden="true" />
-            一键推送
+            <GitPullRequestArrow v-else :size="14" aria-hidden="true" />
+            一键同步
           </button>
         </div>
       </div>
