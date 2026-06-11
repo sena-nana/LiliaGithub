@@ -30,6 +30,14 @@ export interface WorkspaceState {
   bulkPreview: BulkSyncPreview | null;
   bulkResults: BulkSyncResult[];
   bulkRunning: boolean;
+  recentPush: RecentBulkPushState | null;
+}
+
+export interface RecentBulkPushState {
+  preview: BulkSyncPreview;
+  results: BulkSyncResult[];
+  retryingRepoIds: string[];
+  updatedAt: number;
 }
 
 export const state = reactive<WorkspaceState>({
@@ -50,6 +58,7 @@ export const state = reactive<WorkspaceState>({
   bulkPreview: null,
   bulkResults: [],
   bulkRunning: false,
+  recentPush: null,
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -121,6 +130,54 @@ export function repoById(repoId: string) {
   return state.repos.find((repo) => repo.id === repoId) ?? null;
 }
 
+export function rememberRecentPush(preview: BulkSyncPreview, results: BulkSyncResult[]) {
+  if (preview.operation !== "push") return;
+  state.recentPush = {
+    preview,
+    results,
+    retryingRepoIds: state.recentPush?.retryingRepoIds.filter((id) =>
+      results.some((result) => result.repoId === id && result.status === "error"),
+    ) ?? [],
+    updatedAt: Date.now(),
+  };
+}
+
+export function beginRecentPushRetry(repoId: string) {
+  if (!state.recentPush) return false;
+  if (!isRecentPushIssue(repoId)) return false;
+  if (!state.recentPush.retryingRepoIds.includes(repoId)) {
+    state.recentPush.retryingRepoIds = [...state.recentPush.retryingRepoIds, repoId];
+  }
+  return true;
+}
+
+export function finishRecentPushRetry(result: BulkSyncResult) {
+  if (!state.recentPush) return;
+  const existingResult = state.recentPush.results.some((item) => item.repoId === result.repoId);
+  const nextResults = existingResult
+    ? state.recentPush.results.map((item) => (item.repoId === result.repoId ? result : item))
+    : [...state.recentPush.results, result];
+  state.recentPush = {
+    ...state.recentPush,
+    preview: {
+      ...state.recentPush.preview,
+      blocked: state.recentPush.preview.blocked.filter((item) => item.repo.id !== result.repoId),
+    },
+    results: nextResults,
+    retryingRepoIds: state.recentPush.retryingRepoIds.filter((id) => id !== result.repoId),
+    updatedAt: Date.now(),
+  };
+}
+
+function isRecentPushIssue(repoId: string) {
+  const recentPush = state.recentPush;
+  if (!recentPush) return false;
+  return (
+    recentPush.results.some((result) => result.repoId === repoId && result.status === "error") ||
+    recentPush.preview.blocked.some((item) => item.repo.id === repoId)
+  );
+}
+
 export function resetWorkspaceStateForTests() {
   state.settings = null;
   state.bindingStatus = null;
@@ -139,5 +196,6 @@ export function resetWorkspaceStateForTests() {
   state.bulkPreview = null;
   state.bulkResults = [];
   state.bulkRunning = false;
+  state.recentPush = null;
   deviceFlow.value = null;
 }

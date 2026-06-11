@@ -228,6 +228,7 @@ function createFallbackSettings(): WorkspaceSettings {
 }
 
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
+let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
@@ -235,6 +236,7 @@ let fallbackLaunchLogIndex = 1;
 
 export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
+  fallbackBulkExecuteOverride = null;
   for (const key of Object.keys(fallbackLaunchStatuses)) {
     delete fallbackLaunchStatuses[key];
   }
@@ -242,6 +244,12 @@ export function resetWorkspaceFallbacksForTests() {
     delete fallbackLaunchLogs[key];
   }
   fallbackLaunchLogIndex = 1;
+}
+
+export function setFallbackBulkExecuteOverrideForTests(
+  override: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null,
+) {
+  fallbackBulkExecuteOverride = override;
 }
 
 function canInvoke() {
@@ -653,7 +661,7 @@ export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPrevi
 
 export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {
   return call("bulk_sync_execute", { operation, repoIds }, () =>
-    repoIds.map((repoId) => {
+    fallbackBulkExecuteOverride?.(operation, repoIds) ?? repoIds.map((repoId) => {
       const repo = fallbackRepo(repoId);
       return {
         summary: {

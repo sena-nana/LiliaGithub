@@ -1,4 +1,10 @@
-import { setRepoDetail, state, upsertRepo } from "./state";
+import {
+  beginRecentPushRetry,
+  finishRecentPushRetry,
+  setRepoDetail,
+  state,
+  upsertRepo,
+} from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 
 async function applyRepoMutation(repoId: string, loadSummary: () => Promise<import("../../services/workspace").RepoSummary>) {
@@ -72,7 +78,31 @@ export async function pull(repoId: string) {
 
 export async function push(repoId: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.pushRepo(repoId));
+  const updateRecentPush = beginRecentPushRetry(repoId);
+  try {
+    await applyRepoMutation(repoId, async () => {
+      const summary = await service.pushRepo(repoId);
+      if (updateRecentPush) {
+        finishRecentPushRetry({
+          repoId,
+          status: "success",
+          message: "完成",
+          summary,
+        });
+      }
+      return summary;
+    });
+  } catch (err) {
+    if (updateRecentPush) {
+      finishRecentPushRetry({
+        repoId,
+        status: "error",
+        message: String(err),
+        summary: null,
+      });
+    }
+    throw err;
+  }
 }
 
 export async function checkout(repoId: string, branch: string) {

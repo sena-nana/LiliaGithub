@@ -1,11 +1,12 @@
 import type { BulkOperation } from "../../services/workspace";
-import { state, upsertRepo } from "./state";
+import { rememberRecentPush, state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 
 export async function previewBulk(operation: BulkOperation) {
   const service = await loadWorkspaceService();
   state.bulkPreview = await service.bulkSyncPreview(operation);
   state.bulkResults = [];
+  rememberRecentPush(state.bulkPreview, []);
 }
 
 export async function executeBulk() {
@@ -20,6 +21,7 @@ export async function executeBulk() {
         upsertRepo(result.summary);
       }
     }
+    rememberRecentPush(state.bulkPreview, state.bulkResults);
   } finally {
     state.bulkRunning = false;
   }
@@ -32,5 +34,4 @@ export async function pushAll() {
 
 export function closeBulkPreview() {
   state.bulkPreview = null;
-  state.bulkResults = [];
 }
