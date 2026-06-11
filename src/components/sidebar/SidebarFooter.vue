@@ -1,12 +1,9 @@
 <script setup lang="ts">
+import { Settings } from "@lucide/vue";
 import { RouterLink } from "vue-router";
-import type {
-  SidebarFooterLink,
-  SidebarFooterStatus,
-} from "../../config/appShell";
+import type { SidebarFooterStatus } from "../../config/appShell";
 
 defineProps<{
-  links: SidebarFooterLink[];
   status: SidebarFooterStatus;
 }>();
 </script>
@@ -14,15 +11,13 @@ defineProps<{
 <template>
   <div class="sb-footer">
     <RouterLink
-      v-for="link in links"
-      :key="link.label"
-      :to="link.to"
+      to="/settings"
       class="sb-footer__btn"
       active-class="is-active"
-      :title="link.title ?? link.label"
-      :aria-label="link.label"
+      title="设置"
+      aria-label="设置"
     >
-      <component :is="link.icon" :size="14" aria-hidden="true" />
+      <Settings :size="14" aria-hidden="true" />
     </RouterLink>
 
     <RouterLink

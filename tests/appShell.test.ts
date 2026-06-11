@@ -33,10 +33,6 @@ async function renderAppShell(initialRoute = "/") {
         component: { template: "<div>home</div>" },
       },
       {
-        path: "/plugins",
-        component: { template: "<div>plugins</div>" },
-      },
-      {
         path: "/repos/:repoId(.*)",
         component: { template: "<div>repo</div>" },
       },
@@ -102,7 +98,7 @@ beforeEach(() => {
 
 describe("AppShell sidebar", () => {
   it("主侧边栏显示总览、仓库列表和一键同步工具", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
@@ -120,7 +116,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("仓库行优先显示 GitHub repo 名称，缺失时回退本地目录名", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
@@ -151,7 +147,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("侧边栏一键同步运行中显示按钮和仓库行状态", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
@@ -172,7 +168,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("侧边栏显示最近一次同步失败结果", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
@@ -203,7 +199,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("侧边栏搜索可过滤仓库并回车跳转首个结果", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
@@ -227,7 +223,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("侧边栏新建可克隆远端仓库并跳转详情", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
@@ -279,12 +275,6 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "概览")).toHaveClass("is-active");
     });
 
-    await view.router.push("/plugins");
-
-    await waitFor(() => {
-      expect(sidebarRowForText(view.container, "概览")).not.toHaveClass("is-active");
-    });
-
     await view.router.push("/repos/LiliaGithub");
 
     await waitFor(() => {
@@ -293,7 +283,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("左上角按钮切换左侧栏折叠状态并写回本地存储", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
     const shell = shellElement(view.container);
     const collapse = view.getByRole("button", { name: "折叠左侧栏" });
 
@@ -319,7 +309,7 @@ describe("AppShell sidebar", () => {
 
   it("左侧栏宽度可拖拽调整、写回存储并双击恢复默认", async () => {
     localStorage.setItem(SIDEBAR_CONFIG.widthStorageKey, "260");
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
     const shell = shellElement(view.container);
     const resizer = leftResizer(view.container);
 
@@ -377,18 +367,18 @@ describe("AppShell sidebar", () => {
     });
     expect(view.getByRole("button", { name: /关于/ })).toHaveClass("is-active");
 
-    await view.router.push("/plugins");
+    await view.router.push("/repos/LiliaGithub");
     expect(shell).toHaveClass("is-sidebar-collapsed");
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
   });
 
   it("设置页返回进入设置前的主窗口路由", async () => {
-    const view = await renderAppShell("/plugins");
+    const view = await renderAppShell("/repos/LiliaGithub");
 
     await view.router.push("/settings?tab=about");
     await fireEvent.click(view.getByRole("button", { name: "返回" }));
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/plugins");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
     });
   });
 });

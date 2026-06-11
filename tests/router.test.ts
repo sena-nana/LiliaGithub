@@ -38,14 +38,14 @@ describe("基础路由", () => {
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
   });
 
-  it("侧边栏左下角提供设置、扩展和 GitHub 状态入口", async () => {
+  it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
     await renderAt("/");
 
     expect(
       await screen.findByRole("link", { name: "GitHub 已授权。点击进入设置。" }),
     ).toHaveClass("sb-conn--ok");
     expect(screen.getAllByRole("link", { name: "设置" })).toHaveLength(1);
-    expect(screen.getByRole("link", { name: "扩展" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "扩展" })).toBeNull();
   });
 
   it("仓库详情页提供变更、历史、分支和提交视图", async () => {
@@ -298,15 +298,14 @@ describe("基础路由", () => {
     expect((await service.scanRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
   });
 
-  it("扩展页显示模板占位内容", async () => {
-    await renderAt("/plugins");
-
-    expect(await screen.findByRole("heading", { level: 1, name: "扩展" })).toBeInTheDocument();
-    expect(screen.getByText("当前模板不包含 Lilia 的真实插件管理逻辑。")).toBeInTheDocument();
-  });
-
   it("未知路由回到首页", async () => {
     await renderAt("/missing");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+  });
+
+  it("旧扩展路由回到首页", async () => {
+    await renderAt("/plugins");
 
     expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
   });
