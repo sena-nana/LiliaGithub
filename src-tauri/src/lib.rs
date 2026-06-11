@@ -54,6 +54,7 @@ pub fn run() {
             workspace::github_start_device_flow,
             workspace::github_poll_device_flow,
             workspace::github_unbind,
+            workspace::github_list_repo_contributions,
             workspace::repo_get_summary,
             workspace::repo_get_changes,
             workspace::repo_get_history,

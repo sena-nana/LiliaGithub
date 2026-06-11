@@ -3,6 +3,7 @@ import type {
   BulkSyncPreview,
   BulkSyncResult,
   GitHubBindingStatus,
+  GitHubContributionDay,
   GitHubDeviceFlowStart,
   ProjectLaunchConfig,
   ProjectLaunchLog,
@@ -31,6 +32,7 @@ export interface WorkspaceState {
   bulkResults: BulkSyncResult[];
   bulkRunning: boolean;
   recentSync: RecentBulkSyncState | null;
+  githubContributions: GitHubContributionsState;
 }
 
 export interface RecentBulkSyncState {
@@ -38,6 +40,13 @@ export interface RecentBulkSyncState {
   results: BulkSyncResult[];
   retryingRepoIds: string[];
   updatedAt: number;
+}
+
+export interface GitHubContributionsState {
+  days: GitHubContributionDay[];
+  loading: boolean;
+  error: string | null;
+  updatedAt: number | null;
 }
 
 export const state = reactive<WorkspaceState>({
@@ -59,6 +68,12 @@ export const state = reactive<WorkspaceState>({
   bulkResults: [],
   bulkRunning: false,
   recentSync: null,
+  githubContributions: {
+    days: [],
+    loading: false,
+    error: null,
+    updatedAt: null,
+  },
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -74,24 +89,11 @@ export const overviewStats = computed(() => {
   ).length;
   const pullable = state.repos.filter((repo) => repo.behind > 0).length;
   const pushable = state.repos.filter((repo) => repo.ahead > 0).length;
-  const commitsByDay = new Map<string, number>();
-  const now = new Date();
-  for (let i = 6; i >= 0; i -= 1) {
-    const d = new Date(now);
-    d.setDate(now.getDate() - i);
-    commitsByDay.set(d.toISOString().slice(5, 10), 0);
-  }
-  for (const repo of state.repos) {
-    if (!repo.lastCommitAt) continue;
-    const key = new Date(repo.lastCommitAt * 1000).toISOString().slice(5, 10);
-    if (commitsByDay.has(key)) commitsByDay.set(key, (commitsByDay.get(key) ?? 0) + 1);
-  }
   return {
     totalRepos: state.repos.length,
     dirtyRepos,
     pullable,
     pushable,
-    commitsByDay: Array.from(commitsByDay, ([day, count]) => ({ day, count })),
   };
 });
 
@@ -237,5 +239,11 @@ export function resetWorkspaceStateForTests() {
   state.bulkResults = [];
   state.bulkRunning = false;
   state.recentSync = null;
+  state.githubContributions = {
+    days: [],
+    loading: false,
+    error: null,
+    updatedAt: null,
+  };
   deviceFlow.value = null;
 }

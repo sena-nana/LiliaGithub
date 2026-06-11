@@ -55,7 +55,36 @@ describe("基础路由", () => {
       await screen.findByRole("heading", { level: 1, name: "项目总览" }),
     ).toBeInTheDocument();
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
+    expect(await screen.findByLabelText("GitHub 提交贡献图")).toBeInTheDocument();
+    expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
+    expect(document.querySelector(".contribution-day[title$='次提交']")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
+  });
+
+  it("首页 GitHub 贡献图支持空状态和错误重试", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackRepoContributionsOverrideForTests(() => []);
+
+    await renderAt("/");
+
+    expect(await screen.findByText("暂无 GitHub 提交")).toBeInTheDocument();
+
+    service.setFallbackRepoContributionsOverrideForTests(() => {
+      throw new Error("rate limited");
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+
+    expect(await screen.findByText("Error: rate limited")).toBeInTheDocument();
+
+    service.setFallbackRepoContributionsOverrideForTests(() => [
+      {
+        date: "2026-06-11",
+        count: 4,
+      },
+    ]);
+    await fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    expect(await screen.findByLabelText("2026-06-11：4 次提交")).toBeInTheDocument();
   });
 
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {

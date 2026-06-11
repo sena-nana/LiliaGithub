@@ -4,6 +4,7 @@ import type {
   BulkSyncResult,
   CommitDetail,
   GitHubBindingStatus,
+  GitHubContributionDay,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   HiddenRepo,
@@ -68,6 +69,8 @@ const fallbackBinding: GitHubBindingStatus = {
   },
 };
 
+const CONTRIBUTION_DAYS = 371;
+
 function createFallbackSettings(): WorkspaceSettings {
   return {
     workspaceRoot: "C:\\Files\\workspace",
@@ -80,6 +83,7 @@ function createFallbackSettings(): WorkspaceSettings {
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
+let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionDay[]) | null = null;
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
 
@@ -91,6 +95,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
+  fallbackRepoContributionsOverride = null;
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
   for (const key of Object.keys(fallbackLaunchStatuses)) {
@@ -112,6 +117,12 @@ export function setFallbackConflictOverrideForTests(
   override: ((repoId: string) => RepoConflictState | null) | null,
 ) {
   fallbackConflictOverride = override;
+}
+
+export function setFallbackRepoContributionsOverrideForTests(
+  override: ((repoFullNames: string[]) => GitHubContributionDay[]) | null,
+) {
+  fallbackRepoContributionsOverride = override;
 }
 
 async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T): Promise<T> {
@@ -244,6 +255,26 @@ export function pollGitHubDeviceFlow(
     bindingStatus: fallbackBinding,
     error: null,
   }));
+}
+
+export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionDay[]> {
+  return call("github_list_repo_contributions", { repoFullNames }, () => {
+    if (fallbackRepoContributionsOverride) {
+      return fallbackRepoContributionsOverride(repoFullNames).map((item) => ({ ...item }));
+    }
+    const end = new Date("2026-06-11T00:00:00Z");
+    const repoFactor = Math.max(1, repoFullNames.filter((name) => name.trim()).length);
+    return Array.from({ length: CONTRIBUTION_DAYS }, (_, index) => {
+      const date = new Date(end);
+      date.setUTCDate(end.getUTCDate() - (CONTRIBUTION_DAYS - 1 - index));
+      const dayIndex = Math.floor(date.getTime() / 86_400_000);
+      const active = dayIndex % 5 === 0 || dayIndex % 17 === 0 || dayIndex > Math.floor(end.getTime() / 86_400_000) - 45;
+      return {
+        date: date.toISOString().slice(0, 10),
+        count: active ? ((dayIndex % 4) + 1) * repoFactor : 0,
+      };
+    });
+  });
 }
 
 function fallbackRepo(repoId: string): RepoSummary {

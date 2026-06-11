@@ -63,6 +63,11 @@ export interface GitHubDeviceFlowPollResult {
   error: string | null;
 }
 
+export interface GitHubContributionDay {
+  date: string;
+  count: number;
+}
+
 export interface RepoSummary {
   id: string;
   name: string;
