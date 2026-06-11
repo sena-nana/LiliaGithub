@@ -24,7 +24,8 @@ import {
   state,
 } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
-import type { BulkSyncPreview, RepoConflictState, RepoDetail, RepoSummary, WorkspaceSettings } from "../src/services/workspace";
+import type { BulkSyncPreview } from "../src/services/workspace";
+import { conflictState, repoDetail, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const service = {
   scanRepos: vi.fn(),
@@ -52,55 +53,6 @@ vi.mock("../src/composables/workspace/serviceLoader", () => ({
   loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
 }));
 
-function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): RepoSummary {
-  return {
-    id,
-    name: id,
-    path: `C:\\Files\\workspace\\${id}`,
-    relativePath: id,
-    currentBranch: "main",
-    remoteUrl: `https://github.com/sena-nana/${id}.git`,
-    githubFullName: `sena-nana/${id}`,
-    ahead: 0,
-    behind: 0,
-    stagedCount: 0,
-    unstagedCount: 0,
-    untrackedCount: 0,
-    conflictCount: 0,
-    lastCommitAt: null,
-    lastCommitMessage: null,
-    ...overrides,
-  };
-}
-
-function conflictState(overrides: Partial<RepoConflictState> = {}): RepoConflictState {
-  return {
-    operation: "none",
-    files: [],
-    allResolved: true,
-    ...overrides,
-  };
-}
-
-function repoDetail(summary: RepoSummary): RepoDetail {
-  return {
-    summary,
-    changes: [],
-    commits: [],
-    branches: [],
-    conflicts: conflictState(),
-  };
-}
-
-function settings(hiddenRepoIds: string[] = []): WorkspaceSettings {
-  return {
-    workspaceRoot: "C:\\Files\\workspace",
-    githubBinding: null,
-    projectLaunchConfigs: {},
-    hiddenRepoIds,
-  };
-}
-
 beforeEach(() => {
   resetWorkspaceStateForTests();
   vi.clearAllMocks();
@@ -122,7 +74,7 @@ describe("workspace incremental refresh", () => {
       error: null,
     };
     state.launchLogs[target.id] = [{ index: 1, repoId: target.id, stream: "system", line: "start", timestamp: 1 }];
-    service.hideRepo.mockResolvedValue(settings([target.id]));
+    service.hideRepo.mockResolvedValue(workspaceSettings([target.id]));
 
     await hideRepo(target.id);
 
@@ -137,7 +89,7 @@ describe("workspace incremental refresh", () => {
   it("恢复仓库只读取目标仓库 summary 并插回列表", async () => {
     const restored = repoSummary("LiliaGithub", { ahead: 2 });
     state.repos = [repoSummary("Lilia")];
-    service.unhideRepo.mockResolvedValue(settings());
+    service.unhideRepo.mockResolvedValue(workspaceSettings());
     service.getRepoSummary.mockResolvedValue(restored);
 
     await unhideRepo(restored.id);

@@ -1,0 +1,225 @@
+
+export interface WorkspaceSettings {
+  workspaceRoot: string | null;
+  githubBinding: GitHubBindingMetadata | null;
+  projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
+  hiddenRepoIds: string[];
+}
+
+export interface ProjectLaunchConfig {
+  command: string;
+  cwd: string | null;
+  source: "inferred" | "manual";
+  updatedAt: number | null;
+}
+
+export type ProjectLaunchState = "idle" | "running" | "exited" | "error";
+
+export interface ProjectLaunchStatus {
+  repoId: string;
+  state: ProjectLaunchState;
+  pid: number | null;
+  command: string | null;
+  startedAt: number | null;
+  exitCode: number | null;
+  error: string | null;
+}
+
+export interface ProjectLaunchLog {
+  index: number;
+  repoId: string;
+  stream: "stdout" | "stderr" | "system";
+  line: string;
+  timestamp: number;
+}
+
+export interface GitHubBindingMetadata {
+  login: string;
+  avatarUrl: string | null;
+  boundAt: number;
+  scopes: string[];
+  clientIdSource: "bundled" | "custom" | string;
+}
+
+export interface GitHubBindingStatus {
+  state: "bound" | "unbound";
+  clientIdConfigured: boolean;
+  clientIdSource: "bundled" | "none" | string;
+  binding: GitHubBindingMetadata | null;
+}
+
+export interface GitHubDeviceFlowStart {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  expiresAt: number;
+  intervalSeconds: number;
+}
+
+export interface GitHubDeviceFlowPollResult {
+  status: "pending" | "authorized" | "expired";
+  intervalSeconds: number;
+  bindingStatus: GitHubBindingStatus | null;
+  error: string | null;
+}
+
+export interface RepoSummary {
+  id: string;
+  name: string;
+  path: string;
+  relativePath: string;
+  currentBranch: string | null;
+  remoteUrl: string | null;
+  githubFullName: string | null;
+  ahead: number;
+  behind: number;
+  stagedCount: number;
+  unstagedCount: number;
+  untrackedCount: number;
+  conflictCount: number;
+  lastCommitAt: number | null;
+  lastCommitMessage: string | null;
+}
+
+export interface RepoChange {
+  path: string;
+  oldPath: string | null;
+  indexStatus: string;
+  worktreeStatus: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  conflicted: boolean;
+  diff: string;
+}
+
+export interface RepoConflictState {
+  operation: "none" | "merge" | "rebase" | "cherry-pick" | string;
+  files: RepoConflictFile[];
+  allResolved: boolean;
+}
+
+export interface RepoConflictFile {
+  path: string;
+  status: string;
+  resolved: boolean;
+  binary: boolean;
+  hunks: RepoConflictHunk[];
+}
+
+export interface RepoConflictHunk {
+  id: string;
+  startLine: number;
+  endLine: number;
+  oursLabel: string;
+  theirsLabel: string;
+  oursLines: string[];
+  theirsLines: string[];
+}
+
+export interface RepoConflictChoice {
+  hunkId: string;
+  side: "ours" | "theirs";
+}
+
+export interface RepoMergePullResult {
+  status: "success" | "conflicts";
+  message: string;
+  summary: RepoSummary;
+  conflicts: RepoConflictState;
+}
+
+export interface CommitSummary {
+  hash: string;
+  shortHash: string;
+  author: string;
+  authorEmail?: string | null;
+  timestamp: number;
+  subject: string;
+  parents: string[];
+  refs: string[];
+}
+
+export interface CommitFileChange {
+  path: string;
+  oldPath: string | null;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch: string;
+  hunks: CommitDiffHunk[];
+}
+
+export interface CommitDiffHunk {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: CommitDiffLine[];
+}
+
+export interface CommitDiffLine {
+  kind: "context" | "added" | "deleted" | "meta";
+  content: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+
+export interface CommitDetail {
+  hash: string;
+  shortHash: string;
+  author: string;
+  authorEmail?: string | null;
+  committer: string;
+  committerEmail?: string | null;
+  timestamp: number;
+  subject: string;
+  body: string;
+  parents: string[];
+  refs: string[];
+  files: CommitFileChange[];
+}
+
+export interface BranchSummary {
+  name: string;
+  remote: boolean;
+  current: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
+export interface RepoDetail {
+  summary: RepoSummary;
+  changes: RepoChange[];
+  commits: CommitSummary[];
+  branches: BranchSummary[];
+  conflicts: RepoConflictState;
+}
+
+export type BulkOperation = "pull" | "push";
+
+export interface BulkSyncRepo {
+  repo: RepoSummary;
+  reason: string;
+}
+
+export interface BulkSyncPreview {
+  operation: BulkOperation;
+  eligible: BulkSyncRepo[];
+  blocked: BulkSyncRepo[];
+  warnings: BulkSyncRepo[];
+}
+
+export interface BulkSyncResult {
+  repoId: string;
+  status: "success" | "error";
+  message: string;
+  summary: RepoSummary | null;
+}
+
+export interface HiddenRepo {
+  id: string;
+  name: string;
+}

@@ -5,6 +5,7 @@ import App from "../src/App.vue";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
 import type { RepoConflictState } from "../src/services/workspace";
+import { conflictState, repoSummary } from "./fixtures/workspace";
 
 async function renderAt(path: string) {
   const router = createLiliaGithubRouter(createMemoryHistory());
@@ -55,7 +56,6 @@ describe("基础路由", () => {
     expect(screen.getByLabelText("仓库状态条")).toBeInTheDocument();
     expect(screen.getByText("仓库健康")).toBeInTheDocument();
     expect(screen.getByText("快速启动")).toBeInTheDocument();
-    expect(screen.getByText("提交并推送")).toBeInTheDocument();
     expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
@@ -73,8 +73,6 @@ describe("基础路由", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("提交历史和分支树")).toBeInTheDocument();
-    expect(screen.getByLabelText("历史和分支树")).toBeInTheDocument();
-    expect(screen.getByLabelText("提交历史密集列表")).toBeInTheDocument();
     expect(screen.getAllByLabelText("提交图谱").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("1234567")).toBeInTheDocument();
     expect(screen.getAllByText("HEAD -> main").length).toBeGreaterThanOrEqual(1);
@@ -117,7 +115,7 @@ describe("基础路由", () => {
   });
 
   it("rebase 冲突支持应用内继续和终止入口", async () => {
-    await overrideLiliaConflict({
+    await overrideLiliaConflict(conflictState({
       operation: "rebase",
       allResolved: false,
       files: [
@@ -139,7 +137,7 @@ describe("基础路由", () => {
           ],
         },
       ],
-    });
+    }));
 
     await renderAt("/repos/Lilia");
 
@@ -151,11 +149,11 @@ describe("基础路由", () => {
   });
 
   it("cherry-pick 冲突文件处理完后仍禁用普通提交并允许继续", async () => {
-    await overrideLiliaConflict({
+    await overrideLiliaConflict(conflictState({
       operation: "cherry-pick",
       allResolved: true,
       files: [],
-    });
+    }));
 
     await renderAt("/repos/Lilia");
 
@@ -172,7 +170,7 @@ describe("基础路由", () => {
     await renderAt("/repos/LiliaGithub");
 
     await fireEvent.click(await screen.findByRole("tab", { name: "历史" }));
-    await fireEvent.click(screen.getByRole("button", { name: /搭建 LiliaGithub MVP/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: /搭建 LiliaGithub MVP/ }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "搭建 LiliaGithub MVP" })).toBeInTheDocument();
     expect(screen.getByLabelText("提交元数据")).toHaveTextContent("1234567890abcdef");
@@ -240,23 +238,7 @@ describe("基础路由", () => {
         repoId,
         status: repoId === "LiliaGithub" && operation === "push" ? "error" : "success",
         message: repoId === "LiliaGithub" && operation === "push" ? "认证失败" : "完成",
-        summary: repoId === "LiliaGithub" && operation === "push" ? null : {
-          id: repoId,
-          name: repoId,
-          path: `C:\\Files\\workspace\\${repoId}`,
-          relativePath: repoId,
-          currentBranch: "main",
-          remoteUrl: `https://github.com/sena-nana/${repoId}.git`,
-          githubFullName: `sena-nana/${repoId}`,
-          ahead: 0,
-          behind: 0,
-          stagedCount: 0,
-          unstagedCount: 0,
-          untrackedCount: 0,
-          conflictCount: 0,
-          lastCommitAt: null,
-          lastCommitMessage: null,
-        },
+        summary: repoId === "LiliaGithub" && operation === "push" ? null : repoSummary(repoId),
       })),
     );
     await renderAt("/");

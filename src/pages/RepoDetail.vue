@@ -1,515 +1,106 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
 import {
-  AlertCircle,
-  Check,
   ExternalLink,
   FolderOpen,
-  GitBranch,
-  GitCommitHorizontal,
   GitMerge,
-  LoaderCircle,
   GitPullRequestArrow,
-  Play,
   RefreshCw,
-  RotateCw,
-  Settings,
-  Square,
-  Terminal,
   TriangleAlert,
   Upload,
 } from "@lucide/vue";
-import { useWorkspace } from "../composables/useWorkspace";
-import { recentPushErrorForRepo } from "../composables/workspace/state";
-import type { RepoConflictChoice } from "../services/workspace";
-import {
-  changeStatusText,
-  changeStatusTone,
-  conflictStatusText,
-  conflictStatusTone,
-  formatCompactRepoTime,
-  formatRepoTime,
-  lastCommitText as repoLastCommitText,
-  launchSourceText,
-  launchStatusText,
-  repoDisplayName,
-  streamLabel,
-  syncStatusText,
-  syncStatusTone,
-} from "../utils/repoDisplay";
+import RepoBranchesPanel from "../components/repo/RepoBranchesPanel.vue";
+import RepoChangesPanel from "../components/repo/RepoChangesPanel.vue";
+import RepoCommitPanel from "../components/repo/RepoCommitPanel.vue";
+import RepoConflictsPanel from "../components/repo/RepoConflictsPanel.vue";
+import RepoHistoryPanel from "../components/repo/RepoHistoryPanel.vue";
+import RepoLaunchPanel from "../components/repo/RepoLaunchPanel.vue";
+import RepoPushError from "../components/repo/RepoPushError.vue";
+import RepoSideStatus from "../components/repo/RepoSideStatus.vue";
+import RepoStatusStrip from "../components/repo/RepoStatusStrip.vue";
+import { useRepoDetailController } from "../composables/useRepoDetailController";
 import "../styles/page.css";
 
-type RepoTab = "conflicts" | "changes" | "history" | "branches";
-type HistoryCommit = {
-  readonly hash: string;
-  readonly shortHash: string;
-  readonly author: string;
-  readonly authorEmail?: string | null;
-  readonly timestamp: number;
-  readonly subject: string;
-  readonly parents: readonly string[];
-  readonly refs: readonly string[];
-};
-
-const route = useRoute();
-const router = useRouter();
-const workspace = useWorkspace();
-const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
-const selectedFiles = ref<Set<string>>(new Set());
-const commitMessage = ref("");
-const pushAfter = ref(true);
-const actionError = ref<string | null>(null);
-const actionRunning = ref(false);
-const conflictAbortConfirm = ref(false);
-const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
-const launchEditing = ref(false);
-const launchTerminalVisible = ref(false);
-const launchCommandInput = ref("");
-const launchCwdInput = ref("");
-const focusedChangePath = ref<string | null>(null);
-const focusedConflictPath = ref<string | null>(null);
-const conflictChoices = ref<Record<string, "ours" | "theirs">>({});
-let launchPollTimer: number | null = null;
-
-const repoId = computed(() => String(route.params.repoId ?? ""));
-const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);
-const summary = computed(() => detail.value?.summary ?? workspace.repoById(repoId.value));
-const repoTitle = computed(() => repoDisplayName(summary.value));
-const repoMetaItems = computed(() => {
-  const repo = summary.value;
-  if (!repo) return [repoId.value];
-  return [
-    repo.githubFullName ?? "未识别 GitHub",
-    repo.currentBranch ?? "detached",
-    repo.path,
-  ].filter(Boolean);
-});
-const changes = computed(() => detail.value?.changes ?? []);
-const conflicts = computed(() => detail.value?.conflicts ?? { operation: "none", files: [], allResolved: true });
-const conflictOperationActive = computed(() => conflicts.value.operation !== "none");
-const supportedConflictOperation = computed(() =>
-  conflicts.value.operation === "merge" ||
-  conflicts.value.operation === "rebase" ||
-  conflicts.value.operation === "cherry-pick",
-);
-const selectedFileList = computed(() => Array.from(selectedFiles.value));
-const focusedChange = computed(() =>
-  changes.value.find((change) => change.path === focusedChangePath.value) ?? null,
-);
-const previewChange = computed(() => {
-  if (focusedChange.value) return focusedChange.value;
-  if (selectedFileList.value.length !== 1) return null;
-  return changes.value.find((change) => change.path === selectedFileList.value[0]) ?? null;
-});
-const conflictFiles = computed(() => conflicts.value.files ?? []);
-const focusedConflict = computed(() =>
-  conflictFiles.value.find((file) => file.path === focusedConflictPath.value) ?? conflictFiles.value[0] ?? null,
-);
-const conflictResolvedCount = computed(() => conflictFiles.value.filter((file) => file.resolved).length);
-const conflictSelectedCount = computed(() => Object.keys(conflictChoices.value).length);
-const canResolveSelectedConflict = computed(() =>
-  Boolean(
-    focusedConflict.value &&
-    focusedConflict.value.hunks.length > 0 &&
-    focusedConflict.value.hunks.every((hunk) => Boolean(conflictChoices.value[hunk.id])),
-  ),
-);
-const canContinueConflictOperation = computed(() => supportedConflictOperation.value && !conflictFiles.value.length);
-const canCommit = computed(() => selectedFiles.value.size > 0 && commitMessage.value.trim().length > 0);
-const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
-const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
-const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
-const launchState = computed(() => launchStatus.value?.state ?? "idle");
-const launchRunning = computed(() => launchState.value === "running");
-const hasLaunchCommand = computed(() => Boolean(launchConfig.value?.command.trim()));
-const selectedSummaryText = computed(() => {
-  if (!selectedFileList.value.length) return "未选择文件";
-  if (selectedFileList.value.length === 1) return `已选 1 个文件`;
-  return `已选 ${selectedFileList.value.length} 个文件`;
-});
-const selectedFilePreview = computed(() => selectedFileList.value.slice(0, 3));
-const historyBranches = computed(() => ({
-  local: detail.value?.branches.filter((branch) => !branch.remote) ?? [],
-  remote: detail.value?.branches.filter((branch) => branch.remote) ?? [],
-}));
-const historyRefNames = computed(() => {
-  const refs = new Set<string>();
-  for (const commit of detail.value?.commits ?? []) {
-    for (const refName of commit.refs) refs.add(refName);
-  }
-  return Array.from(refs);
-});
-const recentPushError = computed(() => {
-  return recentPushErrorForRepo(repoId.value);
-});
-const hasConflicts = computed(() =>
-  Boolean(summary.value?.conflictCount || conflictFiles.value.length || conflictOperationActive.value),
-);
-const conflictSummaryText = computed(() => {
-  if (!conflictFiles.value.length && conflictOperationActive.value) return "冲突文件已处理，等待继续操作";
-  if (!conflictFiles.value.length) return "没有待处理冲突";
-  return `已处理 ${conflictResolvedCount.value} / ${conflictFiles.value.length}`;
-});
-const conflictOperationText = computed(() => {
-  if (conflicts.value.operation === "merge") return "合并冲突";
-  if (conflicts.value.operation === "rebase") return "rebase 冲突";
-  if (conflicts.value.operation === "cherry-pick") return "cherry-pick 冲突";
-  return "冲突处理";
-});
-const conflictAbortText = computed(() => {
-  if (conflicts.value.operation === "rebase") return conflictAbortConfirm.value ? "确认终止 rebase" : "终止 rebase";
-  if (conflicts.value.operation === "cherry-pick") return conflictAbortConfirm.value ? "确认终止 cherry-pick" : "终止 cherry-pick";
-  if (conflicts.value.operation !== "merge") return "终止操作";
-  return conflictAbortConfirm.value ? "确认终止合并" : "终止合并";
-});
-const conflictContinueText = computed(() => {
-  if (conflicts.value.operation === "rebase") return "继续 rebase";
-  if (conflicts.value.operation === "cherry-pick") return "继续 cherry-pick";
-  if (conflicts.value.operation !== "merge") return "继续操作";
-  return "完成合并";
-});
-
-const tabs: Array<{ key: RepoTab; label: string }> = [
-  { key: "conflicts", label: "冲突" },
-  { key: "changes", label: "变更" },
-  { key: "history", label: "历史" },
-  { key: "branches", label: "分支" },
-];
-
-onMounted(() => {
-  void load();
-  launchPollTimer = window.setInterval(() => {
-    if (repoId.value) {
-      void refreshLaunch();
-    }
-  }, 1500);
-});
-
-onUnmounted(() => {
-  if (launchPollTimer !== null) {
-    window.clearInterval(launchPollTimer);
-  }
-});
-
-watch(repoId, () => {
-  selectedFiles.value = new Set();
-  commitMessage.value = "";
-  launchEditing.value = false;
-  launchTerminalVisible.value = false;
-  focusedChangePath.value = null;
-  focusedConflictPath.value = null;
-  conflictChoices.value = {};
-  conflictAbortConfirm.value = false;
-  conflictAcceptConfirm.value = null;
-  void load();
-});
-
-watch(
-  () => route.query.tab,
-  (tab) => {
-    const normalized = normalizeTab(tab);
-    if (normalized) activeTab.value = normalized;
-  },
-);
-
-watch(changes, () => {
-  syncFocusedChange();
-});
-
-function normalizeTab(value: unknown): RepoTab | null {
-  if (value === "conflicts" || value === "changes" || value === "history" || value === "branches") return value;
-  return null;
-}
-
-async function load() {
-  if (!repoId.value) return;
-  actionError.value = null;
-  try {
-    const [nextDetail] = await Promise.all([
-      workspace.loadRepoDetail(repoId.value),
-      workspace.loadLaunch(repoId.value),
-    ]);
-    resetLaunchForm();
-    syncFocusedChange();
-    syncFocusedConflict();
-    if (
-      (nextDetail.summary.conflictCount > 0 ||
-        nextDetail.conflicts.files.length > 0 ||
-        nextDetail.conflicts.operation !== "none") &&
-      activeTab.value !== "conflicts"
-    ) {
-      activeTab.value = "conflicts";
-    }
-  } catch (err) {
-    actionError.value = String(err);
-  }
-}
-
-async function refreshLaunch() {
-  if (!repoId.value) return;
-  try {
-    const status = await workspace.refreshLaunchStatus(repoId.value);
-    if (status.state === "running" || launchTerminalVisible.value) {
-      await workspace.refreshLaunchLogs(repoId.value);
-    }
-  } catch {
-    // The explicit action path surfaces errors; polling should stay quiet.
-  }
-}
-
-function resetLaunchForm() {
-  launchCommandInput.value = launchConfig.value?.command ?? "";
-  launchCwdInput.value = launchConfig.value?.cwd ?? "";
-}
-
-function dirtyCount(changeSummary = summary.value) {
-  if (!changeSummary) return 0;
-  return changeSummary.stagedCount + changeSummary.unstagedCount + changeSummary.untrackedCount;
-}
-
-function syncFocusedConflict() {
-  if (focusedConflictPath.value && conflictFiles.value.some((file) => file.path === focusedConflictPath.value)) {
-    syncConflictChoices();
-    return;
-  }
-  focusedConflictPath.value = conflictFiles.value[0]?.path ?? null;
-  syncConflictChoices();
-}
-
-function syncFocusedChange() {
-  if (!focusedChangePath.value) return;
-  if (!changes.value.some((change) => change.path === focusedChangePath.value)) {
-    focusedChangePath.value = null;
-  }
-}
-
-watch(conflictFiles, () => {
-  syncFocusedConflict();
-  if (!conflictFiles.value.length && activeTab.value === "conflicts") {
-    activeTab.value = "changes";
-  }
-});
-
-function focusChange(path: string) {
-  focusedChangePath.value = path;
-}
-
-function focusConflict(path: string) {
-  focusedConflictPath.value = path;
-  resetConflictConfirmation();
-  syncConflictChoices();
-}
-
-function toggleFile(path: string) {
-  const next = new Set(selectedFiles.value);
-  if (next.has(path)) next.delete(path);
-  else next.add(path);
-  selectedFiles.value = next;
-  focusedChangePath.value = path;
-}
-
-function selectAll() {
-  selectedFiles.value = new Set(changes.value.map((change) => change.path));
-  focusedChangePath.value = changes.value[0]?.path ?? null;
-}
-
-function syncConflictChoices() {
-  const current = focusedConflict.value;
-  if (!current) {
-    conflictChoices.value = {};
-    return;
-  }
-  const next: Record<string, "ours" | "theirs"> = {};
-  for (const hunk of current.hunks) {
-    const existing = conflictChoices.value[hunk.id];
-    if (existing) next[hunk.id] = existing;
-  }
-  conflictChoices.value = next;
-}
-
-function pickConflictHunk(hunkId: string, side: "ours" | "theirs") {
-  conflictChoices.value = {
-    ...conflictChoices.value,
-    [hunkId]: side,
-  };
-}
-
-function resetConflictConfirmation() {
-  conflictAbortConfirm.value = false;
-  conflictAcceptConfirm.value = null;
-}
-
-async function runAction(action: () => Promise<unknown>) {
-  actionRunning.value = true;
-  actionError.value = null;
-  try {
-    await action();
-  } catch (err) {
-    actionError.value = String(err);
-  } finally {
-    actionRunning.value = false;
-  }
-}
-
-function stageSelected() {
-  void runAction(async () => {
-    await workspace.stage(repoId.value, selectedFileList.value);
-    selectedFiles.value = new Set();
-  });
-}
-
-function unstageSelected() {
-  void runAction(async () => {
-    await workspace.unstage(repoId.value, selectedFileList.value);
-    selectedFiles.value = new Set();
-  });
-}
-
-function commitSelected() {
-  void runAction(async () => {
-    await workspace.commit(repoId.value, selectedFileList.value, commitMessage.value, pushAfter.value);
-    selectedFiles.value = new Set();
-    commitMessage.value = "";
-  });
-}
-
-function pull() {
-  void runAction(() => workspace.pull(repoId.value));
-}
-
-function mergePull() {
-  void runAction(async () => {
-    await workspace.mergePull(repoId.value);
-    if (hasConflicts.value) activeTab.value = "conflicts";
-  });
-}
-
-function push() {
-  void runAction(() => workspace.push(repoId.value));
-}
-
-function showConflicts() {
-  activeTab.value = "conflicts";
-}
-
-function acceptConflict(side: "ours" | "theirs") {
-  const file = focusedConflict.value;
-  if (!file) return;
-  if (conflictAcceptConfirm.value !== side) {
-    conflictAcceptConfirm.value = side;
-    return;
-  }
-  void runAction(async () => {
-    await workspace.acceptConflictFile(repoId.value, file.path, side, true);
-    resetConflictConfirmation();
-  });
-}
-
-function resolveSelectedConflict() {
-  const file = focusedConflict.value;
-  if (!file) return;
-  const choices: RepoConflictChoice[] = file.hunks.map((hunk) => ({
-    hunkId: hunk.id,
-    side: conflictChoices.value[hunk.id],
-  }));
-  void runAction(async () => {
-    await workspace.resolveConflictFile(repoId.value, file.path, choices, true);
-    resetConflictConfirmation();
-  });
-}
-
-function markConflictResolved() {
-  const file = focusedConflict.value;
-  if (!file) return;
-  void runAction(async () => {
-    await workspace.markConflictFileResolved(repoId.value, file.path);
-    resetConflictConfirmation();
-  });
-}
-
-function abortConflict() {
-  if (!conflictAbortConfirm.value) {
-    conflictAbortConfirm.value = true;
-    return;
-  }
-  void runAction(async () => {
-    await workspace.abortConflictOperation(repoId.value);
-    resetConflictConfirmation();
-  });
-}
-
-function continueConflict() {
-  void runAction(async () => {
-    await workspace.continueConflictOperation(repoId.value);
-    resetConflictConfirmation();
-  });
-}
-
-function startLaunch() {
-  void runAction(async () => {
-    await workspace.startLaunch(repoId.value);
-    launchTerminalVisible.value = true;
-  });
-}
-
-function stopLaunch() {
-  void runAction(() => workspace.stopLaunch(repoId.value));
-}
-
-function editLaunchConfig() {
-  resetLaunchForm();
-  launchEditing.value = true;
-}
-
-function cancelLaunchConfig() {
-  resetLaunchForm();
-  launchEditing.value = false;
-}
-
-function saveLaunchConfig() {
-  void runAction(async () => {
-    await workspace.saveLaunchConfig(repoId.value, launchCommandInput.value, launchCwdInput.value);
-    launchEditing.value = false;
-  });
-}
-
-function checkout(branch: string) {
-  void runAction(() => workspace.checkout(repoId.value, branch));
-}
-
-function openCommit(commit: HistoryCommit) {
-  void router.push(`/repos/${repoId.value}/commits/${commit.hash}`);
-}
-
-function openGitHub() {
-  if (!summary.value?.githubFullName) return;
-  void workspace.openUrl(`https://github.com/${summary.value.githubFullName}`);
-}
-
-function openFolder() {
-  if (!summary.value?.path) return;
-  void workspace.openPath(summary.value.path);
-}
-
-function openConflictFolder() {
-  const file = focusedConflict.value;
-  if (!file || !summary.value?.path) return;
-  const path = `${summary.value.path}\\${file.path.replace(/\//g, "\\")}`;
-  void workspace.openPath(path);
-}
-
-function commitMetaTitle(commit: HistoryCommit) {
-  return [
-    commit.hash,
-    commit.authorEmail ? `${commit.author} <${commit.authorEmail}>` : commit.author,
-    formatRepoTime(commit.timestamp),
-    commit.parents.length ? `parents: ${commit.parents.join(", ")}` : "root commit",
-    commit.refs.length ? `refs: ${commit.refs.join(", ")}` : "",
-  ].filter(Boolean).join("\n");
-}
+const {
+  activeTab,
+  selectedFiles,
+  commitMessage,
+  pushAfter,
+  actionError,
+  actionRunning,
+  conflictAcceptConfirm,
+  launchEditing,
+  launchTerminalVisible,
+  launchCommandInput,
+  launchCwdInput,
+  conflictChoices,
+  detail,
+  summary,
+  repoTitle,
+  repoMetaItems,
+  changes,
+  conflictOperationActive,
+  supportedConflictOperation,
+  selectedFileList,
+  previewChange,
+  conflictSelectedCount,
+  canResolveSelectedConflict,
+  canContinueConflictOperation,
+  canCommit,
+  launchConfig,
+  launchStatus,
+  launchLogs,
+  launchLoading,
+  launchState,
+  launchRunning,
+  hasLaunchCommand,
+  selectedSummaryText,
+  selectedFilePreview,
+  statusCommits,
+  panelConflictFiles,
+  panelConflicts,
+  panelFocusedConflict,
+  historyBranches,
+  historyRefNames,
+  recentPushError,
+  hasConflicts,
+  conflictSummaryText,
+  conflictOperationText,
+  conflictAbortText,
+  conflictContinueText,
+  tabs,
+  load,
+  refreshLaunch,
+  dirtyCount,
+  focusChange,
+  focusConflict,
+  toggleFile,
+  selectAll,
+  pickConflictHunk,
+  stageSelected,
+  unstageSelected,
+  commitSelected,
+  pull,
+  mergePull,
+  push,
+  showConflicts,
+  acceptConflict,
+  resolveSelectedConflict,
+  markConflictResolved,
+  abortConflict,
+  continueConflict,
+  startLaunch,
+  stopLaunch,
+  editLaunchConfig,
+  cancelLaunchConfig,
+  saveLaunchConfig,
+  checkout,
+  openCommit,
+  openGitHub,
+  openFolder,
+  openConflictFolder,
+  commitMetaTitle,
+} = useRepoDetailController();
 </script>
-
 <template>
   <section class="repo-workbench">
     <header class="repo-header">
@@ -556,57 +147,25 @@ function commitMetaTitle(commit: HistoryCommit) {
       </div>
     </header>
 
-    <section v-if="summary" class="repo-status-strip" aria-label="仓库状态条">
-      <div class="repo-status-strip__item">
-        <span>分支</span>
-        <strong>{{ summary.currentBranch ?? "detached" }}</strong>
-      </div>
-      <div class="repo-status-strip__item">
-        <span>同步</span>
-        <strong :class="syncStatusTone(summary)">{{ syncStatusText(summary) }}</strong>
-      </div>
-      <div class="repo-status-strip__item">
-        <span>冲突</span>
-        <strong :class="{ 'repo-status-strip__value--err': summary.conflictCount > 0 }">{{ summary.conflictCount }}</strong>
-      </div>
-      <div class="repo-status-strip__item">
-        <span>变更</span>
-        <strong :class="{ 'repo-status-strip__value--warn': dirtyCount(summary) > 0 }">{{ dirtyCount(summary) }}</strong>
-      </div>
-      <div class="repo-status-strip__item">
-        <span>最近提交</span>
-        <strong :title="repoLastCommitText(detail?.commits, summary)">{{ repoLastCommitText(detail?.commits, summary) }}</strong>
-      </div>
-      <div class="repo-status-strip__item">
-        <span>启动</span>
-        <strong :class="{ 'repo-status-strip__value--accent': launchRunning, 'repo-status-strip__value--warn': launchState === 'error' }">
-          {{ hasLaunchCommand ? launchStatusText(launchStatus) : "未配置" }}
-        </strong>
-      </div>
-      <div class="repo-status-strip__item">
-        <span>远端</span>
-        <strong>{{ summary.githubFullName ?? "未识别 GitHub" }}</strong>
-      </div>
-    </section>
+    <RepoStatusStrip
+      v-if="summary"
+      :commits="statusCommits"
+      :summary="summary"
+      :launch-status="launchStatus"
+      :launch-config="launchConfig"
+      :launch-running="launchRunning"
+      :launch-state="launchState"
+      :dirty-count="dirtyCount"
+    />
 
     <p v-if="actionError" class="error-line">{{ actionError }}</p>
-    <section v-if="recentPushError" class="repo-push-error" aria-label="最近推送失败">
-      <AlertCircle :size="16" aria-hidden="true" />
-      <div>
-        <strong>最近推送失败</strong>
-        <p>{{ recentPushError.message }}</p>
-      </div>
-      <button
-        type="button"
-        class="primary"
-        :disabled="recentPushError.retrying || actionRunning"
-        @click="push"
-      >
-        <LoaderCircle v-if="recentPushError.retrying" :size="14" aria-hidden="true" class="sb-spin" />
-        <RotateCw v-else :size="14" aria-hidden="true" />
-        重试
-      </button>
-    </section>
+    <RepoPushError
+      v-if="recentPushError"
+      :message="recentPushError.message"
+      :retrying="recentPushError.retrying"
+      :action-running="actionRunning"
+      @retry="push"
+    />
 
     <div class="workbench-grid" :class="{ 'workbench-grid--conflicts': activeTab === 'conflicts' }">
       <main class="workbench-main card">
@@ -625,440 +184,112 @@ function commitMetaTitle(commit: HistoryCommit) {
           </button>
         </div>
 
-        <section v-if="activeTab === 'changes'" class="repo-panel">
-          <div class="section-toolbar section-toolbar--compact">
-            <div class="repo-panel__title">
-              <h2>工作区变更</h2>
-              <p class="muted">共 {{ changes.length }} 个文件，{{ selectedSummaryText }}</p>
-            </div>
-            <div class="toolbar">
-              <button type="button" class="ghost" :disabled="!changes.length" @click="selectAll">全选</button>
-              <button type="button" class="ghost" :disabled="!selectedFiles.size" @click="stageSelected">暂存</button>
-              <button type="button" class="ghost" :disabled="!selectedFiles.size" @click="unstageSelected">取消暂存</button>
-            </div>
-          </div>
+        <RepoChangesPanel
+          v-if="activeTab === 'changes'"
+          :changes="changes"
+          :selected-files="selectedFiles"
+          :selected-summary-text="selectedSummaryText"
+          :preview-change="previewChange"
+          @select-all="selectAll"
+          @stage-selected="stageSelected"
+          @unstage-selected="unstageSelected"
+          @focus-change="focusChange"
+          @toggle-file="toggleFile"
+        />
 
-          <p v-if="!changes.length" class="muted repo-empty">没有本地变更。</p>
-          <div v-else class="change-workspace">
-            <div class="change-list" role="list" aria-label="工作区变更列表">
-              <div
-                v-for="change in changes"
-                :key="change.path"
-                class="change-row"
-                :class="{ 'is-focused': previewChange?.path === change.path }"
-                role="button"
-                tabindex="0"
-                @click="focusChange(change.path)"
-                @keydown.enter.prevent="focusChange(change.path)"
-                @keydown.space.prevent="focusChange(change.path)"
-              >
-                <span class="change-row__select" @click.stop>
-                  <input
-                    type="checkbox"
-                    :checked="selectedFiles.has(change.path)"
-                    @change="toggleFile(change.path)"
-                  />
-                </span>
-                <span class="change-row__path" :title="change.oldPath ? `${change.oldPath} -> ${change.path}` : change.path">
-                  <span>{{ change.path }}</span>
-                  <small v-if="change.oldPath">来自 {{ change.oldPath }}</small>
-                </span>
-                <span class="change-badge" :class="changeStatusTone(change)">{{ changeStatusText(change) }}</span>
-              </div>
-            </div>
+        <RepoConflictsPanel
+          v-else-if="activeTab === 'conflicts'"
+          :conflict-operation-text="conflictOperationText"
+          :conflict-summary-text="conflictSummaryText"
+          :conflict-continue-text="conflictContinueText"
+          :conflict-abort-text="conflictAbortText"
+          :conflict-files="panelConflictFiles"
+          :conflict-operation-active="conflictOperationActive"
+          :conflicts="panelConflicts"
+          :focused-conflict="panelFocusedConflict"
+          :conflict-choices="conflictChoices"
+          :conflict-selected-count="conflictSelectedCount"
+          :conflict-accept-confirm="conflictAcceptConfirm"
+          :can-continue-conflict-operation="canContinueConflictOperation"
+          :can-resolve-selected-conflict="canResolveSelectedConflict"
+          :supported-conflict-operation="supportedConflictOperation"
+          :action-running="actionRunning"
+          @continue-conflict="continueConflict"
+          @abort-conflict="abortConflict"
+          @focus-conflict="focusConflict"
+          @pick-conflict-hunk="pickConflictHunk"
+          @resolve-selected-conflict="resolveSelectedConflict"
+          @accept-conflict="acceptConflict"
+          @mark-conflict-resolved="markConflictResolved"
+          @open-conflict-folder="openConflictFolder"
+        />
 
-            <section class="diff-preview" aria-label="变更预览">
-              <div class="section-toolbar section-toolbar--compact">
-                <div class="repo-panel__title">
-                  <h2>差异预览</h2>
-                  <p class="muted">{{ previewChange?.path ?? "选择一个文件查看差异" }}</p>
-                </div>
-              </div>
-              <div v-if="previewChange?.diff" class="diff-preview__body">
-                <pre><code>{{ previewChange.diff }}</code></pre>
-              </div>
-              <p v-else class="muted diff-preview__empty">当前没有可展示的差异内容。</p>
-            </section>
-          </div>
-        </section>
+        <RepoHistoryPanel
+          v-else-if="activeTab === 'history'"
+          :commits="statusCommits"
+          :branches="historyBranches"
+          :ref-names="historyRefNames"
+          :commit-meta-title="commitMetaTitle"
+          @open-commit="openCommit"
+        />
 
-        <section v-else-if="activeTab === 'conflicts'" class="repo-panel">
-          <div class="section-toolbar section-toolbar--compact">
-            <div class="repo-panel__title">
-              <h2>{{ conflictOperationText }}</h2>
-              <p class="muted">{{ conflictSummaryText }}</p>
-            </div>
-            <div class="toolbar">
-              <button
-                type="button"
-                class="primary"
-                :disabled="actionRunning || !canContinueConflictOperation"
-                @click="continueConflict"
-              >
-                <Check :size="14" aria-hidden="true" />
-                {{ conflictContinueText }}
-              </button>
-              <button
-                type="button"
-                class="ghost danger"
-                :disabled="actionRunning || !supportedConflictOperation"
-                @click="abortConflict"
-              >
-                <TriangleAlert :size="14" aria-hidden="true" />
-                {{ conflictAbortText }}
-              </button>
-            </div>
-          </div>
-
-          <p v-if="!conflictFiles.length && conflictOperationActive" class="muted repo-empty">冲突文件已处理，可继续当前操作。</p>
-          <p v-else-if="!conflictFiles.length" class="muted repo-empty">当前没有需要处理的冲突。</p>
-          <div v-else class="conflict-flow">
-          <div class="conflict-workspace">
-            <div class="conflict-list" role="list" aria-label="冲突文件列表">
-              <button
-                v-for="file in conflictFiles"
-                :key="file.path"
-                type="button"
-                class="conflict-row"
-                :class="{ 'is-focused': focusedConflict?.path === file.path }"
-                @click="focusConflict(file.path)"
-              >
-                <span class="conflict-row__path">
-                  <strong>{{ file.path }}</strong>
-                  <small>{{ file.status }} · {{ conflictStatusText(file) }}</small>
-                </span>
-                <span class="change-badge" :class="conflictStatusTone(file)">
-                  {{ file.resolved ? "已解决" : "待处理" }}
-                </span>
-              </button>
-            </div>
-
-            <section class="conflict-editor" aria-label="冲突分段处理">
-              <div class="section-toolbar section-toolbar--compact">
-                <div class="repo-panel__title">
-                  <h2>分段处理</h2>
-                  <p class="muted">{{ focusedConflict?.path ?? "选择左侧冲突文件" }}</p>
-                </div>
-              </div>
-              <p v-if="!focusedConflict" class="muted diff-preview__empty">没有选中的冲突文件。</p>
-              <p v-else-if="focusedConflict.binary" class="muted diff-preview__empty">该文件无法解析为文本冲突，请使用文件级处理或外部编辑。</p>
-              <p v-else-if="!focusedConflict.hunks.length" class="muted diff-preview__empty">该文件没有可分段解析的 marker，请使用文件级处理或外部编辑。</p>
-              <div v-else class="conflict-hunk-list">
-                <article v-for="hunk in focusedConflict.hunks" :key="hunk.id" class="conflict-hunk">
-                  <header class="conflict-hunk__header">
-                    <strong>{{ hunk.id }}</strong>
-                    <span>第 {{ hunk.startLine }}-{{ hunk.endLine }} 行</span>
-                  </header>
-                  <div class="conflict-hunk__columns">
-                    <section class="conflict-side" :class="{ 'is-selected': conflictChoices[hunk.id] === 'ours' }">
-                      <div class="conflict-side__header">
-                        <strong>{{ hunk.oursLabel }}</strong>
-                        <button type="button" class="ghost" @click="pickConflictHunk(hunk.id, 'ours')">采用此段</button>
-                      </div>
-                      <pre><code>{{ hunk.oursLines.join("\n") || " " }}</code></pre>
-                    </section>
-                    <section class="conflict-side" :class="{ 'is-selected': conflictChoices[hunk.id] === 'theirs' }">
-                      <div class="conflict-side__header">
-                        <strong>{{ hunk.theirsLabel }}</strong>
-                        <button type="button" class="ghost" @click="pickConflictHunk(hunk.id, 'theirs')">采用此段</button>
-                      </div>
-                      <pre><code>{{ hunk.theirsLines.join("\n") || " " }}</code></pre>
-                    </section>
-                  </div>
-                </article>
-              </div>
-            </section>
-
-            <aside class="conflict-sidepanel" aria-label="冲突处理操作">
-              <div class="conflict-sidepanel__card">
-                <div class="section-toolbar section-toolbar--compact">
-                  <div class="repo-panel__title">
-                    <h2>当前文件</h2>
-                    <p class="muted">{{ focusedConflict?.path ?? "未选择" }}</p>
-                  </div>
-                </div>
-                <dl class="side-kv">
-                  <div>
-                    <dt>冲突类型</dt>
-                    <dd>{{ conflicts.operation }}</dd>
-                  </div>
-                  <div>
-                    <dt>处理进度</dt>
-                    <dd>{{ conflictSummaryText }}</dd>
-                  </div>
-                  <div>
-                    <dt>已选分段</dt>
-                    <dd>{{ conflictSelectedCount }}</dd>
-                  </div>
-                </dl>
-                <div class="conflict-actions">
-                  <button type="button" class="primary" :disabled="!canResolveSelectedConflict || actionRunning" @click="resolveSelectedConflict">
-                    解决并暂存
-                  </button>
-                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="acceptConflict('ours')">
-                    {{ conflictAcceptConfirm === "ours" ? "确认整文件采用 ours 并暂存" : "整文件采用 ours" }}
-                  </button>
-                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="acceptConflict('theirs')">
-                    {{ conflictAcceptConfirm === "theirs" ? "确认整文件采用 theirs 并暂存" : "整文件采用 theirs" }}
-                  </button>
-                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="markConflictResolved">
-                    外部修改后标记解决
-                  </button>
-                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="openConflictFolder">
-                    打开文件
-                  </button>
-                </div>
-              </div>
-            </aside>
-          </div>
-          </div>
-        </section>
-
-        <section v-else-if="activeTab === 'history'" class="repo-panel">
-          <div class="section-toolbar section-toolbar--compact">
-            <div class="repo-panel__title">
-              <h2>提交历史</h2>
-              <p class="muted">按时间倒序展示最近提交</p>
-            </div>
-          </div>
-          <p v-if="!detail?.commits.length" class="muted repo-empty">没有提交历史。</p>
-          <div v-else class="history-workspace" aria-label="提交历史和分支树">
-            <aside class="history-tree" aria-label="历史和分支树">
-              <section>
-                <h3>本地分支</h3>
-                <p v-if="!historyBranches.local.length" class="muted">无本地分支</p>
-                <div v-for="branch in historyBranches.local" :key="branch.name" class="history-tree__item">
-                  <GitBranch :size="13" aria-hidden="true" />
-                  <span :title="branch.name">{{ branch.name }}</span>
-                  <em v-if="branch.current">当前</em>
-                </div>
-              </section>
-              <section>
-                <h3>远端分支</h3>
-                <p v-if="!historyBranches.remote.length" class="muted">无远端分支</p>
-                <div v-for="branch in historyBranches.remote" :key="branch.name" class="history-tree__item">
-                  <GitBranch :size="13" aria-hidden="true" />
-                  <span :title="branch.name">{{ branch.name }}</span>
-                </div>
-              </section>
-              <section v-if="historyRefNames.length">
-                <h3>历史引用</h3>
-                <div v-for="refName in historyRefNames" :key="refName" class="history-tree__item history-tree__item--ref">
-                  <GitCommitHorizontal :size="13" aria-hidden="true" />
-                  <span :title="refName">{{ refName }}</span>
-                </div>
-              </section>
-            </aside>
-            <div class="history-list" aria-label="提交历史密集列表">
-              <button
-                v-for="(commit, index) in detail?.commits"
-                :key="commit.hash"
-                type="button"
-                class="history-row"
-                :title="commitMetaTitle(commit)"
-                @click="openCommit(commit)"
-              >
-                <span class="history-graph" aria-label="提交图谱">
-                  <span class="history-graph__line" :class="{ 'is-first': index === 0, 'is-last': index === (detail?.commits.length ?? 0) - 1 }" />
-                  <span class="history-graph__node" />
-                </span>
-                <span class="history-row__body">
-                  <span class="history-row__main">
-                    <strong>{{ commit.subject }}</strong>
-                    <span class="history-row__refs" v-if="commit.refs.length">
-                      <span v-for="ref in commit.refs.slice(0, 3)" :key="ref">{{ ref }}</span>
-                    </span>
-                  </span>
-                  <span class="history-row__meta">
-                    <span>{{ commit.shortHash }}</span>
-                    <span>{{ commit.author }}</span>
-                  </span>
-                </span>
-                <time class="history-row__time" :datetime="new Date(commit.timestamp * 1000).toISOString()">
-                  {{ formatCompactRepoTime(commit.timestamp) }}
-                </time>
-                <span class="history-popover" role="tooltip">
-                  <strong>{{ commit.subject }}</strong>
-                  <span>{{ commit.hash }}</span>
-                  <span>{{ commit.authorEmail ? `${commit.author} <${commit.authorEmail}>` : commit.author }}</span>
-                  <span>{{ formatRepoTime(commit.timestamp) }}</span>
-                  <span>{{ commit.parents.length ? `父提交 ${commit.parents.join(", ")}` : "根提交" }}</span>
-                  <span v-if="commit.refs.length">引用 {{ commit.refs.join(", ") }}</span>
-                </span>
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section v-else class="repo-panel">
-          <div class="section-toolbar section-toolbar--compact">
-            <div class="repo-panel__title">
-              <h2>分支</h2>
-              <p class="muted">巡检当前和远端分支状态</p>
-            </div>
-          </div>
-          <p v-if="!detail?.branches.length" class="muted repo-empty">没有分支信息。</p>
-          <div v-else class="repo-list-panel">
-            <div v-for="branch in detail?.branches" :key="`${branch.remote}:${branch.name}`" class="branch-row">
-              <GitBranch :size="14" aria-hidden="true" />
-              <div>
-                <strong>{{ branch.name }}</strong>
-                <span>{{ branch.remote ? "远端" : "本地" }} · ↑{{ branch.ahead }} / ↓{{ branch.behind }}</span>
-              </div>
-              <button
-                type="button"
-                class="ghost"
-                :disabled="branch.current || branch.remote"
-                @click="checkout(branch.name)"
-              >
-                <Check :size="14" aria-hidden="true" />
-                Checkout
-              </button>
-            </div>
-          </div>
-        </section>
+        <RepoBranchesPanel
+          v-else
+          :branches="detail?.branches ?? []"
+          @checkout="checkout"
+        />
       </main>
 
       <aside class="workbench-side">
-        <section v-if="summary" class="card repo-side-status" aria-label="仓库健康与执行状态">
-          <div class="section-toolbar section-toolbar--compact">
-            <div class="repo-panel__title">
-              <h2>仓库健康</h2>
-              <p class="muted">当前仓库的关键巡检信号</p>
-            </div>
-          </div>
-          <dl class="side-kv">
-            <div>
-              <dt>当前分支</dt>
-              <dd>{{ summary.currentBranch ?? "detached" }}</dd>
-            </div>
-            <div>
-              <dt>同步状态</dt>
-              <dd :class="syncStatusTone(summary)">{{ syncStatusText(summary) }}</dd>
-            </div>
-            <div>
-              <dt>冲突数量</dt>
-              <dd :class="{ 'repo-status-strip__value--err': summary.conflictCount > 0 }">{{ summary.conflictCount }}</dd>
-            </div>
-            <div>
-              <dt>工作区变更</dt>
-              <dd :class="{ 'repo-status-strip__value--warn': dirtyCount(summary) > 0 }">{{ dirtyCount(summary) }}</dd>
-            </div>
-            <div>
-              <dt>启动状态</dt>
-              <dd>{{ hasLaunchCommand ? launchStatusText(launchStatus) : "未配置" }}</dd>
-            </div>
-            <div>
-              <dt>启动来源</dt>
-              <dd>{{ hasLaunchCommand ? launchSourceText(launchConfig) : "无" }}</dd>
-            </div>
-          </dl>
-          <div class="repo-side-status__actions">
-            <button type="button" class="primary" :disabled="actionRunning || !hasLaunchCommand || launchRunning" @click="startLaunch">
-              <Play :size="14" aria-hidden="true" />
-              运行
-            </button>
-            <button type="button" class="ghost" :disabled="actionRunning || !launchRunning" @click="stopLaunch">
-              <Square :size="14" aria-hidden="true" />
-              停止
-            </button>
-            <button type="button" class="ghost" @click="launchTerminalVisible = !launchTerminalVisible">
-              <Terminal :size="14" aria-hidden="true" />
-              终端
-            </button>
-            <button type="button" class="ghost" @click="editLaunchConfig">
-              <Settings :size="14" aria-hidden="true" />
-              启动配置
-            </button>
-          </div>
-        </section>
+        <RepoSideStatus
+          v-if="summary"
+          :summary="summary"
+          :launch-config="launchConfig"
+          :launch-status="launchStatus"
+          :action-running="actionRunning"
+          :launch-running="launchRunning"
+          :has-launch-command="hasLaunchCommand"
+          :dirty-count="dirtyCount"
+          @start="startLaunch"
+          @stop="stopLaunch"
+          @toggle-terminal="launchTerminalVisible = !launchTerminalVisible"
+          @edit-config="editLaunchConfig"
+        />
 
-        <section class="card commit-panel" aria-label="提交并推送">
-          <div class="section-toolbar section-toolbar--compact">
-            <div class="repo-panel__title">
-              <h2>提交并推送</h2>
-              <p class="muted">从左侧变更列表选择文件后执行提交</p>
-            </div>
-          </div>
-          <div class="commit-summary">
-            <strong>{{ selectedSummaryText }}</strong>
-            <p v-if="hasConflicts" class="muted">当前存在冲突，先完成冲突处理再提交。</p>
-            <p v-if="selectedFilePreview.length" class="muted">
-              {{ selectedFilePreview.join(" · ") }}<template v-if="selectedFileList.length > selectedFilePreview.length"> 等 {{ selectedFileList.length }} 个</template>
-            </p>
-            <p v-else class="muted">先在左侧勾选需要提交的文件。</p>
-          </div>
-          <input v-model="commitMessage" type="text" placeholder="提交说明" />
-          <label class="checkbox-line">
-            <input v-model="pushAfter" type="checkbox" />
-            <span>提交后立即 push</span>
-          </label>
-          <button type="button" class="primary" :disabled="!canCommit || actionRunning || hasConflicts" @click="commitSelected">
-            <GitCommitHorizontal :size="14" aria-hidden="true" />
-            提交
-          </button>
-        </section>
+        <RepoCommitPanel
+          v-model:commit-message="commitMessage"
+          v-model:push-after="pushAfter"
+          :selected-summary-text="selectedSummaryText"
+          :selected-file-preview="selectedFilePreview"
+          :selected-file-count="selectedFileList.length"
+          :has-conflicts="hasConflicts"
+          :can-commit="canCommit"
+          :action-running="actionRunning"
+          @commit="commitSelected"
+        />
 
-        <section class="launch-panel card">
-          <div class="section-toolbar section-toolbar--compact">
-            <div>
-              <h2>快速启动</h2>
-              <p class="muted">
-                {{ hasLaunchCommand ? launchStatusText(launchStatus) : "未识别启动脚本" }}
-                <template v-if="hasLaunchCommand"> · {{ launchSourceText(launchConfig) }}</template>
-              </p>
-            </div>
-            <button type="button" class="ghost" :disabled="workspace.state.launchLoading" @click="refreshLaunch">
-              <RefreshCw :size="14" aria-hidden="true" />
-              刷新状态
-            </button>
-          </div>
-
-          <div v-if="launchEditing" class="launch-form">
-            <label>
-              <span>命令</span>
-              <input v-model="launchCommandInput" type="text" placeholder="例如 yarn tauri:dev" />
-            </label>
-            <label>
-              <span>工作目录</span>
-              <input v-model="launchCwdInput" type="text" placeholder="留空使用仓库根目录" />
-            </label>
-            <div class="toolbar">
-              <button type="button" class="primary" :disabled="!launchCommandInput.trim() || actionRunning" @click="saveLaunchConfig">
-                保存配置
-              </button>
-              <button type="button" class="ghost" @click="cancelLaunchConfig">取消</button>
-            </div>
-          </div>
-          <div v-else class="launch-command">
-            <code>{{ launchConfig?.command || "暂无启动命令，请手动配置。" }}</code>
-            <span v-if="launchConfig?.cwd">cwd: {{ launchConfig.cwd }}</span>
-          </div>
-
-          <p v-if="launchStatus?.error" class="error-line">{{ launchStatus.error }}</p>
-
-          <div v-if="launchTerminalVisible" class="launch-terminal" aria-label="启动终端">
-            <div class="launch-terminal__header">
-              <span>运行输出</span>
-              <button type="button" class="ghost" @click="launchTerminalVisible = false">隐藏</button>
-            </div>
-            <div class="launch-terminal__body">
-              <p v-if="!launchLogs.length" class="muted">暂无输出。</p>
-              <pre v-else><code><span
-                v-for="entry in launchLogs"
-                :key="entry.index"
-                :class="`launch-log launch-log--${entry.stream}`"
-              >[{{ streamLabel(entry.stream) }}] {{ entry.line }}
-</span></code></pre>
-            </div>
-          </div>
-        </section>
+        <RepoLaunchPanel
+          v-model:launch-command-input="launchCommandInput"
+          v-model:launch-cwd-input="launchCwdInput"
+          :loading="launchLoading"
+          :launch-editing="launchEditing"
+          :has-launch-command="hasLaunchCommand"
+          :launch-config="launchConfig"
+          :launch-status="launchStatus"
+          :launch-logs="launchLogs"
+          :launch-terminal-visible="launchTerminalVisible"
+          :action-running="actionRunning"
+          @refresh="refreshLaunch"
+          @save="saveLaunchConfig"
+          @cancel="cancelLaunchConfig"
+          @hide-terminal="launchTerminalVisible = false"
+        />
       </aside>
     </div>
   </section>
 </template>
 
-<style scoped>
+<style>
 .repo-workbench {
   display: grid;
   gap: 14px;
@@ -2030,7 +1261,6 @@ function commitMetaTitle(commit: HistoryCommit) {
     grid-column: 1 / -1;
   }
 }
-
 @media (max-width: 760px) {
   .repo-header,
   .repo-status-strip,
