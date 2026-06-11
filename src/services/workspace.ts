@@ -77,6 +77,7 @@ export interface RepoSummary {
   stagedCount: number;
   unstagedCount: number;
   untrackedCount: number;
+  conflictCount: number;
   lastCommitAt: number | null;
   lastCommitMessage: string | null;
 }
@@ -89,7 +90,44 @@ export interface RepoChange {
   staged: boolean;
   unstaged: boolean;
   untracked: boolean;
+  conflicted: boolean;
   diff: string;
+}
+
+export interface RepoConflictState {
+  operation: "none" | "merge" | "rebase" | "cherry-pick" | string;
+  files: RepoConflictFile[];
+  allResolved: boolean;
+}
+
+export interface RepoConflictFile {
+  path: string;
+  status: string;
+  resolved: boolean;
+  binary: boolean;
+  hunks: RepoConflictHunk[];
+}
+
+export interface RepoConflictHunk {
+  id: string;
+  startLine: number;
+  endLine: number;
+  oursLabel: string;
+  theirsLabel: string;
+  oursLines: string[];
+  theirsLines: string[];
+}
+
+export interface RepoConflictChoice {
+  hunkId: string;
+  side: "ours" | "theirs";
+}
+
+export interface RepoMergePullResult {
+  status: "success" | "conflicts";
+  message: string;
+  summary: RepoSummary;
+  conflicts: RepoConflictState;
 }
 
 export interface CommitSummary {
@@ -158,6 +196,7 @@ export interface RepoDetail {
   changes: RepoChange[];
   commits: CommitSummary[];
   branches: BranchSummary[];
+  conflicts: RepoConflictState;
 }
 
 export type BulkOperation = "pull" | "push";
@@ -202,6 +241,7 @@ const fallbackRepos: RepoSummary[] = [
     stagedCount: 1,
     unstagedCount: 2,
     untrackedCount: 1,
+    conflictCount: 0,
     lastCommitAt: 1_785_000_000,
     lastCommitMessage: "搭建 LiliaGithub MVP",
   },
@@ -218,6 +258,7 @@ const fallbackRepos: RepoSummary[] = [
     stagedCount: 0,
     unstagedCount: 0,
     untrackedCount: 0,
+    conflictCount: 1,
     lastCommitAt: 1_784_990_000,
     lastCommitMessage: "完善 GitHub 授权",
   },
@@ -376,6 +417,56 @@ function fallbackRepo(repoId: string): RepoSummary {
   return fallbackRepos.find((repo) => repo.id === repoId) ?? fallbackRepos[0];
 }
 
+function emptyConflictState(): RepoConflictState {
+  return {
+    operation: "none",
+    files: [],
+    allResolved: true,
+  };
+}
+
+function fallbackConflictState(repoId: string): RepoConflictState {
+  if (repoId !== "Lilia") return emptyConflictState();
+  return {
+    operation: "merge",
+    allResolved: false,
+    files: [
+      {
+        path: "src/pages/TaskDetail.vue",
+        status: "UU",
+        resolved: false,
+        binary: false,
+        hunks: [
+          {
+            id: "hunk-1",
+            startLine: 42,
+            endLine: 58,
+            oursLabel: "HEAD",
+            theirsLabel: "origin/main",
+            oursLines: [
+              "const mode = 'local';",
+              "await sendLocalMessage(draft);",
+            ],
+            theirsLines: [
+              "const mode = 'remote';",
+              "await sendRemoteMessage(draft);",
+            ],
+          },
+          {
+            id: "hunk-2",
+            startLine: 128,
+            endLine: 141,
+            oursLabel: "HEAD",
+            theirsLabel: "origin/main",
+            oursLines: ["return retryOriginalContext(event);"],
+            theirsLines: ["return retryLatestDraft(event);"],
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function fallbackLaunchConfig(repoId: string): ProjectLaunchConfig | null {
   return fallbackSettings.projectLaunchConfigs[repoId] ?? {
     command: repoId === "LiliaGithub" ? "yarn tauri:dev" : "yarn dev",
@@ -413,9 +504,21 @@ function pushFallbackLaunchLog(repoId: string, stream: ProjectLaunchLog["stream"
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => {
     const summary = fallbackRepo(repoId);
+    const conflicts = fallbackConflictState(repoId);
     return {
       summary: { ...summary },
       changes: [
+        ...conflicts.files.map((file) => ({
+          path: file.path,
+          oldPath: null,
+          indexStatus: file.status.slice(0, 1),
+          worktreeStatus: file.status.slice(1, 2),
+          staged: true,
+          unstaged: true,
+          untracked: false,
+          conflicted: true,
+          diff: "",
+        })),
         {
           path: "src/pages/Home.vue",
           oldPath: null,
@@ -424,6 +527,7 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           staged: true,
           unstaged: false,
           untracked: false,
+          conflicted: false,
           diff: "@@ -1 +1 @@\n-Lilia\n+LiliaGithub",
         },
         {
@@ -434,6 +538,7 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           staged: false,
           unstaged: false,
           untracked: true,
+          conflicted: false,
           diff: "",
         },
       ],
@@ -477,6 +582,7 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           behind: 0,
         },
       ],
+      conflicts,
     };
   });
 }
@@ -654,6 +760,19 @@ export function pullRepo(repoId: string): Promise<RepoSummary> {
   });
 }
 
+export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
+  return call("repo_merge_pull", { repoId }, () => {
+    const repo = fallbackRepo(repoId);
+    const conflicts = fallbackConflictState(repoId);
+    return {
+      status: conflicts.files.length ? "conflicts" : "success",
+      message: conflicts.files.length ? "合并产生冲突，请处理后提交" : "合并完成",
+      summary: { ...repo, behind: conflicts.files.length ? repo.behind : 0 },
+      conflicts,
+    };
+  });
+}
+
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => {
     const repo = fallbackRepo(repoId);
@@ -665,6 +784,44 @@ export function checkoutBranch(repoId: string, branch: string): Promise<RepoSumm
   return call("repo_checkout_branch", { repoId, branch }, () => {
     const repo = fallbackRepo(repoId);
     return { ...repo, currentBranch: branch };
+  });
+}
+
+export function getRepoConflicts(repoId: string): Promise<RepoConflictState> {
+  return call("repo_get_conflicts", { repoId }, () => fallbackConflictState(repoId));
+}
+
+function resolvedFallbackRepo(repoId: string): RepoSummary {
+  const repo = fallbackRepo(repoId);
+  return { ...repo, conflictCount: 0, stagedCount: repo.stagedCount + 1 };
+}
+
+export function acceptConflictFile(
+  repoId: string,
+  path: string,
+  side: "ours" | "theirs",
+  stage = true,
+): Promise<RepoSummary> {
+  return call("repo_accept_conflict_file", { repoId, path, side, stage }, () => resolvedFallbackRepo(repoId));
+}
+
+export function resolveConflictFile(
+  repoId: string,
+  path: string,
+  choices: RepoConflictChoice[],
+  stage = true,
+): Promise<RepoSummary> {
+  return call("repo_resolve_conflict_file", { repoId, path, choices, stage }, () => resolvedFallbackRepo(repoId));
+}
+
+export function markFileResolved(repoId: string, path: string): Promise<RepoSummary> {
+  return call("repo_mark_file_resolved", { repoId, path }, () => resolvedFallbackRepo(repoId));
+}
+
+export function abortConflictOperation(repoId: string): Promise<RepoSummary> {
+  return call("repo_abort_conflict_operation", { repoId }, () => {
+    const repo = fallbackRepo(repoId);
+    return { ...repo, conflictCount: 0 };
   });
 }
 

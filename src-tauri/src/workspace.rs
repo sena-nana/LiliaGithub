@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -140,6 +140,7 @@ pub struct RepoSummary {
     pub staged_count: usize,
     pub unstaged_count: usize,
     pub untracked_count: usize,
+    pub conflict_count: usize,
     pub last_commit_at: Option<i64>,
     pub last_commit_message: Option<String>,
 }
@@ -154,7 +155,54 @@ pub struct RepoChange {
     pub staged: bool,
     pub unstaged: bool,
     pub untracked: bool,
+    pub conflicted: bool,
     pub diff: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoConflictState {
+    pub operation: String,
+    pub files: Vec<RepoConflictFile>,
+    pub all_resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoConflictFile {
+    pub path: String,
+    pub status: String,
+    pub resolved: bool,
+    pub binary: bool,
+    pub hunks: Vec<RepoConflictHunk>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoConflictHunk {
+    pub id: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub ours_label: String,
+    pub theirs_label: String,
+    pub ours_lines: Vec<String>,
+    pub theirs_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoConflictChoice {
+    pub hunk_id: String,
+    pub side: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoMergePullResult {
+    pub status: String,
+    pub message: String,
+    pub summary: RepoSummary,
+    pub conflicts: RepoConflictState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +295,7 @@ pub struct RepoDetail {
     pub changes: Vec<RepoChange>,
     pub commits: Vec<CommitSummary>,
     pub branches: Vec<BranchSummary>,
+    pub conflicts: RepoConflictState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -635,6 +684,7 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
     let mut staged_count = 0;
     let mut unstaged_count = 0;
     let mut untracked_count = 0;
+    let mut conflict_count = 0;
 
     for line in status.lines() {
         if let Some(header) = line.strip_prefix("## ") {
@@ -658,7 +708,9 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
             continue;
         }
         let (index, worktree) = status_pair(line);
-        if index == "?" && worktree == "?" {
+        if is_conflict_status(&index, &worktree) {
+            conflict_count += 1;
+        } else if index == "?" && worktree == "?" {
             untracked_count += 1;
         } else {
             if index != " " {
@@ -694,6 +746,7 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
         staged_count,
         unstaged_count,
         untracked_count,
+        conflict_count,
         last_commit_at,
         last_commit_message,
     }
@@ -713,6 +766,19 @@ fn parse_status_path(line: &str) -> (Option<String>, String) {
     } else {
         (None, raw.to_string())
     }
+}
+
+fn is_conflict_status(index: &str, worktree: &str) -> bool {
+    matches!(
+        (index, worktree),
+        ("A", "A")
+            | ("D", "D")
+            | ("U", "U")
+            | ("A", "U")
+            | ("U", "A")
+            | ("D", "U")
+            | ("U", "D")
+    )
 }
 
 fn collect_repos(root: &Path) -> Vec<PathBuf> {
@@ -1259,19 +1325,27 @@ pub fn repo_get_branches(app: AppHandle, repo_id: String) -> Result<Vec<BranchSu
 }
 
 #[tauri::command]
+pub fn repo_get_conflicts(app: AppHandle, repo_id: String) -> Result<RepoConflictState, String> {
+    let path = repo_path_by_id(&app, &repo_id)?;
+    Ok(repo_conflicts(&path))
+}
+
+#[tauri::command]
 pub fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, String> {
     let root = workspace_root(&app)?;
     let path = repo_path_by_id(&app, &repo_id)?;
-    let (summary, changes, commits, branches) = thread::scope(|scope| {
+    let (summary, changes, commits, branches, conflicts) = thread::scope(|scope| {
         let summary = scope.spawn(|| summarize_repo(&root, &path));
         let changes = scope.spawn(|| repo_changes(&path));
         let commits = scope.spawn(|| repo_history(&path));
         let branches = scope.spawn(|| repo_branches(&path));
+        let conflicts = scope.spawn(|| repo_conflicts(&path));
         (
             summary.join().expect("repo summary worker panicked"),
             changes.join().expect("repo changes worker panicked"),
             commits.join().expect("repo history worker panicked"),
             branches.join().expect("repo branches worker panicked"),
+            conflicts.join().expect("repo conflicts worker panicked"),
         )
     });
     Ok(RepoDetail {
@@ -1279,6 +1353,7 @@ pub fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, St
         changes,
         commits,
         branches,
+        conflicts,
     })
 }
 
@@ -1482,6 +1557,43 @@ pub fn repo_pull(app: AppHandle, repo_id: String) -> Result<RepoSummary, String>
 }
 
 #[tauri::command]
+pub fn repo_merge_pull(app: AppHandle, repo_id: String) -> Result<RepoMergePullResult, String> {
+    let root = workspace_root(&app)?;
+    let path = repo_path_by_id(&app, &repo_id)?;
+    let summary = summarize_repo(&root, &path);
+    if let Some(reason) = merge_pull_block_reason(&summary, current_branch_upstream(&path).is_some()) {
+        return Err(reason);
+    }
+
+    run_fetch(&app, &path)?;
+    match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
+        Ok(_) => {
+            let summary = summarize_repo(&root, &path);
+            Ok(RepoMergePullResult {
+                status: "success".to_string(),
+                message: "合并完成".to_string(),
+                conflicts: repo_conflicts(&path),
+                summary,
+            })
+        }
+        Err(err) => {
+            let conflicts = repo_conflicts(&path);
+            let summary = summarize_repo(&root, &path);
+            if conflicts.files.is_empty() {
+                Err(err)
+            } else {
+                Ok(RepoMergePullResult {
+                    status: "conflicts".to_string(),
+                    message: "合并产生冲突，请处理后提交".to_string(),
+                    summary,
+                    conflicts,
+                })
+            }
+        }
+    }
+}
+
+#[tauri::command]
 pub fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
     let root = workspace_root(&app)?;
     let path = repo_path_by_id(&app, &repo_id)?;
@@ -1506,6 +1618,71 @@ pub fn repo_checkout_branch(
 }
 
 #[tauri::command]
+pub fn repo_accept_conflict_file(
+    app: AppHandle,
+    repo_id: String,
+    path: String,
+    side: String,
+    stage: bool,
+) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let repo_path = repo_path_by_id(&app, &repo_id)?;
+    let checkout_side = conflict_checkout_side(&side)?;
+    git_command(&repo_path, &["checkout", checkout_side, "--", &path], None)?;
+    if stage {
+        git_command(&repo_path, &["add", "--", &path], None)?;
+    }
+    Ok(summarize_repo(&root, &repo_path))
+}
+
+#[tauri::command]
+pub fn repo_resolve_conflict_file(
+    app: AppHandle,
+    repo_id: String,
+    path: String,
+    choices: Vec<RepoConflictChoice>,
+    stage: bool,
+) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let repo_path = repo_path_by_id(&app, &repo_id)?;
+    let file_path = safe_repo_file_path(&repo_path, &path)?;
+    let content = fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
+    let resolved = resolve_conflict_content(&content, &choices)?;
+    fs::write(&file_path, resolved).map_err(|e| format!("写入冲突文件失败：{e}"))?;
+    if stage {
+        git_command(&repo_path, &["add", "--", &path], None)?;
+    }
+    Ok(summarize_repo(&root, &repo_path))
+}
+
+#[tauri::command]
+pub fn repo_mark_file_resolved(
+    app: AppHandle,
+    repo_id: String,
+    path: String,
+) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let repo_path = repo_path_by_id(&app, &repo_id)?;
+    git_command(&repo_path, &["add", "--", &path], None)?;
+    Ok(summarize_repo(&root, &repo_path))
+}
+
+#[tauri::command]
+pub fn repo_abort_conflict_operation(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let repo_path = repo_path_by_id(&app, &repo_id)?;
+    let conflicts = repo_conflicts(&repo_path);
+    if conflicts.operation != "merge" {
+        return Err("当前只支持终止 merge 冲突".to_string());
+    }
+    git_command(&repo_path, &["merge", "--abort"], None)?;
+    Ok(summarize_repo(&root, &repo_path))
+}
+
+#[tauri::command]
 pub fn bulk_sync_preview(app: AppHandle, operation: String) -> Result<BulkSyncPreview, String> {
     let repos = workspace_scan_repos(app)?;
     Ok(build_bulk_preview(operation, repos))
@@ -1517,44 +1694,10 @@ pub fn bulk_sync_execute(
     operation: String,
     repo_ids: Vec<String>,
 ) -> Result<Vec<BulkSyncResult>, String> {
-    let mut results = Vec::new();
-    for repo_id in repo_ids {
-        let result = match repo_path_by_id(&app, &repo_id) {
-            Ok(path) => {
-                let root = workspace_root(&app)?;
-                let summary = summarize_repo(&root, &path);
-                let run = if operation == "pull" {
-                    if summary.staged_count + summary.unstaged_count + summary.untracked_count > 0 {
-                        Err("存在未提交变更，已跳过 pull".to_string())
-                    } else {
-                        run_pull(&app, &path)
-                    }
-                } else {
-                    if let Some(reason) =
-                        push_block_reason(&summary, current_branch_upstream(&path).is_some())
-                    {
-                        Err(format!("{reason}，已跳过 push"))
-                    } else if summary.ahead <= 0 {
-                        Err("没有需要推送的提交，已跳过 push".to_string())
-                    } else {
-                        run_push(&app, &path)
-                    }
-                };
-                match run {
-                    Ok(()) => BulkSyncResult {
-                        summary: Some(summarize_repo(&root, &path)),
-                        repo_id,
-                        status: "success".to_string(),
-                        message: "完成".to_string(),
-                    },
-                    Err(err) => bulk_error_result(repo_id, err),
-                }
-            }
-            Err(err) => bulk_error_result(repo_id, err),
-        };
-        results.push(result);
-    }
-    Ok(results)
+    let root = workspace_root(&app)?;
+    Ok(run_bulk_sync_parallel(repo_ids, |repo_id| {
+        bulk_sync_repo(&app, &root, &operation, repo_id)
+    }))
 }
 
 #[tauri::command]
@@ -1572,6 +1715,216 @@ pub fn system_open_url(app: AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("打开链接失败：{e}"))
+}
+
+fn repo_conflicts(path: &Path) -> RepoConflictState {
+    let entries = conflict_status_entries(path);
+    let files: Vec<_> = entries
+        .into_iter()
+        .map(|(status, file_path)| conflict_file_from_status(path, status, file_path))
+        .collect();
+    RepoConflictState {
+        operation: conflict_operation(path),
+        all_resolved: files.is_empty(),
+        files,
+    }
+}
+
+fn conflict_status_entries(path: &Path) -> Vec<(String, String)> {
+    let status = git_command_lossy(path, &["status", "--porcelain=v1"]).unwrap_or_default();
+    status
+        .lines()
+        .filter(|line| line.len() >= 3)
+        .filter_map(|line| {
+            let (index, worktree) = status_pair(line);
+            if !is_conflict_status(&index, &worktree) {
+                return None;
+            }
+            let (_, file_path) = parse_status_path(line);
+            Some((format!("{index}{worktree}"), file_path))
+        })
+        .collect()
+}
+
+fn conflict_file_from_status(path: &Path, status: String, file_path: String) -> RepoConflictFile {
+    let full_path = path.join(&file_path);
+    match fs::read_to_string(&full_path) {
+        Ok(content) => RepoConflictFile {
+            path: file_path,
+            status,
+            resolved: false,
+            binary: false,
+            hunks: parse_conflict_hunks(&content),
+        },
+        Err(_) => RepoConflictFile {
+            path: file_path,
+            status,
+            resolved: false,
+            binary: true,
+            hunks: Vec::new(),
+        },
+    }
+}
+
+fn conflict_operation(path: &Path) -> String {
+    if git_state_file_exists(path, "MERGE_HEAD") {
+        "merge".to_string()
+    } else if git_state_file_exists(path, "CHERRY_PICK_HEAD") {
+        "cherry-pick".to_string()
+    } else if git_state_file_exists(path, "REBASE_HEAD")
+        || git_state_file_exists(path, "rebase-merge")
+        || git_state_file_exists(path, "rebase-apply")
+    {
+        "rebase".to_string()
+    } else {
+        "none".to_string()
+    }
+}
+
+fn git_state_file_exists(path: &Path, name: &str) -> bool {
+    git_command_lossy(path, &["rev-parse", "--git-path", name])
+        .map(PathBuf::from)
+        .map(|state_path| {
+            if state_path.is_absolute() {
+                state_path.exists()
+            } else {
+                path.join(state_path).exists()
+            }
+        })
+        .unwrap_or(false)
+}
+
+fn parse_conflict_hunks(content: &str) -> Vec<RepoConflictHunk> {
+    let mut hunks = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        if !line.starts_with("<<<<<<<") {
+            index += 1;
+            continue;
+        }
+
+        let start_line = index + 1;
+        let ours_label = conflict_marker_label(line, "<<<<<<<", "ours");
+        index += 1;
+        let mut ours_lines = Vec::new();
+        while index < lines.len() && !lines[index].starts_with("=======") {
+            ours_lines.push(lines[index].to_string());
+            index += 1;
+        }
+        if index >= lines.len() {
+            break;
+        }
+        index += 1;
+        let mut theirs_lines = Vec::new();
+        while index < lines.len() && !lines[index].starts_with(">>>>>>>") {
+            theirs_lines.push(lines[index].to_string());
+            index += 1;
+        }
+        if index >= lines.len() {
+            break;
+        }
+        let theirs_label = conflict_marker_label(lines[index], ">>>>>>>", "theirs");
+        let end_line = index + 1;
+        hunks.push(RepoConflictHunk {
+            id: format!("hunk-{}", hunks.len() + 1),
+            start_line,
+            end_line,
+            ours_label,
+            theirs_label,
+            ours_lines,
+            theirs_lines,
+        });
+        index += 1;
+    }
+    hunks
+}
+
+fn conflict_marker_label(line: &str, marker: &str, fallback: &str) -> String {
+    let label = line.trim_start_matches(marker).trim();
+    if label.is_empty() {
+        fallback.to_string()
+    } else {
+        label.to_string()
+    }
+}
+
+fn resolve_conflict_content(
+    content: &str,
+    choices: &[RepoConflictChoice],
+) -> Result<String, String> {
+    let choice_map: HashMap<&str, &str> = choices
+        .iter()
+        .map(|choice| (choice.hunk_id.as_str(), choice.side.as_str()))
+        .collect();
+    let mut output = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut index = 0;
+    let mut hunk_index = 1;
+    while index < lines.len() {
+        let line = lines[index];
+        if !line.starts_with("<<<<<<<") {
+            output.push(line.to_string());
+            index += 1;
+            continue;
+        }
+
+        let hunk_id = format!("hunk-{hunk_index}");
+        hunk_index += 1;
+        index += 1;
+        let mut ours_lines = Vec::new();
+        while index < lines.len() && !lines[index].starts_with("=======") {
+            ours_lines.push(lines[index].to_string());
+            index += 1;
+        }
+        if index >= lines.len() {
+            return Err("冲突 marker 不完整".to_string());
+        }
+        index += 1;
+        let mut theirs_lines = Vec::new();
+        while index < lines.len() && !lines[index].starts_with(">>>>>>>") {
+            theirs_lines.push(lines[index].to_string());
+            index += 1;
+        }
+        if index >= lines.len() {
+            return Err("冲突 marker 不完整".to_string());
+        }
+        index += 1;
+
+        match choice_map.get(hunk_id.as_str()).copied() {
+            Some("ours") => output.extend(ours_lines),
+            Some("theirs") => output.extend(theirs_lines),
+            Some(_) => return Err(format!("{hunk_id} 的选择无效")),
+            None => return Err(format!("{hunk_id} 缺少解决选择")),
+        }
+    }
+
+    let mut resolved = output.join("\n");
+    if content.ends_with('\n') {
+        resolved.push('\n');
+    }
+    Ok(resolved)
+}
+
+fn conflict_checkout_side(side: &str) -> Result<&'static str, String> {
+    match side {
+        "ours" => Ok("--ours"),
+        "theirs" => Ok("--theirs"),
+        _ => Err("冲突侧只能是 ours 或 theirs".to_string()),
+    }
+}
+
+fn safe_repo_file_path(repo_path: &Path, file_path: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(file_path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("文件路径必须位于仓库内".to_string());
+    }
+    Ok(repo_path.join(relative))
 }
 
 fn repo_changes(path: &Path) -> Vec<RepoChange> {
@@ -1592,6 +1945,7 @@ fn repo_changes(path: &Path) -> Vec<RepoChange> {
             .map(|(index, worktree, old_path, file_path)| {
                 scope.spawn(move || {
                     let untracked = index == "?" && worktree == "?";
+                    let conflicted = is_conflict_status(&index, &worktree);
                     let staged = !untracked && index != " ";
                     let unstaged = !untracked && worktree != " ";
                     let diff = if untracked {
@@ -1610,6 +1964,7 @@ fn repo_changes(path: &Path) -> Vec<RepoChange> {
                         staged,
                         unstaged,
                         untracked,
+                        conflicted,
                         diff,
                     }
                 })
@@ -2089,6 +2444,11 @@ fn run_pull(app: &AppHandle, path: &Path) -> Result<(), String> {
     git_command(path, &["pull", "--ff-only"], auth.as_deref()).map(|_| ())
 }
 
+fn run_fetch(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let auth = token_for_binding(app)?.map(|token| github_auth_header(&token));
+    git_command(path, &["fetch"], auth.as_deref()).map(|_| ())
+}
+
 fn run_push(app: &AppHandle, path: &Path) -> Result<(), String> {
     let auth = token_for_binding(app)?.map(|token| github_auth_header(&token));
     git_command(path, &["push"], auth.as_deref()).map(|_| ())
@@ -2108,6 +2468,18 @@ fn push_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<String
         Some("当前分支没有 upstream".to_string())
     } else if summary.behind > 0 {
         Some("当前分支落后于 upstream".to_string())
+    } else {
+        None
+    }
+}
+
+fn merge_pull_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<String> {
+    if summary.conflict_count > 0 {
+        Some("已有冲突需要先处理".to_string())
+    } else if summary.staged_count + summary.unstaged_count + summary.untracked_count > 0 {
+        Some("存在未提交变更，已阻止合并拉取".to_string())
+    } else if !has_upstream {
+        Some("当前分支没有 upstream".to_string())
     } else {
         None
     }
@@ -2226,6 +2598,66 @@ fn build_bulk_preview(operation: String, repos: Vec<RepoSummary>) -> BulkSyncPre
     }
 }
 
+fn bulk_sync_repo(
+    app: &AppHandle,
+    root: &Path,
+    operation: &str,
+    repo_id: String,
+) -> BulkSyncResult {
+    let path = match repo_path_by_id(app, &repo_id) {
+        Ok(path) => path,
+        Err(err) => return bulk_error_result(repo_id, err),
+    };
+    let summary = summarize_repo(root, &path);
+    let run = if operation == "pull" {
+        if summary.staged_count + summary.unstaged_count + summary.untracked_count > 0 {
+            Err("存在未提交变更，已跳过 pull".to_string())
+        } else {
+            run_pull(app, &path)
+        }
+    } else if let Some(reason) =
+        push_block_reason(&summary, current_branch_upstream(&path).is_some())
+    {
+        Err(format!("{reason}，已跳过 push"))
+    } else if summary.ahead <= 0 {
+        Err("没有需要推送的提交，已跳过 push".to_string())
+    } else {
+        run_push(app, &path)
+    };
+
+    match run {
+        Ok(()) => BulkSyncResult {
+            summary: Some(summarize_repo(root, &path)),
+            repo_id,
+            status: "success".to_string(),
+            message: "完成".to_string(),
+        },
+        Err(err) => bulk_error_result(repo_id, err),
+    }
+}
+
+fn run_bulk_sync_parallel<F>(repo_ids: Vec<String>, run: F) -> Vec<BulkSyncResult>
+where
+    F: Fn(String) -> BulkSyncResult + Sync,
+{
+    thread::scope(|scope| {
+        let run = &run;
+        let handles: Vec<_> = repo_ids
+            .into_iter()
+            .map(|repo_id| scope.spawn(move || run(repo_id)))
+            .collect();
+
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle.join().unwrap_or_else(|_| {
+                    bulk_error_result("unknown".to_string(), "批量执行线程异常".to_string())
+                })
+            })
+            .collect()
+    })
+}
+
 fn bulk_error_result(repo_id: String, message: String) -> BulkSyncResult {
     BulkSyncResult {
         repo_id,
@@ -2259,6 +2691,8 @@ pub(crate) fn parse_github_remote(remote: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::time::Duration as TestDuration;
 
     fn temp_dir(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("lilia-github-{name}-{}", now_millis()));
@@ -2268,6 +2702,28 @@ mod tests {
 
     fn write_package(path: &Path, body: &str) {
         fs::write(path.join("package.json"), body).unwrap();
+    }
+
+    fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
+        let mut summary = RepoSummary {
+            id: "repo".to_string(),
+            name: "repo".to_string(),
+            path: "C:/repo".to_string(),
+            relative_path: "repo".to_string(),
+            current_branch: Some("main".to_string()),
+            remote_url: Some("https://github.com/a/repo.git".to_string()),
+            github_full_name: Some("a/repo".to_string()),
+            ahead: 0,
+            behind: 0,
+            staged_count: 0,
+            unstaged_count: 0,
+            untracked_count: 0,
+            conflict_count: 0,
+            last_commit_at: None,
+            last_commit_message: None,
+        };
+        overrides(&mut summary);
+        summary
     }
 
     #[test]
@@ -2293,6 +2749,111 @@ mod tests {
             parse_status_path("R  old.ts -> new.ts"),
             (Some("old.ts".to_string()), "new.ts".to_string())
         );
+    }
+
+    #[test]
+    fn detects_unmerged_status_pairs() {
+        for (index, worktree) in [
+            ("U", "U"),
+            ("A", "A"),
+            ("D", "D"),
+            ("A", "U"),
+            ("U", "A"),
+            ("D", "U"),
+            ("U", "D"),
+        ] {
+            assert!(is_conflict_status(index, worktree));
+        }
+        assert!(!is_conflict_status("M", " "));
+        assert!(!is_conflict_status("?", "?"));
+    }
+
+    #[test]
+    fn parses_conflict_marker_hunks() {
+        let content = [
+            "before",
+            &format!("{} HEAD", "<<<<<<<"),
+            "ours one",
+            "=======",
+            "theirs one",
+            &format!("{} origin/main", ">>>>>>>"),
+            "middle",
+            &format!("{} feature", "<<<<<<<"),
+            "ours two",
+            "=======",
+            "theirs two",
+            &format!("{} main", ">>>>>>>"),
+            "after",
+            "",
+        ]
+        .join("\n");
+
+        let hunks = parse_conflict_hunks(&content);
+
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].id, "hunk-1");
+        assert_eq!(hunks[0].start_line, 2);
+        assert_eq!(hunks[0].end_line, 6);
+        assert_eq!(hunks[0].ours_label, "HEAD");
+        assert_eq!(hunks[0].theirs_label, "origin/main");
+        assert_eq!(hunks[0].ours_lines, vec!["ours one".to_string()]);
+        assert_eq!(hunks[0].theirs_lines, vec!["theirs one".to_string()]);
+        assert_eq!(hunks[1].id, "hunk-2");
+    }
+
+    #[test]
+    fn resolves_conflict_content_from_hunk_choices() {
+        let content = [
+            "keep",
+            &format!("{} HEAD", "<<<<<<<"),
+            "ours one",
+            "=======",
+            "theirs one",
+            &format!("{} origin/main", ">>>>>>>"),
+            &format!("{} HEAD", "<<<<<<<"),
+            "ours two",
+            "=======",
+            "theirs two",
+            &format!("{} origin/main", ">>>>>>>"),
+            "",
+        ]
+        .join("\n");
+        let resolved = resolve_conflict_content(
+            &content,
+            &[
+                RepoConflictChoice {
+                    hunk_id: "hunk-1".to_string(),
+                    side: "ours".to_string(),
+                },
+                RepoConflictChoice {
+                    hunk_id: "hunk-2".to_string(),
+                    side: "theirs".to_string(),
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(resolved, "keep\nours one\ntheirs two\n");
+        assert!(!resolved.contains("<<<<<<<"));
+        assert!(!resolved.contains("======="));
+        assert!(!resolved.contains(">>>>>>>"));
+    }
+
+    #[test]
+    fn merge_pull_blocks_unsafe_states() {
+        assert_eq!(
+            merge_pull_block_reason(&test_repo_summary(|summary| summary.conflict_count = 1), true),
+            Some("已有冲突需要先处理".to_string())
+        );
+        assert_eq!(
+            merge_pull_block_reason(&test_repo_summary(|summary| summary.unstaged_count = 1), true),
+            Some("存在未提交变更，已阻止合并拉取".to_string())
+        );
+        assert_eq!(
+            merge_pull_block_reason(&test_repo_summary(|_| {}), false),
+            Some("当前分支没有 upstream".to_string())
+        );
+        assert_eq!(merge_pull_block_reason(&test_repo_summary(|_| {}), true), None);
     }
 
     #[test]
@@ -2404,6 +2965,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 1,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2423,6 +2985,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 1,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2446,6 +3009,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2462,6 +3026,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2478,6 +3043,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2514,6 +3080,7 @@ rename to docs/new.md",
             staged_count: 1,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2530,6 +3097,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2563,6 +3131,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2571,6 +3140,37 @@ rename to docs/new.md",
 
         assert_eq!(preview.blocked.len(), 1);
         assert_eq!(preview.blocked[0].reason, "当前分支没有 upstream");
+    }
+
+    #[test]
+    fn bulk_sync_parallel_returns_all_results_after_repo_error() {
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+
+        let results =
+            run_bulk_sync_parallel(vec!["ok".to_string(), "failed".to_string()], |repo_id| {
+                let current = active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                peak.fetch_max(current, AtomicOrdering::SeqCst);
+                std::thread::sleep(TestDuration::from_millis(30));
+                active.fetch_sub(1, AtomicOrdering::SeqCst);
+
+                if repo_id == "failed" {
+                    return bulk_error_result(repo_id, "认证失败".to_string());
+                }
+                BulkSyncResult {
+                    repo_id,
+                    status: "success".to_string(),
+                    message: "完成".to_string(),
+                    summary: None,
+                }
+            });
+
+        assert_eq!(results.len(), 2);
+        assert!(peak.load(AtomicOrdering::SeqCst) > 1);
+        assert!(results.iter().any(|result| result.status == "success"));
+        assert!(results
+            .iter()
+            .any(|result| result.status == "error" && result.message == "认证失败"));
     }
 
     #[test]
@@ -2588,6 +3188,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };
@@ -2604,6 +3205,7 @@ rename to docs/new.md",
             staged_count: 0,
             unstaged_count: 0,
             untracked_count: 0,
+            conflict_count: 0,
             last_commit_at: None,
             last_commit_message: None,
         };

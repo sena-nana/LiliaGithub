@@ -2,25 +2,30 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
+  AlertCircle,
   Check,
   ExternalLink,
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
+  GitMerge,
+  LoaderCircle,
   GitPullRequestArrow,
   Play,
   RefreshCw,
+  RotateCw,
   Settings,
   Square,
   Terminal,
+  TriangleAlert,
   Upload,
 } from "@lucide/vue";
 import { useWorkspace } from "../composables/useWorkspace";
-import type { RepoChange } from "../services/workspace";
+import type { RepoChange, RepoConflictChoice } from "../services/workspace";
 import { repoDisplayName } from "../utils/repoDisplay";
 import "../styles/page.css";
 
-type RepoTab = "changes" | "history" | "branches";
+type RepoTab = "conflicts" | "changes" | "history" | "branches";
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -41,11 +46,15 @@ const commitMessage = ref("");
 const pushAfter = ref(true);
 const actionError = ref<string | null>(null);
 const actionRunning = ref(false);
+const conflictAbortConfirm = ref(false);
+const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
 const launchEditing = ref(false);
 const launchTerminalVisible = ref(false);
 const launchCommandInput = ref("");
 const launchCwdInput = ref("");
 const focusedChangePath = ref<string | null>(null);
+const focusedConflictPath = ref<string | null>(null);
+const conflictChoices = ref<Record<string, "ours" | "theirs">>({});
 let launchPollTimer: number | null = null;
 
 const repoId = computed(() => String(route.params.repoId ?? ""));
@@ -62,6 +71,7 @@ const repoMetaItems = computed(() => {
   ].filter(Boolean);
 });
 const changes = computed(() => detail.value?.changes ?? []);
+const conflicts = computed(() => detail.value?.conflicts ?? { operation: "none", files: [], allResolved: true });
 const selectedFileList = computed(() => Array.from(selectedFiles.value));
 const focusedChange = computed(() =>
   changes.value.find((change) => change.path === focusedChangePath.value) ?? null,
@@ -71,6 +81,19 @@ const previewChange = computed(() => {
   if (selectedFileList.value.length !== 1) return null;
   return changes.value.find((change) => change.path === selectedFileList.value[0]) ?? null;
 });
+const conflictFiles = computed(() => conflicts.value.files ?? []);
+const focusedConflict = computed(() =>
+  conflictFiles.value.find((file) => file.path === focusedConflictPath.value) ?? conflictFiles.value[0] ?? null,
+);
+const conflictResolvedCount = computed(() => conflictFiles.value.filter((file) => file.resolved).length);
+const conflictSelectedCount = computed(() => Object.keys(conflictChoices.value).length);
+const canResolveSelectedConflict = computed(() =>
+  Boolean(
+    focusedConflict.value &&
+    focusedConflict.value.hunks.length > 0 &&
+    focusedConflict.value.hunks.every((hunk) => Boolean(conflictChoices.value[hunk.id])),
+  ),
+);
 const canCommit = computed(() => selectedFiles.value.size > 0 && commitMessage.value.trim().length > 0);
 const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
 const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
@@ -95,8 +118,36 @@ const historyRefNames = computed(() => {
   }
   return Array.from(refs);
 });
+const recentPushError = computed(() => {
+  const recent = workspace.state.recentPush;
+  if (!recent) return null;
+  const result = recent.results.find((item) => item.repoId === repoId.value && item.status === "error");
+  if (!result) return null;
+  return {
+    message: result.message,
+    retrying: recent.retryingRepoIds.includes(repoId.value),
+  };
+});
+const hasConflicts = computed(() => Boolean(summary.value?.conflictCount || conflictFiles.value.length));
+const conflictSummaryText = computed(() => {
+  if (!conflictFiles.value.length) return "没有待处理冲突";
+  return `已处理 ${conflictResolvedCount.value} / ${conflictFiles.value.length}`;
+});
+const conflictOperationText = computed(() => {
+  if (conflicts.value.operation === "merge") return "合并冲突";
+  if (conflicts.value.operation === "rebase") return "rebase 冲突";
+  if (conflicts.value.operation === "cherry-pick") return "cherry-pick 冲突";
+  return "冲突处理";
+});
+const unsupportedConflictText = computed(() => {
+  if (!conflictFiles.value.length || conflicts.value.operation === "merge") return "";
+  if (conflicts.value.operation === "rebase") return "当前检测到 rebase 冲突，第一版暂不支持在应用内继续 rebase。请在外部 Git 工具完成后返回标记解决。";
+  if (conflicts.value.operation === "cherry-pick") return "当前检测到 cherry-pick 冲突，第一版暂不支持在应用内继续 cherry-pick。请在外部 Git 工具完成后返回标记解决。";
+  return "当前冲突操作暂不支持在应用内继续，请在外部 Git 工具完成后返回标记解决。";
+});
 
 const tabs: Array<{ key: RepoTab; label: string }> = [
+  { key: "conflicts", label: "冲突" },
   { key: "changes", label: "变更" },
   { key: "history", label: "历史" },
   { key: "branches", label: "分支" },
@@ -123,6 +174,10 @@ watch(repoId, () => {
   launchEditing.value = false;
   launchTerminalVisible.value = false;
   focusedChangePath.value = null;
+  focusedConflictPath.value = null;
+  conflictChoices.value = {};
+  conflictAbortConfirm.value = false;
+  conflictAcceptConfirm.value = null;
   void load();
 });
 
@@ -139,7 +194,7 @@ watch(changes, () => {
 });
 
 function normalizeTab(value: unknown): RepoTab | null {
-  if (value === "changes" || value === "history" || value === "branches") return value;
+  if (value === "conflicts" || value === "changes" || value === "history" || value === "branches") return value;
   return null;
 }
 
@@ -147,12 +202,16 @@ async function load() {
   if (!repoId.value) return;
   actionError.value = null;
   try {
-    await Promise.all([
+    const [nextDetail] = await Promise.all([
       workspace.loadRepoDetail(repoId.value),
       workspace.loadLaunch(repoId.value),
     ]);
     resetLaunchForm();
     syncFocusedChange();
+    syncFocusedConflict();
+    if ((nextDetail.summary.conflictCount > 0 || nextDetail.conflicts.files.length > 0) && activeTab.value !== "conflicts") {
+      activeTab.value = "conflicts";
+    }
   } catch (err) {
     actionError.value = String(err);
   }
@@ -180,6 +239,15 @@ function dirtyCount(changeSummary = summary.value) {
   return changeSummary.stagedCount + changeSummary.unstagedCount + changeSummary.untrackedCount;
 }
 
+function syncFocusedConflict() {
+  if (focusedConflictPath.value && conflictFiles.value.some((file) => file.path === focusedConflictPath.value)) {
+    syncConflictChoices();
+    return;
+  }
+  focusedConflictPath.value = conflictFiles.value[0]?.path ?? null;
+  syncConflictChoices();
+}
+
 function syncFocusedChange() {
   if (!focusedChangePath.value) return;
   if (!changes.value.some((change) => change.path === focusedChangePath.value)) {
@@ -187,8 +255,21 @@ function syncFocusedChange() {
   }
 }
 
+watch(conflictFiles, () => {
+  syncFocusedConflict();
+  if (!conflictFiles.value.length && activeTab.value === "conflicts") {
+    activeTab.value = "changes";
+  }
+});
+
 function focusChange(path: string) {
   focusedChangePath.value = path;
+}
+
+function focusConflict(path: string) {
+  focusedConflictPath.value = path;
+  resetConflictConfirmation();
+  syncConflictChoices();
 }
 
 function toggleFile(path: string) {
@@ -202,6 +283,32 @@ function toggleFile(path: string) {
 function selectAll() {
   selectedFiles.value = new Set(changes.value.map((change) => change.path));
   focusedChangePath.value = changes.value[0]?.path ?? null;
+}
+
+function syncConflictChoices() {
+  const current = focusedConflict.value;
+  if (!current) {
+    conflictChoices.value = {};
+    return;
+  }
+  const next: Record<string, "ours" | "theirs"> = {};
+  for (const hunk of current.hunks) {
+    const existing = conflictChoices.value[hunk.id];
+    if (existing) next[hunk.id] = existing;
+  }
+  conflictChoices.value = next;
+}
+
+function pickConflictHunk(hunkId: string, side: "ours" | "theirs") {
+  conflictChoices.value = {
+    ...conflictChoices.value,
+    [hunkId]: side,
+  };
+}
+
+function resetConflictConfirmation() {
+  conflictAbortConfirm.value = false;
+  conflictAcceptConfirm.value = null;
 }
 
 async function runAction(action: () => Promise<unknown>) {
@@ -242,8 +349,65 @@ function pull() {
   void runAction(() => workspace.pull(repoId.value));
 }
 
+function mergePull() {
+  void runAction(async () => {
+    await workspace.mergePull(repoId.value);
+    if (hasConflicts.value) activeTab.value = "conflicts";
+  });
+}
+
 function push() {
   void runAction(() => workspace.push(repoId.value));
+}
+
+function showConflicts() {
+  activeTab.value = "conflicts";
+}
+
+function acceptConflict(side: "ours" | "theirs") {
+  const file = focusedConflict.value;
+  if (!file) return;
+  if (conflictAcceptConfirm.value !== side) {
+    conflictAcceptConfirm.value = side;
+    return;
+  }
+  void runAction(async () => {
+    await workspace.acceptConflictFile(repoId.value, file.path, side, true);
+    resetConflictConfirmation();
+  });
+}
+
+function resolveSelectedConflict() {
+  const file = focusedConflict.value;
+  if (!file) return;
+  const choices: RepoConflictChoice[] = file.hunks.map((hunk) => ({
+    hunkId: hunk.id,
+    side: conflictChoices.value[hunk.id],
+  }));
+  void runAction(async () => {
+    await workspace.resolveConflictFile(repoId.value, file.path, choices, true);
+    resetConflictConfirmation();
+  });
+}
+
+function markConflictResolved() {
+  const file = focusedConflict.value;
+  if (!file) return;
+  void runAction(async () => {
+    await workspace.markConflictFileResolved(repoId.value, file.path);
+    resetConflictConfirmation();
+  });
+}
+
+function abortConflict() {
+  if (!conflictAbortConfirm.value) {
+    conflictAbortConfirm.value = true;
+    return;
+  }
+  void runAction(async () => {
+    await workspace.abortConflictOperation(repoId.value);
+    resetConflictConfirmation();
+  });
 }
 
 function startLaunch() {
@@ -292,7 +456,15 @@ function openFolder() {
   void workspace.openPath(summary.value.path);
 }
 
+function openConflictFolder() {
+  const file = focusedConflict.value;
+  if (!file || !summary.value?.path) return;
+  const path = `${summary.value.path}\\${file.path.replace(/\//g, "\\")}`;
+  void workspace.openPath(path);
+}
+
 function statusText(change: RepoChange) {
+  if (change.conflicted) return "冲突";
   if (change.untracked) return "未跟踪";
   if (change.staged && change.unstaged) return "已暂存/有修改";
   if (change.staged) return "已暂存";
@@ -300,6 +472,7 @@ function statusText(change: RepoChange) {
 }
 
 function statusTone(change: RepoChange) {
+  if (change.conflicted) return "change-badge--err";
   if (change.untracked) return "change-badge--warn";
   if (change.staged && change.unstaged) return "change-badge--accent";
   if (change.staged) return "change-badge--ok";
@@ -344,9 +517,32 @@ function syncStatusText() {
 
 function syncStatusTone() {
   if (!summary.value) return "";
+  if (summary.value.conflictCount > 0) return "repo-status-strip__value--err";
   if (summary.value.behind > 0) return "repo-status-strip__value--warn";
   if (summary.value.ahead > 0) return "repo-status-strip__value--accent";
   return "repo-status-strip__value--ok";
+}
+
+function conflictStatusText(file: {
+  binary: boolean;
+  hunks: readonly unknown[];
+  resolved: boolean;
+  status: string;
+}) {
+  if (file.binary) return "二进制 / 不可解析";
+  if (!file.hunks.length) return "文件级处理";
+  if (file.resolved) return "已解决";
+  return `${file.hunks.length} 个分段`;
+}
+
+function conflictStatusTone(file: {
+  binary: boolean;
+  hunks: readonly unknown[];
+  resolved: boolean;
+}) {
+  if (file.resolved) return "change-badge--ok";
+  if (file.binary || !file.hunks.length) return "change-badge--warn";
+  return "change-badge--err";
 }
 
 function launchStatusText() {
@@ -385,6 +581,19 @@ function streamText(stream: string) {
           <GitPullRequestArrow :size="14" aria-hidden="true" />
           Pull
         </button>
+        <button
+          type="button"
+          class="ghost"
+          :disabled="actionRunning || hasConflicts"
+          @click="mergePull"
+        >
+          <GitMerge :size="14" aria-hidden="true" />
+          拉取并合并
+        </button>
+        <button v-if="hasConflicts" type="button" class="primary" :disabled="actionRunning" @click="showConflicts">
+          <TriangleAlert :size="14" aria-hidden="true" />
+          处理冲突
+        </button>
         <button type="button" class="primary" :disabled="actionRunning || !summary?.ahead" @click="push">
           <Upload :size="14" aria-hidden="true" />
           Push
@@ -410,6 +619,10 @@ function streamText(stream: string) {
         <strong :class="syncStatusTone()">{{ syncStatusText() }}</strong>
       </div>
       <div class="repo-status-strip__item">
+        <span>冲突</span>
+        <strong :class="{ 'repo-status-strip__value--err': summary.conflictCount > 0 }">{{ summary.conflictCount }}</strong>
+      </div>
+      <div class="repo-status-strip__item">
         <span>变更</span>
         <strong :class="{ 'repo-status-strip__value--warn': dirtyCount(summary) > 0 }">{{ dirtyCount(summary) }}</strong>
       </div>
@@ -430,8 +643,25 @@ function streamText(stream: string) {
     </section>
 
     <p v-if="actionError" class="error-line">{{ actionError }}</p>
+    <section v-if="recentPushError" class="repo-push-error" aria-label="最近推送失败">
+      <AlertCircle :size="16" aria-hidden="true" />
+      <div>
+        <strong>最近推送失败</strong>
+        <p>{{ recentPushError.message }}</p>
+      </div>
+      <button
+        type="button"
+        class="primary"
+        :disabled="recentPushError.retrying || actionRunning"
+        @click="push"
+      >
+        <LoaderCircle v-if="recentPushError.retrying" :size="14" aria-hidden="true" class="sb-spin" />
+        <RotateCw v-else :size="14" aria-hidden="true" />
+        重试
+      </button>
+    </section>
 
-    <div class="workbench-grid">
+    <div class="workbench-grid" :class="{ 'workbench-grid--conflicts': activeTab === 'conflicts' }">
       <main class="workbench-main card">
         <div class="repo-tabs" role="tablist" aria-label="仓库视图">
           <button
@@ -502,6 +732,132 @@ function streamText(stream: string) {
               </div>
               <p v-else class="muted diff-preview__empty">当前没有可展示的差异内容。</p>
             </section>
+          </div>
+        </section>
+
+        <section v-else-if="activeTab === 'conflicts'" class="repo-panel">
+          <div class="section-toolbar section-toolbar--compact">
+            <div class="repo-panel__title">
+              <h2>{{ conflictOperationText }}</h2>
+              <p class="muted">{{ conflictSummaryText }}</p>
+            </div>
+            <div class="toolbar">
+              <button
+                type="button"
+                class="ghost danger"
+                :disabled="actionRunning || conflicts.operation !== 'merge'"
+                @click="abortConflict"
+              >
+                <TriangleAlert :size="14" aria-hidden="true" />
+                {{ conflictAbortConfirm ? "确认终止合并" : "终止合并" }}
+              </button>
+            </div>
+          </div>
+
+          <p v-if="!conflictFiles.length" class="muted repo-empty">当前没有需要处理的冲突。</p>
+          <div v-else class="conflict-flow">
+            <p v-if="unsupportedConflictText" class="conflict-warning">
+              <TriangleAlert :size="14" aria-hidden="true" />
+              <span>{{ unsupportedConflictText }}</span>
+            </p>
+          <div class="conflict-workspace">
+            <div class="conflict-list" role="list" aria-label="冲突文件列表">
+              <button
+                v-for="file in conflictFiles"
+                :key="file.path"
+                type="button"
+                class="conflict-row"
+                :class="{ 'is-focused': focusedConflict?.path === file.path }"
+                @click="focusConflict(file.path)"
+              >
+                <span class="conflict-row__path">
+                  <strong>{{ file.path }}</strong>
+                  <small>{{ file.status }} · {{ conflictStatusText(file) }}</small>
+                </span>
+                <span class="change-badge" :class="conflictStatusTone(file)">
+                  {{ file.resolved ? "已解决" : "待处理" }}
+                </span>
+              </button>
+            </div>
+
+            <section class="conflict-editor" aria-label="冲突分段处理">
+              <div class="section-toolbar section-toolbar--compact">
+                <div class="repo-panel__title">
+                  <h2>分段处理</h2>
+                  <p class="muted">{{ focusedConflict?.path ?? "选择左侧冲突文件" }}</p>
+                </div>
+              </div>
+              <p v-if="!focusedConflict" class="muted diff-preview__empty">没有选中的冲突文件。</p>
+              <p v-else-if="focusedConflict.binary" class="muted diff-preview__empty">该文件无法解析为文本冲突，请使用文件级处理或外部编辑。</p>
+              <p v-else-if="!focusedConflict.hunks.length" class="muted diff-preview__empty">该文件没有可分段解析的 marker，请使用文件级处理或外部编辑。</p>
+              <div v-else class="conflict-hunk-list">
+                <article v-for="hunk in focusedConflict.hunks" :key="hunk.id" class="conflict-hunk">
+                  <header class="conflict-hunk__header">
+                    <strong>{{ hunk.id }}</strong>
+                    <span>第 {{ hunk.startLine }}-{{ hunk.endLine }} 行</span>
+                  </header>
+                  <div class="conflict-hunk__columns">
+                    <section class="conflict-side" :class="{ 'is-selected': conflictChoices[hunk.id] === 'ours' }">
+                      <div class="conflict-side__header">
+                        <strong>{{ hunk.oursLabel }}</strong>
+                        <button type="button" class="ghost" @click="pickConflictHunk(hunk.id, 'ours')">采用此段</button>
+                      </div>
+                      <pre><code>{{ hunk.oursLines.join("\n") || " " }}</code></pre>
+                    </section>
+                    <section class="conflict-side" :class="{ 'is-selected': conflictChoices[hunk.id] === 'theirs' }">
+                      <div class="conflict-side__header">
+                        <strong>{{ hunk.theirsLabel }}</strong>
+                        <button type="button" class="ghost" @click="pickConflictHunk(hunk.id, 'theirs')">采用此段</button>
+                      </div>
+                      <pre><code>{{ hunk.theirsLines.join("\n") || " " }}</code></pre>
+                    </section>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <aside class="conflict-sidepanel" aria-label="冲突处理操作">
+              <div class="conflict-sidepanel__card">
+                <div class="section-toolbar section-toolbar--compact">
+                  <div class="repo-panel__title">
+                    <h2>当前文件</h2>
+                    <p class="muted">{{ focusedConflict?.path ?? "未选择" }}</p>
+                  </div>
+                </div>
+                <dl class="side-kv">
+                  <div>
+                    <dt>冲突类型</dt>
+                    <dd>{{ conflicts.operation }}</dd>
+                  </div>
+                  <div>
+                    <dt>处理进度</dt>
+                    <dd>{{ conflictSummaryText }}</dd>
+                  </div>
+                  <div>
+                    <dt>已选分段</dt>
+                    <dd>{{ conflictSelectedCount }}</dd>
+                  </div>
+                </dl>
+                <div class="conflict-actions">
+                  <button type="button" class="primary" :disabled="!canResolveSelectedConflict || actionRunning" @click="resolveSelectedConflict">
+                    解决并暂存
+                  </button>
+                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="acceptConflict('ours')">
+                    {{ conflictAcceptConfirm === "ours" ? "确认整文件采用 ours 并暂存" : "整文件采用 ours" }}
+                  </button>
+                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="acceptConflict('theirs')">
+                    {{ conflictAcceptConfirm === "theirs" ? "确认整文件采用 theirs 并暂存" : "整文件采用 theirs" }}
+                  </button>
+                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="markConflictResolved">
+                    外部修改后标记解决
+                  </button>
+                  <button type="button" class="ghost" :disabled="!focusedConflict || actionRunning" @click="openConflictFolder">
+                    打开文件
+                  </button>
+                </div>
+              </div>
+            </aside>
+          </div>
           </div>
         </section>
 
@@ -628,6 +984,10 @@ function streamText(stream: string) {
               <dd :class="syncStatusTone()">{{ syncStatusText() }}</dd>
             </div>
             <div>
+              <dt>冲突数量</dt>
+              <dd :class="{ 'repo-status-strip__value--err': summary.conflictCount > 0 }">{{ summary.conflictCount }}</dd>
+            </div>
+            <div>
               <dt>工作区变更</dt>
               <dd :class="{ 'repo-status-strip__value--warn': dirtyCount(summary) > 0 }">{{ dirtyCount(summary) }}</dd>
             </div>
@@ -669,6 +1029,7 @@ function streamText(stream: string) {
           </div>
           <div class="commit-summary">
             <strong>{{ selectedSummaryText }}</strong>
+            <p v-if="hasConflicts" class="muted">当前存在冲突，先完成冲突处理再提交。</p>
             <p v-if="selectedFilePreview.length" class="muted">
               {{ selectedFilePreview.join(" · ") }}<template v-if="selectedFileList.length > selectedFilePreview.length"> 等 {{ selectedFileList.length }} 个</template>
             </p>
@@ -679,7 +1040,7 @@ function streamText(stream: string) {
             <input v-model="pushAfter" type="checkbox" />
             <span>提交后立即 push</span>
           </label>
-          <button type="button" class="primary" :disabled="!canCommit || actionRunning" @click="commitSelected">
+          <button type="button" class="primary" :disabled="!canCommit || actionRunning || hasConflicts" @click="commitSelected">
             <GitCommitHorizontal :size="14" aria-hidden="true" />
             提交
           </button>
@@ -849,11 +1210,54 @@ function streamText(stream: string) {
   color: var(--warn);
 }
 
+.repo-status-strip__value--err {
+  color: var(--err);
+}
+
+.repo-push-error {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--err-soft);
+  border-radius: 8px;
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.repo-push-error div {
+  min-width: 0;
+}
+
+.repo-push-error strong,
+.repo-push-error p {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-push-error strong {
+  font-size: 13px;
+}
+
+.repo-push-error p {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
 .workbench-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
   align-items: start;
   gap: 14px;
+}
+
+.workbench-grid--conflicts {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .workbench-main {
@@ -865,6 +1269,10 @@ function streamText(stream: string) {
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+
+.workbench-grid--conflicts .workbench-side {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .section-toolbar {
@@ -1042,9 +1450,162 @@ function streamText(stream: string) {
   background: var(--accent-soft);
 }
 
+.change-badge--err {
+  color: var(--err);
+  background: var(--err-soft);
+}
+
 .change-badge--muted {
   color: var(--text-muted);
   background: var(--bg-subtle);
+}
+
+.conflict-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(260px, 320px);
+  gap: 14px;
+  align-items: start;
+}
+
+.conflict-flow {
+  display: grid;
+  gap: 12px;
+}
+
+.conflict-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warn-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn-soft) 72%, var(--bg-subtle));
+  color: var(--text);
+}
+
+.conflict-warning svg {
+  color: var(--warn);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.conflict-warning span {
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.conflict-list,
+.conflict-hunk-list {
+  display: grid;
+  gap: 8px;
+}
+
+.conflict-row {
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  justify-content: space-between;
+  text-align: left;
+}
+
+.conflict-row:hover {
+  background: var(--bg-hover);
+}
+
+.conflict-row.is-focused {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
+
+.conflict-row__path {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.conflict-row__path strong,
+.conflict-row__path small {
+  overflow-wrap: anywhere;
+}
+
+.conflict-row__path small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.conflict-editor,
+.conflict-sidepanel__card,
+.conflict-hunk,
+.conflict-side {
+  display: grid;
+  gap: 10px;
+}
+
+.conflict-editor {
+  min-width: 0;
+}
+
+.conflict-hunk {
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.conflict-hunk__header,
+.conflict-side__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.conflict-hunk__header strong,
+.conflict-side__header strong {
+  font-size: 13px;
+}
+
+.conflict-hunk__header span,
+.conflict-side__header span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.conflict-hunk__columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.conflict-side {
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+
+.conflict-side.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 65%, var(--bg-elev));
+}
+
+.conflict-side pre {
+  min-height: 120px;
+  max-height: 320px;
+}
+
+.conflict-sidepanel {
+  min-width: 0;
+}
+
+.conflict-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .diff-preview {
@@ -1500,16 +2061,34 @@ function streamText(stream: string) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .workbench-grid--conflicts .workbench-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .change-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .conflict-workspace {
+    grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  }
+
+  .conflict-sidepanel {
+    grid-column: 1 / -1;
   }
 }
 
 @media (max-width: 760px) {
   .repo-header,
   .repo-status-strip,
+  .repo-push-error,
+  .conflict-workspace,
   .workbench-side {
     grid-template-columns: 1fr;
+  }
+
+  .conflict-sidepanel {
+    grid-column: auto;
   }
 
   .repo-header {
@@ -1559,6 +2138,10 @@ function streamText(stream: string) {
   }
 
   .history-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .conflict-hunk__columns {
     grid-template-columns: 1fr;
   }
 
