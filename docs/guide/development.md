@@ -7,7 +7,7 @@ LiliaGithub/
 ├── src/                 # Vue 3 前端
 │   ├── layouts/         # AppShell / SecondaryPanel / SettingsSidebar
 │   ├── components/      # TitleBar / ViewTabs / SidebarFooter 等
-│   ├── pages/           # Home / Settings / Plugins
+│   ├── pages/           # Home / Settings / RepoDetail
 │   ├── composables/     # useTheme / useResizablePane 等
 │   ├── router.ts
 │   └── styles.css

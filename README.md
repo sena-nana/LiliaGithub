@@ -21,7 +21,7 @@
 
 - Lilia 的 Claude / Codex / CC-Switch / agent runner 业务。
 - `packages/contracts`、项目 stub、聊天流、provider 配置。
-- 真实插件管理、技能市场或第三方集成管理；扩展页目前只是入口占位。
+- 真实插件管理、技能市场或第三方集成管理。
 - SQLite、WebDAV、托盘、小组件等 Momo 业务能力。
 
 ## 命令

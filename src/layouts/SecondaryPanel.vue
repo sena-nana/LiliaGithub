@@ -2,10 +2,7 @@
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
 import { AlertCircle, EyeOff, FilePlus2, FolderGit2, GitPullRequestArrow, LoaderCircle, RefreshCw, Search, X } from "@lucide/vue";
-import {
-  SIDEBAR_FOOTER_LINKS,
-  SIDEBAR_NAV,
-} from "../config/appShell";
+import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
@@ -315,7 +312,6 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
     </div>
 
     <SidebarFooter
-      :links="SIDEBAR_FOOTER_LINKS"
       :status="footerStatus"
     />
     <div v-if="cloneOpen" class="sb-modal-backdrop" role="presentation">

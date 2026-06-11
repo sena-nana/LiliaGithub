@@ -3,8 +3,6 @@ import {
   Home,
   Info,
   Palette,
-  Puzzle,
-  Settings,
   Sparkles,
 } from "@lucide/vue";
 import { defineAsyncComponent, type Component } from "vue";
@@ -43,13 +41,6 @@ export interface SidebarGroup {
   emptyText?: string;
 }
 
-export interface SidebarFooterLink {
-  to: string;
-  label: string;
-  title?: string;
-  icon: Component;
-}
-
 export interface SidebarFooterStatus {
   to: string;
   label: string;
@@ -67,11 +58,6 @@ export const SIDEBAR_NAV: SidebarNavItem[] = [
 ];
 
 export const SIDEBAR_GROUPS: SidebarGroup[] = [];
-
-export const SIDEBAR_FOOTER_LINKS: SidebarFooterLink[] = [
-  { to: "/settings", label: "设置", icon: Settings },
-  { to: "/plugins", label: "扩展", icon: Puzzle },
-];
 
 export const SIDEBAR_FOOTER_STATUS: SidebarFooterStatus = {
   to: "/settings",
