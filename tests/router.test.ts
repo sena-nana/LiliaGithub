@@ -20,11 +20,31 @@ async function renderAt(path: string) {
       },
     },
   });
+
+  return { router };
 }
 
 async function overrideLiliaConflict(conflict: RepoConflictState) {
   const service = await import("../src/services/workspace");
   service.setFallbackConflictOverrideForTests((repoId) => repoId === "Lilia" ? conflict : null);
+}
+
+async function clickOverviewSync() {
+  const syncButtons = await screen.findAllByRole("button", { name: "一键同步" });
+  await fireEvent.click(syncButtons[1]);
+}
+
+async function mockLiliaGithubSyncFailure() {
+  const service = await import("../src/services/workspace");
+  service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
+    repoIds.map((repoId) => ({
+      repoId,
+      status: repoId === "LiliaGithub" && operation === "sync" ? "error" : "success",
+      message: repoId === "LiliaGithub" && operation === "sync" ? "认证失败" : "完成",
+      summary: repoId === "LiliaGithub" && operation === "sync" ? null : repoSummary(repoId),
+    })),
+  );
+  return service;
 }
 
 describe("基础路由", () => {
@@ -221,8 +241,7 @@ describe("基础路由", () => {
   it("总览页一键同步直接执行且不打开预检弹层", async () => {
     await renderAt("/");
 
-    const syncButtons = await screen.findAllByRole("button", { name: "一键同步" });
-    await fireEvent.click(syncButtons[1]);
+    await clickOverviewSync();
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
@@ -231,19 +250,10 @@ describe("基础路由", () => {
   });
 
   it("批量同步失败后从侧边栏进入项目详情处理失败仓库", async () => {
-    const service = await import("../src/services/workspace");
-    service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
-      repoIds.map((repoId) => ({
-        repoId,
-        status: repoId === "LiliaGithub" && operation === "sync" ? "error" : "success",
-        message: repoId === "LiliaGithub" && operation === "sync" ? "认证失败" : "完成",
-        summary: repoId === "LiliaGithub" && operation === "sync" ? null : repoSummary(repoId),
-      })),
-    );
+    const service = await mockLiliaGithubSyncFailure();
     await renderAt("/");
 
-    const syncButtons = await screen.findAllByRole("button", { name: "一键同步" });
-    await fireEvent.click(syncButtons[1]);
+    await clickOverviewSync();
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
@@ -263,6 +273,66 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.queryByText("认证失败")).toBeNull();
     });
+  });
+
+  it("总览页可直接进入最近同步失败仓库继续处理", async () => {
+    await mockLiliaGithubSyncFailure();
+    const { router } = await renderAt("/");
+
+    await clickOverviewSync();
+
+    await waitFor(() => {
+      expect(screen.getByText("同步失败")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "处理失败" })).toHaveAttribute("title", "认证失败");
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "处理失败" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+  });
+
+  it("总览页可直接进入冲突仓库的冲突处理视图", async () => {
+    const { router } = await renderAt("/");
+
+    expect(await screen.findByText("存在冲突")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("link", { name: "处理冲突" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/Lilia?tab=conflicts");
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "冲突" })).toHaveClass("is-active");
+    });
+  });
+
+  it("总览页可直接进入待拉取仓库继续处理", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackBulkExecuteOverrideForTests((_operation, repoIds) =>
+      repoIds.map((repoId) => ({
+        repoId,
+        status: "success",
+        message: "完成",
+        summary: repoId === "LiliaGithub"
+          ? repoSummary(repoId, { ahead: 0, behind: 2 })
+          : repoSummary(repoId),
+      })),
+    );
+    const { router } = await renderAt("/");
+
+    await clickOverviewSync();
+
+    await waitFor(() => {
+      expect(screen.getByText("待拉取")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "继续处理" })).toHaveAttribute("title", "远端领先 2 个提交");
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "继续处理" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    expect(screen.getByRole("button", { name: "Pull" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "拉取并合并" })).toBeInTheDocument();
   });
 
   it("设置页默认显示外观设置并使用设置侧栏", async () => {
