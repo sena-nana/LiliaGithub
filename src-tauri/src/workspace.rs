@@ -1782,9 +1782,8 @@ pub fn repo_continue_conflict_operation(
 }
 
 #[tauri::command]
-pub async fn bulk_sync_preview(app: AppHandle, operation: String) -> Result<BulkSyncPreview, String> {
+pub async fn bulk_sync_preview(_app: AppHandle, operation: String, repos: Vec<RepoSummary>) -> Result<BulkSyncPreview, String> {
     tokio::task::spawn_blocking(move || {
-        let repos = workspace_scan_repos(app)?;
         Ok(build_bulk_preview(operation, repos))
     })
     .await

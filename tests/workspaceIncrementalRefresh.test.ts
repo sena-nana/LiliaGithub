@@ -143,7 +143,7 @@ describe("workspace incremental refresh", () => {
 
     await syncAll();
 
-    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync");
+    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync", expect.any(Array));
     expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, both.id]);
     expect(service.pushRepo).not.toHaveBeenCalled();
     expect(state.bulkPreview).toEqual(preview);

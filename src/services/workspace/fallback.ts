@@ -667,13 +667,13 @@ export function continueConflictOperation(repoId: string): Promise<RepoSummary> 
   });
 }
 
-export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPreview> {
-  const repos = visibleFallbackRepos();
+export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]): Promise<BulkSyncPreview> {
+  const reposToUse = repos.length ? repos : visibleFallbackRepos();
   return call("bulk_sync_preview", { operation }, () => {
     if (operation === "sync") {
       return {
         operation,
-        eligible: repos
+        eligible: reposToUse
           .filter((repo) => repo.remoteUrl && repo.currentBranch && repo.conflictCount <= 0)
           .filter((repo) => {
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
@@ -687,7 +687,7 @@ export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPrevi
                 ? "可拉取远端更新"
                 : "有本地提交待推送",
           })),
-        blocked: repos
+        blocked: reposToUse
           .flatMap((repo) => {
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
             if (!repo.remoteUrl) return [{ repo: { ...repo }, reason: "没有 origin remote" }];
@@ -696,7 +696,7 @@ export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPrevi
             if (repo.behind > 0 && dirty > 0) return [{ repo: { ...repo }, reason: "存在未提交变更" }];
             return [];
           }),
-        warnings: repos
+        warnings: reposToUse
           .flatMap((repo) => {
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
             if (repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl && dirty > 0) {
@@ -712,17 +712,17 @@ export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPrevi
     if (operation === "push") {
       return {
         operation,
-        eligible: repos
+        eligible: reposToUse
           .filter((repo) => repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl)
           .map((repo) => ({ repo: { ...repo }, reason: "有本地提交待推送" })),
-        blocked: repos
+        blocked: reposToUse
           .flatMap((repo) => {
             if (!repo.remoteUrl) return [{ repo: { ...repo }, reason: "没有 origin remote" }];
             if (!repo.currentBranch) return [{ repo: { ...repo }, reason: "当前不是命名分支" }];
             if (repo.behind > 0) return [{ repo: { ...repo }, reason: "当前分支落后于 upstream" }];
             return [];
           }),
-        warnings: repos
+        warnings: reposToUse
           .flatMap((repo) => {
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
             if (repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl && dirty > 0) {
@@ -737,13 +737,13 @@ export function bulkSyncPreview(operation: BulkOperation): Promise<BulkSyncPrevi
     }
     return {
       operation,
-      eligible: repos
+      eligible: reposToUse
         .filter((repo) => repo.behind > 0)
         .map((repo) => ({ repo: { ...repo }, reason: "可拉取远端更新" })),
-      blocked: repos
+      blocked: reposToUse
         .filter((repo) => repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0)
         .map((repo) => ({ repo: { ...repo }, reason: "存在未提交变更" })),
-      warnings: repos
+      warnings: reposToUse
         .filter((repo) => repo.behind <= 0)
         .map((repo) => ({ repo: { ...repo }, reason: "没有需要拉取的更新" })),
     };
