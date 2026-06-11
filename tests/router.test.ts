@@ -85,7 +85,9 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "搭建 LiliaGithub MVP" })).toBeInTheDocument();
     expect(screen.getByLabelText("提交元数据")).toHaveTextContent("1234567890abcdef");
-    expect(screen.getByLabelText("改动文件列表")).toHaveTextContent("src-tauri/src/workspace.rs");
+    expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("src-tauri/src/workspace.rs");
+    expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("@@ -10,4 +10,5 @@");
+    expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("pub github_full_name: Option<String>,");
   });
 
   it("提交详情页可通过独立路由打开并返回仓库历史", async () => {
@@ -93,7 +95,11 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "搭建 LiliaGithub MVP" })).toBeInTheDocument();
     expect(screen.getByText("改动文件")).toBeInTheDocument();
+    expect(screen.getAllByText("修改").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("+42")).toBeInTheDocument();
+    expect(screen.getByText("-3")).toBeInTheDocument();
+    expect(screen.getByText("@@ -1,3 +1,4 @@")).toBeInTheDocument();
+    expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("<h1>LiliaGithub</h1>");
 
     await fireEvent.click(screen.getByRole("link", { name: "返回历史" }));
 

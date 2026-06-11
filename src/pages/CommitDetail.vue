@@ -53,7 +53,14 @@ function fileStatusText(status: string) {
   if (status === "renamed") return "重命名";
   if (status === "added") return "新增";
   if (status === "deleted") return "删除";
+  if (status === "copied") return "复制";
   return "修改";
+}
+
+function lineMark(kind: string) {
+  if (kind === "added") return "+";
+  if (kind === "deleted") return "-";
+  return "";
 }
 </script>
 
@@ -110,7 +117,7 @@ function fileStatusText(status: string) {
         </div>
       </section>
 
-      <section class="card commit-files" aria-label="改动文件列表">
+      <section class="card commit-files" aria-label="改动文件 diff">
         <div class="commit-files__header">
           <div>
             <h2>改动文件</h2>
@@ -121,14 +128,38 @@ function fileStatusText(status: string) {
         </div>
         <p v-if="!detail.files.length" class="muted">此提交没有可展示的文件改动。</p>
         <div v-else class="commit-file-list">
-          <div v-for="file in detail.files" :key="`${file.oldPath ?? ''}:${file.path}`" class="commit-file-row">
-            <span class="commit-file-row__status">{{ fileStatusText(file.status) }}</span>
-            <span class="commit-file-row__path" :title="file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path">
-              <template v-if="file.oldPath">{{ file.oldPath }} -> </template>{{ file.path }}
-            </span>
-            <span class="commit-file-row__stat commit-file-row__stat--add">+{{ file.additions }}</span>
-            <span class="commit-file-row__stat commit-file-row__stat--del">-{{ file.deletions }}</span>
-          </div>
+          <article v-for="file in detail.files" :key="`${file.oldPath ?? ''}:${file.path}`" class="commit-file-diff">
+            <header class="commit-file-diff__header">
+              <span class="commit-file-diff__status">{{ fileStatusText(file.status) }}</span>
+              <span class="commit-file-diff__path" :title="file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path">
+                <template v-if="file.oldPath">{{ file.oldPath }} -> </template>{{ file.path }}
+              </span>
+              <span class="commit-file-diff__stat commit-file-diff__stat--add">+{{ file.additions }}</span>
+              <span class="commit-file-diff__stat commit-file-diff__stat--del">-{{ file.deletions }}</span>
+            </header>
+            <div v-if="file.hunks.length" class="commit-diff-table">
+              <template v-for="hunk in file.hunks" :key="`${file.path}:${hunk.header}`">
+                <div class="commit-diff-hunk" role="row">
+                  <span class="commit-diff-hunk__header">{{ hunk.header }}</span>
+                </div>
+                <div
+                  v-for="(line, index) in hunk.lines"
+                  :key="`${file.path}:${hunk.header}:${index}`"
+                  class="commit-diff-line"
+                  :class="`is-${line.kind}`"
+                  role="row"
+                >
+                  <span class="commit-diff-line__number">{{ line.oldLine ?? "" }}</span>
+                  <span class="commit-diff-line__number">{{ line.newLine ?? "" }}</span>
+                  <span class="commit-diff-line__mark">{{ lineMark(line.kind) }}</span>
+                  <code class="commit-diff-line__content">{{ line.content || " " }}</code>
+                </div>
+              </template>
+            </div>
+            <p v-else class="muted commit-file-diff__empty">
+              仅文件元数据变更、二进制文件或无可展示的文本差异。
+            </p>
+          </article>
         </div>
       </section>
     </template>
@@ -241,45 +272,127 @@ function fileStatusText(status: string) {
 
 .commit-file-list {
   display: grid;
+  gap: 12px;
 }
 
-.commit-file-row {
+.commit-file-diff {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+
+.commit-file-diff__header {
   display: grid;
   grid-template-columns: 70px minmax(0, 1fr) 56px 56px;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
-  border-top: 1px solid var(--border-soft);
+  min-height: 38px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-subtle);
 }
 
-.commit-file-row:first-child {
-  border-top: 0;
-}
-
-.commit-file-row__status {
+.commit-file-diff__status {
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.commit-file-row__path {
+.commit-file-diff__path {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
-.commit-file-row__stat {
+.commit-file-diff__stat {
   justify-self: end;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
 }
 
-.commit-file-row__stat--add {
+.commit-file-diff__stat--add {
   color: var(--ok);
 }
 
-.commit-file-row__stat--del {
+.commit-file-diff__stat--del {
   color: var(--err);
+}
+
+.commit-diff-table {
+  display: grid;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.commit-diff-hunk,
+.commit-diff-line {
+  display: grid;
+  grid-template-columns: 48px 48px 22px minmax(420px, 1fr);
+  min-height: 24px;
+}
+
+.commit-diff-hunk {
+  align-items: center;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-top: 1px solid var(--border-soft);
+}
+
+.commit-diff-hunk:first-child {
+  border-top: 0;
+}
+
+.commit-diff-hunk__header {
+  grid-column: 1 / -1;
+  padding: 4px 10px;
+  white-space: pre;
+}
+
+.commit-diff-line {
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.commit-diff-line.is-added {
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.commit-diff-line.is-deleted {
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
+.commit-diff-line.is-meta {
+  color: var(--text-muted);
+}
+
+.commit-diff-line__number,
+.commit-diff-line__mark {
+  padding: 3px 8px;
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid var(--border-soft);
+}
+
+.commit-diff-line__mark {
+  text-align: center;
+}
+
+.commit-diff-line__content {
+  min-width: 0;
+  padding: 3px 10px;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.commit-file-diff__empty {
+  margin: 0;
+  padding: 12px 10px;
 }
 
 .error-line {
@@ -298,13 +411,23 @@ function fileStatusText(status: string) {
     display: grid;
   }
 
-  .commit-file-row {
+  .commit-file-diff__header {
     grid-template-columns: 1fr 56px 56px;
     padding: 8px 0;
   }
 
-  .commit-file-row__status {
+  .commit-file-diff__status {
     grid-column: 1 / -1;
+    padding: 0 10px;
+  }
+
+  .commit-file-diff__path {
+    padding-left: 10px;
+  }
+
+  .commit-diff-hunk,
+  .commit-diff-line {
+    grid-template-columns: 40px 40px 20px minmax(320px, 1fr);
   }
 }
 </style>

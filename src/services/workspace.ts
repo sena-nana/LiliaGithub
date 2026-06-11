@@ -109,6 +109,24 @@ export interface CommitFileChange {
   status: string;
   additions: number;
   deletions: number;
+  patch: string;
+  hunks: CommitDiffHunk[];
+}
+
+export interface CommitDiffHunk {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: CommitDiffLine[];
+}
+
+export interface CommitDiffLine {
+  kind: "context" | "added" | "deleted" | "meta";
+  content: string;
+  oldLine: number | null;
+  newLine: number | null;
 }
 
 export interface CommitDetail {
@@ -485,6 +503,23 @@ export function getRepoCommitDetail(repoId: string, hash: string): Promise<Commi
           status: "modified",
           additions: 24,
           deletions: 8,
+          patch: "diff --git a/src/pages/Home.vue b/src/pages/Home.vue\n@@ -1,3 +1,4 @@\n <template>\n-  <h1>Lilia</h1>\n+  <h1>LiliaGithub</h1>\n+  <p>本地仓库管理</p>\n </template>",
+          hunks: [
+            {
+              header: "@@ -1,3 +1,4 @@",
+              oldStart: 1,
+              oldLines: 3,
+              newStart: 1,
+              newLines: 4,
+              lines: [
+                { kind: "context", content: "<template>", oldLine: 1, newLine: 1 },
+                { kind: "deleted", content: "  <h1>Lilia</h1>", oldLine: 2, newLine: null },
+                { kind: "added", content: "  <h1>LiliaGithub</h1>", oldLine: null, newLine: 2 },
+                { kind: "added", content: "  <p>本地仓库管理</p>", oldLine: null, newLine: 3 },
+                { kind: "context", content: "</template>", oldLine: 3, newLine: 4 },
+              ],
+            },
+          ],
         },
         {
           path: "src-tauri/src/workspace.rs",
@@ -492,6 +527,24 @@ export function getRepoCommitDetail(repoId: string, hash: string): Promise<Commi
           status: "modified",
           additions: 42,
           deletions: 3,
+          patch: "diff --git a/src-tauri/src/workspace.rs b/src-tauri/src/workspace.rs\n@@ -10,4 +10,5 @@\n pub struct RepoSummary {\n   pub name: String,\n-  pub path: String,\n+  pub path: String,\n+  pub github_full_name: Option<String>,\n }",
+          hunks: [
+            {
+              header: "@@ -10,4 +10,5 @@",
+              oldStart: 10,
+              oldLines: 4,
+              newStart: 10,
+              newLines: 5,
+              lines: [
+                { kind: "context", content: "pub struct RepoSummary {", oldLine: 10, newLine: 10 },
+                { kind: "context", content: "  pub name: String,", oldLine: 11, newLine: 11 },
+                { kind: "deleted", content: "  pub path: String,", oldLine: 12, newLine: null },
+                { kind: "added", content: "  pub path: String,", oldLine: null, newLine: 12 },
+                { kind: "added", content: "  pub github_full_name: Option<String>,", oldLine: null, newLine: 13 },
+                { kind: "context", content: "}", oldLine: 13, newLine: 14 },
+              ],
+            },
+          ],
         },
       ],
     };
