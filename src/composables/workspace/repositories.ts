@@ -148,3 +148,8 @@ export async function abortConflictOperation(repoId: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.abortConflictOperation(repoId));
 }
+
+export async function continueConflictOperation(repoId: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.continueConflictOperation(repoId));
+}

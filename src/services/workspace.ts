@@ -288,6 +288,7 @@ function createFallbackSettings(): WorkspaceSettings {
 
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
+let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
@@ -296,6 +297,7 @@ let fallbackLaunchLogIndex = 1;
 export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
+  fallbackConflictOverride = null;
   for (const key of Object.keys(fallbackLaunchStatuses)) {
     delete fallbackLaunchStatuses[key];
   }
@@ -309,6 +311,12 @@ export function setFallbackBulkExecuteOverrideForTests(
   override: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null,
 ) {
   fallbackBulkExecuteOverride = override;
+}
+
+export function setFallbackConflictOverrideForTests(
+  override: ((repoId: string) => RepoConflictState | null) | null,
+) {
+  fallbackConflictOverride = override;
 }
 
 function canInvoke() {
@@ -426,6 +434,8 @@ function emptyConflictState(): RepoConflictState {
 }
 
 function fallbackConflictState(repoId: string): RepoConflictState {
+  const override = fallbackConflictOverride?.(repoId);
+  if (override) return override;
   if (repoId !== "Lilia") return emptyConflictState();
   return {
     operation: "merge",
@@ -820,6 +830,13 @@ export function markFileResolved(repoId: string, path: string): Promise<RepoSumm
 
 export function abortConflictOperation(repoId: string): Promise<RepoSummary> {
   return call("repo_abort_conflict_operation", { repoId }, () => {
+    const repo = fallbackRepo(repoId);
+    return { ...repo, conflictCount: 0 };
+  });
+}
+
+export function continueConflictOperation(repoId: string): Promise<RepoSummary> {
+  return call("repo_continue_conflict_operation", { repoId }, () => {
     const repo = fallbackRepo(repoId);
     return { ...repo, conflictCount: 0 };
   });

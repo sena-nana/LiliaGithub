@@ -1674,11 +1674,25 @@ pub fn repo_abort_conflict_operation(
 ) -> Result<RepoSummary, String> {
     let root = workspace_root(&app)?;
     let repo_path = repo_path_by_id(&app, &repo_id)?;
+    let operation = conflict_operation(&repo_path);
+    let args = conflict_operation_args(&operation, "终止")?;
+    git_command(&repo_path, args, None)?;
+    Ok(summarize_repo(&root, &repo_path))
+}
+
+#[tauri::command]
+pub fn repo_continue_conflict_operation(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let repo_path = repo_path_by_id(&app, &repo_id)?;
     let conflicts = repo_conflicts(&repo_path);
-    if conflicts.operation != "merge" {
-        return Err("当前只支持终止 merge 冲突".to_string());
+    if !conflicts.files.is_empty() {
+        return Err("仍有冲突文件未解决".to_string());
     }
-    git_command(&repo_path, &["merge", "--abort"], None)?;
+    let args = conflict_operation_args(&conflicts.operation, "继续")?;
+    git_command(&repo_path, args, None)?;
     Ok(summarize_repo(&root, &repo_path))
 }
 
@@ -1912,6 +1926,22 @@ fn conflict_checkout_side(side: &str) -> Result<&'static str, String> {
         "ours" => Ok("--ours"),
         "theirs" => Ok("--theirs"),
         _ => Err("冲突侧只能是 ours 或 theirs".to_string()),
+    }
+}
+
+fn conflict_operation_args(
+    operation: &str,
+    action: &str,
+) -> Result<&'static [&'static str], String> {
+    match (operation, action) {
+        ("merge", "终止") => Ok(&["merge", "--abort"]),
+        ("rebase", "终止") => Ok(&["rebase", "--abort"]),
+        ("cherry-pick", "终止") => Ok(&["cherry-pick", "--abort"]),
+        ("merge", "继续") => Ok(&["commit", "--no-edit"]),
+        ("rebase", "继续") => Ok(&["rebase", "--continue"]),
+        ("cherry-pick", "继续") => Ok(&["cherry-pick", "--continue"]),
+        ("none", _) => Err("当前没有进行中的冲突操作".to_string()),
+        _ => Err(format!("不支持{action} {operation} 冲突")),
     }
 }
 
@@ -2837,6 +2867,54 @@ mod tests {
         assert!(!resolved.contains("<<<<<<<"));
         assert!(!resolved.contains("======="));
         assert!(!resolved.contains(">>>>>>>"));
+    }
+
+    #[test]
+    fn maps_conflict_abort_and_continue_args() {
+        assert_eq!(
+            conflict_operation_args("merge", "终止").unwrap(),
+            ["merge", "--abort"]
+        );
+        assert_eq!(
+            conflict_operation_args("rebase", "终止").unwrap(),
+            ["rebase", "--abort"]
+        );
+        assert_eq!(
+            conflict_operation_args("cherry-pick", "终止").unwrap(),
+            ["cherry-pick", "--abort"]
+        );
+        assert_eq!(
+            conflict_operation_args("merge", "继续").unwrap(),
+            ["commit", "--no-edit"]
+        );
+        assert_eq!(
+            conflict_operation_args("rebase", "继续").unwrap(),
+            ["rebase", "--continue"]
+        );
+        assert_eq!(
+            conflict_operation_args("cherry-pick", "继续").unwrap(),
+            ["cherry-pick", "--continue"]
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_unknown_conflict_operations() {
+        assert_eq!(
+            conflict_operation_args("none", "终止").unwrap_err(),
+            "当前没有进行中的冲突操作"
+        );
+        assert_eq!(
+            conflict_operation_args("none", "继续").unwrap_err(),
+            "当前没有进行中的冲突操作"
+        );
+        assert_eq!(
+            conflict_operation_args("am", "终止").unwrap_err(),
+            "不支持终止 am 冲突"
+        );
+        assert_eq!(
+            conflict_operation_args("am", "继续").unwrap_err(),
+            "不支持继续 am 冲突"
+        );
     }
 
     #[test]

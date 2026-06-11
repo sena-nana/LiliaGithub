@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import App from "../src/App.vue";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
+import type { RepoConflictState } from "../src/services/workspace";
 
 async function renderAt(path: string) {
   const router = createLiliaGithubRouter(createMemoryHistory());
@@ -18,6 +19,11 @@ async function renderAt(path: string) {
       },
     },
   });
+}
+
+async function overrideLiliaConflict(conflict: RepoConflictState) {
+  const service = await import("../src/services/workspace");
+  service.setFallbackConflictOverrideForTests((repoId) => repoId === "Lilia" ? conflict : null);
 }
 
 describe("基础路由", () => {
@@ -108,6 +114,58 @@ describe("基础路由", () => {
     await fireEvent.click(firstButton);
 
     expect(screen.getByRole("button", { name: "确认整文件采用 ours 并暂存" })).toBeInTheDocument();
+  });
+
+  it("rebase 冲突支持应用内继续和终止入口", async () => {
+    await overrideLiliaConflict({
+      operation: "rebase",
+      allResolved: false,
+      files: [
+        {
+          path: "src/rebase.ts",
+          status: "UU",
+          resolved: false,
+          binary: false,
+          hunks: [
+            {
+              id: "hunk-1",
+              startLine: 1,
+              endLine: 5,
+              oursLabel: "HEAD",
+              theirsLabel: "feature",
+              oursLines: ["ours"],
+              theirsLines: ["theirs"],
+            },
+          ],
+        },
+      ],
+    });
+
+    await renderAt("/repos/Lilia");
+
+    expect(await screen.findByText("rebase 冲突")).toBeInTheDocument();
+    expect(screen.queryByText(/第一版暂不支持/)).toBeNull();
+    expect(screen.getByRole("button", { name: "继续 rebase" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "终止 rebase" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
+  });
+
+  it("cherry-pick 冲突文件处理完后仍禁用普通提交并允许继续", async () => {
+    await overrideLiliaConflict({
+      operation: "cherry-pick",
+      allResolved: true,
+      files: [],
+    });
+
+    await renderAt("/repos/Lilia");
+
+    expect(await screen.findByText("cherry-pick 冲突")).toBeInTheDocument();
+    expect(screen.queryByText(/第一版暂不支持/)).toBeNull();
+    expect(screen.getByText("冲突文件已处理，可继续当前操作。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续 cherry-pick" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "终止 cherry-pick" })).toBeEnabled();
+    expect(screen.getByText("当前存在冲突，先完成冲突处理再提交。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
   });
 
   it("提交历史行点击后进入提交详情页", async () => {
