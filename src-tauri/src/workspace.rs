@@ -1782,21 +1782,29 @@ pub fn repo_continue_conflict_operation(
 }
 
 #[tauri::command]
-pub fn bulk_sync_preview(app: AppHandle, operation: String) -> Result<BulkSyncPreview, String> {
-    let repos = workspace_scan_repos(app)?;
-    Ok(build_bulk_preview(operation, repos))
+pub async fn bulk_sync_preview(app: AppHandle, operation: String) -> Result<BulkSyncPreview, String> {
+    tokio::task::spawn_blocking(move || {
+        let repos = workspace_scan_repos(app)?;
+        Ok(build_bulk_preview(operation, repos))
+    })
+    .await
+    .map_err(|e| format!("批量预览后台任务异常：{e}"))?
 }
 
 #[tauri::command]
-pub fn bulk_sync_execute(
+pub async fn bulk_sync_execute(
     app: AppHandle,
     operation: String,
     repo_ids: Vec<String>,
 ) -> Result<Vec<BulkSyncResult>, String> {
-    let root = workspace_root(&app)?;
-    Ok(run_bulk_sync_parallel(repo_ids, |repo_id| {
-        bulk_sync_repo(&app, &root, &operation, repo_id)
-    }))
+    tokio::task::spawn_blocking(move || {
+        let root = workspace_root(&app)?;
+        Ok(run_bulk_sync_parallel(repo_ids, |repo_id| {
+            bulk_sync_repo(&app, &root, &operation, repo_id)
+        }))
+    })
+    .await
+    .map_err(|e| format!("批量同步后台任务异常：{e}"))?
 }
 
 #[tauri::command]
