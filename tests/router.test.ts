@@ -34,7 +34,7 @@ async function clickOverviewSync() {
   if (!(main instanceof HTMLElement)) throw new Error("未找到主内容区域");
   await screen.findByRole("heading", { level: 1, name: "项目总览" });
   await within(main).findByText("LiliaGithub");
-  await fireEvent.click(within(main).getByRole("button", { name: "一键同步" }));
+  await fireEvent.click(within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" }));
 }
 
 async function mockLiliaGithubSyncFailure() {
@@ -72,7 +72,8 @@ describe("基础路由", () => {
     await fireEvent.click(screen.getByRole("button", { name: "含改动" }));
     expect(await screen.findByText(/包含未提交改动 · 刷新于/)).toBeInTheDocument();
     expect(await screen.findByText("49%")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
+    expect(screen.getByLabelText("项目总览操作")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(1);
   });
 
   it("总览页语言图表和列表可跳转到对应仓库", async () => {
@@ -116,7 +117,11 @@ describe("基础路由", () => {
     service.setFallbackRepoContributionsOverrideForTests(() => {
       throw new Error("rate limited");
     });
-    await fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" });
+    await waitFor(() => {
+      expect(refreshRepos).toBeEnabled();
+    });
+    await fireEvent.click(refreshRepos);
 
     expect(await screen.findByText("Error: rate limited")).toBeInTheDocument();
 

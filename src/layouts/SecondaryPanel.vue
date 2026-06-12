@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
-import { AlertCircle, EyeOff, FilePlus2, FolderGit2, GitPullRequestArrow, LoaderCircle, Lock, Radar, RefreshCw, Search, Sparkles, X } from "@lucide/vue";
+import { AlertCircle, EyeOff, FolderGit2, GitPullRequestArrow, LoaderCircle, Lock, Search, Sparkles, X } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -26,8 +26,6 @@ import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
-const searchOpen = ref(false);
-const searchQuery = ref("");
 const searchInput = ref<HTMLInputElement | null>(null);
 const cloneOpen = ref(false);
 const cloneRemoteUrl = ref("");
@@ -44,8 +42,21 @@ const cloneRepoLoadingMore = ref(false);
 const cloneRepoLoadError = ref<string | null>(null);
 const cloneNextRepoPage = ref<number | null>(null);
 const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
-const discoverBusy = ref(false);
-const addRepoBusy = ref(false);
+
+const props = defineProps<{
+  searchOpen: boolean;
+  searchQuery: string;
+}>();
+
+const emit = defineEmits<{
+  "update:searchOpen": [value: boolean];
+  "update:searchQuery": [value: string];
+}>();
+
+const searchQueryModel = computed({
+  get: () => props.searchQuery,
+  set: (value: string) => emit("update:searchQuery", value),
+});
 
 const footerStatus = computed(() => {
   if (!workspace.workspaceRoot.value) {
@@ -102,7 +113,7 @@ function repoIssue(repo: RepoSummary): RepoIssue | null {
 }
 
 const filteredRepoItems = computed(() => {
-  const query = searchQuery.value.trim().toLocaleLowerCase();
+  const query = searchQueryModel.value.trim().toLocaleLowerCase();
   return workspace.state.repos
     .filter((repo) =>
       !query ||
@@ -141,18 +152,16 @@ watch(cloneRemoteUrl, (value) => {
   cloneDirectoryName.value = cloneSelectedRepo.value?.name ?? inferCloneDirectoryName(value);
 });
 
-function toggleSearch() {
-  searchOpen.value = !searchOpen.value;
-  if (searchOpen.value) {
-    void nextTick(() => searchInput.value?.focus());
-  } else {
-    searchQuery.value = "";
-  }
-}
+watch(
+  () => props.searchOpen,
+  (open) => {
+    if (open) void nextTick(() => searchInput.value?.focus());
+  },
+);
 
 function closeSearch() {
-  searchOpen.value = false;
-  searchQuery.value = "";
+  emit("update:searchOpen", false);
+  emit("update:searchQuery", "");
 }
 
 async function openFirstSearchResult() {
@@ -160,6 +169,10 @@ async function openFirstSearchResult() {
   if (!repo) return;
   await router.push(`/repos/${encodeURIComponent(repo.id)}`);
 }
+
+defineExpose({
+  openCloneDialog,
+});
 
 function normalizeGitHubInput(input: string): string | null {
   const trimmed = input.trim().replace(/\/+$/, "");
@@ -345,29 +358,6 @@ async function openGitHubBindingSettings() {
   await router.push({ path: "/settings", query: { tab: "repositories" } });
 }
 
-async function addLocalRepo() {
-  if (addRepoBusy.value) return;
-  addRepoBusy.value = true;
-  try {
-    const summary = await workspace.addLocalRepo();
-    if (summary) {
-      await router.push(`/repos/${encodeURIComponent(summary.id)}`);
-    }
-  } finally {
-    addRepoBusy.value = false;
-  }
-}
-
-async function discoverRepos() {
-  if (discoverBusy.value) return;
-  discoverBusy.value = true;
-  try {
-    await workspace.discoverRepos();
-  } finally {
-    discoverBusy.value = false;
-  }
-}
-
 function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   return [
     {
@@ -389,78 +379,6 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 
 <template>
   <aside class="secondary-panel">
-    <div class="sb-section sb-section--actions">
-      <button
-        type="button"
-        class="sb-action"
-        title="克隆仓库"
-        aria-label="克隆仓库"
-        :disabled="!workspace.workspaceRoot.value"
-        @click="openCloneDialog"
-      >
-        <FilePlus2 :size="16" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        class="sb-action"
-        title="添加本地仓库"
-        aria-label="添加本地仓库"
-        :disabled="!workspace.workspaceRoot.value || addRepoBusy"
-        @click="addLocalRepo"
-      >
-        <FolderGit2 :size="16" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        class="sb-action"
-        :class="{ 'is-active': searchOpen }"
-        title="搜索"
-        aria-label="搜索"
-        :disabled="!workspace.state.repos.length"
-        @click="toggleSearch"
-      >
-        <Search :size="16" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        class="sb-action"
-        title="刷新仓库"
-        aria-label="刷新仓库"
-        :disabled="workspace.state.scanning"
-        @click="workspace.refreshRepos"
-      >
-        <RefreshCw :size="16" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        class="sb-action"
-        title="发现仓库"
-        aria-label="发现仓库"
-        :disabled="!workspace.workspaceRoot.value || discoverBusy"
-        @click="discoverRepos"
-      >
-        <LoaderCircle v-if="discoverBusy" :size="16" aria-hidden="true" class="sb-spin" />
-        <Radar v-else :size="16" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        class="sb-action"
-        :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync' }"
-        title="一键同步"
-        aria-label="一键同步"
-        :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
-        @click="workspace.syncAll"
-      >
-        <LoaderCircle
-          v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync'"
-          :size="16"
-          aria-hidden="true"
-          class="sb-spin"
-        />
-        <GitPullRequestArrow v-else :size="16" aria-hidden="true" />
-      </button>
-    </div>
-
     <div class="sb-section">
       <div class="sb-section__header">
         <span class="sb-section__title">工作区</span>
@@ -484,24 +402,12 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
     <div class="sb-section">
       <div class="sb-section__header">
         <span class="sb-section__title">仓库</span>
-        <div class="sb-section__tools">
-          <button
-            type="button"
-            class="sb-icon-btn"
-            title="刷新仓库"
-            aria-label="刷新仓库"
-            :disabled="workspace.state.scanning"
-            @click="workspace.refreshRepos"
-          >
-            <RefreshCw :size="14" aria-hidden="true" />
-          </button>
-        </div>
       </div>
       <div v-if="searchOpen" class="sb-search">
         <Search :size="13" aria-hidden="true" />
         <input
           ref="searchInput"
-          v-model="searchQuery"
+          v-model="searchQueryModel"
           type="search"
           aria-label="搜索仓库"
           placeholder="搜索仓库"
@@ -679,13 +585,6 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   min-height: 0;
 }
 
-.sb-section--actions {
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 2px 0;
-}
-
 .sb-section__header {
   display: flex;
   align-items: center;
@@ -701,20 +600,6 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   text-transform: uppercase;
 }
 
-.sb-section__tools {
-  margin-left: auto;
-  display: inline-flex;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.sb-section__header:hover .sb-section__tools,
-.sb-section__header:focus-within .sb-section__tools {
-  opacity: 1;
-}
-
-.sb-action,
 .sb-icon-btn {
   border: 0;
   background: transparent;
@@ -726,13 +611,6 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
-.sb-action {
-  flex: 1;
-  height: 30px;
-  padding: 0;
-  border-radius: 6px;
-}
-
 .sb-icon-btn {
   width: 22px;
   height: 22px;
@@ -740,24 +618,10 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   border-radius: 4px;
 }
 
-.sb-action:hover,
 .sb-icon-btn:hover {
   background: var(--bg-hover);
   color: var(--text);
   filter: none;
-}
-
-.sb-action.is-active {
-  background: var(--bg-active);
-  color: var(--accent);
-}
-
-.sb-action.is-running,
-.sb-action.is-running:hover,
-.sb-action.is-running:disabled {
-  background: var(--accent);
-  color: var(--accent-text);
-  opacity: 1;
 }
 
 .sb-spin {

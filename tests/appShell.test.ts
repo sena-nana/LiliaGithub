@@ -12,6 +12,7 @@ import {
 } from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
+import Home from "../src/pages/Home.vue";
 import { repoSummary } from "./fixtures/workspace";
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -34,7 +35,7 @@ async function renderAppShell(initialRoute = "/") {
     routes: [
       {
         path: "/",
-        component: { template: "<div>home</div>" },
+        component: Home,
       },
       {
         path: "/repos/:repoId(.*)",
@@ -101,16 +102,19 @@ beforeEach(() => {
 });
 
 describe("AppShell sidebar", () => {
-  it("主侧边栏显示总览、仓库列表和一键同步工具", async () => {
-    const view = await renderAppShell("/repos/LiliaGithub");
+  it("主侧边栏显示总览和仓库列表，仓库操作集中在总览页", async () => {
+    const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
     expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
-    expect(view.getAllByRole("button", { name: "刷新仓库" }).length).toBeGreaterThanOrEqual(1);
-    expect(view.getByRole("button", { name: "一键同步" })).toBeEnabled();
+    expect(view.container.querySelector(".sb-section--actions")).toBeNull();
+    expect(view.container.querySelector(".shell-actions")).toBeNull();
+    expect(view.getByLabelText("项目总览操作")).toBeInTheDocument();
+    expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" })).toBeInTheDocument();
+    expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" })).toBeEnabled();
 
     await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
@@ -150,8 +154,8 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏一键同步运行中显示按钮和仓库行状态", async () => {
-    const view = await renderAppShell("/repos/LiliaGithub");
+  it("总览页一键同步运行中显示按钮和仓库行状态", async () => {
+    const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
@@ -179,7 +183,7 @@ describe("AppShell sidebar", () => {
     state.bulkRunning = true;
 
     await waitFor(() => {
-      expect(view.getByRole("button", { name: "一键同步" })).toHaveClass("is-running");
+      expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" })).toHaveClass("is-running");
       const row = sidebarRowForText(view.container, "LiliaGithub");
       expect(within(row).getByLabelText("正在同步")).toBeInTheDocument();
       expect(within(row).queryByLabelText("同步失败")).not.toBeInTheDocument();
@@ -239,14 +243,14 @@ describe("AppShell sidebar", () => {
   });
 
   it("侧边栏搜索可过滤仓库并回车跳转首个结果", async () => {
-    const view = await renderAppShell("/repos/LiliaGithub");
+    const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
       expect(sidebarRowForText(view.container, "Lilia")).toBeInTheDocument();
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "搜索" }));
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "搜索" }));
     const search = view.getByRole("searchbox", { name: "搜索仓库" });
     await fireEvent.update(search, "sena-nana/LiliaGithub");
 
@@ -262,45 +266,28 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("未绑定 GitHub 时侧边栏新建可克隆远端仓库并跳转详情", async () => {
+  it("未绑定 GitHub 时首页保持初始化页且不显示总览操作卡片", async () => {
     setFallbackGitHubBindingStatusForTests({
       state: "unbound",
       clientIdConfigured: true,
       clientIdSource: "bundled",
       binding: null,
     });
-    const view = await renderAppShell("/repos/LiliaGithub");
+    const view = await renderAppShell("/");
 
-    await waitFor(() => {
-      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
-    });
-
-    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
-    expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
-
-    await fireEvent.update(
-      view.getByPlaceholderText("https://github.com/user/repo.git"),
-      "https://github.com/sena-nana/NewRepo.git",
-    );
-    await waitFor(() => {
-      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("NewRepo");
-    });
-    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
-
-    await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
-      expect(sidebarRowForText(view.container, "NewRepo")).toBeInTheDocument();
-    });
+    expect(await view.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
+    expect(view.queryByLabelText("项目总览操作")).toBeNull();
+    expect(view.queryByRole("navigation", { name: "主导航" })).toBeNull();
   });
 
   it("已绑定 GitHub 时克隆弹窗展示账号仓库列表并可选择克隆", async () => {
-    const view = await renderAppShell("/repos/LiliaGithub");
+    const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
 
     expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
     const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
@@ -320,13 +307,13 @@ describe("AppShell sidebar", () => {
   });
 
   it("已绑定 GitHub 时支持 owner/repo 直接克隆", async () => {
-    const view = await renderAppShell("/repos/LiliaGithub");
+    const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
     const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
 
     await fireEvent.update(input, "sena-nana/NewRepo");
@@ -344,13 +331,13 @@ describe("AppShell sidebar", () => {
 
   it("GitHub 仓库列表绑定失效时提供重新绑定入口", async () => {
     setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
-    const view = await renderAppShell("/repos/LiliaGithub");
+    const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
 
     expect(await view.findByText("GitHub 绑定已失效，请重新绑定。")).toBeInTheDocument();
     await fireEvent.focus(view.getByPlaceholderText("搜索仓库，或直接输入 owner/repo"));
