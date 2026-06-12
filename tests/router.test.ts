@@ -62,12 +62,12 @@ describe("基础路由", () => {
     expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
     expect(screen.getByLabelText("编程语言占比图")).toBeInTheDocument();
-    expect(screen.getByText(/HEAD 已提交文件 · 刷新于/)).toBeInTheDocument();
-    expect(screen.getByText("TypeScript")).toBeInTheDocument();
-    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(await screen.findByText(/HEAD 已提交文件 · 刷新于/)).toBeInTheDocument();
+    expect(await screen.findByText("TypeScript")).toBeInTheDocument();
+    expect(await screen.findByText("50%")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "含改动" }));
-    expect(screen.getByText(/包含未提交改动 · 刷新于/)).toBeInTheDocument();
-    expect(screen.getByText("49%")).toBeInTheDocument();
+    expect(await screen.findByText(/包含未提交改动 · 刷新于/)).toBeInTheDocument();
+    expect(await screen.findByText("49%")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
   });
 
@@ -438,7 +438,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByText("没有隐藏仓库。")).toBeInTheDocument();
     });
-    expect((await service.scanRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
+    expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
   });
 
   it("未知路由回到首页", async () => {

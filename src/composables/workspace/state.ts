@@ -11,6 +11,7 @@ import type {
   ProjectLaunchStatus,
   RepoDetail,
   RepoSummary,
+  WorkspaceTask,
   WorkspaceSettings,
 } from "../../services/workspace";
 
@@ -34,6 +35,8 @@ export interface WorkspaceState {
   bulkRunning: boolean;
   recentSync: RecentBulkSyncState | null;
   githubContributions: GitHubContributionsState;
+  tasks: WorkspaceTask[];
+  languageStatsLoadingRepoIds: string[];
 }
 
 export interface RecentBulkSyncState {
@@ -75,6 +78,8 @@ export const state = reactive<WorkspaceState>({
     loading: false,
     error: null,
   },
+  tasks: [],
+  languageStatsLoadingRepoIds: [],
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -111,7 +116,7 @@ export function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
 export function upsertRepo(summary: RepoSummary) {
   const index = state.repos.findIndex((repo) => repo.id === summary.id);
   if (index >= 0) {
-    state.repos[index] = summary;
+    state.repos[index] = mergeRepoSummary(state.repos[index], summary);
   } else {
     state.repos.push(summary);
   }
@@ -122,6 +127,33 @@ export function upsertRepo(summary: RepoSummary) {
       summary,
     };
   }
+}
+
+export function replaceRepos(summaries: RepoSummary[]) {
+  const currentById = new Map(state.repos.map((repo) => [repo.id, repo]));
+  state.repos = summaries.map((summary) => {
+    const current = currentById.get(summary.id);
+    return current ? mergeRepoSummary(current, summary) : summary;
+  });
+  for (const summary of state.repos) {
+    const detail = state.repoDetails[summary.id];
+    if (detail) {
+      state.repoDetails[summary.id] = {
+        ...detail,
+        summary,
+      };
+    }
+  }
+}
+
+function mergeRepoSummary(current: RepoSummary, next: RepoSummary) {
+  const hasLanguageStats = next.languageStatsUpdatedAt > 0 || next.languageStats.length > 0 || next.workingTreeLanguageStats.length > 0;
+  return {
+    ...next,
+    languageStats: hasLanguageStats ? next.languageStats : current.languageStats,
+    workingTreeLanguageStats: hasLanguageStats ? next.workingTreeLanguageStats : current.workingTreeLanguageStats,
+    languageStatsUpdatedAt: hasLanguageStats ? next.languageStatsUpdatedAt : current.languageStatsUpdatedAt,
+  };
 }
 
 export function setRepoDetail(detail: RepoDetail) {
@@ -246,5 +278,7 @@ export function resetWorkspaceStateForTests() {
     loading: false,
     error: null,
   };
+  state.tasks = [];
+  state.languageStatsLoadingRepoIds = [];
   deviceFlow.value = null;
 }

@@ -4,7 +4,6 @@ import type {
   BulkSyncResult,
   CommitDetail,
   GitHubBindingStatus,
-  GitHubContributionDay,
   GitHubContributionMeta,
   GitHubContributionResult,
   GitHubDeviceFlowPollResult,
@@ -18,6 +17,7 @@ import type {
   RepoDetail,
   RepoMergePullResult,
   RepoSummary,
+  WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
 
@@ -104,6 +104,7 @@ function createFallbackSettings(): WorkspaceSettings {
     githubBinding: fallbackBinding.binding,
     projectLaunchConfigs: {},
     hiddenRepoIds: [],
+    managedRepoIds: fallbackRepos.map((repo) => repo.id),
   };
 }
 
@@ -113,6 +114,8 @@ let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | n
 let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionResult) | null = null;
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
+let fallbackTaskIndex = 1;
+let fallbackTasks: WorkspaceTask[] = [];
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
@@ -125,6 +128,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoContributionsOverride = null;
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
+  fallbackTaskIndex = 1;
+  fallbackTasks = [];
   for (const key of Object.keys(fallbackLaunchStatuses)) {
     delete fallbackLaunchStatuses[key];
   }
@@ -157,6 +162,26 @@ async function call<T>(_command: string, _args?: Record<string, unknown>, fallba
   throw new Error("Workspace fallback is unavailable for this command");
 }
 
+function recordFallbackTask(
+  kind: WorkspaceTask["kind"],
+  priority: WorkspaceTask["priority"],
+  repoId: string | null,
+  status: WorkspaceTask["status"],
+  message: string | null,
+) {
+  const task: WorkspaceTask = {
+    id: `fallback-task-${fallbackTaskIndex++}`,
+    kind,
+    priority,
+    repoId,
+    status,
+    message,
+    updatedAt: Date.now(),
+  };
+  fallbackTasks = [task, ...fallbackTasks].slice(0, 200);
+  return task;
+}
+
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
   return call("workspace_get_settings", undefined, () => ({ ...fallbackSettings }));
 }
@@ -172,8 +197,41 @@ export function pickWorkspaceRoot(): Promise<string | null> {
   return call("workspace_pick_root", undefined, () => fallbackSettings.workspaceRoot);
 }
 
-export function scanRepos(): Promise<RepoSummary[]> {
-  return call("workspace_scan_repos", undefined, () => visibleFallbackRepos());
+export function pickRepo(): Promise<string | null> {
+  return call("workspace_pick_repo", undefined, () => allFallbackRepos()[0]?.path ?? null);
+}
+
+export function refreshRepos(): Promise<RepoSummary[]> {
+  return call("workspace_refresh_repos", undefined, () => {
+    const repos = visibleFallbackRepos();
+    recordFallbackTask("repoStatus", "high", null, "success", `已刷新 ${repos.length} 个仓库`);
+    return repos;
+  });
+}
+
+export function discoverRepos(): Promise<RepoSummary[]> {
+  return call("workspace_discover_repos", undefined, () => {
+    const discovered = visibleFallbackRepos();
+    fallbackSettings = {
+      ...fallbackSettings,
+      managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, ...discovered.map((repo) => repo.id)])).sort(),
+    };
+    recordFallbackTask("discoverRepos", "low", null, "success", `发现 ${discovered.length} 个仓库`);
+    return discovered;
+  });
+}
+
+export function addRepo(repoPath: string): Promise<RepoSummary> {
+  return call("workspace_add_repo", { repoPath }, () => {
+    const repo = allFallbackRepos().find((item) => item.path === repoPath || item.id === repoPath) ?? fallbackRepos[0];
+    fallbackSettings = {
+      ...fallbackSettings,
+      hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repo.id),
+      managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, repo.id])).sort(),
+    };
+    recordFallbackTask("repoStatus", "high", repo.id, "success", "已添加仓库");
+    return { ...repo };
+  });
 }
 
 function inferRepoDirectoryName(remoteUrl: string) {
@@ -208,6 +266,10 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
       languageStatsUpdatedAt: Date.now(),
     };
     fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
+    fallbackSettings = {
+      ...fallbackSettings,
+      managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, repo.id])).sort(),
+    };
     return { ...repo };
   });
 }
@@ -259,6 +321,18 @@ export function listHiddenRepos(): Promise<HiddenRepo[]> {
       name: allFallbackRepos().find((repo) => repo.id === id)?.name ?? id,
     })),
   );
+}
+
+export function listWorkspaceTasks(): Promise<WorkspaceTask[]> {
+  return call("workspace_list_tasks", undefined, () => fallbackTasks.map((task) => ({ ...task })));
+}
+
+export function cancelWorkspaceTask(taskId: string): Promise<void> {
+  return call("workspace_cancel_task", { taskId }, () => {
+    fallbackTasks = fallbackTasks.map((task) =>
+      task.id === taskId ? { ...task, status: "cancelled", message: "已取消", updatedAt: Date.now() } : task,
+    );
+  });
 }
 
 export function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
@@ -503,6 +577,21 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
         },
       ],
       conflicts,
+    };
+  });
+}
+
+export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
+  return call("repo_refresh_language_stats", { repoId }, () => {
+    const repo = fallbackRepo(repoId);
+    recordFallbackTask("languageStats", "low", repo.id, "success", "语言统计已更新");
+    return {
+      ...repo,
+      languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000 }],
+      workingTreeLanguageStats: repo.workingTreeLanguageStats.length
+        ? repo.workingTreeLanguageStats
+        : [{ language: "TypeScript", bytes: 1200 }],
+      languageStatsUpdatedAt: Date.now(),
     };
   });
 }

@@ -229,7 +229,7 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "新建" }));
+    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
     expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
 
     await fireEvent.update(

@@ -18,6 +18,8 @@ const state = reactive({
     loading: false,
     error: null,
   },
+  languageStatsLoadingRepoIds: [],
+  tasks: [],
 });
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -46,6 +48,9 @@ vi.mock("../src/composables/useWorkspace", () => ({
     })),
     initialize: vi.fn(async () => undefined),
     chooseWorkspaceRoot: vi.fn(async () => null),
+    addLocalRepo: vi.fn(async () => null),
+    discoverRepos: vi.fn(async () => []),
+    refreshRepos: vi.fn(async () => undefined),
     refreshRepoContributions: vi.fn(async () => undefined),
     startAuthFlow: vi.fn(async () => undefined),
     pollAuthFlow: vi.fn(async () => null),

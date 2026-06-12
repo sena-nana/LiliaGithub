@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { RotateCcw } from "@lucide/vue";
+import { FolderGit2, LoaderCircle, Radar, RotateCcw } from "@lucide/vue";
 import { useWorkspace } from "../../composables/useWorkspace";
 import type { HiddenRepo } from "../../services/workspace";
 
@@ -8,6 +8,8 @@ const workspace = useWorkspace();
 const hiddenRepos = ref<HiddenRepo[]>([]);
 const loading = ref(false);
 const restoringRepoId = ref<string | null>(null);
+const discovering = ref(false);
+const addingRepo = ref(false);
 const error = ref<string | null>(null);
 
 async function loadHiddenRepos() {
@@ -35,6 +37,30 @@ async function restoreRepo(repoId: string) {
   }
 }
 
+async function addLocalRepo() {
+  addingRepo.value = true;
+  error.value = null;
+  try {
+    await workspace.addLocalRepo();
+  } catch (err) {
+    error.value = String(err);
+  } finally {
+    addingRepo.value = false;
+  }
+}
+
+async function discoverRepos() {
+  discovering.value = true;
+  error.value = null;
+  try {
+    await workspace.discoverRepos();
+  } catch (err) {
+    error.value = String(err);
+  } finally {
+    discovering.value = false;
+  }
+}
+
 onMounted(loadHiddenRepos);
 </script>
 
@@ -42,6 +68,18 @@ onMounted(loadHiddenRepos);
   <div class="card">
     <h2>仓库</h2>
     <div class="repo-settings">
+      <div class="repo-settings__actions">
+        <button type="button" class="ghost" :disabled="addingRepo" @click="addLocalRepo">
+          <LoaderCircle v-if="addingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+          <FolderGit2 v-else :size="14" aria-hidden="true" />
+          添加本地仓库
+        </button>
+        <button type="button" class="ghost" :disabled="discovering" @click="discoverRepos">
+          <LoaderCircle v-if="discovering" :size="14" aria-hidden="true" class="sb-spin" />
+          <Radar v-else :size="14" aria-hidden="true" />
+          后台发现仓库
+        </button>
+      </div>
       <p v-if="loading" class="muted">正在读取隐藏仓库...</p>
       <p v-else-if="!hiddenRepos.length" class="muted">没有隐藏仓库。</p>
       <ul v-else class="hidden-repo-list">
@@ -62,6 +100,15 @@ onMounted(loadHiddenRepos);
         </li>
       </ul>
       <p v-if="error" class="repo-settings__error">{{ error }}</p>
+      <div v-if="workspace.state.tasks.length" class="workspace-task-list">
+        <h3>后台任务</h3>
+        <ul>
+          <li v-for="task in workspace.state.tasks.slice(0, 6)" :key="task.id">
+            <span>{{ task.kind }}</span>
+            <em>{{ task.message ?? task.status }}</em>
+          </li>
+        </ul>
+      </div>
     </div>
   </div>
 </template>
@@ -73,6 +120,19 @@ onMounted(loadHiddenRepos);
 
 .repo-settings .muted {
   margin: 4px 0;
+}
+
+.repo-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.repo-settings__actions .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .hidden-repo-list {
@@ -131,6 +191,51 @@ onMounted(loadHiddenRepos);
   margin: 10px 0 0;
   color: var(--err);
   font-size: 12px;
+}
+
+.workspace-task-list {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.workspace-task-list h3 {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-task-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workspace-task-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 120px) minmax(0, 1fr);
+  gap: 8px;
+  padding: 5px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workspace-task-list em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
+}
+
+@keyframes sb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sb-spin {
+  animation: sb-spin 0.9s linear infinite;
 }
 
 @media (max-width: 700px) {
