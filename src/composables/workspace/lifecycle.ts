@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { state } from "./state";
-import { refreshRepos } from "./repositories";
+import { refreshRepoSummaries, refreshRepos } from "./repositories";
 import { loadWorkspaceService } from "./serviceLoader";
 
 export const FOCUS_REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
@@ -49,7 +49,7 @@ export async function installWorkspaceFocusRefresh(): Promise<() => void> {
 
     if (!focused || elapsed < FOCUS_REFRESH_THRESHOLD_MS) return;
     if (!state.settings?.workspaceRoot || state.loading || state.scanning || state.bulkRunning) return;
-    void refreshRepos();
+    void refreshRepoSummaries();
   };
 
   const tauriCleanup = await installTauriFocusListener(handleFocusChange);

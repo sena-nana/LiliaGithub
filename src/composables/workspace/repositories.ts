@@ -17,14 +17,21 @@ async function applyRepoMutation(repoId: string, loadSummary: () => Promise<impo
 }
 
 export async function refreshRepos() {
+  const repos = await refreshRepoSummaries();
+  if (repos) scheduleLowPriorityRefresh(repos.map((repo) => repo.id));
+}
+
+export async function refreshRepoSummaries() {
   state.scanning = true;
   state.error = null;
   try {
     const service = await loadWorkspaceService();
     const repos = await service.refreshRepos();
-    applyRepoList(repos);
+    replaceRepos(repos);
+    return repos;
   } catch (err) {
     state.error = String(err);
+    return null;
   } finally {
     state.scanning = false;
   }
