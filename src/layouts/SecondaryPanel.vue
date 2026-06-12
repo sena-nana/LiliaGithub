@@ -87,18 +87,38 @@ const bulkSyncErrorByRepoId = computed(() => {
   return syncErrorByRepoId();
 });
 
-const filteredRepos = computed(() => {
+interface RepoIssue {
+  label: string;
+  title: string;
+}
+
+function repoIssue(repo: RepoSummary): RepoIssue | null {
+  const syncError = bulkSyncErrorByRepoId.value.get(repo.id);
+  if (syncError) return { label: "同步失败", title: syncError };
+  if (repo.conflictCount > 0) {
+    return { label: "存在合并冲突", title: "存在合并冲突，请处理后再同步" };
+  }
+  return null;
+}
+
+const filteredRepoItems = computed(() => {
   const query = searchQuery.value.trim().toLocaleLowerCase();
-  if (!query) return workspace.state.repos;
-  return workspace.state.repos.filter((repo) =>
-    [
-      repoDisplayName(repo),
-      repo.name,
-      repo.githubFullName,
-      repo.relativePath,
-      repo.path,
-    ].some((value) => value?.toLocaleLowerCase().includes(query)),
-  );
+  return workspace.state.repos
+    .filter((repo) =>
+      !query ||
+      [
+        repoDisplayName(repo),
+        repo.name,
+        repo.githubFullName,
+        repo.relativePath,
+        repo.path,
+      ].some((value) => value?.toLocaleLowerCase().includes(query)),
+    )
+    .map((repo) => ({
+      repo,
+      dirtyCount: repoDirtyCount(repo),
+      issue: repoIssue(repo),
+    }));
 });
 
 const canSubmitClone = computed(() => cloneRemoteUrl.value.trim().length > 0 && !cloneBusy.value);
@@ -136,7 +156,7 @@ function closeSearch() {
 }
 
 async function openFirstSearchResult() {
-  const repo = filteredRepos.value[0];
+  const repo = filteredRepoItems.value[0]?.repo;
   if (!repo) return;
   await router.push(`/repos/${encodeURIComponent(repo.id)}`);
 }
@@ -494,7 +514,7 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
       </div>
       <div class="sb-tree">
         <RouterLink
-          v-for="repo in filteredRepos"
+          v-for="{ repo, dirtyCount, issue } in filteredRepoItems"
           :key="repo.id"
           :to="`/repos/${encodeURIComponent(repo.id)}`"
           class="sb-tree__row sb-tree__row--project"
@@ -513,21 +533,21 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
             <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
           </span>
           <span
-            v-else-if="bulkSyncErrorByRepoId.has(repo.id)"
+            v-else-if="issue"
             class="sb-badge sb-badge--error"
-            :title="bulkSyncErrorByRepoId.get(repo.id) ?? '同步失败'"
-            aria-label="同步失败"
+            :title="issue.title"
+            :aria-label="issue.label"
           >
             <AlertCircle :size="11" aria-hidden="true" />
           </span>
           <span v-if="workspace.state.launchStatuses[repo.id]?.state === 'running'" class="sb-badge sb-badge--ok">RUN</span>
-          <span v-if="repoDirtyCount(repo)" class="sb-badge sb-badge--warn">{{ repoDirtyCount(repo) }}</span>
+          <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
           <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
           <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
         </RouterLink>
         <p v-if="workspace.state.scanning" class="sb-tree__empty">正在扫描仓库...</p>
         <p v-else-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
-        <p v-else-if="searchOpen && !filteredRepos.length" class="sb-tree__empty">没有匹配的仓库。</p>
+        <p v-else-if="searchOpen && !filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
       </div>
     </div>
 
