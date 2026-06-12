@@ -41,6 +41,16 @@ const GITHUB_COMMITS_MAX_PAGES: usize = 10;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+async fn run_blocking<T, F>(label: &'static str, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(task)
+        .await
+        .map_err(|e| format!("{label}后台任务异常：{e}"))?
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSettings {
@@ -2278,122 +2288,135 @@ pub fn workspace_pick_repo(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    let root = workspace_root(&app)?;
-    let settings = load_settings(&app);
-    let task = record_workspace_task(
-        "repoStatus",
-        "high",
-        None,
-        "running",
-        Some("刷新已管理仓库并同步远端状态".to_string()),
-    );
-    let paths = managed_repo_paths(&root, &settings);
-    let failures = refresh_managed_repo_remotes(&root, &paths, |path| run_fetch(&app, path));
-    let mut repos = summarize_repos(&root, paths);
-    sort_repos(&mut repos);
-    if failures.is_empty() {
-        update_workspace_task(
-            &task.id,
-            "success",
-            Some(repo_refresh_success_message(repos.len())),
+pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+    run_blocking("刷新仓库", move || {
+        let root = workspace_root(&app)?;
+        let settings = load_settings(&app);
+        let task = record_workspace_task(
+            "repoStatus",
+            "high",
+            None,
+            "running",
+            Some("刷新已管理仓库并同步远端状态".to_string()),
         );
-    } else {
-        update_workspace_task(
-            &task.id,
-            "error",
-            Some(repo_refresh_partial_failure_message(repos.len(), &failures)),
+        let paths = managed_repo_paths(&root, &settings);
+        let failures = refresh_managed_repo_remotes(&root, &paths, |path| run_fetch(&app, path));
+        let mut repos = summarize_repos(&root, paths);
+        sort_repos(&mut repos);
+        if failures.is_empty() {
+            update_workspace_task(
+                &task.id,
+                "success",
+                Some(repo_refresh_success_message(repos.len())),
+            );
+        } else {
+            update_workspace_task(
+                &task.id,
+                "error",
+                Some(repo_refresh_partial_failure_message(repos.len(), &failures)),
+            );
+        }
+        Ok(repos)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+    workspace_refresh_repos(app).await
+}
+
+#[tauri::command]
+pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+    run_blocking("发现仓库", move || {
+        let root = workspace_root(&app)?;
+        let task = record_workspace_task(
+            "discoverRepos",
+            "low",
+            None,
+            "running",
+            Some("后台发现工作区仓库".to_string()),
         );
-    }
-    Ok(repos)
+        let paths = collect_repos(&root);
+        let mut settings = load_settings(&app);
+        for path in &paths {
+            add_managed_repo_id(&mut settings, repo_id(&root, path));
+        }
+        save_settings(&app, &settings)?;
+        let mut repos =
+            filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
+        sort_repos(&mut repos);
+        update_workspace_task(&task.id, "success", Some(format!("发现 {} 个仓库", repos.len())));
+        Ok(repos)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    workspace_refresh_repos(app)
+pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<RepoSummary, String> {
+    run_blocking("添加仓库", move || {
+        let root = workspace_root(&app)?;
+        let path = normalize_repo_path(&root, &repo_path)?;
+        let repo_id = repo_id(&root, &path);
+        let task = record_workspace_task(
+            "repoStatus",
+            "high",
+            Some(repo_id.clone()),
+            "running",
+            Some("添加本地仓库".to_string()),
+        );
+        let mut settings = load_settings(&app);
+        add_managed_repo_id(&mut settings, repo_id.clone());
+        settings.hidden_repo_ids.retain(|id| id != &repo_id);
+        save_settings(&app, &settings)?;
+        let summary = summarize_repo(&root, &path);
+        update_workspace_task(&task.id, "success", Some("已添加仓库".to_string()));
+        Ok(summary)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    let root = workspace_root(&app)?;
-    let task = record_workspace_task(
-        "discoverRepos",
-        "low",
-        None,
-        "running",
-        Some("后台发现工作区仓库".to_string()),
-    );
-    let paths = collect_repos(&root);
-    let mut settings = load_settings(&app);
-    for path in &paths {
-        add_managed_repo_id(&mut settings, repo_id(&root, path));
-    }
-    save_settings(&app, &settings)?;
-    let mut repos = filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
-    sort_repos(&mut repos);
-    update_workspace_task(&task.id, "success", Some(format!("发现 {} 个仓库", repos.len())));
-    Ok(repos)
-}
-
-#[tauri::command]
-pub fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = normalize_repo_path(&root, &repo_path)?;
-    let repo_id = repo_id(&root, &path);
-    let task = record_workspace_task(
-        "repoStatus",
-        "high",
-        Some(repo_id.clone()),
-        "running",
-        Some("添加本地仓库".to_string()),
-    );
-    let mut settings = load_settings(&app);
-    add_managed_repo_id(&mut settings, repo_id.clone());
-    settings.hidden_repo_ids.retain(|id| id != &repo_id);
-    save_settings(&app, &settings)?;
-    let summary = summarize_repo(&root, &path);
-    update_workspace_task(&task.id, "success", Some("已添加仓库".to_string()));
-    Ok(summary)
-}
-
-#[tauri::command]
-pub fn workspace_clone_repo(
+pub async fn workspace_clone_repo(
     app: AppHandle,
     remote_url: String,
     directory_name: Option<String>,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let input = remote_url.trim();
-    if input.is_empty() {
-        return Err("远端 URL 不能为空".to_string());
-    }
-    let normalized_github = normalize_github_repo_input(input).ok();
-    let remote = normalized_github
-        .as_ref()
-        .map(|repo| repo.clone_url.as_str())
-        .unwrap_or(input);
-    let directory = normalize_clone_directory_name(remote, directory_name)?;
-    let target = root.join(&directory);
-    if target.exists() {
-        return Err(format!("目标目录已存在：{}", target.display()));
-    }
-    if target.parent() != Some(root.as_path()) {
-        return Err("目标目录必须位于工作区内".to_string());
-    }
-    let auth_header = if normalized_github.is_some() || parse_github_remote(remote).is_some() {
-        token_for_binding(&app)?.map(|token| github_auth_header(&token))
-    } else {
-        None
-    };
-    git_command(
-        &root,
-        &["clone", remote, directory.as_str()],
-        auth_header.as_deref(),
-    )?;
-    let mut settings = load_settings(&app);
-    add_managed_repo_id(&mut settings, repo_id(&root, &target));
-    save_settings(&app, &settings)?;
-    Ok(summarize_repo(&root, &target))
+    run_blocking("克隆仓库", move || {
+        let root = workspace_root(&app)?;
+        let input = remote_url.trim();
+        if input.is_empty() {
+            return Err("远端 URL 不能为空".to_string());
+        }
+        let normalized_github = normalize_github_repo_input(input).ok();
+        let remote = normalized_github
+            .as_ref()
+            .map(|repo| repo.clone_url.as_str())
+            .unwrap_or(input);
+        let directory = normalize_clone_directory_name(remote, directory_name)?;
+        let target = root.join(&directory);
+        if target.exists() {
+            return Err(format!("目标目录已存在：{}", target.display()));
+        }
+        if target.parent() != Some(root.as_path()) {
+            return Err("目标目录必须位于工作区内".to_string());
+        }
+        let auth_header = if normalized_github.is_some() || parse_github_remote(remote).is_some() {
+            token_for_binding(&app)?.map(|token| github_auth_header(&token))
+        } else {
+            None
+        };
+        git_command(
+            &root,
+            &["clone", remote, directory.as_str()],
+            auth_header.as_deref(),
+        )?;
+        let mut settings = load_settings(&app);
+        add_managed_repo_id(&mut settings, repo_id(&root, &target));
+        save_settings(&app, &settings)?;
+        Ok(summarize_repo(&root, &target))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2472,111 +2495,118 @@ pub fn github_get_binding_status(app: AppHandle) -> Result<GitHubBindingStatus, 
 }
 
 #[tauri::command]
-pub fn github_start_device_flow() -> Result<GitHubDeviceFlowStart, String> {
-    let Some(client_id) = client_id() else {
-        return Err("GitHub Client ID 未配置".to_string());
-    };
-    let client = build_client()?;
-    let response = github_oauth_headers(client.post("https://github.com/login/device/code"))
-        .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
-        .send()
-        .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
-    if !response.status().is_success() {
-        return Err(github_http_error("启动 GitHub 设备授权失败", response));
-    }
-    let body = response
-        .json::<DeviceCodeResponse>()
-        .map_err(|e| format!("解析 GitHub 设备授权响应失败：{e}"))?;
-    Ok(GitHubDeviceFlowStart {
-        device_code: body.device_code,
-        user_code: body.user_code,
-        verification_uri: body.verification_uri,
-        expires_at: now_millis() + body.expires_in * 1000,
-        interval_seconds: body.interval,
+pub async fn github_start_device_flow() -> Result<GitHubDeviceFlowStart, String> {
+    run_blocking("启动 GitHub 设备授权", move || {
+        let Some(client_id) = client_id() else {
+            return Err("GitHub Client ID 未配置".to_string());
+        };
+        let client = build_client()?;
+        let response = github_oauth_headers(client.post("https://github.com/login/device/code"))
+            .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
+            .send()
+            .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
+        if !response.status().is_success() {
+            return Err(github_http_error("启动 GitHub 设备授权失败", response));
+        }
+        let body = response
+            .json::<DeviceCodeResponse>()
+            .map_err(|e| format!("解析 GitHub 设备授权响应失败：{e}"))?;
+        Ok(GitHubDeviceFlowStart {
+            device_code: body.device_code,
+            user_code: body.user_code,
+            verification_uri: body.verification_uri,
+            expires_at: now_millis() + body.expires_in * 1000,
+            interval_seconds: body.interval,
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn github_poll_device_flow(
+pub async fn github_poll_device_flow(
     app: AppHandle,
     device_code: String,
     interval_seconds: Option<i64>,
 ) -> Result<GitHubDeviceFlowPollResult, String> {
-    let Some(client_id) = client_id() else {
-        return Err("GitHub Client ID 未配置".to_string());
-    };
-    let client = build_client()?;
-    let response = github_oauth_headers(client.post("https://github.com/login/oauth/access_token"))
-        .form(&[
-            ("client_id", client_id),
-            ("device_code", device_code.trim()),
-            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-        ])
-        .send()
-        .map_err(|e| format!("轮询 GitHub 授权失败：{e}"))?;
-    if !response.status().is_success() {
-        return Err(github_http_error("轮询 GitHub 授权失败", response));
-    }
-    let body = response
-        .json::<TokenResponse>()
-        .map_err(|e| format!("解析 GitHub 授权结果失败：{e}"))?;
-    if let Some(token) = body.access_token {
-        let user_response = github_headers(client.get("https://api.github.com/user"), Some(&token))
+    run_blocking("轮询 GitHub 授权", move || {
+        let Some(client_id) = client_id() else {
+            return Err("GitHub Client ID 未配置".to_string());
+        };
+        let client = build_client()?;
+        let response =
+            github_oauth_headers(client.post("https://github.com/login/oauth/access_token"))
+                .form(&[
+                    ("client_id", client_id),
+                    ("device_code", device_code.trim()),
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ])
+                .send()
+                .map_err(|e| format!("轮询 GitHub 授权失败：{e}"))?;
+        if !response.status().is_success() {
+            return Err(github_http_error("轮询 GitHub 授权失败", response));
+        }
+        let body = response
+            .json::<TokenResponse>()
+            .map_err(|e| format!("解析 GitHub 授权结果失败：{e}"))?;
+        if let Some(token) = body.access_token {
+            let user_response = github_headers(client.get("https://api.github.com/user"), Some(&token))
             .send()
             .map_err(|e| format!("读取 GitHub 账号信息失败：{e}"))?;
-        if !user_response.status().is_success() {
-            return Err(format!(
-                "读取 GitHub 账号信息失败：HTTP {}",
-                user_response.status()
-            ));
+            if !user_response.status().is_success() {
+                return Err(format!(
+                    "读取 GitHub 账号信息失败：HTTP {}",
+                    user_response.status()
+                ));
+            }
+            let user = user_response
+                .json::<GitHubUserResponse>()
+                .map_err(|e| format!("解析 GitHub 账号信息失败：{e}"))?;
+            write_token(&user.login, &token)?;
+            let mut settings = load_settings(&app);
+            let binding = GitHubBindingMetadata {
+                login: user.login,
+                avatar_url: user.avatar_url,
+                bound_at: now_millis(),
+                scopes: normalize_scope_list(body.scope.as_deref()),
+                client_id_source: client_id_source().to_string(),
+            };
+            settings.github_binding = Some(binding.clone());
+            save_settings(&app, &settings)?;
+            return Ok(GitHubDeviceFlowPollResult {
+                status: "authorized".to_string(),
+                interval_seconds: interval_seconds.unwrap_or(5),
+                binding_status: Some(binding_status(Some(binding))),
+                error: None,
+            });
         }
-        let user = user_response
-            .json::<GitHubUserResponse>()
-            .map_err(|e| format!("解析 GitHub 账号信息失败：{e}"))?;
-        write_token(&user.login, &token)?;
-        let mut settings = load_settings(&app);
-        let binding = GitHubBindingMetadata {
-            login: user.login,
-            avatar_url: user.avatar_url,
-            bound_at: now_millis(),
-            scopes: normalize_scope_list(body.scope.as_deref()),
-            client_id_source: client_id_source().to_string(),
-        };
-        settings.github_binding = Some(binding.clone());
-        save_settings(&app, &settings)?;
-        return Ok(GitHubDeviceFlowPollResult {
-            status: "authorized".to_string(),
-            interval_seconds: interval_seconds.unwrap_or(5),
-            binding_status: Some(binding_status(Some(binding))),
-            error: None,
-        });
-    }
 
-    match body.error.as_deref() {
-        Some("authorization_pending") | Some("slow_down") => Ok(GitHubDeviceFlowPollResult {
-            status: "pending".to_string(),
-            interval_seconds: interval_seconds.unwrap_or(5)
-                + if body.error.as_deref() == Some("slow_down") {
-                    5
-                } else {
-                    0
-                },
-            binding_status: None,
-            error: None,
-        }),
-        Some("expired_token") => Ok(GitHubDeviceFlowPollResult {
-            status: "expired".to_string(),
-            interval_seconds: interval_seconds.unwrap_or(5),
-            binding_status: None,
-            error: body.error,
-        }),
-        _ => Ok(GitHubDeviceFlowPollResult {
-            status: "pending".to_string(),
-            interval_seconds: interval_seconds.unwrap_or(5),
-            binding_status: None,
-            error: body.error,
-        }),
-    }
+        match body.error.as_deref() {
+            Some("authorization_pending") | Some("slow_down") => Ok(GitHubDeviceFlowPollResult {
+                status: "pending".to_string(),
+                interval_seconds: interval_seconds.unwrap_or(5)
+                    + if body.error.as_deref() == Some("slow_down") {
+                        5
+                    } else {
+                        0
+                    },
+                binding_status: None,
+                error: None,
+            }),
+            Some("expired_token") => Ok(GitHubDeviceFlowPollResult {
+                status: "expired".to_string(),
+                interval_seconds: interval_seconds.unwrap_or(5),
+                binding_status: None,
+                error: body.error,
+            }),
+            _ => Ok(GitHubDeviceFlowPollResult {
+                status: "pending".to_string(),
+                interval_seconds: interval_seconds.unwrap_or(5),
+                binding_status: None,
+                error: body.error,
+            }),
+        }
+    })
+    .await
 }
 
 #[tauri::command]
@@ -2588,7 +2618,7 @@ pub fn github_unbind(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn github_list_repos(app: AppHandle, page: Option<u32>) -> Result<GitHubRepoPage, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("读取 GitHub 仓库", move || {
         let page = page.unwrap_or(1).max(1);
         let (_binding, token) = github_require_token(&app)?;
         let client = build_client()?;
@@ -2626,12 +2656,11 @@ pub async fn github_list_repos(app: AppHandle, page: Option<u32>) -> Result<GitH
         })
     })
     .await
-    .map_err(|e| format!("读取 GitHub 仓库后台任务异常：{e}"))?
 }
 
 #[tauri::command]
 pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwner>, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("读取 GitHub 仓库 owner", move || {
         let (binding, token) = github_require_token(&app)?;
         let client = build_client()?;
         let response = github_send(
@@ -2657,7 +2686,6 @@ pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwn
         Ok(owners)
     })
     .await
-    .map_err(|e| format!("读取 GitHub 仓库 owner 后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2665,7 +2693,7 @@ pub async fn github_create_repo(
     app: AppHandle,
     request: GitHubCreateRepoRequest,
 ) -> Result<GitHubRepoSummary, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("创建 GitHub 仓库", move || {
         let (_binding, token) = github_require_token(&app)?;
         let owner = request.owner.trim();
         let name = request.name.trim();
@@ -2708,7 +2736,6 @@ pub async fn github_create_repo(
         Ok(github_repo_summary_from_response(repo))
     })
     .await
-    .map_err(|e| format!("创建 GitHub 仓库后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2716,7 +2743,7 @@ pub async fn github_get_repo_management(
     app: AppHandle,
     repo_full_name: String,
 ) -> Result<GitHubRepoManagement, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("读取 GitHub 仓库设置", move || {
         let (_binding, token) = github_require_token(&app)?;
         let client = build_client()?;
         let response = github_send(
@@ -2728,7 +2755,6 @@ pub async fn github_get_repo_management(
         Ok(github_repo_management_from_response(repo))
     })
     .await
-    .map_err(|e| format!("读取 GitHub 仓库设置后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2737,7 +2763,7 @@ pub async fn github_update_repo_settings(
     repo_full_name: String,
     request: GitHubUpdateRepoSettingsRequest,
 ) -> Result<GitHubRepoManagement, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("更新 GitHub 仓库设置", move || {
         let (_binding, token) = github_require_token(&app)?;
         let payload = github_update_repo_settings_payload(request);
         let client = build_client()?;
@@ -2755,7 +2781,6 @@ pub async fn github_update_repo_settings(
         Ok(github_repo_management_from_response(repo))
     })
     .await
-    .map_err(|e| format!("更新 GitHub 仓库设置后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2763,7 +2788,7 @@ pub async fn github_list_remote_branches(
     app: AppHandle,
     repo_full_name: String,
 ) -> Result<Vec<GitHubRemoteBranch>, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("读取 GitHub 分支", move || {
         let (_binding, token) = github_require_token(&app)?;
         let client = build_client()?;
         let url = format!("{}/branches", github_repo_api_url(&repo_full_name)?);
@@ -2783,7 +2808,6 @@ pub async fn github_list_remote_branches(
             .collect())
     })
     .await
-    .map_err(|e| format!("读取 GitHub 分支后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2792,7 +2816,7 @@ pub async fn github_create_remote_branch(
     repo_full_name: String,
     request: GitHubCreateBranchRequest,
 ) -> Result<GitHubRemoteBranch, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("创建 GitHub 分支", move || {
         let (_binding, token) = github_require_token(&app)?;
         let payload = github_create_branch_payload(&request.name, &request.source_sha)?;
         let client = build_client()?;
@@ -2812,7 +2836,6 @@ pub async fn github_create_remote_branch(
         })
     })
     .await
-    .map_err(|e| format!("创建 GitHub 分支后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2821,7 +2844,7 @@ pub async fn github_list_issues(
     repo_full_name: String,
     state: Option<String>,
 ) -> Result<Vec<GitHubIssue>, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("读取 GitHub Issue", move || {
         let (_binding, token) = github_require_token(&app)?;
         let issue_state = state.unwrap_or_else(|| "open".to_string());
         let client = build_client()?;
@@ -2840,7 +2863,6 @@ pub async fn github_list_issues(
         Ok(issues.into_iter().filter_map(github_issue_from_response).collect())
     })
     .await
-    .map_err(|e| format!("读取 GitHub Issue 后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2849,7 +2871,7 @@ pub async fn github_create_issue(
     repo_full_name: String,
     request: GitHubCreateIssueRequest,
 ) -> Result<GitHubIssue, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("创建 GitHub Issue", move || {
         let (_binding, token) = github_require_token(&app)?;
         let title = request.title.trim();
         if title.is_empty() {
@@ -2880,7 +2902,6 @@ pub async fn github_create_issue(
         github_issue_from_response(issue).ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
     })
     .await
-    .map_err(|e| format!("创建 GitHub Issue 后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2890,7 +2911,7 @@ pub async fn github_update_issue(
     issue_number: u64,
     request: GitHubUpdateIssueRequest,
 ) -> Result<GitHubIssue, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("更新 GitHub Issue", move || {
         if issue_number == 0 {
             return Err("Issue 编号不合法".to_string());
         }
@@ -2932,7 +2953,6 @@ pub async fn github_update_issue(
         github_issue_from_response(issue).ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
     })
     .await
-    .map_err(|e| format!("更新 GitHub Issue 后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -2940,7 +2960,7 @@ pub async fn github_list_repo_contributions(
     app: AppHandle,
     repo_full_names: Vec<String>,
 ) -> Result<GitHubContributionResult, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("读取 GitHub 提交贡献", move || {
         let (repos, requested_repo_count) = normalize_github_contribution_repos(repo_full_names);
         let repo_count = repos.len();
         let end_day_index = current_utc_day_index();
@@ -2985,91 +3005,114 @@ pub async fn github_list_repo_contributions(
         })
     })
     .await
-    .map_err(|e| format!("读取 GitHub 提交贡献后台任务异常：{e}"))?
 }
 
 #[tauri::command]
-pub fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    Ok(summarize_repo(&root, &path))
+pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+    run_blocking("读取仓库摘要", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_refresh_language_stats(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    let task = record_workspace_task(
-        "languageStats",
-        "low",
-        Some(repo_id),
-        "running",
-        Some("刷新语言统计".to_string()),
-    );
-    let summary = summarize_repo_with_language_stats(&root, &path);
-    update_workspace_task(&task.id, "success", Some("语言统计已更新".to_string()));
-    Ok(summary)
+pub async fn repo_refresh_language_stats(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+    run_blocking("刷新语言统计", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let task = record_workspace_task(
+            "languageStats",
+            "low",
+            Some(repo_id),
+            "running",
+            Some("刷新语言统计".to_string()),
+        );
+        let summary = summarize_repo_with_language_stats(&root, &path);
+        update_workspace_task(&task.id, "success", Some("语言统计已更新".to_string()));
+        Ok(summary)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_get_changes(app: AppHandle, repo_id: String) -> Result<Vec<RepoChange>, String> {
-    let path = repo_path_by_id(&app, &repo_id)?;
-    Ok(repo_changes(&path))
+pub async fn repo_get_changes(app: AppHandle, repo_id: String) -> Result<Vec<RepoChange>, String> {
+    run_blocking("读取仓库改动", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        Ok(repo_changes(&path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_get_history(app: AppHandle, repo_id: String) -> Result<Vec<CommitSummary>, String> {
-    let path = repo_path_by_id(&app, &repo_id)?;
-    Ok(repo_history(&path))
+pub async fn repo_get_history(app: AppHandle, repo_id: String) -> Result<Vec<CommitSummary>, String> {
+    run_blocking("读取提交历史", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        Ok(repo_history(&path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_get_commit_detail(
+pub async fn repo_get_commit_detail(
     app: AppHandle,
     repo_id: String,
     hash: String,
 ) -> Result<CommitDetail, String> {
-    let path = repo_path_by_id(&app, &repo_id)?;
-    repo_commit_detail(&path, &hash)
-}
-
-#[tauri::command]
-pub fn repo_get_branches(app: AppHandle, repo_id: String) -> Result<Vec<BranchSummary>, String> {
-    let path = repo_path_by_id(&app, &repo_id)?;
-    Ok(repo_branches(&path))
-}
-
-#[tauri::command]
-pub fn repo_get_conflicts(app: AppHandle, repo_id: String) -> Result<RepoConflictState, String> {
-    let path = repo_path_by_id(&app, &repo_id)?;
-    Ok(repo_conflicts(&path))
-}
-
-#[tauri::command]
-pub fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    let (summary, changes, commits, branches, conflicts) = thread::scope(|scope| {
-        let summary = scope.spawn(|| summarize_repo_with_language_stats(&root, &path));
-        let changes = scope.spawn(|| repo_changes(&path));
-        let commits = scope.spawn(|| repo_history(&path));
-        let branches = scope.spawn(|| repo_branches(&path));
-        let conflicts = scope.spawn(|| repo_conflicts(&path));
-        (
-            summary.join().expect("repo summary worker panicked"),
-            changes.join().expect("repo changes worker panicked"),
-            commits.join().expect("repo history worker panicked"),
-            branches.join().expect("repo branches worker panicked"),
-            conflicts.join().expect("repo conflicts worker panicked"),
-        )
-    });
-    Ok(RepoDetail {
-        summary,
-        changes,
-        commits,
-        branches,
-        conflicts,
+    run_blocking("读取提交详情", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        repo_commit_detail(&path, &hash)
     })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_get_branches(app: AppHandle, repo_id: String) -> Result<Vec<BranchSummary>, String> {
+    run_blocking("读取仓库分支", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        Ok(repo_branches(&path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_get_conflicts(app: AppHandle, repo_id: String) -> Result<RepoConflictState, String> {
+    run_blocking("读取冲突状态", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        Ok(repo_conflicts(&path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, String> {
+    run_blocking("读取仓库详情", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let (summary, changes, commits, branches, conflicts) = thread::scope(|scope| {
+            let summary = scope.spawn(|| summarize_repo_with_language_stats(&root, &path));
+            let changes = scope.spawn(|| repo_changes(&path));
+            let commits = scope.spawn(|| repo_history(&path));
+            let branches = scope.spawn(|| repo_branches(&path));
+            let conflicts = scope.spawn(|| repo_conflicts(&path));
+            (
+                summary.join().expect("repo summary worker panicked"),
+                changes.join().expect("repo changes worker panicked"),
+                commits.join().expect("repo history worker panicked"),
+                branches.join().expect("repo branches worker panicked"),
+                conflicts.join().expect("repo conflicts worker panicked"),
+            )
+        });
+        Ok(RepoDetail {
+            summary,
+            changes,
+            commits,
+            branches,
+            conflicts,
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -3211,213 +3254,250 @@ pub fn repo_stop_launch(repo_id: String) -> Result<ProjectLaunchStatus, String> 
 }
 
 #[tauri::command]
-pub fn repo_stage_files(app: AppHandle, repo_id: String, files: Vec<String>) -> Result<(), String> {
-    let path = repo_path_by_id(&app, &repo_id)?;
-    for file in files {
-        git_command(&path, &["add", "--", &file], None)?;
-    }
-    Ok(())
+pub async fn repo_stage_files(app: AppHandle, repo_id: String, files: Vec<String>) -> Result<(), String> {
+    run_blocking("暂存文件", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        for file in files {
+            git_command(&path, &["add", "--", &file], None)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_unstage_files(
+pub async fn repo_unstage_files(
     app: AppHandle,
     repo_id: String,
     files: Vec<String>,
 ) -> Result<(), String> {
-    let path = repo_path_by_id(&app, &repo_id)?;
-    for file in files {
-        git_command(&path, &["restore", "--staged", "--", &file], None)?;
-    }
-    Ok(())
+    run_blocking("取消暂存文件", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        for file in files {
+            git_command(&path, &["restore", "--staged", "--", &file], None)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_commit(
+pub async fn repo_commit(
     app: AppHandle,
     repo_id: String,
     files: Vec<String>,
     message: String,
     push_after: bool,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    let trimmed = message.trim();
-    if trimmed.is_empty() {
-        return Err("提交说明不能为空".to_string());
-    }
-    if files.is_empty() {
-        return Err("请选择要提交的文件".to_string());
-    }
-    for file in files {
-        git_command(&path, &["add", "--", &file], None)?;
-    }
-    git_command(&path, &["commit", "-m", trimmed], None)?;
-    if push_after {
-        run_push(&app, &path)?;
-    }
-    Ok(summarize_repo(&root, &path))
-}
-
-#[tauri::command]
-pub fn repo_pull(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    let summary = summarize_repo(&root, &path);
-    if repo_dirty_count(&summary) > 0 {
-        return Err("存在未提交变更，已阻止 pull".to_string());
-    }
-    run_pull(&app, &path)?;
-    Ok(summarize_repo(&root, &path))
-}
-
-#[tauri::command]
-pub fn repo_merge_pull(app: AppHandle, repo_id: String) -> Result<RepoMergePullResult, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    let summary = summarize_repo(&root, &path);
-    if let Some(reason) = merge_pull_block_reason(&summary, current_branch_upstream(&path).is_some()) {
-        return Err(reason);
-    }
-
-    run_fetch(&app, &path)?;
-    match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
-        Ok(_) => {
-            let summary = summarize_repo(&root, &path);
-            Ok(RepoMergePullResult {
-                status: "success".to_string(),
-                message: "合并完成".to_string(),
-                conflicts: repo_conflicts(&path),
-                summary,
-            })
+    run_blocking("提交仓库", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let trimmed = message.trim();
+        if trimmed.is_empty() {
+            return Err("提交说明不能为空".to_string());
         }
-        Err(err) => {
-            let conflicts = repo_conflicts(&path);
-            let summary = summarize_repo(&root, &path);
-            if conflicts.files.is_empty() {
-                Err(err)
-            } else {
+        if files.is_empty() {
+            return Err("请选择要提交的文件".to_string());
+        }
+        for file in files {
+            git_command(&path, &["add", "--", &file], None)?;
+        }
+        git_command(&path, &["commit", "-m", trimmed], None)?;
+        if push_after {
+            run_push(&app, &path)?;
+        }
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_pull(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+    run_blocking("拉取仓库", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let summary = summarize_repo(&root, &path);
+        if repo_dirty_count(&summary) > 0 {
+            return Err("存在未提交变更，已阻止 pull".to_string());
+        }
+        run_pull(&app, &path)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_merge_pull(app: AppHandle, repo_id: String) -> Result<RepoMergePullResult, String> {
+    run_blocking("合并拉取仓库", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let summary = summarize_repo(&root, &path);
+        if let Some(reason) =
+            merge_pull_block_reason(&summary, current_branch_upstream(&path).is_some())
+        {
+            return Err(reason);
+        }
+
+        run_fetch(&app, &path)?;
+        match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
+            Ok(_) => {
+                let summary = summarize_repo(&root, &path);
                 Ok(RepoMergePullResult {
-                    status: "conflicts".to_string(),
-                    message: "合并产生冲突，请处理后提交".to_string(),
+                    status: "success".to_string(),
+                    message: "合并完成".to_string(),
+                    conflicts: repo_conflicts(&path),
                     summary,
-                    conflicts,
                 })
             }
+            Err(err) => {
+                let conflicts = repo_conflicts(&path);
+                let summary = summarize_repo(&root, &path);
+                if conflicts.files.is_empty() {
+                    Err(err)
+                } else {
+                    Ok(RepoMergePullResult {
+                        status: "conflicts".to_string(),
+                        message: "合并产生冲突，请处理后提交".to_string(),
+                        summary,
+                        conflicts,
+                    })
+                }
+            }
         }
-    }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    run_push(&app, &path)?;
-    Ok(summarize_repo(&root, &path))
+pub async fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+    run_blocking("推送仓库", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        run_push(&app, &path)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_checkout_branch(
+pub async fn repo_checkout_branch(
     app: AppHandle,
     repo_id: String,
     branch: String,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let path = repo_path_by_id(&app, &repo_id)?;
-    let branch = branch.trim();
-    if branch.is_empty() {
-        return Err("分支名不能为空".to_string());
-    }
-    git_command(&path, &["checkout", branch], None)?;
-    Ok(summarize_repo(&root, &path))
+    run_blocking("切换分支", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let branch = branch.trim();
+        if branch.is_empty() {
+            return Err("分支名不能为空".to_string());
+        }
+        git_command(&path, &["checkout", branch], None)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_accept_conflict_file(
+pub async fn repo_accept_conflict_file(
     app: AppHandle,
     repo_id: String,
     path: String,
     side: String,
     stage: bool,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let repo_path = repo_path_by_id(&app, &repo_id)?;
-    let checkout_side = conflict_checkout_side(&side)?;
-    git_command(&repo_path, &["checkout", checkout_side, "--", &path], None)?;
-    if stage {
-        git_command(&repo_path, &["add", "--", &path], None)?;
-    }
-    Ok(summarize_repo(&root, &repo_path))
+    run_blocking("接受冲突文件", move || {
+        let root = workspace_root(&app)?;
+        let repo_path = repo_path_by_id(&app, &repo_id)?;
+        let checkout_side = conflict_checkout_side(&side)?;
+        git_command(&repo_path, &["checkout", checkout_side, "--", &path], None)?;
+        if stage {
+            git_command(&repo_path, &["add", "--", &path], None)?;
+        }
+        Ok(summarize_repo(&root, &repo_path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_resolve_conflict_file(
+pub async fn repo_resolve_conflict_file(
     app: AppHandle,
     repo_id: String,
     path: String,
     choices: Vec<RepoConflictChoice>,
     stage: bool,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let repo_path = repo_path_by_id(&app, &repo_id)?;
-    let file_path = safe_repo_file_path(&repo_path, &path)?;
-    let content = fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
-    let resolved = resolve_conflict_content(&content, &choices)?;
-    fs::write(&file_path, resolved).map_err(|e| format!("写入冲突文件失败：{e}"))?;
-    if stage {
-        git_command(&repo_path, &["add", "--", &path], None)?;
-    }
-    Ok(summarize_repo(&root, &repo_path))
+    run_blocking("解决冲突文件", move || {
+        let root = workspace_root(&app)?;
+        let repo_path = repo_path_by_id(&app, &repo_id)?;
+        let file_path = safe_repo_file_path(&repo_path, &path)?;
+        let content = fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
+        let resolved = resolve_conflict_content(&content, &choices)?;
+        fs::write(&file_path, resolved).map_err(|e| format!("写入冲突文件失败：{e}"))?;
+        if stage {
+            git_command(&repo_path, &["add", "--", &path], None)?;
+        }
+        Ok(summarize_repo(&root, &repo_path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_mark_file_resolved(
+pub async fn repo_mark_file_resolved(
     app: AppHandle,
     repo_id: String,
     path: String,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let repo_path = repo_path_by_id(&app, &repo_id)?;
-    git_command(&repo_path, &["add", "--", &path], None)?;
-    Ok(summarize_repo(&root, &repo_path))
+    run_blocking("标记冲突文件已解决", move || {
+        let root = workspace_root(&app)?;
+        let repo_path = repo_path_by_id(&app, &repo_id)?;
+        git_command(&repo_path, &["add", "--", &path], None)?;
+        Ok(summarize_repo(&root, &repo_path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_abort_conflict_operation(
+pub async fn repo_abort_conflict_operation(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let repo_path = repo_path_by_id(&app, &repo_id)?;
-    let operation = conflict_operation(&repo_path);
-    let args = conflict_operation_args(&operation, "终止")?;
-    git_command(&repo_path, args, None)?;
-    Ok(summarize_repo(&root, &repo_path))
+    run_blocking("终止冲突操作", move || {
+        let root = workspace_root(&app)?;
+        let repo_path = repo_path_by_id(&app, &repo_id)?;
+        let operation = conflict_operation(&repo_path);
+        let args = conflict_operation_args(&operation, "终止")?;
+        git_command(&repo_path, args, None)?;
+        Ok(summarize_repo(&root, &repo_path))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn repo_continue_conflict_operation(
+pub async fn repo_continue_conflict_operation(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoSummary, String> {
-    let root = workspace_root(&app)?;
-    let repo_path = repo_path_by_id(&app, &repo_id)?;
-    let conflicts = repo_conflicts(&repo_path);
-    if !conflicts.files.is_empty() {
-        return Err("仍有冲突文件未解决".to_string());
-    }
-    let args = conflict_operation_args(&conflicts.operation, "继续")?;
-    git_command(&repo_path, args, None)?;
-    Ok(summarize_repo(&root, &repo_path))
+    run_blocking("继续冲突操作", move || {
+        let root = workspace_root(&app)?;
+        let repo_path = repo_path_by_id(&app, &repo_id)?;
+        let conflicts = repo_conflicts(&repo_path);
+        if !conflicts.files.is_empty() {
+            return Err("仍有冲突文件未解决".to_string());
+        }
+        let args = conflict_operation_args(&conflicts.operation, "继续")?;
+        git_command(&repo_path, args, None)?;
+        Ok(summarize_repo(&root, &repo_path))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn bulk_sync_preview(_app: AppHandle, operation: String, repos: Vec<RepoSummary>) -> Result<BulkSyncPreview, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("批量预览", move || {
         Ok(build_bulk_preview(operation, repos))
     })
     .await
-    .map_err(|e| format!("批量预览后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -3426,14 +3506,13 @@ pub async fn bulk_sync_execute(
     operation: String,
     repo_ids: Vec<String>,
 ) -> Result<Vec<BulkSyncResult>, String> {
-    tokio::task::spawn_blocking(move || {
+    run_blocking("批量同步", move || {
         let root = workspace_root(&app)?;
         Ok(run_bulk_sync_parallel(repo_ids, |repo_id| {
             bulk_sync_repo(&app, &root, &operation, repo_id)
         }))
     })
     .await
-    .map_err(|e| format!("批量同步后台任务异常：{e}"))?
 }
 
 #[tauri::command]
