@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
 import {
   CheckCircle2,
@@ -38,6 +38,12 @@ type RepoStatusRow = {
 
 type ContributionCell = GitHubContributionDay & {
   level: number;
+  weekStart: string;
+};
+
+type ContributionMonthLabel = {
+  key: string;
+  label: string;
 };
 
 type LanguageSlice = {
@@ -60,15 +66,10 @@ const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", 
 const languageScope = ref<LanguageScope>("head");
 const discovering = ref(false);
 const addingRepo = ref(false);
-const contributionScroller = ref<HTMLElement | null>(null);
-let contributionDrag:
-  | {
-      pointerId: number;
-      startX: number;
-      startScrollLeft: number;
-    }
-  | null = null;
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
+const contributionMonthLabels = computed(() =>
+  buildContributionMonthLabels(contributionWeeks.value, workspace.state.githubContributions.days),
+);
 
 const totalContributions = computed(() =>
   workspace.state.githubContributions.days.reduce((total, day) => total + day.count, 0),
@@ -83,15 +84,6 @@ const contributionMetaNote = computed(() => {
   }
   return `覆盖 ${meta.repoCount} 个仓库 · ${refreshedAt}`;
 });
-
-watch(
-  () => workspace.state.githubContributions.days,
-  async () => {
-    await nextTick();
-    scrollContributionToEnd();
-  },
-  { immediate: true },
-);
 
 const languageUpdatedAt = computed(() => {
   const timestamps = workspace.state.repos
@@ -229,11 +221,41 @@ function buildContributionWeeks(days: readonly GitHubContributionDay[]) {
       week.push({
         ...day,
         level: contributionLevel(day.count, maxCount),
+        weekStart: cursor.toISOString().slice(0, 10),
       });
     }
     weeks.push(week);
   }
   return weeks;
+}
+
+function buildContributionMonthLabels(
+  weeks: readonly ContributionCell[][],
+  days: readonly GitHubContributionDay[],
+): ContributionMonthLabel[] {
+  let lastMonth = "";
+  const sortedDays = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  const start = sortedDays[0]?.date ?? "";
+  const end = sortedDays[sortedDays.length - 1]?.date ?? "";
+  const isInRange = (date: string) => start !== "" && date >= start && date <= end;
+  return weeks.map((week, index) => {
+    const weekStart = week[0]?.weekStart ?? String(index);
+    const month = week
+      .filter((day) => isInRange(day.date))
+      .map((day) => day.date.slice(0, 7))
+      .find((value) => value && value !== lastMonth) ?? "";
+    const label = month && month !== lastMonth ? formatContributionMonth(month) : "";
+    if (month) lastMonth = month;
+    return {
+      key: weekStart,
+      label,
+    };
+  });
+}
+
+function formatContributionMonth(month: string) {
+  const [, rawMonth] = month.split("-");
+  return `${Number(rawMonth)}月`;
 }
 
 function parseDateOnly(date: string) {
@@ -247,42 +269,6 @@ function contributionLevel(count: number, maxCount: number) {
 
 function contributionTitle(day: GitHubContributionDay) {
   return `${day.date}：${day.count} 次提交`;
-}
-
-function scrollContributionToEnd() {
-  const scroller = contributionScroller.value;
-  if (!scroller) return;
-  scroller.scrollLeft = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
-}
-
-function startContributionDrag(event: PointerEvent) {
-  if (event.button !== 0) return;
-  const scroller = contributionScroller.value;
-  if (!scroller) return;
-  contributionDrag = {
-    pointerId: event.pointerId,
-    startX: event.clientX,
-    startScrollLeft: scroller.scrollLeft,
-  };
-  scroller.classList.add("is-dragging");
-  scroller.setPointerCapture(event.pointerId);
-}
-
-function dragContributionChart(event: PointerEvent) {
-  if (!contributionDrag || contributionDrag.pointerId !== event.pointerId) return;
-  const scroller = contributionScroller.value;
-  if (!scroller) return;
-  scroller.scrollLeft = contributionDrag.startScrollLeft - (event.clientX - contributionDrag.startX);
-}
-
-function stopContributionDrag(event: PointerEvent) {
-  if (!contributionDrag || contributionDrag.pointerId !== event.pointerId) return;
-  const scroller = contributionScroller.value;
-  if (scroller?.hasPointerCapture(event.pointerId)) {
-    scroller.releasePointerCapture(event.pointerId);
-  }
-  scroller?.classList.remove("is-dragging");
-  contributionDrag = null;
 }
 
 function formatBytes(bytes: number) {
@@ -493,6 +479,7 @@ async function addLocalRepo() {
           </p>
           <div v-else class="contribution-chart" aria-label="GitHub 提交贡献图">
             <div class="contribution-week-labels" aria-hidden="true">
+              <span class="contribution-month-spacer" />
               <span />
               <span>Mon</span>
               <span />
@@ -501,29 +488,32 @@ async function addLocalRepo() {
               <span>Fri</span>
               <span />
             </div>
-            <div
-              ref="contributionScroller"
-              class="contribution-scroll"
-              @pointerdown="startContributionDrag"
-              @pointermove="dragContributionChart"
-              @pointerup="stopContributionDrag"
-              @pointercancel="stopContributionDrag"
-              @lostpointercapture="stopContributionDrag"
-            >
-              <div class="contribution-weeks">
-                <div
-                  v-for="(week, weekIndex) in contributionWeeks"
-                  :key="weekIndex"
-                  class="contribution-week"
-                >
+            <div class="contribution-window">
+              <div class="contribution-grid">
+                <div class="contribution-months" aria-hidden="true">
                   <span
-                    v-for="day in week"
-                    :key="day.date"
-                    class="contribution-day"
-                    :class="`contribution-day--${day.level}`"
-                    :title="contributionTitle(day)"
-                    :aria-label="contributionTitle(day)"
-                  />
+                    v-for="month in contributionMonthLabels"
+                    :key="month.key"
+                    class="contribution-month"
+                  >
+                    {{ month.label }}
+                  </span>
+                </div>
+                <div class="contribution-weeks">
+                  <div
+                    v-for="(week, weekIndex) in contributionWeeks"
+                    :key="weekIndex"
+                    class="contribution-week"
+                  >
+                    <span
+                      v-for="day in week"
+                      :key="day.date"
+                      class="contribution-day"
+                      :class="`contribution-day--${day.level}`"
+                      :title="contributionTitle(day)"
+                      :aria-label="contributionTitle(day)"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -855,6 +845,8 @@ async function addLocalRepo() {
 .contribution-card {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 760px;
 }
 
 .card-heading {
@@ -910,34 +902,47 @@ async function addLocalRepo() {
 
 .contribution-week-labels {
   display: grid;
-  grid-template-rows: repeat(7, 11px);
+  grid-template-rows: 14px repeat(7, 11px);
   gap: 3px;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 11px;
 }
 
-.contribution-scroll {
+.contribution-month-spacer {
+  height: 14px;
+}
+
+.contribution-window {
+  display: flex;
+  justify-content: flex-end;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  touch-action: pan-y;
-  user-select: none;
+  overflow: hidden;
 }
 
-.contribution-scroll::-webkit-scrollbar {
-  display: none;
+.contribution-grid {
+  min-width: max-content;
 }
 
-.contribution-scroll.is-dragging {
-  cursor: grabbing;
-}
-
+.contribution-months,
 .contribution-weeks {
   display: flex;
   gap: 3px;
   min-width: max-content;
+}
+
+.contribution-months {
+  margin-bottom: 3px;
+}
+
+.contribution-month {
+  width: 11px;
+  height: 14px;
+  overflow: visible;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
 }
 
 .contribution-week {
