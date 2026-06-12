@@ -66,7 +66,16 @@ describe("workspace focus refresh", () => {
     vi.useRealTimers();
   });
 
-  it("失焦超过 5 分钟后回焦点会刷新已管理仓库", async () => {
+  it("失焦超过 5 分钟后回焦点只同步仓库摘要和远端状态", async () => {
+    const initial = repoSummary("LiliaGithub", {
+      behind: 0,
+      languageStats: [{ language: "Vue", bytes: 10 }],
+      workingTreeLanguageStats: [{ language: "Vue", bytes: 10 }],
+      languageStatsUpdatedAt: 1,
+    });
+    const refreshed = repoSummary("LiliaGithub", { behind: 2 });
+    state.repos = [initial];
+    service.refreshRepos.mockResolvedValue([refreshed]);
     cleanup = await installWorkspaceFocusRefresh();
 
     blurWindow();
@@ -76,6 +85,13 @@ describe("workspace focus refresh", () => {
 
     expect(service.refreshRepos).toHaveBeenCalledTimes(1);
     expect(service.discoverRepos).not.toHaveBeenCalled();
+    expect(service.listRepoContributions).not.toHaveBeenCalled();
+    expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
+    expect(service.listWorkspaceTasks).not.toHaveBeenCalled();
+    expect(state.repos[0].behind).toBe(2);
+    expect(state.repos[0].languageStats).toEqual(initial.languageStats);
+    expect(state.repos[0].workingTreeLanguageStats).toEqual(initial.workingTreeLanguageStats);
+    expect(state.repos[0].languageStatsUpdatedAt).toBe(1);
   });
 
   it("失焦不足 5 分钟后回焦点不会刷新", async () => {
