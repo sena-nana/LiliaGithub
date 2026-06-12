@@ -6,6 +6,10 @@ import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
+import {
+  setFallbackGitHubBindingStatusForTests,
+  setFallbackGitHubReposErrorForTests,
+} from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 import { repoSummary } from "./fixtures/workspace";
@@ -222,7 +226,13 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏新建可克隆远端仓库并跳转详情", async () => {
+  it("未绑定 GitHub 时侧边栏新建可克隆远端仓库并跳转详情", async () => {
+    setFallbackGitHubBindingStatusForTests({
+      state: "unbound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: null,
+    });
     const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
@@ -244,6 +254,77 @@ describe("AppShell sidebar", () => {
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
       expect(sidebarRowForText(view.container, "NewRepo")).toBeInTheDocument();
+    });
+  });
+
+  it("已绑定 GitHub 时克隆弹窗展示账号仓库列表并可选择克隆", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
+
+    expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
+    const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+    expect(view.getByText(/当前绑定账号：/)).toBeInTheDocument();
+
+    await fireEvent.focus(input);
+    expect(await view.findByText("sena-nana/Lilia")).toBeInTheDocument();
+
+    await fireEvent.click(view.getByText("sena-nana/Lilia"));
+    expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("Lilia");
+
+    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/Lilia");
+    });
+  });
+
+  it("已绑定 GitHub 时支持 owner/repo 直接克隆", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
+    const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+
+    await fireEvent.update(input, "sena-nana/NewRepo");
+    await waitFor(() => {
+      expect(view.getByText("直接克隆 sena-nana/NewRepo")).toBeInTheDocument();
+      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("NewRepo");
+    });
+    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
+      expect(sidebarRowForText(view.container, "NewRepo")).toBeInTheDocument();
+    });
+  });
+
+  it("GitHub 仓库列表绑定失效时提供重新绑定入口", async () => {
+    setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "克隆仓库" }));
+
+    expect(await view.findByText("GitHub 绑定已失效，请重新绑定。")).toBeInTheDocument();
+    await fireEvent.focus(view.getByPlaceholderText("搜索仓库，或直接输入 owner/repo"));
+    expect(view.getByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
+
+    await fireEvent.click(view.getByRole("button", { name: "重新绑定 GitHub" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.path).toBe("/settings");
+      expect(view.router.currentRoute.value.query.tab).toBe("repositories");
     });
   });
 

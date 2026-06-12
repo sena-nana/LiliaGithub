@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring_core::{Entry, Error as KeyringError};
 use reqwest::blocking::{Client, Response};
-use reqwest::header::{ACCEPT, USER_AGENT};
+use reqwest::header::{ACCEPT, LINK, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -153,6 +153,31 @@ pub struct GitHubContributionMeta {
 pub struct GitHubContributionResult {
     pub days: Vec<GitHubContributionDay>,
     pub meta: GitHubContributionMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoSummary {
+    pub id: u64,
+    pub name: String,
+    pub full_name: String,
+    pub owner_login: String,
+    pub private: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub default_branch: Option<String>,
+    pub updated_at: String,
+    pub clone_url: String,
+    pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoPage {
+    pub items: Vec<GitHubRepoSummary>,
+    #[serde(default)]
+    pub next_page: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -415,6 +440,33 @@ struct GitHubErrorResponse {
 struct GitHubUserResponse {
     login: String,
     avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubRepoOwnerResponse {
+    login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubRepoResponse {
+    id: u64,
+    name: String,
+    full_name: String,
+    private: bool,
+    description: Option<String>,
+    default_branch: Option<String>,
+    updated_at: String,
+    clone_url: String,
+    html_url: String,
+    owner: GitHubRepoOwnerResponse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedGitHubRepo {
+    owner: String,
+    name: String,
+    full_name: String,
+    clone_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -726,6 +778,63 @@ fn github_http_error(prefix: &str, response: Response) -> String {
 fn github_auth_header(token: &str) -> String {
     let encoded = STANDARD.encode(format!("x-access-token:{token}"));
     format!("AUTHORIZATION: basic {encoded}")
+}
+
+fn normalize_github_repo_input(input: &str) -> Result<NormalizedGitHubRepo, String> {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("仓库输入不能为空".to_string());
+    }
+
+    let path = if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix("http://github.com/") {
+        rest
+    } else {
+        trimmed
+    };
+    let path = path.trim_end_matches(".git");
+    let parts = path
+        .split('/')
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>();
+
+    if parts.len() != 2 {
+        return Err("请输入 owner/repo 或 https://github.com/owner/repo.git".to_string());
+    }
+
+    let owner = parts[0].trim();
+    let name = parts[1].trim();
+    if owner.is_empty() || name.is_empty() {
+        return Err("请输入 owner/repo 或 https://github.com/owner/repo.git".to_string());
+    }
+
+    Ok(NormalizedGitHubRepo {
+        owner: owner.to_string(),
+        name: name.to_string(),
+        full_name: format!("{owner}/{name}"),
+        clone_url: format!("https://github.com/{owner}/{name}.git"),
+    })
+}
+
+fn parse_next_page(link: Option<&str>) -> Option<u32> {
+    let link = link?;
+    for part in link.split(',') {
+        if !part.contains("rel=\"next\"") {
+            continue;
+        }
+        let page_part = part.split('?').nth(1)?;
+        let query = page_part.split('>').next()?;
+        for pair in query.split('&') {
+            let (key, value) = pair.split_once('=')?;
+            if key == "page" {
+                if let Ok(page) = value.parse::<u32>() {
+                    return Some(page);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn normalize_github_contribution_repos(repo_full_names: Vec<String>) -> (Vec<String>, usize) {
@@ -1759,10 +1868,15 @@ pub fn workspace_clone_repo(
     directory_name: Option<String>,
 ) -> Result<RepoSummary, String> {
     let root = workspace_root(&app)?;
-    let remote = remote_url.trim();
-    if remote.is_empty() {
+    let input = remote_url.trim();
+    if input.is_empty() {
         return Err("远端 URL 不能为空".to_string());
     }
+    let normalized_github = normalize_github_repo_input(input).ok();
+    let remote = normalized_github
+        .as_ref()
+        .map(|repo| repo.clone_url.as_str())
+        .unwrap_or(input);
     let directory = normalize_clone_directory_name(remote, directory_name)?;
     let target = root.join(&directory);
     if target.exists() {
@@ -1771,7 +1885,7 @@ pub fn workspace_clone_repo(
     if target.parent() != Some(root.as_path()) {
         return Err("目标目录必须位于工作区内".to_string());
     }
-    let auth_header = if parse_github_remote(remote).is_some() {
+    let auth_header = if normalized_github.is_some() || parse_github_remote(remote).is_some() {
         token_for_binding(&app)?.map(|token| github_auth_header(&token))
     } else {
         None
@@ -1975,6 +2089,82 @@ pub fn github_unbind(app: AppHandle) -> Result<(), String> {
     let mut settings = load_settings(&app);
     settings.github_binding = None;
     save_settings(&app, &settings)
+}
+
+#[tauri::command]
+pub async fn github_list_repos(app: AppHandle, page: Option<u32>) -> Result<GitHubRepoPage, String> {
+    tokio::task::spawn_blocking(move || {
+        let page = page.unwrap_or(1).max(1);
+        let mut settings = load_settings(&app);
+        let Some(binding) = settings.github_binding.clone() else {
+            return Err("请先绑定 GitHub".to_string());
+        };
+        let Some(token) = read_token(&binding.login)? else {
+            settings.github_binding = None;
+            save_settings(&app, &settings)?;
+            return Err("GitHub 绑定已失效，请重新绑定".to_string());
+        };
+
+        let client = build_client()?;
+        let response = github_headers(
+            client.get("https://api.github.com/user/repos").query(&[
+                ("affiliation", "owner"),
+                ("visibility", "all"),
+                ("sort", "updated"),
+                ("per_page", "100"),
+                ("page", &page.to_string()),
+            ]),
+            Some(&token),
+        )
+        .send()
+        .map_err(|e| format!("读取 GitHub 仓库失败：{e}"))?;
+
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            || response.status() == reqwest::StatusCode::FORBIDDEN
+        {
+            settings.github_binding = None;
+            save_settings(&app, &settings)?;
+            return Err(format!(
+                "GitHub 绑定已失效，请重新绑定（账号 {}）",
+                binding.login
+            ));
+        }
+
+        if !response.status().is_success() {
+            return Err(github_http_error("读取 GitHub 仓库失败", response));
+        }
+
+        let next_page = parse_next_page(
+            response
+                .headers()
+                .get(LINK)
+                .and_then(|value| value.to_str().ok()),
+        );
+        let repos = response
+            .json::<Vec<GitHubRepoResponse>>()
+            .map_err(|e| format!("解析 GitHub 仓库列表失败：{e}"))?;
+
+        Ok(GitHubRepoPage {
+            items: repos
+                .into_iter()
+                .map(|repo| GitHubRepoSummary {
+                    id: repo.id,
+                    name: repo.name,
+                    full_name: repo.full_name,
+                    owner_login: repo.owner.login,
+                    private: repo.private,
+                    description: repo.description,
+                    default_branch: repo.default_branch,
+                    updated_at: repo.updated_at,
+                    clone_url: repo.clone_url,
+                    html_url: repo.html_url,
+                })
+                .collect(),
+            next_page,
+        })
+    })
+    .await
+    .map_err(|e| format!("读取 GitHub 仓库后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -4454,6 +4644,46 @@ rename to docs/new.md",
     fn workspace_task_priority_orders_high_before_low() {
         assert!(task_priority_rank("high") < task_priority_rank("normal"));
         assert!(task_priority_rank("normal") < task_priority_rank("low"));
+    }
+
+    #[test]
+    fn normalize_github_repo_input_accepts_owner_repo() {
+        let repo = normalize_github_repo_input("sena-nana/LiliaGithub").unwrap();
+
+        assert_eq!(repo.owner, "sena-nana");
+        assert_eq!(repo.name, "LiliaGithub");
+        assert_eq!(repo.full_name, "sena-nana/LiliaGithub");
+        assert_eq!(
+            repo.clone_url,
+            "https://github.com/sena-nana/LiliaGithub.git"
+        );
+    }
+
+    #[test]
+    fn normalize_github_repo_input_accepts_https_url() {
+        let repo =
+            normalize_github_repo_input("https://github.com/sena-nana/LiliaGithub.git").unwrap();
+
+        assert_eq!(repo.full_name, "sena-nana/LiliaGithub");
+        assert_eq!(
+            repo.clone_url,
+            "https://github.com/sena-nana/LiliaGithub.git"
+        );
+    }
+
+    #[test]
+    fn normalize_github_repo_input_rejects_invalid_values() {
+        assert!(normalize_github_repo_input("sena-nana").is_err());
+        assert!(normalize_github_repo_input("https://example.com/foo/bar").is_err());
+    }
+
+    #[test]
+    fn parses_github_next_page_from_link_header() {
+        let link = r#"<https://api.github.com/user/repos?page=2>; rel="next", <https://api.github.com/user/repos?page=4>; rel="last""#;
+
+        assert_eq!(parse_next_page(Some(link)), Some(2));
+        assert_eq!(parse_next_page(Some(r#"<https://api.github.com/user/repos?page=4>; rel="last""#)), None);
+        assert_eq!(parse_next_page(None), None);
     }
 
     #[test]

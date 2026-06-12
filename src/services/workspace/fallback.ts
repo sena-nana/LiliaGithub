@@ -8,6 +8,8 @@ import type {
   GitHubContributionResult,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
+  GitHubRepoPage,
+  GitHubRepoSummary,
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchLog,
@@ -82,7 +84,7 @@ const fallbackRepos: RepoSummary[] = [
   },
 ];
 
-const fallbackBinding: GitHubBindingStatus = {
+const defaultFallbackBinding: GitHubBindingStatus = {
   state: "bound",
   clientIdConfigured: true,
   clientIdSource: "bundled",
@@ -97,11 +99,37 @@ const fallbackBinding: GitHubBindingStatus = {
 
 const CONTRIBUTION_DAYS = 371;
 const CONTRIBUTION_REPO_LIMIT = 30;
+const fallbackGitHubRepos: GitHubRepoSummary[] = [
+  {
+    id: 1,
+    name: "LiliaGithub",
+    fullName: "sena-nana/LiliaGithub",
+    ownerLogin: "sena-nana",
+    private: false,
+    description: "Local GitHub workspace manager",
+    defaultBranch: "main",
+    updatedAt: "2026-06-11T00:00:00Z",
+    cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
+    htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+  },
+  {
+    id: 2,
+    name: "Lilia",
+    fullName: "sena-nana/Lilia",
+    ownerLogin: "sena-nana",
+    private: true,
+    description: "Desktop agent workbench",
+    defaultBranch: "main",
+    updatedAt: "2026-06-10T00:00:00Z",
+    cloneUrl: "https://github.com/sena-nana/Lilia.git",
+    htmlUrl: "https://github.com/sena-nana/Lilia",
+  },
+];
 
 function createFallbackSettings(): WorkspaceSettings {
   return {
     workspaceRoot: "C:\\Files\\workspace",
-    githubBinding: fallbackBinding.binding,
+    githubBinding: defaultFallbackBinding.binding,
     projectLaunchConfigs: {},
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
@@ -112,6 +140,8 @@ let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
 let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionResult) | null = null;
+let fallbackBinding = defaultFallbackBinding;
+let fallbackGitHubReposError: string | null = null;
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackTaskIndex = 1;
@@ -126,6 +156,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
   fallbackRepoContributionsOverride = null;
+  fallbackBinding = defaultFallbackBinding;
+  fallbackGitHubReposError = null;
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
   fallbackTaskIndex = 1;
@@ -155,6 +187,18 @@ export function setFallbackRepoContributionsOverrideForTests(
   override: ((repoFullNames: string[]) => GitHubContributionResult) | null,
 ) {
   fallbackRepoContributionsOverride = override;
+}
+
+export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingStatus) {
+  fallbackBinding = binding;
+  fallbackSettings = {
+    ...fallbackSettings,
+    githubBinding: binding.binding,
+  };
+}
+
+export function setFallbackGitHubReposErrorForTests(error: string | null) {
+  fallbackGitHubReposError = error;
 }
 
 async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T): Promise<T> {
@@ -359,6 +403,16 @@ export function pollGitHubDeviceFlow(
     bindingStatus: fallbackBinding,
     error: null,
   }));
+}
+
+export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
+  return call("github_list_repos", { page: page ?? null }, () => {
+    if (fallbackGitHubReposError) throw new Error(fallbackGitHubReposError);
+    return {
+      items: fallbackGitHubRepos.map((repo) => ({ ...repo })),
+      nextPage: null,
+    };
+  });
 }
 
 function fallbackContributionMeta(repoFullNames: string[]): GitHubContributionMeta {

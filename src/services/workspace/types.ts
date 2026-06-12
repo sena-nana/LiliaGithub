@@ -82,6 +82,24 @@ export interface GitHubContributionResult {
   meta: GitHubContributionMeta;
 }
 
+export interface GitHubRepoSummary {
+  id: number;
+  name: string;
+  fullName: string;
+  ownerLogin: string;
+  private: boolean;
+  description: string | null;
+  defaultBranch: string | null;
+  updatedAt: string;
+  cloneUrl: string;
+  htmlUrl: string;
+}
+
+export interface GitHubRepoPage {
+  items: GitHubRepoSummary[];
+  nextPage: number | null;
+}
+
 export interface LanguageStat {
   language: string;
   bytes: number;

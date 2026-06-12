@@ -9,6 +9,7 @@ import type {
   GitHubContributionResult,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
+  GitHubRepoPage,
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchLog,
@@ -23,6 +24,14 @@ import type {
 } from "./types";
 
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
+const GITHUB_REPO_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let githubRepoCache: {
+  items: GitHubRepoPage["items"];
+  nextPage: number | null;
+  fetchedAt: number;
+} | null = null;
+let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
 
 function canInvoke() {
   return !isTest && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -45,6 +54,55 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
 
 export function pickWorkspaceRoot(): Promise<string | null> {
   return call("workspace_pick_root", undefined, fallback.pickWorkspaceRoot);
+}
+
+function cloneRepoPage(page: GitHubRepoPage): GitHubRepoPage {
+  return {
+    items: page.items.map((repo) => ({ ...repo })),
+    nextPage: page.nextPage,
+  };
+}
+
+function writeGitHubRepoCache(page: GitHubRepoPage) {
+  githubRepoCache = {
+    items: page.items.map((repo) => ({ ...repo })),
+    nextPage: page.nextPage,
+    fetchedAt: Date.now(),
+  };
+}
+
+export function readCachedGitHubRepos(): GitHubRepoPage | null {
+  if (!githubRepoCache) return null;
+  return cloneRepoPage(githubRepoCache);
+}
+
+export function clearGitHubRepoCache() {
+  githubRepoCache = null;
+  githubRepoPreloadPromise = null;
+}
+
+export function isGitHubBindingExpiredError(err: unknown): boolean {
+  const message = String(err);
+  return message.includes("GitHub 绑定已失效") ||
+    message.includes("HTTP 401") ||
+    message.includes("HTTP 403") ||
+    message.toLowerCase().includes("bad credentials");
+}
+
+export function preloadGitHubRepos(opts: { force?: boolean } = {}): Promise<GitHubRepoPage> {
+  const now = Date.now();
+  if (
+    !opts.force &&
+    githubRepoCache &&
+    now - githubRepoCache.fetchedAt < GITHUB_REPO_CACHE_TTL_MS
+  ) {
+    return Promise.resolve(cloneRepoPage(githubRepoCache));
+  }
+  if (!opts.force && githubRepoPreloadPromise) return githubRepoPreloadPromise;
+  githubRepoPreloadPromise = listGitHubRepos(1).finally(() => {
+    githubRepoPreloadPromise = null;
+  });
+  return githubRepoPreloadPromise;
 }
 
 export function pickRepo(): Promise<string | null> {
@@ -93,8 +151,10 @@ export function cancelWorkspaceTask(taskId: string): Promise<void> {
   return call("workspace_cancel_task", { taskId }, () => fallback.cancelWorkspaceTask(taskId));
 }
 
-export function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
-  return call("github_get_binding_status", undefined, fallback.getGitHubBindingStatus);
+export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
+  const status = await call("github_get_binding_status", undefined, fallback.getGitHubBindingStatus);
+  if (status.state !== "bound") clearGitHubRepoCache();
+  return status;
 }
 
 export function startGitHubDeviceFlow(): Promise<GitHubDeviceFlowStart> {
@@ -114,6 +174,18 @@ export function listRepoContributions(repoFullNames: string[]): Promise<GitHubCo
   return call("github_list_repo_contributions", { repoFullNames }, () =>
     fallback.listRepoContributions(repoFullNames),
   );
+}
+
+export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
+  const pageNo = page ?? null;
+  const result = await call("github_list_repos", { page: pageNo }, () =>
+    fallback.listGitHubRepos(pageNo),
+  ).catch((err) => {
+    if (isGitHubBindingExpiredError(err)) clearGitHubRepoCache();
+    throw err;
+  });
+  if ((pageNo ?? 1) === 1) writeGitHubRepoCache(result);
+  return cloneRepoPage(result);
 }
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
