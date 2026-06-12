@@ -14,9 +14,9 @@ const state = reactive({
   error: null,
   githubContributions: {
     days: [],
+    meta: null,
     loading: false,
     error: null,
-    updatedAt: null,
   },
 });
 

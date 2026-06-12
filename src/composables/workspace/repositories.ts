@@ -8,6 +8,8 @@ import {
 import { loadWorkspaceService } from "./serviceLoader";
 import type { RepoConflictChoice } from "../../services/workspace";
 
+const CONTRIBUTION_REPO_LIMIT = 30;
+
 async function applyRepoMutation(repoId: string, loadSummary: () => Promise<import("../../services/workspace").RepoSummary>) {
   upsertRepo(await loadSummary());
   await loadRepoDetail(repoId);
@@ -39,15 +41,23 @@ export async function refreshRepoContributions() {
   const fullNames = repoFullNames();
   state.githubContributions.loading = true;
   state.githubContributions.error = null;
+  const refreshedAt = Date.now();
   try {
     if (!fullNames.length) {
       state.githubContributions.days = [];
-      state.githubContributions.updatedAt = Date.now();
+      state.githubContributions.meta = {
+        repoCount: 0,
+        requestedRepoCount: 0,
+        repoLimit: CONTRIBUTION_REPO_LIMIT,
+        truncated: false,
+        refreshedAt,
+      };
       return;
     }
     const service = await loadWorkspaceService();
-    state.githubContributions.days = await service.listRepoContributions(fullNames);
-    state.githubContributions.updatedAt = Date.now();
+    const result = await service.listRepoContributions(fullNames);
+    state.githubContributions.days = result.days;
+    state.githubContributions.meta = result.meta;
   } catch (err) {
     state.githubContributions.error = String(err);
   } finally {

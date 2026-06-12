@@ -68,6 +68,19 @@ export interface GitHubContributionDay {
   count: number;
 }
 
+export interface GitHubContributionMeta {
+  repoCount: number;
+  requestedRepoCount: number;
+  repoLimit: number;
+  truncated: boolean;
+  refreshedAt: number;
+}
+
+export interface GitHubContributionResult {
+  days: GitHubContributionDay[];
+  meta: GitHubContributionMeta;
+}
+
 export interface LanguageStat {
   language: string;
   bytes: number;

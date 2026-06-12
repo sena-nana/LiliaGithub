@@ -5,6 +5,8 @@ import type {
   CommitDetail,
   GitHubBindingStatus,
   GitHubContributionDay,
+  GitHubContributionMeta,
+  GitHubContributionResult,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   HiddenRepo,
@@ -94,6 +96,7 @@ const fallbackBinding: GitHubBindingStatus = {
 };
 
 const CONTRIBUTION_DAYS = 371;
+const CONTRIBUTION_REPO_LIMIT = 30;
 
 function createFallbackSettings(): WorkspaceSettings {
   return {
@@ -107,7 +110,7 @@ function createFallbackSettings(): WorkspaceSettings {
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
-let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionDay[]) | null = null;
+let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionResult) | null = null;
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
 
@@ -144,7 +147,7 @@ export function setFallbackConflictOverrideForTests(
 }
 
 export function setFallbackRepoContributionsOverrideForTests(
-  override: ((repoFullNames: string[]) => GitHubContributionDay[]) | null,
+  override: ((repoFullNames: string[]) => GitHubContributionResult) | null,
 ) {
   fallbackRepoContributionsOverride = override;
 }
@@ -284,14 +287,34 @@ export function pollGitHubDeviceFlow(
   }));
 }
 
-export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionDay[]> {
+function fallbackContributionMeta(repoFullNames: string[]): GitHubContributionMeta {
+  const requestedRepoCount = Array.from(new Set(
+    repoFullNames
+      .map((name) => name.trim().replace(/^\/+|\/+$/g, ""))
+      .filter((name) => name && name.includes("/")),
+  )).length;
+  const repoCount = Math.min(requestedRepoCount, CONTRIBUTION_REPO_LIMIT);
+  return {
+    repoCount,
+    requestedRepoCount,
+    repoLimit: CONTRIBUTION_REPO_LIMIT,
+    truncated: requestedRepoCount > repoCount,
+    refreshedAt: Date.now(),
+  };
+}
+
+export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionResult> {
   return call("github_list_repo_contributions", { repoFullNames }, () => {
     if (fallbackRepoContributionsOverride) {
-      return fallbackRepoContributionsOverride(repoFullNames).map((item) => ({ ...item }));
+      const result = fallbackRepoContributionsOverride(repoFullNames);
+      return {
+        days: result.days.map((item) => ({ ...item })),
+        meta: { ...result.meta },
+      };
     }
     const end = new Date("2026-06-11T00:00:00Z");
     const repoFactor = Math.max(1, repoFullNames.filter((name) => name.trim()).length);
-    return Array.from({ length: CONTRIBUTION_DAYS }, (_, index) => {
+    const days = Array.from({ length: CONTRIBUTION_DAYS }, (_, index) => {
       const date = new Date(end);
       date.setUTCDate(end.getUTCDate() - (CONTRIBUTION_DAYS - 1 - index));
       const dayIndex = Math.floor(date.getTime() / 86_400_000);
@@ -301,6 +324,10 @@ export function listRepoContributions(repoFullNames: string[]): Promise<GitHubCo
         count: active ? ((dayIndex % 4) + 1) * repoFactor : 0,
       };
     });
+    return {
+      days,
+      meta: fallbackContributionMeta(repoFullNames),
+    };
   });
 }
 
