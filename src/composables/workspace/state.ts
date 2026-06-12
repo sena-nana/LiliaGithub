@@ -4,6 +4,7 @@ import type {
   BulkSyncResult,
   GitHubBindingStatus,
   GitHubContributionDay,
+  GitHubContributionMeta,
   GitHubDeviceFlowStart,
   ProjectLaunchConfig,
   ProjectLaunchLog,
@@ -44,9 +45,9 @@ export interface RecentBulkSyncState {
 
 export interface GitHubContributionsState {
   days: GitHubContributionDay[];
+  meta: GitHubContributionMeta | null;
   loading: boolean;
   error: string | null;
-  updatedAt: number | null;
 }
 
 export const state = reactive<WorkspaceState>({
@@ -70,9 +71,9 @@ export const state = reactive<WorkspaceState>({
   recentSync: null,
   githubContributions: {
     days: [],
+    meta: null,
     loading: false,
     error: null,
-    updatedAt: null,
   },
 });
 
@@ -241,9 +242,9 @@ export function resetWorkspaceStateForTests() {
   state.recentSync = null;
   state.githubContributions = {
     days: [],
+    meta: null,
     loading: false,
     error: null,
-    updatedAt: null,
   };
   deviceFlow.value = null;
 }

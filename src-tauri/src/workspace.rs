@@ -136,6 +136,23 @@ pub struct GitHubContributionDay {
     pub count: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubContributionMeta {
+    pub repo_count: usize,
+    pub requested_repo_count: usize,
+    pub repo_limit: usize,
+    pub truncated: bool,
+    pub refreshed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubContributionResult {
+    pub days: Vec<GitHubContributionDay>,
+    pub meta: GitHubContributionMeta,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageStat {
@@ -635,20 +652,19 @@ fn github_auth_header(token: &str) -> String {
     format!("AUTHORIZATION: basic {encoded}")
 }
 
-fn normalize_github_contribution_repos(repo_full_names: Vec<String>) -> Vec<String> {
+fn normalize_github_contribution_repos(repo_full_names: Vec<String>) -> (Vec<String>, usize) {
     let mut seen = HashSet::new();
-    let mut repos = Vec::new();
+    let mut valid_repos = Vec::new();
     for name in repo_full_names {
         let trimmed = name.trim().trim_matches('/').to_string();
         if trimmed.is_empty() || !trimmed.contains('/') || !seen.insert(trimmed.clone()) {
             continue;
         }
-        repos.push(trimmed);
-        if repos.len() >= GITHUB_CONTRIBUTIONS_REPO_LIMIT {
-            break;
-        }
+        valid_repos.push(trimmed);
     }
-    repos
+    let requested_repo_count = valid_repos.len();
+    valid_repos.truncate(GITHUB_CONTRIBUTIONS_REPO_LIMIT);
+    (valid_repos, requested_repo_count)
 }
 
 fn github_api_repo_path(repo_full_name: &str) -> String {
@@ -711,6 +727,19 @@ fn github_contribution_days(
             }
         })
         .collect()
+}
+
+fn github_contribution_meta(
+    repo_count: usize,
+    requested_repo_count: usize,
+) -> GitHubContributionMeta {
+    GitHubContributionMeta {
+        repo_count,
+        requested_repo_count,
+        repo_limit: GITHUB_CONTRIBUTIONS_REPO_LIMIT,
+        truncated: requested_repo_count > repo_count,
+        refreshed_at: now_millis(),
+    }
 }
 
 fn add_commit_contributions(
@@ -1737,13 +1766,17 @@ pub fn github_unbind(app: AppHandle) -> Result<(), String> {
 pub async fn github_list_repo_contributions(
     app: AppHandle,
     repo_full_names: Vec<String>,
-) -> Result<Vec<GitHubContributionDay>, String> {
+) -> Result<GitHubContributionResult, String> {
     tokio::task::spawn_blocking(move || {
-        let repos = normalize_github_contribution_repos(repo_full_names);
+        let (repos, requested_repo_count) = normalize_github_contribution_repos(repo_full_names);
+        let repo_count = repos.len();
         let end_day_index = current_utc_day_index();
         let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
         if repos.is_empty() {
-            return Ok(github_contribution_days(&HashMap::new(), end_day_index));
+            return Ok(GitHubContributionResult {
+                days: github_contribution_days(&HashMap::new(), end_day_index),
+                meta: github_contribution_meta(repo_count, requested_repo_count),
+            });
         }
         let token = token_for_binding(&app)?;
         let client = build_client()?;
@@ -1773,7 +1806,10 @@ pub async fn github_list_repo_contributions(
                 }
             }
         }
-        Ok(github_contribution_days(&counts, end_day_index))
+        Ok(GitHubContributionResult {
+            days: github_contribution_days(&counts, end_day_index),
+            meta: github_contribution_meta(repo_count, requested_repo_count),
+        })
     })
     .await
     .map_err(|e| format!("读取 GitHub 提交贡献后台任务异常：{e}"))?
@@ -3467,7 +3503,7 @@ mod tests {
 
     #[test]
     fn normalizes_github_contribution_repo_inputs() {
-        let repos = normalize_github_contribution_repos(vec![
+        let (repos, requested_repo_count) = normalize_github_contribution_repos(vec![
             " sena-nana/LiliaGithub ".to_string(),
             "".to_string(),
             "invalid".to_string(),
@@ -3476,6 +3512,23 @@ mod tests {
         ]);
 
         assert_eq!(repos, vec!["sena-nana/LiliaGithub", "sena-nana/Lilia"]);
+        assert_eq!(requested_repo_count, 2);
+    }
+
+    #[test]
+    fn marks_github_contribution_repo_limit_truncation() {
+        let names = (0..GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1)
+            .map(|index| format!("sena-nana/repo-{index}"))
+            .collect::<Vec<_>>();
+        let (repos, requested_repo_count) = normalize_github_contribution_repos(names);
+        let meta = github_contribution_meta(repos.len(), requested_repo_count);
+
+        assert_eq!(repos.len(), GITHUB_CONTRIBUTIONS_REPO_LIMIT);
+        assert_eq!(requested_repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1);
+        assert_eq!(meta.repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT);
+        assert_eq!(meta.requested_repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1);
+        assert_eq!(meta.repo_limit, GITHUB_CONTRIBUTIONS_REPO_LIMIT);
+        assert!(meta.truncated);
     }
 
     #[test]

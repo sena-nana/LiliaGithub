@@ -57,7 +57,16 @@ vi.mock("../src/composables/workspace/serviceLoader", () => ({
 beforeEach(() => {
   resetWorkspaceStateForTests();
   vi.clearAllMocks();
-  service.listRepoContributions.mockResolvedValue([]);
+  service.listRepoContributions.mockResolvedValue({
+    days: [],
+    meta: {
+      repoCount: 0,
+      requestedRepoCount: 0,
+      repoLimit: 30,
+      truncated: false,
+      refreshedAt: 1_780_000_000_000,
+    },
+  });
 });
 
 describe("workspace incremental refresh", () => {
@@ -68,7 +77,16 @@ describe("workspace incremental refresh", () => {
       repoSummary("LocalOnly", { githubFullName: null }),
       repoSummary("LiliaDuplicate", { githubFullName: "sena-nana/Lilia" }),
     ]);
-    service.listRepoContributions.mockResolvedValue([{ date: "2026-06-11", count: 3 }]);
+    service.listRepoContributions.mockResolvedValue({
+      days: [{ date: "2026-06-11", count: 3 }],
+      meta: {
+        repoCount: 2,
+        requestedRepoCount: 2,
+        repoLimit: 30,
+        truncated: false,
+        refreshedAt: 1_780_000_000_000,
+      },
+    });
 
     const { refreshRepos } = await import("../src/composables/workspace/repositories");
     await refreshRepos();
@@ -77,6 +95,13 @@ describe("workspace incremental refresh", () => {
       ["sena-nana/LiliaGithub", "sena-nana/Lilia"],
     );
     expect(state.githubContributions.days).toEqual([{ date: "2026-06-11", count: 3 }]);
+    expect(state.githubContributions.meta).toEqual({
+      repoCount: 2,
+      requestedRepoCount: 2,
+      repoLimit: 30,
+      truncated: false,
+      refreshedAt: 1_780_000_000_000,
+    });
     expect(state.githubContributions.error).toBeNull();
   });
 
@@ -91,6 +116,24 @@ describe("workspace incremental refresh", () => {
     expect(state.repos).toEqual([repo]);
     expect(state.error).toBeNull();
     expect(state.githubContributions.error).toBe("Error: rate limited");
+    expect(state.githubContributions.meta).toBeNull();
+  });
+
+  it("没有 GitHub 仓库时写入空贡献图采样信息", async () => {
+    service.scanRepos.mockResolvedValue([repoSummary("LocalOnly", { githubFullName: null })]);
+
+    const { refreshRepos } = await import("../src/composables/workspace/repositories");
+    await refreshRepos();
+
+    expect(service.listRepoContributions).not.toHaveBeenCalled();
+    expect(state.githubContributions.days).toEqual([]);
+    expect(state.githubContributions.meta).toMatchObject({
+      repoCount: 0,
+      requestedRepoCount: 0,
+      repoLimit: 30,
+      truncated: false,
+    });
+    expect(typeof state.githubContributions.meta?.refreshedAt).toBe("number");
   });
 
   it("隐藏仓库只移除目标仓库和缓存，不触发全量扫描", async () => {

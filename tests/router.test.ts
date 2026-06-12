@@ -57,6 +57,7 @@ describe("基础路由", () => {
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
     expect(await screen.findByLabelText("GitHub 提交贡献图")).toBeInTheDocument();
     expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
+    expect(screen.getByText(/覆盖 2 个仓库 · 刷新于/)).toBeInTheDocument();
     expect(document.querySelector(".contribution-day[title$='次提交']")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
@@ -72,7 +73,16 @@ describe("基础路由", () => {
 
   it("首页 GitHub 贡献图支持空状态和错误重试", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionsOverrideForTests(() => []);
+    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
+      days: [],
+      meta: {
+        repoCount: repoFullNames.length,
+        requestedRepoCount: repoFullNames.length,
+        repoLimit: 30,
+        truncated: false,
+        refreshedAt: 1_780_000_000_000,
+      },
+    }));
 
     await renderAt("/");
 
@@ -85,15 +95,40 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("Error: rate limited")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionsOverrideForTests(() => [
-      {
-        date: "2026-06-11",
-        count: 4,
+    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
+      days: [{ date: "2026-06-11", count: 4 }],
+      meta: {
+        repoCount: repoFullNames.length,
+        requestedRepoCount: repoFullNames.length,
+        repoLimit: 30,
+        truncated: false,
+        refreshedAt: 1_780_000_000_000,
       },
-    ]);
+    }));
     await fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
     expect(await screen.findByLabelText("2026-06-11：4 次提交")).toBeInTheDocument();
+  });
+
+  it("首页 GitHub 贡献图命中仓库采样上限时显示提示", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
+      days: [{ date: "2026-06-11", count: 1 }],
+      meta: {
+        repoCount: 30,
+        requestedRepoCount: repoFullNames.length,
+        repoLimit: 30,
+        truncated: true,
+        refreshedAt: 1_780_000_000_000,
+      },
+    }));
+    for (let index = 0; index < 31; index += 1) {
+      await service.cloneRepo(`https://github.com/sena-nana/sample-${index}.git`);
+    }
+
+    await renderAt("/");
+
+    expect(await screen.findByText(/覆盖 30\/33 个仓库 · 仅统计前 30 个 · 刷新于/)).toBeInTheDocument();
   });
 
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {

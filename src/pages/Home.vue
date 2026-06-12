@@ -62,6 +62,16 @@ const totalContributions = computed(() =>
   workspace.state.githubContributions.days.reduce((total, day) => total + day.count, 0),
 );
 
+const contributionMetaNote = computed(() => {
+  const meta = workspace.state.githubContributions.meta;
+  if (!meta) return null;
+  const refreshedAt = `刷新于 ${formatDateTime(meta.refreshedAt)}`;
+  if (meta.truncated) {
+    return `覆盖 ${meta.repoCount}/${meta.requestedRepoCount} 个仓库 · 仅统计前 ${meta.repoLimit} 个 · ${refreshedAt}`;
+  }
+  return `覆盖 ${meta.repoCount} 个仓库 · ${refreshedAt}`;
+});
+
 const languageUpdatedAt = computed(() => {
   const timestamps = workspace.state.repos
     .map((repo) => repo.languageStatsUpdatedAt)
@@ -363,6 +373,7 @@ function formatDateTime(timestamp: number) {
             <div>
               <h2>最近工作结果</h2>
               <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
+              <p v-if="contributionMetaNote" class="contribution-meta">{{ contributionMetaNote }}</p>
             </div>
             <button
               v-if="workspace.state.githubContributions.error"
@@ -764,6 +775,12 @@ function formatDateTime(timestamp: number) {
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+}
+
+.contribution-meta {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .contribution-retry {
