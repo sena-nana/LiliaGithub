@@ -425,6 +425,27 @@ describe("AppShell sidebar", () => {
     expect(localStorage.getItem(SIDEBAR_CONFIG.widthStorageKey)).toBe("220");
   });
 
+  it("左侧栏拖拽中断后恢复主内容交互", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+    const shell = shellElement(view.container);
+    const resizer = leftResizer(view.container);
+
+    await fireEvent.pointerDown(resizer, {
+      button: 0,
+      clientX: 220,
+      pointerId: 1,
+    });
+
+    expect(shell).toHaveClass("is-resizing");
+
+    await fireEvent.pointerCancel(window, {
+      clientX: 220,
+      pointerId: 1,
+    });
+
+    expect(shell).not.toHaveClass("is-resizing");
+  });
+
   it("设置页替换左侧栏、禁用折叠并保留折叠偏好", async () => {
     localStorage.setItem(SIDEBAR_CONFIG.collapsedStorageKey, "1");
     const view = await renderAppShell("/settings");

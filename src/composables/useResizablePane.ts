@@ -23,6 +23,8 @@ export function useResizablePane(options: ResizablePaneOptions) {
 
   let startX = 0;
   let startWidth = 0;
+  let captureTarget: Element | null = null;
+  let activePointerId: number | null = null;
 
   function setWidth(nextWidth: number) {
     width.value = clampNumber(nextWidth, options.minWidth, options.maxWidth);
@@ -39,27 +41,57 @@ export function useResizablePane(options: ResizablePaneOptions) {
     setWidth(startWidth + delta);
   }
 
-  function onPointerUp(event: PointerEvent) {
+  function finishResize(event?: PointerEvent) {
     isResizing.value = false;
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", onPointerUp);
-    (event.target as Element | null)?.releasePointerCapture?.(event.pointerId);
+    window.removeEventListener("pointercancel", onPointerCancel);
+    window.removeEventListener("blur", onWindowBlur);
+    captureTarget?.removeEventListener("lostpointercapture", onLostPointerCapture);
+    if (event && captureTarget?.hasPointerCapture?.(event.pointerId)) {
+      captureTarget.releasePointerCapture(event.pointerId);
+    }
+    captureTarget = null;
+    activePointerId = null;
+  }
+
+  function onPointerUp(event: PointerEvent) {
+    finishResize(event);
+  }
+
+  function onPointerCancel(event: PointerEvent) {
+    finishResize(event);
+  }
+
+  function onWindowBlur() {
+    finishResize();
+  }
+
+  function onLostPointerCapture(event: Event) {
+    if (activePointerId == null || !(event instanceof PointerEvent) || event.pointerId === activePointerId) {
+      finishResize();
+    }
   }
 
   function startResize(event: PointerEvent) {
     if (options.disabled?.value || event.button !== 0) return;
     event.preventDefault();
+    finishResize();
     isResizing.value = true;
     startX = event.clientX;
     startWidth = width.value;
-    (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
+    captureTarget = event.currentTarget as Element;
+    activePointerId = event.pointerId;
+    captureTarget.setPointerCapture?.(event.pointerId);
+    captureTarget.addEventListener("lostpointercapture", onLostPointerCapture);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    window.addEventListener("blur", onWindowBlur);
   }
 
   onBeforeUnmount(() => {
-    window.removeEventListener("pointermove", onPointerMove);
-    window.removeEventListener("pointerup", onPointerUp);
+    finishResize();
   });
 
   return {
