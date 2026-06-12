@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from "@testing-library/vue";
+import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
@@ -163,11 +163,26 @@ describe("AppShell sidebar", () => {
       blocked: [],
       warnings: [],
     };
+    state.recentSync = {
+      preview: state.bulkPreview,
+      results: [
+        {
+          repoId: "LiliaGithub",
+          status: "error",
+          message: "认证失败",
+          summary: null,
+        },
+      ],
+      retryingRepoIds: [],
+      updatedAt: 2,
+    };
     state.bulkRunning = true;
 
     await waitFor(() => {
       expect(view.getByRole("button", { name: "一键同步" })).toHaveClass("is-running");
-      expect(view.getByLabelText("正在同步")).toBeInTheDocument();
+      const row = sidebarRowForText(view.container, "LiliaGithub");
+      expect(within(row).getByLabelText("正在同步")).toBeInTheDocument();
+      expect(within(row).queryByLabelText("同步失败")).not.toBeInTheDocument();
     });
   });
 
@@ -198,7 +213,28 @@ describe("AppShell sidebar", () => {
     };
 
     await waitFor(() => {
-      expect(view.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
+      expect(
+        within(sidebarRowForText(view.container, "LiliaGithub")).getByLabelText("同步失败"),
+      ).toHaveAttribute("title", "认证失败");
+    });
+  });
+
+  it("侧边栏显示自动合并冲突仓库提示", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.repos = [
+      repoSummary("LiliaGithub", { conflictCount: 1 }),
+      repoSummary("Lilia"),
+    ];
+
+    await waitFor(() => {
+      expect(
+        within(sidebarRowForText(view.container, "LiliaGithub")).getByLabelText("存在合并冲突"),
+      ).toHaveAttribute("title", "存在合并冲突，请处理后再同步");
     });
   });
 
