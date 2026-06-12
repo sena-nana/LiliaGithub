@@ -109,44 +109,75 @@ const {
           <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
         </div>
       </div>
-      <div class="repo-header__actions" aria-label="仓库操作">
+      <div class="repo-header__actions overview-actions" aria-label="仓库操作">
         <button
           type="button"
-          class="ghost"
+          class="overview-actions__btn"
+          title="刷新"
+          aria-label="刷新"
           :disabled="actionRunning || languageStatsRefreshing"
           @click="load"
         >
-          <RefreshCw :size="14" aria-hidden="true" />
-          刷新
-        </button>
-        <button type="button" class="ghost" :disabled="actionRunning || dirtyCount() > 0" @click="pull">
-          <GitPullRequestArrow :size="14" aria-hidden="true" />
-          Pull
+          <RefreshCw :size="17" aria-hidden="true" />
         </button>
         <button
           type="button"
-          class="ghost"
+          class="overview-actions__btn"
+          title="Pull"
+          aria-label="Pull"
+          :disabled="actionRunning || dirtyCount() > 0"
+          @click="pull"
+        >
+          <GitPullRequestArrow :size="17" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="overview-actions__btn"
+          title="拉取并合并"
+          aria-label="拉取并合并"
           :disabled="actionRunning || hasConflicts"
           @click="mergePull"
         >
-          <GitMerge :size="14" aria-hidden="true" />
-          拉取并合并
+          <GitMerge :size="17" aria-hidden="true" />
         </button>
-        <button v-if="hasConflicts" type="button" class="primary" :disabled="actionRunning" @click="showConflicts">
-          <TriangleAlert :size="14" aria-hidden="true" />
+        <button
+          v-if="hasConflicts"
+          type="button"
+          class="overview-actions__btn overview-actions__btn--primary"
+          :disabled="actionRunning"
+          @click="showConflicts"
+        >
+          <TriangleAlert :size="17" aria-hidden="true" />
           处理冲突
         </button>
-        <button type="button" class="primary" :disabled="actionRunning || !summary?.ahead" @click="push">
-          <Upload :size="14" aria-hidden="true" />
+        <button
+          type="button"
+          class="overview-actions__btn"
+          title="GitHub"
+          aria-label="GitHub"
+          :disabled="!summary?.githubFullName"
+          @click="openGitHub"
+        >
+          <ExternalLink :size="17" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="overview-actions__btn"
+          title="文件夹"
+          aria-label="文件夹"
+          :disabled="!summary?.path"
+          @click="openFolder"
+        >
+          <FolderOpen :size="17" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="overview-actions__btn overview-actions__btn--primary"
+          :disabled="actionRunning || !summary?.ahead"
+          @click="push"
+        >
+          <Upload :size="17" aria-hidden="true" />
           Push
-        </button>
-        <button type="button" class="ghost" :disabled="!summary?.githubFullName" @click="openGitHub">
-          <ExternalLink :size="14" aria-hidden="true" />
-          GitHub
-        </button>
-        <button type="button" class="ghost" :disabled="!summary?.path" @click="openFolder">
-          <FolderOpen :size="14" aria-hidden="true" />
-          文件夹
         </button>
       </div>
     </header>
@@ -344,6 +375,11 @@ const {
 .repo-header__actions {
   justify-content: flex-end;
   flex: 0 0 auto;
+}
+
+.repo-header__actions.overview-actions {
+  gap: 2px;
+  flex-wrap: nowrap;
 }
 
 .repo-status-strip {
@@ -1215,8 +1251,7 @@ const {
   }
 
   .repo-header__actions {
-    display: grid;
-    grid-template-columns: 1fr;
+    align-self: flex-start;
     justify-content: flex-start;
   }
 
@@ -1230,7 +1265,6 @@ const {
     margin-left: 0;
   }
 
-  .repo-header__actions button,
   .launch-actions button {
     justify-content: flex-start;
   }
