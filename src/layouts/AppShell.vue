@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { RouterView } from "vue-router";
 import { APP_TITLE, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
 import { useRouteReturnTarget } from "../composables/useRouteReturnTarget";
 import { useShellSidebar } from "../composables/useShellSidebar";
+import { provideShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import TitleBar from "../components/TitleBar.vue";
@@ -18,6 +19,9 @@ const isSettingsMode = computed(() => sidebarVariant.value === "settings");
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
 const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
+const secondaryPanel = ref<InstanceType<typeof SecondaryPanel> | null>(null);
+const searchOpen = ref(false);
+const searchQuery = ref("");
 void workspace.initialize();
 let cleanupFocusRefresh: (() => void) | null = null;
 let focusRefreshDisposed = false;
@@ -38,6 +42,26 @@ onUnmounted(() => {
 });
 
 const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.value);
+
+async function toggleSearch() {
+  searchOpen.value = !searchOpen.value;
+  if (searchOpen.value) {
+    if (sidebar.effectiveCollapsed.value) sidebar.toggleCollapsed();
+    await nextTick();
+  } else {
+    searchQuery.value = "";
+  }
+}
+
+function openCloneDialog() {
+  secondaryPanel.value?.openCloneDialog();
+}
+
+provideShellRepoActions({
+  searchOpen,
+  openCloneDialog,
+  toggleSearch,
+});
 </script>
 
 <template>
@@ -63,7 +87,12 @@ const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.v
       :active-key="activeSettingsTab"
       :return-to="returnTo"
     />
-    <SecondaryPanel v-else-if="!isSetupOverlay" />
+    <SecondaryPanel
+      v-else-if="!isSetupOverlay"
+      ref="secondaryPanel"
+      v-model:search-open="searchOpen"
+      v-model:search-query="searchQuery"
+    />
     <div
       v-if="!isSetupOverlay"
       class="shell__resizer"

@@ -4,6 +4,7 @@ import { RouterLink, useRouter } from "vue-router";
 import {
   CheckCircle2,
   AlertCircle,
+  FilePlus2,
   FolderOpen,
   FolderGit2,
   GitPullRequestArrow,
@@ -11,9 +12,11 @@ import {
   LoaderCircle,
   Radar,
   RefreshCw,
+  Search,
   ShieldCheck,
   X,
 } from "@lucide/vue";
+import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { syncErrorByRepoId } from "../composables/workspace/state";
 import type { GitHubContributionDay, RepoSummary } from "../services/workspace";
@@ -22,6 +25,7 @@ import "../styles/page.css";
 
 const workspace = useWorkspace();
 const router = useRouter();
+const shellActions = useShellRepoActions();
 const syncErrors = computed(() => syncErrorByRepoId());
 
 type RepoAction = {
@@ -77,6 +81,7 @@ const discovering = ref(false);
 const addingRepo = ref(false);
 const languageRefreshError = ref<string | null>(null);
 const languageStatsRefreshing = computed(() => workspace.state.languageStatsLoadingRepoIds.length > 0);
+const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
   buildContributionMonthLabels(contributionWeeks.value, workspace.state.githubContributions.days),
@@ -352,6 +357,14 @@ function formatDateTime(timestamp: number) {
   }).format(new Date(timestamp));
 }
 
+function openCloneDialog() {
+  shellActions?.openCloneDialog();
+}
+
+function toggleSearch() {
+  void shellActions?.toggleSearch();
+}
+
 async function discoverRepos() {
   if (discovering.value) return;
   discovering.value = true;
@@ -366,7 +379,10 @@ async function addLocalRepo() {
   if (addingRepo.value) return;
   addingRepo.value = true;
   try {
-    await workspace.addLocalRepo();
+    const summary = await workspace.addLocalRepo();
+    if (summary) {
+      await router.push(`/repos/${encodeURIComponent(summary.id)}`);
+    }
   } finally {
     addingRepo.value = false;
   }
@@ -468,29 +484,76 @@ async function refreshLanguageStats() {
           <h1>项目总览</h1>
           <p>{{ workspace.workspaceRoot.value }} · {{ workspace.githubBinding.value?.login }}</p>
         </div>
-        <div class="toolbar">
-          <button type="button" class="ghost" :disabled="workspace.state.scanning" @click="workspace.refreshRepos">
-            <RefreshCw :size="14" aria-hidden="true" />
-            刷新
+        <div class="overview-actions" aria-label="项目总览操作">
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="克隆仓库"
+            aria-label="克隆仓库"
+            :disabled="!workspace.workspaceRoot.value"
+            @click="openCloneDialog"
+          >
+            <FilePlus2 :size="17" aria-hidden="true" />
           </button>
-          <button type="button" class="ghost" :disabled="addingRepo" @click="addLocalRepo">
-            <FolderGit2 :size="14" aria-hidden="true" />
-            添加本地仓库
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="添加本地仓库"
+            aria-label="添加本地仓库"
+            :disabled="!workspace.workspaceRoot.value || addingRepo"
+            @click="addLocalRepo"
+          >
+            <FolderGit2 :size="17" aria-hidden="true" />
           </button>
-          <button type="button" class="ghost" :disabled="discovering" @click="discoverRepos">
-            <LoaderCircle v-if="discovering" :size="14" aria-hidden="true" class="sb-spin" />
-            <Radar v-else :size="14" aria-hidden="true" />
-            发现仓库
+          <button
+            type="button"
+            class="overview-actions__btn"
+            :class="{ 'is-active': searchOpen }"
+            title="搜索"
+            aria-label="搜索"
+            :disabled="!workspace.state.repos.length"
+            @click="toggleSearch"
+          >
+            <Search :size="17" aria-hidden="true" />
           </button>
-          <button type="button" class="primary" :disabled="workspace.state.bulkRunning" @click="workspace.syncAll">
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="刷新仓库"
+            aria-label="刷新仓库"
+            :disabled="workspace.state.scanning"
+            @click="workspace.refreshRepos"
+          >
+            <RefreshCw :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="发现仓库"
+            aria-label="发现仓库"
+            :disabled="!workspace.workspaceRoot.value || discovering"
+            @click="discoverRepos"
+          >
+            <LoaderCircle v-if="discovering" :size="17" aria-hidden="true" class="sb-spin" />
+            <Radar v-else :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn overview-actions__btn--primary"
+            :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync' }"
+            title="一键同步"
+            aria-label="一键同步"
+            :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
+            @click="workspace.syncAll"
+          >
             <LoaderCircle
               v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync'"
-              :size="14"
+              :size="17"
               aria-hidden="true"
               class="sb-spin"
             />
-            <GitPullRequestArrow v-else :size="14" aria-hidden="true" />
-            一键同步
+            <GitPullRequestArrow v-else :size="17" aria-hidden="true" />
+            <span>同步</span>
           </button>
         </div>
       </div>
@@ -888,12 +951,65 @@ async function refreshLanguageStats() {
   justify-content: flex-end;
 }
 
-.setup-actions,
-.toolbar {
+.setup-actions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.overview-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.overview-actions__btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.overview-actions__btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.overview-actions__btn.is-active {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.overview-actions__btn--primary {
+  width: auto;
+  min-width: 72px;
+  padding: 0 12px;
+  gap: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.overview-actions__btn--primary:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+}
+
+.overview-actions__btn.is-running,
+.overview-actions__btn.is-running:hover,
+.overview-actions__btn.is-running:disabled {
+  background: var(--accent);
+  color: var(--accent-text);
+  opacity: 1;
 }
 
 .setup-code,
