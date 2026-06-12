@@ -16,6 +16,16 @@ function scriptEnv(extra: Record<string, string>) {
   };
 }
 
+function rustFunctionBody(source: string, name: string) {
+  const start = source.indexOf(`fn ${name}`);
+  const commandStart = source.lastIndexOf("#[tauri::command]", start);
+  if (start === -1 || commandStart === -1) {
+    throw new Error(`Rust command not found: ${name}`);
+  }
+  const nextCommand = source.indexOf("#[tauri::command]", start);
+  return source.slice(commandStart, nextCommand === -1 ? undefined : nextCommand);
+}
+
 describe("单应用模板工具链", () => {
   it("根 package.json 直接提供单应用脚本，不包含 workspace", () => {
     const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf-8"));
@@ -67,11 +77,8 @@ describe("单应用模板工具链", () => {
 
   it("GitHub OAuth 设备授权请求显式协商 JSON 响应并保留错误详情", () => {
     const workspace = readFileSync(resolve("src-tauri/src/workspace.rs"), "utf-8");
-    const startDeviceFlow = workspace.slice(
-      workspace.indexOf("pub fn github_start_device_flow"),
-      workspace.indexOf("#[tauri::command]\npub fn github_poll_device_flow"),
-    );
-    const pollDeviceFlow = workspace.slice(workspace.indexOf("pub fn github_poll_device_flow"));
+    const startDeviceFlow = rustFunctionBody(workspace, "github_start_device_flow");
+    const pollDeviceFlow = rustFunctionBody(workspace, "github_poll_device_flow");
 
     expect(workspace).toContain('const GITHUB_OAUTH_ACCEPT: &str = "application/json";');
     expect(workspace).toContain('const GITHUB_SCOPE: &str = "repo workflow read:user";');
