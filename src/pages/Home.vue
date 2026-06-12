@@ -5,9 +5,11 @@ import {
   CheckCircle2,
   AlertCircle,
   FolderOpen,
+  FolderGit2,
   GitPullRequestArrow,
   Info,
   LoaderCircle,
+  Radar,
   RefreshCw,
   ShieldCheck,
   X,
@@ -56,6 +58,8 @@ type LanguageScope = "head" | "workingTree";
 const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
 
 const languageScope = ref<LanguageScope>("head");
+const discovering = ref(false);
+const addingRepo = ref(false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 
 const totalContributions = computed(() =>
@@ -81,6 +85,9 @@ const languageUpdatedAt = computed(() => {
 
 const languageScopeNote = computed(() => {
   const scope = languageScope.value === "workingTree" ? "包含未提交改动" : "HEAD 已提交文件";
+  if (workspace.state.languageStatsLoadingRepoIds.length > 0) {
+    return `${scope} · 后台刷新中`;
+  }
   const updatedAt = languageUpdatedAt.value == null ? "刷新时间未知" : `刷新于 ${formatDateTime(languageUpdatedAt.value)}`;
   return `${scope} · ${updatedAt}`;
 });
@@ -244,6 +251,26 @@ function formatDateTime(timestamp: number) {
   }).format(new Date(timestamp));
 }
 
+async function discoverRepos() {
+  if (discovering.value) return;
+  discovering.value = true;
+  try {
+    await workspace.discoverRepos();
+  } finally {
+    discovering.value = false;
+  }
+}
+
+async function addLocalRepo() {
+  if (addingRepo.value) return;
+  addingRepo.value = true;
+  try {
+    await workspace.addLocalRepo();
+  } finally {
+    addingRepo.value = false;
+  }
+}
+
 </script>
 
 <template>
@@ -334,6 +361,15 @@ function formatDateTime(timestamp: number) {
           <button type="button" class="ghost" :disabled="workspace.state.scanning" @click="workspace.refreshRepos">
             <RefreshCw :size="14" aria-hidden="true" />
             刷新
+          </button>
+          <button type="button" class="ghost" :disabled="addingRepo" @click="addLocalRepo">
+            <FolderGit2 :size="14" aria-hidden="true" />
+            添加本地仓库
+          </button>
+          <button type="button" class="ghost" :disabled="discovering" @click="discoverRepos">
+            <LoaderCircle v-if="discovering" :size="14" aria-hidden="true" class="sb-spin" />
+            <Radar v-else :size="14" aria-hidden="true" />
+            发现仓库
           </button>
           <button type="button" class="primary" :disabled="workspace.state.bulkRunning" @click="workspace.syncAll">
             <LoaderCircle

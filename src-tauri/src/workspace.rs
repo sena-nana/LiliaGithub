@@ -50,6 +50,8 @@ pub struct WorkspaceSettings {
     pub project_launch_configs: HashMap<String, ProjectLaunchConfig>,
     #[serde(default)]
     pub hidden_repo_ids: Vec<String>,
+    #[serde(default)]
+    pub managed_repo_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,6 +373,20 @@ pub struct HiddenRepo {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTask {
+    pub id: String,
+    pub kind: String,
+    pub priority: String,
+    #[serde(default)]
+    pub repo_id: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub message: Option<String>,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct DeviceCodeResponse {
@@ -446,9 +462,23 @@ fn launch_logs() -> &'static Mutex<HashMap<String, VecDeque<ProjectLaunchLog>>> 
     LOGS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn workspace_tasks() -> &'static Mutex<Vec<WorkspaceTask>> {
+    static TASKS: OnceLock<Mutex<Vec<WorkspaceTask>>> = OnceLock::new();
+    TASKS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 fn next_launch_log_index() -> u64 {
     static INDEX: AtomicU64 = AtomicU64::new(1);
     INDEX.fetch_add(1, Ordering::Relaxed)
+}
+
+fn next_workspace_task_id() -> String {
+    static INDEX: AtomicU64 = AtomicU64::new(1);
+    format!(
+        "workspace-task-{}-{}",
+        now_millis(),
+        INDEX.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
@@ -529,6 +559,52 @@ fn save_settings(app: &AppHandle, settings: &WorkspaceSettings) -> Result<(), St
         serde_json::to_value(settings).map_err(|e| e.to_string())?,
     );
     store.save().map_err(|e| format!("保存配置失败：{e}"))
+}
+
+fn task_priority_rank(priority: &str) -> usize {
+    match priority {
+        "high" => 0,
+        "normal" => 1,
+        _ => 2,
+    }
+}
+
+fn record_workspace_task(
+    kind: &str,
+    priority: &str,
+    repo_id: Option<String>,
+    status: &str,
+    message: Option<String>,
+) -> WorkspaceTask {
+    let task = WorkspaceTask {
+        id: next_workspace_task_id(),
+        kind: kind.to_string(),
+        priority: priority.to_string(),
+        repo_id,
+        status: status.to_string(),
+        message,
+        updated_at: now_millis(),
+    };
+    let mut tasks = workspace_tasks().lock().unwrap_or_else(|e| e.into_inner());
+    tasks.push(task.clone());
+    tasks.sort_by(|a, b| {
+        task_priority_rank(&a.priority)
+            .cmp(&task_priority_rank(&b.priority))
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+    });
+    while tasks.len() > 200 {
+        tasks.pop();
+    }
+    task
+}
+
+fn update_workspace_task(task_id: &str, status: &str, message: Option<String>) {
+    let mut tasks = workspace_tasks().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(task) = tasks.iter_mut().find(|task| task.id == task_id) {
+        task.status = status.to_string();
+        task.message = message;
+        task.updated_at = now_millis();
+    }
 }
 
 fn client_id() -> Option<&'static str> {
@@ -866,6 +942,43 @@ fn repo_id(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn sort_dedup(values: &mut Vec<String>) {
+    values.sort();
+    values.dedup();
+}
+
+fn add_managed_repo_id(settings: &mut WorkspaceSettings, repo_id: String) {
+    if !settings.managed_repo_ids.iter().any(|id| id == &repo_id) {
+        settings.managed_repo_ids.push(repo_id);
+        sort_dedup(&mut settings.managed_repo_ids);
+    }
+}
+
+fn normalize_repo_path(root: &Path, repo_path: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(repo_path.trim());
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    if !absolute.exists() || !absolute.is_dir() {
+        return Err(format!("仓库目录不存在：{}", absolute.display()));
+    }
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("读取工作区路径失败：{e}"))?;
+    let canonical_path = absolute
+        .canonicalize()
+        .map_err(|e| format!("读取仓库路径失败：{e}"))?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err("仓库必须位于当前工作区内".to_string());
+    }
+    if !is_git_repo(&canonical_path) {
+        return Err(format!("不是 Git 仓库：{}", canonical_path.display()));
+    }
+    Ok(canonical_path)
+}
+
 fn infer_clone_directory_name(remote_url: &str) -> Result<String, String> {
     let trimmed = remote_url.trim().trim_end_matches('/').trim_end_matches(".git");
     if trimmed.is_empty() {
@@ -1187,10 +1300,18 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
         conflict_count,
         last_commit_at,
         last_commit_message,
-        language_stats: repo_head_language_stats(path),
-        working_tree_language_stats: repo_working_tree_language_stats(path),
-        language_stats_updated_at: now_millis(),
+        language_stats: Vec::new(),
+        working_tree_language_stats: Vec::new(),
+        language_stats_updated_at: 0,
     }
+}
+
+fn summarize_repo_with_language_stats(root: &Path, path: &Path) -> RepoSummary {
+    let mut summary = summarize_repo(root, path);
+    summary.language_stats = repo_head_language_stats(path);
+    summary.working_tree_language_stats = repo_working_tree_language_stats(path);
+    summary.language_stats_updated_at = now_millis();
+    summary
 }
 
 fn status_pair(line: &str) -> (String, String) {
@@ -1258,6 +1379,24 @@ fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
             .map(|handle| handle.join().expect("repo summary worker panicked"))
             .collect()
     })
+}
+
+fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> Vec<PathBuf> {
+    settings
+        .managed_repo_ids
+        .iter()
+        .filter(|id| !settings.hidden_repo_ids.iter().any(|hidden| hidden == *id))
+        .map(|id| root.join(id.replace('/', std::path::MAIN_SEPARATOR_STR)))
+        .filter(|path| path.exists() && is_git_repo(path))
+        .collect()
+}
+
+fn sort_repos(repos: &mut [RepoSummary]) {
+    repos.sort_by(|a, b| {
+        b.last_commit_at
+            .cmp(&a.last_commit_at)
+            .then_with(|| a.name.cmp(&b.name))
+    });
 }
 
 fn filter_hidden_repos(repos: Vec<RepoSummary>, hidden_repo_ids: &[String]) -> Vec<RepoSummary> {
@@ -1539,19 +1678,78 @@ pub fn workspace_pick_root(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+pub fn workspace_pick_repo(app: AppHandle) -> Result<Option<String>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("选择 Git 仓库")
+        .blocking_pick_folder();
+    Ok(picked.map(|path| path.to_string()))
+}
+
+#[tauri::command]
+pub fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     let root = workspace_root(&app)?;
     let settings = load_settings(&app);
-    let mut repos = filter_hidden_repos(
-        summarize_repos(&root, collect_repos(&root)),
-        &settings.hidden_repo_ids,
+    let task = record_workspace_task(
+        "repoStatus",
+        "high",
+        None,
+        "running",
+        Some("刷新已管理仓库状态".to_string()),
     );
-    repos.sort_by(|a, b| {
-        b.last_commit_at
-            .cmp(&a.last_commit_at)
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    let mut repos = summarize_repos(&root, managed_repo_paths(&root, &settings));
+    sort_repos(&mut repos);
+    update_workspace_task(&task.id, "success", Some(format!("已刷新 {} 个仓库", repos.len())));
     Ok(repos)
+}
+
+#[tauri::command]
+pub fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+    workspace_refresh_repos(app)
+}
+
+#[tauri::command]
+pub fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+    let root = workspace_root(&app)?;
+    let task = record_workspace_task(
+        "discoverRepos",
+        "low",
+        None,
+        "running",
+        Some("后台发现工作区仓库".to_string()),
+    );
+    let paths = collect_repos(&root);
+    let mut settings = load_settings(&app);
+    for path in &paths {
+        add_managed_repo_id(&mut settings, repo_id(&root, path));
+    }
+    save_settings(&app, &settings)?;
+    let mut repos = filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
+    sort_repos(&mut repos);
+    update_workspace_task(&task.id, "success", Some(format!("发现 {} 个仓库", repos.len())));
+    Ok(repos)
+}
+
+#[tauri::command]
+pub fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let path = normalize_repo_path(&root, &repo_path)?;
+    let repo_id = repo_id(&root, &path);
+    let task = record_workspace_task(
+        "repoStatus",
+        "high",
+        Some(repo_id.clone()),
+        "running",
+        Some("添加本地仓库".to_string()),
+    );
+    let mut settings = load_settings(&app);
+    add_managed_repo_id(&mut settings, repo_id.clone());
+    settings.hidden_repo_ids.retain(|id| id != &repo_id);
+    save_settings(&app, &settings)?;
+    let summary = summarize_repo(&root, &path);
+    update_workspace_task(&task.id, "success", Some("已添加仓库".to_string()));
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -1583,6 +1781,9 @@ pub fn workspace_clone_repo(
         &["clone", remote, directory.as_str()],
         auth_header.as_deref(),
     )?;
+    let mut settings = load_settings(&app);
+    add_managed_repo_id(&mut settings, repo_id(&root, &target));
+    save_settings(&app, &settings)?;
     Ok(summarize_repo(&root, &target))
 }
 
@@ -1632,6 +1833,20 @@ pub fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo> {
             HiddenRepo { id, name }
         })
         .collect()
+}
+
+#[tauri::command]
+pub fn workspace_list_tasks() -> Vec<WorkspaceTask> {
+    workspace_tasks()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+#[tauri::command]
+pub fn workspace_cancel_task(task_id: String) -> Result<(), String> {
+    update_workspace_task(&task_id, "cancelled", Some("已取消".to_string()));
+    Ok(())
 }
 
 #[tauri::command]
@@ -1823,6 +2038,22 @@ pub fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSummary, 
 }
 
 #[tauri::command]
+pub fn repo_refresh_language_stats(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+    let root = workspace_root(&app)?;
+    let path = repo_path_by_id(&app, &repo_id)?;
+    let task = record_workspace_task(
+        "languageStats",
+        "low",
+        Some(repo_id),
+        "running",
+        Some("刷新语言统计".to_string()),
+    );
+    let summary = summarize_repo_with_language_stats(&root, &path);
+    update_workspace_task(&task.id, "success", Some("语言统计已更新".to_string()));
+    Ok(summary)
+}
+
+#[tauri::command]
 pub fn repo_get_changes(app: AppHandle, repo_id: String) -> Result<Vec<RepoChange>, String> {
     let path = repo_path_by_id(&app, &repo_id)?;
     Ok(repo_changes(&path))
@@ -1861,7 +2092,7 @@ pub fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, St
     let root = workspace_root(&app)?;
     let path = repo_path_by_id(&app, &repo_id)?;
     let (summary, changes, commits, branches, conflicts) = thread::scope(|scope| {
-        let summary = scope.spawn(|| summarize_repo(&root, &path));
+        let summary = scope.spawn(|| summarize_repo_with_language_stats(&root, &path));
         let changes = scope.spawn(|| repo_changes(&path));
         let commits = scope.spawn(|| repo_history(&path));
         let branches = scope.spawn(|| repo_branches(&path));
@@ -4217,6 +4448,49 @@ rename to docs/new.md",
 
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].id, visible.id);
+    }
+
+    #[test]
+    fn workspace_task_priority_orders_high_before_low() {
+        assert!(task_priority_rank("high") < task_priority_rank("normal"));
+        assert!(task_priority_rank("normal") < task_priority_rank("low"));
+    }
+
+    #[test]
+    fn managed_repo_ids_are_deduplicated_and_sorted() {
+        let mut settings = WorkspaceSettings::default();
+
+        add_managed_repo_id(&mut settings, "z-repo".to_string());
+        add_managed_repo_id(&mut settings, "a-repo".to_string());
+        add_managed_repo_id(&mut settings, "z-repo".to_string());
+
+        assert_eq!(settings.managed_repo_ids, vec!["a-repo", "z-repo"]);
+    }
+
+    #[test]
+    fn managed_repo_paths_only_returns_visible_git_repos() {
+        let root = temp_dir("managed-repos");
+        let visible = root.join("visible");
+        let hidden = root.join("hidden");
+        let missing = root.join("missing");
+        fs::create_dir_all(visible.join(".git")).unwrap();
+        fs::create_dir_all(hidden.join(".git")).unwrap();
+        let settings = WorkspaceSettings {
+            workspace_root: Some(root.to_string_lossy().to_string()),
+            hidden_repo_ids: vec!["hidden".to_string()],
+            managed_repo_ids: vec![
+                "visible".to_string(),
+                "hidden".to_string(),
+                "missing".to_string(),
+            ],
+            ..WorkspaceSettings::default()
+        };
+
+        let paths = managed_repo_paths(&root, &settings);
+
+        assert_eq!(paths, vec![visible]);
+        assert!(!missing.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

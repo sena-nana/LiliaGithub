@@ -18,6 +18,7 @@ import type {
   RepoDetail,
   RepoMergePullResult,
   RepoSummary,
+  WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
 
@@ -46,8 +47,20 @@ export function pickWorkspaceRoot(): Promise<string | null> {
   return call("workspace_pick_root", undefined, fallback.pickWorkspaceRoot);
 }
 
-export function scanRepos(): Promise<RepoSummary[]> {
-  return call("workspace_scan_repos", undefined, fallback.scanRepos);
+export function pickRepo(): Promise<string | null> {
+  return call("workspace_pick_repo", undefined, fallback.pickRepo);
+}
+
+export function refreshRepos(): Promise<RepoSummary[]> {
+  return call("workspace_refresh_repos", undefined, fallback.refreshRepos);
+}
+
+export function discoverRepos(): Promise<RepoSummary[]> {
+  return call("workspace_discover_repos", undefined, fallback.discoverRepos);
+}
+
+export function addRepo(repoPath: string): Promise<RepoSummary> {
+  return call("workspace_add_repo", { repoPath }, () => fallback.addRepo(repoPath));
 }
 
 export function cloneRepo(remoteUrl: string, directoryName?: string | null): Promise<RepoSummary> {
@@ -70,6 +83,14 @@ export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
 
 export function listHiddenRepos(): Promise<HiddenRepo[]> {
   return call("workspace_list_hidden_repos", undefined, fallback.listHiddenRepos);
+}
+
+export function listWorkspaceTasks(): Promise<WorkspaceTask[]> {
+  return call("workspace_list_tasks", undefined, fallback.listWorkspaceTasks);
+}
+
+export function cancelWorkspaceTask(taskId: string): Promise<void> {
+  return call("workspace_cancel_task", { taskId }, () => fallback.cancelWorkspaceTask(taskId));
 }
 
 export function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
@@ -97,6 +118,10 @@ export function listRepoContributions(repoFullNames: string[]): Promise<GitHubCo
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => fallback.getRepoDetail(repoId));
+}
+
+export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
+  return call("repo_refresh_language_stats", { repoId }, () => fallback.refreshRepoLanguageStats(repoId));
 }
 
 export function getRepoCommitDetail(repoId: string, hash: string): Promise<CommitDetail> {

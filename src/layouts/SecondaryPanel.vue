@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
-import { AlertCircle, EyeOff, FilePlus2, FolderGit2, GitPullRequestArrow, LoaderCircle, RefreshCw, Search, X } from "@lucide/vue";
+import { AlertCircle, EyeOff, FilePlus2, FolderGit2, GitPullRequestArrow, LoaderCircle, Radar, RefreshCw, Search, X } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -26,6 +26,8 @@ const cloneDirectoryName = ref("");
 const cloneTouchedDirectory = ref(false);
 const cloneBusy = ref(false);
 const cloneError = ref<string | null>(null);
+const discoverBusy = ref(false);
+const addRepoBusy = ref(false);
 
 const footerStatus = computed(() => {
   if (!workspace.workspaceRoot.value) {
@@ -140,12 +142,34 @@ async function submitClone() {
       cloneDirectoryName.value.trim() || null,
     );
     cloneOpen.value = false;
-    await workspace.refreshRepos();
     await router.push(`/repos/${encodeURIComponent(summary.id)}`);
   } catch (err) {
     cloneError.value = String(err);
   } finally {
     cloneBusy.value = false;
+  }
+}
+
+async function addLocalRepo() {
+  if (addRepoBusy.value) return;
+  addRepoBusy.value = true;
+  try {
+    const summary = await workspace.addLocalRepo();
+    if (summary) {
+      await router.push(`/repos/${encodeURIComponent(summary.id)}`);
+    }
+  } finally {
+    addRepoBusy.value = false;
+  }
+}
+
+async function discoverRepos() {
+  if (discoverBusy.value) return;
+  discoverBusy.value = true;
+  try {
+    await workspace.discoverRepos();
+  } finally {
+    discoverBusy.value = false;
   }
 }
 
@@ -174,12 +198,22 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
       <button
         type="button"
         class="sb-action"
-        title="新建"
-        aria-label="新建"
+        title="克隆仓库"
+        aria-label="克隆仓库"
         :disabled="!workspace.workspaceRoot.value"
         @click="openCloneDialog"
       >
         <FilePlus2 :size="16" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="sb-action"
+        title="添加本地仓库"
+        aria-label="添加本地仓库"
+        :disabled="!workspace.workspaceRoot.value || addRepoBusy"
+        @click="addLocalRepo"
+      >
+        <FolderGit2 :size="16" aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -201,6 +235,17 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
         @click="workspace.refreshRepos"
       >
         <RefreshCw :size="16" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="sb-action"
+        title="发现仓库"
+        aria-label="发现仓库"
+        :disabled="!workspace.workspaceRoot.value || discoverBusy"
+        @click="discoverRepos"
+      >
+        <LoaderCircle v-if="discoverBusy" :size="16" aria-hidden="true" class="sb-spin" />
+        <Radar v-else :size="16" aria-hidden="true" />
       </button>
       <button
         type="button"

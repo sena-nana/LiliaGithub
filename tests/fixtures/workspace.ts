@@ -50,5 +50,6 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     githubBinding: null,
     projectLaunchConfigs: {},
     hiddenRepoIds,
+    managedRepoIds: [],
   };
 }

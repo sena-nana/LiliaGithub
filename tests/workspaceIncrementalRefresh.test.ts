@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { waitFor } from "@testing-library/vue";
 import {
   abortConflictOperation,
   acceptConflictFile,
@@ -28,12 +29,18 @@ import type { BulkSyncPreview } from "../src/services/workspace";
 import { conflictState, repoDetail, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const service = {
-  scanRepos: vi.fn(),
+  refreshRepos: vi.fn(),
+  discoverRepos: vi.fn(),
+  pickRepo: vi.fn(),
+  addRepo: vi.fn(),
   hideRepo: vi.fn(),
   unhideRepo: vi.fn(),
   getRepoSummary: vi.fn(),
   getRepoDetail: vi.fn(),
   listRepoContributions: vi.fn(),
+  listWorkspaceTasks: vi.fn(),
+  cancelWorkspaceTask: vi.fn(),
+  refreshRepoLanguageStats: vi.fn(),
   stageFiles: vi.fn(),
   unstageFiles: vi.fn(),
   commitRepo: vi.fn(),
@@ -67,11 +74,17 @@ beforeEach(() => {
       refreshedAt: 1_780_000_000_000,
     },
   });
+  service.listWorkspaceTasks.mockResolvedValue([]);
+  service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
+    languageStats: [{ language: "TypeScript", bytes: 1 }],
+    workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+    languageStatsUpdatedAt: 1,
+  }));
 });
 
 describe("workspace incremental refresh", () => {
   it("全量刷新成功后按 GitHub 仓库列表刷新贡献图", async () => {
-    service.scanRepos.mockResolvedValue([
+    service.refreshRepos.mockResolvedValue([
       repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" }),
       repoSummary("Lilia", { githubFullName: "sena-nana/Lilia" }),
       repoSummary("LocalOnly", { githubFullName: null }),
@@ -91,9 +104,9 @@ describe("workspace incremental refresh", () => {
     const { refreshRepos } = await import("../src/composables/workspace/repositories");
     await refreshRepos();
 
-    expect(service.listRepoContributions).toHaveBeenCalledWith(
+    await waitFor(() => expect(service.listRepoContributions).toHaveBeenCalledWith(
       ["sena-nana/LiliaGithub", "sena-nana/Lilia"],
-    );
+    ));
     expect(state.githubContributions.days).toEqual([{ date: "2026-06-11", count: 3 }]);
     expect(state.githubContributions.meta).toEqual({
       repoCount: 2,
@@ -107,7 +120,7 @@ describe("workspace incremental refresh", () => {
 
   it("GitHub 贡献图失败不覆盖仓库扫描结果", async () => {
     const repo = repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" });
-    service.scanRepos.mockResolvedValue([repo]);
+    service.refreshRepos.mockResolvedValue([repo]);
     service.listRepoContributions.mockRejectedValue(new Error("rate limited"));
 
     const { refreshRepos } = await import("../src/composables/workspace/repositories");
@@ -115,18 +128,18 @@ describe("workspace incremental refresh", () => {
 
     expect(state.repos).toEqual([repo]);
     expect(state.error).toBeNull();
-    expect(state.githubContributions.error).toBe("Error: rate limited");
+    await waitFor(() => expect(state.githubContributions.error).toBe("Error: rate limited"));
     expect(state.githubContributions.meta).toBeNull();
   });
 
   it("没有 GitHub 仓库时写入空贡献图采样信息", async () => {
-    service.scanRepos.mockResolvedValue([repoSummary("LocalOnly", { githubFullName: null })]);
+    service.refreshRepos.mockResolvedValue([repoSummary("LocalOnly", { githubFullName: null })]);
 
     const { refreshRepos } = await import("../src/composables/workspace/repositories");
     await refreshRepos();
 
+    await waitFor(() => expect(state.githubContributions.days).toEqual([]));
     expect(service.listRepoContributions).not.toHaveBeenCalled();
-    expect(state.githubContributions.days).toEqual([]);
     expect(state.githubContributions.meta).toMatchObject({
       repoCount: 0,
       requestedRepoCount: 0,
@@ -155,7 +168,7 @@ describe("workspace incremental refresh", () => {
 
     await hideRepo(target.id);
 
-    expect(service.scanRepos).not.toHaveBeenCalled();
+    expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(state.repos.map((repo) => repo.id)).toEqual(["Lilia"]);
     expect(state.repoDetails[target.id]).toBeUndefined();
     expect(state.launchConfigs[target.id]).toBeUndefined();
@@ -171,7 +184,7 @@ describe("workspace incremental refresh", () => {
 
     await unhideRepo(restored.id);
 
-    expect(service.scanRepos).not.toHaveBeenCalled();
+    expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(service.getRepoSummary).toHaveBeenCalledWith(restored.id);
     expect(state.repos.map((repo) => repo.id)).toEqual(["Lilia", "LiliaGithub"]);
     expect(state.repos.find((repo) => repo.id === restored.id)?.ahead).toBe(2);
@@ -194,7 +207,7 @@ describe("workspace incremental refresh", () => {
 
     await executeBulk();
 
-    expect(service.scanRepos).not.toHaveBeenCalled();
+    expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(state.repos.find((repo) => repo.id === before.id)?.ahead).toBe(0);
     expect(state.repoDetails[before.id]?.summary.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === "Lilia")?.ahead).toBe(3);
@@ -368,7 +381,7 @@ describe("workspace incremental refresh", () => {
     await push(initial.id);
     await checkout(initial.id, "main");
 
-    expect(service.scanRepos).not.toHaveBeenCalled();
+    expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(service.getRepoDetail).toHaveBeenCalledTimes(6);
     expect(state.repos).toEqual([updated]);
   });
@@ -419,7 +432,7 @@ describe("workspace incremental refresh", () => {
     await continueConflictOperation(initial.id);
     await abortConflictOperation(initial.id);
 
-    expect(service.scanRepos).not.toHaveBeenCalled();
+    expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(service.getRepoDetail).toHaveBeenCalledTimes(6);
     expect(state.repos).toEqual([updated]);
   });

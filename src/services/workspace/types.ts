@@ -4,6 +4,7 @@ export interface WorkspaceSettings {
   githubBinding: GitHubBindingMetadata | null;
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
   hiddenRepoIds: string[];
+  managedRepoIds: string[];
 }
 
 export interface ProjectLaunchConfig {
@@ -248,4 +249,18 @@ export interface BulkSyncResult {
 export interface HiddenRepo {
   id: string;
   name: string;
+}
+
+export type WorkspaceTaskPriority = "high" | "normal" | "low";
+export type WorkspaceTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
+export type WorkspaceTaskKind = "repoStatus" | "repoDetail" | "discoverRepos" | "languageStats" | "contributions";
+
+export interface WorkspaceTask {
+  id: string;
+  kind: WorkspaceTaskKind;
+  priority: WorkspaceTaskPriority;
+  repoId: string | null;
+  status: WorkspaceTaskStatus;
+  message: string | null;
+  updatedAt: number;
 }

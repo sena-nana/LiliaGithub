@@ -1,12 +1,13 @@
 import {
   beginRecentSyncRetry,
   finishRecentSyncRetry,
+  replaceRepos,
   setRepoDetail,
   state,
   upsertRepo,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
-import type { RepoConflictChoice } from "../../services/workspace";
+import type { RepoConflictChoice, RepoSummary } from "../../services/workspace";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 
@@ -20,13 +21,41 @@ export async function refreshRepos() {
   state.error = null;
   try {
     const service = await loadWorkspaceService();
-    state.repos = await service.scanRepos();
-    await refreshRepoContributions();
+    const repos = await service.refreshRepos();
+    applyRepoList(repos);
   } catch (err) {
     state.error = String(err);
   } finally {
     state.scanning = false;
   }
+}
+
+export async function discoverRepos() {
+  const service = await loadWorkspaceService();
+  const repos = await service.discoverRepos();
+  applyRepoList(repos);
+  return repos;
+}
+
+export async function addLocalRepo() {
+  const service = await loadWorkspaceService();
+  const picked = await service.pickRepo();
+  if (!picked) return null;
+  const summary = await service.addRepo(picked);
+  upsertRepo(summary);
+  scheduleLowPriorityRefresh([summary.id]);
+  return summary;
+}
+
+function applyRepoList(repos: RepoSummary[]) {
+  replaceRepos(repos);
+  scheduleLowPriorityRefresh(repos.map((repo) => repo.id));
+}
+
+function scheduleLowPriorityRefresh(repoIds: string[]) {
+  void refreshLanguageStatsForRepos(repoIds);
+  void refreshRepoContributions();
+  void refreshWorkspaceTasks();
 }
 
 function repoFullNames() {
@@ -62,6 +91,27 @@ export async function refreshRepoContributions() {
     state.githubContributions.error = String(err);
   } finally {
     state.githubContributions.loading = false;
+  }
+}
+
+export async function refreshWorkspaceTasks() {
+  const service = await loadWorkspaceService();
+  state.tasks = await service.listWorkspaceTasks();
+}
+
+async function refreshLanguageStatsForRepos(repoIds: string[]) {
+  const uniqueRepoIds = Array.from(new Set(repoIds));
+  for (const repoId of uniqueRepoIds) {
+    if (state.languageStatsLoadingRepoIds.includes(repoId)) continue;
+    state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
+    try {
+      const service = await loadWorkspaceService();
+      const summary = await service.refreshRepoLanguageStats(repoId).catch(() => null);
+      if (summary) upsertRepo(summary);
+    } finally {
+      state.languageStatsLoadingRepoIds = state.languageStatsLoadingRepoIds.filter((id) => id !== repoId);
+      void refreshWorkspaceTasks();
+    }
   }
 }
 
