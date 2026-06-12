@@ -7,9 +7,19 @@ import type {
   CommitDetail,
   GitHubBindingStatus,
   GitHubContributionResult,
+  GitHubCreateBranchRequest,
+  GitHubCreateIssueRequest,
+  GitHubCreateRepoRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
+  GitHubIssue,
+  GitHubRemoteBranch,
+  GitHubRepoManagement,
+  GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepoSummary,
+  GitHubUpdateIssueRequest,
+  GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchLog,
@@ -186,6 +196,71 @@ export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoP
   });
   if ((pageNo ?? 1) === 1) writeGitHubRepoCache(result);
   return cloneRepoPage(result);
+}
+
+export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
+  return call("github_list_repo_owners", undefined, fallback.listGitHubRepoOwners);
+}
+
+export async function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitHubRepoSummary> {
+  const repo = await call("github_create_repo", { request }, () => fallback.createGitHubRepo(request));
+  clearGitHubRepoCache();
+  return repo;
+}
+
+export function getGitHubRepoManagement(repoFullName: string): Promise<GitHubRepoManagement> {
+  return call("github_get_repo_management", { repoFullName }, () =>
+    fallback.getGitHubRepoManagement(repoFullName),
+  );
+}
+
+export function updateGitHubRepoSettings(
+  repoFullName: string,
+  request: GitHubUpdateRepoSettingsRequest,
+): Promise<GitHubRepoManagement> {
+  return call("github_update_repo_settings", { repoFullName, request }, () =>
+    fallback.updateGitHubRepoSettings(repoFullName, request),
+  );
+}
+
+export function listGitHubRemoteBranches(repoFullName: string): Promise<GitHubRemoteBranch[]> {
+  return call("github_list_remote_branches", { repoFullName }, () =>
+    fallback.listGitHubRemoteBranches(repoFullName),
+  );
+}
+
+export function createGitHubRemoteBranch(
+  repoFullName: string,
+  request: GitHubCreateBranchRequest,
+): Promise<GitHubRemoteBranch> {
+  return call("github_create_remote_branch", { repoFullName, request }, () =>
+    fallback.createGitHubRemoteBranch(repoFullName, request),
+  );
+}
+
+export function listGitHubIssues(repoFullName: string, state?: string | null): Promise<GitHubIssue[]> {
+  return call("github_list_issues", { repoFullName, state: state ?? null }, () =>
+    fallback.listGitHubIssues(repoFullName, state),
+  );
+}
+
+export function createGitHubIssue(
+  repoFullName: string,
+  request: GitHubCreateIssueRequest,
+): Promise<GitHubIssue> {
+  return call("github_create_issue", { repoFullName, request }, () =>
+    fallback.createGitHubIssue(repoFullName, request),
+  );
+}
+
+export function updateGitHubIssue(
+  repoFullName: string,
+  issueNumber: number,
+  request: GitHubUpdateIssueRequest,
+): Promise<GitHubIssue> {
+  return call("github_update_issue", { repoFullName, issueNumber, request }, () =>
+    fallback.updateGitHubIssue(repoFullName, issueNumber, request),
+  );
 }
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {

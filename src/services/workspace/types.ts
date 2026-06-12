@@ -100,6 +100,85 @@ export interface GitHubRepoPage {
   nextPage: number | null;
 }
 
+export interface GitHubRepoOwner {
+  login: string;
+  kind: "user" | "org" | string;
+}
+
+export interface GitHubCreateRepoRequest {
+  owner: string;
+  ownerKind: "user" | "org" | string;
+  name: string;
+  description?: string | null;
+  private: boolean;
+  autoInit: boolean;
+  gitignoreTemplate?: string | null;
+  licenseTemplate?: string | null;
+  hasIssues: boolean;
+  hasWiki: boolean;
+}
+
+export interface GitHubRepoManagement {
+  fullName: string;
+  name: string;
+  description: string | null;
+  homepage: string | null;
+  private: boolean;
+  defaultBranch: string;
+  hasIssues: boolean;
+  hasWiki: boolean;
+  hasProjects: boolean;
+  hasDiscussions: boolean;
+  allowMergeCommit: boolean;
+  allowSquashMerge: boolean;
+  allowRebaseMerge: boolean;
+  allowAutoMerge: boolean;
+  deleteBranchOnMerge: boolean;
+  allowForking: boolean;
+  webCommitSignoffRequired: boolean;
+  htmlUrl: string;
+}
+
+export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "name" | "htmlUrl">>;
+
+export interface GitHubRemoteBranch {
+  name: string;
+  sha: string;
+  protected: boolean;
+}
+
+export interface GitHubCreateBranchRequest {
+  name: string;
+  sourceSha: string;
+}
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  state: "open" | "closed" | string;
+  body: string | null;
+  labels: string[];
+  assignees: string[];
+  htmlUrl: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface GitHubCreateIssueRequest {
+  title: string;
+  body?: string | null;
+  labels: string[];
+  assignees: string[];
+}
+
+export interface GitHubUpdateIssueRequest {
+  title?: string;
+  body?: string | null;
+  state?: "open" | "closed";
+  labels?: string[];
+  assignees?: string[];
+}
+
 export interface LanguageStat {
   language: string;
   bytes: number;

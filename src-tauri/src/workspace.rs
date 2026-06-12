@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring_core::{Entry, Error as KeyringError};
-use reqwest::blocking::{Client, Response};
+use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, LINK, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -459,6 +459,222 @@ struct GitHubRepoResponse {
     clone_url: String,
     html_url: String,
     owner: GitHubRepoOwnerResponse,
+    #[serde(default)]
+    homepage: Option<String>,
+    #[serde(default)]
+    has_issues: bool,
+    #[serde(default)]
+    has_wiki: bool,
+    #[serde(default)]
+    has_projects: bool,
+    #[serde(default)]
+    has_discussions: bool,
+    #[serde(default)]
+    allow_merge_commit: bool,
+    #[serde(default)]
+    allow_squash_merge: bool,
+    #[serde(default)]
+    allow_rebase_merge: bool,
+    #[serde(default)]
+    allow_auto_merge: bool,
+    #[serde(default)]
+    delete_branch_on_merge: bool,
+    #[serde(default)]
+    allow_forking: bool,
+    #[serde(default)]
+    web_commit_signoff_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoOwner {
+    pub login: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubCreateRepoRequest {
+    pub owner: String,
+    pub owner_kind: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub private: bool,
+    #[serde(default)]
+    pub auto_init: bool,
+    #[serde(default)]
+    pub gitignore_template: Option<String>,
+    #[serde(default)]
+    pub license_template: Option<String>,
+    #[serde(default = "default_true")]
+    pub has_issues: bool,
+    #[serde(default = "default_true")]
+    pub has_wiki: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoManagement {
+    pub full_name: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+    pub private: bool,
+    pub default_branch: String,
+    pub has_issues: bool,
+    pub has_wiki: bool,
+    pub has_projects: bool,
+    pub has_discussions: bool,
+    pub allow_merge_commit: bool,
+    pub allow_squash_merge: bool,
+    pub allow_rebase_merge: bool,
+    pub allow_auto_merge: bool,
+    pub delete_branch_on_merge: bool,
+    pub allow_forking: bool,
+    pub web_commit_signoff_required: bool,
+    pub html_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubUpdateRepoSettingsRequest {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub private: Option<bool>,
+    #[serde(default)]
+    pub default_branch: Option<String>,
+    #[serde(default)]
+    pub has_issues: Option<bool>,
+    #[serde(default)]
+    pub has_wiki: Option<bool>,
+    #[serde(default)]
+    pub has_projects: Option<bool>,
+    #[serde(default)]
+    pub has_discussions: Option<bool>,
+    #[serde(default)]
+    pub allow_merge_commit: Option<bool>,
+    #[serde(default)]
+    pub allow_squash_merge: Option<bool>,
+    #[serde(default)]
+    pub allow_rebase_merge: Option<bool>,
+    #[serde(default)]
+    pub allow_auto_merge: Option<bool>,
+    #[serde(default)]
+    pub delete_branch_on_merge: Option<bool>,
+    #[serde(default)]
+    pub allow_forking: Option<bool>,
+    #[serde(default)]
+    pub web_commit_signoff_required: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRemoteBranch {
+    pub name: String,
+    pub sha: String,
+    pub protected: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubCreateBranchRequest {
+    pub name: String,
+    pub source_sha: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIssue {
+    pub number: u64,
+    pub title: String,
+    pub state: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
+    pub html_url: String,
+    pub updated_at: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubCreateIssueRequest {
+    pub title: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubUpdateIssueRequest {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub assignees: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubOrgResponse {
+    login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubBranchCommitResponse {
+    sha: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubBranchResponse {
+    name: String,
+    protected: bool,
+    commit: GitHubBranchCommitResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubLabelResponse {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubAssigneeResponse {
+    login: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubIssueResponse {
+    number: u64,
+    title: String,
+    state: String,
+    body: Option<String>,
+    html_url: String,
+    updated_at: String,
+    created_at: String,
+    #[serde(default)]
+    labels: Vec<GitHubLabelResponse>,
+    #[serde(default)]
+    assignees: Vec<GitHubAssigneeResponse>,
+    #[serde(default)]
+    pull_request: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -508,6 +724,10 @@ fn now_millis() -> i64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|value| value.as_millis() as i64)
         .unwrap_or_default()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn launch_runtime() -> &'static Mutex<HashMap<String, LaunchEntry>> {
@@ -738,9 +958,9 @@ fn normalize_scope_list(scope: Option<&str>) -> Vec<String> {
 }
 
 fn github_headers(
-    builder: reqwest::blocking::RequestBuilder,
+    builder: RequestBuilder,
     token: Option<&str>,
-) -> reqwest::blocking::RequestBuilder {
+) -> RequestBuilder {
     let builder = builder
         .header(USER_AGENT, GITHUB_USER_AGENT)
         .header(ACCEPT, GITHUB_ACCEPT)
@@ -753,8 +973,8 @@ fn github_headers(
 }
 
 fn github_oauth_headers(
-    builder: reqwest::blocking::RequestBuilder,
-) -> reqwest::blocking::RequestBuilder {
+    builder: RequestBuilder,
+) -> RequestBuilder {
     builder
         .header(USER_AGENT, GITHUB_USER_AGENT)
         .header(ACCEPT, GITHUB_OAUTH_ACCEPT)
@@ -779,6 +999,213 @@ fn github_http_error(prefix: &str, response: Response) -> String {
     }
     let detail = trimmed.chars().take(240).collect::<String>();
     format!("{prefix}：HTTP {status}：{detail}")
+}
+
+fn github_binding_expired_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::UNAUTHORIZED
+}
+
+fn github_json<T: for<'de> Deserialize<'de>>(
+    prefix: &str,
+    response: Response,
+) -> Result<T, String> {
+    if !response.status().is_success() {
+        return Err(github_http_error(prefix, response));
+    }
+    response
+        .json::<T>()
+        .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
+}
+
+fn github_require_token(app: &AppHandle) -> Result<(GitHubBindingMetadata, String), String> {
+    let mut settings = load_settings(app);
+    let Some(binding) = settings.github_binding.clone() else {
+        return Err("请先绑定 GitHub".to_string());
+    };
+    let Some(token) = read_token(&binding.login)? else {
+        settings.github_binding = None;
+        save_settings(app, &settings)?;
+        return Err("GitHub 绑定已失效，请重新绑定".to_string());
+    };
+    Ok((binding, token))
+}
+
+fn github_send(app: &AppHandle, prefix: &str, builder: RequestBuilder) -> Result<Response, String> {
+    let response = builder
+        .send()
+        .map_err(|e| format!("{prefix}：{e}"))?;
+    if github_binding_expired_status(response.status()) {
+        let mut settings = load_settings(app);
+        settings.github_binding = None;
+        save_settings(app, &settings)?;
+        return Err("GitHub 绑定已失效，请重新绑定".to_string());
+    }
+    Ok(response)
+}
+
+fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> GitHubRepoSummary {
+    GitHubRepoSummary {
+        id: repo.id,
+        name: repo.name,
+        full_name: repo.full_name,
+        owner_login: repo.owner.login,
+        private: repo.private,
+        description: repo.description,
+        default_branch: repo.default_branch,
+        updated_at: repo.updated_at,
+        clone_url: repo.clone_url,
+        html_url: repo.html_url,
+    }
+}
+
+fn github_repo_management_from_response(repo: GitHubRepoResponse) -> GitHubRepoManagement {
+    GitHubRepoManagement {
+        full_name: repo.full_name,
+        name: repo.name,
+        description: repo.description,
+        homepage: repo.homepage,
+        private: repo.private,
+        default_branch: repo.default_branch.unwrap_or_default(),
+        has_issues: repo.has_issues,
+        has_wiki: repo.has_wiki,
+        has_projects: repo.has_projects,
+        has_discussions: repo.has_discussions,
+        allow_merge_commit: repo.allow_merge_commit,
+        allow_squash_merge: repo.allow_squash_merge,
+        allow_rebase_merge: repo.allow_rebase_merge,
+        allow_auto_merge: repo.allow_auto_merge,
+        delete_branch_on_merge: repo.delete_branch_on_merge,
+        allow_forking: repo.allow_forking,
+        web_commit_signoff_required: repo.web_commit_signoff_required,
+        html_url: repo.html_url,
+    }
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn github_repo_api_url(repo_full_name: &str) -> Result<String, String> {
+    let repo = normalize_github_repo_input(repo_full_name)?;
+    Ok(format!(
+        "https://api.github.com/repos/{}",
+        github_api_repo_path(&repo.full_name)
+    ))
+}
+
+fn validate_github_branch_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim().trim_start_matches("refs/heads/");
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.ends_with('/')
+        || trimmed.contains("..")
+        || trimmed.contains(' ')
+        || trimmed.contains('\\')
+        || trimmed.contains('~')
+        || trimmed.contains('^')
+        || trimmed.contains(':')
+        || trimmed.contains('?')
+        || trimmed.contains('*')
+        || trimmed.contains('[')
+    {
+        return Err("分支名不合法".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn validate_github_sha(sha: &str) -> Result<String, String> {
+    let trimmed = sha.trim();
+    if trimmed.len() < 7 || !trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("源提交 SHA 不合法".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn github_create_branch_payload(name: &str, source_sha: &str) -> Result<serde_json::Value, String> {
+    let branch = validate_github_branch_name(name)?;
+    let sha = validate_github_sha(source_sha)?;
+    Ok(serde_json::json!({
+        "ref": format!("refs/heads/{branch}"),
+        "sha": sha,
+    }))
+}
+
+fn github_update_repo_settings_payload(
+    request: GitHubUpdateRepoSettingsRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut payload = serde_json::Map::new();
+    if let Some(value) = request.description {
+        payload.insert("description".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = request.homepage {
+        payload.insert("homepage".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = request.private {
+        payload.insert("private".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = normalize_optional_string(request.default_branch) {
+        payload.insert("default_branch".to_string(), serde_json::Value::String(value));
+    }
+    if let Some(value) = request.has_issues {
+        payload.insert("has_issues".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.has_wiki {
+        payload.insert("has_wiki".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.has_projects {
+        payload.insert("has_projects".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.has_discussions {
+        payload.insert("has_discussions".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.allow_merge_commit {
+        payload.insert("allow_merge_commit".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.allow_squash_merge {
+        payload.insert("allow_squash_merge".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.allow_rebase_merge {
+        payload.insert("allow_rebase_merge".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.allow_auto_merge {
+        payload.insert("allow_auto_merge".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.delete_branch_on_merge {
+        payload.insert("delete_branch_on_merge".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.allow_forking {
+        payload.insert("allow_forking".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.web_commit_signoff_required {
+        payload.insert(
+            "web_commit_signoff_required".to_string(),
+            serde_json::Value::Bool(value),
+        );
+    }
+    payload
+}
+
+fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<GitHubIssue> {
+    if issue.pull_request.is_some() {
+        return None;
+    }
+    Some(GitHubIssue {
+        number: issue.number,
+        title: issue.title,
+        state: issue.state,
+        body: issue.body,
+        labels: issue.labels.into_iter().map(|label| label.name).collect(),
+        assignees: issue
+            .assignees
+            .into_iter()
+            .map(|assignee| assignee.login)
+            .collect(),
+        html_url: issue.html_url,
+        updated_at: issue.updated_at,
+        created_at: issue.created_at,
+    })
 }
 
 fn github_auth_header(token: &str) -> String {
@@ -2163,18 +2590,9 @@ pub fn github_unbind(app: AppHandle) -> Result<(), String> {
 pub async fn github_list_repos(app: AppHandle, page: Option<u32>) -> Result<GitHubRepoPage, String> {
     tokio::task::spawn_blocking(move || {
         let page = page.unwrap_or(1).max(1);
-        let mut settings = load_settings(&app);
-        let Some(binding) = settings.github_binding.clone() else {
-            return Err("请先绑定 GitHub".to_string());
-        };
-        let Some(token) = read_token(&binding.login)? else {
-            settings.github_binding = None;
-            save_settings(&app, &settings)?;
-            return Err("GitHub 绑定已失效，请重新绑定".to_string());
-        };
-
+        let (_binding, token) = github_require_token(&app)?;
         let client = build_client()?;
-        let response = github_headers(
+        let response = github_send(&app, "读取 GitHub 仓库失败", github_headers(
             client.get("https://api.github.com/user/repos").query(&[
                 ("affiliation", "owner"),
                 ("visibility", "all"),
@@ -2183,20 +2601,7 @@ pub async fn github_list_repos(app: AppHandle, page: Option<u32>) -> Result<GitH
                 ("page", &page.to_string()),
             ]),
             Some(&token),
-        )
-        .send()
-        .map_err(|e| format!("读取 GitHub 仓库失败：{e}"))?;
-
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
-        {
-            settings.github_binding = None;
-            save_settings(&app, &settings)?;
-            return Err(format!(
-                "GitHub 绑定已失效，请重新绑定（账号 {}）",
-                binding.login
-            ));
-        }
+        ))?;
 
         if !response.status().is_success() {
             return Err(github_http_error("读取 GitHub 仓库失败", response));
@@ -2215,24 +2620,319 @@ pub async fn github_list_repos(app: AppHandle, page: Option<u32>) -> Result<GitH
         Ok(GitHubRepoPage {
             items: repos
                 .into_iter()
-                .map(|repo| GitHubRepoSummary {
-                    id: repo.id,
-                    name: repo.name,
-                    full_name: repo.full_name,
-                    owner_login: repo.owner.login,
-                    private: repo.private,
-                    description: repo.description,
-                    default_branch: repo.default_branch,
-                    updated_at: repo.updated_at,
-                    clone_url: repo.clone_url,
-                    html_url: repo.html_url,
-                })
+                .map(github_repo_summary_from_response)
                 .collect(),
             next_page,
         })
     })
     .await
     .map_err(|e| format!("读取 GitHub 仓库后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwner>, String> {
+    tokio::task::spawn_blocking(move || {
+        let (binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 组织失败",
+            github_headers(
+                client
+                    .get("https://api.github.com/user/orgs")
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let orgs = github_json::<Vec<GitHubOrgResponse>>("读取 GitHub 组织失败", response)?;
+        let mut owners = vec![GitHubRepoOwner {
+            login: binding.login,
+            kind: "user".to_string(),
+        }];
+        owners.extend(orgs.into_iter().map(|org| GitHubRepoOwner {
+            login: org.login,
+            kind: "org".to_string(),
+        }));
+        owners.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.login.cmp(&b.login)));
+        Ok(owners)
+    })
+    .await
+    .map_err(|e| format!("读取 GitHub 仓库 owner 后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_create_repo(
+    app: AppHandle,
+    request: GitHubCreateRepoRequest,
+) -> Result<GitHubRepoSummary, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let owner = request.owner.trim();
+        let name = request.name.trim();
+        if owner.is_empty() || name.is_empty() {
+            return Err("owner 和仓库名不能为空".to_string());
+        }
+        let mut payload = serde_json::json!({
+            "name": name,
+            "private": request.private,
+            "auto_init": request.auto_init,
+            "has_issues": request.has_issues,
+            "has_wiki": request.has_wiki,
+        });
+        if let Some(map) = payload.as_object_mut() {
+            if let Some(value) = normalize_optional_string(request.description) {
+                map.insert("description".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = normalize_optional_string(request.gitignore_template) {
+                map.insert("gitignore_template".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = normalize_optional_string(request.license_template) {
+                map.insert("license_template".to_string(), serde_json::Value::String(value));
+            }
+        }
+        let client = build_client()?;
+        let url = if request.owner_kind == "org" {
+            format!(
+                "https://api.github.com/orgs/{}/repos",
+                url_encode_path_segment(owner)
+            )
+        } else {
+            "https://api.github.com/user/repos".to_string()
+        };
+        let response = github_send(
+            &app,
+            "创建 GitHub 仓库失败",
+            github_headers(client.post(url).json(&payload), Some(&token)),
+        )?;
+        let repo = github_json::<GitHubRepoResponse>("创建 GitHub 仓库失败", response)?;
+        Ok(github_repo_summary_from_response(repo))
+    })
+    .await
+    .map_err(|e| format!("创建 GitHub 仓库后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_get_repo_management(
+    app: AppHandle,
+    repo_full_name: String,
+) -> Result<GitHubRepoManagement, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 仓库设置失败",
+            github_headers(client.get(github_repo_api_url(&repo_full_name)?), Some(&token)),
+        )?;
+        let repo = github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?;
+        Ok(github_repo_management_from_response(repo))
+    })
+    .await
+    .map_err(|e| format!("读取 GitHub 仓库设置后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_update_repo_settings(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubUpdateRepoSettingsRequest,
+) -> Result<GitHubRepoManagement, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let payload = github_update_repo_settings_payload(request);
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "更新 GitHub 仓库设置失败",
+            github_headers(
+                client
+                    .patch(github_repo_api_url(&repo_full_name)?)
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        let repo = github_json::<GitHubRepoResponse>("更新 GitHub 仓库设置失败", response)?;
+        Ok(github_repo_management_from_response(repo))
+    })
+    .await
+    .map_err(|e| format!("更新 GitHub 仓库设置后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_list_remote_branches(
+    app: AppHandle,
+    repo_full_name: String,
+) -> Result<Vec<GitHubRemoteBranch>, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let url = format!("{}/branches", github_repo_api_url(&repo_full_name)?);
+        let response = github_send(
+            &app,
+            "读取 GitHub 分支失败",
+            github_headers(client.get(url).query(&[("per_page", "100")]), Some(&token)),
+        )?;
+        let branches = github_json::<Vec<GitHubBranchResponse>>("读取 GitHub 分支失败", response)?;
+        Ok(branches
+            .into_iter()
+            .map(|branch| GitHubRemoteBranch {
+                name: branch.name,
+                sha: branch.commit.sha,
+                protected: branch.protected,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("读取 GitHub 分支后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_create_remote_branch(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubCreateBranchRequest,
+) -> Result<GitHubRemoteBranch, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let payload = github_create_branch_payload(&request.name, &request.source_sha)?;
+        let client = build_client()?;
+        let url = format!("{}/git/refs", github_repo_api_url(&repo_full_name)?);
+        let response = github_send(
+            &app,
+            "创建 GitHub 分支失败",
+            github_headers(client.post(url).json(&payload), Some(&token)),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error("创建 GitHub 分支失败", response));
+        }
+        Ok(GitHubRemoteBranch {
+            name: validate_github_branch_name(&request.name)?,
+            sha: validate_github_sha(&request.source_sha)?,
+            protected: false,
+        })
+    })
+    .await
+    .map_err(|e| format!("创建 GitHub 分支后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_list_issues(
+    app: AppHandle,
+    repo_full_name: String,
+    state: Option<String>,
+) -> Result<Vec<GitHubIssue>, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let issue_state = state.unwrap_or_else(|| "open".to_string());
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Issue 失败",
+            github_headers(
+                client.get(format!("{}/issues", github_repo_api_url(&repo_full_name)?)).query(&[
+                    ("state", issue_state.as_str()),
+                    ("per_page", "100"),
+                ]),
+                Some(&token),
+            ),
+        )?;
+        let issues = github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?;
+        Ok(issues.into_iter().filter_map(github_issue_from_response).collect())
+    })
+    .await
+    .map_err(|e| format!("读取 GitHub Issue 后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_create_issue(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubCreateIssueRequest,
+) -> Result<GitHubIssue, String> {
+    tokio::task::spawn_blocking(move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let title = request.title.trim();
+        if title.is_empty() {
+            return Err("Issue 标题不能为空".to_string());
+        }
+        let mut payload = serde_json::json!({
+            "title": title,
+            "labels": request.labels,
+            "assignees": request.assignees,
+        });
+        if let Some(map) = payload.as_object_mut() {
+            if let Some(value) = normalize_optional_string(request.body) {
+                map.insert("body".to_string(), serde_json::Value::String(value));
+            }
+        }
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "创建 GitHub Issue 失败",
+            github_headers(
+                client
+                    .post(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        let issue = github_json::<GitHubIssueResponse>("创建 GitHub Issue 失败", response)?;
+        github_issue_from_response(issue).ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
+    })
+    .await
+    .map_err(|e| format!("创建 GitHub Issue 后台任务异常：{e}"))?
+}
+
+#[tauri::command]
+pub async fn github_update_issue(
+    app: AppHandle,
+    repo_full_name: String,
+    issue_number: u64,
+    request: GitHubUpdateIssueRequest,
+) -> Result<GitHubIssue, String> {
+    tokio::task::spawn_blocking(move || {
+        if issue_number == 0 {
+            return Err("Issue 编号不合法".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let mut payload = serde_json::Map::new();
+        if let Some(value) = normalize_optional_string(request.title) {
+            payload.insert("title".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = request.body {
+            payload.insert("body".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = request.state {
+            if value != "open" && value != "closed" {
+                return Err("Issue 状态只能是 open 或 closed".to_string());
+            }
+            payload.insert("state".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = request.labels {
+            payload.insert("labels".to_string(), serde_json::json!(value));
+        }
+        if let Some(value) = request.assignees {
+            payload.insert("assignees".to_string(), serde_json::json!(value));
+        }
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "更新 GitHub Issue 失败",
+            github_headers(
+                client
+                    .patch(format!(
+                        "{}/issues/{issue_number}",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        let issue = github_json::<GitHubIssueResponse>("更新 GitHub Issue 失败", response)?;
+        github_issue_from_response(issue).ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
+    })
+    .await
+    .map_err(|e| format!("更新 GitHub Issue 后台任务异常：{e}"))?
 }
 
 #[tauri::command]
@@ -4759,6 +5459,82 @@ rename to docs/new.md",
         assert_eq!(parse_next_page(Some(link)), Some(2));
         assert_eq!(parse_next_page(Some(r#"<https://api.github.com/user/repos?page=4>; rel="last""#)), None);
         assert_eq!(parse_next_page(None), None);
+    }
+
+    #[test]
+    fn builds_github_repo_settings_patch_with_changed_fields_only() {
+        let payload = github_update_repo_settings_payload(GitHubUpdateRepoSettingsRequest {
+            description: Some("new desc".to_string()),
+            homepage: None,
+            private: Some(true),
+            default_branch: Some(" main ".to_string()),
+            has_issues: None,
+            has_wiki: Some(false),
+            has_projects: None,
+            has_discussions: None,
+            allow_merge_commit: None,
+            allow_squash_merge: None,
+            allow_rebase_merge: None,
+            allow_auto_merge: None,
+            delete_branch_on_merge: Some(true),
+            allow_forking: None,
+            web_commit_signoff_required: None,
+        });
+
+        assert_eq!(payload.len(), 5);
+        assert_eq!(payload.get("description").unwrap(), "new desc");
+        assert_eq!(payload.get("private").unwrap(), true);
+        assert_eq!(payload.get("default_branch").unwrap(), "main");
+        assert_eq!(payload.get("has_wiki").unwrap(), false);
+        assert_eq!(payload.get("delete_branch_on_merge").unwrap(), true);
+        assert!(payload.get("homepage").is_none());
+    }
+
+    #[test]
+    fn builds_create_branch_ref_payload() {
+        let payload = github_create_branch_payload(
+            "feature/github-management",
+            "1234567890abcdef",
+        )
+        .unwrap();
+
+        assert_eq!(payload["ref"], "refs/heads/feature/github-management");
+        assert_eq!(payload["sha"], "1234567890abcdef");
+        assert!(github_create_branch_payload("bad branch", "1234567").is_err());
+        assert!(github_create_branch_payload("feature", "not-a-sha").is_err());
+    }
+
+    #[test]
+    fn filters_pull_requests_from_github_issues() {
+        let issue = GitHubIssueResponse {
+            number: 1,
+            title: "Issue".to_string(),
+            state: "open".to_string(),
+            body: None,
+            html_url: "https://github.com/a/repo/issues/1".to_string(),
+            updated_at: "2026-06-11T00:00:00Z".to_string(),
+            created_at: "2026-06-11T00:00:00Z".to_string(),
+            labels: vec![GitHubLabelResponse { name: "bug".to_string() }],
+            assignees: vec![GitHubAssigneeResponse { login: "octo".to_string() }],
+            pull_request: None,
+        };
+        let pr = GitHubIssueResponse {
+            pull_request: Some(serde_json::json!({ "url": "https://api.github.com/repos/a/repo/pulls/2" })),
+            number: 2,
+            title: "PR".to_string(),
+            state: "open".to_string(),
+            body: None,
+            html_url: "https://github.com/a/repo/pull/2".to_string(),
+            updated_at: "2026-06-11T00:00:00Z".to_string(),
+            created_at: "2026-06-11T00:00:00Z".to_string(),
+            labels: Vec::new(),
+            assignees: Vec::new(),
+        };
+
+        let mapped = github_issue_from_response(issue).unwrap();
+        assert_eq!(mapped.labels, vec!["bug"]);
+        assert_eq!(mapped.assignees, vec!["octo"]);
+        assert!(github_issue_from_response(pr).is_none());
     }
 
     #[test]

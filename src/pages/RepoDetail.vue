@@ -13,6 +13,7 @@ import RepoChangesPanel from "../components/repo/RepoChangesPanel.vue";
 import RepoCommitPanel from "../components/repo/RepoCommitPanel.vue";
 import RepoConflictsPanel from "../components/repo/RepoConflictsPanel.vue";
 import RepoHistoryPanel from "../components/repo/RepoHistoryPanel.vue";
+import RepoGitHubPanel from "../components/repo/RepoGitHubPanel.vue";
 import RepoLaunchPanel from "../components/repo/RepoLaunchPanel.vue";
 import RepoPushError from "../components/repo/RepoPushError.vue";
 import RepoSideStatus from "../components/repo/RepoSideStatus.vue";
@@ -234,9 +235,14 @@ const {
         />
 
         <RepoBranchesPanel
-          v-else
+          v-else-if="activeTab === 'branches'"
           :branches="detail?.branches ?? []"
           @checkout="checkout"
+        />
+
+        <RepoGitHubPanel
+          v-else
+          :repo-full-name="summary?.githubFullName"
         />
       </main>
 

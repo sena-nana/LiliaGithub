@@ -5,7 +5,7 @@ import { recentSyncErrorForRepo } from "./workspace/state";
 import type { CommitSummary, RepoConflictChoice, RepoConflictFile, RepoConflictState } from "../services/workspace";
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 
-type RepoTab = "conflicts" | "changes" | "history" | "branches";
+type RepoTab = "conflicts" | "changes" | "history" | "branches" | "github";
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -167,6 +167,7 @@ export function useRepoDetailController() {
     { key: "changes", label: "变更" },
     { key: "history", label: "历史" },
     { key: "branches", label: "分支" },
+    { key: "github", label: "GitHub" },
   ];
 
   onMounted(() => {
@@ -210,7 +211,13 @@ export function useRepoDetailController() {
   });
 
   function normalizeTab(value: unknown): RepoTab | null {
-    if (value === "conflicts" || value === "changes" || value === "history" || value === "branches") return value;
+    if (
+      value === "conflicts" ||
+      value === "changes" ||
+      value === "history" ||
+      value === "branches" ||
+      value === "github"
+    ) return value;
     return null;
   }
 
