@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import { RouterView } from "vue-router";
 import { APP_TITLE, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
 import { useRouteReturnTarget } from "../composables/useRouteReturnTarget";
 import { useShellSidebar } from "../composables/useShellSidebar";
 import { useWorkspace } from "../composables/useWorkspace";
+import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import TitleBar from "../components/TitleBar.vue";
 import SecondaryPanel from "./SecondaryPanel.vue";
 import SettingsSidebar from "./SettingsSidebar.vue";
@@ -18,6 +19,23 @@ const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
 const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
 void workspace.initialize();
+let cleanupFocusRefresh: (() => void) | null = null;
+let focusRefreshDisposed = false;
+
+onMounted(async () => {
+  const cleanup = await installWorkspaceFocusRefresh();
+  if (focusRefreshDisposed) {
+    cleanup();
+    return;
+  }
+  cleanupFocusRefresh = cleanup;
+});
+
+onUnmounted(() => {
+  focusRefreshDisposed = true;
+  cleanupFocusRefresh?.();
+  cleanupFocusRefresh = null;
+});
 
 const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.value);
 </script>
