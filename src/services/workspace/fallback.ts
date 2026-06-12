@@ -42,6 +42,13 @@ const fallbackRepos: RepoSummary[] = [
       { language: "Rust", bytes: 32_000 },
       { language: "CSS", bytes: 10_000 },
     ],
+    workingTreeLanguageStats: [
+      { language: "TypeScript", bytes: 68_000 },
+      { language: "Vue", bytes: 42_000 },
+      { language: "Rust", bytes: 35_000 },
+      { language: "CSS", bytes: 10_000 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
   },
   {
     id: "Lilia",
@@ -64,6 +71,12 @@ const fallbackRepos: RepoSummary[] = [
       { language: "Vue", bytes: 28_000 },
       { language: "CSS", bytes: 8_000 },
     ],
+    workingTreeLanguageStats: [
+      { language: "TypeScript", bytes: 52_000 },
+      { language: "Vue", bytes: 28_000 },
+      { language: "CSS", bytes: 8_000 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
   },
 ];
 
@@ -188,6 +201,8 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
       lastCommitAt: null,
       lastCommitMessage: null,
       languageStats: [],
+      workingTreeLanguageStats: [],
+      languageStatsUpdatedAt: Date.now(),
     };
     fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
     return { ...repo };
