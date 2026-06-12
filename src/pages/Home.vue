@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
 import {
   CheckCircle2,
@@ -51,18 +51,35 @@ type LanguageOverview = {
   slices: LanguageSlice[];
 };
 
+type LanguageScope = "head" | "workingTree";
+
 const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
 
+const languageScope = ref<LanguageScope>("head");
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 
 const totalContributions = computed(() =>
   workspace.state.githubContributions.days.reduce((total, day) => total + day.count, 0),
 );
 
+const languageUpdatedAt = computed(() => {
+  const timestamps = workspace.state.repos
+    .map((repo) => repo.languageStatsUpdatedAt)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return timestamps.length ? Math.max(...timestamps) : null;
+});
+
+const languageScopeNote = computed(() => {
+  const scope = languageScope.value === "workingTree" ? "包含未提交改动" : "HEAD 已提交文件";
+  const updatedAt = languageUpdatedAt.value == null ? "刷新时间未知" : `刷新于 ${formatDateTime(languageUpdatedAt.value)}`;
+  return `${scope} · ${updatedAt}`;
+});
+
 const languageOverview = computed<LanguageOverview>(() => {
   const totals = new Map<string, number>();
   for (const repo of workspace.state.repos) {
-    for (const stat of repo.languageStats) {
+    const stats = languageScope.value === "workingTree" ? repo.workingTreeLanguageStats : repo.languageStats;
+    for (const stat of stats) {
       totals.set(stat.language, (totals.get(stat.language) ?? 0) + stat.bytes);
     }
   }
@@ -206,6 +223,15 @@ function formatBytes(bytes: number) {
 
 function formatPercent(percent: number) {
   return `${Math.round(percent)}%`;
+}
+
+function formatDateTime(timestamp: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }
 
 </script>
@@ -399,6 +425,23 @@ function formatPercent(percent: number) {
             <div>
               <h2>编程语言占比</h2>
               <p class="language-total">{{ formatBytes(languageOverview.totalBytes) }} 代码量</p>
+              <p class="language-scope">{{ languageScopeNote }}</p>
+            </div>
+            <div class="language-tabs" aria-label="语言统计口径">
+              <button
+                type="button"
+                :class="{ 'is-active': languageScope === 'head' }"
+                @click="languageScope = 'head'"
+              >
+                已提交
+              </button>
+              <button
+                type="button"
+                :class="{ 'is-active': languageScope === 'workingTree' }"
+                @click="languageScope = 'workingTree'"
+              >
+                含改动
+              </button>
             </div>
           </div>
           <p v-if="!languageOverview.slices.length" class="language-empty">暂无语言数据</p>
@@ -817,6 +860,40 @@ function formatPercent(percent: number) {
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+}
+
+.language-scope {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.language-tabs {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: var(--bg-subtle);
+}
+
+.language-tabs button {
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 24px;
+  cursor: pointer;
+}
+
+.language-tabs button.is-active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
 }
 
 .language-empty {

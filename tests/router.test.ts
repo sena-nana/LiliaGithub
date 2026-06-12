@@ -61,8 +61,12 @@ describe("基础路由", () => {
     expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
     expect(screen.getByLabelText("编程语言占比图")).toBeInTheDocument();
+    expect(screen.getByText(/HEAD 已提交文件 · 刷新于/)).toBeInTheDocument();
     expect(screen.getByText("TypeScript")).toBeInTheDocument();
     expect(screen.getByText("50%")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "含改动" }));
+    expect(screen.getByText(/包含未提交改动 · 刷新于/)).toBeInTheDocument();
+    expect(screen.getByText("49%")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
   });
 

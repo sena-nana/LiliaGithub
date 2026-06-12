@@ -163,6 +163,10 @@ pub struct RepoSummary {
     pub last_commit_message: Option<String>,
     #[serde(default)]
     pub language_stats: Vec<LanguageStat>,
+    #[serde(default)]
+    pub working_tree_language_stats: Vec<LanguageStat>,
+    #[serde(default)]
+    pub language_stats_updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -890,8 +894,9 @@ fn github_full_name_from_remote(remote: &str) -> Option<String> {
     parse_github_remote(remote)
 }
 
-fn repo_language_stats(path: &Path) -> Vec<LanguageStat> {
-    let output = git_command(path, &["ls-tree", "-r", "-z", "-l", "HEAD"], None).unwrap_or_default();
+fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
+    let output =
+        git_command(path, &["ls-tree", "-r", "-z", "-l", "HEAD"], None).unwrap_or_default();
     let mut stats: HashMap<String, u64> = HashMap::new();
     for entry in output.split('\0').filter(|value| !value.is_empty()) {
         let Some((metadata, raw_path)) = entry.split_once('\t') else {
@@ -914,11 +919,58 @@ fn repo_language_stats(path: &Path) -> Vec<LanguageStat> {
         };
         *stats.entry(language.to_string()).or_default() += bytes;
     }
+    language_stats_from_map(stats)
+}
+
+fn repo_working_tree_language_stats(path: &Path) -> Vec<LanguageStat> {
+    let output = git_command(
+        path,
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--modified",
+            "--others",
+            "--exclude-standard",
+        ],
+        None,
+    )
+    .unwrap_or_default();
+    let mut stats: HashMap<String, u64> = HashMap::new();
+    let mut seen = HashSet::new();
+    for raw_path in output.split('\0').filter(|value| !value.is_empty()) {
+        if !seen.insert(raw_path.to_string()) {
+            continue;
+        }
+        let relative = Path::new(raw_path);
+        if should_skip_language_path(relative) {
+            continue;
+        }
+        let Some(language) = language_for_path(relative) else {
+            continue;
+        };
+        let Some(bytes) = fs::metadata(path.join(relative))
+            .ok()
+            .map(|metadata| metadata.len())
+            .filter(|bytes| *bytes > 0)
+        else {
+            continue;
+        };
+        *stats.entry(language.to_string()).or_default() += bytes;
+    }
+    language_stats_from_map(stats)
+}
+
+fn language_stats_from_map(stats: HashMap<String, u64>) -> Vec<LanguageStat> {
     let mut items = stats
         .into_iter()
         .map(|(language, bytes)| LanguageStat { language, bytes })
         .collect::<Vec<_>>();
-    items.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.language.cmp(&b.language)));
+    items.sort_by(|a, b| {
+        b.bytes
+            .cmp(&a.bytes)
+            .then_with(|| a.language.cmp(&b.language))
+    });
     items
 }
 
@@ -1106,7 +1158,9 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
         conflict_count,
         last_commit_at,
         last_commit_message,
-        language_stats: repo_language_stats(path),
+        language_stats: repo_head_language_stats(path),
+        working_tree_language_stats: repo_working_tree_language_stats(path),
+        language_stats_updated_at: now_millis(),
     }
 }
 
@@ -3391,6 +3445,8 @@ mod tests {
             last_commit_at: None,
             last_commit_message: None,
             language_stats: Vec::new(),
+            working_tree_language_stats: Vec::new(),
+            language_stats_updated_at: 0,
         };
         overrides(&mut summary);
         summary
@@ -3469,7 +3525,7 @@ mod tests {
         fs::write(path.join("src").join("app.ts"), "changed\n").unwrap();
         fs::remove_file(path.join("src").join("view.vue")).unwrap();
 
-        let stats = repo_language_stats(&path);
+        let stats = repo_head_language_stats(&path);
 
         assert_eq!(
             stats,
@@ -3481,6 +3537,61 @@ mod tests {
                 LanguageStat {
                     language: "Vue".to_string(),
                     bytes: 25,
+                },
+            ]
+        );
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn aggregates_language_stats_from_working_tree() {
+        let path = temp_dir("language-stats-working-tree");
+        run_git(&path, &["init"]);
+        run_git(&path, &["config", "user.email", "test@example.com"]);
+        run_git(&path, &["config", "user.name", "Test User"]);
+        fs::create_dir_all(path.join("src")).unwrap();
+        fs::write(
+            path.join("src").join("app.ts"),
+            "console.log('typescript');\n",
+        )
+        .unwrap();
+        fs::write(
+            path.join("src").join("view.vue"),
+            "<template>Vue</template>\n",
+        )
+        .unwrap();
+        run_git(&path, &["add", "src/app.ts", "src/view.vue"]);
+        run_git(&path, &["commit", "-m", "initial"]);
+        fs::write(path.join("src").join("app.ts"), "changed\n").unwrap();
+        fs::remove_file(path.join("src").join("view.vue")).unwrap();
+        fs::write(path.join("src").join("panel.rs"), "fn main() {}\n").unwrap();
+
+        let head_stats = repo_head_language_stats(&path);
+        let working_tree_stats = repo_working_tree_language_stats(&path);
+
+        assert_eq!(
+            head_stats,
+            vec![
+                LanguageStat {
+                    language: "TypeScript".to_string(),
+                    bytes: 27,
+                },
+                LanguageStat {
+                    language: "Vue".to_string(),
+                    bytes: 25,
+                },
+            ]
+        );
+        assert_eq!(
+            working_tree_stats,
+            vec![
+                LanguageStat {
+                    language: "Rust".to_string(),
+                    bytes: 13,
+                },
+                LanguageStat {
+                    language: "TypeScript".to_string(),
+                    bytes: 8,
                 },
             ]
         );

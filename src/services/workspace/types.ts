@@ -90,6 +90,8 @@ export interface RepoSummary {
   lastCommitAt: number | null;
   lastCommitMessage: string | null;
   languageStats: readonly LanguageStat[];
+  workingTreeLanguageStats: readonly LanguageStat[];
+  languageStatsUpdatedAt: number;
 }
 
 export interface RepoChange {
