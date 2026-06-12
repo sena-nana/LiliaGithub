@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import {
   CheckCircle2,
@@ -60,6 +60,14 @@ const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", 
 const languageScope = ref<LanguageScope>("head");
 const discovering = ref(false);
 const addingRepo = ref(false);
+const contributionScroller = ref<HTMLElement | null>(null);
+let contributionDrag:
+  | {
+      pointerId: number;
+      startX: number;
+      startScrollLeft: number;
+    }
+  | null = null;
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 
 const totalContributions = computed(() =>
@@ -75,6 +83,15 @@ const contributionMetaNote = computed(() => {
   }
   return `覆盖 ${meta.repoCount} 个仓库 · ${refreshedAt}`;
 });
+
+watch(
+  () => workspace.state.githubContributions.days,
+  async () => {
+    await nextTick();
+    scrollContributionToEnd();
+  },
+  { immediate: true },
+);
 
 const languageUpdatedAt = computed(() => {
   const timestamps = workspace.state.repos
@@ -230,6 +247,42 @@ function contributionLevel(count: number, maxCount: number) {
 
 function contributionTitle(day: GitHubContributionDay) {
   return `${day.date}：${day.count} 次提交`;
+}
+
+function scrollContributionToEnd() {
+  const scroller = contributionScroller.value;
+  if (!scroller) return;
+  scroller.scrollLeft = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+}
+
+function startContributionDrag(event: PointerEvent) {
+  if (event.button !== 0) return;
+  const scroller = contributionScroller.value;
+  if (!scroller) return;
+  contributionDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startScrollLeft: scroller.scrollLeft,
+  };
+  scroller.classList.add("is-dragging");
+  scroller.setPointerCapture(event.pointerId);
+}
+
+function dragContributionChart(event: PointerEvent) {
+  if (!contributionDrag || contributionDrag.pointerId !== event.pointerId) return;
+  const scroller = contributionScroller.value;
+  if (!scroller) return;
+  scroller.scrollLeft = contributionDrag.startScrollLeft - (event.clientX - contributionDrag.startX);
+}
+
+function stopContributionDrag(event: PointerEvent) {
+  if (!contributionDrag || contributionDrag.pointerId !== event.pointerId) return;
+  const scroller = contributionScroller.value;
+  if (scroller?.hasPointerCapture(event.pointerId)) {
+    scroller.releasePointerCapture(event.pointerId);
+  }
+  scroller?.classList.remove("is-dragging");
+  contributionDrag = null;
 }
 
 function formatBytes(bytes: number) {
@@ -448,20 +501,30 @@ async function addLocalRepo() {
               <span>Fri</span>
               <span />
             </div>
-            <div class="contribution-weeks">
-              <div
-                v-for="(week, weekIndex) in contributionWeeks"
-                :key="weekIndex"
-                class="contribution-week"
-              >
-                <span
-                  v-for="day in week"
-                  :key="day.date"
-                  class="contribution-day"
-                  :class="`contribution-day--${day.level}`"
-                  :title="contributionTitle(day)"
-                  :aria-label="contributionTitle(day)"
-                />
+            <div
+              ref="contributionScroller"
+              class="contribution-scroll"
+              @pointerdown="startContributionDrag"
+              @pointermove="dragContributionChart"
+              @pointerup="stopContributionDrag"
+              @pointercancel="stopContributionDrag"
+              @lostpointercapture="stopContributionDrag"
+            >
+              <div class="contribution-weeks">
+                <div
+                  v-for="(week, weekIndex) in contributionWeeks"
+                  :key="weekIndex"
+                  class="contribution-week"
+                >
+                  <span
+                    v-for="day in week"
+                    :key="day.date"
+                    class="contribution-day"
+                    :class="`contribution-day--${day.level}`"
+                    :title="contributionTitle(day)"
+                    :aria-label="contributionTitle(day)"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -841,8 +904,8 @@ async function addLocalRepo() {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
   gap: 8px;
-  overflow-x: auto;
   padding-bottom: 2px;
+  min-width: 0;
 }
 
 .contribution-week-labels {
@@ -852,6 +915,23 @@ async function addLocalRepo() {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 11px;
+}
+
+.contribution-scroll {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.contribution-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.contribution-scroll.is-dragging {
+  cursor: grabbing;
 }
 
 .contribution-weeks {
