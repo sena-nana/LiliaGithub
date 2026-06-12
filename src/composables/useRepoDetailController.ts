@@ -87,6 +87,9 @@ export function useRepoDetailController() {
   const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
   const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
   const launchLoading = computed(() => workspace.state.launchLoading);
+  const languageStatsRefreshing = computed(() =>
+    workspace.state.languageStatsLoadingRepoIds.includes(repoId.value),
+  );
   const launchState = computed(() => launchStatus.value?.state ?? "idle");
   const launchRunning = computed(() => launchState.value === "running");
   const hasLaunchCommand = computed(() => Boolean(launchConfig.value?.command.trim()));
@@ -229,6 +232,9 @@ export function useRepoDetailController() {
         workspace.loadRepoDetail(repoId.value),
         workspace.loadLaunch(repoId.value),
       ]);
+      await workspace.refreshRepoLanguageStats(repoId.value).catch((err) => {
+        actionError.value = String(err);
+      });
       resetLaunchForm();
       syncFocusedChange();
       syncFocusedConflict();
@@ -543,6 +549,7 @@ export function useRepoDetailController() {
       launchStatus,
       launchLogs,
       launchLoading,
+      languageStatsRefreshing,
       launchState,
       launchRunning,
       hasLaunchCommand,

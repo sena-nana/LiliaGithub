@@ -11,9 +11,20 @@ import type { RepoConflictChoice, RepoSummary } from "../../services/workspace";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 
-async function applyRepoMutation(repoId: string, loadSummary: () => Promise<import("../../services/workspace").RepoSummary>) {
+async function applyRepoMutation(
+  repoId: string,
+  loadSummary: () => Promise<import("../../services/workspace").RepoSummary>,
+) {
   upsertRepo(await loadSummary());
   await loadRepoDetail(repoId);
+}
+
+async function applyRepoMutationWithLanguageStats(
+  repoId: string,
+  loadSummary: () => Promise<import("../../services/workspace").RepoSummary>,
+) {
+  await applyRepoMutation(repoId, loadSummary);
+  await refreshRepoLanguageStats(repoId, { silent: true });
 }
 
 export async function refreshRepos() {
@@ -106,19 +117,41 @@ export async function refreshWorkspaceTasks() {
   state.tasks = await service.listWorkspaceTasks();
 }
 
-async function refreshLanguageStatsForRepos(repoIds: string[]) {
+export async function refreshLanguageStatsForRepos(
+  repoIds: string[],
+  options: { silent?: boolean } = { silent: true },
+) {
   const uniqueRepoIds = Array.from(new Set(repoIds));
+  let firstError: unknown = null;
   for (const repoId of uniqueRepoIds) {
-    if (state.languageStatsLoadingRepoIds.includes(repoId)) continue;
-    state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
     try {
-      const service = await loadWorkspaceService();
-      const summary = await service.refreshRepoLanguageStats(repoId).catch(() => null);
-      if (summary) upsertRepo(summary);
-    } finally {
-      state.languageStatsLoadingRepoIds = state.languageStatsLoadingRepoIds.filter((id) => id !== repoId);
-      void refreshWorkspaceTasks();
+      await refreshRepoLanguageStats(repoId, options);
+    } catch (err) {
+      firstError ??= err;
     }
+  }
+  if (firstError && !options.silent) {
+    throw firstError;
+  }
+}
+
+export async function refreshRepoLanguageStats(
+  repoId: string,
+  options: { silent?: boolean } = {},
+) {
+  if (state.languageStatsLoadingRepoIds.includes(repoId)) return null;
+  state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
+  try {
+    const service = await loadWorkspaceService();
+    const summary = await service.refreshRepoLanguageStats(repoId);
+    upsertRepo(summary);
+    return summary;
+  } catch (err) {
+    if (options.silent) return null;
+    throw err;
+  } finally {
+    state.languageStatsLoadingRepoIds = state.languageStatsLoadingRepoIds.filter((id) => id !== repoId);
+    void refreshWorkspaceTasks();
   }
 }
 
@@ -173,12 +206,12 @@ export async function unstage(repoId: string, files: string[]) {
 
 export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.commitRepo(repoId, files, message, pushAfter));
+  await applyRepoMutationWithLanguageStats(repoId, () => service.commitRepo(repoId, files, message, pushAfter));
 }
 
 export async function pull(repoId: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.pullRepo(repoId));
+  await applyRepoMutationWithLanguageStats(repoId, () => service.pullRepo(repoId));
 }
 
 export async function mergePull(repoId: string) {
@@ -193,7 +226,7 @@ export async function push(repoId: string) {
   const service = await loadWorkspaceService();
   const updateRecentSync = beginRecentSyncRetry(repoId);
   try {
-    await applyRepoMutation(repoId, async () => {
+    await applyRepoMutationWithLanguageStats(repoId, async () => {
       const summary = await service.pushRepo(repoId);
       if (updateRecentSync) {
         finishRecentSyncRetry({
@@ -220,7 +253,7 @@ export async function push(repoId: string) {
 
 export async function checkout(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.checkoutBranch(repoId, branch));
+  await applyRepoMutationWithLanguageStats(repoId, () => service.checkoutBranch(repoId, branch));
 }
 
 export async function acceptConflictFile(

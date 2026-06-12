@@ -362,6 +362,30 @@ describe("workspace incremental refresh", () => {
     expect(state.repos[0].ahead).toBe(0);
   });
 
+  it("单仓库提交、拉取、推送和切换分支后刷新当前仓库语言统计", async () => {
+    const initial = repoSummary("LiliaGithub", { ahead: 1, stagedCount: 1 });
+    const updated = repoSummary("LiliaGithub", { ahead: 0, stagedCount: 0 });
+    state.repos = [initial];
+    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.commitRepo.mockResolvedValue(updated);
+    service.pullRepo.mockResolvedValue(updated);
+    service.pushRepo.mockResolvedValue(updated);
+    service.checkoutBranch.mockResolvedValue(updated);
+
+    await commit(initial.id, ["src/main.ts"], "提交说明", false);
+    await pull(initial.id);
+    await push(initial.id);
+    await checkout(initial.id, "main");
+
+    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(4);
+    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(1, initial.id);
+    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(2, initial.id);
+    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(3, initial.id);
+    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(4, initial.id);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
+    expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
+  });
+
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {
     const initial = repoSummary("LiliaGithub", { ahead: 1, stagedCount: 1 });
     const updated = repoSummary("LiliaGithub", { ahead: 0, stagedCount: 0 });
@@ -383,7 +407,13 @@ describe("workspace incremental refresh", () => {
 
     expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(service.getRepoDetail).toHaveBeenCalledTimes(6);
-    expect(state.repos).toEqual([updated]);
+    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(4);
+    expect(state.repos[0]).toMatchObject({
+      id: updated.id,
+      ahead: 0,
+      stagedCount: 0,
+    });
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
   });
 
   it("冲突处理操作只刷新当前仓库详情，不触发全量扫描", async () => {

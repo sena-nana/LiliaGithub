@@ -52,11 +52,19 @@ type LanguageSlice = {
   percent: number;
   color: string;
   offset: number;
+  to: string;
+  title: string;
 };
 
 type LanguageOverview = {
   totalBytes: number;
   slices: LanguageSlice[];
+};
+
+type LanguageTotal = {
+  language: string;
+  bytes: number;
+  repoBytes: Map<string, number>;
 };
 
 type LanguageScope = "head" | "workingTree";
@@ -66,6 +74,8 @@ const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", 
 const languageScope = ref<LanguageScope>("head");
 const discovering = ref(false);
 const addingRepo = ref(false);
+const languageRefreshError = ref<string | null>(null);
+const languageStatsRefreshing = computed(() => workspace.state.languageStatsLoadingRepoIds.length > 0);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
   buildContributionMonthLabels(contributionWeeks.value, workspace.state.githubContributions.days),
@@ -102,30 +112,28 @@ const languageScopeNote = computed(() => {
 });
 
 const languageOverview = computed<LanguageOverview>(() => {
-  const totals = new Map<string, number>();
+  const totals = new Map<string, Omit<LanguageTotal, "language">>();
   for (const repo of workspace.state.repos) {
     const stats = languageScope.value === "workingTree" ? repo.workingTreeLanguageStats : repo.languageStats;
     for (const stat of stats) {
-      totals.set(stat.language, (totals.get(stat.language) ?? 0) + stat.bytes);
+      const total = totals.get(stat.language) ?? { bytes: 0, repoBytes: new Map<string, number>() };
+      total.bytes += stat.bytes;
+      total.repoBytes.set(repo.id, (total.repoBytes.get(repo.id) ?? 0) + stat.bytes);
+      totals.set(stat.language, total);
     }
   }
   const sorted = [...totals.entries()]
-    .map(([language, bytes]) => ({ language, bytes }))
+    .map(([language, value]) => ({ language, ...value }))
     .filter((item) => item.bytes > 0)
     .sort((a, b) => b.bytes - a.bytes || a.language.localeCompare(b.language));
   const top = sorted.slice(0, 6);
-  const restBytes = sorted.slice(6).reduce((total, item) => total + item.bytes, 0);
-  const items = restBytes > 0 ? [...top, { language: "Other", bytes: restBytes }] : top;
+  const other = mergeLanguageTotals(sorted.slice(6));
+  const items = other ? [...top, other] : top;
   const totalBytes = items.reduce((total, item) => total + item.bytes, 0);
   let offset = 0;
   const slices = items.map((item, index) => {
     const percent = totalBytes > 0 ? (item.bytes / totalBytes) * 100 : 0;
-    const slice = {
-      ...item,
-      percent,
-      color: LANGUAGE_COLORS[index % LANGUAGE_COLORS.length],
-      offset,
-    };
+    const slice = buildLanguageSlice(item, percent, LANGUAGE_COLORS[index % LANGUAGE_COLORS.length], offset);
     offset += percent;
     return slice;
   });
@@ -167,6 +175,44 @@ function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untracke
 function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   const path = `/repos/${encodeURIComponent(repo.id)}`;
   return tab ? `${path}?tab=${tab}` : path;
+}
+
+function mergeLanguageTotals(totals: LanguageTotal[]) {
+  if (!totals.length) return null;
+  const repoBytes = new Map<string, number>();
+  let bytes = 0;
+  for (const total of totals) {
+    bytes += total.bytes;
+    for (const [repoId, repoSliceBytes] of total.repoBytes) {
+      repoBytes.set(repoId, (repoBytes.get(repoId) ?? 0) + repoSliceBytes);
+    }
+  }
+  return { language: "Other", bytes, repoBytes };
+}
+
+function buildLanguageSlice(
+  total: LanguageTotal,
+  percent: number,
+  color: string,
+  offset: number,
+): LanguageSlice {
+  const repoIds = [...total.repoBytes.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([repoId]) => repoId);
+  const primaryRepoId = repoIds[0] ?? null;
+  const target = workspace.repoById(primaryRepoId ?? "")?.name ?? primaryRepoId;
+  const baseTitle = `${total.language}：${formatPercent(percent)}，${formatBytes(total.bytes)}`;
+  return {
+    language: total.language,
+    bytes: total.bytes,
+    percent,
+    color,
+    offset,
+    to: primaryRepoId ? `/repos/${encodeURIComponent(primaryRepoId)}` : "/",
+    title: target
+      ? `${baseTitle}，点击进入 ${target}${repoIds.length > 1 ? ` 等 ${repoIds.length} 个仓库` : ""}`
+      : baseTitle,
+  };
 }
 
 function repoAction(repo: RepoSummary): RepoAction | null {
@@ -307,6 +353,16 @@ async function addLocalRepo() {
     await workspace.addLocalRepo();
   } finally {
     addingRepo.value = false;
+  }
+}
+
+async function refreshLanguageStats() {
+  if (languageStatsRefreshing.value) return;
+  languageRefreshError.value = null;
+  try {
+    await workspace.refreshLanguageStatsForRepos(workspace.state.repos.map((repo) => repo.id), { silent: false });
+  } catch (err) {
+    languageRefreshError.value = String(err);
   }
 }
 
@@ -527,46 +583,79 @@ async function addLocalRepo() {
               <p class="language-total">{{ formatBytes(languageOverview.totalBytes) }} 代码量</p>
               <p class="language-scope">{{ languageScopeNote }}</p>
             </div>
-            <div class="language-tabs" aria-label="语言统计口径">
+            <div class="language-actions">
               <button
                 type="button"
-                :class="{ 'is-active': languageScope === 'head' }"
-                @click="languageScope = 'head'"
+                class="ghost language-refresh"
+                :disabled="languageStatsRefreshing"
+                @click="refreshLanguageStats"
               >
-                已提交
+                <LoaderCircle
+                  v-if="languageStatsRefreshing"
+                  :size="13"
+                  aria-hidden="true"
+                  class="sb-spin"
+                />
+                <RefreshCw v-else :size="13" aria-hidden="true" />
+                刷新语言
               </button>
-              <button
-                type="button"
-                :class="{ 'is-active': languageScope === 'workingTree' }"
-                @click="languageScope = 'workingTree'"
-              >
-                含改动
-              </button>
+              <div class="language-tabs" aria-label="语言统计口径">
+                <button
+                  type="button"
+                  :class="{ 'is-active': languageScope === 'head' }"
+                  @click="languageScope = 'head'"
+                >
+                  已提交
+                </button>
+                <button
+                  type="button"
+                  :class="{ 'is-active': languageScope === 'workingTree' }"
+                  @click="languageScope = 'workingTree'"
+                >
+                  含改动
+                </button>
+              </div>
             </div>
           </div>
+          <p v-if="languageRefreshError" class="language-error">{{ languageRefreshError }}</p>
           <p v-if="!languageOverview.slices.length" class="language-empty">暂无语言数据</p>
           <div v-else class="language-chart" aria-label="编程语言占比图">
             <svg class="language-pie" viewBox="0 0 42 42" role="img" aria-label="编程语言占比饼图">
               <circle class="language-pie__track" cx="21" cy="21" r="15.9155" />
-              <circle
+              <RouterLink
                 v-for="slice in languageOverview.slices"
                 :key="slice.language"
-                class="language-pie__slice"
-                cx="21"
-                cy="21"
-                r="15.9155"
-                :stroke="slice.color"
-                :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
-                :stroke-dashoffset="-slice.offset"
+                :to="slice.to"
+                custom
+                v-slot="{ href, navigate }"
               >
-                <title>{{ slice.language }}：{{ formatPercent(slice.percent) }}，{{ formatBytes(slice.bytes) }}</title>
-              </circle>
+                <a
+                  class="language-pie__link"
+                  :href="href"
+                  :aria-label="slice.title"
+                  @click="navigate"
+                >
+                  <circle
+                    class="language-pie__slice"
+                    cx="21"
+                    cy="21"
+                    r="15.9155"
+                    :stroke="slice.color"
+                    :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
+                    :stroke-dashoffset="-slice.offset"
+                  >
+                    <title>{{ slice.title }}</title>
+                  </circle>
+                </a>
+              </RouterLink>
             </svg>
             <ul class="language-list">
               <li v-for="slice in languageOverview.slices" :key="slice.language">
-                <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
-                <span class="language-name">{{ slice.language }}</span>
-                <strong>{{ formatPercent(slice.percent) }}</strong>
+                <RouterLink class="language-list__link" :to="slice.to" :title="slice.title">
+                  <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
+                  <span class="language-name">{{ slice.language }}</span>
+                  <strong>{{ formatPercent(slice.percent) }}</strong>
+                </RouterLink>
               </li>
             </ul>
           </div>
@@ -1016,6 +1105,20 @@ async function addLocalRepo() {
   background: var(--bg-subtle);
 }
 
+.language-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.language-refresh {
+  height: 30px;
+  padding: 0 8px;
+}
+
 .language-tabs button {
   height: 24px;
   padding: 0 7px;
@@ -1034,10 +1137,15 @@ async function addLocalRepo() {
   box-shadow: inset 0 0 0 1px var(--border-soft);
 }
 
+.language-error,
 .language-empty {
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.language-error {
+  color: var(--err);
 }
 
 .language-chart {
@@ -1067,6 +1175,16 @@ async function addLocalRepo() {
   transition: stroke-dasharray 0.2s ease;
 }
 
+.language-pie__link {
+  cursor: pointer;
+  outline: none;
+}
+
+.language-pie__link:hover .language-pie__slice,
+.language-pie__link:focus-visible .language-pie__slice {
+  stroke-width: 11;
+}
+
 .language-list {
   list-style: none;
   padding: 0;
@@ -1079,18 +1197,32 @@ async function addLocalRepo() {
 }
 
 .language-list li {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
   height: 18px;
   border-bottom: 1px solid var(--border-soft);
-  font-size: 12px;
-  line-height: 16px;
 }
 
 .language-list li:last-child {
   border-bottom: 0;
+}
+
+.language-list__link {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.language-list__link:hover,
+.language-list__link:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
 }
 
 .language-dot {
