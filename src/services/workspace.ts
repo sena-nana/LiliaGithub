@@ -6,5 +6,6 @@ export {
   setFallbackGitHubBindingStatusForTests,
   setFallbackGitHubReposErrorForTests,
   setFallbackRepoContributionsOverrideForTests,
+  setFallbackRepoRemoteSyncOverrideForTests,
 } from "./workspace/fallback";
 export type * from "./workspace/types";

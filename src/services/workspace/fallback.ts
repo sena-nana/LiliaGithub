@@ -140,10 +140,12 @@ let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
 let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionResult) | null = null;
+let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
+let fallbackRepoOverrides: Record<string, RepoSummary> = {};
 let fallbackTaskIndex = 1;
 let fallbackTasks: WorkspaceTask[] = [];
 
@@ -156,10 +158,12 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
   fallbackRepoContributionsOverride = null;
+  fallbackRepoRemoteSyncOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
+  fallbackRepoOverrides = {};
   fallbackTaskIndex = 1;
   fallbackTasks = [];
   for (const key of Object.keys(fallbackLaunchStatuses)) {
@@ -187,6 +191,12 @@ export function setFallbackRepoContributionsOverrideForTests(
   override: ((repoFullNames: string[]) => GitHubContributionResult) | null,
 ) {
   fallbackRepoContributionsOverride = override;
+}
+
+export function setFallbackRepoRemoteSyncOverrideForTests(
+  override: ((repo: RepoSummary) => string | null) | null,
+) {
+  fallbackRepoRemoteSyncOverride = override;
 }
 
 export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingStatus) {
@@ -226,6 +236,19 @@ function recordFallbackTask(
   return task;
 }
 
+function repoRefreshSuccessMessage(repoCount: number) {
+  return `已刷新 ${repoCount} 个仓库并同步远端状态`;
+}
+
+function repoRefreshPartialFailureMessage(
+  repoCount: number,
+  failures: Array<{ repoName: string; error: string }>,
+) {
+  const repoNames = failures.slice(0, 3).map((failure) => failure.repoName).join("、");
+  const repoLabel = failures.length > 3 ? `${repoNames} 等` : repoNames;
+  return `已刷新 ${repoCount} 个仓库，${failures.length} 个仓库 fetch 失败：${repoLabel}（${failures[0].error}）`;
+}
+
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
   return call("workspace_get_settings", undefined, () => ({ ...fallbackSettings }));
 }
@@ -248,7 +271,21 @@ export function pickRepo(): Promise<string | null> {
 export function refreshRepos(): Promise<RepoSummary[]> {
   return call("workspace_refresh_repos", undefined, () => {
     const repos = visibleFallbackRepos();
-    recordFallbackTask("repoStatus", "high", null, "success", `已刷新 ${repos.length} 个仓库`);
+    const failures = repos
+      .filter((repo) => repo.remoteUrl)
+      .flatMap((repo) => {
+        const error = fallbackRepoRemoteSyncOverride?.(repo);
+        return error ? [{ repoName: repo.name, error }] : [];
+      });
+    recordFallbackTask(
+      "repoStatus",
+      "high",
+      null,
+      failures.length ? "error" : "success",
+      failures.length
+        ? repoRefreshPartialFailureMessage(repos.length, failures)
+        : repoRefreshSuccessMessage(repos.length),
+    );
     return repos;
   });
 }
@@ -323,7 +360,7 @@ export function getRepoSummary(repoId: string): Promise<RepoSummary> {
 }
 
 function allFallbackRepos() {
-  return [...fallbackRepos, ...fallbackClonedRepos];
+  return [...fallbackRepos, ...fallbackClonedRepos].map((repo) => fallbackRepoOverrides[repo.id] ?? repo);
 }
 
 function visibleFallbackRepos() {
@@ -461,6 +498,14 @@ export function listRepoContributions(repoFullNames: string[]): Promise<GitHubCo
 
 function fallbackRepo(repoId: string): RepoSummary {
   return allFallbackRepos().find((repo) => repo.id === repoId) ?? fallbackRepos[0];
+}
+
+function updateFallbackRepo(summary: RepoSummary) {
+  fallbackRepoOverrides = {
+    ...fallbackRepoOverrides,
+    [summary.id]: { ...summary },
+  };
+  return { ...summary };
 }
 
 function emptyConflictState(): RepoConflictState {
@@ -639,14 +684,14 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
   return call("repo_refresh_language_stats", { repoId }, () => {
     const repo = fallbackRepo(repoId);
     recordFallbackTask("languageStats", "low", repo.id, "success", "语言统计已更新");
-    return {
+    return updateFallbackRepo({
       ...repo,
       languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000 }],
       workingTreeLanguageStats: repo.workingTreeLanguageStats.length
         ? repo.workingTreeLanguageStats
         : [{ language: "TypeScript", bytes: 1200 }],
       languageStatsUpdatedAt: Date.now(),
-    };
+    });
   });
 }
 
@@ -980,7 +1025,7 @@ export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]):
 
 export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {
   return call("bulk_sync_execute", { operation, repoIds }, () =>
-    fallbackBulkExecuteOverride?.(operation, repoIds) ?? repoIds.map((repoId) => {
+    (fallbackBulkExecuteOverride?.(operation, repoIds) ?? repoIds.map((repoId) => {
       const repo = fallbackRepo(repoId);
       return {
         summary: {
@@ -992,7 +1037,10 @@ export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Pr
         status: "success",
         message: "完成",
       };
-    }),
+    })).map((result) => ({
+      ...result,
+      summary: result.summary ? updateFallbackRepo(result.summary) : null,
+    })),
   );
 }
 
