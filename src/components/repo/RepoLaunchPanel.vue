@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RefreshCw } from "@lucide/vue";
+import { Play, RefreshCw, Settings, Square, Terminal } from "@lucide/vue";
 import type { ProjectLaunchConfig, ProjectLaunchLog, ProjectLaunchStatus } from "../../services/workspace";
 import { launchSourceText, launchStatusText, streamLabel } from "../../utils/repoDisplay";
 
@@ -14,10 +14,15 @@ defineProps<{
   launchCommandInput: string;
   launchCwdInput: string;
   actionRunning: boolean;
+  launchRunning: boolean;
 }>();
 
 defineEmits<{
   refresh: [];
+  start: [];
+  stop: [];
+  toggleTerminal: [];
+  editConfig: [];
   "update:launchCommandInput": [value: string];
   "update:launchCwdInput": [value: string];
   save: [];
@@ -39,6 +44,25 @@ defineEmits<{
       <button type="button" class="ghost" :disabled="loading" @click="$emit('refresh')">
         <RefreshCw :size="14" aria-hidden="true" />
         刷新状态
+      </button>
+    </div>
+
+    <div class="launch-actions">
+      <button type="button" class="primary" :disabled="actionRunning || !hasLaunchCommand || launchRunning" @click="$emit('start')">
+        <Play :size="14" aria-hidden="true" />
+        运行
+      </button>
+      <button type="button" class="ghost" :disabled="actionRunning || !launchRunning" @click="$emit('stop')">
+        <Square :size="14" aria-hidden="true" />
+        停止
+      </button>
+      <button type="button" class="ghost" @click="$emit('toggleTerminal')">
+        <Terminal :size="14" aria-hidden="true" />
+        终端
+      </button>
+      <button type="button" class="ghost" @click="$emit('editConfig')">
+        <Settings :size="14" aria-hidden="true" />
+        启动配置
       </button>
     </div>
 

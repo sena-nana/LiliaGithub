@@ -237,6 +237,14 @@ pub struct RepoChange {
     pub diff: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepoStatusEntry {
+    index: String,
+    worktree: String,
+    path: String,
+    old_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoConflictState {
@@ -1781,6 +1789,7 @@ fn language_for_path(path: &Path) -> Option<&'static str> {
 fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
     let status = git_command_lossy(path, &["status", "--porcelain=v1", "-b", "--ahead-behind"])
         .unwrap_or_default();
+    let entries = repo_status_entries(path);
     let mut current_branch = None;
     let mut ahead = 0;
     let mut behind = 0;
@@ -1810,16 +1819,18 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
             }
             continue;
         }
-        let (index, worktree) = status_pair(line);
-        if is_conflict_status(&index, &worktree) {
+    }
+
+    for entry in entries {
+        if is_conflict_status(&entry.index, &entry.worktree) {
             conflict_count += 1;
-        } else if index == "?" && worktree == "?" {
+        } else if entry.index == "?" && entry.worktree == "?" {
             untracked_count += 1;
         } else {
-            if index != " " {
+            if entry.index != " " {
                 staged_count += 1;
             }
-            if worktree != " " {
+            if entry.worktree != " " {
                 unstaged_count += 1;
             }
         }
@@ -1873,13 +1884,41 @@ fn status_pair(line: &str) -> (String, String) {
     (first.to_string(), second.to_string())
 }
 
-fn parse_status_path(line: &str) -> (Option<String>, String) {
-    let raw = line.get(3..).unwrap_or("").trim();
-    if let Some((old, new)) = raw.split_once(" -> ") {
-        (Some(old.to_string()), new.to_string())
-    } else {
-        (None, raw.to_string())
+fn repo_status_entries(path: &Path) -> Vec<RepoStatusEntry> {
+    let status = git_command(
+        path,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        None,
+    )
+    .unwrap_or_default();
+    parse_status_entries(&status)
+}
+
+fn parse_status_entries(status: &str) -> Vec<RepoStatusEntry> {
+    let mut entries = Vec::new();
+    let mut records = status.split('\0').filter(|record| !record.is_empty());
+    while let Some(record) = records.next() {
+        if record.len() < 3 {
+            continue;
+        }
+        let (index, worktree) = status_pair(record);
+        let path = record.get(3..).unwrap_or("").to_string();
+        let old_path = if matches!(index.as_str(), "R" | "C") {
+            records
+                .next()
+                .map(str::to_string)
+                .filter(|value| !value.is_empty())
+        } else {
+            None
+        };
+        entries.push(RepoStatusEntry {
+            index,
+            worktree,
+            path,
+            old_path,
+        });
     }
+    entries
 }
 
 fn is_conflict_status(index: &str, worktree: &str) -> bool {
@@ -3257,7 +3296,7 @@ pub fn repo_stop_launch(repo_id: String) -> Result<ProjectLaunchStatus, String> 
 pub async fn repo_stage_files(app: AppHandle, repo_id: String, files: Vec<String>) -> Result<(), String> {
     run_blocking("暂存文件", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
-        for file in files {
+        for file in selected_repo_files(&path, files)? {
             git_command(&path, &["add", "--", &file], None)?;
         }
         Ok(())
@@ -3273,7 +3312,7 @@ pub async fn repo_unstage_files(
 ) -> Result<(), String> {
     run_blocking("取消暂存文件", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
-        for file in files {
+        for file in selected_repo_files(&path, files)? {
             git_command(&path, &["restore", "--staged", "--", &file], None)?;
         }
         Ok(())
@@ -3296,10 +3335,7 @@ pub async fn repo_commit(
         if trimmed.is_empty() {
             return Err("提交说明不能为空".to_string());
         }
-        if files.is_empty() {
-            return Err("请选择要提交的文件".to_string());
-        }
-        for file in files {
+        for file in selected_repo_files(&path, files)? {
             git_command(&path, &["add", "--", &file], None)?;
         }
         git_command(&path, &["commit", "-m", trimmed], None)?;
@@ -3546,17 +3582,13 @@ fn repo_conflicts(path: &Path) -> RepoConflictState {
 }
 
 fn conflict_status_entries(path: &Path) -> Vec<(String, String)> {
-    let status = git_command_lossy(path, &["status", "--porcelain=v1"]).unwrap_or_default();
-    status
-        .lines()
-        .filter(|line| line.len() >= 3)
-        .filter_map(|line| {
-            let (index, worktree) = status_pair(line);
-            if !is_conflict_status(&index, &worktree) {
+    repo_status_entries(path)
+        .into_iter()
+        .filter_map(|entry| {
+            if !is_conflict_status(&entry.index, &entry.worktree) {
                 return None;
             }
-            let (_, file_path) = parse_status_path(line);
-            Some((format!("{index}{worktree}"), file_path))
+            Some((format!("{}{}", entry.index, entry.worktree), entry.path))
         })
         .collect()
 }
@@ -3758,23 +3790,45 @@ fn safe_repo_file_path(repo_path: &Path, file_path: &str) -> Result<PathBuf, Str
     Ok(repo_path.join(relative))
 }
 
-fn repo_changes(path: &Path) -> Vec<RepoChange> {
-    let status = git_command_lossy(path, &["status", "--porcelain=v1"]).unwrap_or_default();
-    let entries: Vec<_> = status
-        .lines()
-        .filter(|line| line.len() >= 3)
-        .map(|line| {
-            let (index, worktree) = status_pair(line);
-            let (old_path, file_path) = parse_status_path(line);
-            (index, worktree, old_path, file_path)
-        })
+fn selected_repo_files(path: &Path, files: Vec<String>) -> Result<Vec<String>, String> {
+    let available: HashSet<_> = repo_status_entries(path)
+        .into_iter()
+        .map(|entry| entry.path)
         .collect();
+    let mut seen = HashSet::new();
+    let mut selected = Vec::new();
+    for file in files {
+        if file.is_empty() {
+            continue;
+        }
+        safe_repo_file_path(path, &file)?;
+        if !available.contains(&file) {
+            return Err(format!("选择的文件不在当前变更中：{file}"));
+        }
+        if seen.insert(file.clone()) {
+            selected.push(file);
+        }
+    }
+    if selected.is_empty() {
+        return Err("请选择要提交的文件".to_string());
+    }
+    Ok(selected)
+}
+
+fn repo_changes(path: &Path) -> Vec<RepoChange> {
+    let entries = repo_status_entries(path);
 
     thread::scope(|scope| {
         let handles: Vec<_> = entries
             .into_iter()
-            .map(|(index, worktree, old_path, file_path)| {
+            .map(|entry| {
                 scope.spawn(move || {
+                    let RepoStatusEntry {
+                        index,
+                        worktree,
+                        path: file_path,
+                        old_path,
+                    } = entry;
                     let untracked = index == "?" && worktree == "?";
                     let conflicted = is_conflict_status(&index, &worktree);
                     let staged = !untracked && index != " ";
@@ -5022,9 +5076,59 @@ mod tests {
             (" ".to_string(), "M".to_string())
         );
         assert_eq!(
-            parse_status_path("R  old.ts -> new.ts"),
-            (Some("old.ts".to_string()), "new.ts".to_string())
+            parse_status_entries(" M src/main.ts\0R  new.ts\0old.ts\0"),
+            vec![
+                RepoStatusEntry {
+                    index: " ".to_string(),
+                    worktree: "M".to_string(),
+                    path: "src/main.ts".to_string(),
+                    old_path: None,
+                },
+                RepoStatusEntry {
+                    index: "R".to_string(),
+                    worktree: " ".to_string(),
+                    path: "new.ts".to_string(),
+                    old_path: Some("old.ts".to_string()),
+                },
+            ]
         );
+    }
+
+    #[test]
+    fn selects_repo_files_from_porcelain_z_status() {
+        let path = temp_dir("selected-repo-files");
+        run_git(&path, &["init"]);
+        run_git(&path, &["config", "user.email", "test@example.com"]);
+        run_git(&path, &["config", "user.name", "Test User"]);
+        fs::create_dir_all(path.join("src").join("components").join("repo")).unwrap();
+        fs::write(
+            path.join("src")
+                .join("components")
+                .join("repo")
+                .join("Repo Changes Panel.vue"),
+            "<template />\n",
+        )
+        .unwrap();
+
+        let selected = selected_repo_files(
+            &path,
+            vec![
+                "src/components/repo/Repo Changes Panel.vue".to_string(),
+                "src/components/repo/Repo Changes Panel.vue".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            selected,
+            vec!["src/components/repo/Repo Changes Panel.vue".to_string()]
+        );
+        assert!(selected_repo_files(
+            &path,
+            vec!["rc/components/repo/Repo Changes Panel.vue".to_string()]
+        )
+        .is_err());
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

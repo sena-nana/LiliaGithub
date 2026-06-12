@@ -57,6 +57,8 @@ describe("基础路由", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "项目总览" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("C:\\Files\\workspace")).toBeInTheDocument();
+    expect(screen.queryByText("octo-user")).toBeNull();
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
     expect(await screen.findByLabelText("GitHub 提交贡献图")).toBeInTheDocument();
     expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
@@ -201,8 +203,12 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(screen.getByLabelText("仓库状态条")).toBeInTheDocument();
-    expect(screen.getByText("仓库健康")).toBeInTheDocument();
+    expect(screen.queryByText("仓库健康")).toBeNull();
     expect(screen.getByText("快速启动")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "运行" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "终端" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "启动配置" })).toBeInTheDocument();
     expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
@@ -219,9 +225,12 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByLabelText("提交历史和分支树")).toBeInTheDocument();
+    expect(screen.getByLabelText("提交历史密集列表")).toBeInTheDocument();
+    expect(screen.queryByText("提交历史")).toBeNull();
+    expect(screen.queryByText("按时间倒序展示最近提交")).toBeNull();
+    expect(screen.queryByLabelText("历史和分支树")).toBeNull();
     expect(screen.getAllByLabelText("提交图谱").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("1234567")).toBeInTheDocument();
+    expect(screen.queryByText("1234567")).toBeNull();
     expect(screen.getAllByText("HEAD -> main").length).toBeGreaterThanOrEqual(1);
 
     await fireEvent.click(screen.getByRole("tab", { name: "分支" }));

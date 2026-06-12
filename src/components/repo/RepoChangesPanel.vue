@@ -53,8 +53,8 @@ defineEmits<{
               @change="$emit('toggleFile', change.path)"
             />
           </span>
-          <span class="change-row__path" :title="change.oldPath ? `${change.oldPath} -> ${change.path}` : change.path">
-            <span>{{ change.path }}</span>
+          <span class="change-row__file" :title="change.oldPath ? `${change.oldPath} -> ${change.path}` : change.path">
+            <span class="change-row__path">{{ change.path }}</span>
             <small v-if="change.oldPath">来自 {{ change.oldPath }}</small>
           </span>
           <span class="change-badge" :class="changeStatusTone(change)">{{ changeStatusText(change) }}</span>
