@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/vue";
 import { afterEach } from "vitest";
 import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
-import { resetWorkspaceFallbacksForTests } from "../src/services/workspace";
+import { clearGitHubRepoCache, resetWorkspaceFallbacksForTests } from "../src/services/workspace";
 
 afterEach(async () => {
   cleanup();
@@ -10,6 +10,7 @@ afterEach(async () => {
   resetAuthFlowRuntimeForTests();
   resetWorkspaceStateForTests();
   resetWorkspaceFallbacksForTests();
+  clearGitHubRepoCache();
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
 });

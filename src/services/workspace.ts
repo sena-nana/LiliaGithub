@@ -3,6 +3,8 @@ export {
   resetWorkspaceFallbacksForTests,
   setFallbackBulkExecuteOverrideForTests,
   setFallbackConflictOverrideForTests,
+  setFallbackGitHubBindingStatusForTests,
+  setFallbackGitHubReposErrorForTests,
   setFallbackRepoContributionsOverrideForTests,
 } from "./workspace/fallback";
 export type * from "./workspace/types";
