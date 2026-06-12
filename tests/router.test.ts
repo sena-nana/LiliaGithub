@@ -78,8 +78,19 @@ describe("基础路由", () => {
   it("总览页语言图表和列表可跳转到对应仓库", async () => {
     const { router } = await renderAt("/");
 
-    const languageLink = await screen.findByRole("link", { name: /TypeScript：50%/ });
-    await fireEvent.click(languageLink);
+    const chartLink = await screen.findByRole("link", { name: /TypeScript：50%/ });
+    await fireEvent.click(chartLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+
+    await router.push("/");
+    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+
+    const languageName = await screen.findByText("TypeScript", { selector: ".language-list__link .language-name" });
+    const listLink = languageName.closest("a");
+    expect(listLink).toBeInTheDocument();
+    await fireEvent.click(listLink);
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
