@@ -16,7 +16,6 @@ import RepoHistoryPanel from "../components/repo/RepoHistoryPanel.vue";
 import RepoGitHubPanel from "../components/repo/RepoGitHubPanel.vue";
 import RepoLaunchPanel from "../components/repo/RepoLaunchPanel.vue";
 import RepoPushError from "../components/repo/RepoPushError.vue";
-import RepoSideStatus from "../components/repo/RepoSideStatus.vue";
 import RepoStatusStrip from "../components/repo/RepoStatusStrip.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import "../styles/page.css";
@@ -61,8 +60,6 @@ const {
   panelConflictFiles,
   panelConflicts,
   panelFocusedConflict,
-  historyBranches,
-  historyRefNames,
   recentSyncError,
   hasConflicts,
   conflictSummaryText,
@@ -234,8 +231,6 @@ const {
         <RepoHistoryPanel
           v-else-if="activeTab === 'history'"
           :commits="statusCommits"
-          :branches="historyBranches"
-          :ref-names="historyRefNames"
           :commit-meta-title="commitMetaTitle"
           @open-commit="openCommit"
         />
@@ -253,21 +248,6 @@ const {
       </main>
 
       <aside class="workbench-side">
-        <RepoSideStatus
-          v-if="summary"
-          :summary="summary"
-          :launch-config="launchConfig"
-          :launch-status="launchStatus"
-          :action-running="actionRunning"
-          :launch-running="launchRunning"
-          :has-launch-command="hasLaunchCommand"
-          :dirty-count="dirtyCount"
-          @start="startLaunch"
-          @stop="stopLaunch"
-          @toggle-terminal="launchTerminalVisible = !launchTerminalVisible"
-          @edit-config="editLaunchConfig"
-        />
-
         <RepoCommitPanel
           v-model:commit-message="commitMessage"
           v-model:push-after="pushAfter"
@@ -291,7 +271,12 @@ const {
           :launch-logs="launchLogs"
           :launch-terminal-visible="launchTerminalVisible"
           :action-running="actionRunning"
+          :launch-running="launchRunning"
           @refresh="refreshLaunch"
+          @start="startLaunch"
+          @stop="stopLaunch"
+          @toggle-terminal="launchTerminalVisible = !launchTerminalVisible"
+          @edit-config="editLaunchConfig"
           @save="saveLaunchConfig"
           @cancel="cancelLaunchConfig"
           @hide-terminal="launchTerminalVisible = false"
@@ -488,8 +473,7 @@ const {
 .section-toolbar h2,
 .repo-panel h2,
 .commit-panel h2,
-.launch-panel h2,
-.repo-side-status h2 {
+.launch-panel h2 {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
@@ -546,6 +530,7 @@ const {
 
 .change-list {
   align-content: start;
+  min-width: 0;
 }
 
 .change-row,
@@ -560,13 +545,15 @@ const {
 
 .change-row {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0 10px;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 6px;
   border-radius: 6px;
   cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
 }
 
 .change-row:hover {
@@ -588,25 +575,33 @@ const {
   justify-content: center;
 }
 
-.change-row__path,
+.change-row__file,
 .checkbox-line {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  justify-content: center;
+  gap: 1px;
   min-width: 0;
 }
 
-.change-row__path span {
+.change-row__path {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.25;
 }
 
-.change-row__path small {
+.change-row__file small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .change-row input,
@@ -622,12 +617,13 @@ const {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 64px;
-  min-height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 12px;
+  min-width: 48px;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1;
   white-space: nowrap;
 }
 
@@ -848,80 +844,6 @@ const {
   overflow-wrap: anywhere;
 }
 
-.history-workspace {
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-}
-
-.history-tree {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--bg-subtle);
-}
-
-.history-tree section {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.history-tree h3 {
-  margin: 0 0 2px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.history-tree p {
-  margin: 0;
-  font-size: 12px;
-}
-
-.history-tree__item {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  padding: 0 6px;
-  border-radius: 5px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.history-tree__item:hover {
-  background: var(--bg-hover);
-}
-
-.history-tree__item span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.history-tree__item em {
-  padding: 1px 5px;
-  border-radius: 999px;
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 700;
-}
-
-.history-tree__item--ref {
-  color: var(--text);
-}
-
 .history-list {
   display: grid;
   position: relative;
@@ -930,11 +852,11 @@ const {
 .history-row {
   position: relative;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 128px;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(150px, 190px);
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 8px 0 0;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 6px 0 0;
   border-top: 1px solid var(--border-soft);
   border-radius: 6px;
   text-align: left;
@@ -961,7 +883,7 @@ const {
   align-items: center;
   justify-content: center;
   align-self: stretch;
-  min-height: 34px;
+  min-height: 28px;
 }
 
 .history-graph__line {
@@ -994,19 +916,19 @@ const {
 
 .history-row__body,
 .history-row__main,
-.history-row__meta {
+.history-row__tail {
   min-width: 0;
 }
 
 .history-row__body {
-  display: grid;
-  gap: 2px;
+  display: block;
+  overflow: hidden;
 }
 
 .history-row__main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .history-row__main strong {
@@ -1027,11 +949,11 @@ const {
 }
 
 .history-row__refs span {
-  max-width: 120px;
+  max-width: 108px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 999px;
   color: var(--accent);
   background: var(--accent-soft);
@@ -1039,24 +961,26 @@ const {
   font-weight: 600;
 }
 
-.history-row__meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.history-row__author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
   font-size: 11px;
 }
 
-.history-row__meta span:not(:last-child)::after {
-  content: "·";
-  margin-left: 8px;
-  color: var(--text-faint);
+.history-row__tail {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .history-row__time {
-  justify-self: end;
+  flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -1100,8 +1024,7 @@ const {
 }
 
 .commit-panel,
-.launch-panel,
-.repo-side-status {
+.launch-panel {
   display: grid;
   gap: 12px;
 }
@@ -1152,7 +1075,7 @@ const {
   overflow-wrap: anywhere;
 }
 
-.repo-side-status__actions {
+.launch-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
@@ -1308,13 +1231,14 @@ const {
   }
 
   .repo-header__actions button,
-  .repo-side-status__actions button {
+  .launch-actions button {
     justify-content: flex-start;
   }
 
   .change-row {
-    grid-template-columns: 28px minmax(0, 1fr);
-    padding: 8px 10px;
+    grid-template-columns: 24px minmax(0, 1fr);
+    min-height: 34px;
+    padding: 4px 6px;
   }
 
   .change-badge {
@@ -1328,11 +1252,7 @@ const {
   }
 
   .branch-row,
-  .repo-side-status__actions {
-    grid-template-columns: 1fr;
-  }
-
-  .history-workspace {
+  .launch-actions {
     grid-template-columns: 1fr;
   }
 
@@ -1340,18 +1260,13 @@ const {
     grid-template-columns: 1fr;
   }
 
-  .history-tree {
-    grid-template-columns: 1fr;
-  }
-
   .history-row {
     grid-template-columns: 32px minmax(0, 1fr);
-    min-height: 42px;
+    min-height: 32px;
   }
 
-  .history-row__time {
-    grid-column: 2;
-    justify-self: start;
+  .history-row__tail {
+    display: none;
   }
 
   .history-popover {

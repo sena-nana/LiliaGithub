@@ -124,17 +124,6 @@ export function useRepoDetailController() {
   const panelFocusedConflict = computed(
     () => panelConflictFiles.value.find((file) => file.path === focusedConflict.value?.path) ?? null,
   );
-  const historyBranches = computed(() => ({
-    local: detail.value?.branches.filter((branch) => !branch.remote) ?? [],
-    remote: detail.value?.branches.filter((branch) => branch.remote) ?? [],
-  }));
-  const historyRefNames = computed(() => {
-    const refs = new Set<string>();
-    for (const commit of detail.value?.commits ?? []) {
-      for (const refName of commit.refs) refs.add(refName);
-    }
-    return Array.from(refs);
-  });
   const recentSyncError = computed(() => {
     return recentSyncErrorForRepo(repoId.value);
   });
@@ -559,8 +548,6 @@ export function useRepoDetailController() {
       panelConflictFiles,
       panelConflicts,
       panelFocusedConflict,
-      historyBranches,
-      historyRefNames,
       recentSyncError,
       hasConflicts,
       conflictSummaryText,

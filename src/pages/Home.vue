@@ -481,8 +481,12 @@ async function refreshLanguageStats() {
     <template v-else>
       <div class="page-header">
         <div>
-          <h1>项目总览</h1>
-          <p>{{ workspace.workspaceRoot.value }} · {{ workspace.githubBinding.value?.login }}</p>
+          <div class="overview-title">
+            <h1>项目总览</h1>
+            <span v-if="workspace.workspaceRoot.value" :title="workspace.workspaceRoot.value">
+              {{ workspace.workspaceRoot.value }}
+            </span>
+          </div>
         </div>
         <div class="overview-actions" aria-label="项目总览操作">
           <button
@@ -744,7 +748,6 @@ async function refreshLanguageStats() {
               <th>分支</th>
               <th>变更</th>
               <th>同步</th>
-              <th>状态</th>
               <th>处理</th>
               <th>最近提交</th>
             </tr>
@@ -756,25 +759,23 @@ async function refreshLanguageStats() {
               <td>{{ dirtyCount(repo) }}</td>
               <td>↑{{ repo.ahead }} / ↓{{ repo.behind }}</td>
               <td>
-                <span
-                  v-if="action"
-                  class="repo-action-status"
-                  :class="`repo-action-status--${action.tone}`"
-                  :title="action.title"
-                >
-                  {{ action.status }}
-                </span>
+                <div v-if="action" class="repo-action-cell">
+                  <span
+                    class="repo-action-status"
+                    :class="`repo-action-status--${action.tone}`"
+                    :title="action.title"
+                  >
+                    {{ action.status }}
+                  </span>
+                  <RouterLink
+                    class="repo-action-link"
+                    :to="action.to"
+                    :title="action.title"
+                  >
+                    {{ action.label }}
+                  </RouterLink>
+                </div>
                 <span v-else class="repo-action-status repo-action-status--muted">正常</span>
-              </td>
-              <td>
-                <RouterLink
-                  v-if="action"
-                  class="repo-action-link"
-                  :to="action.to"
-                  :title="action.title"
-                >
-                  {{ action.label }}
-                </RouterLink>
               </td>
               <td>{{ formatNullableRepoTime(repo.lastCommitAt) }}</td>
             </tr>
@@ -967,6 +968,23 @@ async function refreshLanguageStats() {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   background: var(--bg-subtle);
+}
+
+.overview-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.overview-title span {
+  min-width: 0;
+  max-width: min(52vw, 720px);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .overview-actions__btn {
@@ -1391,6 +1409,13 @@ async function refreshLanguageStats() {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.repo-action-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .repo-action-status--error {
