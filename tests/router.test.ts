@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
 import type { RepoConflictState } from "../src/services/workspace";
 import { conflictState, repoSummary } from "./fixtures/workspace";
+import { useWorkspace } from "../src/composables/useWorkspace";
 
 async function renderAt(path: string) {
   const router = createLiliaGithubRouter(createMemoryHistory());
@@ -129,6 +130,76 @@ describe("基础路由", () => {
     await renderAt("/");
 
     expect(await screen.findByText(/覆盖 30\/33 个仓库 · 仅统计前 30 个 · 刷新于/)).toBeInTheDocument();
+  });
+
+  it("首页 GitHub 贡献图默认定位到末尾并支持拖动横向浏览", async () => {
+    const service = await import("../src/services/workspace");
+    const clientWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const scrollWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+    try {
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+        configurable: true,
+        get() {
+          return this.classList?.contains("contribution-scroll") ? 120 : 0;
+        },
+      });
+      Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+        configurable: true,
+        get() {
+          return this.classList?.contains("contribution-scroll") ? 760 : 0;
+        },
+      });
+      service.setFallbackRepoContributionsOverrideForTests(() => ({
+        days: [{ date: "2025-01-01", count: 1 }],
+        meta: {
+          repoCount: 2,
+          requestedRepoCount: 2,
+          repoLimit: 30,
+          truncated: false,
+          refreshedAt: 1_780_000_000_000,
+        },
+      }));
+
+      await renderAt("/");
+
+      service.setFallbackRepoContributionsOverrideForTests(() => ({
+        days: Array.from({ length: 371 }, (_, index) => ({
+          date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
+          count: index === 370 ? 4 : 0,
+        })),
+        meta: {
+          repoCount: 2,
+          requestedRepoCount: 2,
+          repoLimit: 30,
+          truncated: false,
+          refreshedAt: 1_780_000_000_000,
+        },
+      }));
+
+      await useWorkspace().refreshRepoContributions();
+      const chart = await screen.findByLabelText("GitHub 提交贡献图");
+      const scroller = chart.querySelector(".contribution-scroll");
+      if (!(scroller instanceof HTMLElement)) throw new Error("未找到贡献图滚动容器");
+
+      await waitFor(() => {
+        expect(scroller.scrollLeft).toBe(640);
+      });
+
+      scroller.setPointerCapture = vi.fn();
+      scroller.releasePointerCapture = vi.fn();
+      scroller.hasPointerCapture = vi.fn(() => true);
+      await fireEvent.pointerDown(scroller, { button: 0, clientX: 100, pointerId: 1 });
+      await fireEvent.pointerMove(scroller, { clientX: 160, pointerId: 1 });
+
+      expect(scroller.scrollLeft).toBe(580);
+    } finally {
+      if (clientWidthDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "clientWidth", clientWidthDescriptor);
+      }
+      if (scrollWidthDescriptor) {
+        Object.defineProperty(HTMLElement.prototype, "scrollWidth", scrollWidthDescriptor);
+      }
+    }
   });
 
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
