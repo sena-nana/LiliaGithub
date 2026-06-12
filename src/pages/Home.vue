@@ -1072,15 +1072,21 @@ async function addLocalRepo() {
   padding: 0;
   margin: 0;
   min-width: 0;
+  height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .language-list li {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 6px 0;
+  gap: 6px;
+  height: 18px;
   border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .language-list li:last-child {
