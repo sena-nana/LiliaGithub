@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import {
   CheckCircle2,
   AlertCircle,
@@ -21,6 +21,7 @@ import { bulkResultTone, formatNullableRepoTime } from "../utils/repoDisplay";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
+const router = useRouter();
 const syncErrors = computed(() => syncErrorByRepoId());
 
 type RepoAction = {
@@ -175,6 +176,21 @@ function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untracke
 function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   const path = `/repos/${encodeURIComponent(repo.id)}`;
   return tab ? `${path}?tab=${tab}` : path;
+}
+
+function navigateLanguageSlice(to: string, event: MouseEvent) {
+  if (
+    event.defaultPrevented
+    || event.button > 0
+    || event.altKey
+    || event.ctrlKey
+    || event.metaKey
+    || event.shiftKey
+  ) {
+    return;
+  }
+  event.preventDefault();
+  void router.push(to);
 }
 
 function mergeLanguageTotals(totals: LanguageTotal[]) {
@@ -622,32 +638,26 @@ async function refreshLanguageStats() {
           <div v-else class="language-chart" aria-label="编程语言占比图">
             <svg class="language-pie" viewBox="0 0 42 42" role="img" aria-label="编程语言占比饼图">
               <circle class="language-pie__track" cx="21" cy="21" r="15.9155" />
-              <RouterLink
+              <a
                 v-for="slice in languageOverview.slices"
                 :key="slice.language"
-                :to="slice.to"
-                custom
-                v-slot="{ href, navigate }"
+                class="language-pie__link"
+                :href="router.resolve(slice.to).href"
+                :aria-label="slice.title"
+                @click="navigateLanguageSlice(slice.to, $event)"
               >
-                <a
-                  class="language-pie__link"
-                  :href="href"
-                  :aria-label="slice.title"
-                  @click="navigate"
+                <circle
+                  class="language-pie__slice"
+                  cx="21"
+                  cy="21"
+                  r="15.9155"
+                  :stroke="slice.color"
+                  :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
+                  :stroke-dashoffset="-slice.offset"
                 >
-                  <circle
-                    class="language-pie__slice"
-                    cx="21"
-                    cy="21"
-                    r="15.9155"
-                    :stroke="slice.color"
-                    :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
-                    :stroke-dashoffset="-slice.offset"
-                  >
-                    <title>{{ slice.title }}</title>
-                  </circle>
-                </a>
-              </RouterLink>
+                  <title>{{ slice.title }}</title>
+                </circle>
+              </a>
             </svg>
             <ul class="language-list">
               <li v-for="slice in languageOverview.slices" :key="slice.language">
