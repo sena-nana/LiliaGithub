@@ -469,6 +469,12 @@ struct NormalizedGitHubRepo {
     clone_url: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepoFetchFailure {
+    repo_name: String,
+    error: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct GitHubCommitResponse {
     commit: GitHubCommitPayload,
@@ -1490,6 +1496,54 @@ fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
     })
 }
 
+fn repo_refresh_success_message(repo_count: usize) -> String {
+    format!("已刷新 {repo_count} 个仓库并同步远端状态")
+}
+
+fn repo_refresh_partial_failure_message(
+    repo_count: usize,
+    failures: &[RepoFetchFailure],
+) -> String {
+    let repo_names = failures
+        .iter()
+        .take(3)
+        .map(|failure| failure.repo_name.as_str())
+        .collect::<Vec<_>>()
+        .join("、");
+    let repo_label = if failures.len() > 3 {
+        format!("{repo_names} 等")
+    } else {
+        repo_names
+    };
+    format!(
+        "已刷新 {repo_count} 个仓库，{} 个仓库 fetch 失败：{}（{}）",
+        failures.len(),
+        repo_label,
+        failures[0].error
+    )
+}
+
+fn refresh_managed_repo_remotes(
+    root: &Path,
+    paths: &[PathBuf],
+    mut fetch_repo: impl FnMut(&Path) -> Result<(), String>,
+) -> Vec<RepoFetchFailure> {
+    let mut failures = Vec::new();
+    for path in paths {
+        let summary = summarize_repo(root, path);
+        if summary.remote_url.is_none() {
+            continue;
+        }
+        if let Err(error) = fetch_repo(path) {
+            failures.push(RepoFetchFailure {
+                repo_name: summary.name,
+                error,
+            });
+        }
+    }
+    failures
+}
+
 fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> Vec<PathBuf> {
     settings
         .managed_repo_ids
@@ -1805,11 +1859,25 @@ pub fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, Strin
         "high",
         None,
         "running",
-        Some("刷新已管理仓库状态".to_string()),
+        Some("刷新已管理仓库并同步远端状态".to_string()),
     );
-    let mut repos = summarize_repos(&root, managed_repo_paths(&root, &settings));
+    let paths = managed_repo_paths(&root, &settings);
+    let failures = refresh_managed_repo_remotes(&root, &paths, |path| run_fetch(&app, path));
+    let mut repos = summarize_repos(&root, paths);
     sort_repos(&mut repos);
-    update_workspace_task(&task.id, "success", Some(format!("已刷新 {} 个仓库", repos.len())));
+    if failures.is_empty() {
+        update_workspace_task(
+            &task.id,
+            "success",
+            Some(repo_refresh_success_message(repos.len())),
+        );
+    } else {
+        update_workspace_task(
+            &task.id,
+            "error",
+            Some(repo_refresh_partial_failure_message(repos.len(), &failures)),
+        );
+    }
     Ok(repos)
 }
 
@@ -3884,6 +3952,13 @@ mod tests {
         );
     }
 
+    fn init_git_repo(path: &Path) {
+        fs::create_dir_all(path).unwrap();
+        run_git(path, &["init"]);
+        run_git(path, &["config", "user.email", "test@example.com"]);
+        run_git(path, &["config", "user.name", "Test User"]);
+    }
+
     fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         let mut summary = RepoSummary {
             id: "repo".to_string(),
@@ -4721,6 +4796,96 @@ rename to docs/new.md",
         assert_eq!(paths, vec![visible]);
         assert!(!missing.exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refresh_managed_repo_remotes_fetches_only_repos_with_origin() {
+        let root = temp_dir("managed-fetch");
+        let with_origin = root.join("with-origin");
+        let local_only = root.join("local-only");
+        init_git_repo(&with_origin);
+        init_git_repo(&local_only);
+        run_git(
+            &with_origin,
+            &["remote", "add", "origin", "https://github.com/a/repo.git"],
+        );
+        let paths = vec![with_origin.clone(), local_only];
+        let mut fetched = Vec::new();
+
+        let failures = refresh_managed_repo_remotes(&root, &paths, |path| {
+            fetched.push(repo_id(&root, path));
+            Ok(())
+        });
+
+        assert!(failures.is_empty());
+        assert_eq!(fetched, vec!["with-origin"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refresh_managed_repo_remotes_keeps_going_after_fetch_failure() {
+        let root = temp_dir("managed-fetch-failure");
+        let failing = root.join("failing");
+        let succeeding = root.join("succeeding");
+        init_git_repo(&failing);
+        init_git_repo(&succeeding);
+        run_git(
+            &failing,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/a/failing.git",
+            ],
+        );
+        run_git(
+            &succeeding,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/a/succeeding.git",
+            ],
+        );
+        let paths = vec![failing.clone(), succeeding.clone()];
+        let mut fetched = Vec::new();
+
+        let failures = refresh_managed_repo_remotes(&root, &paths, |path| {
+            let id = repo_id(&root, path);
+            fetched.push(id.clone());
+            if id == "failing" {
+                Err("network unavailable".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(fetched, vec!["failing", "succeeding"]);
+        assert_eq!(
+            failures,
+            vec![RepoFetchFailure {
+                repo_name: "failing".to_string(),
+                error: "network unavailable".to_string(),
+            }]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repo_refresh_task_messages_cover_success_and_partial_failure() {
+        assert_eq!(
+            repo_refresh_success_message(2),
+            "已刷新 2 个仓库并同步远端状态"
+        );
+
+        let failures = vec![RepoFetchFailure {
+            repo_name: "repo".to_string(),
+            error: "network unavailable".to_string(),
+        }];
+        assert_eq!(
+            repo_refresh_partial_failure_message(3, &failures),
+            "已刷新 3 个仓库，1 个仓库 fetch 失败：repo（network unavailable）"
+        );
     }
 
     #[test]
