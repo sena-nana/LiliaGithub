@@ -199,6 +199,38 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "分支" }));
     expect(screen.getByText("origin/main")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("tab", { name: "GitHub" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "GitHub 管理" })).toBeInTheDocument();
+    expect(screen.getByText("仓库设置")).toBeInTheDocument();
+    expect(screen.getByText("远端分支")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 3, name: "Issues" })).toBeInTheDocument();
+  });
+
+  it("仓库 GitHub tab 可保存设置、创建分支并关闭 Issue", async () => {
+    await renderAt("/repos/LiliaGithub?tab=github");
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "GitHub" }));
+    expect(await screen.findByRole("heading", { level: 2, name: "GitHub 管理" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Local GitHub workspace manager")).toBeInTheDocument();
+    });
+    await fireEvent.update(screen.getByDisplayValue("Local GitHub workspace manager"), "Updated description");
+    await fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Updated description")).toBeInTheDocument();
+    });
+
+    await fireEvent.update(screen.getByPlaceholderText("new-branch"), "feature/p0-management");
+    await fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() => {
+      expect(screen.getAllByText("feature/p0-management").length).toBeGreaterThanOrEqual(1);
+    });
+
+    expect(await screen.findByText(/#12 补齐仓库管理入口/)).toBeInTheDocument();
+    await fireEvent.click(screen.getAllByRole("button", { name: "关闭" }).at(-1) as HTMLElement);
+    expect(await screen.findByRole("button", { name: "重开" })).toBeInTheDocument();
   });
 
   it("冲突仓库默认进入冲突视图并支持分段处理入口", async () => {
@@ -467,6 +499,24 @@ describe("基础路由", () => {
       expect(screen.getByText("没有隐藏仓库。")).toBeInTheDocument();
     });
     expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
+  });
+
+  it("设置页仓库 tab 可新建 GitHub 仓库并克隆到工作区", async () => {
+    const service = await import("../src/services/workspace");
+    await renderAt("/settings?tab=repositories");
+
+    await fireEvent.click(await screen.findByRole("button", { name: "新建 GitHub 仓库" }));
+    expect(await screen.findByRole("dialog", { name: "新建 GitHub 仓库" })).toBeInTheDocument();
+    await fireEvent.update(screen.getByPlaceholderText("new-repo"), "NewRepo");
+    await fireEvent.update(screen.getByPlaceholderText("Node"), "Node");
+    await fireEvent.click(screen.getByRole("button", { name: "创建" }));
+
+    expect(await screen.findByText("lilia-user/NewRepo")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "克隆到工作区" }));
+
+    await waitFor(async () => {
+      expect((await service.refreshRepos()).some((repo) => repo.id === "NewRepo")).toBe(true);
+    });
   });
 
   it("未知路由回到首页", async () => {

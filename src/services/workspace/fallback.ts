@@ -6,10 +6,19 @@ import type {
   GitHubBindingStatus,
   GitHubContributionMeta,
   GitHubContributionResult,
+  GitHubCreateBranchRequest,
+  GitHubCreateIssueRequest,
+  GitHubCreateRepoRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
+  GitHubIssue,
+  GitHubRemoteBranch,
+  GitHubRepoManagement,
+  GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
+  GitHubUpdateIssueRequest,
+  GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchLog,
@@ -126,6 +135,93 @@ const fallbackGitHubRepos: GitHubRepoSummary[] = [
   },
 ];
 
+function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
+  return [
+    { login: "lilia-user", kind: "user" },
+    { login: "sena-nana", kind: "org" },
+  ];
+}
+
+function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManagement> {
+  return {
+    "sena-nana/LiliaGithub": {
+      fullName: "sena-nana/LiliaGithub",
+      name: "LiliaGithub",
+      description: "Local GitHub workspace manager",
+      homepage: "",
+      private: false,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: false,
+      hasProjects: true,
+      hasDiscussions: false,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: true,
+      allowAutoMerge: false,
+      deleteBranchOnMerge: true,
+      allowForking: true,
+      webCommitSignoffRequired: false,
+      htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+    },
+    "sena-nana/Lilia": {
+      fullName: "sena-nana/Lilia",
+      name: "Lilia",
+      description: "Desktop agent workbench",
+      homepage: "",
+      private: true,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: true,
+      hasProjects: false,
+      hasDiscussions: false,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: false,
+      allowAutoMerge: false,
+      deleteBranchOnMerge: false,
+      allowForking: false,
+      webCommitSignoffRequired: false,
+      htmlUrl: "https://github.com/sena-nana/Lilia",
+    },
+  };
+}
+
+function createFallbackGitHubBranches(): Record<string, GitHubRemoteBranch[]> {
+  return {
+    "sena-nana/LiliaGithub": [
+      { name: "main", sha: "1234567890abcdef1234567890abcdef12345678", protected: true },
+      { name: "codex/github-management", sha: "abcdef1234567890abcdef1234567890abcdef12", protected: false },
+    ],
+    "sena-nana/Lilia": [
+      { name: "main", sha: "2222222222222222222222222222222222222222", protected: true },
+    ],
+  };
+}
+
+function createFallbackGitHubIssues(): Record<string, GitHubIssue[]> {
+  return {
+    "sena-nana/LiliaGithub": [
+      {
+        number: 12,
+        title: "补齐仓库管理入口",
+        state: "open",
+        body: "需要在桌面端管理仓库设置和 issue。",
+        labels: ["enhancement"],
+        assignees: ["lilia-user"],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
+        updatedAt: "2026-06-11T12:00:00Z",
+        createdAt: "2026-06-10T12:00:00Z",
+      },
+    ],
+  };
+}
+
+let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
+let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
+let fallbackGitHubBranches = createFallbackGitHubBranches();
+let fallbackGitHubIssues = createFallbackGitHubIssues();
+
 function createFallbackSettings(): WorkspaceSettings {
   return {
     workspaceRoot: "C:\\Files\\workspace",
@@ -161,6 +257,10 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoRemoteSyncOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
+  fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
+  fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
+  fallbackGitHubBranches = createFallbackGitHubBranches();
+  fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
   fallbackRepoOverrides = {};
@@ -449,6 +549,186 @@ export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
       items: fallbackGitHubRepos.map((repo) => ({ ...repo })),
       nextPage: null,
     };
+  });
+}
+
+function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
+  const existing = fallbackGitHubRepoManagement[repoFullName];
+  if (existing) return { ...existing };
+  const repo = fallbackGitHubRepos.find((item) => item.fullName === repoFullName);
+  if (!repo) throw new Error(`未找到 GitHub 仓库：${repoFullName}`);
+  const management: GitHubRepoManagement = {
+    fullName: repo.fullName,
+    name: repo.name,
+    description: repo.description,
+    homepage: "",
+    private: repo.private,
+    defaultBranch: repo.defaultBranch ?? "main",
+    hasIssues: true,
+    hasWiki: false,
+    hasProjects: true,
+    hasDiscussions: false,
+    allowMergeCommit: true,
+    allowSquashMerge: true,
+    allowRebaseMerge: true,
+    allowAutoMerge: false,
+    deleteBranchOnMerge: true,
+    allowForking: !repo.private,
+    webCommitSignoffRequired: false,
+    htmlUrl: repo.htmlUrl,
+  };
+  fallbackGitHubRepoManagement[repoFullName] = management;
+  return { ...management };
+}
+
+export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
+  return call("github_list_repo_owners", undefined, () => fallbackGitHubRepoOwners.map((owner) => ({ ...owner })));
+}
+
+export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitHubRepoSummary> {
+  return call("github_create_repo", { request }, () => {
+    const owner = request.owner.trim();
+    const name = request.name.trim();
+    if (!owner || !name) throw new Error("owner 和仓库名不能为空");
+    const fullName = `${owner}/${name}`;
+    const repo: GitHubRepoSummary = {
+      id: 1000 + fallbackGitHubRepos.length,
+      name,
+      fullName,
+      ownerLogin: owner,
+      private: request.private,
+      description: request.description?.trim() || null,
+      defaultBranch: request.autoInit ? "main" : null,
+      updatedAt: new Date().toISOString(),
+      cloneUrl: `https://github.com/${fullName}.git`,
+      htmlUrl: `https://github.com/${fullName}`,
+    };
+    fallbackGitHubRepos.push(repo);
+    fallbackGitHubRepoManagement[fullName] = {
+      fullName,
+      name,
+      description: repo.description,
+      homepage: "",
+      private: repo.private,
+      defaultBranch: repo.defaultBranch ?? "main",
+      hasIssues: request.hasIssues,
+      hasWiki: request.hasWiki,
+      hasProjects: true,
+      hasDiscussions: false,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: true,
+      allowAutoMerge: false,
+      deleteBranchOnMerge: true,
+      allowForking: !repo.private,
+      webCommitSignoffRequired: false,
+      htmlUrl: repo.htmlUrl,
+    };
+    fallbackGitHubBranches[fullName] = request.autoInit
+      ? [{ name: "main", sha: "3333333333333333333333333333333333333333", protected: false }]
+      : [];
+    fallbackGitHubIssues[fullName] = [];
+    return { ...repo };
+  });
+}
+
+export function getGitHubRepoManagement(repoFullName: string): Promise<GitHubRepoManagement> {
+  return call("github_get_repo_management", { repoFullName }, () => fallbackRepoManagement(repoFullName));
+}
+
+export function updateGitHubRepoSettings(
+  repoFullName: string,
+  request: GitHubUpdateRepoSettingsRequest,
+): Promise<GitHubRepoManagement> {
+  return call("github_update_repo_settings", { repoFullName, request }, () => {
+    const current = fallbackRepoManagement(repoFullName);
+    const updated = {
+      ...current,
+      ...request,
+      description: request.description ?? current.description,
+      homepage: request.homepage ?? current.homepage,
+    };
+    fallbackGitHubRepoManagement[repoFullName] = updated;
+    return { ...updated };
+  });
+}
+
+export function listGitHubRemoteBranches(repoFullName: string): Promise<GitHubRemoteBranch[]> {
+  return call("github_list_remote_branches", { repoFullName }, () =>
+    (fallbackGitHubBranches[repoFullName] ?? []).map((branch) => ({ ...branch })),
+  );
+}
+
+export function createGitHubRemoteBranch(
+  repoFullName: string,
+  request: GitHubCreateBranchRequest,
+): Promise<GitHubRemoteBranch> {
+  return call("github_create_remote_branch", { repoFullName, request }, () => {
+    const name = request.name.trim().replace(/^refs\/heads\//, "");
+    const sourceSha = request.sourceSha.trim();
+    if (!name || !sourceSha) throw new Error("分支名和源提交不能为空");
+    if (!(fallbackGitHubBranches[repoFullName] ?? []).length) throw new Error("空仓库不能直接创建分支");
+    const branch: GitHubRemoteBranch = { name, sha: sourceSha, protected: false };
+    fallbackGitHubBranches[repoFullName] = [
+      ...(fallbackGitHubBranches[repoFullName] ?? []).filter((item) => item.name !== name),
+      branch,
+    ];
+    return { ...branch };
+  });
+}
+
+export function listGitHubIssues(repoFullName: string, state?: string | null): Promise<GitHubIssue[]> {
+  return call("github_list_issues", { repoFullName, state: state ?? null }, () =>
+    (fallbackGitHubIssues[repoFullName] ?? [])
+      .filter((issue) => !state || state === "all" || issue.state === state)
+      .map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
+  );
+}
+
+export function createGitHubIssue(
+  repoFullName: string,
+  request: GitHubCreateIssueRequest,
+): Promise<GitHubIssue> {
+  return call("github_create_issue", { repoFullName, request }, () => {
+    const title = request.title.trim();
+    if (!title) throw new Error("Issue 标题不能为空");
+    const issues = fallbackGitHubIssues[repoFullName] ?? [];
+    const issue: GitHubIssue = {
+      number: Math.max(0, ...issues.map((item) => item.number)) + 1,
+      title,
+      state: "open",
+      body: request.body?.trim() || null,
+      labels: [...request.labels],
+      assignees: [...request.assignees],
+      htmlUrl: `https://github.com/${repoFullName}/issues/${issues.length + 1}`,
+      updatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    };
+    fallbackGitHubIssues[repoFullName] = [issue, ...issues];
+    return { ...issue, labels: [...issue.labels], assignees: [...issue.assignees] };
+  });
+}
+
+export function updateGitHubIssue(
+  repoFullName: string,
+  issueNumber: number,
+  request: GitHubUpdateIssueRequest,
+): Promise<GitHubIssue> {
+  return call("github_update_issue", { repoFullName, issueNumber, request }, () => {
+    const issues = fallbackGitHubIssues[repoFullName] ?? [];
+    const current = issues.find((issue) => issue.number === issueNumber);
+    if (!current) throw new Error(`未找到 Issue #${issueNumber}`);
+    const updated: GitHubIssue = {
+      ...current,
+      ...request,
+      title: request.title ?? current.title,
+      body: request.body ?? current.body,
+      labels: request.labels ? [...request.labels] : [...current.labels],
+      assignees: request.assignees ? [...request.assignees] : [...current.assignees],
+      updatedAt: new Date().toISOString(),
+    };
+    fallbackGitHubIssues[repoFullName] = issues.map((issue) => issue.number === issueNumber ? updated : issue);
+    return { ...updated, labels: [...updated.labels], assignees: [...updated.assignees] };
   });
 }
 
