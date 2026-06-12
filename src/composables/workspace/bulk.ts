@@ -1,6 +1,7 @@
 import type { BulkOperation } from "../../services/workspace";
 import { bulkSyncRepoIds, rememberRecentSync, state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
+import { refreshLanguageStatsForRepos } from "./repositories";
 
 export async function previewBulk(operation: BulkOperation) {
   const service = await loadWorkspaceService();
@@ -50,11 +51,14 @@ function applyBulkPreview(preview: NonNullable<typeof state.bulkPreview>) {
 
 function applyBulkResults(results: typeof state.bulkResults) {
   state.bulkResults = results;
+  const refreshedRepoIds: string[] = [];
   for (const result of results) {
     if (result.summary) {
       upsertRepo(result.summary);
+      refreshedRepoIds.push(result.repoId);
     }
   }
+  if (refreshedRepoIds.length) void refreshLanguageStatsForRepos(refreshedRepoIds);
   if (state.bulkPreview) {
     rememberRecentSync(state.bulkPreview, results);
   }

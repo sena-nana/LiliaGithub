@@ -115,8 +115,10 @@ export function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
 
 export function upsertRepo(summary: RepoSummary) {
   const index = state.repos.findIndex((repo) => repo.id === summary.id);
+  let nextSummary = summary;
   if (index >= 0) {
-    state.repos[index] = mergeRepoSummary(state.repos[index], summary);
+    nextSummary = mergeRepoSummary(state.repos[index], summary);
+    state.repos[index] = nextSummary;
   } else {
     state.repos.push(summary);
   }
@@ -124,7 +126,7 @@ export function upsertRepo(summary: RepoSummary) {
   if (detail) {
     state.repoDetails[summary.id] = {
       ...detail,
-      summary,
+      summary: nextSummary,
     };
   }
 }

@@ -68,10 +68,21 @@ describe("基础路由", () => {
     expect(await screen.findByText(/HEAD 已提交文件 · 刷新于/)).toBeInTheDocument();
     expect(await screen.findByText("TypeScript")).toBeInTheDocument();
     expect(await screen.findByText("50%")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新语言" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "含改动" }));
     expect(await screen.findByText(/包含未提交改动 · 刷新于/)).toBeInTheDocument();
     expect(await screen.findByText("49%")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(2);
+  });
+
+  it("总览页语言图表和列表可跳转到对应仓库", async () => {
+    const { router } = await renderAt("/");
+
+    const languageLink = await screen.findByRole("link", { name: /TypeScript：50%/ });
+    await fireEvent.click(languageLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
   });
 
   it("首页 GitHub 贡献图支持空状态和错误重试", async () => {

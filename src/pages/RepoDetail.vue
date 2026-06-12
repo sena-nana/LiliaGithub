@@ -51,6 +51,7 @@ const {
   launchStatus,
   launchLogs,
   launchLoading,
+  languageStatsRefreshing,
   launchState,
   launchRunning,
   hasLaunchCommand,
@@ -112,7 +113,12 @@ const {
         </div>
       </div>
       <div class="repo-header__actions" aria-label="仓库操作">
-        <button type="button" class="ghost" :disabled="actionRunning" @click="load">
+        <button
+          type="button"
+          class="ghost"
+          :disabled="actionRunning || languageStatsRefreshing"
+          @click="load"
+        >
           <RefreshCw :size="14" aria-hidden="true" />
           刷新
         </button>
