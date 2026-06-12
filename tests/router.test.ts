@@ -30,8 +30,11 @@ async function overrideLiliaConflict(conflict: RepoConflictState) {
 }
 
 async function clickOverviewSync() {
-  const syncButtons = await screen.findAllByRole("button", { name: "一键同步" });
-  await fireEvent.click(syncButtons[1]);
+  const main = document.querySelector("main");
+  if (!(main instanceof HTMLElement)) throw new Error("未找到主内容区域");
+  await screen.findByRole("heading", { level: 1, name: "项目总览" });
+  await within(main).findByText("LiliaGithub");
+  await fireEvent.click(within(main).getByRole("button", { name: "一键同步" }));
 }
 
 async function mockLiliaGithubSyncFailure() {
