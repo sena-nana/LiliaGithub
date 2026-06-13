@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
@@ -124,6 +124,8 @@ const githubReposError = ref<string | null>(null);
 const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
 const githubIssuesLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
+const repoOverviewGrid = ref<HTMLElement | null>(null);
+const repoOverviewCardMaxHeight = ref("calc(100dvh - 96px)");
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -189,10 +191,47 @@ const githubTimelineEvents = computed<GitHubTimelineEvent[]>(() =>
     .slice(0, GITHUB_TIMELINE_EVENT_LIMIT),
 );
 
+let repoOverviewHeightFrame = 0;
+
+function updateRepoOverviewCardHeight() {
+  const grid = repoOverviewGrid.value;
+  if (!grid) return;
+  const bottomPadding = window.innerWidth <= 900 ? 12 : 20;
+  const { top } = grid.getBoundingClientRect();
+  const rowGap = window.innerWidth <= 900 ? 12 : 0;
+  const availableHeight = Math.floor(window.innerHeight - top - bottomPadding - rowGap);
+  repoOverviewCardMaxHeight.value = `${Math.max(160, availableHeight)}px`;
+}
+
+function scheduleRepoOverviewCardHeightUpdate() {
+  if (repoOverviewHeightFrame) return;
+  repoOverviewHeightFrame = window.requestAnimationFrame(() => {
+    repoOverviewHeightFrame = 0;
+    updateRepoOverviewCardHeight();
+  });
+}
+
+onMounted(() => {
+  scheduleRepoOverviewCardHeightUpdate();
+  window.addEventListener("resize", scheduleRepoOverviewCardHeightUpdate);
+  window.addEventListener("scroll", scheduleRepoOverviewCardHeightUpdate, true);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("resize", scheduleRepoOverviewCardHeightUpdate);
+  window.removeEventListener("scroll", scheduleRepoOverviewCardHeightUpdate, true);
+  if (repoOverviewHeightFrame) {
+    window.cancelAnimationFrame(repoOverviewHeightFrame);
+    repoOverviewHeightFrame = 0;
+  }
+});
+
 watch(
   () => workspace.isReady.value,
   (ready) => {
-    if (ready) void loadGitHubRepoStatus();
+    if (!ready) return;
+    void loadGitHubRepoStatus();
+    void nextTick(scheduleRepoOverviewCardHeightUpdate);
   },
   { immediate: true },
 );
@@ -1066,52 +1105,58 @@ async function addLocalRepo() {
         </div>
       </div>
 
-      <div class="repo-overview-grid">
+      <div
+        ref="repoOverviewGrid"
+        class="repo-overview-grid"
+        :style="{ '--repo-overview-card-max-height': repoOverviewCardMaxHeight }"
+      >
         <div class="card github-timeline-card">
           <div class="repo-status-heading">
             <h2>GitHub 时间线</h2>
             <span>{{ githubTimelineEvents.length }} 个事件</span>
           </div>
-          <p v-if="(githubReposLoading || githubIssuesLoading) && !githubTimelineEvents.length" class="repo-status-empty">
-            正在加载 GitHub 时间线...
-          </p>
-          <p v-else-if="!githubTimelineEvents.length" class="repo-status-empty">暂无 GitHub 事件</p>
-          <ol v-else class="github-timeline-list" aria-label="GitHub 时间线列表">
-            <li
-              v-for="event in githubTimelineEvents"
-              :key="event.id"
-              class="github-timeline-row"
-            >
-              <span class="github-timeline-row__rail" aria-hidden="true">
-                <span class="github-timeline-row__node">
-                  <FolderGit2 v-if="event.kind === 'repo'" :size="14" aria-hidden="true" />
-                  <GitCommitHorizontal v-else-if="event.kind === 'commit'" :size="14" aria-hidden="true" />
-                  <CircleDot v-else-if="event.kind === 'issue'" :size="14" aria-hidden="true" />
-                  <RefreshCw v-else :size="14" aria-hidden="true" />
+          <div class="home-scroll-card__body">
+            <p v-if="(githubReposLoading || githubIssuesLoading) && !githubTimelineEvents.length" class="repo-status-empty">
+              正在加载 GitHub 时间线...
+            </p>
+            <p v-else-if="!githubTimelineEvents.length" class="repo-status-empty">暂无 GitHub 事件</p>
+            <ol v-else class="github-timeline-list" aria-label="GitHub 时间线列表">
+              <li
+                v-for="event in githubTimelineEvents"
+                :key="event.id"
+                class="github-timeline-row"
+              >
+                <span class="github-timeline-row__rail" aria-hidden="true">
+                  <span class="github-timeline-row__node">
+                    <FolderGit2 v-if="event.kind === 'repo'" :size="14" aria-hidden="true" />
+                    <GitCommitHorizontal v-else-if="event.kind === 'commit'" :size="14" aria-hidden="true" />
+                    <CircleDot v-else-if="event.kind === 'issue'" :size="14" aria-hidden="true" />
+                    <RefreshCw v-else :size="14" aria-hidden="true" />
+                  </span>
                 </span>
-              </span>
-              <div class="github-timeline-row__body">
-                <div class="github-timeline-row__head">
-                  <a
-                    v-if="event.href?.startsWith('http')"
-                    class="github-timeline-row__title"
-                    :href="event.href"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {{ event.title }}
-                  </a>
-                  <RouterLink v-else-if="event.href" class="github-timeline-row__title" :to="event.href">
-                    {{ event.title }}
-                  </RouterLink>
-                  <strong v-else class="github-timeline-row__title">{{ event.title }}</strong>
-                  <span class="github-timeline-row__detail">{{ event.detail }}</span>
-                  <time :datetime="new Date(event.timestamp).toISOString()">{{ formatTimelineTime(event.timestamp) }}</time>
+                <div class="github-timeline-row__body">
+                  <div class="github-timeline-row__head">
+                    <a
+                      v-if="event.href?.startsWith('http')"
+                      class="github-timeline-row__title"
+                      :href="event.href"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {{ event.title }}
+                    </a>
+                    <RouterLink v-else-if="event.href" class="github-timeline-row__title" :to="event.href">
+                      {{ event.title }}
+                    </RouterLink>
+                    <strong v-else class="github-timeline-row__title">{{ event.title }}</strong>
+                    <span class="github-timeline-row__detail">{{ event.detail }}</span>
+                    <time :datetime="new Date(event.timestamp).toISOString()">{{ formatTimelineTime(event.timestamp) }}</time>
+                  </div>
+                  <p>{{ event.summary }}</p>
                 </div>
-                <p>{{ event.summary }}</p>
-              </div>
-            </li>
-          </ol>
+              </li>
+            </ol>
+          </div>
         </div>
 
         <div class="card repo-status-card">
@@ -1125,76 +1170,78 @@ async function addLocalRepo() {
               重试
             </button>
           </p>
-          <div class="repo-status-list" aria-label="仓库状态列表">
-            <div class="repo-status-head" aria-hidden="true">
-              <span>GitHub 项目</span>
-              <span>处理</span>
-            </div>
-            <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
-            <div
-              v-for="{ githubRepo, localRepo, action } in repoStatusRows"
-              :key="githubRepo.fullName"
-              class="repo-status-row"
-              :class="{ 'is-cloned': localRepo }"
-              :role="localRepo ? 'link' : undefined"
-              :tabindex="localRepo ? 0 : undefined"
-              :aria-label="localRepo ? `打开 ${githubRepo.fullName}` : undefined"
-              :title="localRepo ? localRepo.path : githubRepo.htmlUrl"
-              @click="localRepo && router.push(repoDetailPath(localRepo))"
-              @keydown.enter.prevent="localRepo && router.push(repoDetailPath(localRepo))"
-              @keydown.space.prevent="localRepo && router.push(repoDetailPath(localRepo))"
-            >
-              <strong class="repo-status-row__name">
-                {{ githubRepo.fullName }}
-              </strong>
-              <span class="repo-status-row__action">
-                <template v-if="localRepo">
-                  <template v-if="action">
-                    <span
-                      class="repo-action-status"
-                      :class="`repo-action-status--${action.tone}`"
-                      :title="action.title"
-                    >
-                      {{ action.status }}
-                    </span>
-                    <RouterLink
-                      class="repo-action-link"
-                      :to="action.to"
-                      :title="action.title"
-                      @click.stop
-                    >
-                      {{ action.label }}
-                    </RouterLink>
+          <div class="home-scroll-card__body">
+            <div class="repo-status-list" aria-label="仓库状态列表">
+              <div class="repo-status-head" aria-hidden="true">
+                <span>GitHub 项目</span>
+                <span>处理</span>
+              </div>
+              <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
+              <div
+                v-for="{ githubRepo, localRepo, action } in repoStatusRows"
+                :key="githubRepo.fullName"
+                class="repo-status-row"
+                :class="{ 'is-cloned': localRepo }"
+                :role="localRepo ? 'link' : undefined"
+                :tabindex="localRepo ? 0 : undefined"
+                :aria-label="localRepo ? `打开 ${githubRepo.fullName}` : undefined"
+                :title="localRepo ? localRepo.path : githubRepo.htmlUrl"
+                @click="localRepo && router.push(repoDetailPath(localRepo))"
+                @keydown.enter.prevent="localRepo && router.push(repoDetailPath(localRepo))"
+                @keydown.space.prevent="localRepo && router.push(repoDetailPath(localRepo))"
+              >
+                <strong class="repo-status-row__name">
+                  {{ githubRepo.fullName }}
+                </strong>
+                <span class="repo-status-row__action">
+                  <template v-if="localRepo">
+                    <template v-if="action">
+                      <span
+                        class="repo-action-status"
+                        :class="`repo-action-status--${action.tone}`"
+                        :title="action.title"
+                      >
+                        {{ action.status }}
+                      </span>
+                      <RouterLink
+                        class="repo-action-link"
+                        :to="action.to"
+                        :title="action.title"
+                        @click.stop
+                      >
+                        {{ action.label }}
+                      </RouterLink>
+                    </template>
+                    <span v-else class="repo-action-status repo-action-status--muted">已 clone</span>
                   </template>
-                  <span v-else class="repo-action-status repo-action-status--muted">已 clone</span>
-                </template>
-                <button
-                  v-else
-                  type="button"
-                  class="repo-action-link"
-                  :disabled="Boolean(cloningFullName)"
-                  @click.stop="cloneGitHubRepo(githubRepo)"
-                >
-                  <LoaderCircle
-                    v-if="cloningFullName === githubRepo.fullName"
-                    :size="13"
-                    aria-hidden="true"
-                    class="sb-spin"
-                  />
-                  克隆
-                </button>
-              </span>
+                  <button
+                    v-else
+                    type="button"
+                    class="repo-action-link"
+                    :disabled="Boolean(cloningFullName)"
+                    @click.stop="cloneGitHubRepo(githubRepo)"
+                  >
+                    <LoaderCircle
+                      v-if="cloningFullName === githubRepo.fullName"
+                      :size="13"
+                      aria-hidden="true"
+                      class="sb-spin"
+                    />
+                    克隆
+                  </button>
+                </span>
+              </div>
+              <button
+                v-if="githubReposNextPage"
+                type="button"
+                class="repo-status-more"
+                :disabled="githubReposLoadingMore"
+                @click="loadMoreGitHubRepos"
+              >
+                <LoaderCircle v-if="githubReposLoadingMore" :size="13" aria-hidden="true" class="sb-spin" />
+                加载更多
+              </button>
             </div>
-            <button
-              v-if="githubReposNextPage"
-              type="button"
-              class="repo-status-more"
-              :disabled="githubReposLoadingMore"
-              @click="loadMoreGitHubRepos"
-            >
-              <LoaderCircle v-if="githubReposLoadingMore" :size="13" aria-hidden="true" class="sb-spin" />
-              加载更多
-            </button>
           </div>
         </div>
       </div>
@@ -1701,17 +1748,56 @@ async function addLocalRepo() {
 }
 
 .repo-overview-grid {
+  --repo-overview-card-max-height: calc(100dvh - 96px);
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  grid-template-rows: minmax(0, auto);
+  align-items: start;
   gap: 12px;
+  min-width: 0;
 }
 
 .github-timeline-card,
 .repo-status-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-height: var(--repo-overview-card-max-height);
+  margin-bottom: 0;
   padding-bottom: 10px;
 }
 
+.home-scroll-card__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.home-scroll-card__body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.home-scroll-card__body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.home-scroll-card__body::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+.home-scroll-card__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .repo-status-heading {
+  flex: 0 0 auto;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -1867,7 +1953,11 @@ async function addLocalRepo() {
 }
 
 .repo-status-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   padding: 0 8px 5px;
+  background: var(--bg-elev);
   color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
@@ -2114,6 +2204,11 @@ async function addLocalRepo() {
   .repo-overview-grid,
   .sync-columns {
     grid-template-columns: 1fr;
+  }
+
+  .github-timeline-card,
+  .repo-status-card {
+    max-height: min(520px, var(--repo-overview-card-max-height));
   }
 
   .repo-status-head {
