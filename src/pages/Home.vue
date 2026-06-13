@@ -183,19 +183,30 @@ function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   return tab ? `${path}?tab=${tab}` : path;
 }
 
-function navigateLanguageSlice(to: string, event: MouseEvent) {
+function navigateLanguageSlice(to: string, event: Event) {
+  const mouseEvent = event instanceof MouseEvent ? event : null;
   if (
     event.defaultPrevented
-    || event.button > 0
-    || event.altKey
-    || event.ctrlKey
-    || event.metaKey
-    || event.shiftKey
+    || (mouseEvent && (
+      mouseEvent.button > 0
+      || mouseEvent.altKey
+      || mouseEvent.ctrlKey
+      || mouseEvent.metaKey
+      || mouseEvent.shiftKey
+    ))
   ) {
     return;
   }
   event.preventDefault();
   void router.push(to);
+}
+
+function navigateLanguagePie(event: Event) {
+  const link = event.target instanceof Element
+    ? event.target.closest<HTMLAnchorElement>(".language-pie__link")
+    : null;
+  const to = link?.dataset.to;
+  if (to) navigateLanguageSlice(to, event);
 }
 
 function mergeLanguageTotals(totals: LanguageTotal[]) {
@@ -703,7 +714,13 @@ async function refreshLanguageStats() {
           <p v-if="languageRefreshError" class="language-error">{{ languageRefreshError }}</p>
           <p v-if="!languageOverview.slices.length" class="language-empty">暂无语言数据</p>
           <div v-else class="language-chart" aria-label="编程语言占比图">
-            <svg class="language-pie" viewBox="0 0 42 42" role="img" aria-label="编程语言占比饼图">
+            <svg
+              class="language-pie"
+              viewBox="0 0 42 42"
+              role="img"
+              aria-label="编程语言占比饼图"
+              @click="navigateLanguagePie"
+            >
               <circle class="language-pie__track" cx="21" cy="21" r="15.9155" />
               <a
                 v-for="slice in languageOverview.slices"
@@ -711,6 +728,7 @@ async function refreshLanguageStats() {
                 class="language-pie__link"
                 :href="router.resolve(slice.to).href"
                 :aria-label="slice.title"
+                :data-to="slice.to"
                 @click="navigateLanguageSlice(slice.to, $event)"
               >
                 <circle
