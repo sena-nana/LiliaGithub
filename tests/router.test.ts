@@ -153,6 +153,7 @@ describe("基础路由", () => {
           githubRepoSummary("sena-nana/LiliaGithub"),
           githubRepoSummary("sena-nana/NewRepo", {
             description: "Not cloned yet",
+            private: true,
             updatedAt: "2026-06-13T08:00:00Z",
           }),
         ],
@@ -166,6 +167,7 @@ describe("基础路由", () => {
     expect(screen.queryByText("Not cloned yet")).toBeNull();
     const row = within(repoStatusList).getByText("sena-nana/NewRepo").closest(".repo-status-row");
     expect(row).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("私有")).toBeInTheDocument();
     expect(within(row as HTMLElement).getByRole("button", { name: "克隆" })).toBeInTheDocument();
 
     await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "克隆" }));
