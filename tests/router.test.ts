@@ -84,8 +84,10 @@ describe("基础路由", () => {
     const chartLink = await screen.findByRole("link", { name: /TypeScript：50%/ });
     await fireEvent.click(chartLink);
 
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
 
     await router.push("/");
     expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
@@ -95,8 +97,10 @@ describe("基础路由", () => {
     expect(listLink).toBeInTheDocument();
     await fireEvent.click(listLink);
 
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
   });
 
   it("首页 GitHub 贡献图支持空状态和错误重试", async () => {
