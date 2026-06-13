@@ -98,6 +98,20 @@ type LanguageTotal = {
 type LanguageScope = "head" | "workingTree";
 
 const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
+const GITHUB_TIMELINE_EVENT_LIMIT = 12;
+const GITHUB_TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
+const GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS = 5 * 60 * 1000;
+const GITHUB_TIMELINE_ISSUE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const GITHUB_TIMELINE_ISSUES_PER_REPO = 100;
+
+type GitHubTimelineIssueCacheEntry = {
+  repoFullName: string;
+  since: string;
+  fetchedAt: number;
+  issues: GitHubIssue[];
+};
+
+type GitHubTimelineIssueCache = Record<string, GitHubTimelineIssueCacheEntry | undefined>;
 
 const languageScope = ref<LanguageScope>("head");
 const discovering = ref(false);
@@ -169,7 +183,10 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
 );
 
 const githubTimelineEvents = computed<GitHubTimelineEvent[]>(() =>
-  repoStatusRows.value.flatMap((row) => buildGitHubTimelineEvents(row)).sort((a, b) => b.timestamp - a.timestamp),
+  repoStatusRows.value
+    .flatMap((row) => buildGitHubTimelineEvents(row))
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, GITHUB_TIMELINE_EVENT_LIMIT),
 );
 
 watch(
@@ -228,30 +245,181 @@ function applyGitHubRepoPage(
 }
 
 function githubRepoLoadErrorMessage(err: unknown) {
-  if (isGitHubBindingExpiredError(err)) return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
+  if (isGitHubBindingExpiredError(err)) {
+    clearGitHubTimelineIssueCache();
+    return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
+  }
   return `GitHub 仓库列表加载失败：${String(err)}`;
 }
 
 async function loadGitHubTimelineIssues(repos: GitHubRepoSummary[]) {
-  const missingRepos = repos.filter((repo) => githubIssuesByRepo.value[repo.fullName] == null);
+  const since = gitHubTimelineIssueSince();
+  const now = Date.now();
+  const cache = readGitHubTimelineIssueCache();
+  const nextIssuesByRepo = { ...githubIssuesByRepo.value };
+  for (const repo of repos) {
+    if (nextIssuesByRepo[repo.fullName] != null) continue;
+    const cached = cache[repo.fullName];
+    if (cached && isGitHubTimelineIssueCacheFresh(cached, now)) {
+      nextIssuesByRepo[repo.fullName] = filterRecentGitHubIssues(cached.issues, since);
+    }
+  }
+  githubIssuesByRepo.value = nextIssuesByRepo;
+  const missingRepos = repos.filter((repo) => nextIssuesByRepo[repo.fullName] == null);
   if (!missingRepos.length) return;
   githubIssuesLoading.value = true;
   try {
-    const entries = await Promise.all(
-      missingRepos.map(async (repo) => {
-        try {
-          return [repo.fullName, await listGitHubIssues(repo.fullName, "all")] as const;
-        } catch {
-          return [repo.fullName, []] as const;
-        }
-      }),
-    );
-    githubIssuesByRepo.value = {
-      ...githubIssuesByRepo.value,
-      ...Object.fromEntries(entries),
-    };
+    const fetchedEntries = await Promise.all(missingRepos.map((repo) => fetchGitHubTimelineIssues(repo, since)));
+    for (const [repoFullName, issues] of fetchedEntries) {
+      nextIssuesByRepo[repoFullName] = issues;
+    }
+    githubIssuesByRepo.value = nextIssuesByRepo;
+    writeGitHubTimelineIssueCache(cache, fetchedEntries, since);
   } finally {
     githubIssuesLoading.value = false;
+  }
+}
+
+async function fetchGitHubTimelineIssues(
+  repo: GitHubRepoSummary,
+  since: string,
+): Promise<readonly [string, GitHubIssue[]]> {
+  try {
+    const issues = await listGitHubIssues(repo.fullName, {
+      state: "all",
+      perPage: GITHUB_TIMELINE_ISSUES_PER_REPO,
+      sort: "updated",
+      direction: "desc",
+      since,
+    });
+    return [repo.fullName, filterRecentGitHubIssues(issues, since)] as const;
+  } catch (err) {
+    if (isGitHubBindingExpiredError(err)) clearGitHubTimelineIssueCache();
+    return [repo.fullName, []] as const;
+  }
+}
+
+function gitHubTimelineIssueSince() {
+  return new Date(Date.now() - GITHUB_TIMELINE_ISSUE_WINDOW_MS).toISOString();
+}
+
+function filterRecentGitHubIssues(issues: readonly GitHubIssue[], since: string) {
+  const sinceTimestamp = parseGitHubTime(since);
+  return issues
+    .filter((issue) => parseGitHubTime(issue.updatedAt) >= sinceTimestamp)
+    .map(cloneGitHubIssue);
+}
+
+function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
+  return {
+    ...issue,
+    labels: [...issue.labels],
+    assignees: [...issue.assignees],
+  };
+}
+
+function isGitHubTimelineIssueCacheFresh(entry: GitHubTimelineIssueCacheEntry, now: number) {
+  return Number.isFinite(entry.fetchedAt) &&
+    now - entry.fetchedAt >= 0 &&
+    now - entry.fetchedAt < GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS;
+}
+
+function readGitHubTimelineIssueCache(): GitHubTimelineIssueCache {
+  try {
+    const raw = localStorage.getItem(GITHUB_TIMELINE_ISSUE_CACHE_KEY);
+    if (!raw) return {};
+    return parseGitHubTimelineIssueCache(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+function parseGitHubTimelineIssueCache(value: unknown): GitHubTimelineIssueCache {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries: GitHubTimelineIssueCache = {};
+  for (const [repoFullName, rawEntry] of Object.entries(value)) {
+    const entry = parseGitHubTimelineIssueCacheEntry(repoFullName, rawEntry);
+    if (entry) entries[repoFullName] = entry;
+  }
+  return entries;
+}
+
+function parseGitHubTimelineIssueCacheEntry(
+  repoFullName: string,
+  value: unknown,
+): GitHubTimelineIssueCacheEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entry = value as Partial<GitHubTimelineIssueCacheEntry>;
+  if (entry.repoFullName !== repoFullName) return null;
+  if (typeof entry.since !== "string" || typeof entry.fetchedAt !== "number" || !Array.isArray(entry.issues)) {
+    return null;
+  }
+  return {
+    repoFullName,
+    since: entry.since,
+    fetchedAt: entry.fetchedAt,
+    issues: entry.issues
+      .map(parseCachedGitHubIssue)
+      .filter((issue): issue is GitHubIssue => issue != null),
+  };
+}
+
+function parseCachedGitHubIssue(value: unknown): GitHubIssue | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const issue = value as Partial<GitHubIssue>;
+  if (
+    typeof issue.number !== "number" ||
+    typeof issue.title !== "string" ||
+    typeof issue.state !== "string" ||
+    typeof issue.htmlUrl !== "string" ||
+    typeof issue.updatedAt !== "string" ||
+    typeof issue.createdAt !== "string"
+  ) {
+    return null;
+  }
+  return {
+    number: issue.number,
+    title: issue.title,
+    state: issue.state,
+    body: typeof issue.body === "string" || issue.body === null ? issue.body : null,
+    labels: Array.isArray(issue.labels) ? issue.labels.filter((label): label is string => typeof label === "string") : [],
+    assignees: Array.isArray(issue.assignees)
+      ? issue.assignees.filter((assignee): assignee is string => typeof assignee === "string")
+      : [],
+    htmlUrl: issue.htmlUrl,
+    updatedAt: issue.updatedAt,
+    createdAt: issue.createdAt,
+  };
+}
+
+function writeGitHubTimelineIssueCache(
+  cache: GitHubTimelineIssueCache,
+  entries: readonly (readonly [string, GitHubIssue[]])[],
+  since: string,
+) {
+  const next: GitHubTimelineIssueCache = { ...cache };
+  const fetchedAt = Date.now();
+  for (const [repoFullName, issues] of entries) {
+    next[repoFullName] = {
+      repoFullName,
+      since,
+      fetchedAt,
+      issues: issues.map(cloneGitHubIssue),
+    };
+  }
+  try {
+    localStorage.setItem(GITHUB_TIMELINE_ISSUE_CACHE_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore quota / privacy mode errors */
+  }
+}
+
+function clearGitHubTimelineIssueCache() {
+  githubIssuesByRepo.value = {};
+  try {
+    localStorage.removeItem(GITHUB_TIMELINE_ISSUE_CACHE_KEY);
+  } catch {
+    /* ignore storage errors */
   }
 }
 
@@ -424,7 +592,7 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
       title: `Issue #${issue.number}`,
       detail: issue.title,
       summary: githubRepo.fullName,
-      timestamp: parseGitHubTime(issue.createdAt),
+      timestamp: parseGitHubTime(issue.updatedAt),
       href: issue.htmlUrl,
     });
   }

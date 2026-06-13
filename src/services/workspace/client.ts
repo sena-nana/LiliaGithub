@@ -13,6 +13,7 @@ import type {
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssue,
+  GitHubIssueListOptions,
   GitHubRemoteBranch,
   GitHubRepoManagement,
   GitHubRepoOwner,
@@ -238,9 +239,22 @@ export function createGitHubRemoteBranch(
   );
 }
 
-export function listGitHubIssues(repoFullName: string, state?: string | null): Promise<GitHubIssue[]> {
-  return call("github_list_issues", { repoFullName, state: state ?? null }, () =>
-    fallback.listGitHubIssues(repoFullName, state),
+export function listGitHubIssues(
+  repoFullName: string,
+  stateOrOptions?: string | null | GitHubIssueListOptions,
+): Promise<GitHubIssue[]> {
+  const options = typeof stateOrOptions === "object" && stateOrOptions != null
+    ? stateOrOptions
+    : { state: stateOrOptions ?? null };
+  return call("github_list_issues", {
+    repoFullName,
+    state: options.state ?? null,
+    perPage: options.perPage ?? null,
+    sort: options.sort ?? null,
+    direction: options.direction ?? null,
+    since: options.since ?? null,
+  }, () =>
+    fallback.listGitHubIssues(repoFullName, options),
   );
 }
 
