@@ -34,7 +34,7 @@ export interface WorkspaceState {
   bulkResults: BulkSyncResult[];
   bulkRunning: boolean;
   recentSync: RecentBulkSyncState | null;
-  repoActionErrors: Record<string, string | undefined>;
+  repoActionErrors: Record<string, RepoActionErrorState | undefined>;
   githubContributions: GitHubContributionsState;
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
@@ -44,6 +44,11 @@ export interface RecentBulkSyncState {
   preview: BulkSyncPreview;
   results: BulkSyncResult[];
   retryingRepoIds: string[];
+  updatedAt: number;
+}
+
+export interface RepoActionErrorState {
+  message: string;
   updatedAt: number;
 }
 
@@ -171,15 +176,21 @@ export function bulkSyncRunningRepoIds() {
 }
 
 export function syncErrorByRepoId() {
-  const recentErrors = recentSyncErrorMap();
+  return new Map(
+    [...syncErrorDetailsByRepoId()].map(([repoId, error]) => [repoId, error.message]),
+  );
+}
+
+export function syncErrorDetailsByRepoId() {
+  const recentErrors = recentSyncErrorsByRepoId();
   if (recentErrors.size) return recentErrors;
   if (!state.bulkPreview || !["push", "sync"].includes(state.bulkPreview.operation)) {
-    return new Map<string, string>();
+    return new Map<string, RepoActionErrorState>();
   }
   return new Map(
     state.bulkResults
       .filter((result) => result.status === "error")
-      .map((result) => [result.repoId, result.message]),
+      .map((result) => [result.repoId, { message: result.message, updatedAt: state.recentSync?.updatedAt ?? 0 }]),
   );
 }
 
@@ -193,13 +204,20 @@ export function recentSyncErrorForRepo(repoId: string) {
 }
 
 export function repoActionErrorForRepo(repoId: string) {
+  return repoActionErrorDetailForRepo(repoId)?.message ?? null;
+}
+
+export function repoActionErrorDetailForRepo(repoId: string) {
   return state.repoActionErrors[repoId] ?? null;
 }
 
 export function setRepoActionError(repoId: string, message: string) {
   state.repoActionErrors = {
     ...state.repoActionErrors,
-    [repoId]: message,
+    [repoId]: {
+      message,
+      updatedAt: Date.now(),
+    },
   };
 }
 
@@ -253,10 +271,15 @@ function isRecentSyncIssue(repoId: string) {
   return Boolean(recentSyncErrorForRepo(repoId));
 }
 
-function recentSyncErrorMap() {
-  const errors = new Map<string, string>();
+function recentSyncErrorsByRepoId() {
+  const errors = new Map<string, RepoActionErrorState>();
   for (const result of state.recentSync?.results ?? []) {
-    if (result.status === "error") errors.set(result.repoId, result.message);
+    if (result.status === "error") {
+      errors.set(result.repoId, {
+        message: result.message,
+        updatedAt: state.recentSync?.updatedAt ?? 0,
+      });
+    }
   }
   return errors;
 }

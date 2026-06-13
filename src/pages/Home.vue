@@ -20,7 +20,7 @@ import {
 } from "@lucide/vue";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
-import { repoActionErrorForRepo, syncErrorByRepoId } from "../composables/workspace/state";
+import { repoActionErrorDetailForRepo, syncErrorDetailsByRepoId } from "../composables/workspace/state";
 import {
   isGitHubBindingExpiredError,
   listGitHubRepos,
@@ -37,7 +37,7 @@ import "../styles/page.css";
 const workspace = useWorkspace();
 const router = useRouter();
 const shellActions = useShellRepoActions();
-const syncErrors = computed(() => syncErrorByRepoId());
+const syncErrorDetails = computed(() => syncErrorDetailsByRepoId());
 
 type RepoAction = {
   status: string;
@@ -237,11 +237,12 @@ function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
 function applyGitHubRepoPage(
   page: { items: GitHubRepoSummary[]; nextPage: number | null },
   append = false,
+  refreshIssues = false,
 ) {
   githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
   githubReposNextPage.value = page.nextPage;
   githubReposError.value = null;
-  void loadGitHubTimelineIssues(page.items);
+  void loadGitHubTimelineIssues(page.items, refreshIssues);
 }
 
 function githubRepoLoadErrorMessage(err: unknown) {
@@ -252,11 +253,20 @@ function githubRepoLoadErrorMessage(err: unknown) {
   return `GitHub 仓库列表加载失败：${String(err)}`;
 }
 
-async function loadGitHubTimelineIssues(repos: GitHubRepoSummary[]) {
+async function loadGitHubTimelineIssues(
+  repos: GitHubRepoSummary[],
+  refresh = false,
+) {
   const since = gitHubTimelineIssueSince();
   const now = Date.now();
   const cache = readGitHubTimelineIssueCache();
   const nextIssuesByRepo = { ...githubIssuesByRepo.value };
+  if (refresh) {
+    for (const repo of repos) {
+      delete nextIssuesByRepo[repo.fullName];
+      delete cache[repo.fullName];
+    }
+  }
   for (const repo of repos) {
     if (nextIssuesByRepo[repo.fullName] != null) continue;
     const cached = cache[repo.fullName];
@@ -428,7 +438,7 @@ async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
   githubReposLoading.value = true;
   githubReposError.value = null;
   try {
-    applyGitHubRepoPage(await preloadGitHubRepos({ force: options.force }));
+    applyGitHubRepoPage(await preloadGitHubRepos({ force: options.force }), false, options.force);
   } catch (err) {
     githubRepos.value = [];
     githubReposNextPage.value = null;
@@ -491,7 +501,7 @@ function buildLanguageSlice(
 }
 
 function repoAction(repo: RepoSummary): RepoAction | null {
-  const syncError = syncErrors.value.get(repo.id);
+  const syncError = syncErrorDetails.value.get(repo.id)?.message ?? null;
   if (syncError) {
     return {
       status: "同步失败",
@@ -547,28 +557,28 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
     });
   }
 
-  const syncError = localRepo ? syncErrors.value.get(localRepo.id) : null;
+  const syncError = localRepo ? syncErrorDetails.value.get(localRepo.id) : null;
   if (localRepo && syncError) {
     addTimelineEvent(events, {
       id: `operation-sync-error:${localRepo.id}`,
       kind: "operation",
       title: "仓库操作失败",
-      detail: syncError,
+      detail: syncError.message,
       summary: githubRepo.fullName,
-      timestamp: workspace.state.recentSync?.updatedAt ?? Date.now(),
+      timestamp: syncError.updatedAt,
       href: repoDetailPath(localRepo),
     });
   }
 
-  const repoActionError = localRepo ? repoActionErrorForRepo(localRepo.id) : null;
+  const repoActionError = localRepo ? repoActionErrorDetailForRepo(localRepo.id) : null;
   if (localRepo && repoActionError) {
     addTimelineEvent(events, {
       id: `operation-error:${localRepo.id}`,
       kind: "operation",
       title: "仓库操作失败",
-      detail: repoActionError,
+      detail: repoActionError.message,
       summary: githubRepo.fullName,
-      timestamp: Date.now(),
+      timestamp: repoActionError.updatedAt,
       href: repoDetailPath(localRepo),
     });
   }

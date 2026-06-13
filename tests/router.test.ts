@@ -245,6 +245,25 @@ describe("基础路由", () => {
     expect(screen.queryByText("Issue #2")).toBeNull();
   });
 
+  it("总览页 GitHub 时间线使用操作失败记录时间排序", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T09:00:00Z"));
+    const { setRepoActionError } = await import("../src/composables/workspace/state");
+    setRepoActionError("LiliaGithub", "合并失败：not something we can merge");
+    vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+
+    await renderAt("/");
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    expect(await within(timeline).findByText("Issue #12")).toBeInTheDocument();
+    const rows = within(timeline).getAllByRole("listitem");
+    const issueIndex = rows.findIndex((row) => row.textContent?.includes("Issue #12"));
+    const errorIndex = rows.findIndex((row) => row.textContent?.includes("合并失败：not something we can merge"));
+    expect(issueIndex).toBeGreaterThanOrEqual(0);
+    expect(errorIndex).toBeGreaterThanOrEqual(0);
+    expect(issueIndex).toBeLessThan(errorIndex);
+  });
+
   it("总览页 GitHub 时间线命中持久缓存时不重复拉取 issue", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
@@ -294,6 +313,44 @@ describe("基础路由", () => {
     });
     expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
       .toBe(90);
+  });
+
+  it("总览页刷新仓库后重新拉取当前可见仓库的 issue", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/RefreshTimeline");
+    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    service.setFallbackGitHubIssuesForTests({
+      [repo.fullName]: [githubIssue(repo.fullName, 92, "2026-06-13T10:00:00Z")],
+    });
+    localStorage.setItem(TIMELINE_ISSUE_CACHE_KEY, JSON.stringify({
+      [repo.fullName]: {
+        repoFullName: repo.fullName,
+        since: "2026-06-06T12:00:00.000Z",
+        fetchedAt: Date.now() - 60_000,
+        issues: [githubIssue(repo.fullName, 91, "2026-06-13T09:00:00Z")],
+      },
+    }));
+
+    await renderAt("/");
+
+    expect(await screen.findByText("Issue #91")).toBeInTheDocument();
+    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(0);
+
+    const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" });
+    await waitFor(() => {
+      expect(refreshRepos).toBeEnabled();
+    });
+    await fireEvent.click(refreshRepos);
+
+    expect(await screen.findByText("Issue #92")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Issue #91")).toBeNull();
+    });
+    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+    expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
+      .toBe(92);
   });
 
   it("总览页 GitHub 项目加载失败时保留本地侧栏并可重试", async () => {

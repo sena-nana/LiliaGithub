@@ -20,7 +20,9 @@ import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/comp
 import {
   bulkSyncRepoIds,
   repoActionErrorForRepo,
+  repoActionErrorDetailForRepo,
   syncErrorByRepoId,
+  syncErrorDetailsByRepoId,
   recentSyncErrorForRepo,
   resetWorkspaceStateForTests,
   state,
@@ -274,6 +276,10 @@ describe("workspace incremental refresh", () => {
     };
 
     expect(syncErrorByRepoId().get(diverged.id)).toBe("合并产生冲突，请处理后推送");
+    expect(syncErrorDetailsByRepoId().get(diverged.id)).toEqual({
+      message: "合并产生冲突，请处理后推送",
+      updatedAt: 1,
+    });
     expect(recentSyncErrorForRepo(diverged.id)).toEqual({
       message: "合并产生冲突，请处理后推送",
       retrying: true,
@@ -373,6 +379,10 @@ describe("workspace incremental refresh", () => {
 
     await expect(mergePull(initial.id)).rejects.toThrow("合并失败：not something we can merge");
     expect(repoActionErrorForRepo(initial.id)).toBe("Error: 合并失败：not something we can merge");
+    expect(repoActionErrorDetailForRepo(initial.id)).toMatchObject({
+      message: "Error: 合并失败：not something we can merge",
+      updatedAt: expect.any(Number),
+    });
 
     await push(initial.id);
 
