@@ -141,16 +141,6 @@ const {
           <GitMerge :size="17" aria-hidden="true" />
         </button>
         <button
-          v-if="hasConflicts"
-          type="button"
-          class="overview-actions__btn overview-actions__btn--primary"
-          :disabled="actionRunning"
-          @click="showConflicts"
-        >
-          <TriangleAlert :size="17" aria-hidden="true" />
-          处理冲突
-        </button>
-        <button
           type="button"
           class="overview-actions__btn"
           title="GitHub"
@@ -171,6 +161,17 @@ const {
           <FolderOpen :size="17" aria-hidden="true" />
         </button>
         <button
+          v-if="hasConflicts"
+          type="button"
+          class="overview-actions__btn overview-actions__btn--primary"
+          :disabled="actionRunning"
+          @click="showConflicts"
+        >
+          <TriangleAlert :size="17" aria-hidden="true" />
+          处理冲突
+        </button>
+        <button
+          v-else
           type="button"
           class="overview-actions__btn overview-actions__btn--primary"
           :disabled="actionRunning || !summary?.ahead"
@@ -1253,6 +1254,24 @@ const {
   .repo-header__actions {
     align-self: flex-start;
     justify-content: flex-start;
+  }
+
+  .repo-header__actions.overview-actions {
+    align-self: stretch;
+    flex-wrap: wrap;
+    width: 100%;
+    height: auto;
+    min-height: 40px;
+    max-width: 100%;
+  }
+
+  .repo-header__actions .overview-actions__btn {
+    flex: 0 0 32px;
+  }
+
+  .repo-header__actions .overview-actions__btn--primary {
+    flex: 1 1 96px;
+    min-width: 96px;
   }
 
   .repo-header__meta {

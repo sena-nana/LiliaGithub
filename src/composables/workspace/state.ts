@@ -34,6 +34,7 @@ export interface WorkspaceState {
   bulkResults: BulkSyncResult[];
   bulkRunning: boolean;
   recentSync: RecentBulkSyncState | null;
+  repoActionErrors: Record<string, string | undefined>;
   githubContributions: GitHubContributionsState;
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
@@ -72,6 +73,7 @@ export const state = reactive<WorkspaceState>({
   bulkResults: [],
   bulkRunning: false,
   recentSync: null,
+  repoActionErrors: {},
   githubContributions: {
     days: [],
     meta: null,
@@ -204,6 +206,24 @@ export function recentSyncErrorForRepo(repoId: string) {
   };
 }
 
+export function repoActionErrorForRepo(repoId: string) {
+  return state.repoActionErrors[repoId] ?? null;
+}
+
+export function setRepoActionError(repoId: string, message: string) {
+  state.repoActionErrors = {
+    ...state.repoActionErrors,
+    [repoId]: message,
+  };
+}
+
+export function clearRepoActionError(repoId: string) {
+  if (!state.repoActionErrors[repoId]) return;
+  const next = { ...state.repoActionErrors };
+  delete next[repoId];
+  state.repoActionErrors = next;
+}
+
 export function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncResult[]) {
   if (!["push", "sync"].includes(preview.operation)) return;
   state.recentSync = {
@@ -274,6 +294,7 @@ export function resetWorkspaceStateForTests() {
   state.bulkResults = [];
   state.bulkRunning = false;
   state.recentSync = null;
+  state.repoActionErrors = {};
   state.githubContributions = {
     days: [],
     meta: null,
