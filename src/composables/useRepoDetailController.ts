@@ -368,10 +368,6 @@ export function useRepoDetailController() {
     });
   }
 
-  function pull() {
-    void runAction(() => workspace.pull(repoId.value));
-  }
-
   function mergePull() {
     void runAction(async () => {
       await workspace.mergePull(repoId.value);
@@ -566,7 +562,6 @@ export function useRepoDetailController() {
       stageSelected,
       unstageSelected,
       commitSelected,
-      pull,
       mergePull,
       push,
       showConflicts,

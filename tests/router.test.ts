@@ -216,6 +216,9 @@ describe("基础路由", () => {
     expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByRole("button", { name: "Push" })).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText("仓库操作")).getAllByRole("button").map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["刷新", "文件夹", "GitHub", "拉取", null]);
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
@@ -506,8 +509,9 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    expect(screen.getByRole("button", { name: "Pull" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "拉取并合并" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pull" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拉取并合并" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "拉取" })).toHaveLength(1);
   });
 
   it("设置页默认显示外观设置并使用设置侧栏", async () => {

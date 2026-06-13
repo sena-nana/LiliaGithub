@@ -2,7 +2,6 @@
 import {
   ExternalLink,
   FolderOpen,
-  GitMerge,
   GitPullRequestArrow,
   RefreshCw,
   TriangleAlert,
@@ -78,7 +77,6 @@ const {
   stageSelected,
   unstageSelected,
   commitSelected,
-  pull,
   mergePull,
   push,
   showConflicts,
@@ -123,22 +121,12 @@ const {
         <button
           type="button"
           class="overview-actions__btn"
-          title="Pull"
-          aria-label="Pull"
-          :disabled="actionRunning || dirtyCount() > 0"
-          @click="pull"
+          title="文件夹"
+          aria-label="文件夹"
+          :disabled="!summary?.path"
+          @click="openFolder"
         >
-          <GitPullRequestArrow :size="17" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="overview-actions__btn"
-          title="拉取并合并"
-          aria-label="拉取并合并"
-          :disabled="actionRunning || hasConflicts"
-          @click="mergePull"
-        >
-          <GitMerge :size="17" aria-hidden="true" />
+          <FolderOpen :size="17" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -153,12 +141,12 @@ const {
         <button
           type="button"
           class="overview-actions__btn"
-          title="文件夹"
-          aria-label="文件夹"
-          :disabled="!summary?.path"
-          @click="openFolder"
+          title="拉取"
+          aria-label="拉取"
+          :disabled="actionRunning || hasConflicts"
+          @click="mergePull"
         >
-          <FolderOpen :size="17" aria-hidden="true" />
+          <GitPullRequestArrow :size="17" aria-hidden="true" />
         </button>
         <button
           v-if="hasConflicts"
