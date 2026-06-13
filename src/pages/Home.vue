@@ -1803,26 +1803,6 @@ async function addLocalRepo() {
   overflow: auto;
   overscroll-behavior: contain;
   padding-right: 2px;
-  scrollbar-color: var(--border-strong) transparent;
-  scrollbar-width: thin;
-}
-
-.home-scroll-card__body::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.home-scroll-card__body::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: var(--border-strong);
-}
-
-.home-scroll-card__body::-webkit-scrollbar-thumb:hover {
-  background: var(--text-faint);
-}
-
-.home-scroll-card__body::-webkit-scrollbar-track {
-  background: transparent;
 }
 
 .repo-status-heading {
