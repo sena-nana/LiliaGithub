@@ -12,15 +12,15 @@ import RepoChangesPanel from "../components/repo/RepoChangesPanel.vue";
 import RepoCommitPanel from "../components/repo/RepoCommitPanel.vue";
 import RepoConflictsPanel from "../components/repo/RepoConflictsPanel.vue";
 import RepoHistoryPanel from "../components/repo/RepoHistoryPanel.vue";
-import RepoGitHubPanel from "../components/repo/RepoGitHubPanel.vue";
 import RepoLaunchPanel from "../components/repo/RepoLaunchPanel.vue";
+import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
 import RepoPushError from "../components/repo/RepoPushError.vue";
-import RepoStatusStrip from "../components/repo/RepoStatusStrip.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import "../styles/page.css";
 
 const {
   activeTab,
+  activeView,
   selectedFiles,
   commitMessage,
   pushAfter,
@@ -32,6 +32,7 @@ const {
   launchCommandInput,
   launchCwdInput,
   conflictChoices,
+  repoId,
   detail,
   summary,
   repoTitle,
@@ -50,7 +51,6 @@ const {
   launchLogs,
   launchLoading,
   languageStatsRefreshing,
-  launchState,
   launchRunning,
   hasLaunchCommand,
   selectedSummaryText,
@@ -66,9 +66,9 @@ const {
   conflictAbortText,
   conflictContinueText,
   tabs,
+  views,
   load,
   refreshLaunch,
-  dirtyCount,
   focusChange,
   focusConflict,
   toggleFile,
@@ -108,6 +108,20 @@ const {
         </div>
       </div>
       <div class="repo-header__actions overview-actions" aria-label="仓库操作">
+        <div class="repo-view-tabs" role="tablist" aria-label="仓库详情视图">
+          <button
+            v-for="view in views"
+            :key="view.key"
+            type="button"
+            class="repo-view-tabs__tab"
+            :class="{ 'is-active': activeView === view.key }"
+            role="tab"
+            :aria-selected="activeView === view.key"
+            @click="activeView = view.key"
+          >
+            {{ view.label }}
+          </button>
+        </div>
         <button
           type="button"
           class="overview-actions__btn"
@@ -171,17 +185,6 @@ const {
       </div>
     </header>
 
-    <RepoStatusStrip
-      v-if="summary"
-      :commits="statusCommits"
-      :summary="summary"
-      :launch-status="launchStatus"
-      :launch-config="launchConfig"
-      :launch-running="launchRunning"
-      :launch-state="launchState"
-      :dirty-count="dirtyCount"
-    />
-
     <p v-if="actionError" class="error-line">{{ actionError }}</p>
     <RepoPushError
       v-if="recentSyncError"
@@ -191,117 +194,121 @@ const {
       @retry="push"
     />
 
-    <div class="workbench-grid" :class="{ 'workbench-grid--conflicts': activeTab === 'conflicts' }">
-      <main class="workbench-main card">
-        <div class="repo-tabs" role="tablist" aria-label="仓库视图">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            type="button"
-            class="repo-tabs__tab"
-            :class="{ 'is-active': activeTab === tab.key }"
-            role="tab"
-            :aria-selected="activeTab === tab.key"
-            @click="activeTab = tab.key"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
-
-        <RepoChangesPanel
-          v-if="activeTab === 'changes'"
-          :changes="changes"
-          :selected-files="selectedFiles"
-          :selected-summary-text="selectedSummaryText"
-          :preview-change="previewChange"
-          @select-all="selectAll"
-          @stage-selected="stageSelected"
-          @unstage-selected="unstageSelected"
-          @focus-change="focusChange"
-          @toggle-file="toggleFile"
-        />
-
-        <RepoConflictsPanel
-          v-else-if="activeTab === 'conflicts'"
-          :conflict-operation-text="conflictOperationText"
-          :conflict-summary-text="conflictSummaryText"
-          :conflict-continue-text="conflictContinueText"
-          :conflict-abort-text="conflictAbortText"
-          :conflict-files="panelConflictFiles"
-          :conflict-operation-active="conflictOperationActive"
-          :conflicts="panelConflicts"
-          :focused-conflict="panelFocusedConflict"
-          :conflict-choices="conflictChoices"
-          :conflict-selected-count="conflictSelectedCount"
-          :conflict-accept-confirm="conflictAcceptConfirm"
-          :can-continue-conflict-operation="canContinueConflictOperation"
-          :can-resolve-selected-conflict="canResolveSelectedConflict"
-          :supported-conflict-operation="supportedConflictOperation"
-          :action-running="actionRunning"
-          @continue-conflict="continueConflict"
-          @abort-conflict="abortConflict"
-          @focus-conflict="focusConflict"
-          @pick-conflict-hunk="pickConflictHunk"
-          @resolve-selected-conflict="resolveSelectedConflict"
-          @accept-conflict="acceptConflict"
-          @mark-conflict-resolved="markConflictResolved"
-          @open-conflict-folder="openConflictFolder"
-        />
-
-        <RepoHistoryPanel
-          v-else-if="activeTab === 'history'"
-          :commits="statusCommits"
-          :commit-meta-title="commitMetaTitle"
-          @open-commit="openCommit"
-        />
-
-        <RepoBranchesPanel
-          v-else-if="activeTab === 'branches'"
-          :branches="detail?.branches ?? []"
-          @checkout="checkout"
-        />
-
-        <RepoGitHubPanel
-          v-else
+    <div class="repo-workbench__body">
+      <main v-if="activeView === 'project'" class="workbench-main card">
+        <RepoProjectPanel
+          :repo-id="repoId"
           :repo-full-name="summary?.githubFullName"
         />
       </main>
 
-      <aside class="workbench-side">
-        <RepoCommitPanel
-          v-model:commit-message="commitMessage"
-          v-model:push-after="pushAfter"
-          :selected-summary-text="selectedSummaryText"
-          :selected-file-preview="selectedFilePreview"
-          :selected-file-count="selectedFileList.length"
-          :has-conflicts="hasConflicts"
-          :can-commit="canCommit"
-          :action-running="actionRunning"
-          @commit="commitSelected"
-        />
+      <div v-else class="workbench-grid" :class="{ 'workbench-grid--conflicts': activeTab === 'conflicts' }">
+        <main class="workbench-main card">
+          <div class="repo-tabs" role="tablist" aria-label="仓库视图">
+            <button
+              v-for="tab in tabs"
+              :key="tab.key"
+              type="button"
+              class="repo-tabs__tab"
+              :class="{ 'is-active': activeTab === tab.key }"
+              role="tab"
+              :aria-selected="activeTab === tab.key"
+              @click="activeTab = tab.key"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
 
-        <RepoLaunchPanel
-          v-model:launch-command-input="launchCommandInput"
-          v-model:launch-cwd-input="launchCwdInput"
-          :loading="launchLoading"
-          :launch-editing="launchEditing"
-          :has-launch-command="hasLaunchCommand"
-          :launch-config="launchConfig"
-          :launch-status="launchStatus"
-          :launch-logs="launchLogs"
-          :launch-terminal-visible="launchTerminalVisible"
-          :action-running="actionRunning"
-          :launch-running="launchRunning"
-          @refresh="refreshLaunch"
-          @start="startLaunch"
-          @stop="stopLaunch"
-          @toggle-terminal="launchTerminalVisible = !launchTerminalVisible"
-          @edit-config="editLaunchConfig"
-          @save="saveLaunchConfig"
-          @cancel="cancelLaunchConfig"
-          @hide-terminal="launchTerminalVisible = false"
-        />
-      </aside>
+          <RepoChangesPanel
+            v-if="activeTab === 'changes'"
+            :changes="changes"
+            :selected-files="selectedFiles"
+            :selected-summary-text="selectedSummaryText"
+            :preview-change="previewChange"
+            @select-all="selectAll"
+            @stage-selected="stageSelected"
+            @unstage-selected="unstageSelected"
+            @focus-change="focusChange"
+            @toggle-file="toggleFile"
+          />
+
+          <RepoConflictsPanel
+            v-else-if="activeTab === 'conflicts'"
+            :conflict-operation-text="conflictOperationText"
+            :conflict-summary-text="conflictSummaryText"
+            :conflict-continue-text="conflictContinueText"
+            :conflict-abort-text="conflictAbortText"
+            :conflict-files="panelConflictFiles"
+            :conflict-operation-active="conflictOperationActive"
+            :conflicts="panelConflicts"
+            :focused-conflict="panelFocusedConflict"
+            :conflict-choices="conflictChoices"
+            :conflict-selected-count="conflictSelectedCount"
+            :conflict-accept-confirm="conflictAcceptConfirm"
+            :can-continue-conflict-operation="canContinueConflictOperation"
+            :can-resolve-selected-conflict="canResolveSelectedConflict"
+            :supported-conflict-operation="supportedConflictOperation"
+            :action-running="actionRunning"
+            @continue-conflict="continueConflict"
+            @abort-conflict="abortConflict"
+            @focus-conflict="focusConflict"
+            @pick-conflict-hunk="pickConflictHunk"
+            @resolve-selected-conflict="resolveSelectedConflict"
+            @accept-conflict="acceptConflict"
+            @mark-conflict-resolved="markConflictResolved"
+            @open-conflict-folder="openConflictFolder"
+          />
+
+          <RepoHistoryPanel
+            v-else-if="activeTab === 'history'"
+            :commits="statusCommits"
+            :commit-meta-title="commitMetaTitle"
+            @open-commit="openCommit"
+          />
+
+          <RepoBranchesPanel
+            v-else-if="activeTab === 'branches'"
+            :branches="detail?.branches ?? []"
+            @checkout="checkout"
+          />
+        </main>
+
+        <aside class="workbench-side">
+          <RepoCommitPanel
+            v-model:commit-message="commitMessage"
+            v-model:push-after="pushAfter"
+            :selected-summary-text="selectedSummaryText"
+            :selected-file-preview="selectedFilePreview"
+            :selected-file-count="selectedFileList.length"
+            :has-conflicts="hasConflicts"
+            :can-commit="canCommit"
+            :action-running="actionRunning"
+            @commit="commitSelected"
+          />
+
+          <RepoLaunchPanel
+            v-model:launch-command-input="launchCommandInput"
+            v-model:launch-cwd-input="launchCwdInput"
+            :loading="launchLoading"
+            :launch-editing="launchEditing"
+            :has-launch-command="hasLaunchCommand"
+            :launch-config="launchConfig"
+            :launch-status="launchStatus"
+            :launch-logs="launchLogs"
+            :launch-terminal-visible="launchTerminalVisible"
+            :action-running="actionRunning"
+            :launch-running="launchRunning"
+            @refresh="refreshLaunch"
+            @start="startLaunch"
+            @stop="stopLaunch"
+            @toggle-terminal="launchTerminalVisible = !launchTerminalVisible"
+            @edit-config="editLaunchConfig"
+            @save="saveLaunchConfig"
+            @cancel="cancelLaunchConfig"
+            @hide-terminal="launchTerminalVisible = false"
+          />
+        </aside>
+      </div>
     </div>
   </section>
 </template>
@@ -309,7 +316,11 @@ const {
 <style>
 .repo-workbench {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 14px;
+  height: calc(100vh - 76px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .repo-header {
@@ -317,8 +328,6 @@ const {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-soft);
 }
 
 .repo-header__identity {
@@ -371,55 +380,6 @@ const {
   flex-wrap: nowrap;
 }
 
-.repo-status-strip {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.repo-status-strip__item {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-}
-
-.repo-status-strip__item span {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.repo-status-strip__item strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.repo-status-strip__value--ok {
-  color: var(--ok);
-}
-
-.repo-status-strip__value--accent {
-  color: var(--accent);
-}
-
-.repo-status-strip__value--warn {
-  color: var(--warn);
-}
-
-.repo-status-strip__value--err {
-  color: var(--err);
-}
-
 .repo-push-error {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -455,11 +415,41 @@ const {
   font-size: 12px;
 }
 
+.repo-workbench__body {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .workbench-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
   align-items: start;
   gap: 14px;
+  height: 100%;
+  min-height: 0;
+}
+
+.repo-view-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.repo-view-tabs__tab {
+  height: 30px;
+  min-width: 92px;
+  padding: 0 12px;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.repo-view-tabs__tab.is-active {
+  background: var(--bg-active);
+  color: var(--text);
 }
 
 .workbench-grid--conflicts {
@@ -468,6 +458,10 @@ const {
 
 .workbench-main {
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: auto;
   padding: 0;
 }
 
@@ -475,6 +469,10 @@ const {
   display: grid;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: auto;
 }
 
 .workbench-grid--conflicts .workbench-side {
@@ -1193,10 +1191,6 @@ const {
 }
 
 @media (max-width: 1180px) {
-  .repo-status-strip {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .workbench-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1222,8 +1216,11 @@ const {
   }
 }
 @media (max-width: 760px) {
+  .repo-workbench {
+    height: calc(100vh - 60px);
+  }
+
   .repo-header,
-  .repo-status-strip,
   .repo-push-error,
   .conflict-workspace,
   .workbench-side {
@@ -1260,6 +1257,16 @@ const {
   .repo-header__actions .overview-actions__btn--primary {
     flex: 1 1 96px;
     min-width: 96px;
+  }
+
+  .repo-header__actions .repo-view-tabs {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .repo-header__actions .repo-view-tabs__tab {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .repo-header__meta {

@@ -6,18 +6,17 @@ import type {
   GitHubBindingStatus,
   GitHubContributionMeta,
   GitHubContributionResult,
-  GitHubCreateBranchRequest,
   GitHubCreateIssueRequest,
   GitHubCreateRepoRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssue,
   GitHubIssueListOptions,
-  GitHubRemoteBranch,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
+  GitHubWorkflowRun,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
@@ -28,6 +27,7 @@ import type {
   RepoConflictState,
   RepoDetail,
   RepoMergePullResult,
+  RepoReadme,
   RepoSummary,
   WorkspaceTask,
   WorkspaceSettings,
@@ -194,18 +194,6 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
   };
 }
 
-function createFallbackGitHubBranches(): Record<string, GitHubRemoteBranch[]> {
-  return {
-    "sena-nana/LiliaGithub": [
-      { name: "main", sha: "1234567890abcdef1234567890abcdef12345678", protected: true },
-      { name: "codex/github-management", sha: "abcdef1234567890abcdef1234567890abcdef12", protected: false },
-    ],
-    "sena-nana/Lilia": [
-      { name: "main", sha: "2222222222222222222222222222222222222222", protected: true },
-    ],
-  };
-}
-
 function createFallbackGitHubIssues(): Record<string, GitHubIssue[]> {
   return {
     "sena-nana/LiliaGithub": [
@@ -224,10 +212,71 @@ function createFallbackGitHubIssues(): Record<string, GitHubIssue[]> {
   };
 }
 
+function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]> {
+  return {
+    "sena-nana/LiliaGithub": [
+      {
+        id: 1201,
+        name: "CI",
+        displayTitle: "验证仓库详情页",
+        status: "completed",
+        conclusion: "success",
+        branch: "main",
+        event: "push",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+        createdAt: "2026-06-12T10:00:00Z",
+        updatedAt: "2026-06-12T10:08:00Z",
+      },
+      {
+        id: 1200,
+        name: "Release",
+        displayTitle: "打包桌面应用",
+        status: "in_progress",
+        conclusion: null,
+        branch: "codex/project-view",
+        event: "workflow_dispatch",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1200",
+        createdAt: "2026-06-12T09:00:00Z",
+        updatedAt: "2026-06-12T09:02:00Z",
+      },
+    ],
+  };
+}
+
+function createFallbackRepoReadmes(): Record<string, RepoReadme | null> {
+  return {
+    LiliaGithub: {
+      repoId: "LiliaGithub",
+      path: "README.md",
+      format: "md",
+      updatedAt: Date.now(),
+      content: [
+        "# LiliaGithub",
+        "",
+        "一个面向本地多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。",
+        "",
+        "## 当前能力",
+        "",
+        "- 工作区 Git 仓库扫描",
+        "- GitHub 仓库管理",
+        "- 快速启动配置",
+      ].join("\n"),
+    },
+    Lilia: {
+      repoId: "Lilia",
+      path: "README.md",
+      format: "md",
+      updatedAt: Date.now(),
+      content: "# Lilia\n\nDesktop agent workbench.",
+    },
+  };
+}
+
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
-let fallbackGitHubBranches = createFallbackGitHubBranches();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
+let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+let fallbackRepoReadmes = createFallbackRepoReadmes();
 
 type FallbackGitHubIssueListCall = {
   repoFullName: string;
@@ -278,8 +327,9 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepoPagesOverride = null;
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
-  fallbackGitHubBranches = createFallbackGitHubBranches();
   fallbackGitHubIssues = createFallbackGitHubIssues();
+  fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+  fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubIssueListCalls = [];
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
@@ -319,6 +369,12 @@ export function setFallbackRepoRemoteSyncOverrideForTests(
   fallbackRepoRemoteSyncOverride = override;
 }
 
+export function setFallbackRepoOverridesForTests(overrides: Record<string, RepoSummary>) {
+  fallbackRepoOverrides = Object.fromEntries(
+    Object.entries(overrides).map(([repoId, summary]) => [repoId, { ...summary }]),
+  );
+}
+
 export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingStatus) {
   fallbackBinding = binding;
   fallbackSettings = {
@@ -347,6 +403,15 @@ export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, Git
     Object.entries(issuesByRepo).map(([repoFullName, issues]) => [
       repoFullName,
       issues.map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
+    ]),
+  );
+}
+
+export function setFallbackRepoReadmesForTests(readmesByRepo: Record<string, RepoReadme | null>) {
+  fallbackRepoReadmes = Object.fromEntries(
+    Object.entries(readmesByRepo).map(([repoId, readme]) => [
+      repoId,
+      readme ? { ...readme } : null,
     ]),
   );
 }
@@ -674,9 +739,6 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       webCommitSignoffRequired: false,
       htmlUrl: repo.htmlUrl,
     };
-    fallbackGitHubBranches[fullName] = request.autoInit
-      ? [{ name: "main", sha: "3333333333333333333333333333333333333333", protected: false }]
-      : [];
     fallbackGitHubIssues[fullName] = [];
     return { ...repo };
   });
@@ -700,30 +762,6 @@ export function updateGitHubRepoSettings(
     };
     fallbackGitHubRepoManagement[repoFullName] = updated;
     return { ...updated };
-  });
-}
-
-export function listGitHubRemoteBranches(repoFullName: string): Promise<GitHubRemoteBranch[]> {
-  return call("github_list_remote_branches", { repoFullName }, () =>
-    (fallbackGitHubBranches[repoFullName] ?? []).map((branch) => ({ ...branch })),
-  );
-}
-
-export function createGitHubRemoteBranch(
-  repoFullName: string,
-  request: GitHubCreateBranchRequest,
-): Promise<GitHubRemoteBranch> {
-  return call("github_create_remote_branch", { repoFullName, request }, () => {
-    const name = request.name.trim().replace(/^refs\/heads\//, "");
-    const sourceSha = request.sourceSha.trim();
-    if (!name || !sourceSha) throw new Error("分支名和源提交不能为空");
-    if (!(fallbackGitHubBranches[repoFullName] ?? []).length) throw new Error("空仓库不能直接创建分支");
-    const branch: GitHubRemoteBranch = { name, sha: sourceSha, protected: false };
-    fallbackGitHubBranches[repoFullName] = [
-      ...(fallbackGitHubBranches[repoFullName] ?? []).filter((item) => item.name !== name),
-      branch,
-    ];
-    return { ...branch };
   });
 }
 
@@ -826,6 +864,15 @@ export function updateGitHubIssue(
   });
 }
 
+export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | null): Promise<GitHubWorkflowRun[]> {
+  return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, () =>
+    [...(fallbackGitHubWorkflowRuns[repoFullName] ?? [])]
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .slice(0, perPage ?? undefined)
+      .map((run) => ({ ...run })),
+  );
+}
+
 function fallbackContributionMeta(repoFullNames: string[]): GitHubContributionMeta {
   const requestedRepoCount = Array.from(new Set(
     repoFullNames
@@ -880,6 +927,13 @@ function updateFallbackRepo(summary: RepoSummary) {
     [summary.id]: { ...summary },
   };
   return { ...summary };
+}
+
+export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
+  return call("repo_get_readme", { repoId }, () => {
+    const readme = fallbackRepoReadmes[repoId] ?? null;
+    return readme ? { ...readme } : null;
+  });
 }
 
 function emptyConflictState(): RepoConflictState {

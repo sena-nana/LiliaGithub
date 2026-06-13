@@ -7,18 +7,17 @@ import type {
   CommitDetail,
   GitHubBindingStatus,
   GitHubContributionResult,
-  GitHubCreateBranchRequest,
   GitHubCreateIssueRequest,
   GitHubCreateRepoRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssue,
   GitHubIssueListOptions,
-  GitHubRemoteBranch,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
+  GitHubWorkflowRun,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
@@ -29,6 +28,7 @@ import type {
   RepoConflictState,
   RepoDetail,
   RepoMergePullResult,
+  RepoReadme,
   RepoSummary,
   WorkspaceTask,
   WorkspaceSettings,
@@ -224,21 +224,6 @@ export function updateGitHubRepoSettings(
   );
 }
 
-export function listGitHubRemoteBranches(repoFullName: string): Promise<GitHubRemoteBranch[]> {
-  return call("github_list_remote_branches", { repoFullName }, () =>
-    fallback.listGitHubRemoteBranches(repoFullName),
-  );
-}
-
-export function createGitHubRemoteBranch(
-  repoFullName: string,
-  request: GitHubCreateBranchRequest,
-): Promise<GitHubRemoteBranch> {
-  return call("github_create_remote_branch", { repoFullName, request }, () =>
-    fallback.createGitHubRemoteBranch(repoFullName, request),
-  );
-}
-
 export function listGitHubIssues(
   repoFullName: string,
   stateOrOptions?: string | null | GitHubIssueListOptions,
@@ -277,8 +262,18 @@ export function updateGitHubIssue(
   );
 }
 
+export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | null): Promise<GitHubWorkflowRun[]> {
+  return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, () =>
+    fallback.listGitHubWorkflowRuns(repoFullName, perPage),
+  );
+}
+
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => fallback.getRepoDetail(repoId));
+}
+
+export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
+  return call("repo_get_readme", { repoId }, () => fallback.getRepoReadme(repoId));
 }
 
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {

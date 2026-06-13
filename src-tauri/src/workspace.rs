@@ -385,6 +385,17 @@ pub struct RepoDetail {
     pub conflicts: RepoConflictState,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoReadme {
+    pub repo_id: String,
+    pub path: String,
+    pub content: String,
+    pub format: String,
+    #[serde(default)]
+    pub updated_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkSyncPreview {
@@ -596,21 +607,6 @@ pub struct GitHubUpdateRepoSettingsRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct GitHubRemoteBranch {
-    pub name: String,
-    pub sha: String,
-    pub protected: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitHubCreateBranchRequest {
-    pub name: String,
-    pub source_sha: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct GitHubIssue {
     pub number: u64,
     pub title: String,
@@ -624,6 +620,22 @@ pub struct GitHubIssue {
     pub html_url: String,
     pub updated_at: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowRun {
+    pub id: u64,
+    pub name: String,
+    pub display_title: String,
+    pub status: String,
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    pub branch: String,
+    pub event: String,
+    pub html_url: String,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -659,18 +671,6 @@ struct GitHubOrgResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct GitHubBranchCommitResponse {
-    sha: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubBranchResponse {
-    name: String,
-    protected: bool,
-    commit: GitHubBranchCommitResponse,
-}
-
-#[derive(Debug, Deserialize)]
 struct GitHubLabelResponse {
     name: String,
 }
@@ -695,6 +695,32 @@ struct GitHubIssueResponse {
     assignees: Vec<GitHubAssigneeResponse>,
     #[serde(default)]
     pull_request: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubWorkflowRunsResponse {
+    #[serde(default)]
+    workflow_runs: Vec<GitHubWorkflowRunResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubWorkflowRunResponse {
+    id: u64,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    display_title: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    conclusion: Option<String>,
+    #[serde(default)]
+    head_branch: Option<String>,
+    #[serde(default)]
+    event: Option<String>,
+    html_url: String,
+    created_at: String,
+    updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1116,43 +1142,6 @@ fn github_repo_api_url(repo_full_name: &str) -> Result<String, String> {
     ))
 }
 
-fn validate_github_branch_name(name: &str) -> Result<String, String> {
-    let trimmed = name.trim().trim_start_matches("refs/heads/");
-    if trimmed.is_empty()
-        || trimmed.starts_with('/')
-        || trimmed.ends_with('/')
-        || trimmed.contains("..")
-        || trimmed.contains(' ')
-        || trimmed.contains('\\')
-        || trimmed.contains('~')
-        || trimmed.contains('^')
-        || trimmed.contains(':')
-        || trimmed.contains('?')
-        || trimmed.contains('*')
-        || trimmed.contains('[')
-    {
-        return Err("分支名不合法".to_string());
-    }
-    Ok(trimmed.to_string())
-}
-
-fn validate_github_sha(sha: &str) -> Result<String, String> {
-    let trimmed = sha.trim();
-    if trimmed.len() < 7 || !trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err("源提交 SHA 不合法".to_string());
-    }
-    Ok(trimmed.to_string())
-}
-
-fn github_create_branch_payload(name: &str, source_sha: &str) -> Result<serde_json::Value, String> {
-    let branch = validate_github_branch_name(name)?;
-    let sha = validate_github_sha(source_sha)?;
-    Ok(serde_json::json!({
-        "ref": format!("refs/heads/{branch}"),
-        "sha": sha,
-    }))
-}
-
 fn github_update_repo_settings_payload(
     request: GitHubUpdateRepoSettingsRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -1227,6 +1216,23 @@ fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<GitHubIssue>
         updated_at: issue.updated_at,
         created_at: issue.created_at,
     })
+}
+
+fn github_workflow_run_from_response(run: GitHubWorkflowRunResponse) -> GitHubWorkflowRun {
+    let name = normalize_optional_string(run.name).unwrap_or_else(|| "Workflow".to_string());
+    let display_title = normalize_optional_string(run.display_title.clone()).unwrap_or_else(|| name.clone());
+    GitHubWorkflowRun {
+        id: run.id,
+        name,
+        display_title,
+        status: normalize_optional_string(run.status).unwrap_or_else(|| "unknown".to_string()),
+        conclusion: normalize_optional_string(run.conclusion),
+        branch: normalize_optional_string(run.head_branch).unwrap_or_else(|| "unknown".to_string()),
+        event: normalize_optional_string(run.event).unwrap_or_else(|| "unknown".to_string()),
+        html_url: run.html_url,
+        created_at: run.created_at,
+        updated_at: run.updated_at,
+    }
 }
 
 fn github_auth_header(token: &str) -> String {
@@ -2073,6 +2079,45 @@ fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+fn find_repo_readme(repo_path: &Path) -> Option<PathBuf> {
+    ["README.md", "README.MD", "README", "readme.md"]
+        .into_iter()
+        .map(|name| repo_path.join(name))
+        .find(|path| path.is_file())
+}
+
+fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme>, String> {
+    let Some(path) = find_repo_readme(repo_path) else {
+        return Ok(None);
+    };
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("读取 README 失败：{}（{e}）", path.display()))?;
+    let updated_at = path
+        .metadata()
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64);
+    let relative_path = path
+        .strip_prefix(repo_path)
+        .unwrap_or(path.as_path())
+        .to_string_lossy()
+        .replace('\\', "/");
+    let format = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .filter(|extension| extension == "md" || extension == "markdown")
+        .unwrap_or_else(|| "text".to_string());
+    Ok(Some(RepoReadme {
+        repo_id: repo_id.to_string(),
+        path: relative_path,
+        content,
+        format,
+        updated_at,
+    }))
+}
+
 fn package_manager(repo_path: &Path, package_manager_field: Option<&str>) -> &'static str {
     if let Some(field) = package_manager_field {
         let name = field.split('@').next().unwrap_or("").trim();
@@ -2826,61 +2871,6 @@ pub async fn github_update_repo_settings(
 }
 
 #[tauri::command]
-pub async fn github_list_remote_branches(
-    app: AppHandle,
-    repo_full_name: String,
-) -> Result<Vec<GitHubRemoteBranch>, String> {
-    run_blocking("读取 GitHub 分支", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let url = format!("{}/branches", github_repo_api_url(&repo_full_name)?);
-        let response = github_send(
-            &app,
-            "读取 GitHub 分支失败",
-            github_headers(client.get(url).query(&[("per_page", "100")]), Some(&token)),
-        )?;
-        let branches = github_json::<Vec<GitHubBranchResponse>>("读取 GitHub 分支失败", response)?;
-        Ok(branches
-            .into_iter()
-            .map(|branch| GitHubRemoteBranch {
-                name: branch.name,
-                sha: branch.commit.sha,
-                protected: branch.protected,
-            })
-            .collect())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn github_create_remote_branch(
-    app: AppHandle,
-    repo_full_name: String,
-    request: GitHubCreateBranchRequest,
-) -> Result<GitHubRemoteBranch, String> {
-    run_blocking("创建 GitHub 分支", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let payload = github_create_branch_payload(&request.name, &request.source_sha)?;
-        let client = build_client()?;
-        let url = format!("{}/git/refs", github_repo_api_url(&repo_full_name)?);
-        let response = github_send(
-            &app,
-            "创建 GitHub 分支失败",
-            github_headers(client.post(url).json(&payload), Some(&token)),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error("创建 GitHub 分支失败", response));
-        }
-        Ok(GitHubRemoteBranch {
-            name: validate_github_branch_name(&request.name)?,
-            sha: validate_github_sha(&request.source_sha)?,
-            protected: false,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn github_list_issues(
     app: AppHandle,
     repo_full_name: String,
@@ -3020,6 +3010,36 @@ pub async fn github_update_issue(
 }
 
 #[tauri::command]
+pub async fn github_list_workflow_runs(
+    app: AppHandle,
+    repo_full_name: String,
+    per_page: Option<u32>,
+) -> Result<Vec<GitHubWorkflowRun>, String> {
+    run_blocking("读取 GitHub Actions", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let runs_per_page = per_page.unwrap_or(30).clamp(1, 100).to_string();
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Actions 失败",
+            github_headers(
+                client
+                    .get(format!("{}/actions/runs", github_repo_api_url(&repo_full_name)?))
+                    .query(&[("per_page", runs_per_page)]),
+                Some(&token),
+            ),
+        )?;
+        let runs = github_json::<GitHubWorkflowRunsResponse>("读取 GitHub Actions 失败", response)?;
+        Ok(runs
+            .workflow_runs
+            .into_iter()
+            .map(github_workflow_run_from_response)
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn github_list_repo_contributions(
     app: AppHandle,
     repo_full_names: Vec<String>,
@@ -3096,6 +3116,15 @@ pub async fn repo_refresh_language_stats(app: AppHandle, repo_id: String) -> Res
         let summary = summarize_repo_with_language_stats(&root, &path);
         update_workspace_task(&task.id, "success", Some("语言统计已更新".to_string()));
         Ok(summary)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_get_readme(app: AppHandle, repo_id: String) -> Result<Option<RepoReadme>, String> {
+    run_blocking("读取 README", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        read_repo_readme(&repo_id, &path)
     })
     .await
 }
@@ -5699,20 +5728,6 @@ rename to docs/new.md",
     }
 
     #[test]
-    fn builds_create_branch_ref_payload() {
-        let payload = github_create_branch_payload(
-            "feature/github-management",
-            "1234567890abcdef",
-        )
-        .unwrap();
-
-        assert_eq!(payload["ref"], "refs/heads/feature/github-management");
-        assert_eq!(payload["sha"], "1234567890abcdef");
-        assert!(github_create_branch_payload("bad branch", "1234567").is_err());
-        assert!(github_create_branch_payload("feature", "not-a-sha").is_err());
-    }
-
-    #[test]
     fn filters_pull_requests_from_github_issues() {
         let issue = GitHubIssueResponse {
             number: 1,
@@ -5743,6 +5758,44 @@ rename to docs/new.md",
         assert_eq!(mapped.labels, vec!["bug"]);
         assert_eq!(mapped.assignees, vec!["octo"]);
         assert!(github_issue_from_response(pr).is_none());
+    }
+
+    #[test]
+    fn maps_github_workflow_runs_with_defaults() {
+        let mapped = github_workflow_run_from_response(GitHubWorkflowRunResponse {
+            id: 42,
+            name: Some("CI".to_string()),
+            display_title: None,
+            status: Some("completed".to_string()),
+            conclusion: Some("success".to_string()),
+            head_branch: Some("main".to_string()),
+            event: Some("push".to_string()),
+            html_url: "https://github.com/a/repo/actions/runs/42".to_string(),
+            created_at: "2026-06-12T10:00:00Z".to_string(),
+            updated_at: "2026-06-12T10:05:00Z".to_string(),
+        });
+
+        assert_eq!(mapped.id, 42);
+        assert_eq!(mapped.name, "CI");
+        assert_eq!(mapped.display_title, "CI");
+        assert_eq!(mapped.status, "completed");
+        assert_eq!(mapped.conclusion.as_deref(), Some("success"));
+        assert_eq!(mapped.branch, "main");
+        assert_eq!(mapped.event, "push");
+    }
+
+    #[test]
+    fn reads_first_supported_repo_readme() {
+        let repo = temp_dir("repo-readme");
+        fs::write(repo.join("README.md"), "# Main\n").unwrap();
+        fs::write(repo.join("README"), "# Plain\n").unwrap();
+
+        let readme = read_repo_readme("repo", &repo).unwrap().unwrap();
+
+        assert_eq!(readme.repo_id, "repo");
+        assert_eq!(readme.path, "README.md");
+        assert_eq!(readme.format, "md");
+        assert_eq!(readme.content, "# Main\n");
     }
 
     #[test]

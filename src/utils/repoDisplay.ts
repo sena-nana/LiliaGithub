@@ -1,11 +1,6 @@
 import type { ProjectLaunchConfig, ProjectLaunchStatus, RepoChange, RepoSummary } from "../services/workspace";
 
 type RepoIdentity = Pick<RepoSummary, "name" | "path" | "githubFullName">;
-type RepoSyncSummary = Pick<RepoSummary, "ahead" | "behind" | "conflictCount">;
-type RepoCommitSummary = Pick<RepoSummary, "lastCommitMessage">;
-type HistoryCommitSummary = {
-  readonly subject: string;
-};
 type ConflictStatusSource = {
   binary: boolean;
   hunks: readonly unknown[];
@@ -58,29 +53,6 @@ export function formatCompactRepoTime(timestamp: number) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-export function lastCommitText(
-  commits: readonly HistoryCommitSummary[] | undefined,
-  summary: RepoCommitSummary | null | undefined,
-) {
-  const latestCommit = commits?.[0];
-  if (latestCommit) return latestCommit.subject;
-  return summary?.lastCommitMessage ?? "无提交";
-}
-
-export function syncStatusText(summary: RepoSyncSummary | null | undefined) {
-  if (!summary) return "未知";
-  if (!summary.ahead && !summary.behind) return "已同步";
-  return `↑${summary.ahead} / ↓${summary.behind}`;
-}
-
-export function syncStatusTone(summary: RepoSyncSummary | null | undefined) {
-  if (!summary) return "";
-  if (summary.conflictCount > 0) return "repo-status-strip__value--err";
-  if (summary.behind > 0) return "repo-status-strip__value--warn";
-  if (summary.ahead > 0) return "repo-status-strip__value--accent";
-  return "repo-status-strip__value--ok";
 }
 
 export function conflictStatusText(file: ConflictStatusSource) {

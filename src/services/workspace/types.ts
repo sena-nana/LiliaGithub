@@ -142,17 +142,6 @@ export interface GitHubRepoManagement {
 
 export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "name" | "htmlUrl">>;
 
-export interface GitHubRemoteBranch {
-  name: string;
-  sha: string;
-  protected: boolean;
-}
-
-export interface GitHubCreateBranchRequest {
-  name: string;
-  sourceSha: string;
-}
-
 export interface GitHubIssue {
   number: number;
   title: string;
@@ -163,6 +152,19 @@ export interface GitHubIssue {
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
+}
+
+export interface GitHubWorkflowRun {
+  id: number;
+  name: string;
+  displayTitle: string;
+  status: string;
+  conclusion: string | null;
+  branch: string;
+  event: string;
+  htmlUrl: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface GitHubIssueListOptions {
@@ -329,6 +331,14 @@ export interface RepoDetail {
   commits: CommitSummary[];
   branches: BranchSummary[];
   conflicts: RepoConflictState;
+}
+
+export interface RepoReadme {
+  repoId: string;
+  path: string;
+  content: string;
+  format: string;
+  updatedAt: number | null;
 }
 
 export type BulkOperation = "pull" | "push" | "sync";
