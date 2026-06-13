@@ -307,13 +307,14 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
 
     expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
+    const dialog = view.getByRole("dialog", { name: "克隆仓库" });
     const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
     expect(view.getByText(/当前绑定账号：/)).toBeInTheDocument();
 
     await fireEvent.focus(input);
-    expect(await view.findByText("sena-nana/Lilia")).toBeInTheDocument();
+    expect(await within(dialog).findByText("sena-nana/Lilia")).toBeInTheDocument();
 
-    await fireEvent.click(view.getByText("sena-nana/Lilia"));
+    await fireEvent.click(within(dialog).getByText("sena-nana/Lilia"));
     expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("Lilia");
 
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
@@ -357,8 +358,9 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
 
     expect(await view.findByText("GitHub 绑定已失效，请重新绑定。")).toBeInTheDocument();
+    const dialog = view.getByRole("dialog", { name: "克隆仓库" });
     await fireEvent.focus(view.getByPlaceholderText("搜索仓库，或直接输入 owner/repo"));
-    expect(view.getByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
+    expect(within(dialog).getByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
 
     await fireEvent.click(view.getByRole("button", { name: "重新绑定 GitHub" }));
 
