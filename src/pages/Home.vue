@@ -31,6 +31,11 @@ import {
   type GitHubRepoSummary,
   type RepoSummary,
 } from "../services/workspace";
+import {
+  clearHomeGitHubOverviewSnapshot,
+  readHomeGitHubOverviewSnapshot,
+  writeHomeGitHubOverviewSnapshot,
+} from "./homeOverviewCache";
 import { bulkResultTone } from "../utils/repoDisplay";
 import "../styles/page.css";
 
@@ -230,6 +235,10 @@ watch(
   () => workspace.isReady.value,
   (ready) => {
     if (!ready) return;
+    if (restoreGitHubOverviewSnapshot()) {
+      void nextTick(scheduleRepoOverviewCardHeightUpdate);
+      return;
+    }
     void loadGitHubRepoStatus();
     void nextTick(scheduleRepoOverviewCardHeightUpdate);
   },
@@ -281,7 +290,26 @@ function applyGitHubRepoPage(
   githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
   githubReposNextPage.value = page.nextPage;
   githubReposError.value = null;
+  writeGitHubOverviewSnapshot();
   void loadGitHubTimelineIssues(page.items, refreshIssues);
+}
+
+function restoreGitHubOverviewSnapshot() {
+  const snapshot = readHomeGitHubOverviewSnapshot();
+  if (!snapshot) return false;
+  githubRepos.value = snapshot.repos;
+  githubReposNextPage.value = snapshot.nextPage;
+  githubIssuesByRepo.value = snapshot.issuesByRepo;
+  githubReposError.value = null;
+  return true;
+}
+
+function writeGitHubOverviewSnapshot() {
+  writeHomeGitHubOverviewSnapshot({
+    repos: githubRepos.value,
+    nextPage: githubReposNextPage.value,
+    issuesByRepo: githubIssuesByRepo.value,
+  });
 }
 
 function githubRepoLoadErrorMessage(err: unknown) {
@@ -314,6 +342,7 @@ async function loadGitHubTimelineIssues(
     }
   }
   githubIssuesByRepo.value = nextIssuesByRepo;
+  writeGitHubOverviewSnapshot();
   const missingRepos = repos.filter((repo) => nextIssuesByRepo[repo.fullName] == null);
   if (!missingRepos.length) return;
   githubIssuesLoading.value = true;
@@ -323,6 +352,7 @@ async function loadGitHubTimelineIssues(
       nextIssuesByRepo[repoFullName] = issues;
     }
     githubIssuesByRepo.value = nextIssuesByRepo;
+    writeGitHubOverviewSnapshot();
     writeGitHubTimelineIssueCache(cache, fetchedEntries, since);
   } finally {
     githubIssuesLoading.value = false;
@@ -465,6 +495,7 @@ function writeGitHubTimelineIssueCache(
 
 function clearGitHubTimelineIssueCache() {
   githubIssuesByRepo.value = {};
+  clearHomeGitHubOverviewSnapshot();
   try {
     localStorage.removeItem(GITHUB_TIMELINE_ISSUE_CACHE_KEY);
   } catch {
