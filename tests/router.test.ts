@@ -211,6 +211,7 @@ describe("基础路由", () => {
     expect(screen.getByRole("button", { name: "启动配置" })).toBeInTheDocument();
     expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
+    expect(screen.getByRole("button", { name: "Push" })).toBeInTheDocument();
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
@@ -274,6 +275,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "处理冲突" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Push" })).toBeNull();
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "冲突" })).toHaveClass("is-active");
     });

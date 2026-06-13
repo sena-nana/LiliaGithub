@@ -19,6 +19,7 @@ import {
 import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/composables/workspace/bulk";
 import {
   bulkSyncRepoIds,
+  repoActionErrorForRepo,
   syncErrorByRepoId,
   recentSyncErrorForRepo,
   resetWorkspaceStateForTests,
@@ -360,6 +361,22 @@ describe("workspace incremental refresh", () => {
     ]);
     expect(state.recentSync?.retryingRepoIds).toEqual([]);
     expect(state.repos[0].ahead).toBe(0);
+  });
+
+  it("单仓库合并失败后记录侧边栏可读取的仓库操作错误，后续成功操作清除", async () => {
+    const initial = repoSummary("LiliaGithub", { ahead: 1, behind: 1 });
+    const updated = repoSummary("LiliaGithub", { ahead: 0, behind: 0 });
+    state.repos = [initial];
+    service.mergePullRepo.mockRejectedValue(new Error("合并失败：not something we can merge"));
+    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.pushRepo.mockResolvedValue(updated);
+
+    await expect(mergePull(initial.id)).rejects.toThrow("合并失败：not something we can merge");
+    expect(repoActionErrorForRepo(initial.id)).toBe("Error: 合并失败：not something we can merge");
+
+    await push(initial.id);
+
+    expect(repoActionErrorForRepo(initial.id)).toBeNull();
   });
 
   it("单仓库提交、拉取、推送和切换分支后刷新当前仓库语言统计", async () => {

@@ -1,8 +1,10 @@
 import {
   beginRecentSyncRetry,
+  clearRepoActionError,
   finishRecentSyncRetry,
   replaceRepos,
   setRepoDetail,
+  setRepoActionError,
   state,
   upsertRepo,
 } from "./state";
@@ -16,6 +18,7 @@ async function applyRepoMutation(
   loadSummary: () => Promise<import("../../services/workspace").RepoSummary>,
 ) {
   upsertRepo(await loadSummary());
+  clearRepoActionError(repoId);
   await loadRepoDetail(repoId);
 }
 
@@ -195,12 +198,14 @@ export async function loadRepoDetail(repoId: string) {
 export async function stage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   await service.stageFiles(repoId, files);
+  clearRepoActionError(repoId);
   await loadRepoDetail(repoId);
 }
 
 export async function unstage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   await service.unstageFiles(repoId, files);
+  clearRepoActionError(repoId);
   await loadRepoDetail(repoId);
 }
 
@@ -216,10 +221,16 @@ export async function pull(repoId: string) {
 
 export async function mergePull(repoId: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, async () => {
-    const result = await service.mergePullRepo(repoId);
-    return result.summary;
-  });
+  clearRepoActionError(repoId);
+  try {
+    await applyRepoMutation(repoId, async () => {
+      const result = await service.mergePullRepo(repoId);
+      return result.summary;
+    });
+  } catch (err) {
+    setRepoActionError(repoId, String(err));
+    throw err;
+  }
 }
 
 export async function push(repoId: string) {

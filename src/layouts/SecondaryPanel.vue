@@ -6,6 +6,7 @@ import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
+  repoActionErrorForRepo,
   syncErrorByRepoId,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
@@ -106,6 +107,8 @@ interface RepoIssue {
 function repoIssue(repo: RepoSummary): RepoIssue | null {
   const syncError = bulkSyncErrorByRepoId.value.get(repo.id);
   if (syncError) return { label: "同步失败", title: syncError };
+  const actionError = repoActionErrorForRepo(repo.id);
+  if (actionError) return { label: "仓库操作失败", title: actionError };
   if (repo.conflictCount > 0) {
     return { label: "存在合并冲突", title: "存在合并冲突，请处理后再同步" };
   }

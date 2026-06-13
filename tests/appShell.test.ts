@@ -5,7 +5,7 @@ import { defineComponent } from "vue";
 import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
-import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
+import { resetWorkspaceStateForTests, setRepoActionError, state } from "../src/composables/workspace/state";
 import {
   setFallbackGitHubBindingStatusForTests,
   setFallbackGitHubReposErrorForTests,
@@ -220,6 +220,22 @@ describe("AppShell sidebar", () => {
       expect(
         within(sidebarRowForText(view.container, "LiliaGithub")).getByLabelText("同步失败"),
       ).toHaveAttribute("title", "认证失败");
+    });
+  });
+
+  it("侧边栏显示单仓库操作失败结果", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    setRepoActionError("LiliaGithub", "合并失败：not something we can merge");
+
+    await waitFor(() => {
+      expect(
+        within(sidebarRowForText(view.container, "LiliaGithub")).getByLabelText("仓库操作失败"),
+      ).toHaveAttribute("title", "合并失败：not something we can merge");
     });
   });
 
