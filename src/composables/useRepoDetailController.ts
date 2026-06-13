@@ -5,7 +5,8 @@ import { recentSyncErrorForRepo } from "./workspace/state";
 import type { CommitSummary, RepoConflictChoice, RepoConflictFile, RepoConflictState } from "../services/workspace";
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 
-type RepoTab = "conflicts" | "changes" | "history" | "branches" | "github";
+type RepoTab = "conflicts" | "changes" | "history" | "branches";
+type RepoView = "project" | "git";
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -21,6 +22,7 @@ export function useRepoDetailController() {
   const route = useRoute();
   const router = useRouter();
   const workspace = useWorkspace();
+  const activeView = ref<RepoView>(normalizeView(route.query.view) ?? "git");
   const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
   const selectedFiles = ref<Set<string>>(new Set());
   const commitMessage = ref("");
@@ -48,7 +50,6 @@ export function useRepoDetailController() {
     return [
       repo.githubFullName ?? "未识别 GitHub",
       repo.currentBranch ?? "detached",
-      repo.path,
     ].filter(Boolean);
   });
   const changes = computed(() => detail.value?.changes ?? []);
@@ -90,8 +91,7 @@ export function useRepoDetailController() {
   const languageStatsRefreshing = computed(() =>
     workspace.state.languageStatsLoadingRepoIds.includes(repoId.value),
   );
-  const launchState = computed(() => launchStatus.value?.state ?? "idle");
-  const launchRunning = computed(() => launchState.value === "running");
+  const launchRunning = computed(() => launchStatus.value?.state === "running");
   const hasLaunchCommand = computed(() => Boolean(launchConfig.value?.command.trim()));
   const selectedSummaryText = computed(() => {
     if (!selectedFileList.value.length) return "未选择文件";
@@ -159,7 +159,10 @@ export function useRepoDetailController() {
     { key: "changes", label: "变更" },
     { key: "history", label: "历史" },
     { key: "branches", label: "分支" },
-    { key: "github", label: "GitHub" },
+  ];
+  const views: Array<{ key: RepoView; label: string }> = [
+    { key: "project", label: "项目信息" },
+    { key: "git", label: "Git 信息" },
   ];
 
   onMounted(() => {
@@ -187,8 +190,17 @@ export function useRepoDetailController() {
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
+    activeView.value = "git";
     void load();
   });
+
+  watch(
+    () => route.query.view,
+    (view) => {
+      const normalized = normalizeView(view);
+      if (normalized) activeView.value = normalized;
+    },
+  );
 
   watch(
     () => route.query.tab,
@@ -207,9 +219,13 @@ export function useRepoDetailController() {
       value === "conflicts" ||
       value === "changes" ||
       value === "history" ||
-      value === "branches" ||
-      value === "github"
+      value === "branches"
     ) return value;
+    return null;
+  }
+
+  function normalizeView(value: unknown): RepoView | null {
+    if (value === "project" || value === "git") return value;
     return null;
   }
 
@@ -255,11 +271,6 @@ export function useRepoDetailController() {
   function resetLaunchForm() {
     launchCommandInput.value = launchConfig.value?.command ?? "";
     launchCwdInput.value = launchConfig.value?.cwd ?? "";
-  }
-
-  function dirtyCount(changeSummary = summary.value) {
-    if (!changeSummary) return 0;
-    return changeSummary.stagedCount + changeSummary.unstagedCount + changeSummary.untrackedCount;
   }
 
   function syncFocusedConflict() {
@@ -507,6 +518,7 @@ export function useRepoDetailController() {
       actionError,
       actionRunning,
       conflictAcceptConfirm,
+      activeView,
       launchEditing,
       launchTerminalVisible,
       launchCommandInput,
@@ -535,7 +547,6 @@ export function useRepoDetailController() {
       launchLogs,
       launchLoading,
       languageStatsRefreshing,
-      launchState,
       launchRunning,
       hasLaunchCommand,
       selectedSummaryText,
@@ -551,9 +562,9 @@ export function useRepoDetailController() {
       conflictAbortText,
       conflictContinueText,
       tabs,
+      views,
       load,
       refreshLaunch,
-      dirtyCount,
       focusChange,
       focusConflict,
       toggleFile,
