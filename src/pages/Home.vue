@@ -1113,7 +1113,6 @@ async function addLocalRepo() {
         <div class="card github-timeline-card">
           <div class="repo-status-heading">
             <h2>GitHub 时间线</h2>
-            <span>{{ githubTimelineEvents.length }} 个事件</span>
           </div>
           <div class="home-scroll-card__body">
             <p v-if="(githubReposLoading || githubIssuesLoading) && !githubTimelineEvents.length" class="repo-status-empty">
@@ -1172,10 +1171,6 @@ async function addLocalRepo() {
           </p>
           <div class="home-scroll-card__body">
             <div class="repo-status-list" aria-label="仓库状态列表">
-              <div class="repo-status-head" aria-hidden="true">
-                <span>GitHub 项目</span>
-                <span>处理</span>
-              </div>
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
                 v-for="{ githubRepo, localRepo, action } in repoStatusRows"
@@ -1190,9 +1185,12 @@ async function addLocalRepo() {
                 @keydown.enter.prevent="localRepo && router.push(repoDetailPath(localRepo))"
                 @keydown.space.prevent="localRepo && router.push(repoDetailPath(localRepo))"
               >
-                <strong class="repo-status-row__name">
-                  {{ githubRepo.fullName }}
-                </strong>
+                <span class="repo-status-row__identity">
+                  <strong class="repo-status-row__name">
+                    {{ githubRepo.fullName }}
+                  </strong>
+                  <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
+                </span>
                 <span class="repo-status-row__action">
                   <template v-if="localRepo">
                     <template v-if="action">
@@ -1944,25 +1942,11 @@ async function addLocalRepo() {
   white-space: nowrap;
 }
 
-.repo-status-head,
 .repo-status-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(168px, auto);
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   gap: 10px;
-}
-
-.repo-status-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 0 8px 5px;
-  background: var(--bg-elev);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
 }
 
 .repo-status-row {
@@ -1989,22 +1973,40 @@ async function addLocalRepo() {
   background: var(--bg-active);
 }
 
+.repo-status-row__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .repo-status-row__name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.repo-status-row__name {
   font-size: 13px;
   font-weight: 600;
+}
+
+.repo-status-row__badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .repo-status-row__action {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 6px;
   min-width: 0;
 }
@@ -2211,12 +2213,8 @@ async function addLocalRepo() {
     max-height: min(520px, var(--repo-overview-card-max-height));
   }
 
-  .repo-status-head {
-    display: none;
-  }
-
   .repo-status-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) max-content;
     gap: 4px 10px;
     align-items: center;
     padding: 8px;
