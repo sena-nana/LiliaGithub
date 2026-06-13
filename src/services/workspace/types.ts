@@ -165,6 +165,14 @@ export interface GitHubIssue {
   createdAt: string;
 }
 
+export interface GitHubIssueListOptions {
+  state?: "open" | "closed" | "all" | string | null;
+  perPage?: number | null;
+  sort?: "created" | "updated" | "comments" | string | null;
+  direction?: "asc" | "desc" | string | null;
+  since?: string | null;
+}
+
 export interface GitHubCreateIssueRequest {
   title: string;
   body?: string | null;

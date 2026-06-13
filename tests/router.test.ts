@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import type { GitHubRepoSummary, RepoConflictState } from "../src/services/workspace";
+import type { GitHubIssue, GitHubRepoSummary, RepoConflictState } from "../src/services/workspace";
 import { conflictState, repoSummary } from "./fixtures/workspace";
+
+const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 
 async function renderAt(path: string) {
   const router = createLiliaGithubRouter(createMemoryHistory());
@@ -68,7 +70,25 @@ function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummar
   };
 }
 
+function githubIssue(repoFullName: string, number: number, updatedAt: string, createdAt = updatedAt): GitHubIssue {
+  return {
+    number,
+    title: `${repoFullName} issue ${number}`,
+    state: number % 2 === 0 ? "closed" : "open",
+    body: null,
+    labels: [],
+    assignees: [],
+    htmlUrl: `https://github.com/${repoFullName}/issues/${number}`,
+    updatedAt,
+    createdAt,
+  };
+}
+
 describe("基础路由", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("默认首页显示 Git 项目总览", async () => {
     await renderAt("/");
 
@@ -182,6 +202,98 @@ describe("基础路由", () => {
     expect(await within(repoStatusList).findByText("sena-nana/PageTwo")).toBeInTheDocument();
     expect(within(repoStatusList).getAllByText("sena-nana/LiliaGithub")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
+  });
+
+  it("总览页 GitHub 时间线按最近一周更新时间拉取 issue", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+    const service = await import("../src/services/workspace");
+    const repos = Array.from({ length: 3 }, (_, index) =>
+      githubRepoSummary(`sena-nana/Timeline${index}`, {
+        createdAt: `2026-06-${String(index + 1).padStart(2, "0")}T08:00:00Z`,
+        updatedAt: `2026-06-${String(index + 1).padStart(2, "0")}T09:00:00Z`,
+      }),
+    );
+    service.setFallbackGitHubRepoPagesForTests([{ items: repos, nextPage: null }]);
+    service.setFallbackGitHubIssuesForTests(Object.fromEntries(
+      repos.map((repo, repoIndex) => [
+        repo.fullName,
+        [
+          githubIssue(repo.fullName, repoIndex * 10 + 1, "2026-06-13T10:00:00Z"),
+          githubIssue(repo.fullName, repoIndex * 10 + 2, "2026-06-05T10:00:00Z"),
+        ],
+      ]),
+    ));
+
+    await renderAt("/");
+
+    await screen.findByLabelText("GitHub 时间线列表");
+    await waitFor(() => {
+      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(3);
+    });
+    expect(service.getFallbackGitHubIssueListCallsForTests()).toEqual(
+      repos.map((repo) => ({
+        repoFullName: repo.fullName,
+        state: "all",
+        perPage: 100,
+        sort: "updated",
+        direction: "desc",
+        since: "2026-06-06T12:00:00.000Z",
+      })),
+    );
+    expect(await screen.findByText("Issue #1")).toBeInTheDocument();
+    expect(screen.queryByText("Issue #2")).toBeNull();
+  });
+
+  it("总览页 GitHub 时间线命中持久缓存时不重复拉取 issue", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/CachedTimeline");
+    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    localStorage.setItem(TIMELINE_ISSUE_CACHE_KEY, JSON.stringify({
+      [repo.fullName]: {
+        repoFullName: repo.fullName,
+        since: "2026-06-06T12:00:00.000Z",
+        fetchedAt: Date.now() - 60_000,
+        issues: [githubIssue(repo.fullName, 88, "2026-06-13T10:00:00Z")],
+      },
+    }));
+
+    await renderAt("/");
+
+    expect(await screen.findByText("Issue #88")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(0);
+    });
+  });
+
+  it("总览页 GitHub 时间线缓存过期后重新拉取并刷新缓存", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/ExpiredTimeline");
+    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    service.setFallbackGitHubIssuesForTests({
+      [repo.fullName]: [githubIssue(repo.fullName, 90, "2026-06-13T10:00:00Z")],
+    });
+    localStorage.setItem(TIMELINE_ISSUE_CACHE_KEY, JSON.stringify({
+      [repo.fullName]: {
+        repoFullName: repo.fullName,
+        since: "2026-06-06T12:00:00.000Z",
+        fetchedAt: Date.now() - 6 * 60_000,
+        issues: [githubIssue(repo.fullName, 89, "2026-06-13T09:00:00Z")],
+      },
+    }));
+
+    await renderAt("/");
+
+    expect(await screen.findByText("Issue #90")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+    });
+    expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
+      .toBe(90);
   });
 
   it("总览页 GitHub 项目加载失败时保留本地侧栏并可重试", async () => {

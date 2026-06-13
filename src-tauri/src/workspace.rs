@@ -2885,19 +2885,41 @@ pub async fn github_list_issues(
     app: AppHandle,
     repo_full_name: String,
     state: Option<String>,
+    per_page: Option<u32>,
+    sort: Option<String>,
+    direction: Option<String>,
+    since: Option<String>,
 ) -> Result<Vec<GitHubIssue>, String> {
     run_blocking("读取 GitHub Issue", move || {
         let (_binding, token) = github_require_token(&app)?;
         let issue_state = state.unwrap_or_else(|| "open".to_string());
+        let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+        let issue_sort = match sort.as_deref() {
+            Some("updated") => "updated",
+            Some("comments") => "comments",
+            _ => "created",
+        };
+        let issue_direction = match direction.as_deref() {
+            Some("asc") => "asc",
+            _ => "desc",
+        };
+        let mut query = vec![
+            ("state", issue_state),
+            ("per_page", issue_per_page),
+            ("sort", issue_sort.to_string()),
+            ("direction", issue_direction.to_string()),
+        ];
+        if let Some(issue_since) = normalize_optional_string(since) {
+            query.push(("since", issue_since));
+        }
         let client = build_client()?;
         let response = github_send(
             &app,
             "读取 GitHub Issue 失败",
             github_headers(
-                client.get(format!("{}/issues", github_repo_api_url(&repo_full_name)?)).query(&[
-                    ("state", issue_state.as_str()),
-                    ("per_page", "100"),
-                ]),
+                client
+                    .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
+                    .query(&query),
                 Some(&token),
             ),
         )?;

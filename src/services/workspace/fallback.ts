@@ -12,6 +12,7 @@ import type {
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssue,
+  GitHubIssueListOptions,
   GitHubRemoteBranch,
   GitHubRepoManagement,
   GitHubRepoOwner,
@@ -228,6 +229,15 @@ let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubBranches = createFallbackGitHubBranches();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 
+type FallbackGitHubIssueListCall = {
+  repoFullName: string;
+  state: string | null;
+  perPage: number | null;
+  sort: string | null;
+  direction: string | null;
+  since: string | null;
+};
+
 function createFallbackSettings(): WorkspaceSettings {
   return {
     workspaceRoot: "C:\\Files\\workspace",
@@ -246,6 +256,7 @@ let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | nul
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
+let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackRepoOverrides: Record<string, RepoSummary> = {};
@@ -269,6 +280,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubBranches = createFallbackGitHubBranches();
   fallbackGitHubIssues = createFallbackGitHubIssues();
+  fallbackGitHubIssueListCalls = [];
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
   fallbackRepoOverrides = {};
@@ -324,6 +336,19 @@ export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | nul
     items: page.items.map(cloneGitHubRepoSummary),
     nextPage: page.nextPage,
   })) ?? null;
+}
+
+export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueListCall[] {
+  return fallbackGitHubIssueListCalls.map((call) => ({ ...call }));
+}
+
+export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, GitHubIssue[]>) {
+  fallbackGitHubIssues = Object.fromEntries(
+    Object.entries(issuesByRepo).map(([repoFullName, issues]) => [
+      repoFullName,
+      issues.map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
+    ]),
+  );
 }
 
 async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T): Promise<T> {
@@ -702,12 +727,56 @@ export function createGitHubRemoteBranch(
   });
 }
 
-export function listGitHubIssues(repoFullName: string, state?: string | null): Promise<GitHubIssue[]> {
-  return call("github_list_issues", { repoFullName, state: state ?? null }, () =>
-    (fallbackGitHubIssues[repoFullName] ?? [])
+export function listGitHubIssues(
+  repoFullName: string,
+  stateOrOptions?: string | null | GitHubIssueListOptions,
+): Promise<GitHubIssue[]> {
+  const options = typeof stateOrOptions === "object" && stateOrOptions != null
+    ? stateOrOptions
+    : { state: stateOrOptions ?? null };
+  const state = options.state ?? null;
+  const sort = options.sort ?? null;
+  const direction = options.direction ?? null;
+  const since = options.since ?? null;
+  const perPage = Number.isFinite(options.perPage) ? Math.max(1, Math.trunc(options.perPage ?? 0)) : null;
+  fallbackGitHubIssueListCalls.push({ repoFullName, state, perPage, sort, direction, since });
+  return call("github_list_issues", {
+    repoFullName,
+    state,
+    perPage,
+    sort,
+    direction,
+    since,
+  }, () => {
+    const sorted = [...(fallbackGitHubIssues[repoFullName] ?? [])]
       .filter((issue) => !state || state === "all" || issue.state === state)
-      .map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
-  );
+      .filter((issue) => isFallbackGitHubIssueSince(issue, since))
+      .sort((a, b) => compareFallbackGitHubIssues(a, b, sort, direction));
+    return sorted
+      .slice(0, perPage ?? sorted.length)
+      .map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] }));
+  });
+}
+
+function isFallbackGitHubIssueSince(issue: GitHubIssue, since: string | null) {
+  if (!since) return true;
+  const issueUpdatedAt = Date.parse(issue.updatedAt);
+  const sinceTimestamp = Date.parse(since);
+  if (!Number.isFinite(issueUpdatedAt) || !Number.isFinite(sinceTimestamp)) return true;
+  return issueUpdatedAt >= sinceTimestamp;
+}
+
+function compareFallbackGitHubIssues(
+  a: GitHubIssue,
+  b: GitHubIssue,
+  sort: string | null,
+  direction: string | null,
+) {
+  const sortKey = sort === "created" ? "createdAt" : "updatedAt";
+  const left = Date.parse(a[sortKey]);
+  const right = Date.parse(b[sortKey]);
+  const compared = (Number.isFinite(left) ? left : 0) - (Number.isFinite(right) ? right : 0);
+  return direction === "asc" ? compared : -compared;
 }
 
 export function createGitHubIssue(

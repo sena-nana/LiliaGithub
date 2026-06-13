@@ -1,9 +1,11 @@
 export * from "./workspace/client";
 export {
+  getFallbackGitHubIssueListCallsForTests,
   resetWorkspaceFallbacksForTests,
   setFallbackBulkExecuteOverrideForTests,
   setFallbackConflictOverrideForTests,
   setFallbackGitHubBindingStatusForTests,
+  setFallbackGitHubIssuesForTests,
   setFallbackGitHubRepoPagesForTests,
   setFallbackGitHubReposErrorForTests,
   setFallbackRepoContributionsOverrideForTests,
