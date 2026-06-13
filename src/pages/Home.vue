@@ -59,6 +59,7 @@ type LanguageSlice = {
   offset: number;
   to: string;
   title: string;
+  linkTitle: string;
 };
 
 type LanguageOverview = {
@@ -183,32 +184,6 @@ function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   return tab ? `${path}?tab=${tab}` : path;
 }
 
-function navigateLanguageSlice(to: string, event: Event) {
-  const mouseEvent = event instanceof MouseEvent ? event : null;
-  if (
-    event.defaultPrevented
-    || (mouseEvent && (
-      mouseEvent.button > 0
-      || mouseEvent.altKey
-      || mouseEvent.ctrlKey
-      || mouseEvent.metaKey
-      || mouseEvent.shiftKey
-    ))
-  ) {
-    return;
-  }
-  event.preventDefault();
-  void router.push(to);
-}
-
-function navigateLanguagePie(event: Event) {
-  const link = event.target instanceof Element
-    ? event.target.closest<HTMLAnchorElement>(".language-pie__link")
-    : null;
-  const to = link?.dataset.to;
-  if (to) navigateLanguageSlice(to, event);
-}
-
 function mergeLanguageTotals(totals: LanguageTotal[]) {
   if (!totals.length) return null;
   const repoBytes = new Map<string, number>();
@@ -241,7 +216,8 @@ function buildLanguageSlice(
     color,
     offset,
     to: primaryRepoId ? `/repos/${encodeURIComponent(primaryRepoId)}` : "/",
-    title: target
+    title: baseTitle,
+    linkTitle: target
       ? `${baseTitle}，点击进入 ${target}${repoIds.length > 1 ? ` 等 ${repoIds.length} 个仓库` : ""}`
       : baseTitle,
   };
@@ -719,34 +695,25 @@ async function refreshLanguageStats() {
               viewBox="0 0 42 42"
               role="img"
               aria-label="编程语言占比饼图"
-              @click="navigateLanguagePie"
             >
               <circle class="language-pie__track" cx="21" cy="21" r="15.9155" />
-              <a
+              <circle
                 v-for="slice in languageOverview.slices"
                 :key="slice.language"
-                class="language-pie__link"
-                :href="router.resolve(slice.to).href"
-                :aria-label="slice.title"
-                :data-to="slice.to"
-                @click="navigateLanguageSlice(slice.to, $event)"
+                class="language-pie__slice"
+                cx="21"
+                cy="21"
+                r="15.9155"
+                :stroke="slice.color"
+                :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
+                :stroke-dashoffset="-slice.offset"
               >
-                <circle
-                  class="language-pie__slice"
-                  cx="21"
-                  cy="21"
-                  r="15.9155"
-                  :stroke="slice.color"
-                  :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
-                  :stroke-dashoffset="-slice.offset"
-                >
-                  <title>{{ slice.title }}</title>
-                </circle>
-              </a>
+                <title>{{ slice.title }}</title>
+              </circle>
             </svg>
             <ul class="language-list">
               <li v-for="slice in languageOverview.slices" :key="slice.language">
-                <RouterLink class="language-list__link" :to="slice.to" :title="slice.title">
+                <RouterLink class="language-list__link" :to="slice.to" :title="slice.linkTitle">
                   <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
                   <span class="language-name">{{ slice.language }}</span>
                   <strong>{{ formatPercent(slice.percent) }}</strong>
@@ -1281,16 +1248,6 @@ async function refreshLanguageStats() {
 
 .language-pie__slice {
   transition: stroke-dasharray 0.2s ease;
-}
-
-.language-pie__link {
-  cursor: pointer;
-  outline: none;
-}
-
-.language-pie__link:hover .language-pie__slice,
-.language-pie__link:focus-visible .language-pie__slice {
-  stroke-width: 11;
 }
 
 .language-list {

@@ -78,19 +78,15 @@ describe("基础路由", () => {
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(1);
   });
 
-  it("总览页语言图表和列表可跳转到对应仓库", async () => {
+  it("总览页语言列表可跳转到对应仓库，饼图仅展示占比", async () => {
     const { router } = await renderAt("/");
 
-    const chartLink = await screen.findByRole("link", { name: /TypeScript：50%/ });
-    await fireEvent.click(chartLink);
-
-    await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    });
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-
-    await router.push("/");
-    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /TypeScript：50%/ })).toBeNull();
+    const chart = await screen.findByLabelText("编程语言占比图");
+    const pieSlice = chart.querySelector(".language-pie__slice");
+    expect(pieSlice).toBeInTheDocument();
+    await fireEvent.click(pieSlice as Element);
+    expect(router.currentRoute.value.fullPath).toBe("/");
 
     const languageName = await screen.findByText("TypeScript", { selector: ".language-list__link .language-name" });
     const listLink = languageName.closest("a");
