@@ -4,6 +4,7 @@ export {
   setFallbackBulkExecuteOverrideForTests,
   setFallbackConflictOverrideForTests,
   setFallbackGitHubBindingStatusForTests,
+  setFallbackGitHubRepoPagesForTests,
   setFallbackGitHubReposErrorForTests,
   setFallbackRepoContributionsOverrideForTests,
   setFallbackRepoRemoteSyncOverrideForTests,

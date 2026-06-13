@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import App from "../src/App.vue";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import type { RepoConflictState } from "../src/services/workspace";
+import type { GitHubRepoSummary, RepoConflictState } from "../src/services/workspace";
 import { conflictState, repoSummary } from "./fixtures/workspace";
 
 async function renderAt(path: string) {
@@ -33,7 +33,7 @@ async function clickOverviewSync() {
   const main = document.querySelector("main");
   if (!(main instanceof HTMLElement)) throw new Error("未找到主内容区域");
   await screen.findByRole("heading", { level: 1, name: "项目总览" });
-  await within(main).findByText("LiliaGithub");
+  await within(main).findByLabelText("仓库状态列表");
   await fireEvent.click(within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" }));
 }
 
@@ -50,6 +50,24 @@ async function mockLiliaGithubSyncFailure() {
   return service;
 }
 
+function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummary> = {}): GitHubRepoSummary {
+  const [, name = fullName] = fullName.split("/");
+  return {
+    id: Math.floor(Math.random() * 1_000_000),
+    name,
+    fullName,
+    ownerLogin: fullName.split("/")[0] ?? "sena-nana",
+    private: false,
+    description: null,
+    defaultBranch: "main",
+    createdAt: "2026-06-10T08:00:00Z",
+    updatedAt: "2026-06-12T08:00:00Z",
+    cloneUrl: `https://github.com/${fullName}.git`,
+    htmlUrl: `https://github.com/${fullName}`,
+    ...overrides,
+  };
+}
+
 describe("基础路由", () => {
   it("默认首页显示 Git 项目总览", async () => {
     await renderAt("/");
@@ -62,20 +80,124 @@ describe("基础路由", () => {
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
     expect(await screen.findByLabelText("GitHub 提交贡献图")).toBeInTheDocument();
     expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
-    expect(screen.getByText(/覆盖 2 个仓库 · 刷新于/)).toBeInTheDocument();
+    expect(screen.queryByText(/刷新于/)).toBeNull();
+    expect(screen.queryByText(/覆盖 \d+ 个仓库/)).toBeNull();
     expect(document.querySelector(".contribution-day[title$='次提交']")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
     expect(screen.getByLabelText("编程语言占比图")).toBeInTheDocument();
-    expect(await screen.findByText(/HEAD 已提交文件 · 刷新于/)).toBeInTheDocument();
+    expect(screen.queryByText(/HEAD 已提交文件/)).toBeNull();
     expect(await screen.findByText("TypeScript")).toBeInTheDocument();
     expect(await screen.findByText("50%")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "刷新语言" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "刷新语言" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "含改动" }));
-    expect(await screen.findByText(/包含未提交改动 · 刷新于/)).toBeInTheDocument();
+    expect(screen.queryByText(/包含未提交改动/)).toBeNull();
     expect(await screen.findByText("49%")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "GitHub 时间线" })).toBeInTheDocument();
+    const githubTimelineList = screen.getByLabelText("GitHub 时间线列表");
+    expect(await within(githubTimelineList).findByText("Issue #12")).toBeInTheDocument();
+    expect(githubTimelineList).toHaveTextContent("补齐仓库管理入口");
+    expect(githubTimelineList).toHaveTextContent("提交");
+    expect(githubTimelineList).toHaveTextContent("搭建 LiliaGithub MVP");
+    expect(githubTimelineList).toHaveTextContent("创建仓库");
+    expect(githubTimelineList).toHaveTextContent("仓库同步状态");
+    expect(githubTimelineList).toHaveTextContent("sena-nana/LiliaGithub");
+    expect(screen.getByRole("heading", { level: 2, name: "仓库状态" })).toBeInTheDocument();
+    expect(screen.getByText("2 个 GitHub 项目")).toBeInTheDocument();
+    const repoStatusList = screen.getByLabelText("仓库状态列表");
+    expect(repoStatusList).toBeInTheDocument();
+    expect(repoStatusList).toHaveTextContent("sena-nana/LiliaGithub");
+    expect(repoStatusList).not.toHaveTextContent("分支");
+    expect(repoStatusList).not.toHaveTextContent("变更");
+    expect(repoStatusList).not.toHaveTextContent("同步");
+    expect(repoStatusList).not.toHaveTextContent("更新时间");
+    expect(screen.getByRole("link", { name: "打开 sena-nana/LiliaGithub" })).toBeInTheDocument();
     expect(screen.getByLabelText("项目总览操作")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(1);
+  });
+
+  it("总览页仓库状态行可直接进入仓库详情", async () => {
+    const { router } = await renderAt("/");
+
+    await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+  });
+
+  it("总览页未 clone 的 GitHub 项目显示克隆按钮并跳转本地详情", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/LiliaGithub"),
+          githubRepoSummary("sena-nana/NewRepo", {
+            description: "Not cloned yet",
+            updatedAt: "2026-06-13T08:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    const { router } = await renderAt("/");
+
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    await within(repoStatusList).findByText("sena-nana/NewRepo");
+    expect(screen.queryByText("Not cloned yet")).toBeNull();
+    const row = within(repoStatusList).getByText("sena-nana/NewRepo").closest(".repo-status-row");
+    expect(row).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByRole("button", { name: "克隆" })).toBeInTheDocument();
+
+    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
+  });
+
+  it("总览页 GitHub 项目支持手动加载更多并去重", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary("sena-nana/LiliaGithub")],
+        nextPage: 2,
+      },
+      {
+        items: [
+          githubRepoSummary("sena-nana/LiliaGithub"),
+          githubRepoSummary("sena-nana/PageTwo"),
+        ],
+        nextPage: null,
+      },
+    ]);
+    await renderAt("/");
+
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    await within(repoStatusList).findByText("sena-nana/LiliaGithub");
+    expect(within(repoStatusList).queryByText("sena-nana/PageTwo")).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+
+    expect(await within(repoStatusList).findByText("sena-nana/PageTwo")).toBeInTheDocument();
+    expect(within(repoStatusList).getAllByText("sena-nana/LiliaGithub")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
+  });
+
+  it("总览页 GitHub 项目加载失败时保留本地侧栏并可重试", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
+    await renderAt("/");
+
+    expect(await screen.findByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
+    expect(screen.getByText("仓库 2")).toBeInTheDocument();
+    expect(screen.getAllByText("LiliaGithub").length).toBeGreaterThan(0);
+
+    service.setFallbackGitHubReposErrorForTests(null);
+    await fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    expect(await within(screen.getByLabelText("仓库状态列表")).findByText("sena-nana/LiliaGithub")).toBeInTheDocument();
+    expect(screen.queryByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeNull();
   });
 
   it("总览页语言列表可跳转到对应仓库，饼图仅展示占比", async () => {
@@ -160,7 +282,8 @@ describe("基础路由", () => {
 
     await renderAt("/");
 
-    expect(await screen.findByText(/覆盖 30\/33 个仓库 · 仅统计前 30 个 · 刷新于/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("2026-06-11：1 次提交")).toBeInTheDocument();
+    expect(screen.queryByText(/仅统计前 30 个/)).toBeNull();
   });
 
   it("首页 GitHub 贡献图使用固定右侧窗口显示", async () => {

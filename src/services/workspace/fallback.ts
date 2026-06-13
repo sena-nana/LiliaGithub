@@ -117,6 +117,7 @@ const fallbackGitHubRepos: GitHubRepoSummary[] = [
     private: false,
     description: "Local GitHub workspace manager",
     defaultBranch: "main",
+    createdAt: "2026-06-08T09:00:00Z",
     updatedAt: "2026-06-11T00:00:00Z",
     cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
     htmlUrl: "https://github.com/sena-nana/LiliaGithub",
@@ -129,11 +130,16 @@ const fallbackGitHubRepos: GitHubRepoSummary[] = [
     private: true,
     description: "Desktop agent workbench",
     defaultBranch: "main",
+    createdAt: "2026-06-07T09:00:00Z",
     updatedAt: "2026-06-10T00:00:00Z",
     cloneUrl: "https://github.com/sena-nana/Lilia.git",
     htmlUrl: "https://github.com/sena-nana/Lilia",
   },
 ];
+
+function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
+  return { ...repo };
+}
 
 function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
   return [
@@ -239,6 +245,7 @@ let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContr
 let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
+let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackRepoOverrides: Record<string, RepoSummary> = {};
@@ -257,6 +264,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoRemoteSyncOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
+  fallbackGitHubRepoPagesOverride = null;
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubBranches = createFallbackGitHubBranches();
@@ -309,6 +317,13 @@ export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingSta
 
 export function setFallbackGitHubReposErrorForTests(error: string | null) {
   fallbackGitHubReposError = error;
+}
+
+export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | null) {
+  fallbackGitHubRepoPagesOverride = pages?.map((page) => ({
+    items: page.items.map(cloneGitHubRepoSummary),
+    nextPage: page.nextPage,
+  })) ?? null;
 }
 
 async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T): Promise<T> {
@@ -545,8 +560,16 @@ export function pollGitHubDeviceFlow(
 export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
   return call("github_list_repos", { page: page ?? null }, () => {
     if (fallbackGitHubReposError) throw new Error(fallbackGitHubReposError);
+    if (fallbackGitHubRepoPagesOverride) {
+      const pageIndex = Math.max(0, (page ?? 1) - 1);
+      const fallbackPage = fallbackGitHubRepoPagesOverride[pageIndex] ?? { items: [], nextPage: null };
+      return {
+        items: fallbackPage.items.map(cloneGitHubRepoSummary),
+        nextPage: fallbackPage.nextPage,
+      };
+    }
     return {
-      items: fallbackGitHubRepos.map((repo) => ({ ...repo })),
+      items: fallbackGitHubRepos.map(cloneGitHubRepoSummary),
       nextPage: null,
     };
   });
@@ -591,6 +614,7 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
     const name = request.name.trim();
     if (!owner || !name) throw new Error("owner 和仓库名不能为空");
     const fullName = `${owner}/${name}`;
+    const now = new Date().toISOString();
     const repo: GitHubRepoSummary = {
       id: 1000 + fallbackGitHubRepos.length,
       name,
@@ -599,7 +623,8 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       private: request.private,
       description: request.description?.trim() || null,
       defaultBranch: request.autoInit ? "main" : null,
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       cloneUrl: `https://github.com/${fullName}.git`,
       htmlUrl: `https://github.com/${fullName}`,
     };
@@ -1331,4 +1356,3 @@ export function openPath(path: string): Promise<void> {
 export function openUrl(url: string): Promise<void> {
   return call("system_open_url", { url }, () => undefined);
 }
-

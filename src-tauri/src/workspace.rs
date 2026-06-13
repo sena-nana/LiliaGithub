@@ -177,6 +177,7 @@ pub struct GitHubRepoSummary {
     pub description: Option<String>,
     #[serde(default)]
     pub default_branch: Option<String>,
+    pub created_at: String,
     pub updated_at: String,
     pub clone_url: String,
     pub html_url: String,
@@ -473,6 +474,7 @@ struct GitHubRepoResponse {
     private: bool,
     description: Option<String>,
     default_branch: Option<String>,
+    created_at: String,
     updated_at: String,
     clone_url: String,
     html_url: String,
@@ -1070,6 +1072,7 @@ fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> GitHubRepoSumm
         private: repo.private,
         description: repo.description,
         default_branch: repo.default_branch,
+        created_at: repo.created_at,
         updated_at: repo.updated_at,
         clone_url: repo.clone_url,
         html_url: repo.html_url,

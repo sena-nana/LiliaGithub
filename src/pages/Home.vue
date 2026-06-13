@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
-  CheckCircle2,
   AlertCircle,
+  CheckCircle2,
+  CircleDot,
   FilePlus2,
   FolderOpen,
   FolderGit2,
+  GitCommitHorizontal,
   GitPullRequestArrow,
   Info,
   LoaderCircle,
@@ -18,9 +20,18 @@ import {
 } from "@lucide/vue";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
-import { syncErrorByRepoId } from "../composables/workspace/state";
-import type { GitHubContributionDay, RepoSummary } from "../services/workspace";
-import { bulkResultTone, formatNullableRepoTime } from "../utils/repoDisplay";
+import { repoActionErrorForRepo, syncErrorByRepoId } from "../composables/workspace/state";
+import {
+  isGitHubBindingExpiredError,
+  listGitHubRepos,
+  listGitHubIssues,
+  preloadGitHubRepos,
+  type GitHubContributionDay,
+  type GitHubIssue,
+  type GitHubRepoSummary,
+  type RepoSummary,
+} from "../services/workspace";
+import { bulkResultTone } from "../utils/repoDisplay";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
@@ -37,8 +48,19 @@ type RepoAction = {
 };
 
 type RepoStatusRow = {
-  repo: RepoSummary;
+  githubRepo: GitHubRepoSummary;
+  localRepo: RepoSummary | null;
   action: RepoAction | null;
+};
+
+type GitHubTimelineEvent = {
+  id: string;
+  kind: "repo" | "operation" | "commit" | "issue";
+  title: string;
+  detail: string;
+  summary: string;
+  timestamp: number;
+  href?: string;
 };
 
 type ContributionCell = GitHubContributionDay & {
@@ -80,8 +102,14 @@ const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", 
 const languageScope = ref<LanguageScope>("head");
 const discovering = ref(false);
 const addingRepo = ref(false);
-const languageRefreshError = ref<string | null>(null);
-const languageStatsRefreshing = computed(() => workspace.state.languageStatsLoadingRepoIds.length > 0);
+const githubRepos = ref<GitHubRepoSummary[]>([]);
+const githubReposNextPage = ref<number | null>(null);
+const githubReposLoading = ref(false);
+const githubReposLoadingMore = ref(false);
+const githubReposError = ref<string | null>(null);
+const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
+const githubIssuesLoading = ref(false);
+const cloningFullName = ref<string | null>(null);
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -91,32 +119,6 @@ const contributionMonthLabels = computed(() =>
 const totalContributions = computed(() =>
   workspace.state.githubContributions.days.reduce((total, day) => total + day.count, 0),
 );
-
-const contributionMetaNote = computed(() => {
-  const meta = workspace.state.githubContributions.meta;
-  if (!meta) return null;
-  const refreshedAt = `刷新于 ${formatDateTime(meta.refreshedAt)}`;
-  if (meta.truncated) {
-    return `覆盖 ${meta.repoCount}/${meta.requestedRepoCount} 个仓库 · 仅统计前 ${meta.repoLimit} 个 · ${refreshedAt}`;
-  }
-  return `覆盖 ${meta.repoCount} 个仓库 · ${refreshedAt}`;
-});
-
-const languageUpdatedAt = computed(() => {
-  const timestamps = workspace.state.repos
-    .map((repo) => repo.languageStatsUpdatedAt)
-    .filter((value) => Number.isFinite(value) && value > 0);
-  return timestamps.length ? Math.max(...timestamps) : null;
-});
-
-const languageScopeNote = computed(() => {
-  const scope = languageScope.value === "workingTree" ? "包含未提交改动" : "HEAD 已提交文件";
-  if (workspace.state.languageStatsLoadingRepoIds.length > 0) {
-    return `${scope} · 后台刷新中`;
-  }
-  const updatedAt = languageUpdatedAt.value == null ? "刷新时间未知" : `刷新于 ${formatDateTime(languageUpdatedAt.value)}`;
-  return `${scope} · ${updatedAt}`;
-});
 
 const languageOverview = computed<LanguageOverview>(() => {
   const totals = new Map<string, Omit<LanguageTotal, "language">>();
@@ -147,11 +149,35 @@ const languageOverview = computed<LanguageOverview>(() => {
   return { totalBytes, slices };
 });
 
+const localRepoByGitHubFullName = computed(() => {
+  const repos = new Map<string, RepoSummary>();
+  for (const repo of workspace.state.repos) {
+    if (repo.githubFullName) repos.set(repo.githubFullName, repo);
+  }
+  return repos;
+});
+
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
-  workspace.state.repos.map((repo) => ({
-    repo,
-    action: repoAction(repo),
-  })),
+  githubRepos.value.map((githubRepo) => {
+    const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
+    return {
+      githubRepo,
+      localRepo,
+      action: localRepo ? repoAction(localRepo) : null,
+    };
+  }),
+);
+
+const githubTimelineEvents = computed<GitHubTimelineEvent[]>(() =>
+  repoStatusRows.value.flatMap((row) => buildGitHubTimelineEvents(row)).sort((a, b) => b.timestamp - a.timestamp),
+);
+
+watch(
+  () => workspace.isReady.value,
+  (ready) => {
+    if (ready) void loadGitHubRepoStatus();
+  },
+  { immediate: true },
 );
 
 const authStatusText = computed(() => {
@@ -175,13 +201,86 @@ const authRemainingText = computed(() => {
   return `${minutes}:${String(rest).padStart(2, "0")}`;
 });
 
-function dirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
-  return repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
-}
-
 function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   const path = `/repos/${encodeURIComponent(repo.id)}`;
   return tab ? `${path}?tab=${tab}` : path;
+}
+
+function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
+  const seen = new Set<string>();
+  const next: GitHubRepoSummary[] = [];
+  for (const item of items) {
+    if (seen.has(item.fullName)) continue;
+    seen.add(item.fullName);
+    next.push(item);
+  }
+  return next;
+}
+
+function applyGitHubRepoPage(
+  page: { items: GitHubRepoSummary[]; nextPage: number | null },
+  append = false,
+) {
+  githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
+  githubReposNextPage.value = page.nextPage;
+  githubReposError.value = null;
+  void loadGitHubTimelineIssues(page.items);
+}
+
+function githubRepoLoadErrorMessage(err: unknown) {
+  if (isGitHubBindingExpiredError(err)) return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
+  return `GitHub 仓库列表加载失败：${String(err)}`;
+}
+
+async function loadGitHubTimelineIssues(repos: GitHubRepoSummary[]) {
+  const missingRepos = repos.filter((repo) => githubIssuesByRepo.value[repo.fullName] == null);
+  if (!missingRepos.length) return;
+  githubIssuesLoading.value = true;
+  try {
+    const entries = await Promise.all(
+      missingRepos.map(async (repo) => {
+        try {
+          return [repo.fullName, await listGitHubIssues(repo.fullName, "all")] as const;
+        } catch {
+          return [repo.fullName, []] as const;
+        }
+      }),
+    );
+    githubIssuesByRepo.value = {
+      ...githubIssuesByRepo.value,
+      ...Object.fromEntries(entries),
+    };
+  } finally {
+    githubIssuesLoading.value = false;
+  }
+}
+
+async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
+  if (!workspace.isReady.value || githubReposLoading.value) return;
+  githubReposLoading.value = true;
+  githubReposError.value = null;
+  try {
+    applyGitHubRepoPage(await preloadGitHubRepos({ force: options.force }));
+  } catch (err) {
+    githubRepos.value = [];
+    githubReposNextPage.value = null;
+    githubReposError.value = githubRepoLoadErrorMessage(err);
+  } finally {
+    githubReposLoading.value = false;
+  }
+}
+
+async function loadMoreGitHubRepos() {
+  if (!githubReposNextPage.value || githubReposLoadingMore.value) return;
+  githubReposLoadingMore.value = true;
+  githubReposError.value = null;
+  try {
+    applyGitHubRepoPage(await listGitHubRepos(githubReposNextPage.value), true);
+  } catch (err) {
+    githubReposError.value = githubRepoLoadErrorMessage(err);
+  } finally {
+    githubReposLoadingMore.value = false;
+  }
 }
 
 function mergeLanguageTotals(totals: LanguageTotal[]) {
@@ -253,6 +352,89 @@ function repoAction(repo: RepoSummary): RepoAction | null {
     };
   }
   return null;
+}
+
+function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
+  const { githubRepo, localRepo } = row;
+  const events: GitHubTimelineEvent[] = [];
+  addTimelineEvent(events, {
+    id: `repo-created:${githubRepo.fullName}`,
+    kind: "repo",
+    title: "创建仓库",
+    detail: githubRepo.fullName,
+    summary: githubRepo.private ? "私有 GitHub 仓库" : "公开 GitHub 仓库",
+    timestamp: parseGitHubTime(githubRepo.createdAt),
+    href: githubRepo.htmlUrl,
+  });
+
+  if (localRepo?.lastCommitAt) {
+    addTimelineEvent(events, {
+      id: `commit:${localRepo.id}:${localRepo.lastCommitAt}`,
+      kind: "commit",
+      title: "提交",
+      detail: localRepo.lastCommitMessage ?? "最近一次本地提交",
+      summary: githubRepo.fullName,
+      timestamp: localRepo.lastCommitAt * 1000,
+      href: repoDetailPath(localRepo),
+    });
+  }
+
+  const syncError = localRepo ? syncErrors.value.get(localRepo.id) : null;
+  if (localRepo && syncError) {
+    addTimelineEvent(events, {
+      id: `operation-sync-error:${localRepo.id}`,
+      kind: "operation",
+      title: "仓库操作失败",
+      detail: syncError,
+      summary: githubRepo.fullName,
+      timestamp: workspace.state.recentSync?.updatedAt ?? Date.now(),
+      href: repoDetailPath(localRepo),
+    });
+  }
+
+  const repoActionError = localRepo ? repoActionErrorForRepo(localRepo.id) : null;
+  if (localRepo && repoActionError) {
+    addTimelineEvent(events, {
+      id: `operation-error:${localRepo.id}`,
+      kind: "operation",
+      title: "仓库操作失败",
+      detail: repoActionError,
+      summary: githubRepo.fullName,
+      timestamp: Date.now(),
+      href: repoDetailPath(localRepo),
+    });
+  }
+
+  if (localRepo && (localRepo.ahead > 0 || localRepo.behind > 0)) {
+    addTimelineEvent(events, {
+      id: `operation-sync-state:${localRepo.id}:${localRepo.ahead}:${localRepo.behind}`,
+      kind: "operation",
+      title: "仓库同步状态",
+      detail: `待处理提交 ↑${localRepo.ahead} / ↓${localRepo.behind}`,
+      summary: githubRepo.fullName,
+      timestamp: parseGitHubTime(githubRepo.updatedAt),
+      href: repoDetailPath(localRepo),
+    });
+  }
+
+  for (const issue of githubIssuesByRepo.value[githubRepo.fullName] ?? []) {
+    addTimelineEvent(events, {
+      id: `issue-created:${githubRepo.fullName}:${issue.number}`,
+      kind: "issue",
+      title: `Issue #${issue.number}`,
+      detail: issue.title,
+      summary: githubRepo.fullName,
+      timestamp: parseGitHubTime(issue.createdAt),
+      href: issue.htmlUrl,
+    });
+  }
+
+  return events;
+}
+
+function addTimelineEvent(events: GitHubTimelineEvent[], event: GitHubTimelineEvent) {
+  if (!Number.isFinite(event.timestamp) || event.timestamp <= 0) return;
+  events.push(event);
 }
 
 function buildContributionWeeks(days: readonly GitHubContributionDay[]) {
@@ -335,7 +517,13 @@ function formatPercent(percent: number) {
   return `${Math.round(percent)}%`;
 }
 
-function formatDateTime(timestamp: number) {
+function parseGitHubTime(value: string | null | undefined) {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function formatTimelineTime(timestamp: number) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
@@ -362,6 +550,29 @@ async function discoverRepos() {
   }
 }
 
+async function refreshOverviewRepos() {
+  await Promise.all([
+    workspace.refreshRepos(),
+    loadGitHubRepoStatus({ force: true }),
+  ]);
+}
+
+async function cloneGitHubRepo(repo: GitHubRepoSummary) {
+  if (cloningFullName.value) return;
+  cloningFullName.value = repo.fullName;
+  githubReposError.value = null;
+  try {
+    const summary = await workspace.cloneRepo(repo.cloneUrl, repo.name);
+    await router.push(`/repos/${encodeURIComponent(summary.id)}`);
+  } catch (err) {
+    githubReposError.value = isGitHubBindingExpiredError(err)
+      ? "GitHub 绑定已失效，请重新绑定后再克隆仓库。"
+      : `克隆 ${repo.fullName} 失败：${String(err)}`;
+  } finally {
+    cloningFullName.value = null;
+  }
+}
+
 async function addLocalRepo() {
   if (addingRepo.value) return;
   addingRepo.value = true;
@@ -372,16 +583,6 @@ async function addLocalRepo() {
     }
   } finally {
     addingRepo.value = false;
-  }
-}
-
-async function refreshLanguageStats() {
-  if (languageStatsRefreshing.value) return;
-  languageRefreshError.value = null;
-  try {
-    await workspace.refreshLanguageStatsForRepos(workspace.state.repos.map((repo) => repo.id), { silent: false });
-  } catch (err) {
-    languageRefreshError.value = String(err);
   }
 }
 
@@ -512,8 +713,8 @@ async function refreshLanguageStats() {
             class="overview-actions__btn"
             title="刷新仓库"
             aria-label="刷新仓库"
-            :disabled="workspace.state.scanning"
-            @click="workspace.refreshRepos"
+            :disabled="workspace.state.scanning || githubReposLoading"
+            @click="refreshOverviewRepos"
           >
             <RefreshCw :size="17" aria-hidden="true" />
           </button>
@@ -555,7 +756,6 @@ async function refreshLanguageStats() {
             <div>
               <h2>最近工作结果</h2>
               <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
-              <p v-if="contributionMetaNote" class="contribution-meta">{{ contributionMetaNote }}</p>
             </div>
             <button
               v-if="workspace.state.githubContributions.error"
@@ -632,24 +832,8 @@ async function refreshLanguageStats() {
             <div>
               <h2>编程语言占比</h2>
               <p class="language-total">{{ formatBytes(languageOverview.totalBytes) }} 代码量</p>
-              <p class="language-scope">{{ languageScopeNote }}</p>
             </div>
             <div class="language-actions">
-              <button
-                type="button"
-                class="ghost language-refresh"
-                :disabled="languageStatsRefreshing"
-                @click="refreshLanguageStats"
-              >
-                <LoaderCircle
-                  v-if="languageStatsRefreshing"
-                  :size="13"
-                  aria-hidden="true"
-                  class="sb-spin"
-                />
-                <RefreshCw v-else :size="13" aria-hidden="true" />
-                刷新语言
-              </button>
               <div class="language-tabs" aria-label="语言统计口径">
                 <button
                   type="button"
@@ -668,7 +852,6 @@ async function refreshLanguageStats() {
               </div>
             </div>
           </div>
-          <p v-if="languageRefreshError" class="language-error">{{ languageRefreshError }}</p>
           <p v-if="!languageOverview.slices.length" class="language-empty">暂无语言数据</p>
           <div v-else class="language-chart" aria-label="编程语言占比图">
             <svg
@@ -705,48 +888,137 @@ async function refreshLanguageStats() {
         </div>
       </div>
 
-      <div class="card">
-        <h2>仓库状态</h2>
-        <table class="repo-table">
-          <thead>
-            <tr>
-              <th>仓库</th>
-              <th>分支</th>
-              <th>变更</th>
-              <th>同步</th>
-              <th>处理</th>
-              <th>最近提交</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="{ repo, action } in repoStatusRows" :key="repo.id">
-              <td>{{ repo.name }}</td>
-              <td>{{ repo.currentBranch ?? "detached" }}</td>
-              <td>{{ dirtyCount(repo) }}</td>
-              <td>↑{{ repo.ahead }} / ↓{{ repo.behind }}</td>
-              <td>
-                <div v-if="action" class="repo-action-cell">
-                  <span
-                    class="repo-action-status"
-                    :class="`repo-action-status--${action.tone}`"
-                    :title="action.title"
+      <div class="repo-overview-grid">
+        <div class="card github-timeline-card">
+          <div class="repo-status-heading">
+            <h2>GitHub 时间线</h2>
+            <span>{{ githubTimelineEvents.length }} 个事件</span>
+          </div>
+          <p v-if="(githubReposLoading || githubIssuesLoading) && !githubTimelineEvents.length" class="repo-status-empty">
+            正在加载 GitHub 时间线...
+          </p>
+          <p v-else-if="!githubTimelineEvents.length" class="repo-status-empty">暂无 GitHub 事件</p>
+          <ol v-else class="github-timeline-list" aria-label="GitHub 时间线列表">
+            <li
+              v-for="event in githubTimelineEvents"
+              :key="event.id"
+              class="github-timeline-row"
+            >
+              <span class="github-timeline-row__rail" aria-hidden="true">
+                <span class="github-timeline-row__node">
+                  <FolderGit2 v-if="event.kind === 'repo'" :size="14" aria-hidden="true" />
+                  <GitCommitHorizontal v-else-if="event.kind === 'commit'" :size="14" aria-hidden="true" />
+                  <CircleDot v-else-if="event.kind === 'issue'" :size="14" aria-hidden="true" />
+                  <RefreshCw v-else :size="14" aria-hidden="true" />
+                </span>
+              </span>
+              <div class="github-timeline-row__body">
+                <div class="github-timeline-row__head">
+                  <a
+                    v-if="event.href?.startsWith('http')"
+                    class="github-timeline-row__title"
+                    :href="event.href"
+                    target="_blank"
+                    rel="noreferrer"
                   >
-                    {{ action.status }}
-                  </span>
-                  <RouterLink
-                    class="repo-action-link"
-                    :to="action.to"
-                    :title="action.title"
-                  >
-                    {{ action.label }}
+                    {{ event.title }}
+                  </a>
+                  <RouterLink v-else-if="event.href" class="github-timeline-row__title" :to="event.href">
+                    {{ event.title }}
                   </RouterLink>
+                  <strong v-else class="github-timeline-row__title">{{ event.title }}</strong>
+                  <span class="github-timeline-row__detail">{{ event.detail }}</span>
+                  <time :datetime="new Date(event.timestamp).toISOString()">{{ formatTimelineTime(event.timestamp) }}</time>
                 </div>
-                <span v-else class="repo-action-status repo-action-status--muted">正常</span>
-              </td>
-              <td>{{ formatNullableRepoTime(repo.lastCommitAt) }}</td>
-            </tr>
-          </tbody>
-        </table>
+                <p>{{ event.summary }}</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+
+        <div class="card repo-status-card">
+          <div class="repo-status-heading">
+            <h2>仓库状态</h2>
+            <span>{{ repoStatusRows.length }} 个 GitHub 项目</span>
+          </div>
+          <p v-if="githubReposError" class="repo-status-error">
+            {{ githubReposError }}
+            <button type="button" class="ghost" :disabled="githubReposLoading" @click="loadGitHubRepoStatus({ force: true })">
+              重试
+            </button>
+          </p>
+          <div class="repo-status-list" aria-label="仓库状态列表">
+            <div class="repo-status-head" aria-hidden="true">
+              <span>GitHub 项目</span>
+              <span>处理</span>
+            </div>
+            <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
+            <div
+              v-for="{ githubRepo, localRepo, action } in repoStatusRows"
+              :key="githubRepo.fullName"
+              class="repo-status-row"
+              :class="{ 'is-cloned': localRepo }"
+              :role="localRepo ? 'link' : undefined"
+              :tabindex="localRepo ? 0 : undefined"
+              :aria-label="localRepo ? `打开 ${githubRepo.fullName}` : undefined"
+              :title="localRepo ? localRepo.path : githubRepo.htmlUrl"
+              @click="localRepo && router.push(repoDetailPath(localRepo))"
+              @keydown.enter.prevent="localRepo && router.push(repoDetailPath(localRepo))"
+              @keydown.space.prevent="localRepo && router.push(repoDetailPath(localRepo))"
+            >
+              <strong class="repo-status-row__name">
+                {{ githubRepo.fullName }}
+              </strong>
+              <span class="repo-status-row__action">
+                <template v-if="localRepo">
+                  <template v-if="action">
+                    <span
+                      class="repo-action-status"
+                      :class="`repo-action-status--${action.tone}`"
+                      :title="action.title"
+                    >
+                      {{ action.status }}
+                    </span>
+                    <RouterLink
+                      class="repo-action-link"
+                      :to="action.to"
+                      :title="action.title"
+                      @click.stop
+                    >
+                      {{ action.label }}
+                    </RouterLink>
+                  </template>
+                  <span v-else class="repo-action-status repo-action-status--muted">已 clone</span>
+                </template>
+                <button
+                  v-else
+                  type="button"
+                  class="repo-action-link"
+                  :disabled="Boolean(cloningFullName)"
+                  @click.stop="cloneGitHubRepo(githubRepo)"
+                >
+                  <LoaderCircle
+                    v-if="cloningFullName === githubRepo.fullName"
+                    :size="13"
+                    aria-hidden="true"
+                    class="sb-spin"
+                  />
+                  克隆
+                </button>
+              </span>
+            </div>
+            <button
+              v-if="githubReposNextPage"
+              type="button"
+              class="repo-status-more"
+              :disabled="githubReposLoadingMore"
+              @click="loadMoreGitHubRepos"
+            >
+              <LoaderCircle v-if="githubReposLoadingMore" :size="13" aria-hidden="true" class="sb-spin" />
+              加载更多
+            </button>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -996,12 +1268,6 @@ async function refreshLanguageStats() {
   font-weight: 600;
 }
 
-.contribution-meta {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
 .contribution-retry {
   height: 26px;
   padding: 0 7px;
@@ -1128,12 +1394,6 @@ async function refreshLanguageStats() {
   font-weight: 600;
 }
 
-.language-scope {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
 .language-tabs {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1151,11 +1411,6 @@ async function refreshLanguageStats() {
   gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.language-refresh {
-  height: 30px;
-  padding: 0 8px;
 }
 
 .language-tabs button {
@@ -1267,22 +1522,223 @@ async function refreshLanguageStats() {
   white-space: nowrap;
 }
 
-.repo-table {
-  width: 100%;
-  border-collapse: collapse;
+.repo-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 12px;
+}
+
+.github-timeline-card,
+.repo-status-card {
+  padding-bottom: 10px;
+}
+
+.repo-status-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.repo-status-heading h2 {
+  margin: 0;
+}
+
+.repo-status-heading span {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.repo-status-list {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.github-timeline-list {
+  position: relative;
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.github-timeline-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 4px;
+  border-radius: 6px;
   font-size: 13px;
 }
 
-.repo-table th,
-.repo-table td {
-  padding: 8px 6px;
-  text-align: left;
+.github-timeline-row:hover {
+  background: var(--bg-hover);
+}
+
+.github-timeline-row__rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding-top: 9px;
+}
+
+.github-timeline-row__rail::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  content: "";
+  background: var(--border-soft);
+}
+
+.github-timeline-row:first-child .github-timeline-row__rail::before {
+  top: 10px;
+}
+
+.github-timeline-row:last-child .github-timeline-row__rail::before {
+  bottom: calc(100% - 10px);
+}
+
+.github-timeline-row__node {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+}
+
+.github-timeline-row__node,
+.github-timeline-row__title {
+  color: var(--accent);
+}
+
+.github-timeline-row__body {
+  min-width: 0;
+  padding: 7px 0 8px;
   border-bottom: 1px solid var(--border-soft);
 }
 
-.repo-table th {
-  color: var(--text-muted);
+.github-timeline-row:last-child .github-timeline-row__body {
+  border-bottom: 0;
+}
+
+.github-timeline-row__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.github-timeline-row__title {
+  flex: 0 0 auto;
   font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.github-timeline-row__title:hover,
+.github-timeline-row__title:focus-visible {
+  color: var(--accent);
+}
+
+.github-timeline-row__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-timeline-row__head time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.github-timeline-row__body p {
+  min-width: 0;
+  margin: 3px 0 2px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-status-head,
+.repo-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(168px, auto);
+  align-items: center;
+  gap: 10px;
+}
+
+.repo-status-head {
+  padding: 0 8px 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.repo-status-row {
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: inherit;
+  cursor: default;
+  font-size: 13px;
+}
+
+.repo-status-row.is-cloned {
+  cursor: pointer;
+}
+
+.repo-status-row.is-cloned:hover {
+  background: var(--bg-hover);
+}
+
+.repo-status-row:focus-visible {
+  outline: 0;
+  border-color: var(--border-strong);
+  background: var(--bg-active);
+}
+
+.repo-status-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-status-row__name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.repo-status-row__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-width: 0;
 }
 
 .repo-action-status {
@@ -1294,13 +1750,6 @@ async function refreshLanguageStats() {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.repo-action-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
 }
 
 .repo-action-status--error {
@@ -1322,8 +1771,8 @@ async function refreshLanguageStats() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 26px;
-  padding: 0 9px;
+  min-height: 24px;
+  padding: 0 8px;
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   color: var(--text);
@@ -1338,6 +1787,41 @@ async function refreshLanguageStats() {
 .repo-action-link:focus-visible {
   border-color: var(--border);
   background: var(--bg-hover);
+}
+
+.repo-action-link:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.repo-status-error,
+.repo-status-empty {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.repo-status-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--err);
+}
+
+.repo-status-more {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .modal-backdrop {
@@ -1449,8 +1933,31 @@ async function refreshLanguageStats() {
 
 @media (max-width: 900px) {
   .overview-grid,
+  .repo-overview-grid,
   .sync-columns {
     grid-template-columns: 1fr;
+  }
+
+  .repo-status-head {
+    display: none;
+  }
+
+  .repo-status-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 10px;
+    align-items: center;
+    padding: 8px;
+  }
+
+  .repo-status-row__name {
+    grid-column: 1;
+  }
+
+  .repo-status-row__action {
+    grid-column: 2;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    max-width: 168px;
   }
 
   .setup-step {
