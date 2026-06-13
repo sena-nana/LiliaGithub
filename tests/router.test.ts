@@ -317,6 +317,34 @@ describe("基础路由", () => {
       .toBe(90);
   });
 
+  it("从仓库详情返回总览时复用仓库状态和时间线缓存", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/ReturnTimeline");
+    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    service.setFallbackGitHubIssuesForTests({
+      [repo.fullName]: [githubIssue(repo.fullName, 93, "2026-06-13T10:00:00Z")],
+    });
+    const { router } = await renderAt("/");
+
+    expect(await screen.findByText("Issue #93")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+    });
+
+    await router.push("/repos/LiliaGithub");
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+
+    await router.push("/");
+    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    expect(await screen.findByText("Issue #93")).toBeInTheDocument();
+    expect(screen.getByLabelText("仓库状态列表")).toHaveTextContent(repo.fullName);
+    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+    expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
+      .toBe(93);
+  });
+
   it("总览页刷新仓库后重新拉取当前可见仓库的 issue", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
