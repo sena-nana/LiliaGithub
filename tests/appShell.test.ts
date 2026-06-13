@@ -110,6 +110,7 @@ describe("AppShell sidebar", () => {
     });
 
     expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
+    expect(view.getByText("仓库 2")).toBeInTheDocument();
     expect(view.container.querySelector(".sb-section--actions")).toBeNull();
     expect(view.container.querySelector(".shell-actions")).toBeNull();
     expect(view.getByLabelText("项目总览操作")).toBeInTheDocument();

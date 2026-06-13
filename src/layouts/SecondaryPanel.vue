@@ -404,7 +404,7 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 
     <div class="sb-section">
       <div class="sb-section__header">
-        <span class="sb-section__title">仓库</span>
+        <span class="sb-section__title">仓库 {{ workspace.state.repos.length }}</span>
       </div>
       <div v-if="searchOpen" class="sb-search">
         <Search :size="13" aria-hidden="true" />
@@ -591,6 +591,7 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 .sb-section__header {
   display: flex;
   align-items: center;
+  gap: 5px;
   height: 24px;
   padding: 0 6px 0 8px;
   color: var(--text-faint);
