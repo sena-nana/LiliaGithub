@@ -606,6 +606,7 @@ describe("基础路由", () => {
       LiliaGithub: {
         repoId: "LiliaGithub",
         path: "README.md",
+        images: {},
         format: "md",
         updatedAt: 1,
         content: "# LocalOnly\n\n本地 README。",
