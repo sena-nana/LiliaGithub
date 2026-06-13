@@ -1,13 +1,13 @@
 import { render, screen } from "@testing-library/vue";
-import { computed, reactive, ref } from "vue";
+import { reactive, ref } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
 
 const workspaceRoot = ref<string | null>(null);
 const githubBinding = ref<null>(null);
 const deviceFlow = ref<null>(null);
-const isReady = computed(() => false);
-const isAuthorized = computed(() => false);
+const isReady = ref(false);
+const isAuthorized = ref(false);
 const state = reactive({
   loading: true,
   authLoading: false,
@@ -40,12 +40,6 @@ vi.mock("../src/composables/useWorkspace", () => ({
     githubBinding,
     isAuthorized,
     isReady,
-    overviewStats: computed(() => ({
-      totalRepos: 0,
-      dirtyRepos: 0,
-      pullable: 0,
-      pushable: 0,
-    })),
     initialize: vi.fn(async () => undefined),
     chooseWorkspaceRoot: vi.fn(async () => null),
     addLocalRepo: vi.fn(async () => null),

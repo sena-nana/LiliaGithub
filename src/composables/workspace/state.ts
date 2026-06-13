@@ -91,20 +91,6 @@ export const githubBinding = computed(() => state.bindingStatus?.binding ?? stat
 export const isAuthorized = computed(() => state.bindingStatus?.state === "bound" && Boolean(githubBinding.value));
 export const isReady = computed(() => Boolean(workspaceRoot.value) && isAuthorized.value);
 
-export const overviewStats = computed(() => {
-  const dirtyRepos = state.repos.filter((repo) =>
-    repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0
-  ).length;
-  const pullable = state.repos.filter((repo) => repo.behind > 0).length;
-  const pushable = state.repos.filter((repo) => repo.ahead > 0).length;
-  return {
-    totalRepos: state.repos.length,
-    dirtyRepos,
-    pullable,
-    pushable,
-  };
-});
-
 export function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
   state.bindingStatus = bindingStatus;
   if (state.settings) {

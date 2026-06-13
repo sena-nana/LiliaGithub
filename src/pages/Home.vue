@@ -549,25 +549,6 @@ async function refreshLanguageStats() {
         </div>
       </div>
 
-      <div class="metric-grid">
-        <div class="card metric">
-          <span>仓库</span>
-          <strong>{{ workspace.overviewStats.value.totalRepos }}</strong>
-        </div>
-        <div class="card metric">
-          <span>存在变更</span>
-          <strong>{{ workspace.overviewStats.value.dirtyRepos }}</strong>
-        </div>
-        <div class="card metric">
-          <span>可拉取</span>
-          <strong>{{ workspace.overviewStats.value.pullable }}</strong>
-        </div>
-        <div class="card metric">
-          <span>待推送</span>
-          <strong>{{ workspace.overviewStats.value.pushable }}</strong>
-        </div>
-      </div>
-
       <div class="overview-grid">
         <div class="card contribution-card">
           <div class="card-heading">
@@ -851,8 +832,7 @@ async function refreshLanguageStats() {
 </template>
 
 <style scoped>
-.overview-grid,
-.metric-grid {
+.overview-grid {
   display: grid;
   gap: 12px;
 }
@@ -881,10 +861,6 @@ async function refreshLanguageStats() {
 
 .overview-grid {
   grid-template-columns: 1.3fr 1fr;
-}
-
-.metric-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .setup-step {
@@ -992,18 +968,6 @@ async function refreshLanguageStats() {
 
 .error-line {
   color: var(--err);
-}
-
-.metric span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.metric strong {
-  display: block;
-  margin-top: 4px;
-  font-size: 24px;
-  line-height: 1;
 }
 
 .contribution-card {
@@ -1485,7 +1449,6 @@ async function refreshLanguageStats() {
 
 @media (max-width: 900px) {
   .overview-grid,
-  .metric-grid,
   .sync-columns {
     grid-template-columns: 1fr;
   }
