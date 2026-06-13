@@ -320,7 +320,7 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
       <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
       <p v-else-if="readmeLoading" class="muted repo-empty">正在读取 README。</p>
       <p v-else-if="!readme" class="muted repo-empty">当前仓库没有本地 README。</p>
-      <MarkdownReadme v-else :content="readme.content" @open-link="openLink" />
+      <MarkdownReadme v-else :content="readme.content" :images="readme.images" @open-link="openLink" />
     </div>
 
     <template v-else-if="!repoReady">

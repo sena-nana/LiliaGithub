@@ -3,6 +3,7 @@ import { computed } from "vue";
 
 const props = defineProps<{
   content: string;
+  images?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -58,7 +59,7 @@ const allowedAttributes: Record<string, Set<string>> = {
 };
 
 function renderMarkdown(content: string): string {
-  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const lines = stripHtmlComments(content).replace(/\r\n?/g, "\n").split("\n");
   const blocks: string[] = [];
   let paragraph: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
@@ -193,6 +194,10 @@ function renderInline(text: string): string {
   return html;
 }
 
+function stripHtmlComments(content: string): string {
+  return content.replace(/<!--[\s\S]*?-->/g, "");
+}
+
 function renderListItem(text: string): string {
   const task = /^\[([ xX])\]\s+(.+)$/.exec(text);
   if (!task) return renderInline(text);
@@ -262,6 +267,10 @@ function sanitizeAttributes(element: HTMLElement, tagName: string) {
       continue;
     }
 
+    if (tagName === "img" && name === "src") {
+      element.setAttribute(attribute.name, resolveImageSrc(attribute.value));
+    }
+
     if (name === "type" && tagName === "input" && attribute.value.toLowerCase() !== "checkbox") {
       element.remove();
     }
@@ -272,6 +281,15 @@ function isSafeUrl(value: string, allowedProtocols: string[]): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return false;
   return !/^[a-z][a-z0-9+.-]*:/.test(normalized) || allowedProtocols.some((protocol) => normalized.startsWith(protocol));
+}
+
+function resolveImageSrc(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith("#") || trimmed.startsWith("//")) {
+    return value;
+  }
+
+  return props.images?.[trimmed] ?? props.images?.[trimmed.replace(/\\/g, "/")] ?? value;
 }
 
 function escapeHtml(value: string): string {

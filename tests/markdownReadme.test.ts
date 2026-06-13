@@ -3,6 +3,19 @@ import { describe, expect, it } from "vitest";
 import MarkdownReadme from "../src/components/repo/MarkdownReadme.vue";
 
 describe("MarkdownReadme", () => {
+  it("does not render README maintenance comments", () => {
+    const { container } = render(MarkdownReadme, {
+      props: {
+        content:
+          "<!-- To replace the main window screenshot, keep the file name .github/assets/main-window.png to avoid README changes. -->\n\n# LiliaCode",
+      },
+    });
+
+    expect(screen.getByRole("heading", { level: 1, name: "LiliaCode" })).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("To replace the main window screenshot");
+    expect(container.innerHTML).not.toContain("<!--");
+  });
+
   it("renders safe inline HTML inside README markdown", () => {
     const { container } = render(MarkdownReadme, {
       props: {
@@ -20,9 +33,13 @@ describe("MarkdownReadme", () => {
   it("renders common README HTML blocks used by Lilia", () => {
     const { container } = render(MarkdownReadme, {
       props: {
+        images: {
+          "./apps/desktop/src-tauri/icons/icon.png": "data:image/png;base64,badge",
+          "./.github/assets/main-window.png": "data:image/png;base64,window",
+        },
         content: `<p align="center">
   <a href="https://example.com">
-    <img alt="badge" src="https://img.shields.io/badge/Lilia-blue" width="128">
+    <img alt="badge" src="./apps/desktop/src-tauri/icons/icon.png" width="128">
   </a>
 </p>
 
@@ -41,7 +58,8 @@ describe("MarkdownReadme", () => {
     expect(container.querySelector("p")).toHaveAttribute("align", "center");
     expect(screen.getByRole("link")).toHaveAttribute("href", "https://example.com");
     expect(screen.getByAltText("badge")).toHaveAttribute("width", "128");
-    expect(screen.getByAltText("window")).toHaveAttribute("src", "./.github/assets/main-window.png");
+    expect(screen.getByAltText("badge")).toHaveAttribute("src", "data:image/png;base64,badge");
+    expect(screen.getByAltText("window")).toHaveAttribute("src", "data:image/png;base64,window");
     expect(container.querySelector("hr")).toBeInTheDocument();
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
   });

@@ -336,6 +336,7 @@ export interface RepoDetail {
 export interface RepoReadme {
   repoId: string;
   path: string;
+  images: Record<string, string>;
   content: string;
   format: string;
   updatedAt: number | null;

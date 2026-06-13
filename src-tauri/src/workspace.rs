@@ -390,6 +390,7 @@ pub struct RepoDetail {
 pub struct RepoReadme {
     pub repo_id: String,
     pub path: String,
+    pub images: HashMap<String, String>,
     pub content: String,
     pub format: String,
     #[serde(default)]
@@ -2103,6 +2104,8 @@ fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme
         .unwrap_or(path.as_path())
         .to_string_lossy()
         .replace('\\', "/");
+    let readme_dir = path.parent().unwrap_or(repo_path);
+    let images = readme_image_data_urls(&content, readme_dir, repo_path);
     let format = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -2112,10 +2115,95 @@ fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme
     Ok(Some(RepoReadme {
         repo_id: repo_id.to_string(),
         path: relative_path,
+        images,
         content,
         format,
         updated_at,
     }))
+}
+
+fn readme_image_data_urls(content: &str, readme_dir: &Path, repo_path: &Path) -> HashMap<String, String> {
+    readme_image_sources(content)
+        .into_iter()
+        .filter_map(|source| {
+            let file_path = resolve_readme_image_path(readme_dir, repo_path, &source)?;
+            let mime = image_mime_for_path(&file_path)?;
+            let bytes = fs::read(file_path).ok()?;
+            Some((source, format!("data:{mime};base64,{}", STANDARD.encode(bytes))))
+        })
+        .collect()
+}
+
+fn readme_image_sources(content: &str) -> HashSet<String> {
+    let mut sources = HashSet::new();
+
+    collect_readme_image_sources(content, "](", ')', &mut sources);
+    collect_readme_image_sources(content, "src=\"", '"', &mut sources);
+    collect_readme_image_sources(content, "src='", '\'', &mut sources);
+
+    sources
+}
+
+fn collect_readme_image_sources(content: &str, prefix: &str, suffix: char, sources: &mut HashSet<String>) {
+    for capture in content.match_indices(prefix) {
+        let value = &content[capture.0 + prefix.len()..];
+        let Some(end) = value.find(suffix) else {
+            continue;
+        };
+        let source = value[..end].trim();
+        if is_relative_readme_image_source(source) {
+            sources.insert(source.to_string());
+        }
+    }
+}
+
+fn is_relative_readme_image_source(source: &str) -> bool {
+    !source.is_empty()
+        && !source.starts_with('#')
+        && !source.starts_with("//")
+        && !source.contains(':')
+        && image_extension(source).is_some()
+}
+
+fn resolve_readme_image_path(readme_dir: &Path, repo_path: &Path, source: &str) -> Option<PathBuf> {
+    let relative = Path::new(clean_readme_image_source(source));
+    if relative.is_absolute() || relative.components().any(|component| matches!(component, Component::ParentDir)) {
+        return None;
+    }
+
+    let path = readme_dir.join(relative);
+    let canonical = path.canonicalize().ok()?;
+    let repo = repo_path.canonicalize().ok()?;
+    if !canonical.starts_with(repo) || !canonical.is_file() {
+        return None;
+    }
+    Some(canonical)
+}
+
+fn image_mime_for_path(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "gif" => Some("image/gif"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn image_extension(source: &str) -> Option<String> {
+    clean_readme_image_source(source)
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+}
+
+fn clean_readme_image_source(source: &str) -> &str {
+    source
+        .split('#')
+        .next()
+        .unwrap_or(source)
+        .split('?')
+        .next()
+        .unwrap_or(source)
 }
 
 fn package_manager(repo_path: &Path, package_manager_field: Option<&str>) -> &'static str {
@@ -5796,6 +5884,25 @@ rename to docs/new.md",
         assert_eq!(readme.path, "README.md");
         assert_eq!(readme.format, "md");
         assert_eq!(readme.content, "# Main\n");
+    }
+
+    #[test]
+    fn reads_repo_readme_image_data_urls() {
+        let repo = temp_dir("repo-readme-images");
+        fs::create_dir_all(repo.join(".github").join("assets")).unwrap();
+        fs::write(repo.join(".github").join("assets").join("main-window.png"), [1_u8, 2, 3]).unwrap();
+        fs::write(
+            repo.join("README.md"),
+            "![window](./.github/assets/main-window.png)\n<img src='./.github/assets/main-window.png'>\n",
+        )
+        .unwrap();
+
+        let readme = read_repo_readme("repo", &repo).unwrap().unwrap();
+
+        assert_eq!(
+            readme.images.get("./.github/assets/main-window.png").map(String::as_str),
+            Some("data:image/png;base64,AQID"),
+        );
     }
 
     #[test]

@@ -248,6 +248,7 @@ function createFallbackRepoReadmes(): Record<string, RepoReadme | null> {
     LiliaGithub: {
       repoId: "LiliaGithub",
       path: "README.md",
+      images: {},
       format: "md",
       updatedAt: Date.now(),
       content: [
@@ -265,6 +266,7 @@ function createFallbackRepoReadmes(): Record<string, RepoReadme | null> {
     Lilia: {
       repoId: "Lilia",
       path: "README.md",
+      images: {},
       format: "md",
       updatedAt: Date.now(),
       content: "# Lilia\n\nDesktop agent workbench.",
