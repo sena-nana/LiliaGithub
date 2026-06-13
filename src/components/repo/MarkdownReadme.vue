@@ -1,18 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-type InlineToken =
-  | { kind: "text"; text: string }
-  | { kind: "code"; text: string }
-  | { kind: "link"; text: string; href: string };
-
-type MarkdownBlock =
-  | { kind: "heading"; level: number; tokens: InlineToken[] }
-  | { kind: "paragraph"; tokens: InlineToken[] }
-  | { kind: "quote"; tokens: InlineToken[] }
-  | { kind: "list"; ordered: boolean; items: InlineToken[][] }
-  | { kind: "code"; text: string };
-
 const props = defineProps<{
   content: string;
 }>();
@@ -21,30 +9,89 @@ const emit = defineEmits<{
   openLink: [href: string];
 }>();
 
-const blocks = computed(() => parseMarkdown(props.content));
+const renderedHtml = computed(() => sanitizeHtml(renderMarkdown(props.content)));
 
-function parseMarkdown(content: string): MarkdownBlock[] {
+const allowedTags = new Set([
+  "a",
+  "blockquote",
+  "b",
+  "br",
+  "code",
+  "del",
+  "details",
+  "div",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "i",
+  "img",
+  "input",
+  "kbd",
+  "li",
+  "mark",
+  "ol",
+  "p",
+  "pre",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+const removableTags = new Set(["iframe", "object", "script", "style", "svg"]);
+const globalAttributes = new Set(["align", "aria-label", "title"]);
+const allowedAttributes: Record<string, Set<string>> = {
+  a: new Set(["href"]),
+  img: new Set(["alt", "height", "src", "width"]),
+  input: new Set(["checked", "disabled", "type"]),
+};
+
+function renderMarkdown(content: string): string {
   const lines = content.replace(/\r\n?/g, "\n").split("\n");
-  const parsed: MarkdownBlock[] = [];
+  const blocks: string[] = [];
   let paragraph: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
   let codeLines: string[] | null = null;
+  let htmlLines: string[] | null = null;
+  let htmlEndTag: RegExp | null = null;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
-    parsed.push({ kind: "paragraph", tokens: parseInline(paragraph.join(" ")) });
+    blocks.push(`<p>${renderInline(paragraph.join(" "))}</p>`);
     paragraph = [];
   };
   const flushList = () => {
     if (!list) return;
-    parsed.push({ kind: "list", ordered: list.ordered, items: list.items.map(parseInline) });
+    const tag = list.ordered ? "ol" : "ul";
+    blocks.push(`<${tag}>${list.items.map((item) => `<li>${renderListItem(item)}</li>`).join("")}</${tag}>`);
     list = null;
   };
 
   for (const line of lines) {
+    if (htmlLines) {
+      htmlLines.push(line);
+      if (!htmlEndTag || htmlEndTag.test(line)) {
+        blocks.push(htmlLines.join("\n"));
+        htmlLines = null;
+        htmlEndTag = null;
+      }
+      continue;
+    }
+
     if (codeLines) {
       if (/^```/.test(line.trim())) {
-        parsed.push({ kind: "code", text: codeLines.join("\n") });
+        blocks.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
         codeLines = null;
       } else {
         codeLines.push(line);
@@ -65,11 +112,32 @@ function parseMarkdown(content: string): MarkdownBlock[] {
       continue;
     }
 
+    const htmlBlock = getHtmlBlock(line);
+    if (htmlBlock) {
+      flushParagraph();
+      flushList();
+      if (htmlBlock.endTag && !htmlBlock.endTag.test(line)) {
+        htmlLines = [line];
+        htmlEndTag = htmlBlock.endTag;
+      } else {
+        blocks.push(line);
+      }
+      continue;
+    }
+
+    if (/^---+$/.test(line.trim())) {
+      flushParagraph();
+      flushList();
+      blocks.push("<hr>");
+      continue;
+    }
+
     const heading = /^(#{1,6})\s+(.+)$/.exec(line);
     if (heading) {
       flushParagraph();
       flushList();
-      parsed.push({ kind: "heading", level: heading[1].length, tokens: parseInline(heading[2]) });
+      const level = heading[1].length;
+      blocks.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
       continue;
     }
 
@@ -87,7 +155,7 @@ function parseMarkdown(content: string): MarkdownBlock[] {
     if (quote) {
       flushParagraph();
       flushList();
-      parsed.push({ kind: "quote", tokens: parseInline(quote[1]) });
+      blocks.push(`<blockquote>${renderInline(quote[1])}</blockquote>`);
       continue;
     }
 
@@ -95,86 +163,142 @@ function parseMarkdown(content: string): MarkdownBlock[] {
     paragraph.push(line.trim());
   }
 
-  if (codeLines) parsed.push({ kind: "code", text: codeLines.join("\n") });
+  if (codeLines) blocks.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
   flushParagraph();
   flushList();
-  return parsed;
+  return blocks.join("");
 }
 
-function parseInline(text: string): InlineToken[] {
-  const tokens: InlineToken[] = [];
-  const pattern = /(`[^`]+`)|(\[([^\]]+)\]\(([^)]+)\))/g;
+function renderInline(text: string): string {
+  const pattern = /(`[^`]+`)|(!\[([^\]]*)\]\(([^)]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(<\/?[A-Za-z][^>]*>)/g;
+  let html = "";
   let cursor = 0;
   let match: RegExpExecArray | null;
+
   while ((match = pattern.exec(text))) {
-    if (match.index > cursor) tokens.push({ kind: "text", text: text.slice(cursor, match.index) });
+    if (match.index > cursor) html += escapeHtml(text.slice(cursor, match.index));
     if (match[1]) {
-      tokens.push({ kind: "code", text: match[1].slice(1, -1) });
+      html += `<code>${escapeHtml(match[1].slice(1, -1))}</code>`;
+    } else if (match[2]) {
+      html += `<img src="${escapeAttribute(match[4])}" alt="${escapeAttribute(match[3])}">`;
+    } else if (match[5]) {
+      html += `<a href="${escapeAttribute(match[7])}">${renderInline(match[6])}</a>`;
     } else {
-      tokens.push({ kind: "link", text: match[3], href: match[4] });
+      html += match[8];
     }
     cursor = match.index + match[0].length;
   }
-  if (cursor < text.length) tokens.push({ kind: "text", text: text.slice(cursor) });
-  return tokens;
+
+  if (cursor < text.length) html += escapeHtml(text.slice(cursor));
+  return html;
 }
 
-function openLink(href: string) {
+function renderListItem(text: string): string {
+  const task = /^\[([ xX])\]\s+(.+)$/.exec(text);
+  if (!task) return renderInline(text);
+
+  const checked = task[1].toLowerCase() === "x" ? " checked" : "";
+  return `<input type="checkbox" disabled${checked}> ${renderInline(task[2])}`;
+}
+
+function getHtmlBlock(line: string): { endTag: RegExp | null } | null {
+  const match = /^<\/?([A-Za-z][\w-]*)(?:\s[^>]*)?>\s*$/.exec(line.trim());
+  if (!match) return null;
+
+  const tagName = match[1].toLowerCase();
+  if (!allowedTags.has(tagName) && !removableTags.has(tagName)) return null;
+  if (/^<\//.test(line.trim()) || /\/>\s*$/.test(line.trim()) || tagName === "hr" || tagName === "br" || tagName === "img") {
+    return { endTag: null };
+  }
+  return { endTag: new RegExp(`</${tagName}>\\s*$`, "i") };
+}
+
+function sanitizeHtml(html: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  sanitizeChildren(template.content);
+  return template.innerHTML;
+}
+
+function sanitizeChildren(parent: ParentNode) {
+  for (const node of Array.from(parent.childNodes)) {
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+    const element = node as HTMLElement;
+    const tagName = element.tagName.toLowerCase();
+
+    if (removableTags.has(tagName)) {
+      element.remove();
+      continue;
+    }
+
+    if (!allowedTags.has(tagName)) {
+      sanitizeChildren(element);
+      element.replaceWith(...Array.from(element.childNodes));
+      continue;
+    }
+
+    sanitizeAttributes(element, tagName);
+    sanitizeChildren(element);
+  }
+}
+
+function sanitizeAttributes(element: HTMLElement, tagName: string) {
+  const tagAllowedAttributes = allowedAttributes[tagName] ?? new Set<string>();
+
+  for (const attribute of Array.from(element.attributes)) {
+    const name = attribute.name.toLowerCase();
+    if (name.startsWith("on") || (!globalAttributes.has(name) && !tagAllowedAttributes.has(name))) {
+      element.removeAttribute(attribute.name);
+      continue;
+    }
+
+    if (name === "href" && !isSafeUrl(attribute.value, ["http:", "https:", "mailto:"])) {
+      element.removeAttribute(attribute.name);
+      continue;
+    }
+
+    if (name === "src" && !isSafeUrl(attribute.value, ["http:", "https:"])) {
+      element.removeAttribute(attribute.name);
+      continue;
+    }
+
+    if (name === "type" && tagName === "input" && attribute.value.toLowerCase() !== "checkbox") {
+      element.remove();
+    }
+  }
+}
+
+function isSafeUrl(value: string, allowedProtocols: string[]): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return false;
+  return !/^[a-z][a-z0-9+.-]*:/.test(normalized) || allowedProtocols.some((protocol) => normalized.startsWith(protocol));
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttribute(value: string): string {
+  return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+function handleClick(event: MouseEvent) {
+  const target = event.target instanceof Element ? event.target.closest("a") : null;
+  const href = target?.getAttribute("href");
+  if (!href) return;
+
+  event.preventDefault();
   emit("openLink", href);
 }
 </script>
 
 <template>
-  <article class="readme-render" aria-label="README 内容">
-    <template v-for="(block, index) in blocks" :key="index">
-      <component
-        :is="`h${block.level}`"
-        v-if="block.kind === 'heading'"
-      >
-        <template v-for="(token, tokenIndex) in block.tokens" :key="tokenIndex">
-          <code v-if="token.kind === 'code'">{{ token.text }}</code>
-          <button v-else-if="token.kind === 'link'" type="button" class="readme-link" @click="openLink(token.href)">
-            {{ token.text }}
-          </button>
-          <template v-else>{{ token.text }}</template>
-        </template>
-      </component>
-
-      <p v-else-if="block.kind === 'paragraph'">
-        <template v-for="(token, tokenIndex) in block.tokens" :key="tokenIndex">
-          <code v-if="token.kind === 'code'">{{ token.text }}</code>
-          <button v-else-if="token.kind === 'link'" type="button" class="readme-link" @click="openLink(token.href)">
-            {{ token.text }}
-          </button>
-          <template v-else>{{ token.text }}</template>
-        </template>
-      </p>
-
-      <blockquote v-else-if="block.kind === 'quote'">
-        <template v-for="(token, tokenIndex) in block.tokens" :key="tokenIndex">
-          <code v-if="token.kind === 'code'">{{ token.text }}</code>
-          <button v-else-if="token.kind === 'link'" type="button" class="readme-link" @click="openLink(token.href)">
-            {{ token.text }}
-          </button>
-          <template v-else>{{ token.text }}</template>
-        </template>
-      </blockquote>
-
-      <component :is="block.ordered ? 'ol' : 'ul'" v-else-if="block.kind === 'list'">
-        <li v-for="(item, itemIndex) in block.items" :key="itemIndex">
-          <template v-for="(token, tokenIndex) in item" :key="tokenIndex">
-            <code v-if="token.kind === 'code'">{{ token.text }}</code>
-            <button v-else-if="token.kind === 'link'" type="button" class="readme-link" @click="openLink(token.href)">
-              {{ token.text }}
-            </button>
-            <template v-else>{{ token.text }}</template>
-          </template>
-        </li>
-      </component>
-
-      <pre v-else><code>{{ block.text }}</code></pre>
-    </template>
-  </article>
+  <article class="readme-render" aria-label="README 内容" @click="handleClick" v-html="renderedHtml" />
 </template>
 
 <style scoped>
@@ -184,12 +308,12 @@ function openLink(href: string) {
   line-height: 1.65;
 }
 
-.readme-render h1,
-.readme-render h2,
-.readme-render h3,
-.readme-render h4,
-.readme-render h5,
-.readme-render h6 {
+.readme-render :deep(h1),
+.readme-render :deep(h2),
+.readme-render :deep(h3),
+.readme-render :deep(h4),
+.readme-render :deep(h5),
+.readme-render :deep(h6) {
   margin: 18px 0 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border-soft);
@@ -197,49 +321,49 @@ function openLink(href: string) {
   line-height: 1.3;
 }
 
-.readme-render h1:first-child,
-.readme-render h2:first-child,
-.readme-render h3:first-child {
+.readme-render :deep(h1:first-child),
+.readme-render :deep(h2:first-child),
+.readme-render :deep(h3:first-child) {
   margin-top: 0;
 }
 
-.readme-render h1 {
+.readme-render :deep(h1) {
   font-size: 22px;
 }
 
-.readme-render h2 {
+.readme-render :deep(h2) {
   font-size: 18px;
 }
 
-.readme-render h3 {
+.readme-render :deep(h3) {
   font-size: 15px;
 }
 
-.readme-render p,
-.readme-render ul,
-.readme-render ol,
-.readme-render blockquote,
-.readme-render pre {
+.readme-render :deep(p),
+.readme-render :deep(ul),
+.readme-render :deep(ol),
+.readme-render :deep(blockquote),
+.readme-render :deep(pre) {
   margin: 10px 0;
 }
 
-.readme-render ul,
-.readme-render ol {
+.readme-render :deep(ul),
+.readme-render :deep(ol) {
   padding-left: 22px;
 }
 
-.readme-render li + li {
+.readme-render :deep(li + li) {
   margin-top: 4px;
 }
 
-.readme-render blockquote {
+.readme-render :deep(blockquote) {
   padding: 8px 12px;
   border-left: 3px solid var(--border-strong);
   color: var(--text-muted);
   background: var(--bg-subtle);
 }
 
-.readme-link {
+.readme-render :deep(a) {
   display: inline;
   height: auto;
   padding: 0;
@@ -250,7 +374,7 @@ function openLink(href: string) {
   vertical-align: baseline;
 }
 
-.readme-link:hover {
+.readme-render :deep(a:hover) {
   background: transparent;
   text-decoration: underline;
 }
