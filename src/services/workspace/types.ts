@@ -90,6 +90,7 @@ export interface GitHubRepoSummary {
   private: boolean;
   description: string | null;
   defaultBranch: string | null;
+  createdAt: string;
   updatedAt: string;
   cloneUrl: string;
   htmlUrl: string;
