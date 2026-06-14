@@ -168,7 +168,7 @@ describe("基础路由", () => {
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
   });
 
-  it("总览页未 clone 的 GitHub 项目显示克隆按钮并跳转本地详情", async () => {
+  it("总览页未 clone 的 GitHub 项目点击 clone 后保持在总览页", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([
       {
@@ -191,14 +191,16 @@ describe("基础路由", () => {
     const row = within(repoStatusList).getByText("sena-nana/NewRepo").closest(".repo-status-row");
     expect(row).toBeInTheDocument();
     expect(within(row as HTMLElement).getByText("私有")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByRole("button", { name: "克隆" })).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByRole("button", { name: "clone" })).toBeInTheDocument();
 
-    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "克隆" }));
+    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "clone" }));
 
     await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
+      expect(router.currentRoute.value.fullPath).toBe("/");
+      expect(within(row as HTMLElement).queryByRole("button", { name: "clone" })).toBeNull();
+      expect(within(row as HTMLElement).getByText("已 clone")).toBeInTheDocument();
     });
-    expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
   });
 
   it("总览页隐藏禁用的 GitHub 项目", async () => {
@@ -241,6 +243,33 @@ describe("基础路由", () => {
     const row = (await within(repoStatusList).findByText("sena-nana/ArchivedRepo")).closest(".repo-status-row");
     expect(row).toBeInTheDocument();
     expect(within(row as HTMLElement).getByText("Archive")).toBeInTheDocument();
+  });
+
+  it("总览页归档 GitHub 项目排序到最后", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/ArchivedRepo", {
+            archived: true,
+            updatedAt: "2026-06-13T08:00:00Z",
+          }),
+          githubRepoSummary("sena-nana/ActiveRepo", {
+            archived: false,
+            updatedAt: "2026-06-13T09:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    await renderAt("/");
+
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    await within(repoStatusList).findByText("sena-nana/ArchivedRepo");
+    await within(repoStatusList).findByText("sena-nana/ActiveRepo");
+    const rows = Array.from(repoStatusList.querySelectorAll(".repo-status-row"));
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toHaveTextContent("sena-nana/ArchivedRepo");
   });
 
   it("总览页 GitHub 项目支持手动加载更多并去重", async () => {
@@ -968,7 +997,6 @@ describe("基础路由", () => {
     await clickOverviewSync();
 
     await waitFor(() => {
-      expect(screen.getByText("同步失败")).toBeInTheDocument();
       expect(screen.getByRole("link", { name: "处理失败" })).toHaveAttribute("title", "认证失败");
     });
 
@@ -982,7 +1010,7 @@ describe("基础路由", () => {
   it("总览页可直接进入冲突仓库的冲突处理视图", async () => {
     const { router } = await renderAt("/");
 
-    expect(await screen.findByText("存在冲突")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "处理冲突" })).toHaveAttribute("title", "1 个冲突待处理");
     await fireEvent.click(screen.getByRole("link", { name: "处理冲突" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
@@ -992,34 +1020,26 @@ describe("基础路由", () => {
     });
   });
 
-  it("总览页可直接进入待拉取仓库继续处理", async () => {
+  it("总览页待同步按钮直接执行同步", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackBulkExecuteOverrideForTests((_operation, repoIds) =>
-      repoIds.map((repoId) => ({
-        repoId,
-        status: "success",
-        message: "完成",
-        summary: repoId === "LiliaGithub"
-          ? repoSummary(repoId, { ahead: 0, behind: 2 })
-          : repoSummary(repoId),
-      })),
-    );
-    const { router } = await renderAt("/");
-
-    await clickOverviewSync();
+    const initial = repoSummary("LiliaGithub", { ahead: 0, behind: 2 });
+    service.setFallbackRepoOverridesForTests({
+      LiliaGithub: initial,
+    });
+    await renderAt("/");
 
     await waitFor(() => {
-      expect(screen.getByText("待拉取")).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "继续处理" })).toHaveAttribute("title", "远端领先 2 个提交");
+      expect(screen.getByText("待同步")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "待同步" })).toHaveAttribute("title", "远端领先 2 个提交");
     });
 
-    await fireEvent.click(screen.getByRole("link", { name: "继续处理" }));
+    await fireEvent.click(screen.getByRole("button", { name: "待同步" }));
 
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    expect(screen.queryByRole("button", { name: "Pull" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "拉取并合并" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: "拉取" })).toHaveLength(1);
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "待同步" })).toBeNull();
+      expect(screen.getAllByText("已 clone").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    });
   });
 
   it("设置页默认显示外观设置并使用设置侧栏", async () => {
