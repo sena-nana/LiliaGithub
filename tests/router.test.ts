@@ -82,6 +82,7 @@ function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummar
     ownerLogin: fullName.split("/")[0] ?? "sena-nana",
     private: false,
     disabled: false,
+    archived: false,
     description: null,
     defaultBranch: "main",
     createdAt: "2026-06-10T08:00:00Z",
@@ -200,7 +201,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
   });
 
-  it("总览页禁用且未 clone 的 GitHub 项目显示禁用标签并通过确认删除", async () => {
+  it("总览页隐藏禁用的 GitHub 项目", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([
       {
@@ -217,45 +218,17 @@ describe("基础路由", () => {
     await renderAt("/");
 
     const repoStatusList = await screen.findByLabelText("仓库状态列表");
-    const row = (await within(repoStatusList).findByText("sena-nana/DisabledRepo")).closest(".repo-status-row");
-    expect(row).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("禁用")).toBeInTheDocument();
-    expect(within(row as HTMLElement).queryByRole("button", { name: "克隆" })).toBeNull();
-
-    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "删除" }));
-    const dialog = await screen.findByRole("dialog", { name: "删除 GitHub 仓库" });
-    expect(dialog).toHaveTextContent("sena-nana/DisabledRepo");
-
-    await fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
-    expect(await within(repoStatusList).findByText("sena-nana/DisabledRepo")).toBeInTheDocument();
-
-    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "删除" }));
-    await fireEvent.click(within(await screen.findByRole("dialog", { name: "删除 GitHub 仓库" })).getByRole("button", { name: "删除" }));
-
-    await waitFor(() => {
-      expect(within(repoStatusList).queryByText("sena-nana/DisabledRepo")).toBeNull();
-    });
+    expect(await within(repoStatusList).findByText("sena-nana/LiliaGithub")).toBeInTheDocument();
+    expect(within(repoStatusList).queryByText("sena-nana/DisabledRepo")).toBeNull();
   });
 
-  it("总览页旧 GitHub 绑定缺少 delete_repo 权限时不删除禁用仓库", async () => {
+  it("总览页归档 GitHub 项目显示 Archive 标签", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubBindingStatusForTests({
-      state: "bound",
-      clientIdConfigured: true,
-      clientIdSource: "bundled",
-      binding: {
-        login: "lilia-user",
-        avatarUrl: null,
-        boundAt: Date.now(),
-        scopes: ["repo", "workflow", "read:user"],
-        clientIdSource: "bundled",
-      },
-    });
     service.setFallbackGitHubRepoPagesForTests([
       {
         items: [
-          githubRepoSummary("sena-nana/DisabledRepo", {
-            disabled: true,
+          githubRepoSummary("sena-nana/ArchivedRepo", {
+            archived: true,
             updatedAt: "2026-06-13T08:00:00Z",
           }),
         ],
@@ -265,13 +238,9 @@ describe("基础路由", () => {
     await renderAt("/");
 
     const repoStatusList = await screen.findByLabelText("仓库状态列表");
-    const row = (await within(repoStatusList).findByText("sena-nana/DisabledRepo")).closest(".repo-status-row");
+    const row = (await within(repoStatusList).findByText("sena-nana/ArchivedRepo")).closest(".repo-status-row");
     expect(row).toBeInTheDocument();
-    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "删除" }));
-
-    expect(await screen.findByText("删除仓库需要 delete_repo 权限，请重新绑定 GitHub 后再试。")).toBeInTheDocument();
-    expect(within(repoStatusList).getByText("sena-nana/DisabledRepo")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
+    expect(within(row as HTMLElement).getByText("Archive")).toBeInTheDocument();
   });
 
   it("总览页 GitHub 项目支持手动加载更多并去重", async () => {
@@ -378,12 +347,9 @@ describe("基础路由", () => {
       if (!candidate) throw new Error("未找到仓库状态行");
       return candidate;
     });
-    await waitFor(() => {
-      expect(statusRow).toHaveTextContent("Actions 运行中");
-    });
-    const runLink = within(statusRow as HTMLElement).getByRole("link", { name: "运行" });
-    expect(runLink).toHaveAttribute("href", `https://github.com/${repo.fullName}/actions/runs/1200`);
-    expect(runLink).toHaveAttribute("title", "正在验证总览页");
+    const actionStatus = await waitFor(() => within(statusRow as HTMLElement).getByLabelText("Actions 运行中"));
+    expect(actionStatus).toHaveAttribute("title", "Actions 运行中 · 正在验证总览页 · CI · codex/project-view");
+    expect(within(statusRow as HTMLElement).queryByRole("link", { name: "运行" })).toBeNull();
 
     const timeline = await screen.findByLabelText("GitHub 时间线列表");
     expect(await within(timeline).findByText("Issue #12")).toBeInTheDocument();
@@ -766,7 +732,8 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
     expect(await screen.findByText("验证仓库详情页")).toBeInTheDocument();
-    expect(screen.getByText(/CI · main · push · success/)).toBeInTheDocument();
+    expect(screen.getByText(/CI · main · push/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Actions 通过")).toHaveAttribute("title", "Actions 通过");
 
     await fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();

@@ -6,6 +6,7 @@ import {
   ExternalLink,
   LoaderCircle,
   Save,
+  X,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import {
@@ -26,6 +27,7 @@ import type {
   GitHubWorkflowRun,
   RepoReadme,
 } from "../../services/workspace/types";
+import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
@@ -304,10 +306,6 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
   }
 }
 
-function formatWorkflowState(run: GitHubWorkflowRun) {
-  if (run.status === "completed") return run.conclusion ?? "completed";
-  return run.status;
-}
 </script>
 
 <template>
@@ -377,10 +375,19 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
           <p v-if="actionsError" class="error-line">{{ actionsError }}</p>
           <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
           <div class="project-list">
-            <div v-for="run in workflowRuns" :key="run.id" class="project-row">
+            <div v-for="run in workflowRuns" :key="run.id" class="project-row project-row--action">
+              <span
+                class="project-action-status"
+                :class="`project-action-status--${workflowRunStatusTone(run)}`"
+                :title="workflowRunStatusText(run)"
+                :aria-label="workflowRunStatusText(run)"
+              >
+                <X v-if="isWorkflowRunFailure(run)" :size="14" aria-hidden="true" />
+                <CircleDot v-else :size="14" aria-hidden="true" />
+              </span>
               <div>
                 <strong>{{ run.displayTitle }}</strong>
-                <span>{{ run.name }} · {{ run.branch }} · {{ run.event }} · {{ formatWorkflowState(run) }}</span>
+                <span>{{ run.name }} · {{ run.branch }} · {{ run.event }}</span>
               </div>
               <button type="button" class="ghost" @click="openUrl(run.htmlUrl)">
                 <ExternalLink :size="14" aria-hidden="true" />
@@ -655,6 +662,36 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
 
 .project-row--issue {
   align-items: flex-start;
+}
+
+.project-row--action {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.project-action-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+}
+
+.project-action-status--error {
+  color: var(--err);
+}
+
+.project-action-status--warn {
+  color: var(--warn);
+}
+
+.project-action-status--ok {
+  color: var(--ok);
+}
+
+.project-action-status--muted {
+  color: var(--text-muted);
 }
 
 .project-switches {
