@@ -9,6 +9,7 @@ import {
   X,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
+import RepoLaunchPanel from "./RepoLaunchPanel.vue";
 import {
   createGitHubIssue,
   getGitHubRepoManagement,
@@ -25,22 +26,41 @@ import type {
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
+  ProjectLaunchConfig,
+  ProjectLaunchLog,
+  ProjectLaunchStatus,
   RepoReadme,
 } from "../../services/workspace/types";
-import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
+import { isWorkflowRunFailure, streamLabel, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 
-type ProjectTab = "readme" | "issues" | "actions" | "settings";
+type ProjectTab = "readme" | "issues" | "actions" | "settings" | "terminal";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
 const props = defineProps<{
   repoId: string;
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
+  loading: boolean;
+  launchConfig: ProjectLaunchConfig | null;
+  launchStatus: ProjectLaunchStatus | null;
+  launchLogs: readonly ProjectLaunchLog[];
+  launchTerminalVisible: boolean;
+  actionRunning: boolean;
+  launchRunning: boolean;
+}>();
+
+const emit = defineEmits<{
+  start: [];
+  stop: [];
+  openTerminal: [];
+  hideTerminal: [];
 }>();
 
 const activeTab = ref<ProjectTab>("readme");
+const previousProjectTab = ref<Exclude<ProjectTab, "terminal">>("readme");
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
+const terminalBody = ref<HTMLElement | null>(null);
 const readmes = ref<RepoReadme[]>([]);
 const activeReadmePath = ref<string | null>(null);
 const readmeLoading = ref(false);
@@ -83,7 +103,7 @@ const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
 const readmePaths = computed(() => readmes.value.map((item) => item.path));
-const tabs: Array<{ key: Exclude<ProjectTab, "readme">; label: string }> = [
+const tabs: Array<{ key: Exclude<ProjectTab, "readme" | "terminal">; label: string }> = [
   { key: "issues", label: "Issues" },
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
@@ -97,6 +117,7 @@ onMounted(() => {
 
 watch(() => props.repoId, () => {
   activeTab.value = "readme";
+  previousProjectTab.value = "readme";
   activeReadmePath.value = null;
   void loadReadme();
 });
@@ -105,6 +126,39 @@ watch(() => props.repoFullName, () => {
   void loadGitHub();
   void loadActions();
 });
+
+watch(
+  () => props.launchTerminalVisible,
+  (visible) => {
+    if (visible) {
+      if (activeTab.value !== "terminal") {
+        previousProjectTab.value = activeTab.value;
+      }
+      activeTab.value = "terminal";
+      void scrollTerminalToEnd();
+      return;
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => props.launchLogs.length,
+  () => {
+    if (props.launchTerminalVisible) {
+      void scrollTerminalToEnd();
+    }
+  },
+);
+
+watch(
+  () => props.launchRunning,
+  () => {
+    if (props.launchTerminalVisible) {
+      void scrollTerminalToEnd();
+    }
+  },
+);
 
 watch(issueState, () => {
   void loadIssues();
@@ -195,11 +249,6 @@ async function loadActions() {
   } finally {
     actionsLoading.value = false;
   }
-}
-
-function selectReadme(path: string) {
-  activeTab.value = "readme";
-  activeReadmePath.value = path;
 }
 
 function changedSettingsRequest(current: GitHubRepoManagement) {
@@ -306,13 +355,63 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
   }
 }
 
+async function scrollTerminalToEnd() {
+  await nextTick();
+  const body = terminalBody.value;
+  if (!body) return;
+  body.scrollTop = body.scrollHeight;
+}
+
+function activateProjectTab(tab: Exclude<ProjectTab, "terminal">) {
+  previousProjectTab.value = tab;
+  activeTab.value = tab;
+  if (props.launchTerminalVisible) {
+    emit("hideTerminal");
+  }
+}
+
+function selectReadme(path: string) {
+  activeReadmePath.value = path;
+  activateProjectTab("readme");
+}
+
+function hideTerminal() {
+  activeTab.value = previousProjectTab.value;
+  emit("hideTerminal");
+}
+
+watch(activeTab, (tab) => {
+  if (tab === "terminal") return;
+  previousProjectTab.value = tab;
+});
+
 </script>
 
 <template>
   <section class="project-panel">
     <div class="project-layout">
       <main class="project-main">
-        <section v-if="activeTab === 'readme'" class="project-readme-card">
+        <section v-if="activeTab === 'terminal'" class="project-terminal-card">
+          <div class="project-section__head">
+            <h3>运行输出</h3>
+            <button type="button" class="ghost" @click="hideTerminal">隐藏</button>
+          </div>
+          <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
+            <div v-if="!launchRunning" class="project-terminal__empty">
+              <p class="muted repo-empty project-empty">请选择一个启动指令并运行。</p>
+              <p class="muted repo-empty project-empty">当前指令：{{ launchConfig?.command || "未配置" }}</p>
+            </div>
+            <p v-else-if="!launchLogs.length" class="muted repo-empty project-empty">暂无输出。</p>
+            <pre v-else><code><span
+              v-for="entry in launchLogs"
+              :key="entry.index"
+              :class="`launch-log launch-log--${entry.stream}`"
+            >[{{ streamLabel(entry.stream) }}] {{ entry.line }}
+</span></code></pre>
+          </div>
+        </section>
+
+        <section v-else-if="activeTab === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
           <p v-else-if="!activeReadme" class="muted repo-empty project-empty">当前仓库没有本地 README。</p>
@@ -437,8 +536,8 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
         </form>
       </main>
 
-      <aside class="project-sidebar" role="tablist" aria-label="项目信息视图">
-        <div class="project-sidebar__card">
+      <aside class="project-sidebar">
+        <div class="project-sidebar__card" role="tablist" aria-label="README 列表">
           <button
             v-for="item in readmes"
             :key="item.path"
@@ -455,7 +554,7 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
           <p v-if="!readmes.length && !readmeLoading" class="project-sidebar__empty">未找到 README</p>
         </div>
 
-        <div class="project-sidebar__card">
+        <div class="project-sidebar__card" role="tablist" aria-label="项目信息视图">
           <button
             v-for="tab in tabs"
             :key="tab.key"
@@ -464,10 +563,23 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
             :class="{ 'is-active': activeTab === tab.key }"
             role="tab"
             :aria-selected="activeTab === tab.key"
-            @click="activeTab = tab.key"
+            @click="activateProjectTab(tab.key)"
           >
             <strong>{{ tab.label }}</strong>
           </button>
+        </div>
+
+        <div class="project-sidebar__launch">
+          <RepoLaunchPanel
+            :loading="loading"
+            :launch-config="launchConfig"
+            :launch-status="launchStatus"
+            :action-running="actionRunning"
+            :launch-running="launchRunning"
+            @start="emit('start')"
+            @stop="emit('stop')"
+            @open-terminal="emit('openTerminal')"
+          />
         </div>
       </aside>
     </div>
@@ -542,6 +654,39 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
   background: var(--bg-elev);
 }
 
+.project-terminal-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+
+.project-terminal__body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.project-terminal__body pre {
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.project-terminal__empty {
+  display: grid;
+  gap: 6px;
+}
+
 .project-empty {
   padding: 18px 0;
 }
@@ -563,6 +708,12 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev);
+}
+
+.project-sidebar__launch {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
 }
 
 .project-sidebar__item {

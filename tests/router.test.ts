@@ -655,14 +655,10 @@ describe("基础路由", () => {
     expect(screen.queryByText("C:\\Files\\workspace\\LiliaGithub")).toBeNull();
     expect(screen.queryByLabelText("仓库状态条")).toBeNull();
     expect(screen.queryByText("仓库健康")).toBeNull();
-    expect(screen.getByText("快速启动")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "运行" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "停止" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "终端" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "启动配置" })).toBeInTheDocument();
-    expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Git 信息" })).toHaveClass("is-active");
     expect(screen.getByRole("tab", { name: "项目信息" })).toBeInTheDocument();
+    expect(screen.queryByText("快速启动")).toBeNull();
+    expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByRole("button", { name: "Push" })).toBeInTheDocument();
     expect(
@@ -677,6 +673,15 @@ describe("基础路由", () => {
     expect(screen.getByPlaceholderText("提交说明")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
     expect(screen.getByText("未选择文件")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("tab", { name: "项目信息" }));
+    expect(await screen.findByLabelText("快速启动")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "运行" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
+    expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Git 信息" }));
 
     await fireEvent.click(screen.getByRole("button", { name: /src\/pages\/Home\.vue已暂存/ }));
     const diffPreview = await screen.findByLabelText("变更预览");
@@ -933,24 +938,46 @@ describe("基础路由", () => {
   it("仓库详情页可配置、运行并查看快速启动终端", async () => {
     await renderAt("/repos/LiliaGithub");
 
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
+    expect(await screen.findByLabelText("快速启动")).toBeInTheDocument();
     expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
 
-    await fireEvent.click(screen.getByRole("button", { name: "启动配置" }));
-    await fireEvent.update(screen.getByPlaceholderText("例如 yarn tauri:dev"), "yarn dev --host 127.0.0.1");
-    await fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Git 信息" }));
+    expect(screen.queryByLabelText("快速启动")).toBeNull();
+    expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
 
+    await fireEvent.click(screen.getByRole("tab", { name: "项目信息" }));
+    await fireEvent.click(screen.getByRole("button", { name: /yarn tauri:dev/ }));
+    const idleTerminal = await screen.findByLabelText("启动终端");
+    expect(idleTerminal).toHaveTextContent("请选择一个启动指令并运行。");
+    expect(idleTerminal).toHaveTextContent("当前指令：yarn tauri:dev");
+    expect(idleTerminal).not.toHaveTextContent("启动命令：");
+
+    await fireEvent.click(screen.getByRole("button", { name: "隐藏" }));
     await waitFor(() => {
-      expect(screen.getByText("yarn dev --host 127.0.0.1")).toBeInTheDocument();
+      expect(screen.queryByLabelText("启动终端")).toBeNull();
     });
-    expect(screen.getAllByText(/手动配置/).length).toBeGreaterThanOrEqual(1);
 
     await fireEvent.click(screen.getByRole("button", { name: "运行" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/启动命令：yarn dev --host 127.0.0.1/)).toBeInTheDocument();
-      expect(screen.getByText(/开发服务已启动/)).toBeInTheDocument();
+      const terminal = screen.getByLabelText("启动终端");
+      expect(terminal).toHaveTextContent("启动命令：yarn tauri:dev");
+      expect(terminal).toHaveTextContent("开发服务已启动");
     });
     expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "停止" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "运行" })).toBeEnabled();
+    });
+    expect(screen.getByLabelText("启动终端")).toHaveTextContent("请选择一个启动指令并运行。");
   });
 
   it("总览页一键同步直接执行且不打开预检弹层", async () => {

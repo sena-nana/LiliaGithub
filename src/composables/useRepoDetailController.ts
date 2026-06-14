@@ -31,10 +31,7 @@ export function useRepoDetailController() {
   const actionRunning = ref(false);
   const conflictAbortConfirm = ref(false);
   const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
-  const launchEditing = ref(false);
   const launchTerminalVisible = ref(false);
-  const launchCommandInput = ref("");
-  const launchCwdInput = ref("");
   const focusedChangePath = ref<string | null>(null);
   const focusedConflictPath = ref<string | null>(null);
   const conflictChoices = ref<Record<string, "ours" | "theirs">>({});
@@ -92,7 +89,6 @@ export function useRepoDetailController() {
     workspace.state.languageStatsLoadingRepoIds.includes(repoId.value),
   );
   const launchRunning = computed(() => launchStatus.value?.state === "running");
-  const hasLaunchCommand = computed(() => Boolean(launchConfig.value?.command.trim()));
   const selectedSummaryText = computed(() => {
     if (!selectedFileList.value.length) return "未选择文件";
     if (selectedFileList.value.length === 1) return `已选 1 个文件`;
@@ -183,7 +179,6 @@ export function useRepoDetailController() {
   watch(repoId, () => {
     selectedFiles.value = new Set();
     commitMessage.value = "";
-    launchEditing.value = false;
     launchTerminalVisible.value = false;
     focusedChangePath.value = null;
     focusedConflictPath.value = null;
@@ -240,7 +235,6 @@ export function useRepoDetailController() {
       await workspace.refreshRepoLanguageStats(repoId.value).catch((err) => {
         actionError.value = String(err);
       });
-      resetLaunchForm();
       syncFocusedChange();
       syncFocusedConflict();
       if (
@@ -266,11 +260,6 @@ export function useRepoDetailController() {
     } catch {
       // The explicit action path surfaces errors; polling should stay quiet.
     }
-  }
-
-  function resetLaunchForm() {
-    launchCommandInput.value = launchConfig.value?.command ?? "";
-    launchCwdInput.value = launchConfig.value?.cwd ?? "";
   }
 
   function syncFocusedConflict() {
@@ -449,6 +438,7 @@ export function useRepoDetailController() {
 
   function startLaunch() {
     void runAction(async () => {
+      await workspace.loadLaunch(repoId.value);
       await workspace.startLaunch(repoId.value);
       launchTerminalVisible.value = true;
     });
@@ -456,23 +446,6 @@ export function useRepoDetailController() {
 
   function stopLaunch() {
     void runAction(() => workspace.stopLaunch(repoId.value));
-  }
-
-  function editLaunchConfig() {
-    resetLaunchForm();
-    launchEditing.value = true;
-  }
-
-  function cancelLaunchConfig() {
-    resetLaunchForm();
-    launchEditing.value = false;
-  }
-
-  function saveLaunchConfig() {
-    void runAction(async () => {
-      await workspace.saveLaunchConfig(repoId.value, launchCommandInput.value, launchCwdInput.value);
-      launchEditing.value = false;
-    });
   }
 
   function checkout(branch: string) {
@@ -519,10 +492,7 @@ export function useRepoDetailController() {
       actionRunning,
       conflictAcceptConfirm,
       activeView,
-      launchEditing,
       launchTerminalVisible,
-      launchCommandInput,
-      launchCwdInput,
       conflictChoices,
       repoId,
       detail,
@@ -548,7 +518,6 @@ export function useRepoDetailController() {
       launchLoading,
       languageStatsRefreshing,
       launchRunning,
-      hasLaunchCommand,
       selectedSummaryText,
       selectedFilePreview,
       statusCommits,
@@ -583,9 +552,6 @@ export function useRepoDetailController() {
       continueConflict,
       startLaunch,
       stopLaunch,
-      editLaunchConfig,
-      cancelLaunchConfig,
-      saveLaunchConfig,
       checkout,
       openCommit,
       openGitHub,
