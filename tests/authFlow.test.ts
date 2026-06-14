@@ -22,7 +22,7 @@ const boundStatus: GitHubBindingStatus = {
     login: "octo-user",
     avatarUrl: null,
     boundAt: 1_785_000_000,
-    scopes: ["repo", "read:user"],
+    scopes: ["repo", "workflow", "read:user", "delete_repo"],
     clientIdSource: "bundled",
   },
 };

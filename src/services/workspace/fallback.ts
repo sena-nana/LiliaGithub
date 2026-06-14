@@ -102,7 +102,7 @@ const defaultFallbackBinding: GitHubBindingStatus = {
     login: "lilia-user",
     avatarUrl: null,
     boundAt: Date.now(),
-    scopes: ["repo", "read:user"],
+    scopes: ["repo", "workflow", "read:user", "delete_repo"],
     clientIdSource: "bundled",
   },
 };
@@ -116,6 +116,7 @@ const fallbackGitHubRepos: GitHubRepoSummary[] = [
     fullName: "sena-nana/LiliaGithub",
     ownerLogin: "sena-nana",
     private: false,
+    disabled: false,
     description: "Local GitHub workspace manager",
     defaultBranch: "main",
     createdAt: "2026-06-08T09:00:00Z",
@@ -129,6 +130,7 @@ const fallbackGitHubRepos: GitHubRepoSummary[] = [
     fullName: "sena-nana/Lilia",
     ownerLogin: "sena-nana",
     private: true,
+    disabled: false,
     description: "Desktop agent workbench",
     defaultBranch: "main",
     createdAt: "2026-06-07T09:00:00Z",
@@ -724,6 +726,7 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       fullName,
       ownerLogin: owner,
       private: request.private,
+      disabled: false,
       description: request.description?.trim() || null,
       defaultBranch: request.autoInit ? "main" : null,
       createdAt: now,
@@ -754,6 +757,27 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
     };
     fallbackGitHubIssues[fullName] = [];
     return { ...repo };
+  });
+}
+
+export function deleteGitHubRepo(repoFullName: string): Promise<void> {
+  return call("github_delete_repo", { repoFullName }, () => {
+    const fullName = repoFullName.trim();
+    const existingIndex = fallbackGitHubRepos.findIndex((repo) => repo.fullName === fullName);
+    const existsInOverride = fallbackGitHubRepoPagesOverride?.some((page) =>
+      page.items.some((repo) => repo.fullName === fullName),
+    ) === true;
+    if (existingIndex < 0 && !existsInOverride) throw new Error(`未找到 GitHub 仓库：${fullName}`);
+    if (existingIndex >= 0) fallbackGitHubRepos.splice(existingIndex, 1);
+    delete fallbackGitHubRepoManagement[fullName];
+    delete fallbackGitHubIssues[fullName];
+    delete fallbackGitHubWorkflowRuns[fullName];
+    if (fallbackGitHubRepoPagesOverride) {
+      fallbackGitHubRepoPagesOverride = fallbackGitHubRepoPagesOverride.map((page) => ({
+        items: page.items.filter((repo) => repo.fullName !== fullName),
+        nextPage: page.nextPage,
+      }));
+    }
   });
 }
 

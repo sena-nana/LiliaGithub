@@ -88,6 +88,7 @@ export interface GitHubRepoSummary {
   fullName: string;
   ownerLogin: string;
   private: boolean;
+  disabled: boolean;
   description: string | null;
   defaultBranch: string | null;
   createdAt: string;
