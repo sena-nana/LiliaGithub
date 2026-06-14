@@ -209,11 +209,6 @@ export async function createGitHubRepo(request: GitHubCreateRepoRequest): Promis
   return repo;
 }
 
-export async function deleteGitHubRepo(repoFullName: string): Promise<void> {
-  await call("github_delete_repo", { repoFullName }, () => fallback.deleteGitHubRepo(repoFullName));
-  clearGitHubRepoCache();
-}
-
 export function getGitHubRepoManagement(repoFullName: string): Promise<GitHubRepoManagement> {
   return call("github_get_repo_management", { repoFullName }, () =>
     fallback.getGitHubRepoManagement(repoFullName),

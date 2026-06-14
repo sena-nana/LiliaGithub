@@ -27,7 +27,7 @@ use std::os::unix::process::CommandExt;
 const STORE_FILE: &str = "lilia-github.json";
 const SETTINGS_KEY: &str = "workspace.settings";
 const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
-const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo";
+const GITHUB_SCOPE: &str = "repo workflow read:user";
 const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_OAUTH_ACCEPT: &str = "application/json";
@@ -174,6 +174,7 @@ pub struct GitHubRepoSummary {
     pub owner_login: String,
     pub private: bool,
     pub disabled: bool,
+    pub archived: bool,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -487,6 +488,8 @@ struct GitHubRepoResponse {
     private: bool,
     #[serde(default)]
     disabled: bool,
+    #[serde(default)]
+    archived: bool,
     description: Option<String>,
     default_branch: Option<String>,
     created_at: String,
@@ -1101,6 +1104,7 @@ fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> GitHubRepoSumm
         owner_login: repo.owner.login,
         private: repo.private,
         disabled: repo.disabled,
+        archived: repo.archived,
         description: repo.description,
         default_branch: repo.default_branch,
         created_at: repo.created_at,
@@ -2947,27 +2951,6 @@ pub async fn github_create_repo(
         )?;
         let repo = github_json::<GitHubRepoResponse>("创建 GitHub 仓库失败", response)?;
         Ok(github_repo_summary_from_response(repo))
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Result<(), String> {
-    run_blocking("删除 GitHub 仓库", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "删除 GitHub 仓库失败",
-            github_headers(
-                client.delete(github_repo_api_url(&repo_full_name)?),
-                Some(&token),
-            ),
-        )?;
-        if response.status() == reqwest::StatusCode::NO_CONTENT {
-            return Ok(());
-        }
-        Err(github_http_error("删除 GitHub 仓库失败", response))
     })
     .await
 }

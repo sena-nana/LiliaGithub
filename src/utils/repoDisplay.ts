@@ -1,4 +1,4 @@
-import type { ProjectLaunchConfig, ProjectLaunchStatus, RepoChange, RepoSummary } from "../services/workspace";
+import type { GitHubWorkflowRun, ProjectLaunchConfig, ProjectLaunchStatus, RepoChange, RepoSummary } from "../services/workspace";
 
 type RepoIdentity = Pick<RepoSummary, "name" | "path" | "githubFullName">;
 type ConflictStatusSource = {
@@ -6,6 +6,7 @@ type ConflictStatusSource = {
   hunks: readonly unknown[];
   resolved: boolean;
 };
+export type WorkflowRunTone = "error" | "warn" | "ok" | "muted";
 
 export function repoDisplayName(repo: RepoIdentity | null | undefined) {
   const githubFullName = repo?.githubFullName?.trim();
@@ -88,6 +89,41 @@ export function streamLabel(stream: string) {
 
 export function bulkResultTone(result: { status: string }) {
   return result.status === "success" ? "sync-results__item--success" : "sync-results__item--error";
+}
+
+export function workflowRunStatusText(run: Pick<GitHubWorkflowRun, "status" | "conclusion">) {
+  const status = run.status.toLowerCase();
+  const conclusion = run.conclusion?.toLowerCase() ?? null;
+  if (status === "completed") return workflowConclusionText(conclusion);
+  if (status === "in_progress") return "Actions 运行中";
+  if (status === "queued") return "Actions 排队中";
+  if (status === "requested") return "Actions 待执行";
+  if (status === "waiting" || status === "pending") return "Actions 等待中";
+  return `Actions ${status}`;
+}
+
+export function workflowRunStatusTone(run: Pick<GitHubWorkflowRun, "status" | "conclusion">): WorkflowRunTone {
+  const status = run.status.toLowerCase();
+  const conclusion = run.conclusion?.toLowerCase() ?? null;
+  if (status === "completed") {
+    if (conclusion != null && !["success", "neutral", "skipped"].includes(conclusion)) return "error";
+    return conclusion === "success" ? "ok" : "muted";
+  }
+  return ["in_progress", "queued", "requested", "waiting", "pending"].includes(status) ? "warn" : "muted";
+}
+
+export function isWorkflowRunFailure(run: Pick<GitHubWorkflowRun, "status" | "conclusion">) {
+  return workflowRunStatusTone(run) === "error";
+}
+
+function workflowConclusionText(conclusion: string | null) {
+  if (conclusion === "success") return "Actions 通过";
+  if (conclusion === "failure") return "Actions 失败";
+  if (conclusion === "cancelled") return "Actions 取消";
+  if (conclusion === "timed_out") return "Actions 超时";
+  if (conclusion === "skipped") return "Actions 跳过";
+  if (conclusion === "neutral") return "Actions 完成";
+  return conclusion ? `Actions ${conclusion}` : "Actions 完成";
 }
 
 export function commitFileStatusText(status: string) {

@@ -19,12 +19,10 @@ import {
   ShieldCheck,
   X,
 } from "@lucide/vue";
-import ConfirmDialog from "../components/ConfirmDialog.vue";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoActionErrorDetailForRepo, syncErrorDetailsByRepoId } from "../composables/workspace/state";
 import {
-  deleteGitHubRepo,
   isGitHubBindingExpiredError,
   listGitHubRepos,
   listGitHubIssues,
@@ -41,7 +39,7 @@ import {
   readHomeGitHubOverviewSnapshot,
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
-import { bulkResultTone } from "../utils/repoDisplay";
+import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
@@ -72,14 +70,14 @@ type GitHubTimelineEvent = {
   summary: string;
   timestamp: number;
   href?: string;
-  tone?: "error" | "warn" | "muted";
+  tone?: WorkflowRunTone;
 };
 
 type WorkflowRunOverview = {
   run: GitHubWorkflowRun;
   status: string;
   detail: string;
-  tone: "error" | "warn" | "muted";
+  tone: WorkflowRunTone;
   priority: number;
 };
 
@@ -147,8 +145,6 @@ const githubIssuesLoading = ref(false);
 const githubWorkflowRunsByRepo = ref<Record<string, GitHubWorkflowRun[] | undefined>>({});
 const githubWorkflowRunsLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
-const deletingRepo = ref<GitHubRepoSummary | null>(null);
-const deletingFullName = ref<string | null>(null);
 const repoOverviewGrid = ref<HTMLElement | null>(null);
 const repoOverviewCardMaxHeight = ref("calc(100dvh - 96px)");
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
@@ -199,7 +195,7 @@ const localRepoByGitHubFullName = computed(() => {
 });
 
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
-  githubRepos.value.map((githubRepo) => {
+  githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
     const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
     return {
       githubRepo,
@@ -667,45 +663,14 @@ function focusedWorkflowRun(runs: readonly GitHubWorkflowRun[]): WorkflowRunOver
 }
 
 function workflowRunOverview(run: GitHubWorkflowRun): WorkflowRunOverview {
-  const normalizedStatus = run.status.toLowerCase();
-  const normalizedConclusion = run.conclusion?.toLowerCase() ?? null;
-  if (normalizedStatus === "completed") {
-    const failed = normalizedConclusion != null && !["success", "neutral", "skipped"].includes(normalizedConclusion);
-    return {
-      run,
-      status: workflowConclusionText(normalizedConclusion),
-      detail: `${run.name} · ${run.branch}`,
-      tone: failed ? "error" : "muted",
-      priority: failed ? 3 : 0,
-    };
-  }
-  const active = ["in_progress", "queued", "requested", "waiting", "pending"].includes(normalizedStatus);
+  const tone = workflowRunStatusTone(run);
   return {
     run,
-    status: workflowStatusText(normalizedStatus),
+    status: workflowRunStatusText(run),
     detail: `${run.name} · ${run.branch}`,
-    tone: active ? "warn" : "muted",
-    priority: active ? 2 : 1,
+    tone,
+    priority: tone === "error" ? 3 : tone === "warn" ? 2 : tone === "ok" ? 0 : 1,
   };
-}
-
-function workflowConclusionText(conclusion: string | null) {
-  if (conclusion === "success") return "Actions 通过";
-  if (conclusion === "failure") return "Actions 失败";
-  if (conclusion === "cancelled") return "Actions 取消";
-  if (conclusion === "timed_out") return "Actions 超时";
-  if (conclusion === "skipped") return "Actions 跳过";
-  if (conclusion === "neutral") return "Actions 完成";
-  return conclusion ? `Actions ${conclusion}` : "Actions 完成";
-}
-
-function workflowStatusText(status: string) {
-  if (status === "in_progress") return "Actions 运行中";
-  if (status === "queued") return "Actions 排队中";
-  if (status === "requested") return "Actions 待执行";
-  if (status === "waiting") return "Actions 等待中";
-  if (status === "pending") return "Actions 等待中";
-  return `Actions ${status}`;
 }
 
 function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
@@ -938,41 +903,6 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
       : `克隆 ${repo.fullName} 失败：${String(err)}`;
   } finally {
     cloningFullName.value = null;
-  }
-}
-
-function requestDeleteGitHubRepo(repo: GitHubRepoSummary) {
-  if (deletingFullName.value) return;
-  githubReposError.value = null;
-  if (workspace.githubBinding.value?.scopes.includes("delete_repo") !== true) {
-    githubReposError.value = "删除仓库需要 delete_repo 权限，请重新绑定 GitHub 后再试。";
-    return;
-  }
-  deletingRepo.value = repo;
-}
-
-function cancelDeleteGitHubRepo() {
-  if (deletingFullName.value) return;
-  deletingRepo.value = null;
-}
-
-async function confirmDeleteGitHubRepo() {
-  const repo = deletingRepo.value;
-  if (!repo || deletingFullName.value) return;
-  deletingFullName.value = repo.fullName;
-  githubReposError.value = null;
-  try {
-    await deleteGitHubRepo(repo.fullName);
-    githubRepos.value = githubRepos.value.filter((item) => item.fullName !== repo.fullName);
-    const nextIssuesByRepo = { ...githubIssuesByRepo.value };
-    delete nextIssuesByRepo[repo.fullName];
-    githubIssuesByRepo.value = nextIssuesByRepo;
-    writeGitHubOverviewSnapshot();
-    deletingRepo.value = null;
-  } catch (err) {
-    githubReposError.value = `删除 ${repo.fullName} 失败：${String(err)}`;
-  } finally {
-    deletingFullName.value = null;
   }
 }
 
@@ -1382,29 +1312,20 @@ async function addLocalRepo() {
                   <strong class="repo-status-row__name">
                     {{ githubRepo.fullName }}
                   </strong>
+                  <span
+                    v-if="workflowRun"
+                    class="repo-action-icon"
+                    :class="`repo-action-icon--${workflowRun.tone}`"
+                    :title="`${workflowRun.status} · ${workflowRun.run.displayTitle} · ${workflowRun.detail}`"
+                    :aria-label="workflowRun.status"
+                  >
+                    <X v-if="workflowRun.tone === 'error'" :size="14" aria-hidden="true" />
+                    <CircleDot v-else :size="14" aria-hidden="true" />
+                  </span>
+                  <span v-if="githubRepo.archived" class="repo-status-row__badge repo-status-row__badge--archived">Archive</span>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
-                  <span v-if="githubRepo.disabled" class="repo-status-row__badge repo-status-row__badge--disabled">禁用</span>
                 </span>
                 <span class="repo-status-row__action">
-                  <template v-if="workflowRun">
-                    <span
-                      class="repo-action-status"
-                      :class="`repo-action-status--${workflowRun.tone}`"
-                      :title="`${workflowRun.run.displayTitle} · ${workflowRun.detail}`"
-                    >
-                      {{ workflowRun.status }}
-                    </span>
-                    <a
-                      class="repo-action-link"
-                      :href="workflowRun.run.htmlUrl"
-                      target="_blank"
-                      rel="noreferrer"
-                      :title="workflowRun.run.displayTitle"
-                      @click.stop
-                    >
-                      运行
-                    </a>
-                  </template>
                   <template v-if="localRepo">
                     <template v-if="action">
                       <span
@@ -1425,21 +1346,6 @@ async function addLocalRepo() {
                     </template>
                     <span v-else class="repo-action-status repo-action-status--muted">已 clone</span>
                   </template>
-                  <button
-                    v-else-if="githubRepo.disabled"
-                    type="button"
-                    class="repo-action-link repo-action-link--danger"
-                    :disabled="Boolean(deletingFullName)"
-                    @click.stop="requestDeleteGitHubRepo(githubRepo)"
-                  >
-                    <LoaderCircle
-                      v-if="deletingFullName === githubRepo.fullName"
-                      :size="13"
-                      aria-hidden="true"
-                      class="sb-spin"
-                    />
-                    删除
-                  </button>
                   <button
                     v-else
                     type="button"
@@ -1552,18 +1458,6 @@ async function addLocalRepo() {
       </div>
     </div>
 
-    <ConfirmDialog
-      :open="Boolean(deletingRepo)"
-      title="删除 GitHub 仓库"
-      :message="`将删除远端仓库 ${deletingRepo?.fullName ?? ''}，本地目录不会被删除。此操作无法撤销。`"
-      confirm-text="删除"
-      cancel-text="取消"
-      busy-text="删除中..."
-      danger
-      :busy="Boolean(deletingFullName)"
-      @confirm="confirmDeleteGitHubRepo"
-      @cancel="cancelDeleteGitHubRepo"
-    />
   </section>
 </template>
 
@@ -2118,6 +2012,10 @@ async function addLocalRepo() {
   color: var(--warn);
 }
 
+.github-timeline-row__node.is-ok {
+  color: var(--ok);
+}
+
 .github-timeline-row__node.is-muted {
   color: var(--text-muted);
 }
@@ -2242,9 +2140,9 @@ async function addLocalRepo() {
   white-space: nowrap;
 }
 
-.repo-status-row__badge--disabled {
-  background: var(--err-soft);
-  color: var(--err);
+.repo-status-row__badge--archived {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
 }
 
 .repo-status-row__action {
@@ -2282,6 +2180,32 @@ async function addLocalRepo() {
   background: var(--bg-subtle);
 }
 
+.repo-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.repo-action-icon--error {
+  color: var(--err);
+}
+
+.repo-action-icon--warn {
+  color: var(--warn);
+}
+
+.repo-action-icon--ok {
+  color: var(--ok);
+}
+
+.repo-action-icon--muted {
+  color: var(--text-muted);
+}
+
 .repo-action-link {
   display: inline-flex;
   align-items: center;
@@ -2307,18 +2231,6 @@ async function addLocalRepo() {
 .repo-action-link:disabled {
   cursor: not-allowed;
   opacity: 0.65;
-}
-
-.repo-action-link--danger {
-  color: var(--err);
-  border-color: var(--err-soft);
-  background: transparent;
-}
-
-.repo-action-link--danger:hover,
-.repo-action-link--danger:focus-visible {
-  border-color: var(--err);
-  background: var(--err-soft);
 }
 
 .repo-status-error,
