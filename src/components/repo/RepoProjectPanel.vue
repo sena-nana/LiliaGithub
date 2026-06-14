@@ -39,6 +39,11 @@ import { isWorkflowRunFailure, streamLabel, workflowRunStatusText, workflowRunSt
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
+type ProjectContentMode = "launch" | ProjectTab;
+type ProjectSectionConfig = {
+  key: Exclude<ProjectContentMode, "launch" | "readme">;
+  label: string;
+};
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
 const props = defineProps<{
@@ -109,11 +114,21 @@ const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
 const readmePaths = computed(() => readmes.value.map((item) => item.path));
-const tabs: Array<{ key: Exclude<ProjectTab, "readme">; label: string }> = [
+const projectSections: readonly ProjectSectionConfig[] = [
   { key: "issues", label: "Issues" },
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
+const activeProjectSection = computed<ProjectContentMode>(() =>
+  props.launchTerminalVisible ? "launch" : activeTab.value,
+);
+
+function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
+  if (section === "readme") {
+    return activeProjectSection.value === "readme" && activeReadmePath.value === options?.readmePath;
+  }
+  return activeProjectSection.value === section;
+}
 const launchCommandText = computed(() => props.launchConfig?.command?.trim() || "选择启动指令");
 const launchCandidateOptions = computed(() => {
   const candidates = [...props.launchCandidates];
@@ -435,7 +450,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   <section class="project-panel">
     <div class="project-layout">
       <main class="project-main">
-        <section v-if="launchTerminalVisible" class="project-terminal-card">
+        <section v-if="activeProjectSection === 'launch'" class="project-terminal-card">
           <div class="project-section__head">
             <div class="launch-head">
               <button
@@ -496,7 +511,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           </div>
         </section>
 
-        <section v-else-if="activeTab === 'readme'" class="project-readme-card">
+        <section v-else-if="activeProjectSection === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
           <p v-else-if="!activeReadme" class="muted repo-empty project-empty">当前仓库没有本地 README。</p>
@@ -516,7 +531,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           <p class="muted repo-empty project-empty">当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。</p>
         </section>
 
-        <section v-else-if="activeTab === 'issues'" class="project-section">
+        <section v-else-if="activeProjectSection === 'issues'" class="project-section">
           <div class="project-section__head">
             <h3>Issues</h3>
             <select v-model="issueState">
@@ -551,7 +566,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           </div>
         </section>
 
-        <section v-else-if="activeTab === 'actions'" class="project-section">
+        <section v-else-if="activeProjectSection === 'actions'" class="project-section">
           <div class="project-section__head">
             <h3>Actions</h3>
             <span class="muted">{{ workflowRuns.length }} 条运行记录</span>
@@ -582,7 +597,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           </div>
         </section>
 
-        <form v-else class="project-section project-settings" @submit.prevent="saveSettings">
+        <form v-else-if="activeProjectSection === 'settings'" class="project-section project-settings" @submit.prevent="saveSettings">
           <div class="project-section__head">
             <h3>仓库设置</h3>
             <button type="submit" class="primary" :disabled="savingSettings || githubLoading || !settings">
@@ -628,9 +643,9 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
             :key="item.path"
             type="button"
             class="project-sidebar__item"
-            :class="{ 'is-active': !launchTerminalVisible && activeTab === 'readme' && activeReadmePath === item.path }"
+            :class="{ 'is-active': isProjectSectionActive('readme', { readmePath: item.path }) }"
             role="tab"
-            :aria-selected="!launchTerminalVisible && activeTab === 'readme' && activeReadmePath === item.path"
+            :aria-selected="isProjectSectionActive('readme', { readmePath: item.path })"
             @click="selectReadme(item.path)"
           >
             <strong>{{ item.path }}</strong>
@@ -641,13 +656,13 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
         <div class="project-sidebar__card" role="tablist" aria-label="项目信息视图">
           <button
-            v-for="tab in tabs"
+            v-for="tab in projectSections"
             :key="tab.key"
             type="button"
             class="project-sidebar__item"
-            :class="{ 'is-active': !launchTerminalVisible && activeTab === tab.key }"
+            :class="{ 'is-active': isProjectSectionActive(tab.key) }"
             role="tab"
-            :aria-selected="!launchTerminalVisible && activeTab === tab.key"
+            :aria-selected="isProjectSectionActive(tab.key)"
             @click="activateProjectTab(tab.key)"
           >
             <strong>{{ tab.label }}</strong>
