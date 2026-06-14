@@ -12,7 +12,6 @@ import RepoChangesPanel from "../components/repo/RepoChangesPanel.vue";
 import RepoCommitPanel from "../components/repo/RepoCommitPanel.vue";
 import RepoConflictsPanel from "../components/repo/RepoConflictsPanel.vue";
 import RepoHistoryPanel from "../components/repo/RepoHistoryPanel.vue";
-import RepoLaunchPanel from "../components/repo/RepoLaunchPanel.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
 import RepoPushError from "../components/repo/RepoPushError.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
@@ -27,10 +26,7 @@ const {
   actionError,
   actionRunning,
   conflictAcceptConfirm,
-  launchEditing,
   launchTerminalVisible,
-  launchCommandInput,
-  launchCwdInput,
   conflictChoices,
   repoId,
   detail,
@@ -52,7 +48,6 @@ const {
   launchLoading,
   languageStatsRefreshing,
   launchRunning,
-  hasLaunchCommand,
   selectedSummaryText,
   selectedFilePreview,
   statusCommits,
@@ -68,7 +63,6 @@ const {
   tabs,
   views,
   load,
-  refreshLaunch,
   focusChange,
   focusConflict,
   toggleFile,
@@ -87,9 +81,6 @@ const {
   continueConflict,
   startLaunch,
   stopLaunch,
-  editLaunchConfig,
-  cancelLaunchConfig,
-  saveLaunchConfig,
   checkout,
   openCommit,
   openGitHub,
@@ -200,6 +191,17 @@ const {
           :repo-id="repoId"
           :repo-full-name="summary?.githubFullName"
           :repo-path="summary?.path"
+          :loading="launchLoading"
+          :launch-config="launchConfig"
+          :launch-status="launchStatus"
+          :launch-logs="launchLogs"
+          :launch-terminal-visible="launchTerminalVisible"
+          :action-running="actionRunning"
+          :launch-running="launchRunning"
+          @start="startLaunch"
+          @stop="stopLaunch"
+          @open-terminal="launchTerminalVisible = true"
+          @hide-terminal="launchTerminalVisible = false"
         />
       </main>
 
@@ -285,28 +287,6 @@ const {
             :can-commit="canCommit"
             :action-running="actionRunning"
             @commit="commitSelected"
-          />
-
-          <RepoLaunchPanel
-            v-model:launch-command-input="launchCommandInput"
-            v-model:launch-cwd-input="launchCwdInput"
-            :loading="launchLoading"
-            :launch-editing="launchEditing"
-            :has-launch-command="hasLaunchCommand"
-            :launch-config="launchConfig"
-            :launch-status="launchStatus"
-            :launch-logs="launchLogs"
-            :launch-terminal-visible="launchTerminalVisible"
-            :action-running="actionRunning"
-            :launch-running="launchRunning"
-            @refresh="refreshLaunch"
-            @start="startLaunch"
-            @stop="stopLaunch"
-            @toggle-terminal="launchTerminalVisible = !launchTerminalVisible"
-            @edit-config="editLaunchConfig"
-            @save="saveLaunchConfig"
-            @cancel="cancelLaunchConfig"
-            @hide-terminal="launchTerminalVisible = false"
           />
         </aside>
       </div>
@@ -500,8 +480,7 @@ const {
 
 .section-toolbar h2,
 .repo-panel h2,
-.commit-panel h2,
-.launch-panel h2 {
+.commit-panel h2 {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
@@ -511,7 +490,6 @@ const {
 }
 
 .section-toolbar p,
-.launch-panel p,
 .repo-panel__title p {
   margin: 4px 0 0;
 }
@@ -1051,8 +1029,7 @@ const {
   display: block;
 }
 
-.commit-panel,
-.launch-panel {
+.commit-panel {
   display: grid;
   gap: 12px;
 }
@@ -1103,77 +1080,50 @@ const {
   overflow-wrap: anywhere;
 }
 
-.launch-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.launch-form {
-  display: grid;
-  gap: 10px;
-}
-
-.launch-form label {
-  display: grid;
-  gap: 5px;
-}
-
-.launch-form label span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.launch-form input {
-  width: 100%;
-}
-
-.launch-command {
+.launch-panel {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
+  padding: 10px;
+  margin-bottom: 0;
 }
 
-.launch-command code {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-
-.launch-command span {
-  color: var(--text-muted);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.launch-terminal {
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--bg-subtle);
-}
-
-.launch-terminal__header {
-  height: 34px;
-  padding: 0 8px 0 12px;
-  border-bottom: 1px solid var(--border-soft);
+.launch-command-button {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.launch-terminal__body {
-  max-height: 320px;
-  overflow: auto;
-}
-
-.launch-terminal__body pre {
+  justify-content: flex-start;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 7px 8px;
   border: 0;
-  border-radius: 0;
+  border-radius: 6px;
   background: transparent;
+  text-align: left;
+  color: var(--text);
+}
+
+.launch-command-button:hover {
+  background: var(--bg-hover);
+}
+
+.launch-command-button strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.launch-run-button {
+  flex: 0 0 auto;
+  width: 36px;
+  min-width: 36px;
+  padding: 0;
+  justify-content: center;
 }
 
 .launch-log {
@@ -1284,10 +1234,6 @@ const {
     margin-left: 0;
   }
 
-  .launch-actions button {
-    justify-content: flex-start;
-  }
-
   .change-row {
     grid-template-columns: 24px minmax(0, 1fr);
     min-height: 34px;
@@ -1302,11 +1248,6 @@ const {
   .branch-row,
   .branch-row button {
     grid-column: auto;
-  }
-
-  .branch-row,
-  .launch-actions {
-    grid-template-columns: 1fr;
   }
 
   .conflict-hunk__columns {
