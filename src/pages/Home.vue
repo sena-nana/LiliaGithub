@@ -18,10 +18,12 @@ import {
   ShieldCheck,
   X,
 } from "@lucide/vue";
+import ConfirmDialog from "../components/ConfirmDialog.vue";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoActionErrorDetailForRepo, syncErrorDetailsByRepoId } from "../composables/workspace/state";
 import {
+  deleteGitHubRepo,
   isGitHubBindingExpiredError,
   listGitHubRepos,
   listGitHubIssues,
@@ -129,6 +131,8 @@ const githubReposError = ref<string | null>(null);
 const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
 const githubIssuesLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
+const deletingRepo = ref<GitHubRepoSummary | null>(null);
+const deletingFullName = ref<string | null>(null);
 const repoOverviewGrid = ref<HTMLElement | null>(null);
 const repoOverviewCardMaxHeight = ref("calc(100dvh - 96px)");
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
@@ -821,6 +825,41 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
   }
 }
 
+function requestDeleteGitHubRepo(repo: GitHubRepoSummary) {
+  if (deletingFullName.value) return;
+  githubReposError.value = null;
+  if (workspace.githubBinding.value?.scopes.includes("delete_repo") !== true) {
+    githubReposError.value = "删除仓库需要 delete_repo 权限，请重新绑定 GitHub 后再试。";
+    return;
+  }
+  deletingRepo.value = repo;
+}
+
+function cancelDeleteGitHubRepo() {
+  if (deletingFullName.value) return;
+  deletingRepo.value = null;
+}
+
+async function confirmDeleteGitHubRepo() {
+  const repo = deletingRepo.value;
+  if (!repo || deletingFullName.value) return;
+  deletingFullName.value = repo.fullName;
+  githubReposError.value = null;
+  try {
+    await deleteGitHubRepo(repo.fullName);
+    githubRepos.value = githubRepos.value.filter((item) => item.fullName !== repo.fullName);
+    const nextIssuesByRepo = { ...githubIssuesByRepo.value };
+    delete nextIssuesByRepo[repo.fullName];
+    githubIssuesByRepo.value = nextIssuesByRepo;
+    writeGitHubOverviewSnapshot();
+    deletingRepo.value = null;
+  } catch (err) {
+    githubReposError.value = `删除 ${repo.fullName} 失败：${String(err)}`;
+  } finally {
+    deletingFullName.value = null;
+  }
+}
+
 async function addLocalRepo() {
   if (addingRepo.value) return;
   addingRepo.value = true;
@@ -1221,6 +1260,7 @@ async function addLocalRepo() {
                     {{ githubRepo.fullName }}
                   </strong>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
+                  <span v-if="githubRepo.disabled" class="repo-status-row__badge repo-status-row__badge--disabled">禁用</span>
                 </span>
                 <span class="repo-status-row__action">
                   <template v-if="localRepo">
@@ -1243,6 +1283,21 @@ async function addLocalRepo() {
                     </template>
                     <span v-else class="repo-action-status repo-action-status--muted">已 clone</span>
                   </template>
+                  <button
+                    v-else-if="githubRepo.disabled"
+                    type="button"
+                    class="repo-action-link repo-action-link--danger"
+                    :disabled="Boolean(deletingFullName)"
+                    @click.stop="requestDeleteGitHubRepo(githubRepo)"
+                  >
+                    <LoaderCircle
+                      v-if="deletingFullName === githubRepo.fullName"
+                      :size="13"
+                      aria-hidden="true"
+                      class="sb-spin"
+                    />
+                    删除
+                  </button>
                   <button
                     v-else
                     type="button"
@@ -1354,6 +1409,19 @@ async function addLocalRepo() {
         </div>
       </div>
     </div>
+
+    <ConfirmDialog
+      :open="Boolean(deletingRepo)"
+      title="删除 GitHub 仓库"
+      :message="`将删除远端仓库 ${deletingRepo?.fullName ?? ''}，本地目录不会被删除。此操作无法撤销。`"
+      confirm-text="删除"
+      cancel-text="取消"
+      busy-text="删除中..."
+      danger
+      :busy="Boolean(deletingFullName)"
+      @confirm="confirmDeleteGitHubRepo"
+      @cancel="cancelDeleteGitHubRepo"
+    />
   </section>
 </template>
 
@@ -2014,6 +2082,11 @@ async function addLocalRepo() {
   white-space: nowrap;
 }
 
+.repo-status-row__badge--disabled {
+  background: var(--err-soft);
+  color: var(--err);
+}
+
 .repo-status-row__action {
   display: inline-flex;
   align-items: center;
@@ -2073,6 +2146,18 @@ async function addLocalRepo() {
 .repo-action-link:disabled {
   cursor: not-allowed;
   opacity: 0.65;
+}
+
+.repo-action-link--danger {
+  color: var(--err);
+  border-color: var(--err-soft);
+  background: transparent;
+}
+
+.repo-action-link--danger:hover,
+.repo-action-link--danger:focus-visible {
+  border-color: var(--err);
+  background: var(--err-soft);
 }
 
 .repo-status-error,

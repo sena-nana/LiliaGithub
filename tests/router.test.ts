@@ -60,6 +60,7 @@ function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummar
     fullName,
     ownerLogin: fullName.split("/")[0] ?? "sena-nana",
     private: false,
+    disabled: false,
     description: null,
     defaultBranch: "main",
     createdAt: "2026-06-10T08:00:00Z",
@@ -176,6 +177,80 @@ describe("基础路由", () => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
     });
     expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
+  });
+
+  it("总览页禁用且未 clone 的 GitHub 项目显示禁用标签并通过确认删除", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/LiliaGithub"),
+          githubRepoSummary("sena-nana/DisabledRepo", {
+            disabled: true,
+            updatedAt: "2026-06-13T08:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    await renderAt("/");
+
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    const row = (await within(repoStatusList).findByText("sena-nana/DisabledRepo")).closest(".repo-status-row");
+    expect(row).toBeInTheDocument();
+    expect(within(row as HTMLElement).getByText("禁用")).toBeInTheDocument();
+    expect(within(row as HTMLElement).queryByRole("button", { name: "克隆" })).toBeNull();
+
+    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "删除" }));
+    const dialog = await screen.findByRole("dialog", { name: "删除 GitHub 仓库" });
+    expect(dialog).toHaveTextContent("sena-nana/DisabledRepo");
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(await within(repoStatusList).findByText("sena-nana/DisabledRepo")).toBeInTheDocument();
+
+    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "删除" }));
+    await fireEvent.click(within(await screen.findByRole("dialog", { name: "删除 GitHub 仓库" })).getByRole("button", { name: "删除" }));
+
+    await waitFor(() => {
+      expect(within(repoStatusList).queryByText("sena-nana/DisabledRepo")).toBeNull();
+    });
+  });
+
+  it("总览页旧 GitHub 绑定缺少 delete_repo 权限时不删除禁用仓库", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubBindingStatusForTests({
+      state: "bound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: {
+        login: "lilia-user",
+        avatarUrl: null,
+        boundAt: Date.now(),
+        scopes: ["repo", "workflow", "read:user"],
+        clientIdSource: "bundled",
+      },
+    });
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/DisabledRepo", {
+            disabled: true,
+            updatedAt: "2026-06-13T08:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    await renderAt("/");
+
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    const row = (await within(repoStatusList).findByText("sena-nana/DisabledRepo")).closest(".repo-status-row");
+    expect(row).toBeInTheDocument();
+    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "删除" }));
+
+    expect(await screen.findByText("删除仓库需要 delete_repo 权限，请重新绑定 GitHub 后再试。")).toBeInTheDocument();
+    expect(within(repoStatusList).getByText("sena-nana/DisabledRepo")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
   });
 
   it("总览页 GitHub 项目支持手动加载更多并去重", async () => {
