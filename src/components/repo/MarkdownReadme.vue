@@ -66,6 +66,7 @@ function renderMarkdown(content: string): string {
   let codeLines: string[] | null = null;
   let htmlLines: string[] | null = null;
   let htmlEndTag: RegExp | null = null;
+  let quoteLines: string[] | null = null;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -77,6 +78,14 @@ function renderMarkdown(content: string): string {
     const tag = list.ordered ? "ol" : "ul";
     blocks.push(`<${tag}>${list.items.map((item) => `<li>${renderListItem(item)}</li>`).join("")}</${tag}>`);
     list = null;
+  };
+  const flushQuote = () => {
+    if (!quoteLines) return;
+    const trimmedLines = trimEmptyLines(quoteLines);
+    if (trimmedLines.length) {
+      blocks.push(`<blockquote>${renderMarkdown(trimmedLines.join("\n"))}</blockquote>`);
+    }
+    quoteLines = null;
   };
 
   for (const line of lines) {
@@ -103,13 +112,24 @@ function renderMarkdown(content: string): string {
     if (/^```/.test(line.trim())) {
       flushParagraph();
       flushList();
+      flushQuote();
       codeLines = [];
+      continue;
+    }
+
+    const quote = /^>\s?(.*)$/.exec(line);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      quoteLines ??= [];
+      quoteLines.push(quote[1]);
       continue;
     }
 
     if (!line.trim()) {
       flushParagraph();
       flushList();
+      flushQuote();
       continue;
     }
 
@@ -117,6 +137,7 @@ function renderMarkdown(content: string): string {
     if (htmlBlock) {
       flushParagraph();
       flushList();
+      flushQuote();
       if (htmlBlock.endTag && !htmlBlock.endTag.test(line)) {
         htmlLines = [line];
         htmlEndTag = htmlBlock.endTag;
@@ -129,6 +150,7 @@ function renderMarkdown(content: string): string {
     if (/^---+$/.test(line.trim())) {
       flushParagraph();
       flushList();
+      flushQuote();
       blocks.push("<hr>");
       continue;
     }
@@ -137,6 +159,7 @@ function renderMarkdown(content: string): string {
     if (heading) {
       flushParagraph();
       flushList();
+      flushQuote();
       const level = heading[1].length;
       blocks.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
       continue;
@@ -145,6 +168,7 @@ function renderMarkdown(content: string): string {
     const listItem = /^(\s*)([-*+]|\d+\.)\s+(.+)$/.exec(line);
     if (listItem) {
       flushParagraph();
+      flushQuote();
       const ordered = /\d+\./.test(listItem[2]);
       if (!list || list.ordered !== ordered) flushList();
       list ??= { ordered, items: [] };
@@ -152,26 +176,20 @@ function renderMarkdown(content: string): string {
       continue;
     }
 
-    const quote = /^>\s?(.*)$/.exec(line);
-    if (quote) {
-      flushParagraph();
-      flushList();
-      blocks.push(`<blockquote>${renderInline(quote[1])}</blockquote>`);
-      continue;
-    }
-
     flushList();
+    flushQuote();
     paragraph.push(line.trim());
   }
 
   if (codeLines) blocks.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
   flushParagraph();
   flushList();
+  flushQuote();
   return blocks.join("");
 }
 
 function renderInline(text: string): string {
-  const pattern = /(`[^`]+`)|(!\[([^\]]*)\]\(([^)]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(<\/?[A-Za-z][^>]*>)/g;
+  const pattern = /(`[^`]+`)|(\*\*([^*]+)\*\*)|(!\[([^\]]*)\]\(([^)]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(<\/?[A-Za-z][^>]*>)/g;
   let html = "";
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -181,17 +199,27 @@ function renderInline(text: string): string {
     if (match[1]) {
       html += `<code>${escapeHtml(match[1].slice(1, -1))}</code>`;
     } else if (match[2]) {
-      html += `<img src="${escapeAttribute(match[4])}" alt="${escapeAttribute(match[3])}">`;
-    } else if (match[5]) {
-      html += `<a href="${escapeAttribute(match[7])}">${renderInline(match[6])}</a>`;
+      html += `<strong>${renderInline(match[3])}</strong>`;
+    } else if (match[4]) {
+      html += `<img src="${escapeAttribute(match[6])}" alt="${escapeAttribute(match[5])}">`;
+    } else if (match[7]) {
+      html += `<a href="${escapeAttribute(match[9])}">${renderInline(match[8])}</a>`;
     } else {
-      html += match[8];
+      html += match[10];
     }
     cursor = match.index + match[0].length;
   }
 
   if (cursor < text.length) html += escapeHtml(text.slice(cursor));
   return html;
+}
+
+function trimEmptyLines(lines: string[]): string[] {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && !lines[start].trim()) start += 1;
+  while (end > start && !lines[end - 1].trim()) end -= 1;
+  return lines.slice(start, end);
 }
 
 function stripHtmlComments(content: string): string {
@@ -374,6 +402,13 @@ function handleClick(event: MouseEvent) {
   margin-top: 4px;
 }
 
+.readme-render :deep(li > input[type="checkbox"]) {
+  width: 14px;
+  height: 14px;
+  margin: 0 7px 0 0;
+  vertical-align: -2px;
+}
+
 .readme-render :deep(blockquote) {
   padding: 8px 12px;
   border-left: 3px solid var(--border-strong);
@@ -395,5 +430,23 @@ function handleClick(event: MouseEvent) {
 .readme-render :deep(a:hover) {
   background: transparent;
   text-decoration: underline;
+}
+
+.readme-render :deep(img) {
+  width: auto;
+  height: auto;
+  max-width: min(45%, 160px);
+  max-height: 160px;
+  object-fit: contain;
+}
+
+.readme-render :deep(:where(p > img:only-child, p > a:only-child img:only-child):not([width]):not([height])) {
+  display: block;
+  max-width: 90%;
+  max-height: min(70vh, 640px);
+  margin: 14px auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-subtle);
 }
 </style>
