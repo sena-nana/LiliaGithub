@@ -2,7 +2,13 @@
 import { useRoute, useRouter } from "vue-router";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
-import type { CommitSummary, RepoConflictChoice, RepoConflictFile, RepoConflictState } from "../services/workspace";
+import type {
+  CommitSummary,
+  ProjectLaunchCandidate,
+  RepoConflictChoice,
+  RepoConflictFile,
+  RepoConflictState,
+} from "../services/workspace";
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 
 type RepoTab = "conflicts" | "changes" | "history" | "branches";
@@ -82,6 +88,7 @@ export function useRepoDetailController() {
   const canContinueConflictOperation = computed(() => supportedConflictOperation.value && !conflictFiles.value.length);
   const canCommit = computed(() => selectedFiles.value.size > 0 && commitMessage.value.trim().length > 0);
   const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
+  const launchCandidates = computed(() => workspace.state.launchCandidates[repoId.value] ?? []);
   const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
   const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
   const launchLoading = computed(() => workspace.state.launchLoading);
@@ -448,6 +455,16 @@ export function useRepoDetailController() {
     void runAction(() => workspace.stopLaunch(repoId.value));
   }
 
+  function selectLaunchCandidate(candidate: ProjectLaunchCandidate) {
+    if (launchRunning.value) return;
+    const current = launchConfig.value;
+    if (current?.command === candidate.command && current.cwd === candidate.cwd) return;
+    void runAction(async () => {
+      await workspace.saveLaunchConfig(repoId.value, candidate.command, candidate.cwd);
+      launchTerminalVisible.value = true;
+    });
+  }
+
   function checkout(branch: string) {
     void runAction(() => workspace.checkout(repoId.value, branch));
   }
@@ -513,6 +530,7 @@ export function useRepoDetailController() {
       canContinueConflictOperation,
       canCommit,
       launchConfig,
+      launchCandidates,
       launchStatus,
       launchLogs,
       launchLoading,
@@ -552,6 +570,7 @@ export function useRepoDetailController() {
       continueConflict,
       startLaunch,
       stopLaunch,
+      selectLaunchCandidate,
       checkout,
       openCommit,
       openGitHub,

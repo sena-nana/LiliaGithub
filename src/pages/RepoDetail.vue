@@ -44,6 +44,7 @@ const {
   canCommit,
   launchConfig,
   launchStatus,
+  launchCandidates,
   launchLogs,
   launchLoading,
   languageStatsRefreshing,
@@ -81,6 +82,7 @@ const {
   continueConflict,
   startLaunch,
   stopLaunch,
+  selectLaunchCandidate,
   checkout,
   openCommit,
   openGitHub,
@@ -91,99 +93,103 @@ const {
 </script>
 <template>
   <section class="repo-workbench">
-    <header class="repo-header">
-      <div class="repo-header__identity">
-        <h1>{{ repoTitle }}</h1>
-        <div class="repo-header__meta" :title="repoMetaItems.join(' · ')">
-          <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
+    <div class="repo-workbench__top">
+      <header class="repo-header">
+        <div class="repo-header__identity">
+          <h1>{{ repoTitle }}</h1>
+          <div class="repo-header__meta" :title="repoMetaItems.join(' · ')">
+            <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
+          </div>
         </div>
-      </div>
-      <div class="repo-header__actions overview-actions" aria-label="仓库操作">
-        <div class="repo-view-tabs" role="tablist" aria-label="仓库详情视图">
+        <div class="repo-header__actions overview-actions" aria-label="仓库操作">
+          <div class="repo-view-tabs" role="tablist" aria-label="仓库详情视图">
+            <button
+              v-for="view in views"
+              :key="view.key"
+              type="button"
+              class="repo-view-tabs__tab"
+              :class="{ 'is-active': activeView === view.key }"
+              role="tab"
+              :aria-selected="activeView === view.key"
+              @click="activeView = view.key"
+            >
+              {{ view.label }}
+            </button>
+          </div>
           <button
-            v-for="view in views"
-            :key="view.key"
             type="button"
-            class="repo-view-tabs__tab"
-            :class="{ 'is-active': activeView === view.key }"
-            role="tab"
-            :aria-selected="activeView === view.key"
-            @click="activeView = view.key"
+            class="overview-actions__btn"
+            title="刷新"
+            aria-label="刷新"
+            :disabled="actionRunning || languageStatsRefreshing"
+            @click="load"
           >
-            {{ view.label }}
+            <RefreshCw :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="文件夹"
+            aria-label="文件夹"
+            :disabled="!summary?.path"
+            @click="openFolder"
+          >
+            <FolderOpen :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="GitHub"
+            aria-label="GitHub"
+            :disabled="!summary?.githubFullName"
+            @click="openGitHub"
+          >
+            <ExternalLink :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="拉取"
+            aria-label="拉取"
+            :disabled="actionRunning || hasConflicts"
+            @click="mergePull"
+          >
+            <GitPullRequestArrow :size="17" aria-hidden="true" />
+          </button>
+          <button
+            v-if="hasConflicts"
+            type="button"
+            class="overview-actions__btn overview-actions__btn--primary"
+            :disabled="actionRunning"
+            @click="showConflicts"
+          >
+            <TriangleAlert :size="17" aria-hidden="true" />
+            处理冲突
+          </button>
+          <button
+            v-else
+            type="button"
+            class="overview-actions__btn overview-actions__btn--primary"
+            :disabled="actionRunning || !summary?.ahead"
+            @click="push"
+          >
+            <Upload :size="17" aria-hidden="true" />
+            Push
           </button>
         </div>
-        <button
-          type="button"
-          class="overview-actions__btn"
-          title="刷新"
-          aria-label="刷新"
-          :disabled="actionRunning || languageStatsRefreshing"
-          @click="load"
-        >
-          <RefreshCw :size="17" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="overview-actions__btn"
-          title="文件夹"
-          aria-label="文件夹"
-          :disabled="!summary?.path"
-          @click="openFolder"
-        >
-          <FolderOpen :size="17" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="overview-actions__btn"
-          title="GitHub"
-          aria-label="GitHub"
-          :disabled="!summary?.githubFullName"
-          @click="openGitHub"
-        >
-          <ExternalLink :size="17" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="overview-actions__btn"
-          title="拉取"
-          aria-label="拉取"
-          :disabled="actionRunning || hasConflicts"
-          @click="mergePull"
-        >
-          <GitPullRequestArrow :size="17" aria-hidden="true" />
-        </button>
-        <button
-          v-if="hasConflicts"
-          type="button"
-          class="overview-actions__btn overview-actions__btn--primary"
-          :disabled="actionRunning"
-          @click="showConflicts"
-        >
-          <TriangleAlert :size="17" aria-hidden="true" />
-          处理冲突
-        </button>
-        <button
-          v-else
-          type="button"
-          class="overview-actions__btn overview-actions__btn--primary"
-          :disabled="actionRunning || !summary?.ahead"
-          @click="push"
-        >
-          <Upload :size="17" aria-hidden="true" />
-          Push
-        </button>
-      </div>
-    </header>
+      </header>
 
-    <p v-if="actionError" class="error-line">{{ actionError }}</p>
-    <RepoPushError
-      v-if="recentSyncError"
-      :message="recentSyncError.message"
-      :retrying="recentSyncError.retrying"
-      :action-running="actionRunning"
-      @retry="push"
-    />
+      <div v-if="actionError || recentSyncError" class="repo-workbench__status">
+        <p v-if="actionError" class="error-line">{{ actionError }}</p>
+        <RepoPushError
+          v-if="recentSyncError"
+          :message="recentSyncError.message"
+          :retrying="recentSyncError.retrying"
+          :action-running="actionRunning"
+          @retry="push"
+        />
+      </div>
+    </div>
 
     <div class="repo-workbench__body">
       <main v-if="activeView === 'project'" class="workbench-main workbench-main--project">
@@ -194,6 +200,7 @@ const {
           :loading="launchLoading"
           :launch-config="launchConfig"
           :launch-status="launchStatus"
+          :launch-candidates="launchCandidates"
           :launch-logs="launchLogs"
           :launch-terminal-visible="launchTerminalVisible"
           :action-running="actionRunning"
@@ -202,6 +209,7 @@ const {
           @stop="stopLaunch"
           @open-terminal="launchTerminalVisible = true"
           @hide-terminal="launchTerminalVisible = false"
+          @select-launch-candidate="selectLaunchCandidate"
         />
       </main>
 
@@ -297,11 +305,17 @@ const {
 <style>
 .repo-workbench {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   height: calc(100vh - 76px);
   min-height: 0;
   overflow: hidden;
+}
+
+.repo-workbench__top {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
 }
 
 .repo-header {
@@ -396,8 +410,18 @@ const {
   font-size: 12px;
 }
 
-.repo-workbench__body {
+.repo-workbench__status {
+  display: grid;
+  grid-template-rows: minmax(0, auto);
+  gap: 14px;
   min-height: 0;
+}
+
+.repo-workbench__body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -447,6 +471,10 @@ const {
 }
 
 .workbench-main--project {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -1124,20 +1152,6 @@ const {
   min-width: 36px;
   padding: 0;
   justify-content: center;
-}
-
-.launch-log {
-  display: block;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.launch-log--stderr {
-  color: var(--err);
-}
-
-.launch-log--system {
-  color: var(--text-muted);
 }
 
 .error-line {

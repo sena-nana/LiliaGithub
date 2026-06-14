@@ -9,6 +9,7 @@ export {
   setFallbackGitHubBindingStatusForTests,
   setFallbackGitHubIssuesForTests,
   setFallbackGitHubWorkflowRunsForTests,
+  setFallbackLaunchCandidatesForTests,
   setFallbackRepoReadmesForTests,
   setFallbackGitHubRepoPagesForTests,
   setFallbackGitHubReposErrorForTests,

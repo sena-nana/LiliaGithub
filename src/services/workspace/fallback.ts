@@ -21,6 +21,7 @@ import type {
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
   ProjectLaunchConfig,
+  ProjectLaunchCandidate,
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RepoConflictChoice,
@@ -327,6 +328,7 @@ let fallbackTasks: WorkspaceTask[] = [];
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
 let fallbackLaunchLogIndex = 1;
+let fallbackLaunchCandidatesOverride: Record<string, ProjectLaunchCandidate[]> | null = null;
 
 export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
@@ -357,6 +359,7 @@ export function resetWorkspaceFallbacksForTests() {
     delete fallbackLaunchLogs[key];
   }
   fallbackLaunchLogIndex = 1;
+  fallbackLaunchCandidatesOverride = null;
 }
 
 export function setFallbackBulkExecuteOverrideForTests(
@@ -387,6 +390,19 @@ export function setFallbackRepoOverridesForTests(overrides: Record<string, RepoS
   fallbackRepoOverrides = Object.fromEntries(
     Object.entries(overrides).map(([repoId, summary]) => [repoId, { ...summary }]),
   );
+}
+
+export function setFallbackLaunchCandidatesForTests(
+  candidatesByRepo: Record<string, ProjectLaunchCandidate[]> | null,
+) {
+  fallbackLaunchCandidatesOverride = candidatesByRepo
+    ? Object.fromEntries(
+        Object.entries(candidatesByRepo).map(([repoId, candidates]) => [
+          repoId,
+          candidates.map((candidate) => ({ ...candidate })),
+        ]),
+      )
+    : null;
 }
 
 export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingStatus) {
@@ -1044,6 +1060,31 @@ function fallbackLaunchConfig(repoId: string): ProjectLaunchConfig | null {
   };
 }
 
+function fallbackLaunchCandidates(repoId: string): ProjectLaunchCandidate[] {
+  const config = fallbackLaunchConfig(repoId);
+  const command = config?.command.trim();
+  const base = repoId === "LiliaGithub"
+    ? [
+        { command: "yarn tauri:dev", label: "tauri:dev", hint: "package.json script", kind: "package", cwd: null },
+        { command: "yarn dev", label: "dev", hint: "package.json script", kind: "package", cwd: null },
+        { command: "yarn start", label: "start", hint: "package.json script", kind: "package", cwd: null },
+      ]
+    : [
+        { command: "yarn dev", label: "dev", hint: "package.json script", kind: "package", cwd: null },
+        { command: "cargo run", label: "cargo run", hint: "Cargo.toml", kind: "cargo", cwd: null },
+      ];
+  if (!command || base.some((candidate) => candidate.command === command && candidate.cwd === (config?.cwd ?? null))) {
+    return base;
+  }
+  return [{
+    command,
+    label: "当前指令",
+    hint: config?.cwd ? config.cwd : null,
+    kind: "current",
+    cwd: config?.cwd ?? null,
+  }, ...base];
+}
+
 function fallbackIdleStatus(repoId: string): ProjectLaunchStatus {
   return {
     repoId,
@@ -1242,6 +1283,12 @@ export function getRepoCommitDetail(repoId: string, hash: string): Promise<Commi
 
 export function getRepoLaunchConfig(repoId: string): Promise<ProjectLaunchConfig | null> {
   return call("repo_get_launch_config", { repoId }, () => fallbackLaunchConfig(repoId));
+}
+
+export function listRepoLaunchCandidates(repoId: string): Promise<ProjectLaunchCandidate[]> {
+  return call("repo_list_launch_candidates", { repoId }, () =>
+    fallbackLaunchCandidatesOverride?.[repoId]?.map((candidate) => ({ ...candidate })) ?? fallbackLaunchCandidates(repoId),
+  );
 }
 
 export function saveRepoLaunchConfig(

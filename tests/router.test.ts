@@ -679,7 +679,7 @@ describe("基础路由", () => {
     expect(screen.getByRole("button", { name: "运行" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
-    expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("tab", { name: "Git 信息" }));
 
@@ -944,7 +944,7 @@ describe("基础路由", () => {
 
     await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
     expect(await screen.findByLabelText("快速启动")).toBeInTheDocument();
-    expect(await screen.findByText("yarn tauri:dev")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
 
@@ -953,29 +953,42 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
 
     await fireEvent.click(screen.getByRole("tab", { name: "项目信息" }));
+    expect(await screen.findByLabelText("README 内容")).toBeInTheDocument();
+    const readmeTab = screen.getByRole("tab", { name: "README.md" });
+    const launchPanel = screen.getByLabelText("快速启动");
+    const launchSidebarButton = within(launchPanel).getByRole("button", { name: /yarn tauri:dev/ });
     await fireEvent.click(screen.getByRole("button", { name: /yarn tauri:dev/ }));
-    const idleTerminal = await screen.findByLabelText("启动终端");
+    expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
+    expect(screen.queryByLabelText("README 内容")).toBeNull();
+    expect(readmeTab).not.toHaveClass("is-active");
+    expect(launchPanel).not.toHaveClass("is-active");
+    expect(launchSidebarButton).toHaveClass("is-active");
+    const launchTerminal = screen.getByLabelText("启动终端");
+    const launchCard = launchTerminal.closest(".project-terminal-card");
+    if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
+    await fireEvent.click(within(launchCard).getByRole("button", { name: /yarn tauri:dev/ }));
+    expect(await within(launchCard).findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("option", { name: /^dev/ }));
+    await waitFor(() => {
+      expect(within(launchCard).getByRole("button", { name: /yarn dev/ })).toBeInTheDocument();
+    });
+    const idleTerminal = screen.getByLabelText("启动终端");
     expect(idleTerminal).toHaveTextContent("请选择一个启动指令并运行。");
-    expect(idleTerminal).toHaveTextContent("当前指令：yarn tauri:dev");
+    expect(idleTerminal).toHaveTextContent("当前指令：yarn dev");
     expect(idleTerminal).not.toHaveTextContent("启动命令：");
 
-    await fireEvent.click(screen.getByRole("button", { name: "隐藏" }));
-    await waitFor(() => {
-      expect(screen.queryByLabelText("启动终端")).toBeNull();
-    });
-
-    await fireEvent.click(screen.getByRole("button", { name: "运行" }));
+    await fireEvent.click(within(launchCard).getByRole("button", { name: "运行" }));
 
     await waitFor(() => {
       const terminal = screen.getByLabelText("启动终端");
-      expect(terminal).toHaveTextContent("启动命令：yarn tauri:dev");
+      expect(terminal).toHaveTextContent("启动命令：yarn dev");
       expect(terminal).toHaveTextContent("开发服务已启动");
     });
-    expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
+    expect(within(launchCard).getByRole("button", { name: "停止" })).toBeEnabled();
 
-    await fireEvent.click(screen.getByRole("button", { name: "停止" }));
+    await fireEvent.click(within(launchCard).getByRole("button", { name: "停止" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "运行" })).toBeEnabled();
+      expect(within(launchCard).getByRole("button", { name: "运行" })).toBeEnabled();
     });
     expect(screen.getByLabelText("启动终端")).toHaveTextContent("请选择一个启动指令并运行。");
   });
@@ -1015,6 +1028,38 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.queryByText("认证失败")).toBeNull();
     });
+  });
+
+  it("仓库详情页状态区出现或消失时保留项目主内容区", async () => {
+    const service = await mockLiliaGithubSyncFailure();
+    await renderAt("/");
+
+    await clickOverviewSync();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
+    });
+
+    const failedLink = screen.getByLabelText("同步失败").closest("a");
+    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到同步失败仓库入口");
+    await fireEvent.click(failedLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
+
+    const status = document.querySelector(".repo-workbench__status");
+    if (!(status instanceof HTMLElement)) throw new Error("未找到仓库状态区");
+    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    expect(screen.getByLabelText("快速启动")).toBeInTheDocument();
+
+    service.setFallbackBulkExecuteOverrideForTests(null);
+    await fireEvent.click(within(screen.getByLabelText("最近同步失败")).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("最近同步失败")).toBeNull();
+    });
+    expect(document.querySelector(".repo-workbench__status")).toBeNull();
+    expect(screen.getByLabelText("快速启动")).toBeInTheDocument();
   });
 
   it("总览页可直接进入最近同步失败仓库继续处理", async () => {

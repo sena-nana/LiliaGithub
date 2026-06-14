@@ -3,9 +3,12 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import {
   CircleDot,
   CircleOff,
+  ChevronDown,
   ExternalLink,
   LoaderCircle,
   Save,
+  Square,
+  Play,
   X,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
@@ -26,6 +29,7 @@ import type {
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
+  ProjectLaunchCandidate,
   ProjectLaunchConfig,
   ProjectLaunchLog,
   ProjectLaunchStatus,
@@ -34,7 +38,7 @@ import type {
 import { isWorkflowRunFailure, streamLabel, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 
-type ProjectTab = "readme" | "issues" | "actions" | "settings" | "terminal";
+type ProjectTab = "readme" | "issues" | "actions" | "settings";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
 const props = defineProps<{
@@ -44,6 +48,7 @@ const props = defineProps<{
   loading: boolean;
   launchConfig: ProjectLaunchConfig | null;
   launchStatus: ProjectLaunchStatus | null;
+  launchCandidates: readonly ProjectLaunchCandidate[];
   launchLogs: readonly ProjectLaunchLog[];
   launchTerminalVisible: boolean;
   actionRunning: boolean;
@@ -55,12 +60,13 @@ const emit = defineEmits<{
   stop: [];
   openTerminal: [];
   hideTerminal: [];
+  selectLaunchCandidate: [candidate: ProjectLaunchCandidate];
 }>();
 
 const activeTab = ref<ProjectTab>("readme");
-const previousProjectTab = ref<Exclude<ProjectTab, "terminal">>("readme");
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const terminalBody = ref<HTMLElement | null>(null);
+const launchMenuOpen = ref(false);
 const readmes = ref<RepoReadme[]>([]);
 const activeReadmePath = ref<string | null>(null);
 const readmeLoading = ref(false);
@@ -103,11 +109,40 @@ const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
 const readmePaths = computed(() => readmes.value.map((item) => item.path));
-const tabs: Array<{ key: Exclude<ProjectTab, "readme" | "terminal">; label: string }> = [
+const tabs: Array<{ key: Exclude<ProjectTab, "readme">; label: string }> = [
   { key: "issues", label: "Issues" },
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
+const launchCommandText = computed(() => props.launchConfig?.command?.trim() || "选择启动指令");
+const launchCandidateOptions = computed(() => {
+  const candidates = [...props.launchCandidates];
+  const current = props.launchConfig?.command?.trim()
+    ? candidates.find((item) => item.command === props.launchConfig?.command && item.cwd === props.launchConfig?.cwd)
+    : null;
+  if (current) return candidates;
+  if (!props.launchConfig?.command.trim()) return candidates;
+  return [{
+    command: props.launchConfig.command,
+    label: "当前指令",
+    hint: props.launchConfig.cwd || null,
+    kind: "current",
+    cwd: props.launchConfig.cwd,
+  }, ...candidates];
+});
+const launchMenuItems = computed(() =>
+  launchCandidateOptions.value.map((candidate) => ({
+    value: `${candidate.command}::${candidate.cwd ?? ""}`,
+    label: candidate.label,
+    hint: candidate.hint ?? candidate.cwd ?? undefined,
+    candidate,
+  })),
+);
+const activeLaunchValue = computed(() =>
+  `${props.launchConfig?.command ?? ""}::${props.launchConfig?.cwd ?? ""}`,
+);
+const hasLaunchCommand = computed(() => Boolean(props.launchConfig?.command.trim()));
+const launchButtonDisabled = computed(() => props.loading || props.actionRunning || props.launchRunning);
 
 onMounted(() => {
   void loadReadme();
@@ -117,8 +152,8 @@ onMounted(() => {
 
 watch(() => props.repoId, () => {
   activeTab.value = "readme";
-  previousProjectTab.value = "readme";
   activeReadmePath.value = null;
+  closeLaunchMenu();
   void loadReadme();
 });
 
@@ -127,42 +162,43 @@ watch(() => props.repoFullName, () => {
   void loadActions();
 });
 
-watch(
-  () => props.launchTerminalVisible,
-  (visible) => {
-    if (visible) {
-      if (activeTab.value !== "terminal") {
-        previousProjectTab.value = activeTab.value;
-      }
-      activeTab.value = "terminal";
-      void scrollTerminalToEnd();
-      return;
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  () => props.launchLogs.length,
-  () => {
-    if (props.launchTerminalVisible) {
-      void scrollTerminalToEnd();
-    }
-  },
-);
-
-watch(
-  () => props.launchRunning,
-  () => {
-    if (props.launchTerminalVisible) {
-      void scrollTerminalToEnd();
-    }
-  },
-);
+watch([() => props.launchLogs.length, () => props.launchRunning], () => {
+  if (!props.launchTerminalVisible) return;
+  void scrollTerminalToEnd();
+});
 
 watch(issueState, () => {
   void loadIssues();
 });
+
+watch(launchMenuOpen, async (open, _previous, onCleanup) => {
+  if (!open) return;
+  await nextTick();
+  document.addEventListener("pointerdown", onDocumentPointerDown, true);
+  document.addEventListener("keydown", onMenuKeydown);
+  onCleanup(() => {
+    document.removeEventListener("pointerdown", onDocumentPointerDown, true);
+    document.removeEventListener("keydown", onMenuKeydown);
+  });
+});
+
+function closeLaunchMenu() {
+  launchMenuOpen.value = false;
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  const target = event.target as Node | null;
+  if (!target) return;
+  const root = terminalBody.value?.closest(".project-terminal-card");
+  if (!(root instanceof HTMLElement)) return;
+  if (!root.contains(target)) closeLaunchMenu();
+}
+
+function onMenuKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  closeLaunchMenu();
+  event.stopPropagation();
+}
 
 function applySettingsForm(next: GitHubRepoManagement) {
   settingsForm.description = next.description ?? "";
@@ -362,10 +398,10 @@ async function scrollTerminalToEnd() {
   body.scrollTop = body.scrollHeight;
 }
 
-function activateProjectTab(tab: Exclude<ProjectTab, "terminal">) {
-  previousProjectTab.value = tab;
+function activateProjectTab(tab: ProjectTab) {
   activeTab.value = tab;
   if (props.launchTerminalVisible) {
+    closeLaunchMenu();
     emit("hideTerminal");
   }
 }
@@ -375,26 +411,75 @@ function selectReadme(path: string) {
   activateProjectTab("readme");
 }
 
-function hideTerminal() {
-  activeTab.value = previousProjectTab.value;
-  emit("hideTerminal");
+function runLaunch() {
+  closeLaunchMenu();
+  emit("start");
 }
 
-watch(activeTab, (tab) => {
-  if (tab === "terminal") return;
-  previousProjectTab.value = tab;
-});
+function stopLaunch() {
+  closeLaunchMenu();
+  emit("stop");
+}
 
+function pickLaunchCandidate(candidate: ProjectLaunchCandidate) {
+  closeLaunchMenu();
+  emit("selectLaunchCandidate", candidate);
+}
+
+function launchButtonTitle(candidate: ProjectLaunchCandidate) {
+  return [candidate.kind, candidate.hint, candidate.cwd].filter(Boolean).join(" · ");
+}
 </script>
 
 <template>
   <section class="project-panel">
     <div class="project-layout">
       <main class="project-main">
-        <section v-if="activeTab === 'terminal'" class="project-terminal-card">
+        <section v-if="launchTerminalVisible" class="project-terminal-card">
           <div class="project-section__head">
-            <h3>运行输出</h3>
-            <button type="button" class="ghost" @click="hideTerminal">隐藏</button>
+            <div class="launch-head">
+              <button
+                type="button"
+                class="launch-command-button"
+                :class="{ 'is-open': launchMenuOpen }"
+                :disabled="launchButtonDisabled"
+                :aria-expanded="launchMenuOpen"
+                aria-haspopup="true"
+                @click="launchMenuOpen = !launchMenuOpen"
+              >
+                <strong>{{ launchCommandText }}</strong>
+                <ChevronDown :size="12" aria-hidden="true" />
+              </button>
+              <div v-if="launchMenuOpen" class="launch-menu" role="listbox" aria-label="启动指令候选">
+                <button
+                  v-for="item in launchMenuItems"
+                  :key="item.value"
+                  type="button"
+                  class="launch-menu__item"
+                  :class="{ 'is-active': item.value === activeLaunchValue }"
+                  role="option"
+                  :aria-selected="item.value === activeLaunchValue"
+                  @click="pickLaunchCandidate(item.candidate)"
+                >
+                  <span class="launch-menu__label">{{ item.label }}</span>
+                  <span class="launch-menu__hint">{{ launchButtonTitle(item.candidate) }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="launch-actions">
+              <button
+                type="button"
+                class="primary launch-run-button"
+                :aria-label="launchRunning ? '停止' : '运行'"
+                :title="launchRunning ? '停止' : '运行'"
+                :disabled="actionRunning || (!launchRunning && !hasLaunchCommand)"
+                @click="launchRunning ? stopLaunch() : runLaunch()"
+              >
+                <Square v-if="launchRunning" :size="15" aria-hidden="true" />
+                <Play v-else :size="15" aria-hidden="true" />
+              </button>
+              <button type="button" class="ghost" @click="emit('hideTerminal')">隐藏</button>
+            </div>
           </div>
           <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
             <div v-if="!launchRunning" class="project-terminal__empty">
@@ -543,9 +628,9 @@ watch(activeTab, (tab) => {
             :key="item.path"
             type="button"
             class="project-sidebar__item"
-            :class="{ 'is-active': activeTab === 'readme' && activeReadmePath === item.path }"
+            :class="{ 'is-active': !launchTerminalVisible && activeTab === 'readme' && activeReadmePath === item.path }"
             role="tab"
-            :aria-selected="activeTab === 'readme' && activeReadmePath === item.path"
+            :aria-selected="!launchTerminalVisible && activeTab === 'readme' && activeReadmePath === item.path"
             @click="selectReadme(item.path)"
           >
             <strong>{{ item.path }}</strong>
@@ -560,9 +645,9 @@ watch(activeTab, (tab) => {
             :key="tab.key"
             type="button"
             class="project-sidebar__item"
-            :class="{ 'is-active': activeTab === tab.key }"
+            :class="{ 'is-active': !launchTerminalVisible && activeTab === tab.key }"
             role="tab"
-            :aria-selected="activeTab === tab.key"
+            :aria-selected="!launchTerminalVisible && activeTab === tab.key"
             @click="activateProjectTab(tab.key)"
           >
             <strong>{{ tab.label }}</strong>
@@ -576,6 +661,7 @@ watch(activeTab, (tab) => {
             :launch-status="launchStatus"
             :action-running="actionRunning"
             :launch-running="launchRunning"
+            :active="launchTerminalVisible"
             @start="emit('start')"
             @stop="emit('stop')"
             @open-terminal="emit('openTerminal')"
@@ -589,22 +675,28 @@ watch(activeTab, (tab) => {
 <style scoped>
 .project-panel {
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   height: 100%;
+  max-height: 100%;
+  overflow: hidden;
   padding: 0;
 }
 
 .project-section__head,
 .project-row,
-.project-inline-form {
+.project-inline-form,
+.launch-head,
+.launch-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .project-section__head,
-.project-row {
+.project-row,
+.launch-head {
   justify-content: space-between;
 }
 
@@ -620,17 +712,26 @@ watch(activeTab, (tab) => {
 .project-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+  grid-template-rows: minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
   min-width: 0;
   min-height: 0;
   height: 100%;
+  max-height: 100%;
+  overflow: hidden;
 }
 
 .project-main {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  align-content: start;
+  align-self: stretch;
   min-width: 0;
   min-height: 0;
   height: 100%;
+  max-height: 100%;
+  overflow: hidden;
 }
 
 .project-readme-card,
@@ -646,6 +747,7 @@ watch(activeTab, (tab) => {
 
 .project-readme-card,
 .project-section {
+  align-self: start;
   max-height: 100%;
   overflow: auto;
   padding: 14px 16px;
@@ -657,16 +759,120 @@ watch(activeTab, (tab) => {
 .project-terminal-card {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  align-self: start;
+  gap: 10px;
   min-width: 0;
   min-height: 0;
-  height: 100%;
   max-height: 100%;
   overflow: hidden;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev);
+}
+
+.launch-head {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: min(520px, 100%);
+}
+
+.launch-command-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  text-align: left;
+  color: var(--text);
+}
+
+.launch-command-button strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.launch-command-button.is-open,
+.launch-command-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.launch-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  max-height: 280px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.4);
+}
+
+.launch-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  min-height: 30px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.launch-menu__item.is-active,
+.launch-menu__item:hover {
+  background: var(--bg-hover);
+}
+
+.launch-menu__label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.launch-menu__hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-actions {
+  flex: 0 0 auto;
+}
+
+.launch-run-button {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+  justify-content: center;
 }
 
 .project-terminal__body {
@@ -680,22 +886,39 @@ watch(activeTab, (tab) => {
   border: 0;
   border-radius: 0;
   background: transparent;
+  padding: 0;
+}
+
+.launch-log {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.launch-log--stderr {
+  color: var(--err);
+}
+
+.launch-log--system {
+  color: var(--text-muted);
 }
 
 .project-terminal__empty {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .project-empty {
-  padding: 18px 0;
+  padding: 12px 0;
 }
 
 .project-sidebar {
   display: grid;
   gap: 14px;
   min-width: 0;
+  min-height: 0;
   align-content: start;
+  align-self: start;
 }
 
 .project-sidebar__card {
@@ -734,6 +957,11 @@ watch(activeTab, (tab) => {
 }
 
 .project-sidebar__item.is-active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.project-sidebar__launch :deep(.launch-command-button.is-active) {
   background: var(--bg-active);
   color: var(--text);
 }
@@ -867,6 +1095,7 @@ watch(activeTab, (tab) => {
 @media (max-width: 900px) {
   .project-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .project-sidebar {

@@ -75,6 +75,18 @@ pub struct ProjectLaunchConfig {
     pub updated_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLaunchCandidate {
+    pub command: String,
+    pub label: String,
+    #[serde(default)]
+    pub hint: Option<String>,
+    pub kind: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectLaunchStatus {
@@ -2276,7 +2288,109 @@ fn package_script_command(pm: &str, script: &str) -> String {
     }
 }
 
-fn infer_launch_config(repo_path: &Path) -> Option<ProjectLaunchConfig> {
+fn push_launch_candidate(
+    candidates: &mut Vec<ProjectLaunchCandidate>,
+    command: String,
+    label: String,
+    hint: Option<String>,
+    kind: &str,
+    cwd: Option<String>,
+) {
+    let key = (command.clone(), cwd.clone());
+    if candidates
+        .iter()
+        .any(|candidate| candidate.command == key.0 && candidate.cwd == key.1)
+    {
+        return;
+    }
+    candidates.push(ProjectLaunchCandidate {
+        command,
+        label,
+        hint,
+        kind: kind.to_string(),
+        cwd,
+    });
+}
+
+fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaunchCandidate> {
+    let mut candidates = Vec::new();
+    for folder in ["scripts", "bin"] {
+        let dir = repo_path.join(folder);
+        if !dir.is_dir() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut files: Vec<_> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect();
+        files.sort();
+        for file_path in files {
+            let Some(ext) = file_path.extension().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let rel = file_path.strip_prefix(repo_path).unwrap_or(&file_path);
+            let rel_label = rel
+                .components()
+                .filter_map(|component| match component {
+                    Component::Normal(value) => Some(value.to_string_lossy().to_string()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            match ext {
+                "sh" => push_launch_candidate(
+                    &mut candidates,
+                    format!("sh {rel_label}"),
+                    rel_label.clone(),
+                    Some(folder.to_string()),
+                    "script",
+                    None,
+                ),
+                "cmd" | "bat" => push_launch_candidate(
+                    &mut candidates,
+                    rel_label.clone(),
+                    rel_label.clone(),
+                    Some(folder.to_string()),
+                    "script",
+                    None,
+                ),
+                "ps1" => push_launch_candidate(
+                    &mut candidates,
+                    format!("powershell -ExecutionPolicy Bypass -File {rel_label}"),
+                    rel_label.clone(),
+                    Some(folder.to_string()),
+                    "script",
+                    None,
+                ),
+                "mjs" | "js" => push_launch_candidate(
+                    &mut candidates,
+                    format!("node {rel_label}"),
+                    rel_label.clone(),
+                    Some(folder.to_string()),
+                    "script",
+                    None,
+                ),
+                "ts" | "tsx" => push_launch_candidate(
+                    &mut candidates,
+                    format!("node --experimental-strip-types {rel_label}"),
+                    rel_label.clone(),
+                    Some(folder.to_string()),
+                    "script",
+                    None,
+                ),
+                _ => {}
+            }
+        }
+    }
+    candidates
+}
+
+fn infer_launch_candidates(repo_path: &Path) -> Vec<ProjectLaunchCandidate> {
+    let mut candidates = Vec::new();
     let package_path = repo_path.join("package.json");
     if package_path.exists() {
         let parsed = fs::read_to_string(&package_path)
@@ -2292,35 +2406,77 @@ fn infer_launch_config(repo_path: &Path) -> Option<ProjectLaunchConfig> {
             );
             if let Some(scripts) = scripts {
                 if repo_path.join("src-tauri").exists() && scripts.contains_key("tauri:dev") {
-                    return Some(ProjectLaunchConfig {
-                        command: package_script_command(pm, "tauri:dev"),
-                        cwd: None,
-                        source: "inferred".to_string(),
-                        updated_at: None,
-                    });
+                    push_launch_candidate(
+                        &mut candidates,
+                        package_script_command(pm, "tauri:dev"),
+                        "tauri:dev".to_string(),
+                        Some("package.json".to_string()),
+                        "package",
+                        None,
+                    );
                 }
                 for script in ["dev", "start", "serve"] {
                     if scripts.contains_key(script) {
-                        return Some(ProjectLaunchConfig {
-                            command: package_script_command(pm, script),
-                            cwd: None,
-                            source: "inferred".to_string(),
-                            updated_at: None,
-                        });
+                        push_launch_candidate(
+                            &mut candidates,
+                            package_script_command(pm, script),
+                            script.to_string(),
+                            Some("package.json".to_string()),
+                            "package",
+                            None,
+                        );
                     }
+                }
+                let mut script_names: Vec<_> = scripts
+                    .keys()
+                    .map(|name| name.to_string())
+                    .filter(|name| !matches!(name.as_str(), "tauri:dev" | "dev" | "start" | "serve"))
+                    .collect();
+                script_names.sort();
+                for script in script_names {
+                    push_launch_candidate(
+                        &mut candidates,
+                        package_script_command(pm, &script),
+                        script.clone(),
+                        Some("package.json".to_string()),
+                        "package",
+                        None,
+                    );
                 }
             }
         }
     }
     if repo_path.join("Cargo.toml").exists() {
-        return Some(ProjectLaunchConfig {
-            command: "cargo run".to_string(),
-            cwd: None,
-            source: "inferred".to_string(),
-            updated_at: None,
-        });
+        push_launch_candidate(
+            &mut candidates,
+            "cargo run".to_string(),
+            "cargo run".to_string(),
+            Some("Cargo.toml".to_string()),
+            "cargo",
+            None,
+        );
     }
-    None
+    candidates.extend(common_script_file_candidates(repo_path));
+    candidates
+}
+
+fn infer_launch_config(repo_path: &Path) -> Option<ProjectLaunchConfig> {
+    infer_launch_candidates(repo_path).into_iter().next().map(|candidate| ProjectLaunchConfig {
+        command: candidate.command,
+        cwd: candidate.cwd,
+        source: "inferred".to_string(),
+        updated_at: None,
+    })
+}
+
+fn current_launch_candidate(config: &ProjectLaunchConfig) -> ProjectLaunchCandidate {
+    ProjectLaunchCandidate {
+        command: config.command.clone(),
+        label: "当前指令".to_string(),
+        hint: config.cwd.clone(),
+        kind: "current".to_string(),
+        cwd: config.cwd.clone(),
+    }
 }
 
 fn launch_config_for_repo(
@@ -2339,6 +2495,29 @@ fn launch_config_for_repo(
     }
     let path = repo_path_by_id(app, repo_id)?;
     Ok(infer_launch_config(&path))
+}
+
+fn launch_candidates_for_repo(
+    app: &AppHandle,
+    repo_id: &str,
+) -> Result<Vec<ProjectLaunchCandidate>, String> {
+    let settings = load_settings(app);
+    let path = repo_path_by_id(app, repo_id)?;
+    let mut candidates = infer_launch_candidates(&path);
+    let current_config = settings
+        .project_launch_configs
+        .get(repo_id)
+        .cloned()
+        .or_else(|| infer_launch_config(&path));
+    if let Some(config) = current_config {
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.command == config.command && candidate.cwd == config.cwd)
+        {
+            candidates.insert(0, current_launch_candidate(&config));
+        }
+    }
+    Ok(candidates)
 }
 
 fn resolve_launch_cwd(repo_path: &Path, cwd: Option<&str>) -> Result<PathBuf, String> {
@@ -3353,6 +3532,14 @@ pub fn repo_get_launch_config(
     repo_id: String,
 ) -> Result<Option<ProjectLaunchConfig>, String> {
     launch_config_for_repo(&app, &repo_id)
+}
+
+#[tauri::command]
+pub fn repo_list_launch_candidates(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<Vec<ProjectLaunchCandidate>, String> {
+    launch_candidates_for_repo(&app, &repo_id)
 }
 
 #[tauri::command]
@@ -6125,6 +6312,14 @@ rename to docs/new.md",
         let config = infer_launch_config(&path).unwrap();
         assert_eq!(config.command, "yarn tauri:dev");
         assert_eq!(config.source, "inferred");
+        let candidates = infer_launch_candidates(&path);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.command.as_str())
+                .collect::<Vec<_>>(),
+            vec!["yarn tauri:dev", "yarn dev"]
+        );
         fs::remove_dir_all(path).unwrap();
     }
 
@@ -6144,6 +6339,13 @@ rename to docs/new.md",
 
         let config = infer_launch_config(&path).unwrap();
         assert_eq!(config.command, "pnpm start");
+        assert_eq!(
+            infer_launch_candidates(&path)
+                .iter()
+                .map(|candidate| candidate.command.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pnpm start", "pnpm serve"]
+        );
         fs::remove_dir_all(path).unwrap();
     }
 
@@ -6174,7 +6376,58 @@ rename to docs/new.md",
             infer_launch_config(&cargo_path).unwrap().command,
             "cargo run"
         );
+        assert_eq!(infer_launch_candidates(&cargo_path)[0].kind, "cargo");
         fs::remove_dir_all(cargo_path).unwrap();
+    }
+
+    #[test]
+    fn lists_remaining_package_scripts_after_priority_scripts() {
+        let path = temp_dir("all-scripts");
+        write_package(
+            &path,
+            r#"{
+              "scripts": {
+                "test": "vitest",
+                "dev": "vite",
+                "build": "vite build"
+              }
+            }"#,
+        );
+
+        assert_eq!(
+            infer_launch_candidates(&path)
+                .iter()
+                .map(|candidate| candidate.command.as_str())
+                .collect::<Vec<_>>(),
+            vec!["npm run dev", "npm run build", "npm run test"]
+        );
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn lists_common_script_file_candidates() {
+        let path = temp_dir("script-files");
+        fs::create_dir_all(path.join("scripts")).unwrap();
+        fs::create_dir_all(path.join("bin")).unwrap();
+        fs::write(path.join("scripts").join("dev.mjs"), "").unwrap();
+        fs::write(path.join("scripts").join("deploy.ps1"), "").unwrap();
+        fs::write(path.join("bin").join("start.sh"), "").unwrap();
+        fs::write(path.join("bin").join("check.ts"), "").unwrap();
+        fs::write(path.join("bin").join("notes.txt"), "").unwrap();
+
+        assert_eq!(
+            infer_launch_candidates(&path)
+                .iter()
+                .map(|candidate| candidate.command.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1",
+                "node scripts/dev.mjs",
+                "node --experimental-strip-types bin/check.ts",
+                "sh bin/start.sh",
+            ]
+        );
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

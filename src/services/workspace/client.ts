@@ -22,6 +22,7 @@ import type {
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
   ProjectLaunchConfig,
+  ProjectLaunchCandidate,
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RepoConflictChoice,
@@ -290,6 +291,10 @@ export function getRepoCommitDetail(repoId: string, hash: string): Promise<Commi
 
 export function getRepoLaunchConfig(repoId: string): Promise<ProjectLaunchConfig | null> {
   return call("repo_get_launch_config", { repoId }, () => fallback.getRepoLaunchConfig(repoId));
+}
+
+export function listRepoLaunchCandidates(repoId: string): Promise<ProjectLaunchCandidate[]> {
+  return call("repo_list_launch_candidates", { repoId }, () => fallback.listRepoLaunchCandidates(repoId));
 }
 
 export function saveRepoLaunchConfig(
