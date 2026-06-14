@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   Radar,
   RefreshCw,
+  RotateCw,
   Search,
   ShieldCheck,
   X,
@@ -27,10 +28,12 @@ import {
   isGitHubBindingExpiredError,
   listGitHubRepos,
   listGitHubIssues,
+  listGitHubWorkflowRuns,
   preloadGitHubRepos,
   type GitHubContributionDay,
   type GitHubIssue,
   type GitHubRepoSummary,
+  type GitHubWorkflowRun,
   type RepoSummary,
 } from "../services/workspace";
 import {
@@ -58,16 +61,26 @@ type RepoStatusRow = {
   githubRepo: GitHubRepoSummary;
   localRepo: RepoSummary | null;
   action: RepoAction | null;
+  workflowRun: WorkflowRunOverview | null;
 };
 
 type GitHubTimelineEvent = {
   id: string;
-  kind: "repo" | "operation" | "commit" | "issue";
+  kind: "repo" | "operation" | "commit" | "issue" | "workflow";
   title: string;
   detail: string;
   summary: string;
   timestamp: number;
   href?: string;
+  tone?: "error" | "warn" | "muted";
+};
+
+type WorkflowRunOverview = {
+  run: GitHubWorkflowRun;
+  status: string;
+  detail: string;
+  tone: "error" | "warn" | "muted";
+  priority: number;
 };
 
 type ContributionCell = GitHubContributionDay & {
@@ -110,6 +123,7 @@ const GITHUB_TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 const GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_TIMELINE_ISSUE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const GITHUB_TIMELINE_ISSUES_PER_REPO = 100;
+const GITHUB_TIMELINE_WORKFLOW_RUNS_PER_REPO = 5;
 
 type GitHubTimelineIssueCacheEntry = {
   repoFullName: string;
@@ -130,6 +144,8 @@ const githubReposLoadingMore = ref(false);
 const githubReposError = ref<string | null>(null);
 const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
 const githubIssuesLoading = ref(false);
+const githubWorkflowRunsByRepo = ref<Record<string, GitHubWorkflowRun[] | undefined>>({});
+const githubWorkflowRunsLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
 const deletingRepo = ref<GitHubRepoSummary | null>(null);
 const deletingFullName = ref<string | null>(null);
@@ -189,6 +205,7 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
       githubRepo,
       localRepo,
       action: localRepo ? repoAction(localRepo) : null,
+      workflowRun: focusedWorkflowRun(githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []),
     };
   }),
 );
@@ -296,6 +313,7 @@ function applyGitHubRepoPage(
   githubReposError.value = null;
   writeGitHubOverviewSnapshot();
   void loadGitHubTimelineIssues(page.items, refreshIssues);
+  void loadGitHubTimelineWorkflowRuns(page.items, refreshIssues);
 }
 
 function restoreGitHubOverviewSnapshot() {
@@ -304,6 +322,7 @@ function restoreGitHubOverviewSnapshot() {
   githubRepos.value = snapshot.repos;
   githubReposNextPage.value = snapshot.nextPage;
   githubIssuesByRepo.value = snapshot.issuesByRepo;
+  githubWorkflowRunsByRepo.value = snapshot.workflowRunsByRepo;
   githubReposError.value = null;
   return true;
 }
@@ -313,15 +332,57 @@ function writeGitHubOverviewSnapshot() {
     repos: githubRepos.value,
     nextPage: githubReposNextPage.value,
     issuesByRepo: githubIssuesByRepo.value,
+    workflowRunsByRepo: githubWorkflowRunsByRepo.value,
   });
 }
 
 function githubRepoLoadErrorMessage(err: unknown) {
   if (isGitHubBindingExpiredError(err)) {
     clearGitHubTimelineIssueCache();
+    clearGitHubTimelineWorkflowRuns();
     return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
   }
   return `GitHub 仓库列表加载失败：${String(err)}`;
+}
+
+async function loadGitHubTimelineWorkflowRuns(
+  repos: GitHubRepoSummary[],
+  refresh = false,
+) {
+  let nextWorkflowRunsByRepo = { ...githubWorkflowRunsByRepo.value };
+  if (refresh) {
+    for (const repo of repos) {
+      delete nextWorkflowRunsByRepo[repo.fullName];
+    }
+  }
+  githubWorkflowRunsByRepo.value = nextWorkflowRunsByRepo;
+  writeGitHubOverviewSnapshot();
+  const missingRepos = repos.filter((repo) => nextWorkflowRunsByRepo[repo.fullName] == null);
+  if (!missingRepos.length) return;
+  githubWorkflowRunsLoading.value = true;
+  try {
+    const fetchedEntries = await Promise.all(missingRepos.map(fetchGitHubTimelineWorkflowRuns));
+    nextWorkflowRunsByRepo = {
+      ...nextWorkflowRunsByRepo,
+      ...Object.fromEntries(fetchedEntries),
+    };
+    githubWorkflowRunsByRepo.value = nextWorkflowRunsByRepo;
+    writeGitHubOverviewSnapshot();
+  } finally {
+    githubWorkflowRunsLoading.value = false;
+  }
+}
+
+async function fetchGitHubTimelineWorkflowRuns(
+  repo: GitHubRepoSummary,
+): Promise<readonly [string, GitHubWorkflowRun[]]> {
+  try {
+    const runs = await listGitHubWorkflowRuns(repo.fullName, GITHUB_TIMELINE_WORKFLOW_RUNS_PER_REPO);
+    return [repo.fullName, runs.map(cloneWorkflowRun)] as const;
+  } catch (err) {
+    if (isGitHubBindingExpiredError(err)) clearGitHubTimelineWorkflowRuns();
+    return [repo.fullName, []] as const;
+  }
 }
 
 async function loadGitHubTimelineIssues(
@@ -331,7 +392,7 @@ async function loadGitHubTimelineIssues(
   const since = gitHubTimelineIssueSince();
   const now = Date.now();
   const cache = readGitHubTimelineIssueCache();
-  const nextIssuesByRepo = { ...githubIssuesByRepo.value };
+  let nextIssuesByRepo = { ...githubIssuesByRepo.value };
   if (refresh) {
     for (const repo of repos) {
       delete nextIssuesByRepo[repo.fullName];
@@ -352,9 +413,10 @@ async function loadGitHubTimelineIssues(
   githubIssuesLoading.value = true;
   try {
     const fetchedEntries = await Promise.all(missingRepos.map((repo) => fetchGitHubTimelineIssues(repo, since)));
-    for (const [repoFullName, issues] of fetchedEntries) {
-      nextIssuesByRepo[repoFullName] = issues;
-    }
+    nextIssuesByRepo = {
+      ...nextIssuesByRepo,
+      ...Object.fromEntries(fetchedEntries),
+    };
     githubIssuesByRepo.value = nextIssuesByRepo;
     writeGitHubOverviewSnapshot();
     writeGitHubTimelineIssueCache(cache, fetchedEntries, since);
@@ -399,6 +461,10 @@ function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
     labels: [...issue.labels],
     assignees: [...issue.assignees],
   };
+}
+
+function cloneWorkflowRun(run: GitHubWorkflowRun): GitHubWorkflowRun {
+  return { ...run };
 }
 
 function isGitHubTimelineIssueCacheFresh(entry: GitHubTimelineIssueCacheEntry, now: number) {
@@ -507,6 +573,11 @@ function clearGitHubTimelineIssueCache() {
   }
 }
 
+function clearGitHubTimelineWorkflowRuns() {
+  githubWorkflowRunsByRepo.value = {};
+  clearHomeGitHubOverviewSnapshot();
+}
+
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
   if (!workspace.isReady.value || githubReposLoading.value) return;
   githubReposLoading.value = true;
@@ -606,6 +677,58 @@ function repoAction(repo: RepoSummary): RepoAction | null {
   return null;
 }
 
+function focusedWorkflowRun(runs: readonly GitHubWorkflowRun[]): WorkflowRunOverview | null {
+  return runs
+    .map(workflowRunOverview)
+    .sort((a, b) =>
+      b.priority - a.priority ||
+      parseGitHubTime(b.run.updatedAt) - parseGitHubTime(a.run.updatedAt) ||
+      b.run.id - a.run.id,
+    )[0] ?? null;
+}
+
+function workflowRunOverview(run: GitHubWorkflowRun): WorkflowRunOverview {
+  const normalizedStatus = run.status.toLowerCase();
+  const normalizedConclusion = run.conclusion?.toLowerCase() ?? null;
+  if (normalizedStatus === "completed") {
+    const failed = normalizedConclusion != null && !["success", "neutral", "skipped"].includes(normalizedConclusion);
+    return {
+      run,
+      status: workflowConclusionText(normalizedConclusion),
+      detail: `${run.name} · ${run.branch}`,
+      tone: failed ? "error" : "muted",
+      priority: failed ? 3 : 0,
+    };
+  }
+  const active = ["in_progress", "queued", "requested", "waiting", "pending"].includes(normalizedStatus);
+  return {
+    run,
+    status: workflowStatusText(normalizedStatus),
+    detail: `${run.name} · ${run.branch}`,
+    tone: active ? "warn" : "muted",
+    priority: active ? 2 : 1,
+  };
+}
+
+function workflowConclusionText(conclusion: string | null) {
+  if (conclusion === "success") return "Actions 通过";
+  if (conclusion === "failure") return "Actions 失败";
+  if (conclusion === "cancelled") return "Actions 取消";
+  if (conclusion === "timed_out") return "Actions 超时";
+  if (conclusion === "skipped") return "Actions 跳过";
+  if (conclusion === "neutral") return "Actions 完成";
+  return conclusion ? `Actions ${conclusion}` : "Actions 完成";
+}
+
+function workflowStatusText(status: string) {
+  if (status === "in_progress") return "Actions 运行中";
+  if (status === "queued") return "Actions 排队中";
+  if (status === "requested") return "Actions 待执行";
+  if (status === "waiting") return "Actions 等待中";
+  if (status === "pending") return "Actions 等待中";
+  return `Actions ${status}`;
+}
+
 function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
   const { githubRepo, localRepo } = row;
   const events: GitHubTimelineEvent[] = [];
@@ -678,6 +801,20 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
       summary: githubRepo.fullName,
       timestamp: parseGitHubTime(issue.updatedAt),
       href: issue.htmlUrl,
+    });
+  }
+
+  for (const run of githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []) {
+    const overview = workflowRunOverview(run);
+    addTimelineEvent(events, {
+      id: `workflow:${githubRepo.fullName}:${run.id}`,
+      kind: "workflow",
+      title: overview.status,
+      detail: run.displayTitle,
+      summary: `${githubRepo.fullName} · ${overview.detail} · ${run.event}`,
+      timestamp: parseGitHubTime(run.updatedAt),
+      href: run.htmlUrl,
+      tone: overview.tone,
     });
   }
 
@@ -1185,7 +1322,10 @@ async function addLocalRepo() {
             <h2>GitHub 时间线</h2>
           </div>
           <div class="home-scroll-card__body">
-            <p v-if="(githubReposLoading || githubIssuesLoading) && !githubTimelineEvents.length" class="repo-status-empty">
+            <p
+              v-if="(githubReposLoading || githubIssuesLoading || githubWorkflowRunsLoading) && !githubTimelineEvents.length"
+              class="repo-status-empty"
+            >
               正在加载 GitHub 时间线...
             </p>
             <p v-else-if="!githubTimelineEvents.length" class="repo-status-empty">暂无 GitHub 事件</p>
@@ -1196,10 +1336,11 @@ async function addLocalRepo() {
                 class="github-timeline-row"
               >
                 <span class="github-timeline-row__rail" aria-hidden="true">
-                  <span class="github-timeline-row__node">
+                  <span class="github-timeline-row__node" :class="event.tone ? `is-${event.tone}` : null">
                     <FolderGit2 v-if="event.kind === 'repo'" :size="14" aria-hidden="true" />
                     <GitCommitHorizontal v-else-if="event.kind === 'commit'" :size="14" aria-hidden="true" />
                     <CircleDot v-else-if="event.kind === 'issue'" :size="14" aria-hidden="true" />
+                    <RotateCw v-else-if="event.kind === 'workflow'" :size="14" aria-hidden="true" />
                     <RefreshCw v-else :size="14" aria-hidden="true" />
                   </span>
                 </span>
@@ -1243,7 +1384,7 @@ async function addLocalRepo() {
             <div class="repo-status-list" aria-label="仓库状态列表">
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
-                v-for="{ githubRepo, localRepo, action } in repoStatusRows"
+                v-for="{ githubRepo, localRepo, action, workflowRun } in repoStatusRows"
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
@@ -1263,6 +1404,25 @@ async function addLocalRepo() {
                   <span v-if="githubRepo.disabled" class="repo-status-row__badge repo-status-row__badge--disabled">禁用</span>
                 </span>
                 <span class="repo-status-row__action">
+                  <template v-if="workflowRun">
+                    <span
+                      class="repo-action-status"
+                      :class="`repo-action-status--${workflowRun.tone}`"
+                      :title="`${workflowRun.run.displayTitle} · ${workflowRun.detail}`"
+                    >
+                      {{ workflowRun.status }}
+                    </span>
+                    <a
+                      class="repo-action-link"
+                      :href="workflowRun.run.htmlUrl"
+                      target="_blank"
+                      rel="noreferrer"
+                      :title="workflowRun.run.displayTitle"
+                      @click.stop
+                    >
+                      运行
+                    </a>
+                  </template>
                   <template v-if="localRepo">
                     <template v-if="action">
                       <span
@@ -1962,6 +2122,18 @@ async function addLocalRepo() {
   color: var(--accent);
 }
 
+.github-timeline-row__node.is-error {
+  color: var(--err);
+}
+
+.github-timeline-row__node.is-warn {
+  color: var(--warn);
+}
+
+.github-timeline-row__node.is-muted {
+  color: var(--text-muted);
+}
+
 .github-timeline-row__body {
   min-width: 0;
   padding: 7px 0 8px;
@@ -2093,6 +2265,7 @@ async function addLocalRepo() {
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .repo-action-status {
