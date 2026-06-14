@@ -276,6 +276,10 @@ export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
   return call("repo_get_readme", { repoId }, () => fallback.getRepoReadme(repoId));
 }
 
+export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
+  return call("repo_list_readmes", { repoId }, () => fallback.listRepoReadmes(repoId));
+}
+
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
   return call("repo_refresh_language_stats", { repoId }, () => fallback.refreshRepoLanguageStats(repoId));
 }

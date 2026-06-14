@@ -570,12 +570,43 @@ describe("基础路由", () => {
   });
 
   it("仓库项目信息页显示 README、Issues、Actions 和 Settings", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackRepoReadmesForTests({
+      LiliaGithub: [
+        {
+          repoId: "LiliaGithub",
+          path: "README.md",
+          images: {},
+          format: "md",
+          updatedAt: 1,
+          content: [
+            "# LiliaGithub",
+            "",
+            "## 当前能力",
+            "",
+            "- 工作区 Git 仓库扫描",
+          ].join("\n"),
+        },
+        {
+          repoId: "LiliaGithub",
+          path: "README.txt",
+          images: {},
+          format: "text",
+          updatedAt: 2,
+          content: "LiliaGithub 本地仓库管理工具。",
+        },
+      ],
+    });
     await renderAt("/repos/LiliaGithub");
 
     await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
-    expect(await screen.findByRole("heading", { level: 2, name: "项目信息" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "项目信息视图" })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "README.md" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "README.txt" })).toBeInTheDocument();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
+    await fireEvent.click(screen.getByRole("tab", { name: "README.txt" }));
+    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("LiliaGithub 本地仓库管理工具");
 
     await fireEvent.click(screen.getByRole("tab", { name: "Issues" }));
     expect(await screen.findByRole("heading", { level: 3, name: "Issues" })).toBeInTheDocument();
@@ -603,14 +634,24 @@ describe("基础路由", () => {
   it("仓库项目信息页无 GitHub 远端时保留 README 并显示远端空态", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackRepoReadmesForTests({
-      LiliaGithub: {
-        repoId: "LiliaGithub",
-        path: "README.md",
-        images: {},
-        format: "md",
-        updatedAt: 1,
-        content: "# LocalOnly\n\n本地 README。",
-      },
+      LiliaGithub: [
+        {
+          repoId: "LiliaGithub",
+          path: "README.md",
+          images: {},
+          format: "md",
+          updatedAt: 1,
+          content: "# LocalOnly\n\n本地 README。",
+        },
+        {
+          repoId: "LiliaGithub",
+          path: "README.txt",
+          images: {},
+          format: "text",
+          updatedAt: 2,
+          content: "本地纯文本 README。",
+        },
+      ],
     });
     service.setFallbackRepoOverridesForTests({
       LiliaGithub: repoSummary("LiliaGithub", { githubFullName: null, remoteUrl: null }),
@@ -620,6 +661,8 @@ describe("基础路由", () => {
     await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
     expect(await screen.findByRole("heading", { level: 1, name: "LocalOnly" })).toBeInTheDocument();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("本地 README");
+    await fireEvent.click(await screen.findByRole("tab", { name: "README.txt" }));
+    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("本地纯文本 README");
 
     await fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
     expect(screen.getByText("当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。")).toBeInTheDocument();

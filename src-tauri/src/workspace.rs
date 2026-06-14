@@ -2080,17 +2080,40 @@ fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-fn find_repo_readme(repo_path: &Path) -> Option<PathBuf> {
-    ["README.md", "README.MD", "README", "readme.md"]
-        .into_iter()
-        .map(|name| repo_path.join(name))
-        .find(|path| path.is_file())
+fn repo_readme_priority(path: &Path) -> Option<usize> {
+    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    match name.as_str() {
+        "readme.md" => Some(0),
+        "readme.markdown" => Some(1),
+        "readme" => Some(2),
+        "readme.txt" => Some(3),
+        _ if name.starts_with("readme.") && matches!(
+            path.extension()?.to_str()?.to_ascii_lowercase().as_str(),
+            "md" | "markdown" | "txt"
+        ) => Some(4),
+        _ => None,
+    }
 }
 
-fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme>, String> {
-    let Some(path) = find_repo_readme(repo_path) else {
-        return Ok(None);
-    };
+fn repo_readme_paths(repo_path: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut paths = fs::read_dir(repo_path)
+        .map_err(|e| format!("读取仓库目录失败：{}（{e}）", repo_path.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file() && repo_readme_priority(path).is_some())
+        .collect::<Vec<_>>();
+    paths.sort_by(|a, b| {
+        let a_priority = repo_readme_priority(a).unwrap_or(usize::MAX);
+        let b_priority = repo_readme_priority(b).unwrap_or(usize::MAX);
+        a_priority.cmp(&b_priority).then_with(|| {
+            let a_name = a.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
+            let b_name = b.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
+            a_name.cmp(&b_name)
+        })
+    });
+    Ok(paths)
+}
+
+fn read_repo_readme_file(repo_id: &str, repo_path: &Path, path: &Path) -> Result<RepoReadme, String> {
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("读取 README 失败：{}（{e}）", path.display()))?;
     let updated_at = path
@@ -2101,7 +2124,7 @@ fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme
         .map(|duration| duration.as_millis() as i64);
     let relative_path = path
         .strip_prefix(repo_path)
-        .unwrap_or(path.as_path())
+        .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/");
     let readme_dir = path.parent().unwrap_or(repo_path);
@@ -2112,14 +2135,25 @@ fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme
         .map(|extension| extension.to_ascii_lowercase())
         .filter(|extension| extension == "md" || extension == "markdown")
         .unwrap_or_else(|| "text".to_string());
-    Ok(Some(RepoReadme {
+    Ok(RepoReadme {
         repo_id: repo_id.to_string(),
         path: relative_path,
         images,
         content,
         format,
         updated_at,
-    }))
+    })
+}
+
+fn read_repo_readmes(repo_id: &str, repo_path: &Path) -> Result<Vec<RepoReadme>, String> {
+    repo_readme_paths(repo_path)?
+        .into_iter()
+        .map(|path| read_repo_readme_file(repo_id, repo_path, &path))
+        .collect()
+}
+
+fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme>, String> {
+    Ok(read_repo_readmes(repo_id, repo_path)?.into_iter().next())
 }
 
 fn readme_image_data_urls(content: &str, readme_dir: &Path, repo_path: &Path) -> HashMap<String, String> {
@@ -3213,6 +3247,15 @@ pub async fn repo_get_readme(app: AppHandle, repo_id: String) -> Result<Option<R
     run_blocking("读取 README", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
         read_repo_readme(&repo_id, &path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_list_readmes(app: AppHandle, repo_id: String) -> Result<Vec<RepoReadme>, String> {
+    run_blocking("读取 README", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        read_repo_readmes(&repo_id, &path)
     })
     .await
 }
@@ -5884,6 +5927,30 @@ rename to docs/new.md",
         assert_eq!(readme.path, "README.md");
         assert_eq!(readme.format, "md");
         assert_eq!(readme.content, "# Main\n");
+    }
+
+    #[test]
+    fn lists_supported_root_readmes_in_priority_order() {
+        let repo = temp_dir("repo-readme-list");
+        fs::create_dir_all(repo.join("docs")).unwrap();
+        fs::write(repo.join("README.txt"), "Text\n").unwrap();
+        fs::write(repo.join("README.unknown"), "Unknown\n").unwrap();
+        fs::write(repo.join("readme.markdown"), "# Markdown\n").unwrap();
+        fs::write(repo.join("README"), "Plain\n").unwrap();
+        fs::write(repo.join("README.md"), "# Main\n").unwrap();
+        fs::write(repo.join("README.zh-CN.md"), "# Chinese\n").unwrap();
+        fs::write(repo.join("docs").join("README.md"), "# Nested\n").unwrap();
+
+        let readmes = read_repo_readmes("repo", &repo).unwrap();
+        let paths = readmes.iter().map(|readme| readme.path.as_str()).collect::<Vec<_>>();
+
+        assert_eq!(
+            paths,
+            vec!["README.md", "readme.markdown", "README", "README.txt", "README.zh-CN.md"],
+        );
+        assert_eq!(readmes[0].content, "# Main\n");
+        assert_eq!(readmes[1].format, "markdown");
+        assert_eq!(readmes[2].format, "text");
     }
 
     #[test]
