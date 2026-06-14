@@ -46,14 +46,19 @@ const workspace = useWorkspace();
 const router = useRouter();
 const shellActions = useShellRepoActions();
 const syncErrorDetails = computed(() => syncErrorDetailsByRepoId());
+const syncingRepoId = ref<string | null>(null);
 
 type RepoAction = {
-  status: string;
   label: string;
-  tone: "error" | "warn";
   title: string;
-  to: string;
-};
+} & (
+  {
+    kind: "link";
+    to: string;
+  } | {
+    kind: "sync";
+  }
+);
 
 type RepoStatusRow = {
   githubRepo: GitHubRepoSummary;
@@ -203,7 +208,7 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
       action: localRepo ? repoAction(localRepo) : null,
       workflowRun: focusedWorkflowRun(githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []),
     };
-  }),
+  }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived)),
 );
 
 const githubTimelineEvents = computed<GitHubTimelineEvent[]>(() =>
@@ -624,29 +629,25 @@ function repoAction(repo: RepoSummary): RepoAction | null {
   const syncError = syncErrorDetails.value.get(repo.id)?.message ?? null;
   if (syncError) {
     return {
-      status: "同步失败",
+      kind: "link",
       label: "处理失败",
-      tone: "error",
       title: syncError,
       to: repoDetailPath(repo),
     };
   }
   if (repo.conflictCount > 0) {
     return {
-      status: "存在冲突",
+      kind: "link",
       label: "处理冲突",
-      tone: "error",
       title: `${repo.conflictCount} 个冲突待处理`,
       to: repoDetailPath(repo, "conflicts"),
     };
   }
   if (repo.behind > 0) {
     return {
-      status: "待拉取",
-      label: "继续处理",
-      tone: "warn",
+      kind: "sync",
+      label: "待同步",
       title: `远端领先 ${repo.behind} 个提交`,
-      to: repoDetailPath(repo),
     };
   }
   return null;
@@ -895,14 +896,25 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
   cloningFullName.value = repo.fullName;
   githubReposError.value = null;
   try {
-    const summary = await workspace.cloneRepo(repo.cloneUrl, repo.name);
-    await router.push(`/repos/${encodeURIComponent(summary.id)}`);
+    await workspace.cloneRepo(repo.cloneUrl, repo.name);
   } catch (err) {
     githubReposError.value = isGitHubBindingExpiredError(err)
       ? "GitHub 绑定已失效，请重新绑定后再克隆仓库。"
       : `克隆 ${repo.fullName} 失败：${String(err)}`;
   } finally {
     cloningFullName.value = null;
+  }
+}
+
+async function syncRepo(repo: RepoSummary) {
+  if (syncingRepoId.value) return;
+  syncingRepoId.value = repo.id;
+  try {
+    await workspace.mergePull(repo.id);
+  } catch {
+    /* action error is surfaced by workspace state */
+  } finally {
+    syncingRepoId.value = null;
   }
 }
 
@@ -1328,21 +1340,31 @@ async function addLocalRepo() {
                 <span class="repo-status-row__action">
                   <template v-if="localRepo">
                     <template v-if="action">
-                      <span
-                        class="repo-action-status"
-                        :class="`repo-action-status--${action.tone}`"
-                        :title="action.title"
-                      >
-                        {{ action.status }}
-                      </span>
                       <RouterLink
-                        class="repo-action-link"
+                        v-if="action.kind !== 'sync'"
+                        class="repo-action-link repo-action-link--warn"
                         :to="action.to"
                         :title="action.title"
                         @click.stop
                       >
                         {{ action.label }}
                       </RouterLink>
+                      <button
+                        v-else
+                        type="button"
+                        class="repo-action-link repo-action-link--warn"
+                        :disabled="workspace.state.bulkRunning || syncingRepoId === localRepo.id"
+                        :title="action.title"
+                        @click.stop="syncRepo(localRepo)"
+                      >
+                        <LoaderCircle
+                          v-if="syncingRepoId === localRepo.id"
+                          :size="11"
+                          aria-hidden="true"
+                          class="sb-spin"
+                        />
+                        {{ action.label }}
+                      </button>
                     </template>
                     <span v-else class="repo-action-status repo-action-status--muted">已 clone</span>
                   </template>
@@ -1359,7 +1381,7 @@ async function addLocalRepo() {
                       aria-hidden="true"
                       class="sb-spin"
                     />
-                    克隆
+                    clone
                   </button>
                 </span>
               </div>
@@ -2165,16 +2187,6 @@ async function addLocalRepo() {
   white-space: nowrap;
 }
 
-.repo-action-status--error {
-  color: var(--err);
-  background: var(--err-soft);
-}
-
-.repo-action-status--warn {
-  color: var(--warn);
-  background: var(--warn-soft);
-}
-
 .repo-action-status--muted {
   color: var(--text-muted);
   background: var(--bg-subtle);
@@ -2210,22 +2222,32 @@ async function addLocalRepo() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
+  min-height: 22px;
+  padding: 0 7px;
+  border: 0;
   border-radius: 6px;
   color: var(--text);
   background: var(--bg-subtle);
   text-decoration: none;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .repo-action-link:hover,
 .repo-action-link:focus-visible {
-  border-color: var(--border);
   background: var(--bg-hover);
+}
+
+.repo-action-link--warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.repo-action-link--warn:hover,
+.repo-action-link--warn:focus-visible {
+  background: color-mix(in srgb, var(--warn-soft) 72%, var(--bg-hover));
 }
 
 .repo-action-link:disabled {
