@@ -314,6 +314,7 @@ let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
+let fallbackOpenPathCalls: string[] = [];
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackRepoOverrides: Record<string, RepoSummary> = {};
@@ -339,6 +340,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubIssueListCalls = [];
+  fallbackOpenPathCalls = [];
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
   fallbackRepoOverrides = {};
@@ -404,6 +406,10 @@ export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | nul
 
 export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueListCall[] {
   return fallbackGitHubIssueListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackOpenPathCallsForTests(): string[] {
+  return [...fallbackOpenPathCalls];
 }
 
 export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, GitHubIssue[]>) {
@@ -1516,7 +1522,10 @@ export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Pr
 }
 
 export function openPath(path: string): Promise<void> {
-  return call("system_open_path", { path }, () => undefined);
+  return call("system_open_path", { path }, () => {
+    fallbackOpenPathCalls.push(path);
+    return undefined;
+  });
 }
 
 export function openUrl(url: string): Promise<void> {

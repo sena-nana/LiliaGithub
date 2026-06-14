@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import MarkdownReadme from "../src/components/repo/MarkdownReadme.vue";
+import { resolveReadmeLink } from "../src/utils/readmeLinks";
 
 describe("MarkdownReadme", () => {
   it("does not render README maintenance comments", () => {
@@ -13,6 +14,7 @@ describe("MarkdownReadme", () => {
     });
 
     expect(screen.getByRole("heading", { level: 1, name: "LiliaCode" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "LiliaCode" })).toHaveAttribute("id", "liliacode");
     expect(container).not.toHaveTextContent("To replace the main window screenshot");
     expect(screen.getByLabelText("README 内容").innerHTML).not.toContain("<!--");
   });
@@ -140,7 +142,7 @@ describe("MarkdownReadme", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "打开" }));
 
-    expect(emitted("openLink")).toEqual([["https://example.com/md/with/a/very/long/path"]]);
+    expect(emitted("openLink")).toEqual([[{ kind: "external", href: "https://example.com/md/with/a/very/long/path" }]]);
     await waitFor(() => expect(screen.queryByRole("toolbar", { name: "链接操作" })).toBeNull());
   });
 
@@ -156,22 +158,79 @@ describe("MarkdownReadme", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "打开" }));
 
-    expect(emitted("openLink")).toEqual([["https://example.com/html"]]);
+    expect(emitted("openLink")).toEqual([[{ kind: "external", href: "https://example.com/html" }]]);
   });
 
-  it("disables opening safe links that are not web urls", async () => {
+  it("opens safe relative links as structured README or file targets", async () => {
     const { emitted } = render(MarkdownReadme, {
       props: {
-        content: "[Relative](./README.zh-CN.md) and [Mail](mailto:hello@example.com)",
+        content: "[Relative](./README.zh-CN.md#intro) and [Guide](docs/guide.md)",
+        repoRootPath: "C:\\Files\\workspace\\LiliaGithub",
+        currentReadmePath: "README.md",
+        readmePaths: ["README.md", "README.zh-CN.md"],
       },
     });
 
     await fireEvent.click(screen.getByRole("link", { name: "Relative" }));
-    expect(await screen.findByTitle("./README.zh-CN.md")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "打开" })).toBeDisabled();
+    expect(await screen.findByTitle("./README.zh-CN.md#intro")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开" })).not.toBeDisabled();
 
     await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    expect(emitted("openLink")).toEqual([[{ kind: "readme", path: "README.zh-CN.md", hash: "intro" }]]);
+
+    await fireEvent.click(screen.getByRole("link", { name: "Guide" }));
+    expect(await screen.findByTitle("docs/guide.md")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开" })).not.toBeDisabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    expect(emitted("openLink")).toEqual([
+      [{ kind: "readme", path: "README.zh-CN.md", hash: "intro" }],
+      [{
+        kind: "file",
+        relativePath: "docs/guide.md",
+        absolutePath: "C:\\Files\\workspace\\LiliaGithub\\docs\\guide.md",
+        hash: null,
+      }],
+    ]);
+  });
+
+  it("scrolls current README anchors from the link toolbar", async () => {
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const { emitted } = render(MarkdownReadme, {
+      props: {
+        content: "# Title\n\n[Jump](#next-section)\n\n## Next Section",
+        repoRootPath: "C:\\Files\\workspace\\LiliaGithub",
+        currentReadmePath: "README.md",
+        readmePaths: ["README.md"],
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Jump" }));
+    expect(await screen.findByTitle("#next-section")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开" })).not.toBeDisabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
     expect(emitted("openLink")).toBeUndefined();
+  });
+
+  it("disables unsafe or unsupported non-web links", async () => {
+    const { emitted } = render(MarkdownReadme, {
+      props: {
+        content: "[Parent](../secret.md) [Absolute](C:/secret.md) [Mail](mailto:hello@example.com)",
+        repoRootPath: "C:\\Files\\workspace\\LiliaGithub",
+        currentReadmePath: "README.md",
+        readmePaths: ["README.md"],
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Parent" }));
+    expect(await screen.findByTitle("../secret.md")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开" })).toBeDisabled();
+
+    expect(screen.getByText("Absolute")).not.toHaveAttribute("href");
 
     await fireEvent.click(screen.getByRole("link", { name: "Mail" }));
     expect(await screen.findByTitle("mailto:hello@example.com")).toBeInTheDocument();
@@ -216,5 +275,39 @@ describe("MarkdownReadme", () => {
     expect(screen.getByRole("list")).toHaveTextContent("one");
     expect(screen.getByRole("list")).toHaveTextContent("two");
     expect(screen.getByText("const ok = true;")).toBeInTheDocument();
+  });
+});
+
+describe("resolveReadmeLink", () => {
+  it("resolves README-directory and repo-root relative links safely", () => {
+    expect(resolveReadmeLink({
+      href: "../guide.md",
+      repoRootPath: "C:\\repo",
+      currentReadmePath: "docs/README.md",
+      readmePaths: [],
+    })).toBeNull();
+    expect(resolveReadmeLink({
+      href: "./guide.md",
+      repoRootPath: "C:\\repo",
+      currentReadmePath: "docs/README.md",
+      readmePaths: [],
+    })).toEqual({
+      kind: "file",
+      relativePath: "docs/guide.md",
+      absolutePath: "C:\\repo\\docs\\guide.md",
+      hash: null,
+    });
+    expect(resolveReadmeLink({
+      href: "/docs/guide.md#intro",
+      repoRootPath: "C:\\repo",
+      currentReadmePath: "README.md",
+      readmePaths: ["docs/guide.md"],
+    })).toEqual({ kind: "readme", path: "docs/guide.md", hash: "intro" });
+    expect(resolveReadmeLink({
+      href: "mailto:hello@example.com",
+      repoRootPath: "C:\\repo",
+      currentReadmePath: "README.md",
+      readmePaths: [],
+    })).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import {
   CircleDot,
   CircleOff,
@@ -16,6 +16,7 @@ import {
   listGitHubWorkflowRuns,
   updateGitHubIssue,
   updateGitHubRepoSettings,
+  openPath,
   openUrl,
 } from "../../services/workspace/client";
 import type {
@@ -25,15 +26,19 @@ import type {
   GitHubWorkflowRun,
   RepoReadme,
 } from "../../services/workspace/types";
+import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
+type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
 const props = defineProps<{
   repoId: string;
   repoFullName: string | null | undefined;
+  repoPath: string | null | undefined;
 }>();
 
 const activeTab = ref<ProjectTab>("readme");
+const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const readmes = ref<RepoReadme[]>([]);
 const activeReadmePath = ref<string | null>(null);
 const readmeLoading = ref(false);
@@ -75,6 +80,7 @@ const repoReady = computed(() => Boolean(props.repoFullName));
 const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
+const readmePaths = computed(() => readmes.value.map((item) => item.path));
 const tabs: Array<{ key: Exclude<ProjectTab, "readme">; label: string }> = [
   { key: "issues", label: "Issues" },
   { key: "actions", label: "Actions" },
@@ -278,9 +284,23 @@ async function toggleIssue(issue: GitHubIssue) {
   }
 }
 
-function openLink(href: string) {
-  if (/^https?:\/\//i.test(href)) {
-    void openUrl(href);
+async function openReadmeLink(target: ReadmeLinkTarget) {
+  if (target.kind === "external") {
+    void openUrl(target.href);
+    return;
+  }
+
+  if (target.kind === "readme") {
+    selectReadme(target.path);
+    if (target.hash) {
+      await nextTick();
+      markdownReadme.value?.scrollToAnchor(target.hash);
+    }
+    return;
+  }
+
+  if (target.kind === "file") {
+    void openPath(target.absolutePath);
   }
 }
 
@@ -298,7 +318,16 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
           <p v-else-if="!activeReadme" class="muted repo-empty project-empty">当前仓库没有本地 README。</p>
-          <MarkdownReadme v-else :content="activeReadme.content" :images="activeReadme.images" @open-link="openLink" />
+          <MarkdownReadme
+            v-else
+            ref="markdownReadme"
+            :content="activeReadme.content"
+            :images="activeReadme.images"
+            :repo-root-path="repoPath"
+            :current-readme-path="activeReadme.path"
+            :readme-paths="readmePaths"
+            @open-link="openReadmeLink"
+          />
         </section>
 
         <section v-else-if="!repoReady" class="project-section">
@@ -353,7 +382,7 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
                 <strong>{{ run.displayTitle }}</strong>
                 <span>{{ run.name }} · {{ run.branch }} · {{ run.event }} · {{ formatWorkflowState(run) }}</span>
               </div>
-              <button type="button" class="ghost" @click="openLink(run.htmlUrl)">
+              <button type="button" class="ghost" @click="openUrl(run.htmlUrl)">
                 <ExternalLink :size="14" aria-hidden="true" />
                 打开
               </button>

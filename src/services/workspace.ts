@@ -1,6 +1,7 @@
 export * from "./workspace/client";
 export {
   getFallbackGitHubIssueListCallsForTests,
+  getFallbackOpenPathCallsForTests,
   resetWorkspaceFallbacksForTests,
   setFallbackBulkExecuteOverrideForTests,
   setFallbackConflictOverrideForTests,

@@ -1,21 +1,32 @@
 <script setup lang="ts">
 import { ExternalLink } from "@lucide/vue";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { readmeHeadingId, resolveReadmeLink, type ReadmeLinkTarget } from "../../utils/readmeLinks";
 
 const props = defineProps<{
   content: string;
   images?: Record<string, string>;
+  repoRootPath?: string | null;
+  currentReadmePath?: string | null;
+  readmePaths?: readonly string[];
 }>();
 
 const emit = defineEmits<{
-  openLink: [href: string];
+  openLink: [target: ReadmeLinkTarget];
 }>();
 
 const renderedHtml = computed(() => sanitizeHtml(renderMarkdown(props.content)));
+const articleEl = ref<HTMLElement | null>(null);
 const toolbarEl = ref<HTMLElement | null>(null);
 const linkToolbar = ref<{ href: string; x: number; y: number } | null>(null);
 const toolbarHref = computed(() => linkToolbar.value?.href ?? "");
-const toolbarCanOpen = computed(() => isOpenableLink(toolbarHref.value));
+const toolbarTarget = computed(() => resolveReadmeLink({
+  href: toolbarHref.value,
+  repoRootPath: props.repoRootPath,
+  currentReadmePath: props.currentReadmePath,
+  readmePaths: props.readmePaths,
+}));
+const toolbarCanOpen = computed(() => Boolean(toolbarTarget.value));
 
 const allowedTags = new Set([
   "a",
@@ -59,6 +70,12 @@ const removableTags = new Set(["iframe", "object", "script", "style", "svg"]);
 const globalAttributes = new Set(["align", "aria-label", "title"]);
 const allowedAttributes: Record<string, Set<string>> = {
   a: new Set(["href"]),
+  h1: new Set(["id"]),
+  h2: new Set(["id"]),
+  h3: new Set(["id"]),
+  h4: new Set(["id"]),
+  h5: new Set(["id"]),
+  h6: new Set(["id"]),
   img: new Set(["alt", "height", "src", "width"]),
   input: new Set(["checked", "disabled", "type"]),
 };
@@ -72,6 +89,7 @@ function renderMarkdown(content: string): string {
   let htmlLines: string[] | null = null;
   let htmlEndTag: RegExp | null = null;
   let quoteLines: string[] | null = null;
+  const headingIds = new Set<string>();
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -166,7 +184,8 @@ function renderMarkdown(content: string): string {
       flushList();
       flushQuote();
       const level = heading[1].length;
-      blocks.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
+      const id = readmeHeadingId(plainText(heading[2]), headingIds);
+      blocks.push(`<h${level} id="${escapeAttribute(id)}">${renderInline(heading[2])}</h${level}>`);
       continue;
     }
 
@@ -295,6 +314,11 @@ function sanitizeAttributes(element: HTMLElement, tagName: string) {
       continue;
     }
 
+    if (name === "id" && !/^[-_A-Za-z0-9\u00A0-\uFFFF]+$/.test(attribute.value)) {
+      element.removeAttribute(attribute.name);
+      continue;
+    }
+
     if (name === "src" && !isSafeUrl(attribute.value, ["http:", "https:"])) {
       element.removeAttribute(attribute.name);
       continue;
@@ -338,8 +362,17 @@ function escapeAttribute(value: string): string {
   return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
-function isOpenableLink(href: string): boolean {
-  return /^https?:\/\//i.test(href);
+function plainText(value: string): string {
+  const template = document.createElement("template");
+  template.innerHTML = renderInline(value);
+  return template.content.textContent ?? value;
+}
+
+function scrollToAnchor(hash: string) {
+  const target = articleEl.value?.querySelector(`#${CSS.escape(hash)}`);
+  if (target && typeof target.scrollIntoView === "function") {
+    target.scrollIntoView({ block: "start" });
+  }
 }
 
 async function showLinkToolbar(href: string, event: MouseEvent) {
@@ -363,10 +396,14 @@ function closeLinkToolbar() {
 }
 
 function openToolbarLink() {
-  const href = toolbarHref.value;
-  if (!toolbarCanOpen.value) return;
+  const target = toolbarTarget.value;
+  if (!target) return;
   closeLinkToolbar();
-  emit("openLink", href);
+  if (target.kind === "anchor") {
+    scrollToAnchor(target.hash);
+    return;
+  }
+  emit("openLink", target);
 }
 
 function handleClick(event: MouseEvent) {
@@ -402,6 +439,8 @@ watch(linkToolbar, (value, previous) => {
 
 watch(() => props.content, closeLinkToolbar);
 
+defineExpose({ scrollToAnchor });
+
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", onDocPointer, true);
   document.removeEventListener("keydown", onKey);
@@ -409,7 +448,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article class="readme-render" aria-label="README 内容" @click="handleClick" v-html="renderedHtml" />
+  <article ref="articleEl" class="readme-render" aria-label="README 内容" @click="handleClick" v-html="renderedHtml" />
   <Teleport to="body">
     <div
       v-if="linkToolbar"
