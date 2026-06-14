@@ -52,6 +52,27 @@ async function mockLiliaGithubSyncFailure() {
   return service;
 }
 
+function githubWorkflowRun(
+  repoFullName: string,
+  id: number,
+  updatedAt: string,
+  overrides: Partial<import("../src/services/workspace").GitHubWorkflowRun> = {},
+) {
+  return {
+    id,
+    name: "CI",
+    displayTitle: `${repoFullName} run ${id}`,
+    status: "completed",
+    conclusion: "success",
+    branch: "main",
+    event: "push",
+    htmlUrl: `https://github.com/${repoFullName}/actions/runs/${id}`,
+    createdAt: updatedAt,
+    updatedAt,
+    ...overrides,
+  };
+}
+
 function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummary> = {}): GitHubRepoSummary {
   const [, name = fullName] = fullName.split("/");
   return {
@@ -322,22 +343,59 @@ describe("基础路由", () => {
     expect(screen.queryByText("Issue #2")).toBeNull();
   });
 
-  it("总览页 GitHub 时间线使用操作失败记录时间排序", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-10T09:00:00Z"));
+  it("总览页 GitHub 时间线展示 Actions 运行并在仓库状态直达对应运行", async () => {
     const { setRepoActionError } = await import("../src/composables/workspace/state");
-    setRepoActionError("LiliaGithub", "合并失败：not something we can merge");
-    vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/LiliaGithub");
+    service.setFallbackGitHubWorkflowRunsForTests({
+      [repo.fullName]: [
+        githubWorkflowRun(repo.fullName, 1200, "2026-08-13T12:30:00Z", {
+          status: "in_progress",
+          conclusion: null,
+          displayTitle: "正在验证总览页",
+          branch: "codex/project-view",
+          event: "workflow_dispatch",
+        }),
+      ],
+    });
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(new Date("2026-06-10T09:00:00Z").getTime());
+    setRepoActionError(repo.name, "合并失败：not something we can merge");
+    nowSpy.mockRestore();
 
     await renderAt("/");
 
+    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(service.getFallbackGitHubWorkflowRunListCallsForTests()).toContainEqual({
+        repoFullName: repo.fullName,
+        perPage: 5,
+      });
+    });
+
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    const statusRow = await waitFor(() => {
+      const candidate = within(repoStatusList).getByText(repo.fullName).closest(".repo-status-row");
+      if (!candidate) throw new Error("未找到仓库状态行");
+      return candidate;
+    });
+    await waitFor(() => {
+      expect(statusRow).toHaveTextContent("Actions 运行中");
+    });
+    const runLink = within(statusRow as HTMLElement).getByRole("link", { name: "运行" });
+    expect(runLink).toHaveAttribute("href", `https://github.com/${repo.fullName}/actions/runs/1200`);
+    expect(runLink).toHaveAttribute("title", "正在验证总览页");
+
     const timeline = await screen.findByLabelText("GitHub 时间线列表");
     expect(await within(timeline).findByText("Issue #12")).toBeInTheDocument();
+    expect(await within(timeline).findByText("Actions 运行中")).toBeInTheDocument();
     const rows = within(timeline).getAllByRole("listitem");
     const issueIndex = rows.findIndex((row) => row.textContent?.includes("Issue #12"));
     const errorIndex = rows.findIndex((row) => row.textContent?.includes("合并失败：not something we can merge"));
+    const workflowIndex = rows.findIndex((row) => row.textContent?.includes("正在验证总览页"));
     expect(issueIndex).toBeGreaterThanOrEqual(0);
     expect(errorIndex).toBeGreaterThanOrEqual(0);
+    expect(workflowIndex).toBeGreaterThanOrEqual(0);
+    expect(workflowIndex).toBeLessThan(issueIndex);
     expect(issueIndex).toBeLessThan(errorIndex);
   });
 

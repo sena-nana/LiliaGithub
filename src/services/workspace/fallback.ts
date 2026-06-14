@@ -314,6 +314,7 @@ let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
+let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
 let fallbackOpenPathCalls: string[] = [];
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
@@ -340,6 +341,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubIssueListCalls = [];
+  fallbackGitHubWorkflowRunListCalls = [];
   fallbackOpenPathCalls = [];
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
@@ -408,6 +410,10 @@ export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueLi
   return fallbackGitHubIssueListCalls.map((call) => ({ ...call }));
 }
 
+export function getFallbackGitHubWorkflowRunListCallsForTests() {
+  return fallbackGitHubWorkflowRunListCalls.map((call) => ({ ...call }));
+}
+
 export function getFallbackOpenPathCallsForTests(): string[] {
   return [...fallbackOpenPathCalls];
 }
@@ -417,6 +423,15 @@ export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, Git
     Object.entries(issuesByRepo).map(([repoFullName, issues]) => [
       repoFullName,
       issues.map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
+    ]),
+  );
+}
+
+export function setFallbackGitHubWorkflowRunsForTests(runsByRepo: Record<string, GitHubWorkflowRun[]>) {
+  fallbackGitHubWorkflowRuns = Object.fromEntries(
+    Object.entries(runsByRepo).map(([repoFullName, runs]) => [
+      repoFullName,
+      runs.map((run) => ({ ...run })),
     ]),
   );
 }
@@ -908,6 +923,7 @@ export function updateGitHubIssue(
 }
 
 export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | null): Promise<GitHubWorkflowRun[]> {
+  fallbackGitHubWorkflowRunListCalls.push({ repoFullName, perPage: perPage ?? null });
   return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, () =>
     [...(fallbackGitHubWorkflowRuns[repoFullName] ?? [])]
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
