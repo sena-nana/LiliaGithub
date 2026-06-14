@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { FolderGit2, GitBranchPlus, LoaderCircle, Radar, RotateCcw, X } from "@lucide/vue";
+import { FolderGit2, GitBranchPlus, LoaderCircle, Radar, RotateCcw, ShieldCheck, X } from "@lucide/vue";
 import { useWorkspace } from "../../composables/useWorkspace";
 import {
   createGitHubRepo,
@@ -159,6 +159,33 @@ onMounted(() => {
   <div class="card">
     <h2>仓库</h2>
     <div class="repo-settings">
+      <div class="github-binding-panel">
+        <div class="github-binding-panel__body">
+          <strong>{{ workspace.githubBinding.value?.login ?? "GitHub 授权" }}</strong>
+          <span>{{ workspace.authBindingStatusText.value }}</span>
+          <p v-if="workspace.deviceFlow.value">
+            设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
+            <template v-if="workspace.authRemainingText.value"> · 剩余 {{ workspace.authRemainingText.value }}</template>
+          </p>
+          <p v-if="workspace.state.authNotice" class="github-binding-panel__notice">
+            {{ workspace.state.authNotice }}
+          </p>
+          <p v-else-if="workspace.githubBinding.value">
+            已绑定账号可用于仓库列表、创建仓库和同步操作。
+          </p>
+          <p v-else>绑定后可加载账号仓库、创建仓库并执行 GitHub 同步操作。</p>
+        </div>
+        <button
+          type="button"
+          class="primary"
+          :disabled="workspace.state.authLoading"
+          @click="workspace.startAuthFlow"
+        >
+          <LoaderCircle v-if="workspace.state.authLoading" :size="14" aria-hidden="true" class="sb-spin" />
+          <ShieldCheck v-else :size="14" aria-hidden="true" />
+          {{ workspace.githubBinding.value || workspace.deviceFlow.value ? "重新绑定 GitHub" : "绑定 GitHub" }}
+        </button>
+      </div>
       <div class="repo-settings__actions">
         <button type="button" class="ghost" :disabled="addingRepo" @click="addLocalRepo">
           <LoaderCircle v-if="addingRepo" :size="14" aria-hidden="true" class="sb-spin" />
@@ -277,6 +304,50 @@ onMounted(() => {
 
 .repo-settings .muted {
   margin: 4px 0;
+}
+
+.github-binding-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.github-binding-panel__body {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.github-binding-panel__body strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-binding-panel__body span,
+.github-binding-panel__body p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.github-binding-panel__notice {
+  color: var(--accent);
+}
+
+.github-binding-panel .primary {
+  flex-shrink: 0;
 }
 
 .repo-settings__actions {
@@ -501,6 +572,11 @@ onMounted(() => {
 }
 
 @media (max-width: 700px) {
+  .github-binding-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .hidden-repo-list__item {
     align-items: flex-start;
     flex-direction: column;

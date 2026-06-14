@@ -99,6 +99,12 @@ beforeEach(() => {
   closeContextMenu();
   installContextMenu();
   localStorage.clear();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: vi.fn(async () => undefined),
+    },
+  });
 });
 
 describe("AppShell sidebar", () => {
@@ -295,6 +301,21 @@ describe("AppShell sidebar", () => {
     expect(await view.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
     expect(view.queryByLabelText("项目总览操作")).toBeNull();
     expect(view.queryByRole("navigation", { name: "主导航" })).toBeNull();
+  });
+
+  it("首页初始绑定会自动复制授权码并提示已复制", async () => {
+    setFallbackGitHubBindingStatusForTests({
+      state: "unbound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: null,
+    });
+    const view = await renderAppShell("/");
+
+    await fireEvent.click(view.getByRole("button", { name: "绑定 GitHub" }));
+
+    expect(await view.findByText("授权码已复制，请在 GitHub 授权页粘贴。")).toBeInTheDocument();
+    expect(view.getByText("ABCD-1234")).toBeInTheDocument();
   });
 
   it("已绑定 GitHub 时克隆弹窗展示账号仓库列表并可选择克隆", async () => {

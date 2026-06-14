@@ -1,5 +1,8 @@
 import { readonly } from "vue";
 import {
+  authBindingStatusText,
+  authPendingStatusText,
+  authRemainingText,
   deviceFlow,
   githubBinding,
   isAuthorized,
@@ -68,6 +71,9 @@ export function useWorkspace() {
     githubBinding,
     isAuthorized,
     isReady,
+    authBindingStatusText,
+    authPendingStatusText,
+    authRemainingText,
     initialize,
     chooseWorkspaceRoot,
     cloneRepo,

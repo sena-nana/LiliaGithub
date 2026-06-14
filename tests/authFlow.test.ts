@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { state, deviceFlow, githubBinding } from "../src/composables/workspace/state";
 import { startAuthFlow } from "../src/composables/workspace/auth";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
@@ -9,6 +9,7 @@ const service = {
   pollGitHubDeviceFlow: vi.fn(),
   openUrl: vi.fn(),
 };
+const writeText = vi.fn();
 
 vi.mock("../src/composables/workspace/serviceLoader", () => ({
   loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
@@ -28,6 +29,15 @@ const boundStatus: GitHubBindingStatus = {
 };
 
 describe("GitHub 设备码授权", () => {
+  beforeEach(() => {
+    writeText.mockReset();
+    writeText.mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+  });
+
   it("启动后按 interval 自动轮询并在成功后收口到已绑定态", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-10T00:00:00.000Z"));
@@ -56,8 +66,10 @@ describe("GitHub 设备码授权", () => {
     await startAuthFlow();
 
     expect(service.openUrl).toHaveBeenCalledWith("https://github.com/login/device");
+    expect(writeText).toHaveBeenCalledWith("ABCD-1234");
     expect(state.authFlowStatus).toBe("pending");
     expect(state.authRemainingSeconds).toBe(600);
+    expect(state.authNotice).toBe("授权码已复制，请在 GitHub 授权页粘贴。");
     expect(deviceFlow.value?.userCode).toBe("ABCD-1234");
 
     await vi.advanceTimersByTimeAsync(2_000);
@@ -75,6 +87,45 @@ describe("GitHub 设备码授权", () => {
     expect(githubBinding.value?.login).toBe("octo-user");
     expect(state.authFlowStatus).toBe("idle");
     expect(state.authRemainingSeconds).toBeNull();
+    expect(state.authNotice).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  it("授权成功后会清掉轮询残留错误", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T00:00:00.000Z"));
+    service.startGitHubDeviceFlow.mockResolvedValue({
+      deviceCode: "device-code",
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+      expiresAt: Date.now() + 600_000,
+      intervalSeconds: 2,
+    });
+    service.openUrl.mockResolvedValue(undefined);
+    service.pollGitHubDeviceFlow
+      .mockResolvedValueOnce({
+        status: "pending",
+        intervalSeconds: 2,
+        bindingStatus: null,
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        status: "authorized",
+        intervalSeconds: 2,
+        bindingStatus: boundStatus,
+        error: null,
+      });
+
+    await startAuthFlow();
+    await vi.advanceTimersByTimeAsync(2_000);
+    state.error = "旧错误";
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(state.error).toBeNull();
+    expect(state.authFlowStatus).toBe("idle");
+    expect(deviceFlow.value).toBeNull();
 
     vi.useRealTimers();
   });

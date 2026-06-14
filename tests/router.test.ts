@@ -1088,6 +1088,23 @@ describe("基础路由", () => {
     expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
   });
 
+  it("设置页仓库 tab 可重新绑定 GitHub", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn(async () => undefined),
+      },
+    });
+    await renderAt("/settings?tab=repositories");
+
+    expect(await screen.findByText("lilia-user")).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("button", { name: "重新绑定 GitHub" }));
+
+    expect(await screen.findByText("等待 GitHub 授权确认")).toBeInTheDocument();
+    expect(await screen.findByText("授权码已复制，请在 GitHub 授权页粘贴。")).toBeInTheDocument();
+    expect(screen.getByText("ABCD-1234")).toBeInTheDocument();
+  });
+
   it("设置页仓库 tab 可新建 GitHub 仓库并克隆到工作区", async () => {
     const service = await import("../src/services/workspace");
     await renderAt("/settings?tab=repositories");

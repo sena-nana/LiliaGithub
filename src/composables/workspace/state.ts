@@ -28,6 +28,7 @@ export interface WorkspaceState {
   authLoading: boolean;
   authFlowStatus: "idle" | "pending" | "expired" | "error";
   authRemainingSeconds: number | null;
+  authNotice: string | null;
   launchLoading: boolean;
   error: string | null;
   bulkPreview: BulkSyncPreview | null;
@@ -72,6 +73,7 @@ export const state = reactive<WorkspaceState>({
   authLoading: false,
   authFlowStatus: "idle",
   authRemainingSeconds: null,
+  authNotice: null,
   launchLoading: false,
   error: null,
   bulkPreview: null,
@@ -95,6 +97,28 @@ export const workspaceRoot = computed(() => state.settings?.workspaceRoot ?? nul
 export const githubBinding = computed(() => state.bindingStatus?.binding ?? state.settings?.githubBinding ?? null);
 export const isAuthorized = computed(() => state.bindingStatus?.state === "bound" && Boolean(githubBinding.value));
 export const isReady = computed(() => Boolean(workspaceRoot.value) && isAuthorized.value);
+export const authRemainingText = computed(() => {
+  const seconds = state.authRemainingSeconds;
+  if (seconds == null) return null;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+});
+export const authPendingStatusText = computed(() => {
+  switch (state.authFlowStatus) {
+    case "pending":
+      return "等待 GitHub 授权确认";
+    case "expired":
+      return "设备码已过期";
+    case "error":
+      return "授权检查失败";
+    default:
+      return null;
+  }
+});
+export const authBindingStatusText = computed(() =>
+  authPendingStatusText.value ?? (githubBinding.value ? "GitHub 已授权" : "尚未绑定 GitHub"),
+);
 
 export function applyBindingStatus(bindingStatus: GitHubBindingStatus) {
   state.bindingStatus = bindingStatus;
@@ -297,6 +321,7 @@ export function resetWorkspaceStateForTests() {
   state.authLoading = false;
   state.authFlowStatus = "idle";
   state.authRemainingSeconds = null;
+  state.authNotice = null;
   state.launchLoading = false;
   state.error = null;
   state.bulkPreview = null;

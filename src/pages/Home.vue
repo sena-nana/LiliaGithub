@@ -266,27 +266,6 @@ watch(
   { immediate: true },
 );
 
-const authStatusText = computed(() => {
-  switch (workspace.state.authFlowStatus) {
-    case "pending":
-      return "等待 GitHub 授权确认";
-    case "expired":
-      return "设备码已过期";
-    case "error":
-      return "授权检查失败";
-    default:
-      return null;
-  }
-});
-
-const authRemainingText = computed(() => {
-  const seconds = workspace.state.authRemainingSeconds;
-  if (seconds == null) return null;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
-});
-
 function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   const path = `/repos/${encodeURIComponent(repo.id)}`;
   return tab ? `${path}?tab=${tab}` : path;
@@ -1059,6 +1038,9 @@ async function addLocalRepo() {
               <p class="setup-code">
                 设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
               </p>
+              <p v-if="workspace.state.authNotice" class="auth-flow__notice">
+                {{ workspace.state.authNotice }}
+              </p>
               <p
                 class="auth-flow__status"
                 :class="{
@@ -1066,8 +1048,8 @@ async function addLocalRepo() {
                   'is-expired': workspace.state.authFlowStatus === 'expired',
                 }"
               >
-                <span>{{ authStatusText }}</span>
-                <span v-if="authRemainingText">剩余 {{ authRemainingText }}</span>
+                <span>{{ workspace.authPendingStatusText.value }}</span>
+                <span v-if="workspace.authRemainingText.value">剩余 {{ workspace.authRemainingText.value }}</span>
               </p>
             </div>
           </div>
@@ -1712,6 +1694,12 @@ async function addLocalRepo() {
   gap: 8px;
   margin: 0;
   color: var(--text-muted);
+  font-size: 12px;
+}
+
+.auth-flow__notice {
+  margin: 0;
+  color: var(--accent);
   font-size: 12px;
 }
 

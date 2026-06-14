@@ -11,6 +11,7 @@ const isAuthorized = ref(false);
 const state = reactive({
   loading: true,
   authLoading: false,
+  authNotice: null,
   error: null,
   githubContributions: {
     days: [],
