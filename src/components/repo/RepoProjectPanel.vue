@@ -5,14 +5,13 @@ import {
   CircleOff,
   ExternalLink,
   LoaderCircle,
-  RefreshCw,
   Save,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import {
   createGitHubIssue,
   getGitHubRepoManagement,
-  getRepoReadme,
+  listRepoReadmes,
   listGitHubIssues,
   listGitHubWorkflowRuns,
   updateGitHubIssue,
@@ -35,7 +34,8 @@ const props = defineProps<{
 }>();
 
 const activeTab = ref<ProjectTab>("readme");
-const readme = ref<RepoReadme | null>(null);
+const readmes = ref<RepoReadme[]>([]);
+const activeReadmePath = ref<string | null>(null);
 const readmeLoading = ref(false);
 const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
@@ -72,8 +72,10 @@ const settingsForm = reactive({
 });
 
 const repoReady = computed(() => Boolean(props.repoFullName));
-const tabs: Array<{ key: ProjectTab; label: string }> = [
-  { key: "readme", label: "README" },
+const activeReadme = computed(() =>
+  readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
+);
+const tabs: Array<{ key: Exclude<ProjectTab, "readme">; label: string }> = [
   { key: "issues", label: "Issues" },
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
@@ -87,6 +89,7 @@ onMounted(() => {
 
 watch(() => props.repoId, () => {
   activeTab.value = "readme";
+  activeReadmePath.value = null;
   void loadReadme();
 });
 
@@ -121,8 +124,13 @@ async function loadReadme() {
   if (!props.repoId) return;
   readmeLoading.value = true;
   readmeError.value = null;
+  const previousPath = activeReadmePath.value;
   try {
-    readme.value = await getRepoReadme(props.repoId);
+    const nextReadmes = await listRepoReadmes(props.repoId);
+    readmes.value = nextReadmes;
+    activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
+      ? previousPath
+      : nextReadmes[0]?.path ?? null;
   } catch (err) {
     readmeError.value = String(err);
   } finally {
@@ -181,10 +189,9 @@ async function loadActions() {
   }
 }
 
-async function refreshActiveTab() {
-  if (activeTab.value === "readme") await loadReadme();
-  else if (activeTab.value === "actions") await loadActions();
-  else await loadGitHub();
+function selectReadme(path: string) {
+  activeTab.value = "readme";
+  activeReadmePath.value = path;
 }
 
 function changedSettingsRequest(current: GitHubRepoManagement) {
@@ -285,154 +292,161 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
 
 <template>
   <section class="project-panel">
-    <div class="project-panel__header">
-      <div>
-        <h2>项目信息</h2>
-        <p class="muted">{{ repoFullName ?? "本地仓库" }}</p>
-      </div>
-      <button type="button" class="ghost" @click="refreshActiveTab">
-        <LoaderCircle v-if="readmeLoading || githubLoading || actionsLoading" :size="14" aria-hidden="true" class="sb-spin" />
-        <RefreshCw v-else :size="14" aria-hidden="true" />
-        刷新
-      </button>
-    </div>
+    <div class="project-layout">
+      <main class="project-main">
+        <section v-if="activeTab === 'readme'" class="project-readme-card">
+          <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
+          <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
+          <p v-else-if="!activeReadme" class="muted repo-empty project-empty">当前仓库没有本地 README。</p>
+          <MarkdownReadme v-else :content="activeReadme.content" :images="activeReadme.images" @open-link="openLink" />
+        </section>
 
-    <div class="project-tabs" role="tablist" aria-label="项目信息视图">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        type="button"
-        class="project-tabs__tab"
-        :class="{ 'is-active': activeTab === tab.key }"
-        role="tab"
-        :aria-selected="activeTab === tab.key"
-        @click="activeTab = tab.key"
-      >
-        {{ tab.label }}
-      </button>
-    </div>
+        <section v-else-if="!repoReady" class="project-section">
+          <p class="muted repo-empty project-empty">当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。</p>
+        </section>
 
-    <div v-if="activeTab === 'readme'" class="project-readme">
-      <div class="project-readme__bar">
-        <strong>{{ readme?.path ?? "README" }}</strong>
-        <span class="muted">{{ readme ? "本地文件" : "未找到" }}</span>
-      </div>
-      <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
-      <p v-else-if="readmeLoading" class="muted repo-empty">正在读取 README。</p>
-      <p v-else-if="!readme" class="muted repo-empty">当前仓库没有本地 README。</p>
-      <MarkdownReadme v-else :content="readme.content" :images="readme.images" @open-link="openLink" />
-    </div>
-
-    <template v-else-if="!repoReady">
-      <p class="muted repo-empty project-empty">当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。</p>
-    </template>
-
-    <section v-else-if="activeTab === 'issues'" class="project-section">
-      <div class="project-section__head">
-        <h3>Issues</h3>
-        <select v-model="issueState">
-          <option value="open">Open</option>
-          <option value="closed">Closed</option>
-          <option value="all">All</option>
-        </select>
-      </div>
-      <p v-if="githubError" class="error-line">{{ githubError }}</p>
-      <form class="project-issue-form" @submit.prevent="createIssue">
-        <input v-model="issueTitle" type="text" placeholder="Issue 标题" />
-        <textarea v-model="issueBody" rows="3" placeholder="Issue 内容"></textarea>
-        <div class="project-inline-form">
-          <input v-model="issueLabels" type="text" placeholder="labels, comma separated" />
-          <input v-model="issueAssignees" type="text" placeholder="assignees" />
-          <button type="submit" class="primary" :disabled="creatingIssue || !issueTitle.trim()">新建 Issue</button>
-        </div>
-      </form>
-      <div class="project-list">
-        <div v-for="issue in issues" :key="issue.number" class="project-row project-row--issue">
-          <div>
-            <strong>#{{ issue.number }} {{ issue.title }}</strong>
-            <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
+        <section v-else-if="activeTab === 'issues'" class="project-section">
+          <div class="project-section__head">
+            <h3>Issues</h3>
+            <select v-model="issueState">
+              <option value="open">Open</option>
+              <option value="closed">Closed</option>
+              <option value="all">All</option>
+            </select>
           </div>
-          <button type="button" class="ghost" @click="toggleIssue(issue)">
-            <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-            <CircleDot v-else :size="14" aria-hidden="true" />
-            {{ issue.state === "open" ? "关闭" : "重开" }}
+          <p v-if="githubError" class="error-line">{{ githubError }}</p>
+          <form class="project-issue-form" @submit.prevent="createIssue">
+            <input v-model="issueTitle" type="text" placeholder="Issue 标题" />
+            <textarea v-model="issueBody" rows="3" placeholder="Issue 内容"></textarea>
+            <div class="project-inline-form">
+              <input v-model="issueLabels" type="text" placeholder="labels, comma separated" />
+              <input v-model="issueAssignees" type="text" placeholder="assignees" />
+              <button type="submit" class="primary" :disabled="creatingIssue || !issueTitle.trim()">新建 Issue</button>
+            </div>
+          </form>
+          <div class="project-list">
+            <div v-for="issue in issues" :key="issue.number" class="project-row project-row--issue">
+              <div>
+                <strong>#{{ issue.number }} {{ issue.title }}</strong>
+                <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
+              </div>
+              <button type="button" class="ghost" @click="toggleIssue(issue)">
+                <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
+                <CircleDot v-else :size="14" aria-hidden="true" />
+                {{ issue.state === "open" ? "关闭" : "重开" }}
+              </button>
+            </div>
+            <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
+          </div>
+        </section>
+
+        <section v-else-if="activeTab === 'actions'" class="project-section">
+          <div class="project-section__head">
+            <h3>Actions</h3>
+            <span class="muted">{{ workflowRuns.length }} 条运行记录</span>
+          </div>
+          <p v-if="actionsError" class="error-line">{{ actionsError }}</p>
+          <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
+          <div class="project-list">
+            <div v-for="run in workflowRuns" :key="run.id" class="project-row">
+              <div>
+                <strong>{{ run.displayTitle }}</strong>
+                <span>{{ run.name }} · {{ run.branch }} · {{ run.event }} · {{ formatWorkflowState(run) }}</span>
+              </div>
+              <button type="button" class="ghost" @click="openLink(run.htmlUrl)">
+                <ExternalLink :size="14" aria-hidden="true" />
+                打开
+              </button>
+            </div>
+            <p v-if="!workflowRuns.length && !actionsLoading" class="muted repo-empty">没有 GitHub Actions 运行记录。</p>
+          </div>
+        </section>
+
+        <form v-else class="project-section project-settings" @submit.prevent="saveSettings">
+          <div class="project-section__head">
+            <h3>仓库设置</h3>
+            <button type="submit" class="primary" :disabled="savingSettings || githubLoading || !settings">
+              <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
+              <Save v-else :size="14" aria-hidden="true" />
+              保存
+            </button>
+          </div>
+          <p v-if="githubError" class="error-line">{{ githubError }}</p>
+          <label>
+            <span>描述</span>
+            <input v-model="settingsForm.description" type="text" />
+          </label>
+          <label>
+            <span>Homepage</span>
+            <input v-model="settingsForm.homepage" type="url" />
+          </label>
+          <label>
+            <span>默认分支</span>
+            <input v-model="settingsForm.defaultBranch" type="text" />
+          </label>
+          <div class="project-switches">
+            <label><input v-model="settingsForm.private" type="checkbox" /> Private</label>
+            <label><input v-model="settingsForm.hasIssues" type="checkbox" /> Issues</label>
+            <label><input v-model="settingsForm.hasWiki" type="checkbox" /> Wiki</label>
+            <label><input v-model="settingsForm.hasProjects" type="checkbox" /> Projects</label>
+            <label><input v-model="settingsForm.hasDiscussions" type="checkbox" /> Discussions</label>
+            <label><input v-model="settingsForm.allowForking" type="checkbox" /> Forking</label>
+            <label><input v-model="settingsForm.deleteBranchOnMerge" type="checkbox" /> 合并后删分支</label>
+            <label><input v-model="settingsForm.webCommitSignoffRequired" type="checkbox" /> Web signoff</label>
+            <label><input v-model="settingsForm.allowMergeCommit" type="checkbox" /> Merge commit</label>
+            <label><input v-model="settingsForm.allowSquashMerge" type="checkbox" /> Squash</label>
+            <label><input v-model="settingsForm.allowRebaseMerge" type="checkbox" /> Rebase</label>
+            <label><input v-model="settingsForm.allowAutoMerge" type="checkbox" /> Auto merge</label>
+          </div>
+        </form>
+      </main>
+
+      <aside class="project-sidebar" role="tablist" aria-label="项目信息视图">
+        <div class="project-sidebar__card">
+          <button
+            v-for="item in readmes"
+            :key="item.path"
+            type="button"
+            class="project-sidebar__item"
+            :class="{ 'is-active': activeTab === 'readme' && activeReadmePath === item.path }"
+            role="tab"
+            :aria-selected="activeTab === 'readme' && activeReadmePath === item.path"
+            @click="selectReadme(item.path)"
+          >
+            <strong>{{ item.path }}</strong>
+            <span aria-hidden="true">{{ item.format === "text" ? "text" : item.format }}</span>
+          </button>
+          <p v-if="!readmes.length && !readmeLoading" class="project-sidebar__empty">未找到 README</p>
+        </div>
+
+        <div class="project-sidebar__card">
+          <button
+            v-for="tab in tabs"
+            :key="tab.key"
+            type="button"
+            class="project-sidebar__item"
+            :class="{ 'is-active': activeTab === tab.key }"
+            role="tab"
+            :aria-selected="activeTab === tab.key"
+            @click="activeTab = tab.key"
+          >
+            <strong>{{ tab.label }}</strong>
           </button>
         </div>
-        <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
-      </div>
-    </section>
-
-    <section v-else-if="activeTab === 'actions'" class="project-section">
-      <div class="project-section__head">
-        <h3>Actions</h3>
-        <span class="muted">{{ workflowRuns.length }} 条运行记录</span>
-      </div>
-      <p v-if="actionsError" class="error-line">{{ actionsError }}</p>
-      <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
-      <div class="project-list">
-        <div v-for="run in workflowRuns" :key="run.id" class="project-row">
-          <div>
-            <strong>{{ run.displayTitle }}</strong>
-            <span>{{ run.name }} · {{ run.branch }} · {{ run.event }} · {{ formatWorkflowState(run) }}</span>
-          </div>
-          <button type="button" class="ghost" @click="openLink(run.htmlUrl)">
-            <ExternalLink :size="14" aria-hidden="true" />
-            打开
-          </button>
-        </div>
-        <p v-if="!workflowRuns.length && !actionsLoading" class="muted repo-empty">没有 GitHub Actions 运行记录。</p>
-      </div>
-    </section>
-
-    <form v-else class="project-section project-settings" @submit.prevent="saveSettings">
-      <div class="project-section__head">
-        <h3>仓库设置</h3>
-        <button type="submit" class="primary" :disabled="savingSettings || githubLoading || !settings">
-          <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
-          <Save v-else :size="14" aria-hidden="true" />
-          保存
-        </button>
-      </div>
-      <p v-if="githubError" class="error-line">{{ githubError }}</p>
-      <label>
-        <span>描述</span>
-        <input v-model="settingsForm.description" type="text" />
-      </label>
-      <label>
-        <span>Homepage</span>
-        <input v-model="settingsForm.homepage" type="url" />
-      </label>
-      <label>
-        <span>默认分支</span>
-        <input v-model="settingsForm.defaultBranch" type="text" />
-      </label>
-      <div class="project-switches">
-        <label><input v-model="settingsForm.private" type="checkbox" /> Private</label>
-        <label><input v-model="settingsForm.hasIssues" type="checkbox" /> Issues</label>
-        <label><input v-model="settingsForm.hasWiki" type="checkbox" /> Wiki</label>
-        <label><input v-model="settingsForm.hasProjects" type="checkbox" /> Projects</label>
-        <label><input v-model="settingsForm.hasDiscussions" type="checkbox" /> Discussions</label>
-        <label><input v-model="settingsForm.allowForking" type="checkbox" /> Forking</label>
-        <label><input v-model="settingsForm.deleteBranchOnMerge" type="checkbox" /> 合并后删分支</label>
-        <label><input v-model="settingsForm.webCommitSignoffRequired" type="checkbox" /> Web signoff</label>
-        <label><input v-model="settingsForm.allowMergeCommit" type="checkbox" /> Merge commit</label>
-        <label><input v-model="settingsForm.allowSquashMerge" type="checkbox" /> Squash</label>
-        <label><input v-model="settingsForm.allowRebaseMerge" type="checkbox" /> Rebase</label>
-        <label><input v-model="settingsForm.allowAutoMerge" type="checkbox" /> Auto merge</label>
-      </div>
-    </form>
+      </aside>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .project-panel {
   display: grid;
-  gap: 12px;
   min-width: 0;
-  padding: 14px 16px 16px;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
 }
 
-.project-panel__header,
 .project-section__head,
 .project-row,
 .project-inline-form {
@@ -441,13 +455,11 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
   gap: 8px;
 }
 
-.project-panel__header,
 .project-section__head,
 .project-row {
   justify-content: space-between;
 }
 
-.project-panel h2,
 .project-section h3 {
   margin: 0;
   font-size: 13px;
@@ -457,31 +469,23 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
   letter-spacing: 0.5px;
 }
 
-.project-panel__header p {
-  margin: 4px 0 0;
-}
-
-.project-tabs {
-  display: flex;
-  gap: 2px;
+.project-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
+  gap: 14px;
+  align-items: start;
   min-width: 0;
-  border-bottom: 1px solid var(--border);
+  min-height: 0;
+  height: 100%;
 }
 
-.project-tabs__tab {
-  height: 34px;
-  padding: 0 12px;
-  border-bottom: 2px solid transparent;
-  border-radius: 6px 6px 0 0;
-  color: var(--text-muted);
+.project-main {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
-.project-tabs__tab.is-active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.project-readme,
+.project-readme-card,
 .project-section,
 .project-issue-form,
 .project-list,
@@ -489,28 +493,87 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
   display: grid;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
 }
 
-.project-readme {
-  padding-top: 2px;
-}
-
-.project-readme__bar {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 32px;
-  padding: 0 0 8px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.project-readme__bar strong,
-.project-readme__bar span {
-  overflow-wrap: anywhere;
+.project-readme-card,
+.project-section {
+  max-height: 100%;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
 }
 
 .project-empty {
   padding: 18px 0;
+}
+
+.project-sidebar {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  align-content: start;
+}
+
+.project-sidebar__card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  max-height: min(420px, 100%);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+
+.project-sidebar__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  text-align: left;
+  color: var(--text-muted);
+}
+
+.project-sidebar__item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.project-sidebar__item.is-active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.project-sidebar__item strong,
+.project-sidebar__item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-sidebar__item strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-sidebar__item span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.project-sidebar__empty {
+  margin: 0;
+  padding: 8px 4px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .project-section label {
@@ -585,6 +648,14 @@ function formatWorkflowState(run: GitHubWorkflowRun) {
 }
 
 @media (max-width: 900px) {
+  .project-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .project-sidebar {
+    order: -1;
+  }
+
   .project-switches {
     grid-template-columns: 1fr;
   }

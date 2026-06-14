@@ -195,7 +195,7 @@ const {
     />
 
     <div class="repo-workbench__body">
-      <main v-if="activeView === 'project'" class="workbench-main card">
+      <main v-if="activeView === 'project'" class="workbench-main workbench-main--project">
         <RepoProjectPanel
           :repo-id="repoId"
           :repo-full-name="summary?.githubFullName"
@@ -463,6 +463,10 @@ const {
   max-height: 100%;
   overflow: auto;
   padding: 0;
+}
+
+.workbench-main--project {
+  overflow: hidden;
 }
 
 .workbench-side {

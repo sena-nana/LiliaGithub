@@ -73,6 +73,7 @@ pub fn run() {
             workspace::repo_get_summary,
             workspace::repo_refresh_language_stats,
             workspace::repo_get_readme,
+            workspace::repo_list_readmes,
             workspace::repo_get_changes,
             workspace::repo_get_history,
             workspace::repo_get_commit_detail,
