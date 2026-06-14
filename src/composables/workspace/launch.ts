@@ -6,15 +6,17 @@ export async function loadLaunch(repoId: string) {
   state.error = null;
   try {
     const service = await loadWorkspaceService();
-    const [config, status, logs] = await Promise.all([
+    const [config, candidates, status, logs] = await Promise.all([
       service.getRepoLaunchConfig(repoId),
+      service.listRepoLaunchCandidates(repoId),
       service.getRepoLaunchStatus(repoId),
       service.getRepoLaunchLogs(repoId),
     ]);
     state.launchConfigs[repoId] = config;
+    state.launchCandidates[repoId] = candidates;
     state.launchStatuses[repoId] = status;
     state.launchLogs[repoId] = logs;
-    return { config, status, logs };
+    return { config, candidates, status, logs };
   } catch (err) {
     state.error = String(err);
     throw err;
@@ -27,6 +29,7 @@ export async function saveLaunchConfig(repoId: string, command: string, cwd?: st
   const service = await loadWorkspaceService();
   const config = await service.saveRepoLaunchConfig(repoId, command, cwd);
   state.launchConfigs[repoId] = config;
+  state.launchCandidates[repoId] = await service.listRepoLaunchCandidates(repoId);
   return config;
 }
 

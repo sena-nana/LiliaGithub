@@ -81,6 +81,7 @@ pub fn run() {
             workspace::repo_get_conflicts,
             workspace::repo_get_detail,
             workspace::repo_get_launch_config,
+            workspace::repo_list_launch_candidates,
             workspace::repo_save_launch_config,
             workspace::repo_get_launch_status,
             workspace::repo_get_launch_logs,

@@ -172,6 +172,7 @@ export async function hideRepo(repoId: string) {
   state.repos = state.repos.filter((repo) => repo.id !== repoId);
   delete state.repoDetails[repoId];
   delete state.launchConfigs[repoId];
+  delete state.launchCandidates[repoId];
   delete state.launchStatuses[repoId];
   delete state.launchLogs[repoId];
 }

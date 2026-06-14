@@ -14,6 +14,14 @@ export interface ProjectLaunchConfig {
   updatedAt: number | null;
 }
 
+export interface ProjectLaunchCandidate {
+  command: string;
+  label: string;
+  hint: string | null;
+  kind: "package" | "cargo" | "script" | "current" | string;
+  cwd: string | null;
+}
+
 export type ProjectLaunchState = "idle" | "running" | "exited" | "error";
 
 export interface ProjectLaunchStatus {

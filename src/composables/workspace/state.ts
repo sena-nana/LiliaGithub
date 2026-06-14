@@ -7,6 +7,7 @@ import type {
   GitHubContributionMeta,
   GitHubDeviceFlowStart,
   ProjectLaunchConfig,
+  ProjectLaunchCandidate,
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RepoDetail,
@@ -21,6 +22,7 @@ export interface WorkspaceState {
   repos: RepoSummary[];
   repoDetails: Record<string, RepoDetail | undefined>;
   launchConfigs: Record<string, ProjectLaunchConfig | null | undefined>;
+  launchCandidates: Record<string, ProjectLaunchCandidate[] | undefined>;
   launchStatuses: Record<string, ProjectLaunchStatus | undefined>;
   launchLogs: Record<string, ProjectLaunchLog[] | undefined>;
   loading: boolean;
@@ -66,6 +68,7 @@ export const state = reactive<WorkspaceState>({
   repos: [],
   repoDetails: {},
   launchConfigs: {},
+  launchCandidates: {},
   launchStatuses: {},
   launchLogs: {},
   loading: false,
@@ -314,6 +317,7 @@ export function resetWorkspaceStateForTests() {
   state.repos = [];
   state.repoDetails = {};
   state.launchConfigs = {};
+  state.launchCandidates = {};
   state.launchStatuses = {};
   state.launchLogs = {};
   state.loading = false;
