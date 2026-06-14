@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import MarkdownReadme from "../src/components/repo/MarkdownReadme.vue";
@@ -14,7 +14,7 @@ describe("MarkdownReadme", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "LiliaCode" })).toBeInTheDocument();
     expect(container).not.toHaveTextContent("To replace the main window screenshot");
-    expect(container.innerHTML).not.toContain("<!--");
+    expect(screen.getByLabelText("README 内容").innerHTML).not.toContain("<!--");
   });
 
   it("renders safe inline HTML inside README markdown", () => {
@@ -122,17 +122,87 @@ describe("MarkdownReadme", () => {
     expect(container.querySelector('input[type="text"]')).not.toBeInTheDocument();
   });
 
-  it("emits openLink for markdown and HTML links", async () => {
+  it("shows a link toolbar before opening markdown links", async () => {
     const { emitted } = render(MarkdownReadme, {
       props: {
-        content: "[Markdown](https://example.com/md) and <a href=\"https://example.com/html\">HTML</a>",
+        content: "[Markdown](https://example.com/md/with/a/very/long/path)",
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Markdown" }), { clientX: 24, clientY: 32 });
+
+    const toolbar = await screen.findByRole("toolbar", { name: "链接操作" });
+    const href = screen.getByTitle("https://example.com/md/with/a/very/long/path");
+    expect(toolbar).toHaveStyle({ left: "24px", top: "40px" });
+    expect(href).toHaveClass("readme-link-toolbar__href");
+    expect(href).toHaveTextContent("https://example.com/md/with/a/very/long/path");
+    expect(emitted("openLink")).toBeUndefined();
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+
+    expect(emitted("openLink")).toEqual([["https://example.com/md/with/a/very/long/path"]]);
+    await waitFor(() => expect(screen.queryByRole("toolbar", { name: "链接操作" })).toBeNull());
+  });
+
+  it("shows the same toolbar for HTML links", async () => {
+    const { emitted } = render(MarkdownReadme, {
+      props: {
+        content: '<a href="https://example.com/html">HTML</a>',
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "HTML" }));
+    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+
+    expect(emitted("openLink")).toEqual([["https://example.com/html"]]);
+  });
+
+  it("disables opening safe links that are not web urls", async () => {
+    const { emitted } = render(MarkdownReadme, {
+      props: {
+        content: "[Relative](./README.zh-CN.md) and [Mail](mailto:hello@example.com)",
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("link", { name: "Relative" }));
+    expect(await screen.findByTitle("./README.zh-CN.md")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开" })).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    expect(emitted("openLink")).toBeUndefined();
+
+    await fireEvent.click(screen.getByRole("link", { name: "Mail" }));
+    expect(await screen.findByTitle("mailto:hello@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开" })).toBeDisabled();
+    expect(emitted("openLink")).toBeUndefined();
+  });
+
+  it("closes the link toolbar with Escape and outside clicks", async () => {
+    render(MarkdownReadme, {
+      props: {
+        content: "[Markdown](https://example.com/md)\n\nPlain text",
       },
     });
 
     await fireEvent.click(screen.getByRole("link", { name: "Markdown" }));
-    await fireEvent.click(screen.getByRole("link", { name: "HTML" }));
+    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
 
-    expect(emitted("openLink")).toEqual([["https://example.com/md"], ["https://example.com/html"]]);
+    await fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("toolbar", { name: "链接操作" })).toBeNull());
+
+    await fireEvent.click(screen.getByRole("link", { name: "Markdown" }));
+    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
+
+    await fireEvent.pointerDown(screen.getByLabelText("README 内容"));
+    await waitFor(() => expect(screen.queryByRole("toolbar", { name: "链接操作" })).toBeNull());
+
+    await fireEvent.click(screen.getByRole("link", { name: "Markdown" }));
+    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
+
+    await fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(screen.queryByRole("toolbar", { name: "链接操作" })).toBeNull());
   });
 
   it("keeps existing markdown headings, lists, and code blocks", () => {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ExternalLink } from "@lucide/vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 const props = defineProps<{
   content: string;
@@ -11,6 +12,10 @@ const emit = defineEmits<{
 }>();
 
 const renderedHtml = computed(() => sanitizeHtml(renderMarkdown(props.content)));
+const toolbarEl = ref<HTMLElement | null>(null);
+const linkToolbar = ref<{ href: string; x: number; y: number } | null>(null);
+const toolbarHref = computed(() => linkToolbar.value?.href ?? "");
+const toolbarCanOpen = computed(() => isOpenableLink(toolbarHref.value));
 
 const allowedTags = new Set([
   "a",
@@ -333,18 +338,94 @@ function escapeAttribute(value: string): string {
   return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
+function isOpenableLink(href: string): boolean {
+  return /^https?:\/\//i.test(href);
+}
+
+async function showLinkToolbar(href: string, event: MouseEvent) {
+  linkToolbar.value = { href, x: event.clientX, y: event.clientY + 8 };
+  await nextTick();
+  clampToolbarPosition();
+}
+
+function clampToolbarPosition() {
+  const toolbar = toolbarEl.value;
+  const state = linkToolbar.value;
+  if (!toolbar || !state) return;
+
+  const x = Math.max(4, Math.min(state.x, window.innerWidth - toolbar.offsetWidth - 4));
+  const y = Math.max(4, Math.min(state.y, window.innerHeight - toolbar.offsetHeight - 4));
+  linkToolbar.value = { ...state, x, y };
+}
+
+function closeLinkToolbar() {
+  linkToolbar.value = null;
+}
+
+function openToolbarLink() {
+  const href = toolbarHref.value;
+  if (!toolbarCanOpen.value) return;
+  closeLinkToolbar();
+  emit("openLink", href);
+}
+
 function handleClick(event: MouseEvent) {
   const target = event.target instanceof Element ? event.target.closest("a") : null;
   const href = target?.getAttribute("href");
   if (!href) return;
 
   event.preventDefault();
-  emit("openLink", href);
+  void showLinkToolbar(href, event);
 }
+
+function onDocPointer(event: PointerEvent) {
+  const target = event.target as Node;
+  if (toolbarEl.value?.contains(target)) return;
+  closeLinkToolbar();
+}
+
+function onKey(event: KeyboardEvent) {
+  if (event.key !== "Escape" || !linkToolbar.value) return;
+  closeLinkToolbar();
+  event.stopPropagation();
+}
+
+watch(linkToolbar, (value, previous) => {
+  if (value && !previous) {
+    document.addEventListener("pointerdown", onDocPointer, true);
+    document.addEventListener("keydown", onKey);
+  } else if (!value && previous) {
+    document.removeEventListener("pointerdown", onDocPointer, true);
+    document.removeEventListener("keydown", onKey);
+  }
+});
+
+watch(() => props.content, closeLinkToolbar);
+
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", onDocPointer, true);
+  document.removeEventListener("keydown", onKey);
+});
 </script>
 
 <template>
   <article class="readme-render" aria-label="README 内容" @click="handleClick" v-html="renderedHtml" />
+  <Teleport to="body">
+    <div
+      v-if="linkToolbar"
+      ref="toolbarEl"
+      class="readme-link-toolbar"
+      role="toolbar"
+      aria-label="链接操作"
+      :style="{ left: `${linkToolbar.x}px`, top: `${linkToolbar.y}px` }"
+    >
+      <span class="readme-link-toolbar__href" :title="toolbarHref">{{ toolbarHref }}</span>
+      <button type="button" class="readme-link-toolbar__button" :disabled="!toolbarCanOpen" @click="openToolbarLink">
+        <ExternalLink :size="13" aria-hidden="true" />
+        打开
+      </button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -448,5 +529,43 @@ function handleClick(event: MouseEvent) {
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   background: var(--bg-subtle);
+}
+
+.readme-link-toolbar {
+  position: fixed;
+  z-index: 2000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 8px));
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.55);
+}
+
+.readme-link-toolbar__href {
+  min-width: 0;
+  max-width: 300px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readme-link-toolbar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 </style>
