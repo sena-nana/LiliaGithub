@@ -199,6 +199,7 @@ const {
         <RepoProjectPanel
           :repo-id="repoId"
           :repo-full-name="summary?.githubFullName"
+          :repo-path="summary?.path"
         />
       </main>
 

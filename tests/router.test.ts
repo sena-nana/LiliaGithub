@@ -657,6 +657,8 @@ describe("基础路由", () => {
           content: [
             "# LiliaGithub",
             "",
+            "[中文](./README.txt#local-doc) [开发指南](docs/guide.md)",
+            "",
             "## 当前能力",
             "",
             "- 工作区 Git 仓库扫描",
@@ -668,7 +670,7 @@ describe("基础路由", () => {
           images: {},
           format: "text",
           updatedAt: 2,
-          content: "LiliaGithub 本地仓库管理工具。",
+          content: "# local-doc\n\nLiliaGithub 本地仓库管理工具。",
         },
       ],
     });
@@ -680,6 +682,21 @@ describe("基础路由", () => {
     expect(await screen.findByRole("tab", { name: "README.md" })).toHaveClass("is-active");
     expect(screen.getByRole("tab", { name: "README.txt" })).toBeInTheDocument();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
+    await fireEvent.click(screen.getByRole("link", { name: "中文" }));
+    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "README.txt" })).toHaveClass("is-active");
+    });
+    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("LiliaGithub 本地仓库管理工具");
+
+    await fireEvent.click(screen.getByRole("tab", { name: "README.md" }));
+    await fireEvent.click(screen.getByRole("link", { name: "开发指南" }));
+    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    await waitFor(() => {
+      expect(service.getFallbackOpenPathCallsForTests()).toEqual(["C:\\Files\\workspace\\LiliaGithub\\docs\\guide.md"]);
+    });
     await fireEvent.click(screen.getByRole("tab", { name: "README.txt" }));
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("LiliaGithub 本地仓库管理工具");
 
