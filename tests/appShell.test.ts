@@ -415,6 +415,35 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("已绑定 GitHub 时支持完整 GitHub 链接直接克隆", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
+    const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+
+    await fireEvent.update(input, "https://github.com/meijustory123/TapdClient");
+    await waitFor(() => {
+      expect(view.getByText("直接克隆 meijustory123/TapdClient")).toBeInTheDocument();
+      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("TapdClient");
+    });
+
+    await fireEvent.update(input, "https://github.com/meijustory123/TapdClient.git");
+    await waitFor(() => {
+      expect(view.getByText("直接克隆 meijustory123/TapdClient")).toBeInTheDocument();
+      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("TapdClient");
+    });
+    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/TapdClient");
+      expect(sidebarRowForText(view.container, "TapdClient")).toBeInTheDocument();
+    });
+  });
+
   it("GitHub 仓库列表绑定失效时提供重新绑定入口", async () => {
     setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
     const view = await renderAppShell("/");
