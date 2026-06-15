@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Play, RefreshCw, Settings, Square, Terminal } from "@lucide/vue";
+import { LoaderCircle, Play, RefreshCw, Settings, Square, Terminal } from "@lucide/vue";
 import type { ProjectLaunchConfig, ProjectLaunchLog, ProjectLaunchStatus } from "../../services/workspace";
 import { launchSourceText, launchStatusText, streamLabel } from "../../utils/repoDisplay";
 
@@ -35,7 +35,10 @@ defineEmits<{
   <section class="launch-panel card">
     <div class="section-toolbar section-toolbar--compact">
       <div>
-        <h2>快速启动</h2>
+        <h2>
+          快速启动
+          <LoaderCircle v-if="loading" :size="13" aria-hidden="true" class="card-title-loader" />
+        </h2>
         <p class="muted">
           {{ hasLaunchCommand ? launchStatusText(launchStatus) : "未识别启动脚本" }}
           <template v-if="hasLaunchCommand"> · {{ launchSourceText(launchConfig) }}</template>
