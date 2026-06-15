@@ -122,14 +122,14 @@ describe("基础路由", () => {
     expect(screen.getByText("C:\\Files\\workspace")).toBeInTheDocument();
     expect(screen.queryByText("octo-user")).toBeNull();
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
-    expect(await screen.findByLabelText("GitHub 提交贡献图")).toBeInTheDocument();
+    expect(await screen.findByLabelText("本地提交贡献图")).toBeInTheDocument();
     expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
     expect(screen.queryByText(/刷新于/)).toBeNull();
     expect(screen.queryByText(/覆盖 \d+ 个仓库/)).toBeNull();
     expect(document.querySelector(".contribution-day[title$='次提交']")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
-    expect(screen.getByLabelText("编程语言占比图")).toBeInTheDocument();
+    expect(await screen.findByLabelText("编程语言占比图")).toBeInTheDocument();
     expect(screen.queryByText(/HEAD 已提交文件/)).toBeNull();
     expect(await screen.findByText("TypeScript")).toBeInTheDocument();
     expect(await screen.findByText("50%")).toBeInTheDocument();
@@ -679,7 +679,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
   });
 
-  it("首页 GitHub 贡献图支持空状态和错误重试", async () => {
+  it("首页本地提交贡献图支持空状态和错误重试", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackRepoContributionOverrideForTests(() => ({
       days: [],
@@ -695,7 +695,7 @@ describe("基础路由", () => {
 
     await renderAt("/");
 
-    expect(await screen.findByText("暂无 GitHub 提交")).toBeInTheDocument();
+    expect(await screen.findByText("暂无本地提交")).toBeInTheDocument();
 
     service.setFallbackRepoContributionOverrideForTests(() => {
       throw new Error("rate limited");
@@ -708,8 +708,8 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("Error: rate limited")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionOverrideForTests((repoFullName) => ({
-      days: [{ date: "2026-06-11", count: repoFullName === "sena-nana/LiliaGithub" ? 4 : 0 }],
+    service.setFallbackRepoContributionOverrideForTests((repoScope) => ({
+      days: [{ date: "2026-06-11", count: repoScope === "local:LiliaGithub" ? 4 : 0 }],
       meta: {
         repoCount: 1,
         requestedRepoCount: 1,
@@ -724,7 +724,7 @@ describe("基础路由", () => {
     expect(await screen.findByLabelText("2026-06-11：4 次提交")).toBeInTheDocument();
   });
 
-  it("首页 GitHub 贡献图命中仓库采样上限时显示提示", async () => {
+  it("首页本地提交贡献图命中仓库采样上限时显示提示", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackRepoContributionOverrideForTests(() => ({
       days: [{ date: "2026-06-11", count: 1 }],
@@ -747,12 +747,12 @@ describe("基础路由", () => {
     expect(screen.queryByText(/仅统计前 30 个/)).toBeNull();
   });
 
-  it("首页 GitHub 贡献图使用固定右侧窗口显示", async () => {
+  it("首页本地提交贡献图使用固定右侧窗口显示", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionOverrideForTests((repoFullName) => ({
+    service.setFallbackRepoContributionOverrideForTests((repoScope) => ({
       days: Array.from({ length: 371 }, (_, index) => ({
         date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
-        count: index === 370 && repoFullName === "sena-nana/LiliaGithub" ? 4 : 0,
+        count: index === 370 && repoScope === "local:LiliaGithub" ? 4 : 0,
       })),
       meta: {
         repoCount: 1,
@@ -765,7 +765,7 @@ describe("基础路由", () => {
     }));
 
     await renderAt("/");
-    const chart = await screen.findByLabelText("GitHub 提交贡献图");
+    const chart = await screen.findByLabelText("本地提交贡献图");
 
     expect(chart.querySelector(".contribution-window")).toBeInTheDocument();
     expect(chart.querySelector(".contribution-months")).toHaveTextContent("1月");

@@ -1413,7 +1413,7 @@ async function syncRepo(repo: RepoSummary) {
           <div
             v-if="workspace.state.githubContributions.loading && !hasContributionDays"
             class="contribution-loading"
-            aria-label="GitHub 提交贡献加载中"
+            aria-label="本地提交加载中"
           >
             <span v-for="index in 84" :key="index" />
           </div>
@@ -1421,9 +1421,9 @@ async function syncRepo(repo: RepoSummary) {
             v-else-if="!workspace.state.githubContributions.loading && totalContributions <= 0 && !workspace.state.githubContributions.error"
             class="contribution-empty"
           >
-            暂无 GitHub 提交
+            暂无本地提交
           </p>
-          <div v-else class="contribution-chart" aria-label="GitHub 提交贡献图">
+          <div v-else class="contribution-chart" aria-label="本地提交贡献图">
             <div class="contribution-week-labels" aria-hidden="true">
               <span class="contribution-month-spacer" />
               <span />

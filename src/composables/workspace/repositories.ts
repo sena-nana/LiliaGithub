@@ -19,6 +19,7 @@ import type {
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 const REPO_REFRESH_CONCURRENCY = 4;
+const LOCAL_REPO_CONTRIBUTION_SCOPE = "local:";
 let repositoryRuntimeGeneration = 0;
 let contributionRefreshGeneration = 0;
 let contributionRefreshPendingCount = 0;
@@ -90,8 +91,8 @@ async function refreshManagedRepoSummaries(
   const shouldRefreshBackground = options.refreshBackground ?? true;
   const contributionGeneration = shouldRefreshBackground ? beginContributionRefresh() : null;
   if (contributionGeneration != null) {
-    for (const fullName of repoFullNames()) {
-      scheduleRepoContributionRefresh(fullName, contributionGeneration);
+    for (const scope of repoContributionScopes()) {
+      scheduleRepoContributionRefresh(scope, contributionGeneration);
     }
   }
   try {
@@ -104,9 +105,6 @@ async function refreshManagedRepoSummaries(
         if (generation !== repositoryRuntimeGeneration) return;
         upsertRepo(summary);
         refreshedRepoIds.push(summary.id);
-        if (contributionGeneration != null && summary.githubFullName) {
-          scheduleRepoContributionRefresh(summary.githubFullName, contributionGeneration);
-        }
       } catch {
         // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
       } finally {
@@ -153,18 +151,22 @@ function scheduleLowPriorityRefresh(repoIds: string[]) {
   void refreshWorkspaceTasks();
 }
 
-function repoFullNames() {
+function repoContributionScope(repo: {
+  id: string;
+}) {
+  return `${LOCAL_REPO_CONTRIBUTION_SCOPE}${repo.id}`;
+}
+
+function repoContributionScopes() {
   return Array.from(new Set(
-    state.repos
-      .map((repo) => repo.githubFullName?.trim())
-      .filter((name): name is string => Boolean(name)),
+    state.repos.map((repo) => repoContributionScope(repo)),
   ));
 }
 
 export async function refreshRepoContributions() {
   const generation = beginContributionRefresh();
-  for (const fullName of repoFullNames()) {
-    scheduleRepoContributionRefresh(fullName, generation);
+  for (const scope of repoContributionScopes()) {
+    scheduleRepoContributionRefresh(scope, generation);
   }
 }
 
@@ -188,17 +190,13 @@ function beginContributionRefresh() {
   return generation;
 }
 
-function scheduleRepoContributionRefresh(fullName: string, generation: number) {
-  const normalized = fullName.trim();
+function scheduleRepoContributionRefresh(scope: string, generation: number) {
+  const normalized = scope.trim();
   if (!normalized || contributionRefreshSeenFullNames.has(normalized) || generation !== contributionRefreshGeneration) {
     return;
   }
-  contributionRefreshSeenFullNames.add(normalized);
-  updateContributionMeta({
-    requestedRepoCount: contributionRefreshSeenFullNames.size,
-    sampledRepoCount: contributionRefreshSampledCount,
-  });
   if (contributionRefreshSampledCount >= CONTRIBUTION_REPO_LIMIT) return;
+  contributionRefreshSeenFullNames.add(normalized);
   contributionRefreshSampledCount += 1;
   updateContributionMeta({
     requestedRepoCount: contributionRefreshSeenFullNames.size,
@@ -209,10 +207,10 @@ function scheduleRepoContributionRefresh(fullName: string, generation: number) {
   void refreshSingleRepoContribution(normalized, generation);
 }
 
-async function refreshSingleRepoContribution(fullName: string, generation: number) {
+async function refreshSingleRepoContribution(scope: string, generation: number) {
   try {
     const service = await loadWorkspaceService();
-    const result = await service.listRepoContribution(fullName);
+    const result = await service.listRepoContribution(scope);
     if (generation !== contributionRefreshGeneration) return;
     state.githubContributions.days = mergeContributionDays(state.githubContributions.days, result.days);
     updateContributionMeta({
@@ -222,9 +220,8 @@ async function refreshSingleRepoContribution(fullName: string, generation: numbe
       skippedRepoCount: (state.githubContributions.meta?.skippedRepoCount ?? 0) + (result.meta.skippedRepoCount ?? 0),
     });
   } catch (err) {
-    if (generation === contributionRefreshGeneration) {
-      state.githubContributions.error = String(err);
-    }
+    if (generation !== contributionRefreshGeneration) return;
+    state.githubContributions.error = String(err);
   } finally {
     finishRepoContributionRefresh(generation);
   }

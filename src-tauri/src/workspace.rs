@@ -37,8 +37,6 @@ const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
 const LAUNCH_LOG_LIMIT: usize = 500;
 const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 const GITHUB_CONTRIBUTION_DAYS: usize = 371;
-const GITHUB_COMMITS_PER_PAGE: usize = 100;
-const GITHUB_COMMITS_MAX_PAGES: usize = 10;
 const MAX_REPO_REFRESH_CONCURRENCY: usize = 4;
 
 #[cfg(target_os = "windows")]
@@ -67,6 +65,15 @@ pub struct WorkspaceSettings {
     pub managed_repo_ids: Vec<String>,
     #[serde(default)]
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
+    #[serde(default)]
+    pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalContributionDayCache {
+    pub count: usize,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -788,21 +795,6 @@ struct RepoFetchFailure {
     error: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct GitHubCommitResponse {
-    commit: GitHubCommitPayload,
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubCommitPayload {
-    author: Option<GitHubCommitAuthor>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubCommitAuthor {
-    date: Option<String>,
-}
-
 struct LaunchEntry {
     child: Option<Child>,
     status: ProjectLaunchStatus,
@@ -1054,10 +1046,7 @@ fn normalize_scope_list(scope: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-fn github_headers(
-    builder: RequestBuilder,
-    token: Option<&str>,
-) -> RequestBuilder {
+fn github_headers(builder: RequestBuilder, token: Option<&str>) -> RequestBuilder {
     let builder = builder
         .header(USER_AGENT, GITHUB_USER_AGENT)
         .header(ACCEPT, GITHUB_ACCEPT)
@@ -1069,9 +1058,7 @@ fn github_headers(
     }
 }
 
-fn github_oauth_headers(
-    builder: RequestBuilder,
-) -> RequestBuilder {
+fn github_oauth_headers(builder: RequestBuilder) -> RequestBuilder {
     builder
         .header(USER_AGENT, GITHUB_USER_AGENT)
         .header(ACCEPT, GITHUB_OAUTH_ACCEPT)
@@ -1131,13 +1118,13 @@ fn github_require_scope(binding: &GitHubBindingMetadata, scope: &str) -> Result<
     if binding.scopes.iter().any(|item| item == scope) {
         return Ok(());
     }
-    Err(format!("GitHub 绑定缺少 {scope} 权限，请重新绑定 GitHub 后再试"))
+    Err(format!(
+        "GitHub 绑定缺少 {scope} 权限，请重新绑定 GitHub 后再试"
+    ))
 }
 
 fn github_send(app: &AppHandle, prefix: &str, builder: RequestBuilder) -> Result<Response, String> {
-    let response = builder
-        .send()
-        .map_err(|e| format!("{prefix}：{e}"))?;
+    let response = builder.send().map_err(|e| format!("{prefix}：{e}"))?;
     if github_binding_expired_status(response.status()) {
         let mut settings = load_settings(app);
         settings.github_binding = None;
@@ -1165,16 +1152,18 @@ fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> GitHubRepoSumm
     }
 }
 
-fn normalize_remote_repo_shortcut(mut shortcut: RemoteRepoShortcut) -> Result<RemoteRepoShortcut, String> {
+fn normalize_remote_repo_shortcut(
+    mut shortcut: RemoteRepoShortcut,
+) -> Result<RemoteRepoShortcut, String> {
     let repo = normalize_github_repo_input(&shortcut.full_name)?;
     shortcut.full_name = repo.full_name;
-    shortcut.name = normalize_optional_string(Some(shortcut.name))
-        .unwrap_or_else(|| repo.name.clone());
+    shortcut.name =
+        normalize_optional_string(Some(shortcut.name)).unwrap_or_else(|| repo.name.clone());
     shortcut.default_branch = normalize_optional_string(shortcut.default_branch);
     shortcut.html_url = normalize_optional_string(Some(shortcut.html_url))
         .unwrap_or_else(|| format!("https://github.com/{}", shortcut.full_name));
-    shortcut.clone_url = normalize_optional_string(Some(shortcut.clone_url))
-        .unwrap_or(repo.clone_url);
+    shortcut.clone_url =
+        normalize_optional_string(Some(shortcut.clone_url)).unwrap_or(repo.clone_url);
     shortcut.opened_at = now_millis();
     Ok(shortcut)
 }
@@ -1199,7 +1188,10 @@ fn remember_remote_repo_shortcut(
     Ok(())
 }
 
-fn forget_remote_repo_shortcut(shortcuts: &mut Vec<RemoteRepoShortcut>, full_name: &str) -> Result<(), String> {
+fn forget_remote_repo_shortcut(
+    shortcuts: &mut Vec<RemoteRepoShortcut>,
+    full_name: &str,
+) -> Result<(), String> {
     let repo = normalize_github_repo_input(full_name)?;
     let target = repo.full_name;
     shortcuts.retain(|item| {
@@ -1261,7 +1253,10 @@ fn github_update_repo_settings_payload(
         payload.insert("private".to_string(), serde_json::Value::Bool(value));
     }
     if let Some(value) = normalize_optional_string(request.default_branch) {
-        payload.insert("default_branch".to_string(), serde_json::Value::String(value));
+        payload.insert(
+            "default_branch".to_string(),
+            serde_json::Value::String(value),
+        );
     }
     if let Some(value) = request.has_issues {
         payload.insert("has_issues".to_string(), serde_json::Value::Bool(value));
@@ -1273,22 +1268,40 @@ fn github_update_repo_settings_payload(
         payload.insert("has_projects".to_string(), serde_json::Value::Bool(value));
     }
     if let Some(value) = request.has_discussions {
-        payload.insert("has_discussions".to_string(), serde_json::Value::Bool(value));
+        payload.insert(
+            "has_discussions".to_string(),
+            serde_json::Value::Bool(value),
+        );
     }
     if let Some(value) = request.allow_merge_commit {
-        payload.insert("allow_merge_commit".to_string(), serde_json::Value::Bool(value));
+        payload.insert(
+            "allow_merge_commit".to_string(),
+            serde_json::Value::Bool(value),
+        );
     }
     if let Some(value) = request.allow_squash_merge {
-        payload.insert("allow_squash_merge".to_string(), serde_json::Value::Bool(value));
+        payload.insert(
+            "allow_squash_merge".to_string(),
+            serde_json::Value::Bool(value),
+        );
     }
     if let Some(value) = request.allow_rebase_merge {
-        payload.insert("allow_rebase_merge".to_string(), serde_json::Value::Bool(value));
+        payload.insert(
+            "allow_rebase_merge".to_string(),
+            serde_json::Value::Bool(value),
+        );
     }
     if let Some(value) = request.allow_auto_merge {
-        payload.insert("allow_auto_merge".to_string(), serde_json::Value::Bool(value));
+        payload.insert(
+            "allow_auto_merge".to_string(),
+            serde_json::Value::Bool(value),
+        );
     }
     if let Some(value) = request.delete_branch_on_merge {
-        payload.insert("delete_branch_on_merge".to_string(), serde_json::Value::Bool(value));
+        payload.insert(
+            "delete_branch_on_merge".to_string(),
+            serde_json::Value::Bool(value),
+        );
     }
     if let Some(value) = request.allow_forking {
         payload.insert("allow_forking".to_string(), serde_json::Value::Bool(value));
@@ -1325,7 +1338,8 @@ fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<GitHubIssue>
 
 fn github_workflow_run_from_response(run: GitHubWorkflowRunResponse) -> GitHubWorkflowRun {
     let name = normalize_optional_string(run.name).unwrap_or_else(|| "Workflow".to_string());
-    let display_title = normalize_optional_string(run.display_title.clone()).unwrap_or_else(|| name.clone());
+    let display_title =
+        normalize_optional_string(run.display_title.clone()).unwrap_or_else(|| name.clone());
     GitHubWorkflowRun {
         id: run.id,
         name,
@@ -1402,14 +1416,6 @@ fn parse_next_page(link: Option<&str>) -> Option<u32> {
     None
 }
 
-fn normalize_github_contribution_repo(repo_full_name: String) -> Option<String> {
-    let trimmed = repo_full_name.trim().trim_matches('/').to_string();
-    if trimmed.is_empty() || !trimmed.contains('/') {
-        return None;
-    }
-    Some(trimmed)
-}
-
 fn github_api_repo_path(repo_full_name: &str) -> String {
     repo_full_name
         .split('/')
@@ -1443,19 +1449,6 @@ fn format_day_index(day_index: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-fn parse_github_date_day(date: &str) -> Option<i64> {
-    if date.len() < 10 {
-        return None;
-    }
-    let year = date.get(0..4)?.parse::<i32>().ok()?;
-    let month = date.get(5..7)?.parse::<u32>().ok()?;
-    let day = date.get(8..10)?.parse::<u32>().ok()?;
-    if date.as_bytes().get(4) != Some(&b'-') || date.as_bytes().get(7) != Some(&b'-') {
-        return None;
-    }
-    Some(days_from_civil(year, month, day))
-}
-
 fn github_contribution_days(
     counts: &HashMap<String, usize>,
     end_day_index: i64,
@@ -1487,35 +1480,90 @@ fn github_contribution_meta(
     }
 }
 
-fn is_recoverable_github_contribution_status(status: StatusCode) -> bool {
-    matches!(status, StatusCode::NOT_FOUND | StatusCode::CONFLICT | StatusCode::FORBIDDEN)
-}
-
-fn add_commit_contributions(
-    counts: &mut HashMap<String, usize>,
-    commits: &[GitHubCommitResponse],
+fn collect_local_contribution_counts(
+    path: &Path,
     start_day_index: i64,
     end_day_index: i64,
-) {
-    for commit in commits {
-        let Some(date) = commit
-            .commit
-            .author
-            .as_ref()
-            .and_then(|author| author.date.as_deref())
-        else {
-            continue;
+    counts: &mut HashMap<String, usize>,
+) -> Result<(), String> {
+    if end_day_index < start_day_index {
+        return Ok(());
+    }
+    let since = format!("{}T00:00:00Z", format_day_index(start_day_index));
+    let until = format!("{}T23:59:59Z", format_day_index(end_day_index));
+    let output = git_command_lossy(
+        path,
+        &[
+            "log",
+            &format!("--since={since}"),
+            &format!("--until={until}"),
+            "--format=%ct",
+        ],
+    )
+    .unwrap_or_default();
+    for line in output.lines() {
+        let ts = match line.trim().parse::<i64>() {
+            Ok(value) => value,
+            Err(_) => continue,
         };
-        let Some(day_index) = parse_github_date_day(date) else {
-            continue;
-        };
+        let day_index = ts / 86_400;
         if day_index < start_day_index || day_index > end_day_index {
             continue;
         }
         *counts.entry(format_day_index(day_index)).or_default() += 1;
     }
+    Ok(())
 }
 
+fn normalize_local_contribution_repo_id(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("github:") {
+        return None;
+    }
+    let repo_id = trimmed.strip_prefix("local:").unwrap_or(trimmed).trim();
+    if repo_id.is_empty() || repo_id.contains("://") || repo_id.contains('\\') {
+        None
+    } else {
+        Some(repo_id.trim_matches('/').to_string())
+    }
+}
+
+fn cached_local_contribution_count(
+    settings: &WorkspaceSettings,
+    repo_id: &str,
+    date: &str,
+) -> Option<usize> {
+    settings
+        .local_contribution_cache
+        .get(repo_id)
+        .and_then(|repo| repo.get(date))
+        .map(|entry| entry.count)
+}
+
+fn write_local_contribution_cache(
+    settings: &mut WorkspaceSettings,
+    repo_id: &str,
+    date: &str,
+    count: usize,
+) {
+    settings
+        .local_contribution_cache
+        .entry(repo_id.to_string())
+        .or_default()
+        .insert(
+            date.to_string(),
+            LocalContributionDayCache {
+                count,
+                updated_at: now_millis(),
+            },
+        );
+}
+
+fn remove_local_contribution_cache(settings: &mut WorkspaceSettings, repo_id: &str) {
+    settings.local_contribution_cache.remove(repo_id);
+}
+
+#[cfg(test)]
 fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
     let year = year - if month <= 2 { 1 } else { 0 };
     let era = if year >= 0 { year } else { year - 399 } / 400;
@@ -1653,12 +1701,19 @@ fn normalize_repo_path(root: &Path, repo_path: &str) -> Result<PathBuf, String> 
 }
 
 fn infer_clone_directory_name(remote_url: &str) -> Result<String, String> {
-    let trimmed = remote_url.trim().trim_end_matches('/').trim_end_matches(".git");
+    let trimmed = remote_url
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git");
     if trimmed.is_empty() {
         return Err("远端 URL 不能为空".to_string());
     }
     if let Some(full_name) = parse_github_remote(trimmed) {
-        if let Some(name) = full_name.rsplit('/').next().filter(|value| !value.is_empty()) {
+        if let Some(name) = full_name
+            .rsplit('/')
+            .next()
+            .filter(|value| !value.is_empty())
+        {
             return Ok(name.to_string());
         }
     }
@@ -1831,11 +1886,7 @@ fn is_skipped_language_dir(name: &str) -> bool {
 fn is_skipped_language_file(name: &str) -> bool {
     matches!(
         name,
-        "bun.lock"
-            | "cargo.lock"
-            | "package-lock.json"
-            | "pnpm-lock.yaml"
-            | "yarn.lock"
+        "bun.lock" | "cargo.lock" | "package-lock.json" | "pnpm-lock.yaml" | "yarn.lock"
     ) || name.ends_with(".lock")
         || matches!(
             Path::new(name)
@@ -2065,13 +2116,7 @@ fn parse_status_entries(status: &str) -> Vec<RepoStatusEntry> {
 fn is_conflict_status(index: &str, worktree: &str) -> bool {
     matches!(
         (index, worktree),
-        ("A", "A")
-            | ("D", "D")
-            | ("U", "U")
-            | ("A", "U")
-            | ("U", "A")
-            | ("D", "U")
-            | ("U", "D")
+        ("A", "A") | ("D", "D") | ("U", "U") | ("A", "U") | ("U", "A") | ("D", "U") | ("U", "D")
     )
 }
 
@@ -2268,10 +2313,18 @@ fn readme_name_priority(name: &str) -> Option<usize> {
         "readme.markdown" => Some(1),
         "readme" => Some(2),
         "readme.txt" => Some(3),
-        _ if name.starts_with("readme.") && matches!(
-            Path::new(&name).extension()?.to_str()?.to_ascii_lowercase().as_str(),
-            "md" | "markdown" | "txt"
-        ) => Some(4),
+        _ if name.starts_with("readme.")
+            && matches!(
+                Path::new(&name)
+                    .extension()?
+                    .to_str()?
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "md" | "markdown" | "txt"
+            ) =>
+        {
+            Some(4)
+        }
         _ => None,
     }
 }
@@ -2291,15 +2344,27 @@ fn repo_readme_paths(repo_path: &Path) -> Result<Vec<PathBuf>, String> {
         let a_priority = repo_readme_priority(a).unwrap_or(usize::MAX);
         let b_priority = repo_readme_priority(b).unwrap_or(usize::MAX);
         a_priority.cmp(&b_priority).then_with(|| {
-            let a_name = a.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
-            let b_name = b.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
+            let a_name = a
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let b_name = b
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
             a_name.cmp(&b_name)
         })
     });
     Ok(paths)
 }
 
-fn read_repo_readme_file(repo_id: &str, repo_path: &Path, path: &Path) -> Result<RepoReadme, String> {
+fn read_repo_readme_file(
+    repo_id: &str,
+    repo_path: &Path,
+    path: &Path,
+) -> Result<RepoReadme, String> {
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("读取 README 失败：{}（{e}）", path.display()))?;
     let updated_at = path
@@ -2369,8 +2434,8 @@ fn decode_github_file_content(
     let bytes = STANDARD
         .decode(encoded)
         .map_err(|e| format!("{prefix}：README 解码失败：{e}"))?;
-    let content = String::from_utf8(bytes)
-        .map_err(|e| format!("{prefix}：README 不是 UTF-8 文本：{e}"))?;
+    let content =
+        String::from_utf8(bytes).map_err(|e| format!("{prefix}：README 不是 UTF-8 文本：{e}"))?;
     Ok(RepoReadme {
         repo_id: format!("github:{repo_full_name}"),
         path: file.path.clone(),
@@ -2381,7 +2446,10 @@ fn decode_github_file_content(
     })
 }
 
-fn read_github_repo_readmes(app: &AppHandle, repo_full_name: &str) -> Result<Vec<RepoReadme>, String> {
+fn read_github_repo_readmes(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<Vec<RepoReadme>, String> {
     let repo = normalize_github_repo_input(repo_full_name)?;
     let (_, token) = github_require_token(app)?;
     let client = build_client()?;
@@ -2393,7 +2461,9 @@ fn read_github_repo_readmes(app: &AppHandle, repo_full_name: &str) -> Result<Vec
         github_headers(client.get(repo_url), Some(&token)),
     )?;
     let repo_info: GitHubRepoResponse = github_json("读取 GitHub 仓库信息失败", repo_response)?;
-    let branch = repo_info.default_branch.unwrap_or_else(|| "main".to_string());
+    let branch = repo_info
+        .default_branch
+        .unwrap_or_else(|| "main".to_string());
     let root_url = format!(
         "https://api.github.com/repos/{repo_path}/contents?ref={}",
         url_encode_path_segment(&branch),
@@ -2444,14 +2514,21 @@ fn read_github_repo_readmes(app: &AppHandle, repo_full_name: &str) -> Result<Vec
     Ok(readmes)
 }
 
-fn readme_image_data_urls(content: &str, readme_dir: &Path, repo_path: &Path) -> HashMap<String, String> {
+fn readme_image_data_urls(
+    content: &str,
+    readme_dir: &Path,
+    repo_path: &Path,
+) -> HashMap<String, String> {
     readme_image_sources(content)
         .into_iter()
         .filter_map(|source| {
             let file_path = resolve_readme_image_path(readme_dir, repo_path, &source)?;
             let mime = image_mime_for_path(&file_path)?;
             let bytes = fs::read(file_path).ok()?;
-            Some((source, format!("data:{mime};base64,{}", STANDARD.encode(bytes))))
+            Some((
+                source,
+                format!("data:{mime};base64,{}", STANDARD.encode(bytes)),
+            ))
         })
         .collect()
 }
@@ -2466,7 +2543,12 @@ fn readme_image_sources(content: &str) -> HashSet<String> {
     sources
 }
 
-fn collect_readme_image_sources(content: &str, prefix: &str, suffix: char, sources: &mut HashSet<String>) {
+fn collect_readme_image_sources(
+    content: &str,
+    prefix: &str,
+    suffix: char,
+    sources: &mut HashSet<String>,
+) {
     for capture in content.match_indices(prefix) {
         let value = &content[capture.0 + prefix.len()..];
         let Some(end) = value.find(suffix) else {
@@ -2489,7 +2571,11 @@ fn is_relative_readme_image_source(source: &str) -> bool {
 
 fn resolve_readme_image_path(readme_dir: &Path, repo_path: &Path, source: &str) -> Option<PathBuf> {
     let relative = Path::new(clean_readme_image_source(source));
-    if relative.is_absolute() || relative.components().any(|component| matches!(component, Component::ParentDir)) {
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
         return None;
     }
 
@@ -2853,7 +2939,11 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
         let mut repos =
             filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
         sort_repos(&mut repos);
-        update_workspace_task(&task.id, "success", Some(format!("发现 {} 个仓库", repos.len())));
+        update_workspace_task(
+            &task.id,
+            "success",
+            Some(format!("发现 {} 个仓库", repos.len())),
+        );
         Ok(repos)
     })
     .await
@@ -2938,6 +3028,7 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
         settings.hidden_repo_ids.push(normalized.to_string());
         settings.hidden_repo_ids.sort();
     }
+    remove_local_contribution_cache(&mut settings, normalized);
     save_settings(&app, &settings)?;
     Ok(settings)
 }
@@ -3078,9 +3169,10 @@ pub async fn github_poll_device_flow(
             .json::<TokenResponse>()
             .map_err(|e| format!("解析 GitHub 授权结果失败：{e}"))?;
         if let Some(token) = body.access_token {
-            let user_response = github_headers(client.get("https://api.github.com/user"), Some(&token))
-            .send()
-            .map_err(|e| format!("读取 GitHub 账号信息失败：{e}"))?;
+            let user_response =
+                github_headers(client.get("https://api.github.com/user"), Some(&token))
+                    .send()
+                    .map_err(|e| format!("读取 GitHub 账号信息失败：{e}"))?;
             if !user_response.status().is_success() {
                 return Err(format!(
                     "读取 GitHub 账号信息失败：HTTP {}",
@@ -3146,21 +3238,28 @@ pub fn github_unbind(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn github_list_repos(app: AppHandle, page: Option<u32>) -> Result<GitHubRepoPage, String> {
+pub async fn github_list_repos(
+    app: AppHandle,
+    page: Option<u32>,
+) -> Result<GitHubRepoPage, String> {
     run_blocking("读取 GitHub 仓库", move || {
         let page = page.unwrap_or(1).max(1);
         let (_binding, token) = github_require_token(&app)?;
         let client = build_client()?;
-        let response = github_send(&app, "读取 GitHub 仓库失败", github_headers(
-            client.get("https://api.github.com/user/repos").query(&[
-                ("affiliation", "owner"),
-                ("visibility", "all"),
-                ("sort", "updated"),
-                ("per_page", "100"),
-                ("page", &page.to_string()),
-            ]),
-            Some(&token),
-        ))?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 仓库失败",
+            github_headers(
+                client.get("https://api.github.com/user/repos").query(&[
+                    ("affiliation", "owner"),
+                    ("visibility", "all"),
+                    ("sort", "updated"),
+                    ("per_page", "100"),
+                    ("page", &page.to_string()),
+                ]),
+                Some(&token),
+            ),
+        )?;
 
         if !response.status().is_success() {
             return Err(github_http_error("读取 GitHub 仓库失败", response));
@@ -3241,10 +3340,16 @@ pub async fn github_create_repo(
                 map.insert("description".to_string(), serde_json::Value::String(value));
             }
             if let Some(value) = normalize_optional_string(request.gitignore_template) {
-                map.insert("gitignore_template".to_string(), serde_json::Value::String(value));
+                map.insert(
+                    "gitignore_template".to_string(),
+                    serde_json::Value::String(value),
+                );
             }
             if let Some(value) = normalize_optional_string(request.license_template) {
-                map.insert("license_template".to_string(), serde_json::Value::String(value));
+                map.insert(
+                    "license_template".to_string(),
+                    serde_json::Value::String(value),
+                );
             }
         }
         let client = build_client()?;
@@ -3278,7 +3383,10 @@ pub async fn github_get_repo_management(
         let response = github_send(
             &app,
             "读取 GitHub 仓库设置失败",
-            github_headers(client.get(github_repo_api_url(&repo_full_name)?), Some(&token)),
+            github_headers(
+                client.get(github_repo_api_url(&repo_full_name)?),
+                Some(&token),
+            ),
         )?;
         let repo = github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?;
         Ok(github_repo_management_from_response(repo))
@@ -3321,7 +3429,10 @@ pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Resul
         let response = github_send(
             &app,
             "删除 GitHub 仓库失败",
-            github_headers(client.delete(github_repo_api_url(&repo_full_name)?), Some(&token)),
+            github_headers(
+                client.delete(github_repo_api_url(&repo_full_name)?),
+                Some(&token),
+            ),
         )?;
         if !response.status().is_success() {
             return Err(github_http_error("删除 GitHub 仓库失败", response));
@@ -3375,7 +3486,10 @@ pub async fn github_list_issues(
             ),
         )?;
         let issues = github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?;
-        Ok(issues.into_iter().filter_map(github_issue_from_response).collect())
+        Ok(issues
+            .into_iter()
+            .filter_map(github_issue_from_response)
+            .collect())
     })
     .await
 }
@@ -3414,7 +3528,8 @@ pub async fn github_create_issue(
             ),
         )?;
         let issue = github_json::<GitHubIssueResponse>("创建 GitHub Issue 失败", response)?;
-        github_issue_from_response(issue).ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
+        github_issue_from_response(issue)
+            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
     })
     .await
 }
@@ -3465,7 +3580,8 @@ pub async fn github_update_issue(
             ),
         )?;
         let issue = github_json::<GitHubIssueResponse>("更新 GitHub Issue 失败", response)?;
-        github_issue_from_response(issue).ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
+        github_issue_from_response(issue)
+            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
     })
     .await
 }
@@ -3485,7 +3601,10 @@ pub async fn github_list_workflow_runs(
             "读取 GitHub Actions 失败",
             github_headers(
                 client
-                    .get(format!("{}/actions/runs", github_repo_api_url(&repo_full_name)?))
+                    .get(format!(
+                        "{}/actions/runs",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
                     .query(&[("per_page", runs_per_page)]),
                 Some(&token),
             ),
@@ -3505,51 +3624,36 @@ pub async fn github_list_repo_contribution(
     app: AppHandle,
     repo_full_name: String,
 ) -> Result<GitHubContributionResult, String> {
-    run_blocking("读取 GitHub 提交贡献", move || {
-        let repo = normalize_github_contribution_repo(repo_full_name);
-        let repo_count = usize::from(repo.is_some());
+    run_blocking("读取本地提交贡献", move || {
         let end_day_index = current_utc_day_index();
         let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
-        let Some(repo) = repo else {
+        let Some(repo_id) = normalize_local_contribution_repo_id(&repo_full_name) else {
             return Ok(GitHubContributionResult {
                 days: github_contribution_days(&HashMap::new(), end_day_index),
-                meta: github_contribution_meta(repo_count, repo_count, 0),
+                meta: github_contribution_meta(0, 0, 0),
             });
         };
-        let token = token_for_binding(&app)?;
-        let client = build_client()?;
-        let since = format!("{}T00:00:00Z", format_day_index(start_day_index));
-        let until = format!("{}T23:59:59Z", format_day_index(end_day_index));
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let today = format_day_index(end_day_index);
+        let mut settings = load_settings(&app);
         let mut counts: HashMap<String, usize> = HashMap::new();
-        let mut skipped_repo_count = 0;
-        for page in 1..=GITHUB_COMMITS_MAX_PAGES {
-            let url = format!(
-                "https://api.github.com/repos/{}/commits?since={since}&until={until}&per_page={}&page={page}",
-                github_api_repo_path(&repo),
-                GITHUB_COMMITS_PER_PAGE,
-            );
-            let response = github_headers(client.get(url), token.as_deref())
-                .send()
-                .map_err(|e| format!("读取 GitHub 提交贡献失败：{e}"))?;
-            if !response.status().is_success() {
-                if page == 1 && is_recoverable_github_contribution_status(response.status()) {
-                    skipped_repo_count += 1;
-                    break;
-                }
-                return Err(github_http_error("读取 GitHub 提交贡献失败", response));
-            }
-            let commits = response
-                .json::<Vec<GitHubCommitResponse>>()
-                .map_err(|e| format!("解析 GitHub 提交贡献失败：{e}"))?;
-            let is_last_page = commits.len() < GITHUB_COMMITS_PER_PAGE;
-            add_commit_contributions(&mut counts, &commits, start_day_index, end_day_index);
-            if is_last_page {
-                break;
-            }
+        if let Some(count) = cached_local_contribution_count(&settings, &repo_id, &today) {
+            collect_local_contribution_counts(
+                &path,
+                start_day_index,
+                end_day_index - 1,
+                &mut counts,
+            )?;
+            counts.insert(today, count);
+        } else {
+            collect_local_contribution_counts(&path, start_day_index, end_day_index, &mut counts)?;
+            let today_count = counts.get(&today).copied().unwrap_or_default();
+            write_local_contribution_cache(&mut settings, &repo_id, &today, today_count);
+            save_settings(&app, &settings)?;
         }
         Ok(GitHubContributionResult {
             days: github_contribution_days(&counts, end_day_index),
-            meta: github_contribution_meta(repo_count, repo_count, skipped_repo_count),
+            meta: github_contribution_meta(1, 1, 0),
         })
     })
     .await
@@ -3616,7 +3720,10 @@ pub async fn repo_refresh_summary(
 }
 
 #[tauri::command]
-pub async fn repo_refresh_language_stats(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+pub async fn repo_refresh_language_stats(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoSummary, String> {
     run_blocking("刷新语言统计", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
@@ -3635,7 +3742,10 @@ pub async fn repo_refresh_language_stats(app: AppHandle, repo_id: String) -> Res
 }
 
 #[tauri::command]
-pub async fn repo_get_readme(app: AppHandle, repo_id: String) -> Result<Option<RepoReadme>, String> {
+pub async fn repo_get_readme(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<Option<RepoReadme>, String> {
     run_blocking("读取 README", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
         read_repo_readme(&repo_id, &path)
@@ -3662,7 +3772,10 @@ pub async fn repo_get_changes(app: AppHandle, repo_id: String) -> Result<Vec<Rep
 }
 
 #[tauri::command]
-pub async fn repo_get_history(app: AppHandle, repo_id: String) -> Result<Vec<CommitSummary>, String> {
+pub async fn repo_get_history(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<Vec<CommitSummary>, String> {
     run_blocking("读取提交历史", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
         Ok(repo_history(&path))
@@ -3684,7 +3797,10 @@ pub async fn repo_get_commit_detail(
 }
 
 #[tauri::command]
-pub async fn repo_get_branches(app: AppHandle, repo_id: String) -> Result<Vec<BranchSummary>, String> {
+pub async fn repo_get_branches(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<Vec<BranchSummary>, String> {
     run_blocking("读取仓库分支", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
         Ok(repo_branches(&path))
@@ -3693,7 +3809,10 @@ pub async fn repo_get_branches(app: AppHandle, repo_id: String) -> Result<Vec<Br
 }
 
 #[tauri::command]
-pub async fn repo_get_conflicts(app: AppHandle, repo_id: String) -> Result<RepoConflictState, String> {
+pub async fn repo_get_conflicts(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoConflictState, String> {
     run_blocking("读取冲突状态", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
         Ok(repo_conflicts(&path))
@@ -3870,7 +3989,11 @@ pub fn repo_stop_launch(repo_id: String) -> Result<ProjectLaunchStatus, String> 
 }
 
 #[tauri::command]
-pub async fn repo_stage_files(app: AppHandle, repo_id: String, files: Vec<String>) -> Result<(), String> {
+pub async fn repo_stage_files(
+    app: AppHandle,
+    repo_id: String,
+    files: Vec<String>,
+) -> Result<(), String> {
     run_blocking("暂存文件", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
         for file in selected_repo_files(&path, files)? {
@@ -3940,7 +4063,10 @@ pub async fn repo_pull(app: AppHandle, repo_id: String) -> Result<RepoSummary, S
 }
 
 #[tauri::command]
-pub async fn repo_merge_pull(app: AppHandle, repo_id: String) -> Result<RepoMergePullResult, String> {
+pub async fn repo_merge_pull(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoMergePullResult, String> {
     run_blocking("合并拉取仓库", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
@@ -4044,7 +4170,8 @@ pub async fn repo_resolve_conflict_file(
         let root = workspace_root(&app)?;
         let repo_path = repo_path_by_id(&app, &repo_id)?;
         let file_path = safe_repo_file_path(&repo_path, &path)?;
-        let content = fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
+        let content =
+            fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
         let resolved = resolve_conflict_content(&content, &choices)?;
         fs::write(&file_path, resolved).map_err(|e| format!("写入冲突文件失败：{e}"))?;
         if stage {
@@ -4106,7 +4233,11 @@ pub async fn repo_continue_conflict_operation(
 }
 
 #[tauri::command]
-pub async fn bulk_sync_preview(_app: AppHandle, operation: String, repos: Vec<RepoSummary>) -> Result<BulkSyncPreview, String> {
+pub async fn bulk_sync_preview(
+    _app: AppHandle,
+    operation: String,
+    repos: Vec<RepoSummary>,
+) -> Result<BulkSyncPreview, String> {
     run_blocking("批量预览", move || {
         Ok(build_bulk_preview(operation, repos))
     })
@@ -4530,7 +4661,11 @@ fn repo_commit_detail(path: &Path, hash: &str) -> Result<CommitDetail, String> {
     })
 }
 
-fn repo_commit_file_changes(path: &Path, hash: &str, first_parent: Option<&str>) -> Vec<CommitFileChange> {
+fn repo_commit_file_changes(
+    path: &Path,
+    hash: &str,
+    first_parent: Option<&str>,
+) -> Vec<CommitFileChange> {
     let status_args = commit_diff_args("--name-status", hash, first_parent);
     let status_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
     let status_output = git_command_lossy(path, &status_refs).unwrap_or_default();
@@ -4586,7 +4721,10 @@ fn commit_file_statuses(output: &str) -> Vec<CommitFileStatus> {
             let mut parts = line.split('\t');
             let status_code = parts.next()?.trim();
             let first_path = parts.next()?.trim();
-            let second_path = parts.next().map(str::trim).filter(|value| !value.is_empty());
+            let second_path = parts
+                .next()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
             let path = second_path.unwrap_or(first_path).to_string();
             if path.is_empty() {
                 return None;
@@ -4642,7 +4780,10 @@ fn parse_commit_file_numstat(line: &str) -> Option<(String, i32, i32)> {
     if path.is_empty() {
         return None;
     }
-    let extra = parts.next().map(str::trim).filter(|value| !value.is_empty());
+    let extra = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let next_path = if let Some(next) = extra {
         next.to_string()
     } else {
@@ -4764,7 +4905,8 @@ fn parse_commit_diff_hunks(block: &str) -> Vec<CommitDiffHunk> {
         let Some(hunk) = current.as_mut() else {
             continue;
         };
-        let (kind, content, old_number, new_number) = if let Some(content) = line.strip_prefix('+') {
+        let (kind, content, old_number, new_number) = if let Some(content) = line.strip_prefix('+')
+        {
             let number = new_line;
             new_line += 1;
             ("added", content.to_string(), None, Some(number))
@@ -4777,7 +4919,12 @@ fn parse_commit_diff_hunks(block: &str) -> Vec<CommitDiffHunk> {
             let new_number = new_line;
             old_line += 1;
             new_line += 1;
-            ("context", content.to_string(), Some(old_number), Some(new_number))
+            (
+                "context",
+                content.to_string(),
+                Some(old_number),
+                Some(new_number),
+            )
         } else {
             ("meta", line.to_string(), None, None)
         };
@@ -4917,8 +5064,11 @@ fn run_push(app: &AppHandle, path: &Path) -> Result<(), String> {
 }
 
 fn current_branch_upstream(path: &Path) -> Option<String> {
-    git_command_lossy(path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-        .filter(|value| !value.is_empty())
+    git_command_lossy(
+        path,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .filter(|value| !value.is_empty())
 }
 
 fn repo_dirty_count(summary: &RepoSummary) -> usize {
@@ -4951,7 +5101,10 @@ fn merge_pull_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<
     }
 }
 
-fn build_bulk_push_preview_with_lookup<F>(repos: Vec<RepoSummary>, has_upstream: F) -> BulkSyncPreview
+fn build_bulk_push_preview_with_lookup<F>(
+    repos: Vec<RepoSummary>,
+    has_upstream: F,
+) -> BulkSyncPreview
 where
     F: Fn(&RepoSummary) -> bool,
 {
@@ -5409,21 +5562,24 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_github_contribution_repo_input() {
+    fn normalizes_local_contribution_repo_input_only() {
         assert_eq!(
-            normalize_github_contribution_repo(" sena-nana/LiliaGithub ".to_string()),
-            Some("sena-nana/LiliaGithub".to_string())
+            normalize_local_contribution_repo_id(" local:repo-id "),
+            Some("repo-id".to_string())
         );
-        assert_eq!(normalize_github_contribution_repo("".to_string()), None);
-        assert_eq!(normalize_github_contribution_repo("invalid".to_string()), None);
-    }
-
-    #[test]
-    fn treats_missing_or_empty_repos_as_recoverable_contribution_sources() {
-        assert!(is_recoverable_github_contribution_status(StatusCode::NOT_FOUND));
-        assert!(is_recoverable_github_contribution_status(StatusCode::CONFLICT));
-        assert!(is_recoverable_github_contribution_status(StatusCode::FORBIDDEN));
-        assert!(!is_recoverable_github_contribution_status(StatusCode::UNAUTHORIZED));
+        assert_eq!(
+            normalize_local_contribution_repo_id("repo-id"),
+            Some("repo-id".to_string())
+        );
+        assert_eq!(
+            normalize_local_contribution_repo_id("github:sena-nana/LiliaGithub"),
+            None
+        );
+        assert_eq!(
+            normalize_local_contribution_repo_id("https://github.com/a/b"),
+            None
+        );
+        assert_eq!(normalize_local_contribution_repo_id(""), None);
     }
 
     fn test_remote_shortcut(full_name: &str) -> RemoteRepoShortcut {
@@ -5443,7 +5599,8 @@ mod tests {
     #[test]
     fn remote_repo_shortcuts_are_upserted_by_full_name() {
         let mut shortcuts = Vec::new();
-        remember_remote_repo_shortcut(&mut shortcuts, test_remote_shortcut("sena-nana/Remote")).unwrap();
+        remember_remote_repo_shortcut(&mut shortcuts, test_remote_shortcut("sena-nana/Remote"))
+            .unwrap();
         let first_opened_at = shortcuts[0].opened_at;
         let mut updated = test_remote_shortcut("https://github.com/sena-nana/Remote.git");
         updated.private = true;
@@ -5454,7 +5611,10 @@ mod tests {
         assert_eq!(shortcuts.len(), 1);
         assert_eq!(shortcuts[0].full_name, "sena-nana/Remote");
         assert!(shortcuts[0].private);
-        assert_eq!(shortcuts[0].clone_url, "https://github.com/sena-nana/Remote-updated.git");
+        assert_eq!(
+            shortcuts[0].clone_url,
+            "https://github.com/sena-nana/Remote-updated.git"
+        );
         assert!(shortcuts[0].opened_at >= first_opened_at);
     }
 
@@ -5506,24 +5666,42 @@ mod tests {
 
         assert_eq!(
             names,
-            vec!["README.md", "readme.markdown", "README", "README.txt", "README.zh-CN.md", "docs.md"],
+            vec![
+                "README.md",
+                "readme.markdown",
+                "README",
+                "README.txt",
+                "README.zh-CN.md",
+                "docs.md"
+            ],
         );
     }
 
     #[test]
     fn detects_source_languages_by_path() {
-        assert_eq!(language_for_path(Path::new("src/app.ts")), Some("TypeScript"));
+        assert_eq!(
+            language_for_path(Path::new("src/app.ts")),
+            Some("TypeScript")
+        );
         assert_eq!(language_for_path(Path::new("src/App.vue")), Some("Vue"));
         assert_eq!(language_for_path(Path::new("src/main.rs")), Some("Rust"));
-        assert_eq!(language_for_path(Path::new("scripts/build.ps1")), Some("PowerShell"));
-        assert_eq!(language_for_path(Path::new("Dockerfile")), Some("Dockerfile"));
+        assert_eq!(
+            language_for_path(Path::new("scripts/build.ps1")),
+            Some("PowerShell")
+        );
+        assert_eq!(
+            language_for_path(Path::new("Dockerfile")),
+            Some("Dockerfile")
+        );
         assert_eq!(language_for_path(Path::new("assets/icon.png")), None);
     }
 
     #[test]
     fn skips_generated_lock_and_binary_language_paths() {
         assert!(should_skip_language_path(Path::new("dist/app.ts")));
-        assert!(should_skip_language_path(Path::new("node_modules/pkg/index.js")));
+        assert!(should_skip_language_path(Path::new(
+            "node_modules/pkg/index.js"
+        )));
         assert!(should_skip_language_path(Path::new("package-lock.json")));
         assert!(should_skip_language_path(Path::new("assets/icon.png")));
         assert!(!should_skip_language_path(Path::new("src/app.ts")));
@@ -5537,8 +5715,16 @@ mod tests {
         run_git(&path, &["config", "user.name", "Test User"]);
         fs::create_dir_all(path.join("src")).unwrap();
         fs::create_dir_all(path.join("dist")).unwrap();
-        fs::write(path.join("src").join("app.ts"), "console.log('typescript');\n").unwrap();
-        fs::write(path.join("src").join("view.vue"), "<template>Vue</template>\n").unwrap();
+        fs::write(
+            path.join("src").join("app.ts"),
+            "console.log('typescript');\n",
+        )
+        .unwrap();
+        fs::write(
+            path.join("src").join("view.vue"),
+            "<template>Vue</template>\n",
+        )
+        .unwrap();
         fs::write(path.join("README.unknown"), "plain text\n").unwrap();
         fs::write(path.join("dist").join("generated.ts"), "ignored\n").unwrap();
         fs::write(path.join("binary.dat"), [0_u8, 159, 146, 150]).unwrap();
@@ -5631,48 +5817,53 @@ mod tests {
     }
 
     #[test]
-    fn aggregates_github_commit_contribution_days() {
-        let mut counts = HashMap::new();
-        let commits = vec![
-            GitHubCommitResponse {
-                commit: GitHubCommitPayload {
-                    author: Some(GitHubCommitAuthor {
-                        date: Some("2026-06-11T08:00:00Z".to_string()),
-                    }),
-                },
-            },
-            GitHubCommitResponse {
-                commit: GitHubCommitPayload {
-                    author: Some(GitHubCommitAuthor {
-                        date: Some("2026-06-11T12:00:00Z".to_string()),
-                    }),
-                },
-            },
-            GitHubCommitResponse {
-                commit: GitHubCommitPayload {
-                    author: Some(GitHubCommitAuthor {
-                        date: Some("2026-06-10T12:00:00Z".to_string()),
-                    }),
-                },
-            },
-        ];
-        let end = days_from_civil(2026, 6, 11);
-        add_commit_contributions(&mut counts, &commits, end - 2, end);
-        let days = github_contribution_days(&counts, end);
+    fn collect_local_contribution_counts_counts_all_repo_commits() {
+        let path = temp_dir("collect-local-contribution");
+        init_git_repo(&path);
+        fs::create_dir_all(path.join("src")).unwrap();
+        fs::write(path.join("src").join("app.ts"), "console.log(1)\n").unwrap();
+        run_git(&path, &["add", "src/app.ts"]);
+        run_git(&path, &["commit", "-m", "first commit"]);
 
-        assert_eq!(days.len(), GITHUB_CONTRIBUTION_DAYS);
-        assert_eq!(days.last().unwrap().date, "2026-06-11");
-        assert_eq!(days.last().unwrap().count, 2);
-        assert_eq!(days[days.len() - 2].date, "2026-06-10");
-        assert_eq!(days[days.len() - 2].count, 1);
+        let end_day_index = current_utc_day_index();
+        let start_day_index = end_day_index - 2;
+
+        let mut counts = HashMap::new();
+        collect_local_contribution_counts(&path, start_day_index, end_day_index, &mut counts)
+            .unwrap();
+        let total: usize = counts.values().sum();
+
+        assert_eq!(total, 1);
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn local_contribution_cache_reads_writes_and_removes_repo_days() {
+        let mut settings = WorkspaceSettings::default();
+
+        write_local_contribution_cache(&mut settings, "repo-id", "2026-06-11", 3);
+
+        assert_eq!(
+            cached_local_contribution_count(&settings, "repo-id", "2026-06-11"),
+            Some(3)
+        );
+        assert_eq!(
+            cached_local_contribution_count(&settings, "repo-id", "2026-06-12"),
+            None
+        );
+
+        remove_local_contribution_cache(&mut settings, "repo-id");
+
+        assert_eq!(
+            cached_local_contribution_count(&settings, "repo-id", "2026-06-11"),
+            None
+        );
     }
 
     #[test]
     fn converts_civil_dates_for_github_contributions() {
         let day = days_from_civil(2026, 6, 11);
         assert_eq!(format_day_index(day), "2026-06-11");
-        assert_eq!(parse_github_date_day("2026-06-11T08:00:00Z"), Some(day));
-        assert_eq!(parse_github_date_day("bad-date"), None);
     }
 
     #[test]
@@ -5920,18 +6111,27 @@ mod tests {
     #[test]
     fn merge_pull_blocks_unsafe_states() {
         assert_eq!(
-            merge_pull_block_reason(&test_repo_summary(|summary| summary.conflict_count = 1), true),
+            merge_pull_block_reason(
+                &test_repo_summary(|summary| summary.conflict_count = 1),
+                true
+            ),
             Some("已有冲突需要先处理".to_string())
         );
         assert_eq!(
-            merge_pull_block_reason(&test_repo_summary(|summary| summary.unstaged_count = 1), true),
+            merge_pull_block_reason(
+                &test_repo_summary(|summary| summary.unstaged_count = 1),
+                true
+            ),
             Some("存在未提交变更，已阻止合并拉取".to_string())
         );
         assert_eq!(
             merge_pull_block_reason(&test_repo_summary(|_| {}), false),
             Some("当前分支没有 upstream".to_string())
         );
-        assert_eq!(merge_pull_block_reason(&test_repo_summary(|_| {}), true), None);
+        assert_eq!(
+            merge_pull_block_reason(&test_repo_summary(|_| {}), true),
+            None
+        );
     }
 
     #[test]
@@ -5957,14 +6157,29 @@ index 1111111..2222222 100644
         assert_eq!((hunk.old_start, hunk.old_lines), (1, 3));
         assert_eq!((hunk.new_start, hunk.new_lines), (1, 4));
         assert_eq!(hunk.lines[0].kind, "context");
-        assert_eq!((hunk.lines[0].old_line, hunk.lines[0].new_line), (Some(1), Some(1)));
+        assert_eq!(
+            (hunk.lines[0].old_line, hunk.lines[0].new_line),
+            (Some(1), Some(1))
+        );
         assert_eq!(hunk.lines[1].kind, "deleted");
-        assert_eq!((hunk.lines[1].old_line, hunk.lines[1].new_line), (Some(2), None));
+        assert_eq!(
+            (hunk.lines[1].old_line, hunk.lines[1].new_line),
+            (Some(2), None)
+        );
         assert_eq!(hunk.lines[2].kind, "added");
-        assert_eq!((hunk.lines[2].old_line, hunk.lines[2].new_line), (None, Some(2)));
+        assert_eq!(
+            (hunk.lines[2].old_line, hunk.lines[2].new_line),
+            (None, Some(2))
+        );
         assert_eq!(hunk.lines[3].kind, "added");
-        assert_eq!((hunk.lines[3].old_line, hunk.lines[3].new_line), (None, Some(3)));
-        assert_eq!((hunk.lines[4].old_line, hunk.lines[4].new_line), (Some(3), Some(4)));
+        assert_eq!(
+            (hunk.lines[3].old_line, hunk.lines[3].new_line),
+            (None, Some(3))
+        );
+        assert_eq!(
+            (hunk.lines[4].old_line, hunk.lines[4].new_line),
+            (Some(3), Some(4))
+        );
     }
 
     #[test]
@@ -6068,7 +6283,8 @@ rename to docs/new.md",
             summary.behind = 2;
         });
 
-        let preview = build_bulk_push_preview_with_lookup(vec![no_remote, detached, behind], |_| true);
+        let preview =
+            build_bulk_push_preview_with_lookup(vec![no_remote, detached, behind], |_| true);
 
         assert_eq!(preview.blocked.len(), 3);
         assert!(preview
@@ -6096,14 +6312,14 @@ rename to docs/new.md",
             summary.id = "idle".to_string();
         });
 
-        let preview = build_bulk_push_preview_with_lookup(vec![ready.clone(), idle.clone()], |_| true);
+        let preview =
+            build_bulk_push_preview_with_lookup(vec![ready.clone(), idle.clone()], |_| true);
 
         assert_eq!(preview.eligible.len(), 1);
         assert_eq!(preview.eligible[0].repo.id, ready.id);
-        assert!(preview
-            .warnings
-            .iter()
-            .any(|item| item.repo.id == ready.id && item.reason == "存在未提交变更，但仍可执行 push"));
+        assert!(preview.warnings.iter().any(
+            |item| item.repo.id == ready.id && item.reason == "存在未提交变更，但仍可执行 push"
+        ));
         assert!(preview
             .warnings
             .iter()
@@ -6254,7 +6470,11 @@ rename to docs/new.md",
             login: "lilia-user".to_string(),
             avatar_url: None,
             bound_at: 1,
-            scopes: vec!["repo".to_string(), "workflow".to_string(), "read:user".to_string()],
+            scopes: vec![
+                "repo".to_string(),
+                "workflow".to_string(),
+                "read:user".to_string(),
+            ],
             client_id_source: "bundled".to_string(),
         };
 
@@ -6318,7 +6538,12 @@ rename to docs/new.md",
         let link = r#"<https://api.github.com/user/repos?page=2>; rel="next", <https://api.github.com/user/repos?page=4>; rel="last""#;
 
         assert_eq!(parse_next_page(Some(link)), Some(2));
-        assert_eq!(parse_next_page(Some(r#"<https://api.github.com/user/repos?page=4>; rel="last""#)), None);
+        assert_eq!(
+            parse_next_page(Some(
+                r#"<https://api.github.com/user/repos?page=4>; rel="last""#
+            )),
+            None
+        );
         assert_eq!(parse_next_page(None), None);
     }
 
@@ -6361,12 +6586,18 @@ rename to docs/new.md",
             html_url: "https://github.com/a/repo/issues/1".to_string(),
             updated_at: "2026-06-11T00:00:00Z".to_string(),
             created_at: "2026-06-11T00:00:00Z".to_string(),
-            labels: vec![GitHubLabelResponse { name: "bug".to_string() }],
-            assignees: vec![GitHubAssigneeResponse { login: "octo".to_string() }],
+            labels: vec![GitHubLabelResponse {
+                name: "bug".to_string(),
+            }],
+            assignees: vec![GitHubAssigneeResponse {
+                login: "octo".to_string(),
+            }],
             pull_request: None,
         };
         let pr = GitHubIssueResponse {
-            pull_request: Some(serde_json::json!({ "url": "https://api.github.com/repos/a/repo/pulls/2" })),
+            pull_request: Some(
+                serde_json::json!({ "url": "https://api.github.com/repos/a/repo/pulls/2" }),
+            ),
             number: 2,
             title: "PR".to_string(),
             state: "open".to_string(),
@@ -6435,11 +6666,20 @@ rename to docs/new.md",
         fs::write(repo.join("docs").join("README.md"), "# Nested\n").unwrap();
 
         let readmes = read_repo_readmes("repo", &repo).unwrap();
-        let paths = readmes.iter().map(|readme| readme.path.as_str()).collect::<Vec<_>>();
+        let paths = readmes
+            .iter()
+            .map(|readme| readme.path.as_str())
+            .collect::<Vec<_>>();
 
         assert_eq!(
             paths,
-            vec!["README.md", "readme.markdown", "README", "README.txt", "README.zh-CN.md"],
+            vec![
+                "README.md",
+                "readme.markdown",
+                "README",
+                "README.txt",
+                "README.zh-CN.md"
+            ],
         );
         assert_eq!(readmes[0].content, "# Main\n");
         assert_eq!(readmes[1].format, "markdown");
@@ -6450,7 +6690,11 @@ rename to docs/new.md",
     fn reads_repo_readme_image_data_urls() {
         let repo = temp_dir("repo-readme-images");
         fs::create_dir_all(repo.join(".github").join("assets")).unwrap();
-        fs::write(repo.join(".github").join("assets").join("main-window.png"), [1_u8, 2, 3]).unwrap();
+        fs::write(
+            repo.join(".github").join("assets").join("main-window.png"),
+            [1_u8, 2, 3],
+        )
+        .unwrap();
         fs::write(
             repo.join("README.md"),
             "![window](./.github/assets/main-window.png)\n<img src='./.github/assets/main-window.png'>\n",
@@ -6460,7 +6704,10 @@ rename to docs/new.md",
         let readme = read_repo_readme("repo", &repo).unwrap().unwrap();
 
         assert_eq!(
-            readme.images.get("./.github/assets/main-window.png").map(String::as_str),
+            readme
+                .images
+                .get("./.github/assets/main-window.png")
+                .map(String::as_str),
             Some("data:image/png;base64,AQID"),
         );
     }
@@ -6625,7 +6872,12 @@ rename to docs/new.md",
         init_git_repo(&other);
         run_git(
             &blocking,
-            &["remote", "add", "origin", "https://github.com/a/blocking.git"],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/a/blocking.git",
+            ],
         );
         run_git(
             &other,
