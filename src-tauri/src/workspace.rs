@@ -1402,19 +1402,12 @@ fn parse_next_page(link: Option<&str>) -> Option<u32> {
     None
 }
 
-fn normalize_github_contribution_repos(repo_full_names: Vec<String>) -> (Vec<String>, usize) {
-    let mut seen = HashSet::new();
-    let mut valid_repos = Vec::new();
-    for name in repo_full_names {
-        let trimmed = name.trim().trim_matches('/').to_string();
-        if trimmed.is_empty() || !trimmed.contains('/') || !seen.insert(trimmed.clone()) {
-            continue;
-        }
-        valid_repos.push(trimmed);
+fn normalize_github_contribution_repo(repo_full_name: String) -> Option<String> {
+    let trimmed = repo_full_name.trim().trim_matches('/').to_string();
+    if trimmed.is_empty() || !trimmed.contains('/') {
+        return None;
     }
-    let requested_repo_count = valid_repos.len();
-    valid_repos.truncate(GITHUB_CONTRIBUTIONS_REPO_LIMIT);
-    (valid_repos, requested_repo_count)
+    Some(trimmed)
 }
 
 fn github_api_repo_path(repo_full_name: &str) -> String {
@@ -3508,57 +3501,55 @@ pub async fn github_list_workflow_runs(
 }
 
 #[tauri::command]
-pub async fn github_list_repo_contributions(
+pub async fn github_list_repo_contribution(
     app: AppHandle,
-    repo_full_names: Vec<String>,
+    repo_full_name: String,
 ) -> Result<GitHubContributionResult, String> {
     run_blocking("读取 GitHub 提交贡献", move || {
-        let (repos, requested_repo_count) = normalize_github_contribution_repos(repo_full_names);
-        let repo_count = repos.len();
+        let repo = normalize_github_contribution_repo(repo_full_name);
+        let repo_count = usize::from(repo.is_some());
         let end_day_index = current_utc_day_index();
         let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
-        if repos.is_empty() {
+        let Some(repo) = repo else {
             return Ok(GitHubContributionResult {
                 days: github_contribution_days(&HashMap::new(), end_day_index),
-                meta: github_contribution_meta(repo_count, requested_repo_count, 0),
+                meta: github_contribution_meta(repo_count, repo_count, 0),
             });
-        }
+        };
         let token = token_for_binding(&app)?;
         let client = build_client()?;
         let since = format!("{}T00:00:00Z", format_day_index(start_day_index));
         let until = format!("{}T23:59:59Z", format_day_index(end_day_index));
         let mut counts: HashMap<String, usize> = HashMap::new();
         let mut skipped_repo_count = 0;
-        for repo in repos {
-            for page in 1..=GITHUB_COMMITS_MAX_PAGES {
-                let url = format!(
-                    "https://api.github.com/repos/{}/commits?since={since}&until={until}&per_page={}&page={page}",
-                    github_api_repo_path(&repo),
-                    GITHUB_COMMITS_PER_PAGE,
-                );
-                let response = github_headers(client.get(url), token.as_deref())
-                    .send()
-                    .map_err(|e| format!("读取 GitHub 提交贡献失败：{e}"))?;
-                if !response.status().is_success() {
-                    if page == 1 && is_recoverable_github_contribution_status(response.status()) {
-                        skipped_repo_count += 1;
-                        break;
-                    }
-                    return Err(github_http_error("读取 GitHub 提交贡献失败", response));
-                }
-                let commits = response
-                    .json::<Vec<GitHubCommitResponse>>()
-                    .map_err(|e| format!("解析 GitHub 提交贡献失败：{e}"))?;
-                let is_last_page = commits.len() < GITHUB_COMMITS_PER_PAGE;
-                add_commit_contributions(&mut counts, &commits, start_day_index, end_day_index);
-                if is_last_page {
+        for page in 1..=GITHUB_COMMITS_MAX_PAGES {
+            let url = format!(
+                "https://api.github.com/repos/{}/commits?since={since}&until={until}&per_page={}&page={page}",
+                github_api_repo_path(&repo),
+                GITHUB_COMMITS_PER_PAGE,
+            );
+            let response = github_headers(client.get(url), token.as_deref())
+                .send()
+                .map_err(|e| format!("读取 GitHub 提交贡献失败：{e}"))?;
+            if !response.status().is_success() {
+                if page == 1 && is_recoverable_github_contribution_status(response.status()) {
+                    skipped_repo_count += 1;
                     break;
                 }
+                return Err(github_http_error("读取 GitHub 提交贡献失败", response));
+            }
+            let commits = response
+                .json::<Vec<GitHubCommitResponse>>()
+                .map_err(|e| format!("解析 GitHub 提交贡献失败：{e}"))?;
+            let is_last_page = commits.len() < GITHUB_COMMITS_PER_PAGE;
+            add_commit_contributions(&mut counts, &commits, start_day_index, end_day_index);
+            if is_last_page {
+                break;
             }
         }
         Ok(GitHubContributionResult {
             days: github_contribution_days(&counts, end_day_index),
-            meta: github_contribution_meta(repo_count, requested_repo_count, skipped_repo_count),
+            meta: github_contribution_meta(repo_count, repo_count, skipped_repo_count),
         })
     })
     .await
@@ -5418,34 +5409,13 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_github_contribution_repo_inputs() {
-        let (repos, requested_repo_count) = normalize_github_contribution_repos(vec![
-            " sena-nana/LiliaGithub ".to_string(),
-            "".to_string(),
-            "invalid".to_string(),
-            "sena-nana/LiliaGithub".to_string(),
-            "sena-nana/Lilia".to_string(),
-        ]);
-
-        assert_eq!(repos, vec!["sena-nana/LiliaGithub", "sena-nana/Lilia"]);
-        assert_eq!(requested_repo_count, 2);
-    }
-
-    #[test]
-    fn marks_github_contribution_repo_limit_truncation() {
-        let names = (0..GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1)
-            .map(|index| format!("sena-nana/repo-{index}"))
-            .collect::<Vec<_>>();
-        let (repos, requested_repo_count) = normalize_github_contribution_repos(names);
-        let meta = github_contribution_meta(repos.len(), requested_repo_count, 0);
-
-        assert_eq!(repos.len(), GITHUB_CONTRIBUTIONS_REPO_LIMIT);
-        assert_eq!(requested_repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1);
-        assert_eq!(meta.repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT);
-        assert_eq!(meta.requested_repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1);
-        assert_eq!(meta.repo_limit, GITHUB_CONTRIBUTIONS_REPO_LIMIT);
-        assert_eq!(meta.skipped_repo_count, 0);
-        assert!(meta.truncated);
+    fn normalizes_github_contribution_repo_input() {
+        assert_eq!(
+            normalize_github_contribution_repo(" sena-nana/LiliaGithub ".to_string()),
+            Some("sena-nana/LiliaGithub".to_string())
+        );
+        assert_eq!(normalize_github_contribution_repo("".to_string()), None);
+        assert_eq!(normalize_github_contribution_repo("invalid".to_string()), None);
     }
 
     #[test]

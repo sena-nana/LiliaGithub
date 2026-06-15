@@ -334,7 +334,9 @@ function createFallbackSettings(): WorkspaceSettings {
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
-let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionResult) | null = null;
+let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContributionResult) | null = null;
+let fallbackGitHubWorkflowRunsOverride:
+  ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null = null;
 let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
@@ -356,7 +358,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
-  fallbackRepoContributionsOverride = null;
+  fallbackRepoContributionOverride = null;
+  fallbackGitHubWorkflowRunsOverride = null;
   fallbackRepoRemoteSyncOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
@@ -397,10 +400,16 @@ export function setFallbackConflictOverrideForTests(
   fallbackConflictOverride = override;
 }
 
-export function setFallbackRepoContributionsOverrideForTests(
-  override: ((repoFullNames: string[]) => GitHubContributionResult) | null,
+export function setFallbackRepoContributionOverrideForTests(
+  override: ((repoFullName: string) => GitHubContributionResult) | null,
 ) {
-  fallbackRepoContributionsOverride = override;
+  fallbackRepoContributionOverride = override;
+}
+
+export function setFallbackGitHubWorkflowRunsOverrideForTests(
+  override: ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null,
+) {
+  fallbackGitHubWorkflowRunsOverride = override;
 }
 
 export function setFallbackRepoRemoteSyncOverrideForTests(
@@ -525,7 +534,7 @@ export function setFallbackGitHubRepoReadmesForTests(readmesByRepo: Record<strin
   );
 }
 
-async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T): Promise<T> {
+async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T | Promise<T>): Promise<T> {
   if (fallback) return fallback();
   throw new Error("Workspace fallback is unavailable for this command");
 }
@@ -759,9 +768,10 @@ function normalizeRemoteRepoShortcut(repo: RemoteRepoShortcut): RemoteRepoShortc
   const parts = fullName.split("/").filter(Boolean);
   const name = repo.name.trim() || parts[parts.length - 1] || fullName;
   return {
-    ...repo,
     fullName,
     name,
+    private: repo.private,
+    archived: repo.archived,
     defaultBranch: repo.defaultBranch?.trim() || null,
     htmlUrl: repo.htmlUrl.trim() || `https://github.com/${fullName}`,
     cloneUrl: repo.cloneUrl.trim() || `https://github.com/${fullName}.git`,
@@ -1108,42 +1118,40 @@ export function updateGitHubIssue(
 
 export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | null): Promise<GitHubWorkflowRun[]> {
   fallbackGitHubWorkflowRunListCalls.push({ repoFullName, perPage: perPage ?? null });
-  return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, () =>
-    [...(fallbackGitHubWorkflowRuns[repoFullName] ?? [])]
+  return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, async () => {
+    const source = fallbackGitHubWorkflowRunsOverride
+      ? await fallbackGitHubWorkflowRunsOverride(repoFullName, perPage ?? null)
+      : fallbackGitHubWorkflowRuns[repoFullName] ?? [];
+    return [...source]
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .slice(0, perPage ?? undefined)
-      .map((run) => ({ ...run })),
-  );
+      .map((run) => ({ ...run }));
+  });
 }
 
-function fallbackContributionMeta(repoFullNames: string[]): GitHubContributionMeta {
-  const requestedRepoCount = Array.from(new Set(
-    repoFullNames
-      .map((name) => name.trim().replace(/^\/+|\/+$/g, ""))
-      .filter((name) => name && name.includes("/")),
-  )).length;
-  const repoCount = Math.min(requestedRepoCount, CONTRIBUTION_REPO_LIMIT);
+function fallbackContributionMeta(repoFullName: string): GitHubContributionMeta {
+  const normalized = repoFullName.trim().replace(/^\/+|\/+$/g, "");
+  const repoCount = normalized && normalized.includes("/") ? 1 : 0;
   return {
     repoCount,
-    requestedRepoCount,
+    requestedRepoCount: repoCount,
     repoLimit: CONTRIBUTION_REPO_LIMIT,
-    truncated: requestedRepoCount > repoCount,
+    truncated: false,
     skippedRepoCount: 0,
     refreshedAt: Date.now(),
   };
 }
 
-export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionResult> {
-  return call("github_list_repo_contributions", { repoFullNames }, () => {
-    if (fallbackRepoContributionsOverride) {
-      const result = fallbackRepoContributionsOverride(repoFullNames);
+export function listRepoContribution(repoFullName: string): Promise<GitHubContributionResult> {
+  return call("github_list_repo_contribution", { repoFullName }, () => {
+    if (fallbackRepoContributionOverride) {
+      const result = fallbackRepoContributionOverride(repoFullName);
       return {
         days: result.days.map((item) => ({ ...item })),
         meta: { ...result.meta },
       };
     }
     const end = new Date("2026-06-11T00:00:00Z");
-    const repoFactor = Math.max(1, repoFullNames.filter((name) => name.trim()).length);
     const days = Array.from({ length: CONTRIBUTION_DAYS }, (_, index) => {
       const date = new Date(end);
       date.setUTCDate(end.getUTCDate() - (CONTRIBUTION_DAYS - 1 - index));
@@ -1151,12 +1159,12 @@ export function listRepoContributions(repoFullNames: string[]): Promise<GitHubCo
       const active = dayIndex % 5 === 0 || dayIndex % 17 === 0 || dayIndex > Math.floor(end.getTime() / 86_400_000) - 45;
       return {
         date: date.toISOString().slice(0, 10),
-        count: active ? ((dayIndex % 4) + 1) * repoFactor : 0,
+        count: active ? ((dayIndex % 4) + 1) : 0,
       };
     });
     return {
       days,
-      meta: fallbackContributionMeta(repoFullNames),
+      meta: fallbackContributionMeta(repoFullName),
     };
   });
 }

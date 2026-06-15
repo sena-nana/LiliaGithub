@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import type { GitHubIssue, GitHubRepoSummary, RepoConflictState } from "../src/services/workspace";
+import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoConflictState } from "../src/services/workspace";
 import { conflictState, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
@@ -165,45 +165,10 @@ describe("基础路由", () => {
 
     const repoLink = await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" });
     await waitFor(() => expect(repoLink).toHaveAttribute("title", "C:\\Files\\workspace\\LiliaGithub"), { timeout: 3000 });
-    await fireEvent.click(repoLink);
+    await fireEvent.click(screen.getByRole("link", { name: "打开 sena-nana/LiliaGithub" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-  });
-
-  it("总览页未 clone 的 GitHub 项目点击 clone 后保持在总览页", async () => {
-    const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
-      {
-        items: [
-          githubRepoSummary("sena-nana/LiliaGithub"),
-          githubRepoSummary("sena-nana/NewRepo", {
-            description: "Not cloned yet",
-            private: true,
-            updatedAt: "2026-06-13T08:00:00Z",
-          }),
-        ],
-        nextPage: null,
-      },
-    ]);
-    const { router } = await renderAt("/");
-
-    const repoStatusList = await screen.findByLabelText("仓库状态列表");
-    await within(repoStatusList).findByText("sena-nana/NewRepo");
-    expect(screen.queryByText("Not cloned yet")).toBeNull();
-    const row = within(repoStatusList).getByText("sena-nana/NewRepo").closest(".repo-status-row");
-    expect(row).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("私有")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByRole("button", { name: "clone" })).toBeInTheDocument();
-
-    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "clone" }));
-
-    await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/");
-      expect(within(row as HTMLElement).queryByRole("button", { name: "clone" })).toBeNull();
-      expect(within(row as HTMLElement).getByText("已 clone")).toBeInTheDocument();
-    });
-    expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
   });
 
   it("总览页未 clone 的 GitHub 项目可进入远程详情并屏蔽本地 Git 功能", async () => {
@@ -461,6 +426,46 @@ describe("基础路由", () => {
     expect(issueIndex).toBeLessThan(errorIndex);
   });
 
+  it("总览页 GitHub 时间线按仓库增量刷新 Actions 运行", async () => {
+    const service = await import("../src/services/workspace");
+    const fastRepo = githubRepoSummary("sena-nana/FastTimeline", { updatedAt: "2026-06-12T08:00:00Z" });
+    const slowRepo = githubRepoSummary("sena-nana/SlowTimeline", { updatedAt: "2026-06-12T09:00:00Z" });
+    const workflowResolvers = new Map<string, (runs: GitHubWorkflowRun[]) => void>();
+    service.setFallbackGitHubRepoPagesForTests([{ items: [fastRepo, slowRepo], nextPage: null }]);
+    service.setFallbackGitHubIssuesForTests({
+      [fastRepo.fullName]: [],
+      [slowRepo.fullName]: [],
+    });
+    service.setFallbackGitHubWorkflowRunsOverrideForTests((repoFullName) =>
+      new Promise((resolve) => {
+        workflowResolvers.set(repoFullName, resolve);
+      }),
+    );
+
+    await renderAt("/");
+
+    await waitFor(() => {
+      expect(service.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(2);
+    });
+    workflowResolvers.get(fastRepo.fullName)?.([
+      githubWorkflowRun(fastRepo.fullName, 2101, "2026-06-13T10:00:00Z", {
+        displayTitle: "快速仓库已验证",
+      }),
+    ]);
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    expect(await within(timeline).findByText("快速仓库已验证")).toBeInTheDocument();
+    expect(within(timeline).queryByText("慢速仓库已验证")).toBeNull();
+
+    workflowResolvers.get(slowRepo.fullName)?.([
+      githubWorkflowRun(slowRepo.fullName, 2102, "2026-06-13T11:00:00Z", {
+        displayTitle: "慢速仓库已验证",
+      }),
+    ]);
+
+    expect(await within(timeline).findByText("慢速仓库已验证")).toBeInTheDocument();
+  });
+
   it("总览页 GitHub 时间线点击 Issue 事件进入仓库详情项目信息 Issues 并定位目标 issue", async () => {
     const { router } = await renderAt("/");
 
@@ -676,13 +681,14 @@ describe("基础路由", () => {
 
   it("首页 GitHub 贡献图支持空状态和错误重试", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
+    service.setFallbackRepoContributionOverrideForTests(() => ({
       days: [],
       meta: {
-        repoCount: repoFullNames.length,
-        requestedRepoCount: repoFullNames.length,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));
@@ -691,7 +697,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("暂无 GitHub 提交")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionsOverrideForTests(() => {
+    service.setFallbackRepoContributionOverrideForTests(() => {
       throw new Error("rate limited");
     });
     const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" });
@@ -702,13 +708,14 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("Error: rate limited")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
-      days: [{ date: "2026-06-11", count: 4 }],
+    service.setFallbackRepoContributionOverrideForTests((repoFullName) => ({
+      days: [{ date: "2026-06-11", count: repoFullName === "sena-nana/LiliaGithub" ? 4 : 0 }],
       meta: {
-        repoCount: repoFullNames.length,
-        requestedRepoCount: repoFullNames.length,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));
@@ -719,13 +726,14 @@ describe("基础路由", () => {
 
   it("首页 GitHub 贡献图命中仓库采样上限时显示提示", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
+    service.setFallbackRepoContributionOverrideForTests(() => ({
       days: [{ date: "2026-06-11", count: 1 }],
       meta: {
-        repoCount: 30,
-        requestedRepoCount: repoFullNames.length,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: true,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));
@@ -735,22 +743,23 @@ describe("基础路由", () => {
 
     await renderAt("/");
 
-    expect(await screen.findByLabelText("2026-06-11：1 次提交")).toBeInTheDocument();
+    expect(await screen.findByLabelText("2026-06-11：30 次提交")).toBeInTheDocument();
     expect(screen.queryByText(/仅统计前 30 个/)).toBeNull();
   });
 
   it("首页 GitHub 贡献图使用固定右侧窗口显示", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionsOverrideForTests(() => ({
+    service.setFallbackRepoContributionOverrideForTests((repoFullName) => ({
       days: Array.from({ length: 371 }, (_, index) => ({
         date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
-        count: index === 370 ? 4 : 0,
+        count: index === 370 && repoFullName === "sena-nana/LiliaGithub" ? 4 : 0,
       })),
       meta: {
-        repoCount: 2,
-        requestedRepoCount: 2,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));

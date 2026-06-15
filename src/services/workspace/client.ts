@@ -202,9 +202,9 @@ export function pollGitHubDeviceFlow(
   );
 }
 
-export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionResult> {
-  return call("github_list_repo_contributions", { repoFullNames }, () =>
-    fallback.listRepoContributions(repoFullNames),
+export function listRepoContribution(repoFullName: string): Promise<GitHubContributionResult> {
+  return call("github_list_repo_contribution", { repoFullName }, () =>
+    fallback.listRepoContribution(repoFullName),
   );
 }
 

@@ -64,7 +64,7 @@ pub fn run() {
             workspace::github_poll_device_flow,
             workspace::github_unbind,
             workspace::github_list_repos,
-            workspace::github_list_repo_contributions,
+            workspace::github_list_repo_contribution,
             workspace::github_list_repo_owners,
             workspace::github_create_repo,
             workspace::github_get_repo_management,
