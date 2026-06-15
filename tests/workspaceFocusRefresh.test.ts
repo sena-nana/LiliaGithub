@@ -8,9 +8,10 @@ import type { WorkspaceService } from "../src/composables/workspace/serviceLoade
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const service = vi.hoisted(() => ({
-  refreshRepos: vi.fn(),
+  listManagedRepos: vi.fn(),
+  refreshRepoSummary: vi.fn(),
   discoverRepos: vi.fn(),
-  listRepoContributions: vi.fn(),
+  listRepoContribution: vi.fn(),
   listWorkspaceTasks: vi.fn(),
   refreshRepoLanguageStats: vi.fn(),
 }));
@@ -41,14 +42,16 @@ describe("workspace focus refresh", () => {
     resetWorkspaceStateForTests();
     vi.clearAllMocks();
     state.settings = workspaceSettings();
-    service.refreshRepos.mockResolvedValue([repoSummary("LiliaGithub")]);
-    service.listRepoContributions.mockResolvedValue({
+    service.listManagedRepos.mockResolvedValue([repoSummary("LiliaGithub")]);
+    service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
+    service.listRepoContribution.mockResolvedValue({
       days: [],
       meta: {
         repoCount: 1,
         requestedRepoCount: 1,
         repoLimit: 30,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt: Date.now(),
       },
     });
@@ -75,19 +78,23 @@ describe("workspace focus refresh", () => {
     });
     const refreshed = repoSummary("LiliaGithub", { behind: 2 });
     state.repos = [initial];
-    service.refreshRepos.mockResolvedValue([refreshed]);
+    service.listManagedRepos.mockResolvedValue([initial]);
+    service.refreshRepoSummary.mockResolvedValue(refreshed);
     cleanup = await installWorkspaceFocusRefresh();
 
     blurWindow();
     vi.advanceTimersByTime(FOCUS_REFRESH_THRESHOLD_MS);
     focusWindow();
     await flushPromises();
+    await flushPromises();
+    await flushPromises();
 
-    expect(service.refreshRepos).toHaveBeenCalledTimes(1);
+    expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true });
+    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
     expect(service.discoverRepos).not.toHaveBeenCalled();
-    expect(service.listRepoContributions).not.toHaveBeenCalled();
+    expect(service.listRepoContribution).not.toHaveBeenCalled();
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
-    expect(service.listWorkspaceTasks).not.toHaveBeenCalled();
+    expect(service.listWorkspaceTasks).toHaveBeenCalledTimes(1);
     expect(state.repos[0].behind).toBe(2);
     expect(state.repos[0].languageStats).toEqual(initial.languageStats);
     expect(state.repos[0].workingTreeLanguageStats).toEqual(initial.workingTreeLanguageStats);
@@ -102,7 +109,7 @@ describe("workspace focus refresh", () => {
     focusWindow();
     await flushPromises();
 
-    expect(service.refreshRepos).not.toHaveBeenCalled();
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
   });
 
   it("没有工作区时不会自动刷新", async () => {
@@ -117,7 +124,7 @@ describe("workspace focus refresh", () => {
     focusWindow();
     await flushPromises();
 
-    expect(service.refreshRepos).not.toHaveBeenCalled();
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
   });
 
   it("初始化、扫描或批量同步进行中时不会自动刷新", async () => {
@@ -130,7 +137,7 @@ describe("workspace focus refresh", () => {
       focusWindow();
       await flushPromises();
 
-      expect(service.refreshRepos).not.toHaveBeenCalled();
+      expect(service.listManagedRepos).not.toHaveBeenCalled();
 
       state[key] = false;
       cleanup();
@@ -149,6 +156,6 @@ describe("workspace focus refresh", () => {
     focusWindow();
     await flushPromises();
 
-    expect(service.refreshRepos).not.toHaveBeenCalled();
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
   });
 });

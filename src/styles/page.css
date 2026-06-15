@@ -116,3 +116,17 @@
   overflow-wrap: anywhere;
   text-align: right;
 }
+
+.card-title-loader {
+  display: inline-flex;
+  margin-left: 6px;
+  color: var(--text-muted);
+  animation: card-title-loader-spin 0.9s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes card-title-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

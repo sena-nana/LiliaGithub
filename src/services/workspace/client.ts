@@ -29,8 +29,10 @@ import type {
   RepoConflictState,
   RepoDetail,
   RepoMergePullResult,
+  RepoRefreshSummaryOptions,
   RepoReadme,
   RepoSummary,
+  RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
@@ -125,6 +127,10 @@ export function refreshRepos(): Promise<RepoSummary[]> {
   return call("workspace_refresh_repos", undefined, fallback.refreshRepos);
 }
 
+export function listManagedRepos(): Promise<RepoSummary[]> {
+  return call("workspace_list_managed_repos", undefined, fallback.listManagedRepos);
+}
+
 export function discoverRepos(): Promise<RepoSummary[]> {
   return call("workspace_discover_repos", undefined, fallback.discoverRepos);
 }
@@ -143,8 +149,23 @@ export function getRepoSummary(repoId: string): Promise<RepoSummary> {
   return call("repo_get_summary", { repoId }, () => fallback.getRepoSummary(repoId));
 }
 
+export function refreshRepoSummary(
+  repoId: string,
+  options: RepoRefreshSummaryOptions = {},
+): Promise<RepoSummary> {
+  return call("repo_refresh_summary", { repoId, options }, () => fallback.refreshRepoSummary(repoId, options));
+}
+
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_hide_repo", { repoId }, () => fallback.hideRepo(repoId));
+}
+
+export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
+  return call("workspace_remember_remote_repo", { repo }, () => fallback.rememberRemoteRepo(repo));
+}
+
+export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {
+  return call("workspace_forget_remote_repo", { fullName }, () => fallback.forgetRemoteRepo(fullName));
 }
 
 export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
@@ -182,9 +203,9 @@ export function pollGitHubDeviceFlow(
   );
 }
 
-export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionResult> {
-  return call("github_list_repo_contributions", { repoFullNames }, () =>
-    fallback.listRepoContributions(repoFullNames),
+export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {
+  return call("github_list_repo_contribution", { repoFullName: repoScope }, () =>
+    fallback.listRepoContribution(repoScope),
   );
 }
 
@@ -223,6 +244,11 @@ export function updateGitHubRepoSettings(
   return call("github_update_repo_settings", { repoFullName, request }, () =>
     fallback.updateGitHubRepoSettings(repoFullName, request),
   );
+}
+
+export async function deleteGitHubRepo(repoFullName: string): Promise<void> {
+  await call("github_delete_repo", { repoFullName }, () => fallback.deleteGitHubRepo(repoFullName));
+  clearGitHubRepoCache();
 }
 
 export function listGitHubIssues(
@@ -279,6 +305,10 @@ export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
 
 export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
   return call("repo_list_readmes", { repoId }, () => fallback.listRepoReadmes(repoId));
+}
+
+export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[]> {
+  return call("github_list_repo_readmes", { repoFullName }, () => fallback.listGitHubRepoReadmes(repoFullName));
 }
 
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
@@ -352,6 +382,10 @@ export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
 
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => fallback.pushRepo(repoId));
+}
+
+export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
+  return call("repo_push_with_system_git", { repoId }, () => fallback.pushRepoWithSystemGit(repoId));
 }
 
 export function checkoutBranch(repoId: string, branch: string): Promise<RepoSummary> {

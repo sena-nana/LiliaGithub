@@ -8,10 +8,13 @@ import type {
   RepoConflictChoice,
   RepoConflictFile,
   RepoConflictState,
+  RepoSummary,
 } from "../services/workspace";
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
+import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 
 type RepoTab = "conflicts" | "changes" | "history" | "branches";
+type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
 type RepoView = "project" | "git";
 type HistoryCommit = {
   readonly hash: string;
@@ -28,8 +31,19 @@ export function useRepoDetailController() {
   const route = useRoute();
   const router = useRouter();
   const workspace = useWorkspace();
-  const activeView = ref<RepoView>(normalizeView(route.query.view) ?? "git");
+  const initialRepoId = String(route.params.repoId ?? "");
+  const initialView = normalizeView(route.query.view);
+  const activeView = ref<RepoView>(
+    parseRemoteRepoId(initialRepoId) && initialView === "git"
+      ? "project"
+      : initialView ?? defaultViewForRepoId(initialRepoId),
+  );
   const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
+  const activeProjectTab = computed<RepoProjectTab>(
+    () => normalizeProjectTab(route.query.projectTab) ?? "readme",
+  );
+  const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
+  const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
   const selectedFiles = ref<Set<string>>(new Set());
   const commitMessage = ref("");
   const pushAfter = ref(true);
@@ -44,8 +58,38 @@ export function useRepoDetailController() {
   let launchPollTimer: number | null = null;
 
   const repoId = computed(() => String(route.params.repoId ?? ""));
+  const remoteFullName = computed(() => parseRemoteRepoId(repoId.value));
+  const remoteOnly = computed(() => Boolean(remoteFullName.value));
+  const remoteShortcut = computed(() =>
+    workspace.state.settings?.remoteRepoShortcuts.find((repo) => repo.fullName === remoteFullName.value) ?? null,
+  );
+  const remoteSummary = computed<RepoSummary | null>(() => {
+    const fullName = remoteFullName.value;
+    if (!fullName) return null;
+    const shortcut = remoteShortcut.value;
+    return {
+      id: repoId.value,
+      name: shortcut?.name ?? remoteRepoName(fullName),
+      path: "",
+      relativePath: fullName,
+      currentBranch: shortcut?.defaultBranch ?? null,
+      remoteUrl: shortcut?.cloneUrl ?? `https://github.com/${fullName}.git`,
+      githubFullName: fullName,
+      ahead: 0,
+      behind: 0,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      conflictCount: 0,
+      lastCommitAt: null,
+      lastCommitMessage: null,
+      languageStats: [],
+      workingTreeLanguageStats: [],
+      languageStatsUpdatedAt: 0,
+    };
+  });
   const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);
-  const summary = computed(() => detail.value?.summary ?? workspace.repoById(repoId.value));
+  const summary = computed(() => remoteSummary.value ?? detail.value?.summary ?? workspace.repoById(repoId.value));
   const repoTitle = computed(() => repoDisplayName(summary.value));
   const repoMetaItems = computed(() => {
     const repo = summary.value;
@@ -53,7 +97,8 @@ export function useRepoDetailController() {
     return [
       repo.githubFullName ?? "未识别 GitHub",
       repo.currentBranch ?? "detached",
-    ].filter(Boolean);
+      remoteOnly.value ? "远程仓库" : null,
+    ].filter((item): item is string => Boolean(item));
   });
   const changes = computed(() => detail.value?.changes ?? []);
   const conflicts = computed(() => detail.value?.conflicts ?? { operation: "none", files: [], allResolved: true });
@@ -163,15 +208,16 @@ export function useRepoDetailController() {
     { key: "history", label: "历史" },
     { key: "branches", label: "分支" },
   ];
-  const views: Array<{ key: RepoView; label: string }> = [
+  const localViews: Array<{ key: RepoView; label: string }> = [
     { key: "project", label: "项目信息" },
     { key: "git", label: "Git 信息" },
   ];
+  const views = computed(() => remoteOnly.value ? localViews.slice(0, 1) : localViews);
 
   onMounted(() => {
     void load();
     launchPollTimer = window.setInterval(() => {
-      if (repoId.value) {
+      if (repoId.value && !remoteOnly.value) {
         void refreshLaunch();
       }
     }, 1500);
@@ -192,7 +238,7 @@ export function useRepoDetailController() {
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
-    activeView.value = "git";
+    activeView.value = normalizeView(route.query.view) ?? defaultViewForRepoId(repoId.value);
     void load();
   });
 
@@ -200,7 +246,7 @@ export function useRepoDetailController() {
     () => route.query.view,
     (view) => {
       const normalized = normalizeView(view);
-      if (normalized) activeView.value = normalized;
+      if (normalized) activeView.value = remoteOnly.value && normalized === "git" ? "project" : normalized;
     },
   );
 
@@ -231,9 +277,35 @@ export function useRepoDetailController() {
     return null;
   }
 
+  function defaultViewForRepoId(value: string): RepoView {
+    return parseRemoteRepoId(value) ? "project" : "git";
+  }
+
+  function normalizeProjectTab(value: unknown): RepoProjectTab | null {
+    if (
+      value === "readme" ||
+      value === "issues" ||
+      value === "actions" ||
+      value === "settings"
+    ) return value;
+    return null;
+  }
+
+  function normalizePositiveIntegerQuery(value: unknown): number | null {
+    const next = Array.isArray(value) ? value[0] : value;
+    if (typeof next !== "string") return null;
+    const parsed = Number.parseInt(next, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return null;
+    return parsed;
+  }
+
   async function load() {
     if (!repoId.value) return;
     actionError.value = null;
+    if (remoteOnly.value) {
+      activeView.value = "project";
+      return;
+    }
     try {
       const [nextDetail] = await Promise.all([
         workspace.loadRepoDetail(repoId.value),
@@ -258,7 +330,7 @@ export function useRepoDetailController() {
   }
 
   async function refreshLaunch() {
-    if (!repoId.value) return;
+    if (!repoId.value || remoteOnly.value) return;
     try {
       const status = await workspace.refreshLaunchStatus(repoId.value);
       if (status.state === "running" || launchTerminalVisible.value) {
@@ -341,6 +413,33 @@ export function useRepoDetailController() {
     conflictAcceptConfirm.value = null;
   }
 
+  function shouldOfferSystemGitPush(error: unknown) {
+    const message = String(error);
+    return message.includes("当前 GitHub 绑定无权限") || message.includes("无法认证 GitHub 仓库");
+  }
+
+  async function retryPushWithSystemGitIfConfirmed(error: unknown) {
+    if (!shouldOfferSystemGitPush(error)) {
+      throw error;
+    }
+    const confirmed = window.confirm(
+      "GitHub token 推送失败。是否改用系统 git 推送？\n\n如果系统 git 推送成功，此仓库后续将默认使用系统 git 凭证。",
+    );
+    if (!confirmed) {
+      await workspace.loadRepoDetail(repoId.value).catch(() => undefined);
+      throw error;
+    }
+    await workspace.pushWithSystemGit(repoId.value);
+  }
+
+  async function runPushWithFallback(pushAction: () => Promise<unknown>) {
+    try {
+      await pushAction();
+    } catch (err) {
+      await retryPushWithSystemGitIfConfirmed(err);
+    }
+  }
+
   async function runAction(action: () => Promise<unknown>) {
     actionRunning.value = true;
     actionError.value = null;
@@ -369,7 +468,10 @@ export function useRepoDetailController() {
 
   function commitSelected() {
     void runAction(async () => {
-      await workspace.commit(repoId.value, selectedFileList.value, commitMessage.value, pushAfter.value);
+      const commitAction = () =>
+        workspace.commit(repoId.value, selectedFileList.value, commitMessage.value, pushAfter.value);
+      if (pushAfter.value) await runPushWithFallback(commitAction);
+      else await commitAction();
       selectedFiles.value = new Set();
       commitMessage.value = "";
     });
@@ -383,7 +485,7 @@ export function useRepoDetailController() {
   }
 
   function push() {
-    void runAction(() => workspace.push(repoId.value));
+    void runAction(() => runPushWithFallback(() => workspace.push(repoId.value)));
   }
 
   function showConflicts() {
@@ -473,11 +575,6 @@ export function useRepoDetailController() {
     void router.push(`/repos/${repoId.value}/commits/${commit.hash}`);
   }
 
-  function openGitHub() {
-    if (!summary.value?.githubFullName) return;
-    void workspace.openUrl(`https://github.com/${summary.value.githubFullName}`);
-  }
-
   function openFolder() {
     if (!summary.value?.path) return;
     void workspace.openPath(summary.value.path);
@@ -512,6 +609,7 @@ export function useRepoDetailController() {
       launchTerminalVisible,
       conflictChoices,
       repoId,
+      remoteOnly,
       detail,
       summary,
       repoTitle,
@@ -548,6 +646,9 @@ export function useRepoDetailController() {
       conflictOperationText,
       conflictAbortText,
       conflictContinueText,
+      activeProjectTab,
+      activeProjectIssue,
+      activeProjectRun,
       tabs,
       views,
       load,
@@ -573,7 +674,6 @@ export function useRepoDetailController() {
       selectLaunchCandidate,
       checkout,
       openCommit,
-      openGitHub,
       openFolder,
       openConflictFolder,
       commitMetaTitle,

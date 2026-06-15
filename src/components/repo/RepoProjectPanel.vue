@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   CircleDot,
   CircleOff,
@@ -9,18 +10,22 @@ import {
   Save,
   Square,
   Play,
+  Trash2,
   X,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoLaunchPanel from "./RepoLaunchPanel.vue";
+import { useWorkspace } from "../../composables/useWorkspace";
 import {
   createGitHubIssue,
   getGitHubRepoManagement,
+  listGitHubRepoReadmes,
   listRepoReadmes,
   listGitHubIssues,
   listGitHubWorkflowRuns,
   updateGitHubIssue,
   updateGitHubRepoSettings,
+  deleteGitHubRepo,
   openPath,
   openUrl,
 } from "../../services/workspace/client";
@@ -37,6 +42,7 @@ import type {
 } from "../../services/workspace/types";
 import { isWorkflowRunFailure, streamLabel, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
+import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
 type ProjectContentMode = "launch" | ProjectTab;
@@ -58,6 +64,10 @@ const props = defineProps<{
   launchTerminalVisible: boolean;
   actionRunning: boolean;
   launchRunning: boolean;
+  remoteOnly?: boolean;
+  projectTab?: ProjectTab;
+  projectIssueNumber?: number | null;
+  projectRunId?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -67,11 +77,15 @@ const emit = defineEmits<{
   hideTerminal: [];
   selectLaunchCandidate: [candidate: ProjectLaunchCandidate];
 }>();
+const workspace = useWorkspace();
+const route = useRoute();
+const router = useRouter();
 
 const activeTab = ref<ProjectTab>("readme");
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const terminalBody = ref<HTMLElement | null>(null);
 const launchMenuOpen = ref(false);
+const projectMainRef = ref<HTMLElement | null>(null);
 const readmes = ref<RepoReadme[]>([]);
 const activeReadmePath = ref<string | null>(null);
 const readmeLoading = ref(false);
@@ -81,7 +95,11 @@ const githubError = ref<string | null>(null);
 const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
 const savingSettings = ref(false);
+const deletingRepo = ref(false);
 const creatingIssue = ref(false);
+const remoteDeleted = ref(false);
+const deleteDialogOpen = ref(false);
+const deleteConfirmInput = ref("");
 const settings = ref<GitHubRepoManagement | null>(null);
 const issues = ref<GitHubIssue[]>([]);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
@@ -90,6 +108,17 @@ const issueTitle = ref("");
 const issueBody = ref("");
 const issueLabels = ref("");
 const issueAssignees = ref("");
+const editingIssueNumber = ref<number | null>(null);
+const editingIssueTitle = ref("");
+const editingIssueBody = ref("");
+const editingIssueLabels = ref("");
+const editingIssueAssignees = ref("");
+const updatingIssue = ref(false);
+const focusedIssueNumber = ref<number | null>(null);
+const focusedRunId = ref<number | null>(null);
+let githubLoadRunId = 0;
+let issueLoadRunId = 0;
+let actionsLoadRunId = 0;
 
 const settingsForm = reactive({
   description: "",
@@ -109,7 +138,14 @@ const settingsForm = reactive({
   webCommitSignoffRequired: false,
 });
 
-const repoReady = computed(() => Boolean(props.repoFullName));
+const githubUnavailableMessage = computed(() => {
+  if (remoteDeleted.value) return "GitHub 远端仓库已删除，本地目录仍保留。";
+  if (!props.repoFullName) return "当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。";
+  return null;
+});
+const deleteConfirmMatches = computed(() =>
+  Boolean(props.repoFullName) && deleteConfirmInput.value.trim() === props.repoFullName,
+);
 const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
@@ -158,21 +194,28 @@ const activeLaunchValue = computed(() =>
 );
 const hasLaunchCommand = computed(() => Boolean(props.launchConfig?.command.trim()));
 const launchButtonDisabled = computed(() => props.loading || props.actionRunning || props.launchRunning);
+const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
 
 onMounted(() => {
+  void applyProjectRouteState();
   void loadReadme();
   void loadGitHub();
   void loadActions();
 });
 
 watch(() => props.repoId, () => {
-  activeTab.value = "readme";
+  activeTab.value = projectTab.value;
   activeReadmePath.value = null;
   closeLaunchMenu();
+  focusedIssueNumber.value = null;
+  focusedRunId.value = null;
+  void applyProjectRouteState();
   void loadReadme();
 });
 
 watch(() => props.repoFullName, () => {
+  remoteDeleted.value = false;
+  closeDeleteDialog();
   void loadGitHub();
   void loadActions();
 });
@@ -185,6 +228,97 @@ watch([() => props.launchLogs.length, () => props.launchRunning], () => {
 watch(issueState, () => {
   void loadIssues();
 });
+
+watch(
+  [projectTab, () => props.projectIssueNumber, () => props.projectRunId],
+  () => {
+    void applyProjectRouteState();
+  },
+);
+
+function normalizeProjectTab(value: unknown): ProjectTab | null {
+  if (value === "readme" || value === "issues" || value === "actions" || value === "settings") return value;
+  return null;
+}
+
+function hasIssue(issueNumber: number) {
+  return issues.value.some((issue) => issue.number === issueNumber);
+}
+
+function hasRun(runId: number) {
+  return workflowRuns.value.some((run) => run.id === runId);
+}
+
+function clearProjectTargets() {
+  focusedIssueNumber.value = null;
+  focusedRunId.value = null;
+  cancelEditIssue();
+}
+
+async function focusIssue(issueNumber: number | null | undefined) {
+  focusedRunId.value = null;
+  if (!issueNumber) {
+    clearProjectTargets();
+    return;
+  }
+  if (issueState.value !== "all" && !hasIssue(issueNumber)) issueState.value = "all";
+  await loadIssues();
+  if (!hasIssue(issueNumber)) {
+    focusedIssueNumber.value = null;
+    return;
+  }
+  focusedIssueNumber.value = issueNumber;
+  await nextTick();
+  const row = projectMainRef.value?.querySelector<HTMLElement>(
+    `.project-row--issue[data-issue-number="${issueNumber}"]`,
+  );
+  row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
+}
+
+async function focusRun(runId: number | null | undefined) {
+  focusedIssueNumber.value = null;
+  if (!runId) {
+    clearProjectTargets();
+    return;
+  }
+  if (!hasRun(runId)) {
+    await loadActions();
+  }
+  if (!hasRun(runId)) {
+    focusedRunId.value = null;
+    return;
+  }
+  focusedRunId.value = runId;
+  await nextTick();
+  const row = projectMainRef.value?.querySelector<HTMLElement>(
+    `.project-row--action[data-run-id="${runId}"]`,
+  );
+  row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
+}
+
+function isIssueRowFocused(issueNumber: number) {
+  return focusedIssueNumber.value === issueNumber && activeTab.value === "issues";
+}
+
+function isRunRowFocused(runId: number) {
+  return focusedRunId.value === runId && activeTab.value === "actions";
+}
+
+async function applyProjectRouteState() {
+  const targetTab = projectTab.value;
+  if (activeTab.value !== targetTab) {
+    activeTab.value = targetTab;
+    await nextTick();
+  }
+  clearProjectTargets();
+  if (targetTab === "issues") {
+    await focusIssue(props.projectIssueNumber);
+    return;
+  }
+  if (targetTab === "actions") {
+    await focusRun(props.projectRunId);
+  }
+}
 
 watch(launchMenuOpen, async (open, _previous, onCleanup) => {
   if (!open) return;
@@ -239,7 +373,9 @@ async function loadReadme() {
   readmeError.value = null;
   const previousPath = activeReadmePath.value;
   try {
-    const nextReadmes = await listRepoReadmes(props.repoId);
+    const nextReadmes = props.remoteOnly && props.repoFullName
+      ? await listGitHubRepoReadmes(props.repoFullName)
+      : await listRepoReadmes(props.repoId);
     readmes.value = nextReadmes;
     activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
       ? previousPath
@@ -252,7 +388,9 @@ async function loadReadme() {
 }
 
 async function loadGitHub() {
-  if (!props.repoFullName) {
+  const runId = ++githubLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) {
     settings.value = null;
     issues.value = [];
     githubError.value = null;
@@ -262,11 +400,13 @@ async function loadGitHub() {
   githubError.value = null;
   try {
     const [nextSettings, nextIssues] = await Promise.all([
-      getGitHubRepoManagement(props.repoFullName),
-      listGitHubIssues(props.repoFullName, issueState.value),
+      getGitHubRepoManagement(repoFullName),
+      listGitHubIssues(repoFullName, issueState.value),
     ]);
+    if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
     settings.value = nextSettings;
     issues.value = nextIssues;
+    syncEditingIssue();
     applySettingsForm(nextSettings);
   } catch (err) {
     githubError.value = String(err);
@@ -276,17 +416,24 @@ async function loadGitHub() {
 }
 
 async function loadIssues() {
-  if (!props.repoFullName) return;
+  const runId = ++issueLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
   githubError.value = null;
   try {
-    issues.value = await listGitHubIssues(props.repoFullName, issueState.value);
+    const nextIssues = await listGitHubIssues(repoFullName, issueState.value);
+    if (runId !== issueLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    issues.value = nextIssues;
+    syncEditingIssue();
   } catch (err) {
     githubError.value = String(err);
   }
 }
 
 async function loadActions() {
-  if (!props.repoFullName) {
+  const runId = ++actionsLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) {
     workflowRuns.value = [];
     actionsError.value = null;
     return;
@@ -294,7 +441,9 @@ async function loadActions() {
   actionsLoading.value = true;
   actionsError.value = null;
   try {
-    workflowRuns.value = await listGitHubWorkflowRuns(props.repoFullName, 20);
+    const nextRuns = await listGitHubWorkflowRuns(repoFullName, 20);
+    if (runId !== actionsLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    workflowRuns.value = nextRuns;
   } catch (err) {
     actionsError.value = String(err);
   } finally {
@@ -346,8 +495,98 @@ async function saveSettings() {
   }
 }
 
+function openDeleteDialog() {
+  if (!props.repoFullName || deletingRepo.value) return;
+  deleteConfirmInput.value = "";
+  deleteDialogOpen.value = true;
+}
+
+function closeDeleteDialog() {
+  if (deletingRepo.value) return;
+  deleteDialogOpen.value = false;
+  deleteConfirmInput.value = "";
+}
+
+async function confirmDeleteRepo() {
+  if (!props.repoFullName || !deleteConfirmMatches.value || deletingRepo.value) return;
+  deletingRepo.value = true;
+  githubError.value = null;
+  try {
+    await deleteGitHubRepo(props.repoFullName);
+    await workspace.forgetRemoteRepo(props.repoFullName);
+    workspace.refreshRepoStatusList();
+    remoteDeleted.value = true;
+    settings.value = null;
+    issues.value = [];
+    workflowRuns.value = [];
+    deleteDialogOpen.value = false;
+    deleteConfirmInput.value = "";
+    const targetRoute = remoteRepoRoute(props.repoFullName);
+    const currentRemoteFullName = parseRemoteRepoId(String(route.params.repoId ?? ""));
+    if (
+      props.remoteOnly &&
+      currentRemoteFullName && props.repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
+      && route.fullPath.startsWith(targetRoute)
+    ) {
+      await router.push("/");
+    }
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    deletingRepo.value = false;
+  }
+}
+
 function splitList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function isEditingIssue(issueNumber: number) {
+  return editingIssueNumber.value === issueNumber;
+}
+
+function syncEditingIssue() {
+  if (!hasIssue(editingIssueNumber.value ?? -1)) {
+    cancelEditIssue();
+  }
+}
+
+function startEditIssue(issue: GitHubIssue) {
+  editingIssueNumber.value = issue.number;
+  editingIssueTitle.value = issue.title;
+  editingIssueBody.value = issue.body ?? "";
+  editingIssueLabels.value = issue.labels.join(", ");
+  editingIssueAssignees.value = issue.assignees.join(", ");
+}
+
+function cancelEditIssue() {
+  editingIssueNumber.value = null;
+  editingIssueTitle.value = "";
+  editingIssueBody.value = "";
+  editingIssueLabels.value = "";
+  editingIssueAssignees.value = "";
+}
+
+async function saveIssueEdit(issue: GitHubIssue) {
+  if (!props.repoFullName || updatingIssue.value) return;
+  const nextTitle = editingIssueTitle.value.trim();
+  if (!nextTitle) return;
+  updatingIssue.value = true;
+  githubError.value = null;
+  try {
+    const updated = await updateGitHubIssue(props.repoFullName, issue.number, {
+      title: nextTitle,
+      body: editingIssueBody.value,
+      labels: splitList(editingIssueLabels.value),
+      assignees: splitList(editingIssueAssignees.value),
+    });
+    issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
+    cancelEditIssue();
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    updatingIssue.value = false;
+  }
 }
 
 async function createIssue() {
@@ -449,7 +688,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 <template>
   <section class="project-panel">
     <div class="project-layout">
-      <main class="project-main">
+      <main ref="projectMainRef" class="project-main">
         <section v-if="activeProjectSection === 'launch'" class="project-terminal-card">
           <div class="project-section__head">
             <div class="launch-head">
@@ -514,7 +753,9 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         <section v-else-if="activeProjectSection === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
-          <p v-else-if="!activeReadme" class="muted repo-empty project-empty">当前仓库没有本地 README。</p>
+          <p v-else-if="!activeReadme" class="muted repo-empty project-empty">
+            {{ remoteOnly ? "当前远程仓库没有 README。" : "当前仓库没有本地 README。" }}
+          </p>
           <MarkdownReadme
             v-else
             ref="markdownReadme"
@@ -527,14 +768,14 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           />
         </section>
 
-        <section v-else-if="!repoReady" class="project-section">
-          <p class="muted repo-empty project-empty">当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。</p>
+        <section v-else-if="githubUnavailableMessage" class="project-section">
+          <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
         </section>
 
         <section v-else-if="activeProjectSection === 'issues'" class="project-section">
           <div class="project-section__head">
             <h3>Issues</h3>
-            <select v-model="issueState">
+            <select v-model="issueState" @change="loadIssues">
               <option value="open">Open</option>
               <option value="closed">Closed</option>
               <option value="all">All</option>
@@ -551,16 +792,43 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
             </div>
           </form>
           <div class="project-list">
-            <div v-for="issue in issues" :key="issue.number" class="project-row project-row--issue">
-              <div>
-                <strong>#{{ issue.number }} {{ issue.title }}</strong>
-                <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
-              </div>
-              <button type="button" class="ghost" @click="toggleIssue(issue)">
-                <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-                <CircleDot v-else :size="14" aria-hidden="true" />
-                {{ issue.state === "open" ? "关闭" : "重开" }}
-              </button>
+            <div
+              v-for="issue in issues"
+              :key="issue.number"
+              class="project-row project-row--issue"
+              :class="{ 'is-target': isIssueRowFocused(issue.number) }"
+              :data-issue-number="issue.number"
+            >
+              <template v-if="!isEditingIssue(issue.number)">
+                <div>
+                  <strong>#{{ issue.number }} {{ issue.title }}</strong>
+                  <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
+                </div>
+                <div class="project-inline-form">
+                  <button type="button" class="ghost" @click="startEditIssue(issue)">
+                    编辑
+                  </button>
+                  <button type="button" class="ghost" @click="toggleIssue(issue)">
+                    <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
+                    <CircleDot v-else :size="14" aria-hidden="true" />
+                    {{ issue.state === "open" ? "关闭" : "重开" }}
+                  </button>
+                </div>
+              </template>
+              <form
+                v-else
+                class="project-issue-edit-form"
+                @submit.prevent="saveIssueEdit(issue)"
+              >
+                <input v-model="editingIssueTitle" type="text" placeholder="Issue 标题" />
+                <textarea v-model="editingIssueBody" rows="3" placeholder="Issue 内容"></textarea>
+                <div class="project-inline-form">
+                  <input v-model="editingIssueLabels" type="text" placeholder="labels, comma separated" />
+                  <input v-model="editingIssueAssignees" type="text" placeholder="assignees" />
+                  <button type="submit" class="primary" :disabled="updatingIssue || !editingIssueTitle.trim()">保存</button>
+                  <button type="button" class="ghost" @click="cancelEditIssue">取消</button>
+                </div>
+              </form>
             </div>
             <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
           </div>
@@ -574,7 +842,13 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           <p v-if="actionsError" class="error-line">{{ actionsError }}</p>
           <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
           <div class="project-list">
-            <div v-for="run in workflowRuns" :key="run.id" class="project-row project-row--action">
+            <div
+              v-for="run in workflowRuns"
+              :key="run.id"
+              class="project-row project-row--action"
+              :class="{ 'is-target': isRunRowFocused(run.id) }"
+              :data-run-id="run.id"
+            >
               <span
                 class="project-action-status"
                 :class="`project-action-status--${workflowRunStatusTone(run)}`"
@@ -600,7 +874,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         <form v-else-if="activeProjectSection === 'settings'" class="project-section project-settings" @submit.prevent="saveSettings">
           <div class="project-section__head">
             <h3>仓库设置</h3>
-            <button type="submit" class="primary" :disabled="savingSettings || githubLoading || !settings">
+            <button type="submit" class="primary" :disabled="savingSettings || deletingRepo || githubLoading || !settings">
               <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
               <Save v-else :size="14" aria-hidden="true" />
               保存
@@ -633,6 +907,70 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
             <label><input v-model="settingsForm.allowRebaseMerge" type="checkbox" /> Rebase</label>
             <label><input v-model="settingsForm.allowAutoMerge" type="checkbox" /> Auto merge</label>
           </div>
+          <section class="project-danger-zone" aria-label="危险操作">
+            <div>
+              <strong>删除 GitHub 远端仓库</strong>
+              <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
+            </div>
+            <button
+              type="button"
+              class="ghost danger"
+              :disabled="deletingRepo || githubLoading || !settings || !repoFullName"
+              @click="openDeleteDialog"
+            >
+              <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+              <Trash2 v-else :size="14" aria-hidden="true" />
+              删除仓库
+            </button>
+          </section>
+          <Teleport to="body">
+            <Transition name="modal">
+              <div
+                v-if="deleteDialogOpen"
+                class="project-delete-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-label="删除 GitHub 仓库"
+                @click.self="closeDeleteDialog"
+              >
+                <div class="project-delete-dialog">
+                  <div class="project-delete-dialog__head">
+                    <Trash2 :size="15" aria-hidden="true" />
+                    <strong>删除 GitHub 仓库</strong>
+                  </div>
+                  <p>
+                    这会永久删除远端仓库 <strong>{{ repoFullName }}</strong>。本地目录会保留，但 GitHub
+                    Issues、Actions 和 Settings 将不可用。
+                  </p>
+                  <p v-if="githubError" class="error-line">{{ githubError }}</p>
+                  <label>
+                    <span>输入完整仓库名以确认</span>
+                    <input
+                      v-model="deleteConfirmInput"
+                      type="text"
+                      :placeholder="repoFullName ?? 'owner/repo'"
+                      :disabled="deletingRepo"
+                    />
+                  </label>
+                  <div class="project-delete-dialog__actions">
+                    <button type="button" class="ghost" :disabled="deletingRepo" @click="closeDeleteDialog">
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      class="ghost danger"
+                      :disabled="deletingRepo || !deleteConfirmMatches"
+                      @click="confirmDeleteRepo"
+                    >
+                      <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+                      <Trash2 v-else :size="14" aria-hidden="true" />
+                      确认删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Transition>
+          </Teleport>
         </form>
       </main>
 
@@ -1058,9 +1396,20 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   align-items: flex-start;
 }
 
+.project-issue-edit-form {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+}
+
 .project-row--action {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.project-row.is-target {
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
 }
 
 .project-action-status {
@@ -1107,6 +1456,118 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   padding: 0;
 }
 
+.project-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--err-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--err-soft) 52%, var(--bg-subtle));
+}
+
+.project-danger-zone div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.project-danger-zone strong {
+  color: var(--err);
+  font-size: 13px;
+}
+
+.project-danger-zone span {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.project-danger-zone button,
+.project-delete-dialog__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.project-delete-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1800;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.project-delete-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(520px, 92vw);
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+
+.project-delete-dialog__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--err);
+}
+
+.project-delete-dialog p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.project-delete-dialog label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-delete-dialog input {
+  width: 100%;
+}
+
+.project-delete-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.16s ease;
+}
+
+.modal-enter-active .project-delete-dialog,
+.modal-leave-active .project-delete-dialog {
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .project-delete-dialog,
+.modal-leave-to .project-delete-dialog {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+}
+
 @media (max-width: 900px) {
   .project-layout {
     grid-template-columns: 1fr;
@@ -1119,6 +1580,11 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
   .project-switches {
     grid-template-columns: 1fr;
+  }
+
+  .project-danger-zone {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

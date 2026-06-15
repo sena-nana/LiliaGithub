@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import type { GitHubIssue, GitHubRepoSummary, RepoConflictState } from "../src/services/workspace";
+import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoConflictState } from "../src/services/workspace";
 import { conflictState, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
@@ -36,6 +36,7 @@ async function clickOverviewSync() {
   if (!(main instanceof HTMLElement)) throw new Error("未找到主内容区域");
   await screen.findByRole("heading", { level: 1, name: "项目总览" });
   await within(main).findByLabelText("仓库状态列表");
+  await screen.findByText("↑1");
   await fireEvent.click(within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" }));
 }
 
@@ -121,14 +122,14 @@ describe("基础路由", () => {
     expect(screen.getByText("C:\\Files\\workspace")).toBeInTheDocument();
     expect(screen.queryByText("octo-user")).toBeNull();
     expect(screen.getByText("最近工作结果")).toBeInTheDocument();
-    expect(await screen.findByLabelText("GitHub 提交贡献图")).toBeInTheDocument();
+    expect(await screen.findByLabelText("本地提交贡献图")).toBeInTheDocument();
     expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
     expect(screen.queryByText(/刷新于/)).toBeNull();
     expect(screen.queryByText(/覆盖 \d+ 个仓库/)).toBeNull();
     expect(document.querySelector(".contribution-day[title$='次提交']")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
-    expect(screen.getByLabelText("编程语言占比图")).toBeInTheDocument();
+    expect(await screen.findByLabelText("编程语言占比图")).toBeInTheDocument();
     expect(screen.queryByText(/HEAD 已提交文件/)).toBeNull();
     expect(await screen.findByText("TypeScript")).toBeInTheDocument();
     expect(await screen.findByText("50%")).toBeInTheDocument();
@@ -162,13 +163,15 @@ describe("基础路由", () => {
   it("总览页仓库状态行可直接进入仓库详情", async () => {
     const { router } = await renderAt("/");
 
-    await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" }));
+    const repoLink = await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" });
+    await waitFor(() => expect(repoLink).toHaveAttribute("title", "C:\\Files\\workspace\\LiliaGithub"), { timeout: 3000 });
+    await fireEvent.click(screen.getByRole("link", { name: "打开 sena-nana/LiliaGithub" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
   });
 
-  it("总览页未 clone 的 GitHub 项目点击 clone 后保持在总览页", async () => {
+  it("总览页未 clone 的 GitHub 项目可进入远程详情并屏蔽本地 Git 功能", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([
       {
@@ -183,24 +186,53 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
+    service.setFallbackGitHubRepoReadmesForTests({
+      "sena-nana/NewRepo": {
+        repoId: "github:sena-nana/NewRepo",
+        path: "README.md",
+        images: {},
+        format: "md",
+        updatedAt: null,
+        content: "# NewRepo\n\n云端 README。",
+      },
+    });
     const { router } = await renderAt("/");
 
-    const repoStatusList = await screen.findByLabelText("仓库状态列表");
-    await within(repoStatusList).findByText("sena-nana/NewRepo");
-    expect(screen.queryByText("Not cloned yet")).toBeNull();
-    const row = within(repoStatusList).getByText("sena-nana/NewRepo").closest(".repo-status-row");
-    expect(row).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("私有")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByRole("button", { name: "clone" })).toBeInTheDocument();
-
-    await fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "clone" }));
+    await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/NewRepo" }));
 
     await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/");
-      expect(within(row as HTMLElement).queryByRole("button", { name: "clone" })).toBeNull();
-      expect(within(row as HTMLElement).getByText("已 clone")).toBeInTheDocument();
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo?view=project");
     });
-    expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "项目信息" })).toHaveClass("is-active");
+    expect(screen.queryByRole("tab", { name: "Git 信息" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Push" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拉取" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "文件夹" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "提交" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "快速启动" })).toBeNull();
+    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("云端 README");
+    expect(screen.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("远程详情页没有云端 README 时显示远程空态", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary("sena-nana/EmptyRemote")],
+        nextPage: null,
+      },
+    ]);
+    service.setFallbackGitHubRepoReadmesForTests({
+      "sena-nana/EmptyRemote": null,
+    });
+
+    await renderAt("/repos/github%3Asena-nana%2FEmptyRemote?view=project");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
+    expect(await screen.findByText("当前远程仓库没有 README。")).toBeInTheDocument();
   });
 
   it("总览页隐藏禁用的 GitHub 项目", async () => {
@@ -394,6 +426,105 @@ describe("基础路由", () => {
     expect(issueIndex).toBeLessThan(errorIndex);
   });
 
+  it("总览页 GitHub 时间线按仓库增量刷新 Actions 运行", async () => {
+    const service = await import("../src/services/workspace");
+    const fastRepo = githubRepoSummary("sena-nana/FastTimeline", { updatedAt: "2026-06-12T08:00:00Z" });
+    const slowRepo = githubRepoSummary("sena-nana/SlowTimeline", { updatedAt: "2026-06-12T09:00:00Z" });
+    const workflowResolvers = new Map<string, (runs: GitHubWorkflowRun[]) => void>();
+    service.setFallbackGitHubRepoPagesForTests([{ items: [fastRepo, slowRepo], nextPage: null }]);
+    service.setFallbackGitHubIssuesForTests({
+      [fastRepo.fullName]: [],
+      [slowRepo.fullName]: [],
+    });
+    service.setFallbackGitHubWorkflowRunsOverrideForTests((repoFullName) =>
+      new Promise((resolve) => {
+        workflowResolvers.set(repoFullName, resolve);
+      }),
+    );
+
+    await renderAt("/");
+
+    await waitFor(() => {
+      expect(service.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(2);
+    });
+    workflowResolvers.get(fastRepo.fullName)?.([
+      githubWorkflowRun(fastRepo.fullName, 2101, "2026-06-13T10:00:00Z", {
+        displayTitle: "快速仓库已验证",
+      }),
+    ]);
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    expect(await within(timeline).findByText("快速仓库已验证")).toBeInTheDocument();
+    expect(within(timeline).queryByText("慢速仓库已验证")).toBeNull();
+
+    workflowResolvers.get(slowRepo.fullName)?.([
+      githubWorkflowRun(slowRepo.fullName, 2102, "2026-06-13T11:00:00Z", {
+        displayTitle: "慢速仓库已验证",
+      }),
+    ]);
+
+    expect(await within(timeline).findByText("慢速仓库已验证")).toBeInTheDocument();
+  });
+
+  it("总览页 GitHub 时间线点击 Issue 事件进入仓库详情项目信息 Issues 并定位目标 issue", async () => {
+    const { router } = await renderAt("/");
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const issueLink = await within(timeline).findByRole("link", { name: "Issue #12" });
+    await fireEvent.click(issueLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "项目信息" })).toHaveClass("is-active");
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Issues" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
+    expect(router.currentRoute.value.query).toMatchObject({
+      view: "project",
+      projectTab: "issues",
+      issue: "12",
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-issue-number="12"].project-row--issue.is-target')).toBeInTheDocument();
+    });
+  });
+
+  it("总览页 GitHub 时间线点击 Actions 事件进入仓库详情项目信息 Actions 并定位目标 run", async () => {
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/LiliaGithub");
+    service.setFallbackGitHubWorkflowRunsForTests({
+      [repo.fullName]: [
+        githubWorkflowRun(repo.fullName, 1310, "2026-06-12T14:00:00Z", {
+          status: "completed",
+          conclusion: "success",
+          displayTitle: "release pipeline",
+          branch: "main",
+          event: "workflow_dispatch",
+        }),
+      ],
+    });
+    const { router } = await renderAt("/");
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const workflowLink = await within(timeline).findByRole("link", { name: "Actions 通过" });
+    await fireEvent.click(workflowLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "项目信息" })).toHaveClass("is-active");
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Actions" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
+    expect(router.currentRoute.value.query).toMatchObject({
+      view: "project",
+      projectTab: "actions",
+      run: "1310",
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+    });
+  });
+
   it("总览页 GitHub 时间线命中持久缓存时不重复拉取 issue", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
@@ -548,24 +679,25 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
   });
 
-  it("首页 GitHub 贡献图支持空状态和错误重试", async () => {
+  it("首页本地提交贡献图支持空状态和错误重试", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
+    service.setFallbackRepoContributionOverrideForTests(() => ({
       days: [],
       meta: {
-        repoCount: repoFullNames.length,
-        requestedRepoCount: repoFullNames.length,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));
 
     await renderAt("/");
 
-    expect(await screen.findByText("暂无 GitHub 提交")).toBeInTheDocument();
+    expect(await screen.findByText("暂无本地提交")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionsOverrideForTests(() => {
+    service.setFallbackRepoContributionOverrideForTests(() => {
       throw new Error("rate limited");
     });
     const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" });
@@ -576,13 +708,14 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("Error: rate limited")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
-      days: [{ date: "2026-06-11", count: 4 }],
+    service.setFallbackRepoContributionOverrideForTests((repoScope) => ({
+      days: [{ date: "2026-06-11", count: repoScope === "local:LiliaGithub" ? 4 : 0 }],
       meta: {
-        repoCount: repoFullNames.length,
-        requestedRepoCount: repoFullNames.length,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));
@@ -591,15 +724,16 @@ describe("基础路由", () => {
     expect(await screen.findByLabelText("2026-06-11：4 次提交")).toBeInTheDocument();
   });
 
-  it("首页 GitHub 贡献图命中仓库采样上限时显示提示", async () => {
+  it("首页本地提交贡献图命中仓库采样上限时显示提示", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionsOverrideForTests((repoFullNames) => ({
+    service.setFallbackRepoContributionOverrideForTests(() => ({
       days: [{ date: "2026-06-11", count: 1 }],
       meta: {
-        repoCount: 30,
-        requestedRepoCount: repoFullNames.length,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: true,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));
@@ -609,28 +743,29 @@ describe("基础路由", () => {
 
     await renderAt("/");
 
-    expect(await screen.findByLabelText("2026-06-11：1 次提交")).toBeInTheDocument();
+    expect(await screen.findByLabelText("2026-06-11：30 次提交")).toBeInTheDocument();
     expect(screen.queryByText(/仅统计前 30 个/)).toBeNull();
   });
 
-  it("首页 GitHub 贡献图使用固定右侧窗口显示", async () => {
+  it("首页本地提交贡献图使用固定右侧窗口显示", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionsOverrideForTests(() => ({
+    service.setFallbackRepoContributionOverrideForTests((repoScope) => ({
       days: Array.from({ length: 371 }, (_, index) => ({
         date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
-        count: index === 370 ? 4 : 0,
+        count: index === 370 && repoScope === "local:LiliaGithub" ? 4 : 0,
       })),
       meta: {
-        repoCount: 2,
-        requestedRepoCount: 2,
+        repoCount: 1,
+        requestedRepoCount: 1,
         repoLimit: 30,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt: 1_780_000_000_000,
       },
     }));
 
     await renderAt("/");
-    const chart = await screen.findByLabelText("GitHub 提交贡献图");
+    const chart = await screen.findByLabelText("本地提交贡献图");
 
     expect(chart.querySelector(".contribution-window")).toBeInTheDocument();
     expect(chart.querySelector(".contribution-months")).toHaveTextContent("1月");
@@ -666,7 +801,7 @@ describe("基础路由", () => {
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label"))
         .filter(Boolean),
-    ).toEqual(["刷新", "文件夹", "GitHub", "拉取"]);
+    ).toEqual(["刷新", "文件夹", "拉取"]);
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
@@ -780,6 +915,153 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("Updated description")).toBeInTheDocument();
     });
+  });
+
+  it("仓库设置删除 GitHub 远端需要输入完整仓库名确认并保留本地仓库", async () => {
+    const service = await import("../src/services/workspace");
+    const { router } = await renderAt("/repos/LiliaGithub");
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();
+
+    const deleteRepoButton = await screen.findByRole("button", { name: "删除仓库" });
+    await waitFor(() => expect(deleteRepoButton).toBeEnabled(), { timeout: 3000 });
+    await fireEvent.click(deleteRepoButton);
+    expect(await screen.findByRole("dialog", { name: "删除 GitHub 仓库" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+
+    await fireEvent.update(screen.getByPlaceholderText("sena-nana/LiliaGithub"), "sena-nana/Wrong");
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+
+    await fireEvent.update(screen.getByPlaceholderText("sena-nana/LiliaGithub"), "sena-nana/LiliaGithub");
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
+      expect(screen.getByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    await router.push("/");
+    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    await waitFor(() => {
+      expect(within(repoStatusList).queryByText("sena-nana/LiliaGithub")).toBeNull();
+    });
+    expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
+    expect((await service.listGitHubRepos()).items.some((repo) => repo.fullName === "sena-nana/LiliaGithub")).toBe(false);
+  });
+
+  it("未 clone 的远程详情页删除 GitHub 远端后移除侧边栏入口并跳回首页", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/DeleteRemoteRepo", {
+            description: "Ready to delete",
+            updatedAt: "2026-06-14T08:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    service.setFallbackGitHubRepoReadmesForTests({
+      "sena-nana/DeleteRemoteRepo": {
+        repoId: "github:sena-nana/DeleteRemoteRepo",
+        path: "README.md",
+        images: {},
+        format: "md",
+        updatedAt: null,
+        content: "# DeleteRemoteRepo\n\n用于验证删除后移除侧边栏入口。",
+      },
+    });
+    await service.rememberRemoteRepo({
+      fullName: "sena-nana/DeleteRemoteRepo",
+      name: "DeleteRemoteRepo",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: "https://github.com/sena-nana/DeleteRemoteRepo",
+      cloneUrl: "https://github.com/sena-nana/DeleteRemoteRepo.git",
+      openedAt: Date.now(),
+    });
+    const { router } = await renderAt("/");
+
+    expect(await screen.findByText("远程仓库 1")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "打开 sena-nana/DeleteRemoteRepo" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("link", { name: "打开 sena-nana/DeleteRemoteRepo" }));
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FDeleteRemoteRepo?view=project");
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "DeleteRemoteRepo" })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    const deleteRepoButton = await screen.findByRole("button", { name: "删除仓库" });
+    await waitFor(() => expect(deleteRepoButton).toBeEnabled(), { timeout: 3000 });
+    await fireEvent.click(deleteRepoButton);
+    expect(await screen.findByRole("dialog", { name: "删除 GitHub 仓库" })).toBeInTheDocument();
+
+    await fireEvent.update(screen.getByPlaceholderText("sena-nana/DeleteRemoteRepo"), "sena-nana/DeleteRemoteRepo");
+    await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
+      expect(screen.getByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/");
+      expect(screen.queryByText("远程仓库 1")).toBeNull();
+    });
+    const latestSettings = await service.getWorkspaceSettings();
+    expect(
+      latestSettings.remoteRepoShortcuts.some((repo) =>
+        repo.fullName.toLowerCase() === "sena-nana/deleteremoterepo",
+      ),
+    ).toBe(false);
+    expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+  });
+
+  it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
+    const service = await import("../src/services/workspace");
+    const issueRow = () => {
+      const row = document.querySelector(".project-row--issue[data-issue-number=\"12\"]");
+      if (!row) throw new Error("未找到 Issue 行");
+      return row as HTMLElement;
+    };
+    service.setFallbackGitHubIssuesForTests({
+      "sena-nana/LiliaGithub": [
+        {
+          number: 12,
+          title: "待编辑 Issue",
+          state: "open",
+          body: "初始正文",
+          labels: ["bug", "ui"],
+          assignees: ["alice", "bob"],
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
+          updatedAt: "2026-06-11T12:00:00Z",
+          createdAt: "2026-06-10T12:00:00Z",
+        },
+      ],
+    });
+
+    await renderAt("/repos/LiliaGithub");
+    await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Issues" }));
+
+    expect(await screen.findByText(/待编辑 Issue/, {}, { timeout: 5000 })).toBeInTheDocument();
+    await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 标题"), "编辑后标题");
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 内容"), "新正文");
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("labels, comma separated"), "backend, docs");
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("assignees"), "carol, dana");
+    await fireEvent.click(within(issueRow()).getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("#12 编辑后标题")).toBeInTheDocument();
+    expect(screen.getByText("backend, docs · carol, dana")).toBeInTheDocument();
+
+    await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
+    expect(within(issueRow()).getByDisplayValue("新正文")).toBeInTheDocument();
   });
 
   it("仓库项目信息页无 GitHub 远端时保留 README 并显示远端空态", async () => {
