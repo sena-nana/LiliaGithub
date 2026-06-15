@@ -2,10 +2,10 @@ import {
   beginRecentSyncRetry,
   clearRepoActionError,
   finishRecentSyncRetry,
+  state,
   replaceRepos,
   setRepoDetail,
   setRepoActionError,
-  state,
   upsertRepo,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
@@ -187,6 +187,10 @@ export async function forgetRemoteRepo(fullName: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.forgetRemoteRepo(fullName);
   return state.settings;
+}
+
+export function refreshRepoStatusList() {
+  state.repoStatusListRefreshToken += 1;
 }
 
 export async function unhideRepo(repoId: string) {

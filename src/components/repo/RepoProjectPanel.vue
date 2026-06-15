@@ -10,6 +10,7 @@ import {
   X,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
+import { useWorkspace } from "../../composables/useWorkspace";
 import {
   createGitHubIssue,
   getGitHubRepoManagement,
@@ -45,6 +46,7 @@ const props = defineProps<{
   projectIssueNumber?: number | null;
   projectRunId?: number | null;
 }>();
+const workspace = useWorkspace();
 
 const activeTab = ref<ProjectTab>("readme");
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
@@ -402,6 +404,7 @@ async function confirmDeleteRepo() {
   githubError.value = null;
   try {
     await deleteGitHubRepo(props.repoFullName);
+    workspace.refreshRepoStatusList();
     remoteDeleted.value = true;
     settings.value = null;
     issues.value = [];
