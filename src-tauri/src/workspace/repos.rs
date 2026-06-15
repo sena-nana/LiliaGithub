@@ -1636,7 +1636,9 @@ pub(super) fn repo_history(path: &Path) -> Vec<CommitSummary> {
         path,
         &[
             "log",
-            "--max-count=80",
+            "--all",
+            "--topo-order",
+            "--max-count=160",
             "--decorate=short",
             "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%ct%x1f%P%x1f%D%x1f%s",
         ],

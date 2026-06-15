@@ -674,6 +674,37 @@ fn merge_pull_blocks_unsafe_states() {
 }
 
 #[test]
+fn repo_history_reads_all_branch_topology() {
+    let path = temp_dir("history-all-branches");
+    init_git_repo(&path);
+
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["checkout", "-b", "feature"]);
+    fs::write(path.join("feature.txt"), "feature").unwrap();
+    run_git(&path, &["add", "feature.txt"]);
+    run_git(&path, &["commit", "-m", "feature"]);
+    run_git(&path, &["checkout", "-b", "main", "HEAD~1"]);
+    fs::write(path.join("main.txt"), "main").unwrap();
+    run_git(&path, &["add", "main.txt"]);
+    run_git(&path, &["commit", "-m", "main"]);
+    run_git(&path, &["merge", "--no-ff", "feature", "-m", "merge feature"]);
+
+    let history = repo_history(&path);
+    let subjects: Vec<_> = history.iter().map(|commit| commit.subject.as_str()).collect();
+    let merge = history
+        .iter()
+        .find(|commit| commit.subject == "merge feature")
+        .expect("merge commit should be present");
+
+    assert!(subjects.contains(&"main"));
+    assert!(subjects.contains(&"feature"));
+    assert_eq!(merge.parents.len(), 2);
+    assert!(merge.refs.iter().any(|item| item.contains("main")));
+}
+
+#[test]
 fn parses_commit_patch_hunks_and_line_numbers() {
     let patch = "\
 diff --git a/src/app.ts b/src/app.ts
