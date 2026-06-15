@@ -1100,7 +1100,8 @@ function closeCloneDialog() {
 }
 
 function inferCloneDirectoryName(remoteUrl: string) {
-  const trimmed = remoteUrl.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
+  const input = normalizeGitHubInput(remoteUrl) ?? remoteUrl.trim();
+  const trimmed = input.replace(/\/+$/, "").replace(/\.git$/i, "");
   const scpPath = trimmed.match(/^[\w.-]+@[^:]+:(.+)$/)?.[1];
   const source = scpPath ?? trimmed;
   const parts = source.split(/[\\/]/).filter(Boolean);

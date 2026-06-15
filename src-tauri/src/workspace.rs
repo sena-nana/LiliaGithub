@@ -6297,6 +6297,17 @@ rename to docs/new.md",
     }
 
     #[test]
+    fn normalize_github_repo_input_accepts_https_url_without_git_suffix() {
+        let repo = normalize_github_repo_input("https://github.com/sena-nana/LiliaGithub").unwrap();
+
+        assert_eq!(repo.full_name, "sena-nana/LiliaGithub");
+        assert_eq!(
+            repo.clone_url,
+            "https://github.com/sena-nana/LiliaGithub.git"
+        );
+    }
+
+    #[test]
     fn normalize_github_repo_input_rejects_invalid_values() {
         assert!(normalize_github_repo_input("sena-nana").is_err());
         assert!(normalize_github_repo_input("https://example.com/foo/bar").is_err());
