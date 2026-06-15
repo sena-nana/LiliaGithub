@@ -475,6 +475,28 @@ function cloneRemoteRepoShortcut(shortcut: RemoteRepoShortcut): RemoteRepoShortc
   return { ...shortcut };
 }
 
+function normalizeRemoteRepoId(fullName: string): string | null {
+  const trimmed = fullName.trim().replace(/^\/+|\/+$/g, "");
+  if (!trimmed) return null;
+
+  const direct = trimmed
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/^git@github\.com:/i, "")
+    .replace(/^ssh:\/\/git@github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .trim();
+
+  const parts = direct.split("/").filter((part) => part.length > 0);
+  if (parts.length !== 2) return null;
+
+  return parts.join("/");
+}
+
+function normalizeRemoteRepoIdKey(fullName: string): string | null {
+  const normalized = normalizeRemoteRepoId(fullName);
+  return normalized ? normalized.toLowerCase() : null;
+}
+
 function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings {
   return {
     ...settings,
@@ -750,11 +772,15 @@ function normalizeRemoteRepoShortcut(repo: RemoteRepoShortcut): RemoteRepoShortc
 export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
   return call("workspace_remember_remote_repo", { repo }, () => {
     const shortcut = normalizeRemoteRepoShortcut(repo);
+    const shortcutKey = normalizeRemoteRepoIdKey(shortcut.fullName);
     fallbackSettings = {
       ...fallbackSettings,
       remoteRepoShortcuts: [
         shortcut,
-        ...fallbackSettings.remoteRepoShortcuts.filter((item) => item.fullName !== shortcut.fullName),
+        ...fallbackSettings.remoteRepoShortcuts.filter((item) => {
+          const key = normalizeRemoteRepoIdKey(item.fullName);
+          return key === null || key !== shortcutKey;
+        }),
       ].sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
     };
     return cloneWorkspaceSettings(fallbackSettings);
@@ -763,10 +789,14 @@ export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceS
 
 export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {
   return call("workspace_forget_remote_repo", { fullName }, () => {
-    const normalized = fullName.trim().replace(/^\/+|\/+$/g, "");
+    const target = normalizeRemoteRepoIdKey(fullName);
+    if (!target) return cloneWorkspaceSettings(fallbackSettings);
     fallbackSettings = {
       ...fallbackSettings,
-      remoteRepoShortcuts: fallbackSettings.remoteRepoShortcuts.filter((repo) => repo.fullName !== normalized),
+      remoteRepoShortcuts: fallbackSettings.remoteRepoShortcuts.filter((repo) => {
+        const key = normalizeRemoteRepoIdKey(repo.fullName);
+        return key === null || key !== target;
+      }),
     };
     return cloneWorkspaceSettings(fallbackSettings);
   });
