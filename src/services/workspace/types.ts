@@ -231,6 +231,10 @@ export interface RepoSummary {
   languageStatsUpdatedAt: number;
 }
 
+export interface RepoRefreshSummaryOptions {
+  fetchRemote?: boolean;
+}
+
 export interface RepoChange {
   path: string;
   oldPath: string | null;

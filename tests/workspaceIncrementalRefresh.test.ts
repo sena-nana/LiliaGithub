@@ -11,11 +11,13 @@ import {
   mergePull,
   pull,
   push,
+  refreshRepos,
   resolveConflictFile,
   stage,
   unhideRepo,
   unstage,
 } from "../src/composables/workspace/repositories";
+import { initialize } from "../src/composables/workspace/lifecycle";
 import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/composables/workspace/bulk";
 import {
   bulkSyncRepoIds,
@@ -32,7 +34,11 @@ import type { BulkSyncPreview } from "../src/services/workspace";
 import { conflictState, repoDetail, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const service = {
+  getWorkspaceSettings: vi.fn(),
+  getGitHubBindingStatus: vi.fn(),
+  listManagedRepos: vi.fn(),
   refreshRepos: vi.fn(),
+  refreshRepoSummary: vi.fn(),
   discoverRepos: vi.fn(),
   pickRepo: vi.fn(),
   addRepo: vi.fn(),
@@ -78,6 +84,21 @@ beforeEach(() => {
     },
   });
   service.listWorkspaceTasks.mockResolvedValue([]);
+  service.getWorkspaceSettings.mockResolvedValue(workspaceSettings());
+  service.getGitHubBindingStatus.mockResolvedValue({
+    state: "bound",
+    clientIdConfigured: true,
+    clientIdSource: "bundled",
+    binding: {
+      login: "sena-nana",
+      avatarUrl: null,
+      boundAt: 1,
+      scopes: ["repo"],
+      clientIdSource: "bundled",
+    },
+  });
+  service.listManagedRepos.mockResolvedValue([]);
+  service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
   service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
     languageStats: [{ language: "TypeScript", bytes: 1 }],
     workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
@@ -86,13 +107,61 @@ beforeEach(() => {
 });
 
 describe("workspace incremental refresh", () => {
-  it("全量刷新成功后按 GitHub 仓库列表刷新贡献图", async () => {
-    service.refreshRepos.mockResolvedValue([
-      repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" }),
-      repoSummary("Lilia", { githubFullName: "sena-nana/Lilia" }),
+  it("初始化先显示轻量项目列表，不等待单仓库状态刷新完成", async () => {
+    let resolveSummary: ((summary: ReturnType<typeof repoSummary>) => void) | null = null;
+    const lightweight = repoSummary("LiliaGithub", {
+      currentBranch: null,
+      remoteUrl: null,
+      githubFullName: null,
+      ahead: 0,
+      stagedCount: 0,
+    });
+    const refreshed = repoSummary("LiliaGithub", {
+      githubFullName: "sena-nana/LiliaGithub",
+      ahead: 2,
+      stagedCount: 1,
+    });
+    service.listManagedRepos.mockResolvedValue([lightweight]);
+    service.refreshRepoSummary.mockReturnValue(new Promise((resolve) => {
+      resolveSummary = resolve;
+    }));
+    service.refreshRepoLanguageStats.mockResolvedValue({
+      ...refreshed,
+      languageStats: [{ language: "TypeScript", bytes: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStatsUpdatedAt: 1,
+    });
+
+    await initialize();
+
+    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+    expect(service.refreshRepos).not.toHaveBeenCalled();
+    expect(state.loading).toBe(false);
+    expect(state.repos).toEqual([lightweight]);
+    expect(state.scanning).toBe(true);
+
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
+    resolveSummary?.(refreshed);
+    await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 2, stagedCount: 1 }));
+  });
+
+  it("轻量刷新后逐个刷新仓库状态并按 GitHub 仓库列表刷新贡献图", async () => {
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("LiliaGithub", { githubFullName: null }),
+      repoSummary("Lilia", { githubFullName: null }),
       repoSummary("LocalOnly", { githubFullName: null }),
-      repoSummary("LiliaDuplicate", { githubFullName: "sena-nana/Lilia" }),
+      repoSummary("LiliaDuplicate", { githubFullName: null }),
     ]);
+    service.refreshRepoSummary.mockImplementation(async (repoId: string) => ({
+      ...repoSummary(repoId),
+      githubFullName: repoId === "LocalOnly" ? null : repoId === "LiliaDuplicate" ? "sena-nana/Lilia" : `sena-nana/${repoId}`,
+    }));
+    service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
+      githubFullName: repoId === "LocalOnly" ? null : repoId === "LiliaDuplicate" ? "sena-nana/Lilia" : `sena-nana/${repoId}`,
+      languageStats: [{ language: "TypeScript", bytes: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStatsUpdatedAt: 1,
+    }));
     service.listRepoContributions.mockResolvedValue({
       days: [{ date: "2026-06-11", count: 3 }],
       meta: {
@@ -104,9 +173,9 @@ describe("workspace incremental refresh", () => {
       },
     });
 
-    const { refreshRepos } = await import("../src/composables/workspace/repositories");
     await refreshRepos();
 
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(4));
     await waitFor(() => expect(service.listRepoContributions).toHaveBeenCalledWith(
       ["sena-nana/LiliaGithub", "sena-nana/Lilia"],
     ));
@@ -121,24 +190,100 @@ describe("workspace incremental refresh", () => {
     expect(state.githubContributions.error).toBeNull();
   });
 
-  it("GitHub 贡献图失败不覆盖仓库扫描结果", async () => {
-    const repo = repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" });
-    service.refreshRepos.mockResolvedValue([repo]);
-    service.listRepoContributions.mockRejectedValue(new Error("rate limited"));
+  it("单仓库刷新失败不清空项目列表，也不影响其他仓库继续更新", async () => {
+    const refreshedSummaries = new Map<string, ReturnType<typeof repoSummary>>();
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("LiliaGithub", { githubFullName: null }),
+      repoSummary("Lilia", { githubFullName: null }),
+      repoSummary("LocalOnly", { githubFullName: null }),
+    ]);
+    service.refreshRepoSummary.mockImplementation(async (repoId: string) => {
+      if (repoId === "Lilia") throw new Error("status failed");
+      const summary = repoSummary(repoId, {
+        githubFullName: repoId === "LocalOnly" ? null : `sena-nana/${repoId}`,
+        ahead: repoId === "LiliaGithub" ? 2 : 0,
+      });
+      refreshedSummaries.set(repoId, summary);
+      return summary;
+    });
+    service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => ({
+      ...(refreshedSummaries.get(repoId) ?? repoSummary(repoId)),
+      languageStats: [{ language: "TypeScript", bytes: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStatsUpdatedAt: 1,
+    }));
 
-    const { refreshRepos } = await import("../src/composables/workspace/repositories");
     await refreshRepos();
 
-    expect(state.repos).toEqual([repo]);
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(3));
+    expect(state.repos.map((repo) => repo.id)).toEqual(["LiliaGithub", "Lilia", "LocalOnly"]);
+    expect(state.repos.find((repo) => repo.id === "LiliaGithub")).toMatchObject({
+      githubFullName: "sena-nana/LiliaGithub",
+      ahead: 2,
+    });
+    expect(state.repos.find((repo) => repo.id === "Lilia")).toMatchObject({
+      githubFullName: null,
+      ahead: 0,
+    });
+    expect(state.error).toBeNull();
+    expect(state.scanning).toBe(false);
+  });
+
+  it("轻量列表刷新不会覆盖已刷新的语言统计", async () => {
+    const withLanguages = repoSummary("LiliaGithub", {
+      languageStats: [{ language: "TypeScript", bytes: 10 }],
+      workingTreeLanguageStats: [{ language: "Vue", bytes: 5 }],
+      languageStatsUpdatedAt: 123,
+    });
+    state.repos = [withLanguages];
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("LiliaGithub", {
+        currentBranch: null,
+        remoteUrl: null,
+        githubFullName: null,
+        languageStats: [],
+        workingTreeLanguageStats: [],
+        languageStatsUpdatedAt: 0,
+      }),
+    ]);
+    service.refreshRepoSummary.mockImplementation(async (repoId: string) =>
+      repoSummary(repoId, {
+        languageStats: [],
+        workingTreeLanguageStats: [],
+        languageStatsUpdatedAt: 0,
+      }),
+    );
+
+    await refreshRepos();
+
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 10 }]);
+    expect(state.repos[0].workingTreeLanguageStats).toEqual([{ language: "Vue", bytes: 5 }]);
+    expect(state.repos[0].languageStatsUpdatedAt).toBe(123);
+  });
+
+  it("GitHub 贡献图失败不覆盖仓库扫描结果", async () => {
+    const repo = repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" });
+    service.listManagedRepos.mockResolvedValue([repoSummary("LiliaGithub", { githubFullName: null })]);
+    service.refreshRepoSummary.mockResolvedValue(repo);
+    service.listRepoContributions.mockRejectedValue(new Error("rate limited"));
+
+    await refreshRepos();
+
+    await waitFor(() => expect(state.repos[0]).toMatchObject({
+      id: repo.id,
+      githubFullName: repo.githubFullName,
+      remoteUrl: repo.remoteUrl,
+    }));
     expect(state.error).toBeNull();
     await waitFor(() => expect(state.githubContributions.error).toBe("Error: rate limited"));
     expect(state.githubContributions.meta).toBeNull();
   });
 
   it("没有 GitHub 仓库时写入空贡献图采样信息", async () => {
-    service.refreshRepos.mockResolvedValue([repoSummary("LocalOnly", { githubFullName: null })]);
+    service.listManagedRepos.mockResolvedValue([repoSummary("LocalOnly", { githubFullName: null })]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("LocalOnly", { githubFullName: null }));
 
-    const { refreshRepos } = await import("../src/composables/workspace/repositories");
     await refreshRepos();
 
     await waitFor(() => expect(state.githubContributions.days).toEqual([]));

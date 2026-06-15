@@ -28,6 +28,7 @@ import type {
   RepoConflictState,
   RepoDetail,
   RepoMergePullResult,
+  RepoRefreshSummaryOptions,
   RepoReadme,
   RepoSummary,
   RemoteRepoShortcut,
@@ -125,6 +126,10 @@ export function refreshRepos(): Promise<RepoSummary[]> {
   return call("workspace_refresh_repos", undefined, fallback.refreshRepos);
 }
 
+export function listManagedRepos(): Promise<RepoSummary[]> {
+  return call("workspace_list_managed_repos", undefined, fallback.listManagedRepos);
+}
+
 export function discoverRepos(): Promise<RepoSummary[]> {
   return call("workspace_discover_repos", undefined, fallback.discoverRepos);
 }
@@ -141,6 +146,13 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
 
 export function getRepoSummary(repoId: string): Promise<RepoSummary> {
   return call("repo_get_summary", { repoId }, () => fallback.getRepoSummary(repoId));
+}
+
+export function refreshRepoSummary(
+  repoId: string,
+  options: RepoRefreshSummaryOptions = {},
+): Promise<RepoSummary> {
+  return call("repo_refresh_summary", { repoId, options }, () => fallback.refreshRepoSummary(repoId, options));
 }
 
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {

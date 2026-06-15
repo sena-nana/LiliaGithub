@@ -36,6 +36,7 @@ async function clickOverviewSync() {
   if (!(main instanceof HTMLElement)) throw new Error("未找到主内容区域");
   await screen.findByRole("heading", { level: 1, name: "项目总览" });
   await within(main).findByLabelText("仓库状态列表");
+  await screen.findByText("↑1");
   await fireEvent.click(within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" }));
 }
 
@@ -162,7 +163,9 @@ describe("基础路由", () => {
   it("总览页仓库状态行可直接进入仓库详情", async () => {
     const { router } = await renderAt("/");
 
-    await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" }));
+    const repoLink = await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" });
+    await waitFor(() => expect(repoLink).toHaveAttribute("title", "C:\\Files\\workspace\\LiliaGithub"), { timeout: 3000 });
+    await fireEvent.click(repoLink);
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
@@ -908,7 +911,9 @@ describe("基础路由", () => {
     await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();
 
-    await fireEvent.click(await screen.findByRole("button", { name: "删除仓库" }));
+    const deleteRepoButton = await screen.findByRole("button", { name: "删除仓库" });
+    await waitFor(() => expect(deleteRepoButton).toBeEnabled(), { timeout: 3000 });
+    await fireEvent.click(deleteRepoButton);
     expect(await screen.findByRole("dialog", { name: "删除 GitHub 仓库" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
 
@@ -961,7 +966,7 @@ describe("基础路由", () => {
     await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
     await fireEvent.click(await screen.findByRole("tab", { name: "Issues" }));
 
-    expect(await screen.findByText(/待编辑 Issue/)).toBeInTheDocument();
+    expect(await screen.findByText(/待编辑 Issue/, {}, { timeout: 5000 })).toBeInTheDocument();
     await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
     await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 标题"), "编辑后标题");
     await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 内容"), "新正文");

@@ -152,6 +152,11 @@ export function upsertRepo(summary: RepoSummary) {
 
 export function replaceRepos(summaries: RepoSummary[]) {
   const currentById = new Map(state.repos.map((repo) => [repo.id, repo]));
+  for (const detail of Object.values(state.repoDetails)) {
+    if (detail && !currentById.has(detail.summary.id)) {
+      currentById.set(detail.summary.id, detail.summary);
+    }
+  }
   state.repos = summaries.map((summary) => {
     const current = currentById.get(summary.id);
     return current ? mergeRepoSummary(current, summary) : summary;
@@ -168,9 +173,29 @@ export function replaceRepos(summaries: RepoSummary[]) {
 }
 
 function mergeRepoSummary(current: RepoSummary, next: RepoSummary) {
+  const nextIsLightweight = !next.currentBranch &&
+    !next.remoteUrl &&
+    !next.githubFullName &&
+    next.ahead === 0 &&
+    next.behind === 0 &&
+    next.stagedCount === 0 &&
+    next.unstagedCount === 0 &&
+    next.untrackedCount === 0 &&
+    next.conflictCount === 0 &&
+    next.lastCommitAt == null &&
+    next.lastCommitMessage == null;
+  const base = nextIsLightweight
+    ? {
+      ...current,
+      id: next.id,
+      name: next.name,
+      path: next.path,
+      relativePath: next.relativePath,
+    }
+    : next;
   const hasLanguageStats = next.languageStatsUpdatedAt > 0 || next.languageStats.length > 0 || next.workingTreeLanguageStats.length > 0;
   return {
-    ...next,
+    ...base,
     languageStats: hasLanguageStats ? next.languageStats : current.languageStats,
     workingTreeLanguageStats: hasLanguageStats ? next.workingTreeLanguageStats : current.workingTreeLanguageStats,
     languageStatsUpdatedAt: hasLanguageStats ? next.languageStatsUpdatedAt : current.languageStatsUpdatedAt,

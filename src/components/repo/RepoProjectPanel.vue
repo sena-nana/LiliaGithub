@@ -81,6 +81,9 @@ const editingIssueAssignees = ref("");
 const updatingIssue = ref(false);
 const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
+let githubLoadRunId = 0;
+let issueLoadRunId = 0;
+let actionsLoadRunId = 0;
 
 const settingsForm = reactive({
   description: "",
@@ -272,7 +275,9 @@ async function loadReadme() {
 }
 
 async function loadGitHub() {
-  if (!props.repoFullName || remoteDeleted.value) {
+  const runId = ++githubLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) {
     settings.value = null;
     issues.value = [];
     githubError.value = null;
@@ -282,9 +287,10 @@ async function loadGitHub() {
   githubError.value = null;
   try {
     const [nextSettings, nextIssues] = await Promise.all([
-      getGitHubRepoManagement(props.repoFullName),
-      listGitHubIssues(props.repoFullName, issueState.value),
+      getGitHubRepoManagement(repoFullName),
+      listGitHubIssues(repoFullName, issueState.value),
     ]);
+    if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
     settings.value = nextSettings;
     issues.value = nextIssues;
     syncEditingIssue();
@@ -297,10 +303,14 @@ async function loadGitHub() {
 }
 
 async function loadIssues() {
-  if (!props.repoFullName || remoteDeleted.value) return;
+  const runId = ++issueLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
   githubError.value = null;
   try {
-    issues.value = await listGitHubIssues(props.repoFullName, issueState.value);
+    const nextIssues = await listGitHubIssues(repoFullName, issueState.value);
+    if (runId !== issueLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    issues.value = nextIssues;
     syncEditingIssue();
   } catch (err) {
     githubError.value = String(err);
@@ -308,7 +318,9 @@ async function loadIssues() {
 }
 
 async function loadActions() {
-  if (!props.repoFullName || remoteDeleted.value) {
+  const runId = ++actionsLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) {
     workflowRuns.value = [];
     actionsError.value = null;
     return;
@@ -316,7 +328,9 @@ async function loadActions() {
   actionsLoading.value = true;
   actionsError.value = null;
   try {
-    workflowRuns.value = await listGitHubWorkflowRuns(props.repoFullName, 20);
+    const nextRuns = await listGitHubWorkflowRuns(repoFullName, 20);
+    if (runId !== actionsLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    workflowRuns.value = nextRuns;
   } catch (err) {
     actionsError.value = String(err);
   } finally {
@@ -697,7 +711,7 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
             <button
               type="button"
               class="ghost danger"
-              :disabled="deletingRepo || githubLoading || !settings"
+              :disabled="deletingRepo || githubLoading || !settings || !repoFullName"
               @click="openDeleteDialog"
             >
               <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
