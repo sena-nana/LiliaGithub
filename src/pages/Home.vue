@@ -1999,7 +1999,7 @@ async function addLocalRepo() {
   bottom: 0;
   width: 1px;
   content: "";
-  background: var(--border-soft);
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
 }
 
 .github-timeline-row:first-child .github-timeline-row__rail::before {
@@ -2019,6 +2019,12 @@ async function addLocalRepo() {
   width: 16px;
   height: 16px;
   color: var(--accent);
+  background: var(--bg-elev);
+  border-radius: 4px;
+}
+
+.github-timeline-row:hover .github-timeline-row__node {
+  background: var(--bg-hover);
 }
 
 .github-timeline-row__node,
