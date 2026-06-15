@@ -145,6 +145,39 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 2, stagedCount: 1 }));
   });
 
+  it("仓库状态刷新按固定并发上限启动，单个仓库未完成时不阻塞同批其他仓库", async () => {
+    const repoIds = ["Repo1", "Repo2", "Repo3", "Repo4", "Repo5", "Repo6"];
+    const resolvers = new Map<string, () => void>();
+    service.listManagedRepos.mockResolvedValue(repoIds.map((repoId) => repoSummary(repoId, { githubFullName: null })));
+    service.refreshRepoSummary.mockImplementation((repoId: string) => new Promise((resolve) => {
+      resolvers.set(repoId, () => resolve(repoSummary(repoId, { ahead: repoId === "Repo1" ? 1 : 0 })));
+    }));
+
+    await refreshRepos();
+
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(4));
+    expect(service.refreshRepoSummary).toHaveBeenNthCalledWith(1, "Repo1", { fetchRemote: true });
+    expect(service.refreshRepoSummary).toHaveBeenNthCalledWith(4, "Repo4", { fetchRemote: true });
+    expect(service.refreshRepoSummary).not.toHaveBeenCalledWith("Repo5", { fetchRemote: true });
+    expect(state.refreshingRepoIds).toEqual(repoIds);
+
+    resolvers.get("Repo1")?.();
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(5));
+    expect(service.refreshRepoSummary).toHaveBeenCalledWith("Repo5", { fetchRemote: true });
+    expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
+    expect(state.refreshingRepoIds).not.toContain("Repo1");
+
+    resolvers.get("Repo2")?.();
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(6));
+    expect(service.refreshRepoSummary).toHaveBeenCalledWith("Repo6", { fetchRemote: true });
+
+    for (const repoId of repoIds.slice(2)) {
+      resolvers.get(repoId)?.();
+    }
+    await waitFor(() => expect(state.scanning).toBe(false));
+    expect(state.refreshingRepoIds).toEqual([]);
+  });
+
   it("轻量刷新后逐个刷新仓库状态并按 GitHub 仓库列表刷新贡献图", async () => {
     service.listManagedRepos.mockResolvedValue([
       repoSummary("LiliaGithub", { githubFullName: null }),
@@ -226,7 +259,7 @@ describe("workspace incremental refresh", () => {
       ahead: 0,
     });
     expect(state.error).toBeNull();
-    expect(state.scanning).toBe(false);
+    await waitFor(() => expect(state.scanning).toBe(false));
   });
 
   it("轻量列表刷新不会覆盖已刷新的语言统计", async () => {
@@ -286,14 +319,13 @@ describe("workspace incremental refresh", () => {
 
     await refreshRepos();
 
-    await waitFor(() => expect(state.githubContributions.days).toEqual([]));
-    expect(service.listRepoContributions).not.toHaveBeenCalled();
-    expect(state.githubContributions.meta).toMatchObject({
+    await waitFor(() => expect(state.githubContributions.meta).toMatchObject({
       repoCount: 0,
       requestedRepoCount: 0,
       repoLimit: 30,
       truncated: false,
-    });
+    }));
+    expect(service.listRepoContributions).not.toHaveBeenCalled();
     expect(typeof state.githubContributions.meta?.refreshedAt).toBe("number");
   });
 

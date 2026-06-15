@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -39,6 +39,7 @@ const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 const GITHUB_CONTRIBUTION_DAYS: usize = 371;
 const GITHUB_COMMITS_PER_PAGE: usize = 100;
 const GITHUB_COMMITS_MAX_PAGES: usize = 10;
+const MAX_REPO_REFRESH_CONCURRENCY: usize = 4;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -2156,24 +2157,65 @@ fn repo_refresh_partial_failure_message(
 }
 
 fn refresh_managed_repo_remotes(
-    root: &Path,
     paths: &[PathBuf],
-    mut fetch_repo: impl FnMut(&Path) -> Result<(), String>,
+    fetch_repo: impl Fn(&Path) -> Result<(), String> + Sync,
 ) -> Vec<RepoFetchFailure> {
-    let mut failures = Vec::new();
-    for path in paths {
-        let summary = summarize_repo(root, path);
-        if summary.remote_url.is_none() {
-            continue;
-        }
-        if let Err(error) = fetch_repo(path) {
-            failures.push(RepoFetchFailure {
-                repo_name: summary.name,
-                error,
+    let remote_repos = paths
+        .iter()
+        .enumerate()
+        .filter_map(|(index, path)| {
+            git_command_lossy(path, &["remote", "get-url", "origin"])?;
+            Some((
+                index,
+                path.clone(),
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("repo")
+                    .to_string(),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if remote_repos.is_empty() {
+        return Vec::new();
+    }
+
+    let next_index = AtomicUsize::new(0);
+    let failures = Mutex::new(Vec::<(usize, RepoFetchFailure)>::new());
+    let worker_count = repo_refresh_worker_count(remote_repos.len());
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let remote_repos = &remote_repos;
+            let next_index = &next_index;
+            let failures = &failures;
+            let fetch_repo = &fetch_repo;
+            scope.spawn(move || loop {
+                let item_index = next_index.fetch_add(1, Ordering::Relaxed);
+                let Some((repo_index, path, repo_name)) = remote_repos.get(item_index) else {
+                    break;
+                };
+                if let Err(error) = fetch_repo(path) {
+                    failures.lock().unwrap().push((
+                        *repo_index,
+                        RepoFetchFailure {
+                            repo_name: repo_name.clone(),
+                            error,
+                        },
+                    ));
+                }
             });
         }
-    }
-    failures
+    });
+
+    let mut failures = failures.into_inner().unwrap();
+    failures.sort_by_key(|(index, _)| *index);
+    failures.into_iter().map(|(_, failure)| failure).collect()
+}
+
+fn repo_refresh_worker_count(repo_count: usize) -> usize {
+    let available = thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(1);
+    repo_count.min(available.clamp(1, MAX_REPO_REFRESH_CONCURRENCY))
 }
 
 fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> Vec<PathBuf> {
@@ -2762,7 +2804,7 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
             Some("刷新已管理仓库并同步远端状态".to_string()),
         );
         let paths = managed_repo_paths(&root, &settings);
-        let failures = refresh_managed_repo_remotes(&root, &paths, |path| run_fetch(&app, path));
+        let failures = refresh_managed_repo_remotes(&paths, |path| run_fetch(&app, path));
         let mut repos = summarize_repos(&root, paths);
         sort_repos(&mut repos);
         if failures.is_empty() {
@@ -5303,6 +5345,7 @@ pub(crate) fn parse_github_remote(remote: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::{mpsc, Arc, Mutex as TestMutex};
     use std::time::Duration as TestDuration;
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -6523,13 +6566,15 @@ rename to docs/new.md",
             &["remote", "add", "origin", "https://github.com/a/repo.git"],
         );
         let paths = vec![with_origin.clone(), local_only];
-        let mut fetched = Vec::new();
+        let fetched = TestMutex::new(Vec::new());
 
-        let failures = refresh_managed_repo_remotes(&root, &paths, |path| {
-            fetched.push(repo_id(&root, path));
+        let failures = refresh_managed_repo_remotes(&paths, |path| {
+            fetched.lock().unwrap().push(repo_id(&root, path));
             Ok(())
         });
 
+        let mut fetched = fetched.into_inner().unwrap();
+        fetched.sort();
         assert!(failures.is_empty());
         assert_eq!(fetched, vec!["with-origin"]);
         fs::remove_dir_all(root).unwrap();
@@ -6561,11 +6606,11 @@ rename to docs/new.md",
             ],
         );
         let paths = vec![failing.clone(), succeeding.clone()];
-        let mut fetched = Vec::new();
+        let fetched = TestMutex::new(Vec::new());
 
-        let failures = refresh_managed_repo_remotes(&root, &paths, |path| {
+        let failures = refresh_managed_repo_remotes(&paths, |path| {
             let id = repo_id(&root, path);
-            fetched.push(id.clone());
+            fetched.lock().unwrap().push(id.clone());
             if id == "failing" {
                 Err("network unavailable".to_string())
             } else {
@@ -6573,6 +6618,8 @@ rename to docs/new.md",
             }
         });
 
+        let mut fetched = fetched.into_inner().unwrap();
+        fetched.sort();
         assert_eq!(fetched, vec!["failing", "succeeding"]);
         assert_eq!(
             failures,
@@ -6581,6 +6628,54 @@ rename to docs/new.md",
                 error: "network unavailable".to_string(),
             }]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refresh_managed_repo_remotes_starts_other_repos_while_one_fetch_is_blocked() {
+        if repo_refresh_worker_count(2) < 2 {
+            return;
+        }
+
+        let root = temp_dir("managed-fetch-parallel");
+        let blocking = root.join("blocking");
+        let other = root.join("other");
+        init_git_repo(&blocking);
+        init_git_repo(&other);
+        run_git(
+            &blocking,
+            &["remote", "add", "origin", "https://github.com/a/blocking.git"],
+        );
+        run_git(
+            &other,
+            &["remote", "add", "origin", "https://github.com/a/other.git"],
+        );
+        let paths = vec![blocking, other];
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Arc::new(TestMutex::new(release_rx));
+        let root_for_fetch = root.clone();
+
+        let handle = thread::spawn(move || {
+            refresh_managed_repo_remotes(&paths, |path| {
+                let id = repo_id(&root_for_fetch, path);
+                started_tx.send(id.clone()).unwrap();
+                if id == "blocking" {
+                    release_rx.lock().unwrap().recv().unwrap();
+                }
+                Ok(())
+            })
+        });
+
+        let first = started_rx.recv_timeout(TestDuration::from_secs(1)).unwrap();
+        let second = started_rx.recv_timeout(TestDuration::from_secs(1)).unwrap();
+        let mut started = vec![first, second];
+        started.sort();
+        assert_eq!(started, vec!["blocking", "other"]);
+
+        release_tx.send(()).unwrap();
+        let failures = handle.join().unwrap();
+        assert!(failures.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 

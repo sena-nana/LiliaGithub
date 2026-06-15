@@ -12,6 +12,7 @@ import { loadWorkspaceService } from "./serviceLoader";
 import type { RemoteRepoShortcut, RepoConflictChoice, RepoSummary } from "../../services/workspace";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
+const REPO_REFRESH_CONCURRENCY = 4;
 let repositoryRuntimeGeneration = 0;
 
 async function applyRepoMutation(
@@ -79,7 +80,7 @@ async function refreshManagedRepoSummaries(
   try {
     const service = await loadWorkspaceService();
     const refreshedRepoIds: string[] = [];
-    for (const repoId of uniqueRepoIds) {
+    await runBoundedParallel(uniqueRepoIds, REPO_REFRESH_CONCURRENCY, async (repoId) => {
       if (generation !== repositoryRuntimeGeneration) return;
       try {
         const summary = await service.refreshRepoSummary(repoId, { fetchRemote: options.fetchRemote ?? false });
@@ -92,7 +93,7 @@ async function refreshManagedRepoSummaries(
         state.refreshingRepoIds = state.refreshingRepoIds.filter((id) => id !== repoId);
         void refreshWorkspaceTasks();
       }
-    }
+    });
     if (generation === repositoryRuntimeGeneration) {
       scheduleLowPriorityRefresh(refreshedRepoIds);
     }
@@ -181,17 +182,33 @@ export async function refreshLanguageStatsForRepos(
   const generation = repositoryRuntimeGeneration;
   const uniqueRepoIds = Array.from(new Set(repoIds));
   let firstError: unknown = null;
-  for (const repoId of uniqueRepoIds) {
+  await runBoundedParallel(uniqueRepoIds, REPO_REFRESH_CONCURRENCY, async (repoId) => {
     if (generation !== repositoryRuntimeGeneration) return;
     try {
       await refreshRepoLanguageStats(repoId, options);
     } catch (err) {
       firstError ??= err;
     }
-  }
+  });
   if (firstError && !options.silent) {
     throw firstError;
   }
+}
+
+async function runBoundedParallel<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+) {
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await worker(item);
+    }
+  }));
 }
 
 export async function refreshRepoLanguageStats(
