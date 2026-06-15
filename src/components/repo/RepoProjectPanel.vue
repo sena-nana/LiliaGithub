@@ -1187,21 +1187,6 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
       </main>
 
       <aside class="project-sidebar">
-        <div v-if="!remoteOnly" class="project-sidebar__card" role="tablist" aria-label="本地 Git 视图">
-          <button
-            v-for="tab in gitTabs"
-            :key="tab.key"
-            type="button"
-            class="project-sidebar__item"
-            :class="{ 'is-active': isProjectSectionActive(tab.key) }"
-            role="tab"
-            :aria-selected="isProjectSectionActive(tab.key)"
-            @click="activateGitTab(tab.key)"
-          >
-            <strong>{{ tab.label }}</strong>
-          </button>
-        </div>
-
         <div class="project-sidebar__card" role="tablist" aria-label="README 列表">
           <button
             v-for="item in readmes"
@@ -1246,6 +1231,21 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
             @stop="emit('stop')"
             @open-terminal="emit('openTerminal')"
           />
+        </div>
+
+        <div v-if="!remoteOnly" class="project-sidebar__card" role="tablist" aria-label="本地 Git 视图">
+          <button
+            v-for="tab in gitTabs"
+            :key="tab.key"
+            type="button"
+            class="project-sidebar__item"
+            :class="{ 'is-active': isProjectSectionActive(tab.key) }"
+            role="tab"
+            :aria-selected="isProjectSectionActive(tab.key)"
+            @click="activateGitTab(tab.key)"
+          >
+            <strong>{{ tab.label }}</strong>
+          </button>
         </div>
       </aside>
     </div>
