@@ -9,7 +9,7 @@ import {
   upsertRepo,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
-import type { RepoConflictChoice, RepoSummary } from "../../services/workspace";
+import type { RemoteRepoShortcut, RepoConflictChoice, RepoSummary } from "../../services/workspace";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 
@@ -100,6 +100,7 @@ export async function refreshRepoContributions() {
         requestedRepoCount: 0,
         repoLimit: CONTRIBUTION_REPO_LIMIT,
         truncated: false,
+        skippedRepoCount: 0,
         refreshedAt,
       };
       return;
@@ -174,6 +175,18 @@ export async function hideRepo(repoId: string) {
   delete state.launchConfigs[repoId];
   delete state.launchStatuses[repoId];
   delete state.launchLogs[repoId];
+}
+
+export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.rememberRemoteRepo(repo);
+  return state.settings;
+}
+
+export async function forgetRemoteRepo(fullName: string) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.forgetRemoteRepo(fullName);
+  return state.settings;
 }
 
 export async function unhideRepo(repoId: string) {

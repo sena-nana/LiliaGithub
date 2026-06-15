@@ -23,6 +23,7 @@ import {
   type RepoSummary,
 } from "../services/workspace";
 import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
+import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -134,6 +135,24 @@ const filteredRepoItems = computed(() => {
       issue: repoIssue(repo),
     }));
 });
+
+const localRepoFullNames = computed(() =>
+  new Set(
+    workspace.state.repos
+      .map((repo) => repo.githubFullName)
+      .filter((name): name is string => Boolean(name)),
+  ),
+);
+
+const remoteRepoItems = computed(() =>
+  [...(workspace.state.settings?.remoteRepoShortcuts ?? [])]
+    .filter((repo) => !localRepoFullNames.value.has(repo.fullName))
+    .sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
+);
+
+const activeRemoteFullName = computed(() =>
+  parseRemoteRepoId(String(route.params.repoId ?? "")),
+);
 
 const canSubmitClone = computed(() => cloneRemoteUrl.value.trim().length > 0 && !cloneBusy.value);
 const cloneGitHubBound = computed(() => cloneBindingStatus.value?.state === "bound");
@@ -361,6 +380,17 @@ async function openGitHubBindingSettings() {
   await router.push({ path: "/settings", query: { tab: "repositories" } });
 }
 
+async function openRemoteRepo(fullName: string) {
+  await router.push(remoteRepoRoute(fullName));
+}
+
+async function removeRemoteRepo(fullName: string) {
+  await workspace.forgetRemoteRepo(fullName);
+  if (activeRemoteFullName.value === fullName) {
+    await router.push("/");
+  }
+}
+
 function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   return [
     {
@@ -457,6 +487,41 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
         <p v-if="workspace.state.scanning" class="sb-tree__empty">正在扫描仓库...</p>
         <p v-else-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
         <p v-else-if="searchOpen && !filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
+      </div>
+    </div>
+
+    <div v-if="remoteRepoItems.length" class="sb-section sb-section--remote">
+      <div class="sb-section__header">
+        <span class="sb-section__title">远程仓库 {{ remoteRepoItems.length }}</span>
+      </div>
+      <div class="sb-tree">
+        <div
+          v-for="repo in remoteRepoItems"
+          :key="repo.fullName"
+          class="sb-tree__row sb-tree__row--project sb-tree__row--remote"
+          :class="{ 'is-active': activeRemoteFullName === repo.fullName }"
+          role="link"
+          tabindex="0"
+          :title="repo.fullName"
+          :aria-label="`打开 ${repo.fullName}`"
+          @click="openRemoteRepo(repo.fullName)"
+          @keydown.enter.prevent="openRemoteRepo(repo.fullName)"
+          @keydown.space.prevent="openRemoteRepo(repo.fullName)"
+        >
+          <FolderGit2 :size="14" aria-hidden="true" />
+          <span class="sb-tree__name">{{ repo.name }}</span>
+          <span v-if="repo.archived" class="sb-badge">ARCH</span>
+          <span v-if="repo.private" class="sb-badge">私有</span>
+          <button
+            type="button"
+            class="sb-icon-btn sb-tree__remote-remove"
+            :aria-label="`移除 ${repo.fullName}`"
+            title="从侧边栏移除"
+            @click.stop="removeRemoteRepo(repo.fullName)"
+          >
+            <X :size="13" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </div>
 
@@ -711,6 +776,23 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 
 .sb-tree__row--project.is-active {
   color: var(--accent);
+}
+
+.sb-tree__row--remote {
+  cursor: pointer;
+}
+
+.sb-tree__remote-remove {
+  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sb-tree__row--remote:hover .sb-tree__remote-remove,
+.sb-tree__row--remote:focus-within .sb-tree__remote-remove,
+.sb-tree__row--remote.is-active .sb-tree__remote-remove {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .sb-tree__name {

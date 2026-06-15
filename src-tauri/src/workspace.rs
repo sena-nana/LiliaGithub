@@ -12,6 +12,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring_core::{Entry, Error as KeyringError};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, LINK, USER_AGENT};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -62,6 +63,8 @@ pub struct WorkspaceSettings {
     pub hidden_repo_ids: Vec<String>,
     #[serde(default)]
     pub managed_repo_ids: Vec<String>,
+    #[serde(default)]
+    pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +158,7 @@ pub struct GitHubContributionMeta {
     pub requested_repo_count: usize,
     pub repo_limit: usize,
     pub truncated: bool,
+    pub skipped_repo_count: usize,
     pub refreshed_at: i64,
 }
 
@@ -183,6 +187,21 @@ pub struct GitHubRepoSummary {
     pub updated_at: String,
     pub clone_url: String,
     pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteRepoShortcut {
+    pub full_name: String,
+    pub name: String,
+    pub private: bool,
+    pub archived: bool,
+    #[serde(default)]
+    pub default_branch: Option<String>,
+    pub html_url: String,
+    pub clone_url: String,
+    #[serde(default)]
+    pub opened_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -521,6 +540,22 @@ struct GitHubRepoResponse {
     allow_forking: bool,
     #[serde(default)]
     web_commit_signoff_required: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubContentListItem {
+    name: String,
+    path: String,
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitHubContentFileResponse {
+    name: String,
+    path: String,
+    encoding: Option<String>,
+    content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1114,6 +1149,41 @@ fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> GitHubRepoSumm
     }
 }
 
+fn normalize_remote_repo_shortcut(mut shortcut: RemoteRepoShortcut) -> Result<RemoteRepoShortcut, String> {
+    let repo = normalize_github_repo_input(&shortcut.full_name)?;
+    shortcut.full_name = repo.full_name;
+    shortcut.name = normalize_optional_string(Some(shortcut.name))
+        .unwrap_or_else(|| repo.name.clone());
+    shortcut.default_branch = normalize_optional_string(shortcut.default_branch);
+    shortcut.html_url = normalize_optional_string(Some(shortcut.html_url))
+        .unwrap_or_else(|| format!("https://github.com/{}", shortcut.full_name));
+    shortcut.clone_url = normalize_optional_string(Some(shortcut.clone_url))
+        .unwrap_or(repo.clone_url);
+    shortcut.opened_at = now_millis();
+    Ok(shortcut)
+}
+
+fn remember_remote_repo_shortcut(
+    shortcuts: &mut Vec<RemoteRepoShortcut>,
+    shortcut: RemoteRepoShortcut,
+) -> Result<(), String> {
+    let shortcut = normalize_remote_repo_shortcut(shortcut)?;
+    shortcuts.retain(|item| item.full_name != shortcut.full_name);
+    shortcuts.push(shortcut);
+    shortcuts.sort_by(|a, b| {
+        b.opened_at
+            .cmp(&a.opened_at)
+            .then_with(|| a.full_name.cmp(&b.full_name))
+    });
+    Ok(())
+}
+
+fn forget_remote_repo_shortcut(shortcuts: &mut Vec<RemoteRepoShortcut>, full_name: &str) -> Result<(), String> {
+    let repo = normalize_github_repo_input(full_name)?;
+    shortcuts.retain(|item| item.full_name != repo.full_name);
+    Ok(())
+}
+
 fn github_repo_management_from_response(repo: GitHubRepoResponse) -> GitHubRepoManagement {
     GitHubRepoManagement {
         full_name: repo.full_name,
@@ -1386,14 +1456,20 @@ fn github_contribution_days(
 fn github_contribution_meta(
     repo_count: usize,
     requested_repo_count: usize,
+    skipped_repo_count: usize,
 ) -> GitHubContributionMeta {
     GitHubContributionMeta {
         repo_count,
         requested_repo_count,
         repo_limit: GITHUB_CONTRIBUTIONS_REPO_LIMIT,
         truncated: requested_repo_count > repo_count,
+        skipped_repo_count,
         refreshed_at: now_millis(),
     }
+}
+
+fn is_recoverable_github_contribution_status(status: StatusCode) -> bool {
+    matches!(status, StatusCode::NOT_FOUND | StatusCode::CONFLICT)
 }
 
 fn add_commit_contributions(
@@ -2088,19 +2164,24 @@ fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-fn repo_readme_priority(path: &Path) -> Option<usize> {
-    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+fn readme_name_priority(name: &str) -> Option<usize> {
+    let name = name.to_ascii_lowercase();
     match name.as_str() {
         "readme.md" => Some(0),
         "readme.markdown" => Some(1),
         "readme" => Some(2),
         "readme.txt" => Some(3),
         _ if name.starts_with("readme.") && matches!(
-            path.extension()?.to_str()?.to_ascii_lowercase().as_str(),
+            Path::new(&name).extension()?.to_str()?.to_ascii_lowercase().as_str(),
             "md" | "markdown" | "txt"
         ) => Some(4),
         _ => None,
     }
+}
+
+fn repo_readme_priority(path: &Path) -> Option<usize> {
+    let name = path.file_name()?.to_str()?;
+    readme_name_priority(name)
 }
 
 fn repo_readme_paths(repo_path: &Path) -> Result<Vec<PathBuf>, String> {
@@ -2162,6 +2243,108 @@ fn read_repo_readmes(repo_id: &str, repo_path: &Path) -> Result<Vec<RepoReadme>,
 
 fn read_repo_readme(repo_id: &str, repo_path: &Path) -> Result<Option<RepoReadme>, String> {
     Ok(read_repo_readmes(repo_id, repo_path)?.into_iter().next())
+}
+
+fn readme_format_for_path(path: &str) -> String {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .filter(|extension| extension == "md" || extension == "markdown")
+        .unwrap_or_else(|| "text".to_string())
+}
+
+fn decode_github_file_content(
+    prefix: &str,
+    repo_full_name: &str,
+    file: GitHubContentFileResponse,
+) -> Result<RepoReadme, String> {
+    let encoding = file.encoding.unwrap_or_default();
+    if encoding.to_ascii_lowercase() != "base64" {
+        return Err(format!("{prefix}：不支持的 README 编码：{encoding}"));
+    }
+    let encoded = file
+        .content
+        .unwrap_or_default()
+        .chars()
+        .filter(|value| !value.is_whitespace())
+        .collect::<String>();
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("{prefix}：README 解码失败：{e}"))?;
+    let content = String::from_utf8(bytes)
+        .map_err(|e| format!("{prefix}：README 不是 UTF-8 文本：{e}"))?;
+    Ok(RepoReadme {
+        repo_id: format!("github:{repo_full_name}"),
+        path: file.path.clone(),
+        images: HashMap::new(),
+        content,
+        format: readme_format_for_path(&file.name),
+        updated_at: None,
+    })
+}
+
+fn read_github_repo_readmes(app: &AppHandle, repo_full_name: &str) -> Result<Vec<RepoReadme>, String> {
+    let repo = normalize_github_repo_input(repo_full_name)?;
+    let (_, token) = github_require_token(app)?;
+    let client = build_client()?;
+    let repo_path = github_api_repo_path(&repo.full_name);
+    let repo_url = format!("https://api.github.com/repos/{repo_path}");
+    let repo_response = github_send(
+        app,
+        "读取 GitHub 仓库信息失败",
+        github_headers(client.get(repo_url), Some(&token)),
+    )?;
+    let repo_info: GitHubRepoResponse = github_json("读取 GitHub 仓库信息失败", repo_response)?;
+    let branch = repo_info.default_branch.unwrap_or_else(|| "main".to_string());
+    let root_url = format!(
+        "https://api.github.com/repos/{repo_path}/contents?ref={}",
+        url_encode_path_segment(&branch),
+    );
+    let root_response = github_send(
+        app,
+        "读取 GitHub README 失败",
+        github_headers(client.get(root_url), Some(&token)),
+    )?;
+    if root_response.status() == StatusCode::NOT_FOUND {
+        return Ok(Vec::new());
+    }
+    let mut candidates: Vec<GitHubContentListItem> =
+        github_json("读取 GitHub README 失败", root_response)?;
+    candidates.retain(|item| item.kind == "file" && readme_name_priority(&item.name).is_some());
+    candidates.sort_by(|a, b| {
+        let a_priority = readme_name_priority(&a.name).unwrap_or(usize::MAX);
+        let b_priority = readme_name_priority(&b.name).unwrap_or(usize::MAX);
+        a_priority.cmp(&b_priority).then_with(|| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        })
+    });
+    let mut readmes = Vec::new();
+    for item in candidates {
+        let file_url = format!(
+            "https://api.github.com/repos/{repo_path}/contents/{}?ref={}",
+            github_api_repo_path(&item.path),
+            url_encode_path_segment(&branch),
+        );
+        let file_response = github_send(
+            app,
+            "读取 GitHub README 失败",
+            github_headers(client.get(file_url), Some(&token)),
+        )?;
+        if file_response.status() == StatusCode::NOT_FOUND {
+            continue;
+        }
+        let file: GitHubContentFileResponse =
+            github_json("读取 GitHub README 失败", file_response)?;
+        readmes.push(decode_github_file_content(
+            "读取 GitHub README 失败",
+            &repo.full_name,
+            file,
+        )?);
+    }
+    Ok(readmes)
 }
 
 fn readme_image_data_urls(content: &str, readme_dir: &Path, repo_path: &Path) -> HashMap<String, String> {
@@ -2648,6 +2831,28 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
         settings.hidden_repo_ids.push(normalized.to_string());
         settings.hidden_repo_ids.sort();
     }
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_remember_remote_repo(
+    app: AppHandle,
+    repo: RemoteRepoShortcut,
+) -> Result<WorkspaceSettings, String> {
+    let mut settings = load_settings(&app);
+    remember_remote_repo_shortcut(&mut settings.remote_repo_shortcuts, repo)?;
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_forget_remote_repo(
+    app: AppHandle,
+    full_name: String,
+) -> Result<WorkspaceSettings, String> {
+    let mut settings = load_settings(&app);
+    forget_remote_repo_shortcut(&mut settings.remote_repo_shortcuts, &full_name)?;
     save_settings(&app, &settings)?;
     Ok(settings)
 }
@@ -3182,7 +3387,7 @@ pub async fn github_list_repo_contributions(
         if repos.is_empty() {
             return Ok(GitHubContributionResult {
                 days: github_contribution_days(&HashMap::new(), end_day_index),
-                meta: github_contribution_meta(repo_count, requested_repo_count),
+                meta: github_contribution_meta(repo_count, requested_repo_count, 0),
             });
         }
         let token = token_for_binding(&app)?;
@@ -3190,6 +3395,7 @@ pub async fn github_list_repo_contributions(
         let since = format!("{}T00:00:00Z", format_day_index(start_day_index));
         let until = format!("{}T23:59:59Z", format_day_index(end_day_index));
         let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut skipped_repo_count = 0;
         for repo in repos {
             for page in 1..=GITHUB_COMMITS_MAX_PAGES {
                 let url = format!(
@@ -3201,6 +3407,10 @@ pub async fn github_list_repo_contributions(
                     .send()
                     .map_err(|e| format!("读取 GitHub 提交贡献失败：{e}"))?;
                 if !response.status().is_success() {
+                    if page == 1 && is_recoverable_github_contribution_status(response.status()) {
+                        skipped_repo_count += 1;
+                        break;
+                    }
                     return Err(github_http_error("读取 GitHub 提交贡献失败", response));
                 }
                 let commits = response
@@ -3215,8 +3425,19 @@ pub async fn github_list_repo_contributions(
         }
         Ok(GitHubContributionResult {
             days: github_contribution_days(&counts, end_day_index),
-            meta: github_contribution_meta(repo_count, requested_repo_count),
+            meta: github_contribution_meta(repo_count, requested_repo_count, skipped_repo_count),
         })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_repo_readmes(
+    app: AppHandle,
+    repo_full_name: String,
+) -> Result<Vec<RepoReadme>, String> {
+    run_blocking("读取 GitHub README", move || {
+        read_github_repo_readmes(&app, &repo_full_name)
     })
     .await
 }
@@ -5043,14 +5264,90 @@ mod tests {
             .map(|index| format!("sena-nana/repo-{index}"))
             .collect::<Vec<_>>();
         let (repos, requested_repo_count) = normalize_github_contribution_repos(names);
-        let meta = github_contribution_meta(repos.len(), requested_repo_count);
+        let meta = github_contribution_meta(repos.len(), requested_repo_count, 0);
 
         assert_eq!(repos.len(), GITHUB_CONTRIBUTIONS_REPO_LIMIT);
         assert_eq!(requested_repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1);
         assert_eq!(meta.repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT);
         assert_eq!(meta.requested_repo_count, GITHUB_CONTRIBUTIONS_REPO_LIMIT + 1);
         assert_eq!(meta.repo_limit, GITHUB_CONTRIBUTIONS_REPO_LIMIT);
+        assert_eq!(meta.skipped_repo_count, 0);
         assert!(meta.truncated);
+    }
+
+    #[test]
+    fn treats_missing_or_empty_repos_as_recoverable_contribution_sources() {
+        assert!(is_recoverable_github_contribution_status(StatusCode::NOT_FOUND));
+        assert!(is_recoverable_github_contribution_status(StatusCode::CONFLICT));
+        assert!(!is_recoverable_github_contribution_status(StatusCode::FORBIDDEN));
+        assert!(!is_recoverable_github_contribution_status(StatusCode::UNAUTHORIZED));
+    }
+
+    fn test_remote_shortcut(full_name: &str) -> RemoteRepoShortcut {
+        let repo = normalize_github_repo_input(full_name).unwrap();
+        RemoteRepoShortcut {
+            full_name: repo.full_name,
+            name: repo.name,
+            private: false,
+            archived: false,
+            default_branch: Some("main".to_string()),
+            html_url: format!("https://github.com/{full_name}"),
+            clone_url: format!("https://github.com/{full_name}.git"),
+            opened_at: 1,
+        }
+    }
+
+    #[test]
+    fn remote_repo_shortcuts_are_upserted_by_full_name() {
+        let mut shortcuts = Vec::new();
+        remember_remote_repo_shortcut(&mut shortcuts, test_remote_shortcut("sena-nana/Remote")).unwrap();
+        let first_opened_at = shortcuts[0].opened_at;
+        let mut updated = test_remote_shortcut("https://github.com/sena-nana/Remote.git");
+        updated.private = true;
+        updated.clone_url = "https://github.com/sena-nana/Remote-updated.git".to_string();
+
+        remember_remote_repo_shortcut(&mut shortcuts, updated).unwrap();
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].full_name, "sena-nana/Remote");
+        assert!(shortcuts[0].private);
+        assert_eq!(shortcuts[0].clone_url, "https://github.com/sena-nana/Remote-updated.git");
+        assert!(shortcuts[0].opened_at >= first_opened_at);
+    }
+
+    #[test]
+    fn forget_remote_repo_shortcut_removes_only_matching_repo() {
+        let mut shortcuts = vec![
+            test_remote_shortcut("sena-nana/Keep"),
+            test_remote_shortcut("sena-nana/Remove"),
+        ];
+
+        forget_remote_repo_shortcut(&mut shortcuts, "https://github.com/sena-nana/Remove").unwrap();
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].full_name, "sena-nana/Keep");
+    }
+
+    #[test]
+    fn readme_name_priority_supports_remote_readme_candidates() {
+        let mut names = vec![
+            "README.txt",
+            "README.zh-CN.md",
+            "README",
+            "readme.markdown",
+            "README.md",
+            "docs.md",
+        ];
+        names.sort_by(|a, b| {
+            let a_priority = readme_name_priority(a).unwrap_or(usize::MAX);
+            let b_priority = readme_name_priority(b).unwrap_or(usize::MAX);
+            a_priority.cmp(&b_priority).then_with(|| a.cmp(b))
+        });
+
+        assert_eq!(
+            names,
+            vec!["README.md", "readme.markdown", "README", "README.txt", "README.zh-CN.md", "docs.md"],
+        );
     }
 
     #[test]

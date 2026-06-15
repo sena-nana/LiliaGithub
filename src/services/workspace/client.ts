@@ -30,6 +30,7 @@ import type {
   RepoMergePullResult,
   RepoReadme,
   RepoSummary,
+  RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
@@ -144,6 +145,14 @@ export function getRepoSummary(repoId: string): Promise<RepoSummary> {
 
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_hide_repo", { repoId }, () => fallback.hideRepo(repoId));
+}
+
+export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
+  return call("workspace_remember_remote_repo", { repo }, () => fallback.rememberRemoteRepo(repo));
+}
+
+export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {
+  return call("workspace_forget_remote_repo", { fullName }, () => fallback.forgetRemoteRepo(fullName));
 }
 
 export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
@@ -278,6 +287,10 @@ export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
 
 export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
   return call("repo_list_readmes", { repoId }, () => fallback.listRepoReadmes(repoId));
+}
+
+export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[]> {
+  return call("github_list_repo_readmes", { repoFullName }, () => fallback.listGitHubRepoReadmes(repoFullName));
 }
 
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {

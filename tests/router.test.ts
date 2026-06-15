@@ -203,6 +203,70 @@ describe("基础路由", () => {
     expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
   });
 
+  it("总览页未 clone 的 GitHub 项目可进入远程详情并屏蔽本地 Git 功能", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/LiliaGithub"),
+          githubRepoSummary("sena-nana/NewRepo", {
+            description: "Not cloned yet",
+            private: true,
+            updatedAt: "2026-06-13T08:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    service.setFallbackGitHubRepoReadmesForTests({
+      "sena-nana/NewRepo": {
+        repoId: "github:sena-nana/NewRepo",
+        path: "README.md",
+        images: {},
+        format: "md",
+        updatedAt: null,
+        content: "# NewRepo\n\n云端 README。",
+      },
+    });
+    const { router } = await renderAt("/");
+
+    await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/NewRepo" }));
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo?view=project");
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "项目信息" })).toHaveClass("is-active");
+    expect(screen.queryByRole("tab", { name: "Git 信息" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Push" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "拉取" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "文件夹" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "提交" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "快速启动" })).toBeNull();
+    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("云端 README");
+    expect(screen.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("远程详情页没有云端 README 时显示远程空态", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary("sena-nana/EmptyRemote")],
+        nextPage: null,
+      },
+    ]);
+    service.setFallbackGitHubRepoReadmesForTests({
+      "sena-nana/EmptyRemote": null,
+    });
+
+    await renderAt("/repos/github%3Asena-nana%2FEmptyRemote?view=project");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
+    expect(await screen.findByText("当前远程仓库没有 README。")).toBeInTheDocument();
+  });
+
   it("总览页隐藏禁用的 GitHub 项目", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([
@@ -863,7 +927,7 @@ describe("基础路由", () => {
     await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
     await fireEvent.click(await screen.findByRole("tab", { name: "Issues" }));
 
-    expect(await screen.findByText("待编辑 Issue")).toBeInTheDocument();
+    expect(await screen.findByText(/待编辑 Issue/)).toBeInTheDocument();
     await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
     await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 标题"), "编辑后标题");
     await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 内容"), "新正文");

@@ -10,6 +10,7 @@ export {
   setFallbackGitHubIssuesForTests,
   setFallbackGitHubWorkflowRunsForTests,
   setFallbackRepoReadmesForTests,
+  setFallbackGitHubRepoReadmesForTests,
   setFallbackGitHubRepoPagesForTests,
   setFallbackGitHubReposErrorForTests,
   setFallbackRepoContributionsOverrideForTests,

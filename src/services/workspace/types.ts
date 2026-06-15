@@ -5,6 +5,7 @@ export interface WorkspaceSettings {
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
   hiddenRepoIds: string[];
   managedRepoIds: string[];
+  remoteRepoShortcuts: RemoteRepoShortcut[];
 }
 
 export interface ProjectLaunchConfig {
@@ -74,6 +75,7 @@ export interface GitHubContributionMeta {
   requestedRepoCount: number;
   repoLimit: number;
   truncated: boolean;
+  skippedRepoCount: number;
   refreshedAt: number;
 }
 
@@ -101,6 +103,17 @@ export interface GitHubRepoSummary {
 export interface GitHubRepoPage {
   items: GitHubRepoSummary[];
   nextPage: number | null;
+}
+
+export interface RemoteRepoShortcut {
+  fullName: string;
+  name: string;
+  private: boolean;
+  archived: boolean;
+  defaultBranch: string | null;
+  htmlUrl: string;
+  cloneUrl: string;
+  openedAt: number;
 }
 
 export interface GitHubRepoOwner {

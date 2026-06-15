@@ -29,6 +29,7 @@ import type {
   RepoMergePullResult,
   RepoReadme,
   RepoSummary,
+  RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
@@ -282,11 +283,28 @@ function createFallbackRepoReadmes(): Record<string, RepoReadme[]> {
   };
 }
 
+function createFallbackGitHubRepoReadmes(): Record<string, RepoReadme[]> {
+  return Object.fromEntries(
+    Object.entries(createFallbackRepoReadmes()).map(([repoId, readmes]) => {
+      const repo = fallbackRepos.find((item) => item.id === repoId);
+      return [
+        repo?.githubFullName ?? repoId,
+        readmes.map((readme) => ({
+          ...readme,
+          repoId: repo?.githubFullName ? `github:${repo.githubFullName}` : readme.repoId,
+          images: { ...readme.images },
+        })),
+      ];
+    }),
+  );
+}
+
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
 let fallbackRepoReadmes = createFallbackRepoReadmes();
+let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
 
 type FallbackGitHubIssueListCall = {
   repoFullName: string;
@@ -304,6 +322,7 @@ function createFallbackSettings(): WorkspaceSettings {
     projectLaunchConfigs: {},
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
+    remoteRepoShortcuts: [],
   };
 }
 
@@ -342,6 +361,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackRepoReadmes = createFallbackRepoReadmes();
+  fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
   fallbackGitHubIssueListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
   fallbackOpenPathCalls = [];
@@ -445,11 +465,34 @@ function cloneRepoReadme(readme: RepoReadme): RepoReadme {
   };
 }
 
+function cloneRemoteRepoShortcut(shortcut: RemoteRepoShortcut): RemoteRepoShortcut {
+  return { ...shortcut };
+}
+
+function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings {
+  return {
+    ...settings,
+    projectLaunchConfigs: { ...settings.projectLaunchConfigs },
+    hiddenRepoIds: [...settings.hiddenRepoIds],
+    managedRepoIds: [...settings.managedRepoIds],
+    remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
+  };
+}
+
 export function setFallbackRepoReadmesForTests(readmesByRepo: Record<string, RepoReadme | RepoReadme[] | null>) {
   fallbackRepoReadmes = Object.fromEntries(
     Object.entries(readmesByRepo).map(([repoId, readmes]) => {
       const list = Array.isArray(readmes) ? readmes : readmes ? [readmes] : [];
       return [repoId, list.map(cloneRepoReadme)];
+    }),
+  );
+}
+
+export function setFallbackGitHubRepoReadmesForTests(readmesByRepo: Record<string, RepoReadme | RepoReadme[] | null>) {
+  fallbackGitHubRepoReadmes = Object.fromEntries(
+    Object.entries(readmesByRepo).map(([repoFullName, readmes]) => {
+      const list = Array.isArray(readmes) ? readmes : readmes ? [readmes] : [];
+      return [repoFullName, list.map(cloneRepoReadme)];
     }),
   );
 }
@@ -493,13 +536,13 @@ function repoRefreshPartialFailureMessage(
 }
 
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
-  return call("workspace_get_settings", undefined, () => ({ ...fallbackSettings }));
+  return call("workspace_get_settings", undefined, () => cloneWorkspaceSettings(fallbackSettings));
 }
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
-    return { ...fallbackSettings };
+    return cloneWorkspaceSettings(fallbackSettings);
   });
 }
 
@@ -624,7 +667,47 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
         hiddenRepoIds: [...fallbackSettings.hiddenRepoIds, repoId].sort(),
       };
     }
-    return { ...fallbackSettings };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+function normalizeRemoteRepoShortcut(repo: RemoteRepoShortcut): RemoteRepoShortcut {
+  const fullName = repo.fullName.trim().replace(/^\/+|\/+$/g, "");
+  const parts = fullName.split("/").filter(Boolean);
+  const name = repo.name.trim() || parts[parts.length - 1] || fullName;
+  return {
+    ...repo,
+    fullName,
+    name,
+    defaultBranch: repo.defaultBranch?.trim() || null,
+    htmlUrl: repo.htmlUrl.trim() || `https://github.com/${fullName}`,
+    cloneUrl: repo.cloneUrl.trim() || `https://github.com/${fullName}.git`,
+    openedAt: Date.now(),
+  };
+}
+
+export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
+  return call("workspace_remember_remote_repo", { repo }, () => {
+    const shortcut = normalizeRemoteRepoShortcut(repo);
+    fallbackSettings = {
+      ...fallbackSettings,
+      remoteRepoShortcuts: [
+        shortcut,
+        ...fallbackSettings.remoteRepoShortcuts.filter((item) => item.fullName !== shortcut.fullName),
+      ].sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {
+  return call("workspace_forget_remote_repo", { fullName }, () => {
+    const normalized = fullName.trim().replace(/^\/+|\/+$/g, "");
+    fallbackSettings = {
+      ...fallbackSettings,
+      remoteRepoShortcuts: fallbackSettings.remoteRepoShortcuts.filter((repo) => repo.fullName !== normalized),
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
   });
 }
 
@@ -634,7 +717,7 @@ export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
       ...fallbackSettings,
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
     };
-    return { ...fallbackSettings };
+    return cloneWorkspaceSettings(fallbackSettings);
   });
 }
 
@@ -706,7 +789,7 @@ export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
 function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
   const existing = fallbackGitHubRepoManagement[repoFullName];
   if (existing) return { ...existing };
-  const repo = fallbackGitHubRepos.find((item) => item.fullName === repoFullName);
+  const repo = allFallbackGitHubRepos().find((item) => item.fullName === repoFullName);
   if (!repo) throw new Error(`未找到 GitHub 仓库：${repoFullName}`);
   const management: GitHubRepoManagement = {
     fullName: repo.fullName,
@@ -730,6 +813,15 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
   };
   fallbackGitHubRepoManagement[repoFullName] = management;
   return { ...management };
+}
+
+function allFallbackGitHubRepos() {
+  const fromPages = fallbackGitHubRepoPagesOverride?.flatMap((page) => page.items) ?? [];
+  const repos = new Map<string, GitHubRepoSummary>();
+  for (const repo of [...fallbackGitHubRepos, ...fromPages]) {
+    repos.set(repo.fullName, repo);
+  }
+  return [...repos.values()].map(cloneGitHubRepoSummary);
 }
 
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
@@ -926,6 +1018,7 @@ function fallbackContributionMeta(repoFullNames: string[]): GitHubContributionMe
     requestedRepoCount,
     repoLimit: CONTRIBUTION_REPO_LIMIT,
     truncated: requestedRepoCount > repoCount,
+    skippedRepoCount: 0,
     refreshedAt: Date.now(),
   };
 }
@@ -980,6 +1073,12 @@ export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
 export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
   return call("repo_list_readmes", { repoId }, () =>
     (fallbackRepoReadmes[repoId] ?? []).map(cloneRepoReadme),
+  );
+}
+
+export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[]> {
+  return call("github_list_repo_readmes", { repoFullName }, () =>
+    (fallbackGitHubRepoReadmes[repoFullName] ?? []).map(cloneRepoReadme),
   );
 }
 

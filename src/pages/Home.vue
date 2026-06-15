@@ -39,6 +39,7 @@ import {
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
+import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
@@ -285,6 +286,18 @@ function repoProjectPath(
     return `${path}?view=project&projectTab=issues&issue=${focusId}`;
   }
   return `${path}?view=project&projectTab=actions&run=${focusId}`;
+}
+
+function remoteRepoProjectPath(
+  repo: Pick<GitHubRepoSummary, "fullName">,
+  tab: ProjectTabRef,
+  focusId: number,
+) {
+  const base = remoteRepoRoute(repo.fullName);
+  if (tab === "issues") {
+    return `${base}&projectTab=issues&issue=${focusId}`;
+  }
+  return `${base}&projectTab=actions&run=${focusId}`;
 }
 
 function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
@@ -753,7 +766,9 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
   }
 
   for (const issue of githubIssuesByRepo.value[githubRepo.fullName] ?? []) {
-    const href = localRepo ? repoProjectPath(localRepo, "issues", issue.number) : undefined;
+    const href = localRepo
+      ? repoProjectPath(localRepo, "issues", issue.number)
+      : remoteRepoProjectPath(githubRepo, "issues", issue.number);
     addTimelineEvent(events, {
       id: `issue-created:${githubRepo.fullName}:${issue.number}`,
       kind: "issue",
@@ -767,7 +782,9 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
 
   for (const run of githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []) {
     const overview = workflowRunOverview(run);
-    const href = localRepo ? repoProjectPath(localRepo, "actions", run.id) : undefined;
+    const href = localRepo
+      ? repoProjectPath(localRepo, "actions", run.id)
+      : remoteRepoProjectPath(githubRepo, "actions", run.id);
     addTimelineEvent(events, {
       id: `workflow:${githubRepo.fullName}:${run.id}`,
       kind: "workflow",
@@ -917,6 +934,15 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
   } finally {
     cloningFullName.value = null;
   }
+}
+
+async function openGitHubRepo(githubRepo: GitHubRepoSummary, localRepo: RepoSummary | null) {
+  if (localRepo) {
+    await router.push(repoDetailPath(localRepo));
+    return;
+  }
+  await workspace.rememberRemoteRepo(shortcutFromGitHubRepo(githubRepo));
+  await router.push(remoteRepoRoute(githubRepo.fullName));
 }
 
 async function syncRepo(repo: RepoSummary) {
@@ -1295,13 +1321,13 @@ async function syncRepo(repo: RepoSummary) {
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
-                :role="localRepo ? 'link' : undefined"
-                :tabindex="localRepo ? 0 : undefined"
-                :aria-label="localRepo ? `打开 ${githubRepo.fullName}` : undefined"
+                role="link"
+                tabindex="0"
+                :aria-label="`打开 ${githubRepo.fullName}`"
                 :title="localRepo ? localRepo.path : githubRepo.htmlUrl"
-                @click="localRepo && router.push(repoDetailPath(localRepo))"
-                @keydown.enter.prevent="localRepo && router.push(repoDetailPath(localRepo))"
-                @keydown.space.prevent="localRepo && router.push(repoDetailPath(localRepo))"
+                @click="openGitHubRepo(githubRepo, localRepo)"
+                @keydown.enter.prevent="openGitHubRepo(githubRepo, localRepo)"
+                @keydown.space.prevent="openGitHubRepo(githubRepo, localRepo)"
               >
                 <span class="repo-status-row__identity">
                   <strong class="repo-status-row__name">

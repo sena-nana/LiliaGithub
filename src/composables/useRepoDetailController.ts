@@ -2,8 +2,9 @@
 import { useRoute, useRouter } from "vue-router";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
-import type { CommitSummary, RepoConflictChoice, RepoConflictFile, RepoConflictState } from "../services/workspace";
+import type { CommitSummary, RepoConflictChoice, RepoConflictFile, RepoConflictState, RepoSummary } from "../services/workspace";
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
+import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 
 type RepoTab = "conflicts" | "changes" | "history" | "branches";
 type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
@@ -23,7 +24,13 @@ export function useRepoDetailController() {
   const route = useRoute();
   const router = useRouter();
   const workspace = useWorkspace();
-  const activeView = ref<RepoView>(normalizeView(route.query.view) ?? "git");
+  const initialRepoId = String(route.params.repoId ?? "");
+  const initialView = normalizeView(route.query.view);
+  const activeView = ref<RepoView>(
+    parseRemoteRepoId(initialRepoId) && initialView === "git"
+      ? "project"
+      : initialView ?? defaultViewForRepoId(initialRepoId),
+  );
   const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
   const activeProjectTab = computed<RepoProjectTab>(
     () => normalizeProjectTab(route.query.projectTab) ?? "readme",
@@ -47,8 +54,38 @@ export function useRepoDetailController() {
   let launchPollTimer: number | null = null;
 
   const repoId = computed(() => String(route.params.repoId ?? ""));
+  const remoteFullName = computed(() => parseRemoteRepoId(repoId.value));
+  const remoteOnly = computed(() => Boolean(remoteFullName.value));
+  const remoteShortcut = computed(() =>
+    workspace.state.settings?.remoteRepoShortcuts.find((repo) => repo.fullName === remoteFullName.value) ?? null,
+  );
+  const remoteSummary = computed<RepoSummary | null>(() => {
+    const fullName = remoteFullName.value;
+    if (!fullName) return null;
+    const shortcut = remoteShortcut.value;
+    return {
+      id: repoId.value,
+      name: shortcut?.name ?? remoteRepoName(fullName),
+      path: "",
+      relativePath: fullName,
+      currentBranch: shortcut?.defaultBranch ?? null,
+      remoteUrl: shortcut?.cloneUrl ?? `https://github.com/${fullName}.git`,
+      githubFullName: fullName,
+      ahead: 0,
+      behind: 0,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      conflictCount: 0,
+      lastCommitAt: null,
+      lastCommitMessage: null,
+      languageStats: [],
+      workingTreeLanguageStats: [],
+      languageStatsUpdatedAt: 0,
+    };
+  });
   const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);
-  const summary = computed(() => detail.value?.summary ?? workspace.repoById(repoId.value));
+  const summary = computed(() => remoteSummary.value ?? detail.value?.summary ?? workspace.repoById(repoId.value));
   const repoTitle = computed(() => repoDisplayName(summary.value));
   const repoMetaItems = computed(() => {
     const repo = summary.value;
@@ -56,7 +93,8 @@ export function useRepoDetailController() {
     return [
       repo.githubFullName ?? "未识别 GitHub",
       repo.currentBranch ?? "detached",
-    ].filter(Boolean);
+      remoteOnly.value ? "远程仓库" : null,
+    ].filter((item): item is string => Boolean(item));
   });
   const changes = computed(() => detail.value?.changes ?? []);
   const conflicts = computed(() => detail.value?.conflicts ?? { operation: "none", files: [], allResolved: true });
@@ -166,15 +204,16 @@ export function useRepoDetailController() {
     { key: "history", label: "历史" },
     { key: "branches", label: "分支" },
   ];
-  const views: Array<{ key: RepoView; label: string }> = [
+  const localViews: Array<{ key: RepoView; label: string }> = [
     { key: "project", label: "项目信息" },
     { key: "git", label: "Git 信息" },
   ];
+  const views = computed(() => remoteOnly.value ? localViews.slice(0, 1) : localViews);
 
   onMounted(() => {
     void load();
     launchPollTimer = window.setInterval(() => {
-      if (repoId.value) {
+      if (repoId.value && !remoteOnly.value) {
         void refreshLaunch();
       }
     }, 1500);
@@ -196,7 +235,7 @@ export function useRepoDetailController() {
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
-    activeView.value = normalizeView(route.query.view) ?? "git";
+    activeView.value = normalizeView(route.query.view) ?? defaultViewForRepoId(repoId.value);
     void load();
   });
 
@@ -204,7 +243,7 @@ export function useRepoDetailController() {
     () => route.query.view,
     (view) => {
       const normalized = normalizeView(view);
-      if (normalized) activeView.value = normalized;
+      if (normalized) activeView.value = remoteOnly.value && normalized === "git" ? "project" : normalized;
     },
   );
 
@@ -235,6 +274,10 @@ export function useRepoDetailController() {
     return null;
   }
 
+  function defaultViewForRepoId(value: string): RepoView {
+    return parseRemoteRepoId(value) ? "project" : "git";
+  }
+
   function normalizeProjectTab(value: unknown): RepoProjectTab | null {
     if (
       value === "readme" ||
@@ -256,6 +299,10 @@ export function useRepoDetailController() {
   async function load() {
     if (!repoId.value) return;
     actionError.value = null;
+    if (remoteOnly.value) {
+      activeView.value = "project";
+      return;
+    }
     try {
       const [nextDetail] = await Promise.all([
         workspace.loadRepoDetail(repoId.value),
@@ -281,7 +328,7 @@ export function useRepoDetailController() {
   }
 
   async function refreshLaunch() {
-    if (!repoId.value) return;
+    if (!repoId.value || remoteOnly.value) return;
     try {
       const status = await workspace.refreshLaunchStatus(repoId.value);
       if (status.state === "running" || launchTerminalVisible.value) {
@@ -544,6 +591,7 @@ export function useRepoDetailController() {
       launchCwdInput,
       conflictChoices,
       repoId,
+      remoteOnly,
       detail,
       summary,
       repoTitle,
