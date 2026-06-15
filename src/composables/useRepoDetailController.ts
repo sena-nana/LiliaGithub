@@ -483,11 +483,6 @@ export function useRepoDetailController() {
     void router.push(`/repos/${repoId.value}/commits/${commit.hash}`);
   }
 
-  function openGitHub() {
-    if (!summary.value?.githubFullName) return;
-    void workspace.openUrl(`https://github.com/${summary.value.githubFullName}`);
-  }
-
   function openFolder() {
     if (!summary.value?.path) return;
     void workspace.openPath(summary.value.path);
@@ -588,7 +583,6 @@ export function useRepoDetailController() {
       saveLaunchConfig,
       checkout,
       openCommit,
-      openGitHub,
       openFolder,
       openConflictFolder,
       commitMetaTitle,
