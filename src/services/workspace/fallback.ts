@@ -36,7 +36,7 @@ import type {
   WorkspaceSettings,
 } from "./types";
 
-const fallbackRepos: RepoSummary[] = [
+let fallbackRepos: RepoSummary[] = [
   {
     id: "LiliaGithub",
     name: "LiliaGithub",
@@ -96,6 +96,7 @@ const fallbackRepos: RepoSummary[] = [
     languageStatsUpdatedAt: Date.now(),
   },
 ];
+const baseFallbackRepos = fallbackRepos.map(cloneRepoSummary);
 
 const defaultFallbackBinding: GitHubBindingStatus = {
   state: "bound",
@@ -151,6 +152,14 @@ let fallbackGitHubRepos: GitHubRepoSummary[] = createFallbackGitHubRepos();
 
 function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
   return { ...repo };
+}
+
+function cloneRepoSummary(repo: RepoSummary): RepoSummary {
+  return {
+    ...repo,
+    languageStats: repo.languageStats.map((stat) => ({ ...stat })),
+    workingTreeLanguageStats: repo.workingTreeLanguageStats.map((stat) => ({ ...stat })),
+  };
 }
 
 function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
@@ -368,6 +377,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
   fallbackGitHubRepoPagesOverride = null;
+  fallbackRepos = baseFallbackRepos.map(cloneRepoSummary);
   fallbackGitHubRepos = createFallbackGitHubRepos();
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
@@ -789,6 +799,32 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
         localContributionCache,
       };
     }
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
+  return call("workspace_delete_local_repo", { repoId }, () => {
+    if (!allFallbackRepos().some((repo) => repo.id === repoId)) {
+      throw new Error(`未找到 Git 仓库：${repoId}`);
+    }
+    const localContributionCache = { ...fallbackSettings.localContributionCache };
+    delete localContributionCache[repoId];
+    const projectLaunchConfigs = { ...fallbackSettings.projectLaunchConfigs };
+    delete projectLaunchConfigs[repoId];
+    fallbackSettings = {
+      ...fallbackSettings,
+      projectLaunchConfigs,
+      managedRepoIds: fallbackSettings.managedRepoIds.filter((id) => id !== repoId),
+      hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
+      systemGitRepoIds: fallbackSettings.systemGitRepoIds.filter((id) => id !== repoId),
+      localContributionCache,
+    };
+    fallbackRepos = fallbackRepos.filter((item) => item.id !== repoId);
+    delete fallbackRepoOverrides[repoId];
+    delete fallbackRepoReadmes[repoId];
+    delete fallbackLaunchStatuses[repoId];
+    delete fallbackLaunchLogs[repoId];
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }

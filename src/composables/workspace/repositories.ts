@@ -362,6 +362,17 @@ export async function hideRepo(repoId: string) {
   repositoryRuntimeGeneration += 1;
   const service = await loadWorkspaceService();
   state.settings = await service.hideRepo(repoId);
+  removeLocalRepoState(repoId);
+}
+
+export async function deleteLocalRepo(repoId: string) {
+  repositoryRuntimeGeneration += 1;
+  const service = await loadWorkspaceService();
+  state.settings = await service.deleteLocalRepo(repoId);
+  removeLocalRepoState(repoId);
+}
+
+function removeLocalRepoState(repoId: string) {
   state.repos = state.repos.filter((repo) => repo.id !== repoId);
   delete state.repoDetails[repoId];
   delete state.launchConfigs[repoId];

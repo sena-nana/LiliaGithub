@@ -50,6 +50,7 @@ type ProjectSectionConfig = {
   key: Exclude<ProjectContentMode, "launch" | "readme">;
   label: string;
 };
+type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
 const props = defineProps<{
@@ -96,10 +97,12 @@ const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
 const savingSettings = ref(false);
 const deletingRepo = ref(false);
+const deletingLocalRepo = ref(false);
 const creatingIssue = ref(false);
 const remoteDeleted = ref(false);
-const deleteDialogOpen = ref(false);
+const deleteDialogTarget = ref<DeleteTarget | null>(null);
 const deleteConfirmInput = ref("");
+const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const issues = ref<GitHubIssue[]>([]);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
@@ -144,8 +147,15 @@ const githubUnavailableMessage = computed(() => {
   return null;
 });
 const deleteConfirmMatches = computed(() =>
-  Boolean(props.repoFullName) && deleteConfirmInput.value.trim() === props.repoFullName,
+  Boolean(deleteExpectedInput.value) && deleteConfirmInput.value.trim() === deleteExpectedInput.value,
 );
+const deleteExpectedInput = computed(() =>
+  deleteDialogTarget.value === "remote" ? props.repoFullName : props.repoId,
+);
+const deleteDialogTitle = computed(() =>
+  deleteDialogTarget.value === "remote" ? "删除 GitHub 仓库" : "删除本地仓库",
+);
+const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.value);
 const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
@@ -207,6 +217,7 @@ watch(() => props.repoId, () => {
   activeTab.value = projectTab.value;
   activeReadmePath.value = null;
   closeLaunchMenu();
+  closeDeleteDialog();
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
   void applyProjectRouteState();
@@ -495,21 +506,50 @@ async function saveSettings() {
   }
 }
 
-function openDeleteDialog() {
-  if (!props.repoFullName || deletingRepo.value) return;
+function openDeleteDialog(target: DeleteTarget) {
+  if (target === "remote" && (!props.repoFullName || deletingRepo.value)) return;
+  if (target === "local" && (props.remoteOnly || !props.repoPath || deletingLocalRepo.value)) return;
+  deleteDialogTarget.value = target;
   deleteConfirmInput.value = "";
-  deleteDialogOpen.value = true;
+  deleteError.value = null;
 }
 
 function closeDeleteDialog() {
-  if (deletingRepo.value) return;
-  deleteDialogOpen.value = false;
+  if (deletingAnything.value) return;
+  deleteDialogTarget.value = null;
   deleteConfirmInput.value = "";
+  deleteError.value = null;
+}
+
+async function confirmDeleteDialog() {
+  if (deleteDialogTarget.value === "local") {
+    await confirmDeleteLocalRepo();
+    return;
+  }
+  await confirmDeleteRepo();
+}
+
+async function confirmDeleteLocalRepo() {
+  if (props.remoteOnly || !deleteConfirmMatches.value || deletingLocalRepo.value) return;
+  deletingLocalRepo.value = true;
+  deleteError.value = null;
+  try {
+    await workspace.deleteLocalRepo(props.repoId);
+    deleteDialogTarget.value = null;
+    deleteConfirmInput.value = "";
+    workspace.refreshRepoStatusList();
+    await router.push("/");
+  } catch (err) {
+    deleteError.value = String(err);
+  } finally {
+    deletingLocalRepo.value = false;
+  }
 }
 
 async function confirmDeleteRepo() {
   if (!props.repoFullName || !deleteConfirmMatches.value || deletingRepo.value) return;
   deletingRepo.value = true;
+  deleteError.value = null;
   githubError.value = null;
   try {
     await deleteGitHubRepo(props.repoFullName);
@@ -519,7 +559,7 @@ async function confirmDeleteRepo() {
     settings.value = null;
     issues.value = [];
     workflowRuns.value = [];
-    deleteDialogOpen.value = false;
+    deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
     const targetRoute = remoteRepoRoute(props.repoFullName);
     const currentRemoteFullName = parseRemoteRepoId(String(route.params.repoId ?? ""));
@@ -531,7 +571,7 @@ async function confirmDeleteRepo() {
       await router.push("/");
     }
   } catch (err) {
-    githubError.value = String(err);
+    deleteError.value = String(err);
   } finally {
     deletingRepo.value = false;
   }
@@ -768,7 +808,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           />
         </section>
 
-        <section v-else-if="githubUnavailableMessage" class="project-section">
+        <section v-else-if="githubUnavailableMessage && activeProjectSection !== 'settings'" class="project-section">
           <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
         </section>
 
@@ -874,40 +914,64 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         <form v-else-if="activeProjectSection === 'settings'" class="project-section project-settings" @submit.prevent="saveSettings">
           <div class="project-section__head">
             <h3>仓库设置</h3>
-            <button type="submit" class="primary" :disabled="savingSettings || deletingRepo || githubLoading || !settings">
+            <button
+              v-if="settings"
+              type="submit"
+              class="primary"
+              :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+            >
               <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
               <Save v-else :size="14" aria-hidden="true" />
               保存
             </button>
           </div>
+          <p v-if="githubUnavailableMessage" class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
           <p v-if="githubError" class="error-line">{{ githubError }}</p>
-          <label>
-            <span>描述</span>
-            <input v-model="settingsForm.description" type="text" />
-          </label>
-          <label>
-            <span>Homepage</span>
-            <input v-model="settingsForm.homepage" type="url" />
-          </label>
-          <label>
-            <span>默认分支</span>
-            <input v-model="settingsForm.defaultBranch" type="text" />
-          </label>
-          <div class="project-switches">
-            <label><input v-model="settingsForm.private" type="checkbox" /> Private</label>
-            <label><input v-model="settingsForm.hasIssues" type="checkbox" /> Issues</label>
-            <label><input v-model="settingsForm.hasWiki" type="checkbox" /> Wiki</label>
-            <label><input v-model="settingsForm.hasProjects" type="checkbox" /> Projects</label>
-            <label><input v-model="settingsForm.hasDiscussions" type="checkbox" /> Discussions</label>
-            <label><input v-model="settingsForm.allowForking" type="checkbox" /> Forking</label>
-            <label><input v-model="settingsForm.deleteBranchOnMerge" type="checkbox" /> 合并后删分支</label>
-            <label><input v-model="settingsForm.webCommitSignoffRequired" type="checkbox" /> Web signoff</label>
-            <label><input v-model="settingsForm.allowMergeCommit" type="checkbox" /> Merge commit</label>
-            <label><input v-model="settingsForm.allowSquashMerge" type="checkbox" /> Squash</label>
-            <label><input v-model="settingsForm.allowRebaseMerge" type="checkbox" /> Rebase</label>
-            <label><input v-model="settingsForm.allowAutoMerge" type="checkbox" /> Auto merge</label>
-          </div>
-          <section class="project-danger-zone" aria-label="危险操作">
+          <template v-if="settings">
+            <label>
+              <span>描述</span>
+              <input v-model="settingsForm.description" type="text" />
+            </label>
+            <label>
+              <span>Homepage</span>
+              <input v-model="settingsForm.homepage" type="url" />
+            </label>
+            <label>
+              <span>默认分支</span>
+              <input v-model="settingsForm.defaultBranch" type="text" />
+            </label>
+            <div class="project-switches">
+              <label><input v-model="settingsForm.private" type="checkbox" /> Private</label>
+              <label><input v-model="settingsForm.hasIssues" type="checkbox" /> Issues</label>
+              <label><input v-model="settingsForm.hasWiki" type="checkbox" /> Wiki</label>
+              <label><input v-model="settingsForm.hasProjects" type="checkbox" /> Projects</label>
+              <label><input v-model="settingsForm.hasDiscussions" type="checkbox" /> Discussions</label>
+              <label><input v-model="settingsForm.allowForking" type="checkbox" /> Forking</label>
+              <label><input v-model="settingsForm.deleteBranchOnMerge" type="checkbox" /> 合并后删分支</label>
+              <label><input v-model="settingsForm.webCommitSignoffRequired" type="checkbox" /> Web signoff</label>
+              <label><input v-model="settingsForm.allowMergeCommit" type="checkbox" /> Merge commit</label>
+              <label><input v-model="settingsForm.allowSquashMerge" type="checkbox" /> Squash</label>
+              <label><input v-model="settingsForm.allowRebaseMerge" type="checkbox" /> Rebase</label>
+              <label><input v-model="settingsForm.allowAutoMerge" type="checkbox" /> Auto merge</label>
+            </div>
+          </template>
+          <section v-if="!remoteOnly && repoPath" class="project-danger-zone" aria-label="本地危险操作">
+            <div>
+              <strong>删除本地仓库</strong>
+              <span>删除工作区内的本地目录，并从本地仓库列表移除。</span>
+            </div>
+            <button
+              type="button"
+              class="ghost danger"
+              :disabled="deletingLocalRepo"
+              @click="openDeleteDialog('local')"
+            >
+              <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
+              <Trash2 v-else :size="14" aria-hidden="true" />
+              删除本地
+            </button>
+          </section>
+          <section v-if="settings" class="project-danger-zone" aria-label="远端危险操作">
             <div>
               <strong>删除 GitHub 远端仓库</strong>
               <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
@@ -916,7 +980,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
               type="button"
               class="ghost danger"
               :disabled="deletingRepo || githubLoading || !settings || !repoFullName"
-              @click="openDeleteDialog"
+              @click="openDeleteDialog('remote')"
             >
               <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
               <Trash2 v-else :size="14" aria-hidden="true" />
@@ -926,43 +990,47 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           <Teleport to="body">
             <Transition name="modal">
               <div
-                v-if="deleteDialogOpen"
+                v-if="deleteDialogTarget"
                 class="project-delete-overlay"
                 role="dialog"
                 aria-modal="true"
-                aria-label="删除 GitHub 仓库"
+                :aria-label="deleteDialogTitle"
                 @click.self="closeDeleteDialog"
               >
                 <div class="project-delete-dialog">
                   <div class="project-delete-dialog__head">
                     <Trash2 :size="15" aria-hidden="true" />
-                    <strong>删除 GitHub 仓库</strong>
+                    <strong>{{ deleteDialogTitle }}</strong>
                   </div>
-                  <p>
+                  <p v-if="deleteDialogTarget === 'remote'">
                     这会永久删除远端仓库 <strong>{{ repoFullName }}</strong>。本地目录会保留，但 GitHub
                     Issues、Actions 和 Settings 将不可用。
                   </p>
-                  <p v-if="githubError" class="error-line">{{ githubError }}</p>
+                  <p v-else>
+                    这会删除本地目录 <strong>{{ repoPath }}</strong>，并从工作区仓库列表移除。GitHub
+                    远端仓库不会被删除。
+                  </p>
+                  <p v-if="deleteError" class="error-line">{{ deleteError }}</p>
                   <label>
-                    <span>输入完整仓库名以确认</span>
+                    <span>{{ deleteDialogTarget === "remote" ? "输入完整仓库名以确认" : "输入仓库 ID 以确认" }}</span>
                     <input
                       v-model="deleteConfirmInput"
                       type="text"
-                      :placeholder="repoFullName ?? 'owner/repo'"
-                      :disabled="deletingRepo"
+                      :placeholder="deleteExpectedInput ?? ''"
+                      :disabled="deletingAnything"
                     />
                   </label>
                   <div class="project-delete-dialog__actions">
-                    <button type="button" class="ghost" :disabled="deletingRepo" @click="closeDeleteDialog">
+                    <button type="button" class="ghost" :disabled="deletingAnything" @click="closeDeleteDialog">
                       取消
                     </button>
                     <button
                       type="button"
                       class="ghost danger"
-                      :disabled="deletingRepo || !deleteConfirmMatches"
-                      @click="confirmDeleteRepo"
+                      :disabled="deletingAnything || !deleteConfirmMatches"
+                      @click="confirmDeleteDialog"
                     >
-                      <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+                      <LoaderCircle v-if="deletingAnything" :size="14" aria-hidden="true" class="sb-spin" />
                       <Trash2 v-else :size="14" aria-hidden="true" />
                       确认删除
                     </button>

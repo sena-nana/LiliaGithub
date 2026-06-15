@@ -112,6 +112,41 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
 }
 
 #[tauri::command]
+pub async fn workspace_delete_local_repo(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<WorkspaceSettings, String> {
+    run_blocking("删除本地仓库", move || {
+        let normalized = repo_id.trim();
+        if normalized.is_empty() {
+            return Err("仓库 ID 不能为空".to_string());
+        }
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, normalized)?;
+        let canonical_root = root
+            .canonicalize()
+            .map_err(|e| format!("读取工作区路径失败：{e}"))?;
+        let canonical_path = path
+            .canonicalize()
+            .map_err(|e| format!("读取仓库路径失败：{e}"))?;
+        if canonical_path == canonical_root || !canonical_path.starts_with(&canonical_root) {
+            return Err("只能删除当前工作区内的仓库目录".to_string());
+        }
+        fs::remove_dir_all(&canonical_path)
+            .map_err(|e| format!("删除本地仓库失败：{e}"))?;
+        let mut settings = load_settings(&app);
+        settings.managed_repo_ids.retain(|id| id != normalized);
+        settings.hidden_repo_ids.retain(|id| id != normalized);
+        settings.system_git_repo_ids.retain(|id| id != normalized);
+        settings.project_launch_configs.remove(normalized);
+        remove_local_contribution_cache(&mut settings, normalized);
+        save_settings(&app, &settings)?;
+        Ok(settings)
+    })
+    .await
+}
+
+#[tauri::command]
 pub fn workspace_remember_remote_repo(
     app: AppHandle,
     repo: RemoteRepoShortcut,

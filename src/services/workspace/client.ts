@@ -160,6 +160,10 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_hide_repo", { repoId }, () => fallback.hideRepo(repoId));
 }
 
+export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
+  return call("workspace_delete_local_repo", { repoId }, () => fallback.deleteLocalRepo(repoId));
+}
+
 export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
   return call("workspace_remember_remote_repo", { repo }, () => fallback.rememberRemoteRepo(repo));
 }
