@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   CircleDot,
   CircleOff,
@@ -33,6 +34,7 @@ import type {
 } from "../../services/workspace/types";
 import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
+import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
@@ -47,6 +49,8 @@ const props = defineProps<{
   projectRunId?: number | null;
 }>();
 const workspace = useWorkspace();
+const route = useRoute();
+const router = useRouter();
 
 const activeTab = ref<ProjectTab>("readme");
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
@@ -418,6 +422,7 @@ async function confirmDeleteRepo() {
   githubError.value = null;
   try {
     await deleteGitHubRepo(props.repoFullName);
+    await workspace.forgetRemoteRepo(props.repoFullName);
     workspace.refreshRepoStatusList();
     remoteDeleted.value = true;
     settings.value = null;
@@ -425,6 +430,15 @@ async function confirmDeleteRepo() {
     workflowRuns.value = [];
     deleteDialogOpen.value = false;
     deleteConfirmInput.value = "";
+    const targetRoute = remoteRepoRoute(props.repoFullName);
+    const currentRemoteFullName = parseRemoteRepoId(String(route.params.repoId ?? ""));
+    if (
+      props.remoteOnly &&
+      currentRemoteFullName && props.repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
+      && route.fullPath.startsWith(targetRoute)
+    ) {
+      await router.push("/");
+    }
   } catch (err) {
     githubError.value = String(err);
   } finally {
