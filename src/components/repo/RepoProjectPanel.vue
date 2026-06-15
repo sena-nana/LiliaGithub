@@ -12,6 +12,7 @@ import MarkdownReadme from "./MarkdownReadme.vue";
 import {
   createGitHubIssue,
   getGitHubRepoManagement,
+  listGitHubRepoReadmes,
   listRepoReadmes,
   listGitHubIssues,
   listGitHubWorkflowRuns,
@@ -37,6 +38,7 @@ const props = defineProps<{
   repoId: string;
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
+  remoteOnly?: boolean;
   projectTab?: ProjectTab;
   projectIssueNumber?: number | null;
   projectRunId?: number | null;
@@ -166,7 +168,7 @@ async function focusIssue(issueNumber: number | null | undefined) {
   const row = projectMainRef.value?.querySelector<HTMLElement>(
     `.project-row--issue[data-issue-number="${issueNumber}"]`,
   );
-  row?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+  row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
 }
 
 async function focusRun(runId: number | null | undefined) {
@@ -187,7 +189,7 @@ async function focusRun(runId: number | null | undefined) {
   const row = projectMainRef.value?.querySelector<HTMLElement>(
     `.project-row--action[data-run-id="${runId}"]`,
   );
-  row?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+  row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
 }
 
 function isIssueRowFocused(issueNumber: number) {
@@ -238,7 +240,9 @@ async function loadReadme() {
   readmeError.value = null;
   const previousPath = activeReadmePath.value;
   try {
-    const nextReadmes = await listRepoReadmes(props.repoId);
+    const nextReadmes = props.remoteOnly && props.repoFullName
+      ? await listGitHubRepoReadmes(props.repoFullName)
+      : await listRepoReadmes(props.repoId);
     readmes.value = nextReadmes;
     activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
       ? previousPath
@@ -306,6 +310,19 @@ async function loadActions() {
 function selectReadme(path: string) {
   activeTab.value = "readme";
   activeReadmePath.value = path;
+}
+
+function selectProjectTab(tab: Exclude<ProjectTab, "readme">) {
+  activeTab.value = tab;
+  if (tab === "issues") {
+    void loadIssues();
+    return;
+  }
+  if (tab === "actions") {
+    void loadActions();
+    return;
+  }
+  void loadGitHub();
 }
 
 function changedSettingsRequest(current: GitHubRepoManagement) {
@@ -469,7 +486,9 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
         <section v-if="activeTab === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
-          <p v-else-if="!activeReadme" class="muted repo-empty project-empty">当前仓库没有本地 README。</p>
+          <p v-else-if="!activeReadme" class="muted repo-empty project-empty">
+            {{ remoteOnly ? "当前远程仓库没有 README。" : "当前仓库没有本地 README。" }}
+          </p>
           <MarkdownReadme
             v-else
             ref="markdownReadme"
@@ -651,7 +670,7 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
             :class="{ 'is-active': activeTab === tab.key }"
             role="tab"
             :aria-selected="activeTab === tab.key"
-            @click="activeTab = tab.key"
+            @click="selectProjectTab(tab.key)"
           >
             <strong>{{ tab.label }}</strong>
           </button>

@@ -161,6 +161,82 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("侧边栏底部显示打开过的远程仓库并可移除跳转", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.settings = {
+      ...state.settings!,
+      remoteRepoShortcuts: [
+        {
+          fullName: "sena-nana/RemoteOnly",
+          name: "RemoteOnly",
+          private: true,
+          archived: false,
+          defaultBranch: "main",
+          htmlUrl: "https://github.com/sena-nana/RemoteOnly",
+          cloneUrl: "https://github.com/sena-nana/RemoteOnly.git",
+          openedAt: 10,
+        },
+      ],
+    };
+
+    await waitFor(() => {
+      expect(view.getByText("远程仓库 1")).toBeInTheDocument();
+      expect(sidebarRowForText(view.container, "RemoteOnly")).toHaveAttribute("title", "sena-nana/RemoteOnly");
+    });
+
+    await fireEvent.click(sidebarRowForText(view.container, "RemoteOnly"));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteOnly?view=project");
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "移除 sena-nana/RemoteOnly" }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/");
+      expect(() => sidebarRowForText(view.container, "RemoteOnly")).toThrow("未找到侧边栏行: RemoteOnly");
+    });
+  });
+
+  it("侧边栏远程仓库在同名仓库已 clone 后自动去重", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.settings = {
+      ...state.settings!,
+      remoteRepoShortcuts: [
+        {
+          fullName: "sena-nana/RemoteOnly",
+          name: "RemoteOnly",
+          private: false,
+          archived: false,
+          defaultBranch: "main",
+          htmlUrl: "https://github.com/sena-nana/RemoteOnly",
+          cloneUrl: "https://github.com/sena-nana/RemoteOnly.git",
+          openedAt: 10,
+        },
+      ],
+    };
+    state.repos = [
+      ...state.repos,
+      repoSummary("RemoteOnly", { githubFullName: "sena-nana/RemoteOnly" }),
+    ];
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "RemoteOnly")).toHaveAttribute(
+        "title",
+        "sena-nana/RemoteOnly · C:\\Files\\workspace\\RemoteOnly",
+      );
+      expect(view.queryByText("远程仓库 1")).toBeNull();
+    });
+  });
+
   it("总览页一键同步运行中显示按钮和仓库行状态", async () => {
     const view = await renderAppShell("/");
 
