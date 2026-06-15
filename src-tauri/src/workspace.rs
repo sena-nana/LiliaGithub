@@ -246,6 +246,13 @@ pub struct RepoSummary {
     pub language_stats_updated_at: i64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoRefreshSummaryOptions {
+    #[serde(default)]
+    pub fetch_remote: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoChange {
@@ -1971,6 +1978,34 @@ fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
     }
 }
 
+fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary {
+    let relative_path = repo_id(root, path);
+    RepoSummary {
+        id: relative_path.clone(),
+        name: path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("repo")
+            .to_string(),
+        path: path.to_string_lossy().to_string(),
+        relative_path,
+        current_branch: None,
+        remote_url: None,
+        github_full_name: None,
+        ahead: 0,
+        behind: 0,
+        staged_count: 0,
+        unstaged_count: 0,
+        untracked_count: 0,
+        conflict_count: 0,
+        last_commit_at: None,
+        last_commit_message: None,
+        language_stats: Vec::new(),
+        working_tree_language_stats: Vec::new(),
+        language_stats_updated_at: 0,
+    }
+}
+
 fn summarize_repo_with_language_stats(root: &Path, path: &Path) -> RepoSummary {
     let mut summary = summarize_repo(root, path);
     summary.language_stats = repo_head_language_stats(path);
@@ -2072,6 +2107,15 @@ fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
             .map(|handle| handle.join().expect("repo summary worker panicked"))
             .collect()
     })
+}
+
+fn lightweight_managed_repos(root: &Path, settings: &WorkspaceSettings) -> Vec<RepoSummary> {
+    let mut repos: Vec<_> = managed_repo_paths(root, settings)
+        .into_iter()
+        .map(|path| lightweight_repo_summary(root, &path))
+        .collect();
+    sort_repos(&mut repos);
+    repos
 }
 
 fn repo_refresh_success_message(repo_count: usize) -> String {
@@ -2725,6 +2769,16 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
             );
         }
         Ok(repos)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
+    run_blocking("读取已管理仓库", move || {
+        let root = workspace_root(&app)?;
+        let settings = load_settings(&app);
+        Ok(lightweight_managed_repos(&root, &settings))
     })
     .await
 }
@@ -3475,6 +3529,45 @@ pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSum
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
         Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_refresh_summary(
+    app: AppHandle,
+    repo_id: String,
+    options: Option<RepoRefreshSummaryOptions>,
+) -> Result<RepoSummary, String> {
+    run_blocking("刷新仓库摘要", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let task = record_workspace_task(
+            "repoStatus",
+            "normal",
+            Some(repo_id),
+            "running",
+            Some("刷新仓库状态".to_string()),
+        );
+        let fetch_error = if options.map(|value| value.fetch_remote).unwrap_or(false) {
+            summarize_repo(&root, &path)
+                .remote_url
+                .as_ref()
+                .and_then(|_| run_fetch(&app, &path).err())
+        } else {
+            None
+        };
+        let summary = summarize_repo(&root, &path);
+        if let Some(error) = fetch_error {
+            update_workspace_task(
+                &task.id,
+                "error",
+                Some(format!("仓库状态已刷新，远端同步失败：{error}")),
+            );
+        } else {
+            update_workspace_task(&task.id, "success", Some("仓库状态已更新".to_string()));
+        }
+        Ok(summary)
     })
     .await
 }
@@ -6355,6 +6448,39 @@ rename to docs/new.md",
 
         assert_eq!(paths, vec![visible]);
         assert!(!missing.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lightweight_managed_repos_returns_visible_repo_list_without_git_metadata() {
+        let root = temp_dir("lightweight-managed-repos");
+        let visible = root.join("visible");
+        let hidden = root.join("hidden");
+        fs::create_dir_all(visible.join(".git")).unwrap();
+        fs::create_dir_all(hidden.join(".git")).unwrap();
+        let settings = WorkspaceSettings {
+            workspace_root: Some(root.to_string_lossy().to_string()),
+            hidden_repo_ids: vec!["hidden".to_string()],
+            managed_repo_ids: vec!["visible".to_string(), "hidden".to_string()],
+            ..WorkspaceSettings::default()
+        };
+
+        let repos = lightweight_managed_repos(&root, &settings);
+
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].id, "visible");
+        assert_eq!(repos[0].name, "visible");
+        assert_eq!(repos[0].current_branch, None);
+        assert_eq!(repos[0].remote_url, None);
+        assert_eq!(repos[0].github_full_name, None);
+        assert_eq!(repos[0].ahead, 0);
+        assert_eq!(repos[0].behind, 0);
+        assert_eq!(repos[0].staged_count, 0);
+        assert_eq!(repos[0].unstaged_count, 0);
+        assert_eq!(repos[0].untracked_count, 0);
+        assert_eq!(repos[0].conflict_count, 0);
+        assert_eq!(repos[0].last_commit_at, None);
+        assert_eq!(repos[0].last_commit_message, None);
         fs::remove_dir_all(root).unwrap();
     }
 

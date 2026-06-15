@@ -12,6 +12,7 @@ import { loadWorkspaceService } from "./serviceLoader";
 import type { RemoteRepoShortcut, RepoConflictChoice, RepoSummary } from "../../services/workspace";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
+let repositoryRuntimeGeneration = 0;
 
 async function applyRepoMutation(
   repoId: string,
@@ -31,8 +32,10 @@ async function applyRepoMutationWithLanguageStats(
 }
 
 export async function refreshRepos() {
-  const repos = await refreshRepoSummaries();
-  if (repos) scheduleLowPriorityRefresh(repos.map((repo) => repo.id));
+  const repos = await loadManagedRepoList();
+  if (repos) {
+    void refreshManagedRepoSummaries(repos.map((repo) => repo.id), { fetchRemote: true });
+  }
 }
 
 export async function refreshRepoSummaries() {
@@ -48,6 +51,56 @@ export async function refreshRepoSummaries() {
     return null;
   } finally {
     state.scanning = false;
+  }
+}
+
+async function loadManagedRepoList() {
+  state.error = null;
+  try {
+    const service = await loadWorkspaceService();
+    const repos = await service.listManagedRepos();
+    replaceRepos(repos);
+    return repos;
+  } catch (err) {
+    state.error = String(err);
+    return null;
+  }
+}
+
+async function refreshManagedRepoSummaries(
+  repoIds: string[],
+  options: { fetchRemote?: boolean } = {},
+) {
+  const generation = ++repositoryRuntimeGeneration;
+  const uniqueRepoIds = Array.from(new Set(repoIds));
+  if (!uniqueRepoIds.length) {
+    scheduleLowPriorityRefresh([]);
+    return;
+  }
+  state.scanning = true;
+  try {
+    const service = await loadWorkspaceService();
+    const refreshedRepoIds: string[] = [];
+    for (const repoId of uniqueRepoIds) {
+      if (generation !== repositoryRuntimeGeneration) return;
+      try {
+        const summary = await service.refreshRepoSummary(repoId, { fetchRemote: options.fetchRemote ?? false });
+        if (generation !== repositoryRuntimeGeneration) return;
+        upsertRepo(summary);
+        refreshedRepoIds.push(summary.id);
+      } catch {
+        // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
+      } finally {
+        void refreshWorkspaceTasks();
+      }
+    }
+    if (generation === repositoryRuntimeGeneration) {
+      scheduleLowPriorityRefresh(refreshedRepoIds);
+    }
+  } finally {
+    if (generation === repositoryRuntimeGeneration) {
+      state.scanning = false;
+    }
   }
 }
 
@@ -125,9 +178,11 @@ export async function refreshLanguageStatsForRepos(
   repoIds: string[],
   options: { silent?: boolean } = { silent: true },
 ) {
+  const generation = repositoryRuntimeGeneration;
   const uniqueRepoIds = Array.from(new Set(repoIds));
   let firstError: unknown = null;
   for (const repoId of uniqueRepoIds) {
+    if (generation !== repositoryRuntimeGeneration) return;
     try {
       await refreshRepoLanguageStats(repoId, options);
     } catch (err) {
@@ -143,11 +198,13 @@ export async function refreshRepoLanguageStats(
   repoId: string,
   options: { silent?: boolean } = {},
 ) {
+  const generation = repositoryRuntimeGeneration;
   if (state.languageStatsLoadingRepoIds.includes(repoId)) return null;
   state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
   try {
     const service = await loadWorkspaceService();
     const summary = await service.refreshRepoLanguageStats(repoId);
+    if (generation !== repositoryRuntimeGeneration) return null;
     upsertRepo(summary);
     return summary;
   } catch (err) {
@@ -159,6 +216,10 @@ export async function refreshRepoLanguageStats(
   }
 }
 
+export function resetRepositoryRuntimeForTests() {
+  repositoryRuntimeGeneration += 1;
+}
+
 export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {
   state.error = null;
   const service = await loadWorkspaceService();
@@ -168,6 +229,7 @@ export async function cloneRepo(remoteUrl: string, directoryName?: string | null
 }
 
 export async function hideRepo(repoId: string) {
+  repositoryRuntimeGeneration += 1;
   const service = await loadWorkspaceService();
   state.settings = await service.hideRepo(repoId);
   state.repos = state.repos.filter((repo) => repo.id !== repoId);

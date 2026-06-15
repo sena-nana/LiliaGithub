@@ -246,7 +246,7 @@ describe("AppShell sidebar", () => {
 
     state.bulkPreview = {
       operation: "sync",
-      eligible: [{ repo: state.repos[0], reason: "有本地提交待推送" }],
+      eligible: [{ repo: repoSummary("LiliaGithub", { ahead: 1 }), reason: "有本地提交待推送" }],
       blocked: [],
       warnings: [],
     };

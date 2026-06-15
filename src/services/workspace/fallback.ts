@@ -27,6 +27,7 @@ import type {
   RepoConflictState,
   RepoDetail,
   RepoMergePullResult,
+  RepoRefreshSummaryOptions,
   RepoReadme,
   RepoSummary,
   RemoteRepoShortcut,
@@ -581,6 +582,12 @@ export function refreshRepos(): Promise<RepoSummary[]> {
   });
 }
 
+export function listManagedRepos(): Promise<RepoSummary[]> {
+  return call("workspace_list_managed_repos", undefined, () =>
+    visibleManagedFallbackRepos().map(lightweightRepoSummary),
+  );
+}
+
 export function discoverRepos(): Promise<RepoSummary[]> {
   return call("workspace_discover_repos", undefined, () => {
     const discovered = visibleFallbackRepos();
@@ -650,8 +657,34 @@ export function getRepoSummary(repoId: string): Promise<RepoSummary> {
   return call("repo_get_summary", { repoId }, () => ({ ...fallbackRepo(repoId) }));
 }
 
+export function refreshRepoSummary(
+  repoId: string,
+  options: RepoRefreshSummaryOptions = {},
+): Promise<RepoSummary> {
+  return call("repo_refresh_summary", { repoId, options }, () => {
+    const repo = fallbackRepo(repoId);
+    const error = options.fetchRemote && repo.remoteUrl ? fallbackRepoRemoteSyncOverride?.(repo) : null;
+    recordFallbackTask(
+      "repoStatus",
+      "normal",
+      repo.id,
+      error ? "error" : "success",
+      error ? `仓库状态已刷新，远端同步失败：${error}` : "仓库状态已更新",
+    );
+    return { ...repo };
+  });
+}
+
 function allFallbackRepos() {
   return [...fallbackRepos, ...fallbackClonedRepos].map((repo) => fallbackRepoOverrides[repo.id] ?? repo);
+}
+
+function visibleManagedFallbackRepos() {
+  const managed = new Set(fallbackSettings.managedRepoIds);
+  const hidden = new Set(fallbackSettings.hiddenRepoIds);
+  return allFallbackRepos()
+    .filter((repo) => managed.has(repo.id) && !hidden.has(repo.id))
+    .map((repo) => ({ ...repo }));
 }
 
 function visibleFallbackRepos() {
@@ -659,6 +692,29 @@ function visibleFallbackRepos() {
   return allFallbackRepos()
     .filter((repo) => !hidden.has(repo.id))
     .map((repo) => ({ ...repo }));
+}
+
+function lightweightRepoSummary(repo: RepoSummary): RepoSummary {
+  return {
+    id: repo.id,
+    name: repo.name,
+    path: repo.path,
+    relativePath: repo.relativePath,
+    currentBranch: null,
+    remoteUrl: null,
+    githubFullName: null,
+    ahead: 0,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: null,
+    lastCommitMessage: null,
+    languageStats: [],
+    workingTreeLanguageStats: [],
+    languageStatsUpdatedAt: 0,
+  };
 }
 
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
