@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  deleteGitHubRepo,
+  listGitHubRepos,
   listWorkspaceTasks,
   refreshRepos,
   setFallbackRepoRemoteSyncOverrideForTests,
@@ -36,5 +38,15 @@ describe("workspace fallback refresh", () => {
       status: "error",
       message: "已刷新 2 个仓库，1 个仓库 fetch 失败：LiliaGithub（认证失败）",
     });
+  });
+
+  it("删除 GitHub 远端仓库只清理远端列表并保留本地仓库", async () => {
+    await deleteGitHubRepo("sena-nana/LiliaGithub");
+
+    const githubRepos = await listGitHubRepos();
+    const localRepos = await refreshRepos();
+
+    expect(githubRepos.items.map((repo) => repo.fullName)).toEqual(["sena-nana/Lilia"]);
+    expect(localRepos.map((repo) => repo.id)).toEqual(["LiliaGithub", "Lilia"]);
   });
 });

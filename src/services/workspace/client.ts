@@ -233,6 +233,11 @@ export function updateGitHubRepoSettings(
   );
 }
 
+export async function deleteGitHubRepo(repoFullName: string): Promise<void> {
+  await call("github_delete_repo", { repoFullName }, () => fallback.deleteGitHubRepo(repoFullName));
+  clearGitHubRepoCache();
+}
+
 export function listGitHubIssues(
   repoFullName: string,
   stateOrOptions?: string | null | GitHubIssueListOptions,

@@ -28,7 +28,8 @@ use std::os::unix::process::CommandExt;
 const STORE_FILE: &str = "lilia-github.json";
 const SETTINGS_KEY: &str = "workspace.settings";
 const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
-const GITHUB_SCOPE: &str = "repo workflow read:user";
+const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo";
+const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
 const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_OAUTH_ACCEPT: &str = "application/json";
@@ -1116,6 +1117,13 @@ fn github_require_token(app: &AppHandle) -> Result<(GitHubBindingMetadata, Strin
         return Err("GitHub 绑定已失效，请重新绑定".to_string());
     };
     Ok((binding, token))
+}
+
+fn github_require_scope(binding: &GitHubBindingMetadata, scope: &str) -> Result<(), String> {
+    if binding.scopes.iter().any(|item| item == scope) {
+        return Ok(());
+    }
+    Err(format!("GitHub 绑定缺少 {scope} 权限，请重新绑定 GitHub 后再试"))
 }
 
 fn github_send(app: &AppHandle, prefix: &str, builder: RequestBuilder) -> Result<Response, String> {
@@ -3201,6 +3209,25 @@ pub async fn github_update_repo_settings(
         )?;
         let repo = github_json::<GitHubRepoResponse>("更新 GitHub 仓库设置失败", response)?;
         Ok(github_repo_management_from_response(repo))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Result<(), String> {
+    run_blocking("删除 GitHub 仓库", move || {
+        let (binding, token) = github_require_token(&app)?;
+        github_require_scope(&binding, GITHUB_DELETE_REPO_SCOPE)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "删除 GitHub 仓库失败",
+            github_headers(client.delete(github_repo_api_url(&repo_full_name)?), Some(&token)),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error("删除 GitHub 仓库失败", response));
+        }
+        Ok(())
     })
     .await
 }
@@ -6086,6 +6113,23 @@ rename to docs/new.md",
 
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].id, visible.id);
+    }
+
+    #[test]
+    fn github_delete_repo_requires_delete_repo_scope() {
+        let mut binding = GitHubBindingMetadata {
+            login: "lilia-user".to_string(),
+            avatar_url: None,
+            bound_at: 1,
+            scopes: vec!["repo".to_string(), "workflow".to_string(), "read:user".to_string()],
+            client_id_source: "bundled".to_string(),
+        };
+
+        assert!(github_require_scope(&binding, GITHUB_DELETE_REPO_SCOPE).is_err());
+
+        binding.scopes.push(GITHUB_DELETE_REPO_SCOPE.to_string());
+
+        assert!(github_require_scope(&binding, GITHUB_DELETE_REPO_SCOPE).is_ok());
     }
 
     #[test]

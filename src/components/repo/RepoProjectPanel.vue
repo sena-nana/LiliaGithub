@@ -6,6 +6,7 @@ import {
   ExternalLink,
   LoaderCircle,
   Save,
+  Trash2,
   X,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
@@ -18,6 +19,7 @@ import {
   listGitHubWorkflowRuns,
   updateGitHubIssue,
   updateGitHubRepoSettings,
+  deleteGitHubRepo,
   openPath,
   openUrl,
 } from "../../services/workspace/client";
@@ -56,7 +58,11 @@ const githubError = ref<string | null>(null);
 const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
 const savingSettings = ref(false);
+const deletingRepo = ref(false);
 const creatingIssue = ref(false);
+const remoteDeleted = ref(false);
+const deleteDialogOpen = ref(false);
+const deleteConfirmInput = ref("");
 const settings = ref<GitHubRepoManagement | null>(null);
 const issues = ref<GitHubIssue[]>([]);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
@@ -92,7 +98,14 @@ const settingsForm = reactive({
   webCommitSignoffRequired: false,
 });
 
-const repoReady = computed(() => Boolean(props.repoFullName));
+const githubUnavailableMessage = computed(() => {
+  if (remoteDeleted.value) return "GitHub 远端仓库已删除，本地目录仍保留。";
+  if (!props.repoFullName) return "当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。";
+  return null;
+});
+const deleteConfirmMatches = computed(() =>
+  Boolean(props.repoFullName) && deleteConfirmInput.value.trim() === props.repoFullName,
+);
 const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
@@ -121,6 +134,8 @@ watch(() => props.repoId, () => {
 });
 
 watch(() => props.repoFullName, () => {
+  remoteDeleted.value = false;
+  closeDeleteDialog();
   void loadGitHub();
   void loadActions();
 });
@@ -255,7 +270,7 @@ async function loadReadme() {
 }
 
 async function loadGitHub() {
-  if (!props.repoFullName) {
+  if (!props.repoFullName || remoteDeleted.value) {
     settings.value = null;
     issues.value = [];
     githubError.value = null;
@@ -280,7 +295,7 @@ async function loadGitHub() {
 }
 
 async function loadIssues() {
-  if (!props.repoFullName) return;
+  if (!props.repoFullName || remoteDeleted.value) return;
   githubError.value = null;
   try {
     issues.value = await listGitHubIssues(props.repoFullName, issueState.value);
@@ -291,7 +306,7 @@ async function loadIssues() {
 }
 
 async function loadActions() {
-  if (!props.repoFullName) {
+  if (!props.repoFullName || remoteDeleted.value) {
     workflowRuns.value = [];
     actionsError.value = null;
     return;
@@ -366,6 +381,37 @@ async function saveSettings() {
     githubError.value = String(err);
   } finally {
     savingSettings.value = false;
+  }
+}
+
+function openDeleteDialog() {
+  if (!props.repoFullName || deletingRepo.value) return;
+  deleteConfirmInput.value = "";
+  deleteDialogOpen.value = true;
+}
+
+function closeDeleteDialog() {
+  if (deletingRepo.value) return;
+  deleteDialogOpen.value = false;
+  deleteConfirmInput.value = "";
+}
+
+async function confirmDeleteRepo() {
+  if (!props.repoFullName || !deleteConfirmMatches.value || deletingRepo.value) return;
+  deletingRepo.value = true;
+  githubError.value = null;
+  try {
+    await deleteGitHubRepo(props.repoFullName);
+    remoteDeleted.value = true;
+    settings.value = null;
+    issues.value = [];
+    workflowRuns.value = [];
+    deleteDialogOpen.value = false;
+    deleteConfirmInput.value = "";
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    deletingRepo.value = false;
   }
 }
 
@@ -501,8 +547,8 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
           />
         </section>
 
-        <section v-else-if="!repoReady" class="project-section">
-          <p class="muted repo-empty project-empty">当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。</p>
+        <section v-else-if="githubUnavailableMessage" class="project-section">
+          <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
         </section>
 
         <section v-else-if="activeTab === 'issues'" class="project-section">
@@ -607,7 +653,7 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
         <form v-else class="project-section project-settings" @submit.prevent="saveSettings">
           <div class="project-section__head">
             <h3>仓库设置</h3>
-            <button type="submit" class="primary" :disabled="savingSettings || githubLoading || !settings">
+            <button type="submit" class="primary" :disabled="savingSettings || deletingRepo || githubLoading || !settings">
               <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
               <Save v-else :size="14" aria-hidden="true" />
               保存
@@ -640,6 +686,70 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
             <label><input v-model="settingsForm.allowRebaseMerge" type="checkbox" /> Rebase</label>
             <label><input v-model="settingsForm.allowAutoMerge" type="checkbox" /> Auto merge</label>
           </div>
+          <section class="project-danger-zone" aria-label="危险操作">
+            <div>
+              <strong>删除 GitHub 远端仓库</strong>
+              <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
+            </div>
+            <button
+              type="button"
+              class="ghost danger"
+              :disabled="deletingRepo || githubLoading || !settings"
+              @click="openDeleteDialog"
+            >
+              <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+              <Trash2 v-else :size="14" aria-hidden="true" />
+              删除仓库
+            </button>
+          </section>
+          <Teleport to="body">
+            <Transition name="modal">
+              <div
+                v-if="deleteDialogOpen"
+                class="project-delete-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-label="删除 GitHub 仓库"
+                @click.self="closeDeleteDialog"
+              >
+                <div class="project-delete-dialog">
+                  <div class="project-delete-dialog__head">
+                    <Trash2 :size="15" aria-hidden="true" />
+                    <strong>删除 GitHub 仓库</strong>
+                  </div>
+                  <p>
+                    这会永久删除远端仓库 <strong>{{ repoFullName }}</strong>。本地目录会保留，但 GitHub
+                    Issues、Actions 和 Settings 将不可用。
+                  </p>
+                  <p v-if="githubError" class="error-line">{{ githubError }}</p>
+                  <label>
+                    <span>输入完整仓库名以确认</span>
+                    <input
+                      v-model="deleteConfirmInput"
+                      type="text"
+                      :placeholder="repoFullName ?? 'owner/repo'"
+                      :disabled="deletingRepo"
+                    />
+                  </label>
+                  <div class="project-delete-dialog__actions">
+                    <button type="button" class="ghost" :disabled="deletingRepo" @click="closeDeleteDialog">
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      class="ghost danger"
+                      :disabled="deletingRepo || !deleteConfirmMatches"
+                      @click="confirmDeleteRepo"
+                    >
+                      <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+                      <Trash2 v-else :size="14" aria-hidden="true" />
+                      确认删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Transition>
+          </Teleport>
         </form>
       </main>
 
@@ -930,6 +1040,118 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
   padding: 0;
 }
 
+.project-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--err-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--err-soft) 52%, var(--bg-subtle));
+}
+
+.project-danger-zone div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.project-danger-zone strong {
+  color: var(--err);
+  font-size: 13px;
+}
+
+.project-danger-zone span {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.project-danger-zone button,
+.project-delete-dialog__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.project-delete-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1800;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.project-delete-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(520px, 92vw);
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+
+.project-delete-dialog__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--err);
+}
+
+.project-delete-dialog p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.project-delete-dialog label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-delete-dialog input {
+  width: 100%;
+}
+
+.project-delete-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.16s ease;
+}
+
+.modal-enter-active .project-delete-dialog,
+.modal-leave-active .project-delete-dialog {
+  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease;
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .project-delete-dialog,
+.modal-leave-to .project-delete-dialog {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+}
+
 @media (max-width: 900px) {
   .project-layout {
     grid-template-columns: 1fr;
@@ -941,6 +1163,11 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
 
   .project-switches {
     grid-template-columns: 1fr;
+  }
+
+  .project-danger-zone {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

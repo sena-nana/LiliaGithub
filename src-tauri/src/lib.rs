@@ -68,6 +68,7 @@ pub fn run() {
             workspace::github_create_repo,
             workspace::github_get_repo_management,
             workspace::github_update_repo_settings,
+            workspace::github_delete_repo,
             workspace::github_list_repo_readmes,
             workspace::github_list_issues,
             workspace::github_create_issue,

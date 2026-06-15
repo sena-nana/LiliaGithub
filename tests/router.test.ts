@@ -900,6 +900,34 @@ describe("基础路由", () => {
     });
   });
 
+  it("仓库设置删除 GitHub 远端需要输入完整仓库名确认并保留本地仓库", async () => {
+    const service = await import("../src/services/workspace");
+    await renderAt("/repos/LiliaGithub");
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();
+
+    await fireEvent.click(await screen.findByRole("button", { name: "删除仓库" }));
+    expect(await screen.findByRole("dialog", { name: "删除 GitHub 仓库" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+
+    await fireEvent.update(screen.getByPlaceholderText("sena-nana/LiliaGithub"), "sena-nana/Wrong");
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+
+    await fireEvent.update(screen.getByPlaceholderText("sena-nana/LiliaGithub"), "sena-nana/LiliaGithub");
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
+      expect(screen.getByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
+    expect((await service.listGitHubRepos()).items.some((repo) => repo.fullName === "sena-nana/LiliaGithub")).toBe(false);
+  });
+
   it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
     const service = await import("../src/services/workspace");
     const issueRow = () => {

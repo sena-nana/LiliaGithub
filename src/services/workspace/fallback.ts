@@ -103,45 +103,49 @@ const defaultFallbackBinding: GitHubBindingStatus = {
     login: "lilia-user",
     avatarUrl: null,
     boundAt: Date.now(),
-    scopes: ["repo", "workflow", "read:user"],
+    scopes: ["repo", "workflow", "read:user", "delete_repo"],
     clientIdSource: "bundled",
   },
 };
 
 const CONTRIBUTION_DAYS = 371;
 const CONTRIBUTION_REPO_LIMIT = 30;
-const fallbackGitHubRepos: GitHubRepoSummary[] = [
-  {
-    id: 1,
-    name: "LiliaGithub",
-    fullName: "sena-nana/LiliaGithub",
-    ownerLogin: "sena-nana",
-    private: false,
-    disabled: false,
-    archived: false,
-    description: "Local GitHub workspace manager",
-    defaultBranch: "main",
-    createdAt: "2026-06-08T09:00:00Z",
-    updatedAt: "2026-06-11T00:00:00Z",
-    cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
-    htmlUrl: "https://github.com/sena-nana/LiliaGithub",
-  },
-  {
-    id: 2,
-    name: "Lilia",
-    fullName: "sena-nana/Lilia",
-    ownerLogin: "sena-nana",
-    private: true,
-    disabled: false,
-    archived: false,
-    description: "Desktop agent workbench",
-    defaultBranch: "main",
-    createdAt: "2026-06-07T09:00:00Z",
-    updatedAt: "2026-06-10T00:00:00Z",
-    cloneUrl: "https://github.com/sena-nana/Lilia.git",
-    htmlUrl: "https://github.com/sena-nana/Lilia",
-  },
-];
+function createFallbackGitHubRepos(): GitHubRepoSummary[] {
+  return [
+    {
+      id: 1,
+      name: "LiliaGithub",
+      fullName: "sena-nana/LiliaGithub",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: "Local GitHub workspace manager",
+      defaultBranch: "main",
+      createdAt: "2026-06-08T09:00:00Z",
+      updatedAt: "2026-06-11T00:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+    },
+    {
+      id: 2,
+      name: "Lilia",
+      fullName: "sena-nana/Lilia",
+      ownerLogin: "sena-nana",
+      private: true,
+      disabled: false,
+      archived: false,
+      description: "Desktop agent workbench",
+      defaultBranch: "main",
+      createdAt: "2026-06-07T09:00:00Z",
+      updatedAt: "2026-06-10T00:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/Lilia.git",
+      htmlUrl: "https://github.com/sena-nana/Lilia",
+    },
+  ];
+}
+
+let fallbackGitHubRepos: GitHubRepoSummary[] = createFallbackGitHubRepos();
 
 function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
   return { ...repo };
@@ -356,6 +360,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
   fallbackGitHubRepoPagesOverride = null;
+  fallbackGitHubRepos = createFallbackGitHubRepos();
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
@@ -894,6 +899,25 @@ export function updateGitHubRepoSettings(
     };
     fallbackGitHubRepoManagement[repoFullName] = updated;
     return { ...updated };
+  });
+}
+
+export function deleteGitHubRepo(repoFullName: string): Promise<void> {
+  return call("github_delete_repo", { repoFullName }, () => {
+    const normalized = repoFullName.trim().replace(/^\/+|\/+$/g, "");
+    const exists = fallbackGitHubRepos.some((repo) => repo.fullName === normalized) ||
+      fallbackGitHubRepoPagesOverride?.some((page) => page.items.some((repo) => repo.fullName === normalized)) ||
+      Boolean(fallbackGitHubRepoManagement[normalized]);
+    if (!exists) throw new Error(`未找到 GitHub 仓库：${normalized}`);
+    fallbackGitHubRepos = fallbackGitHubRepos.filter((repo) => repo.fullName !== normalized);
+    fallbackGitHubRepoPagesOverride = fallbackGitHubRepoPagesOverride?.map((page) => ({
+      ...page,
+      items: page.items.filter((repo) => repo.fullName !== normalized),
+    })) ?? null;
+    delete fallbackGitHubRepoManagement[normalized];
+    delete fallbackGitHubIssues[normalized];
+    delete fallbackGitHubWorkflowRuns[normalized];
+    delete fallbackGitHubRepoReadmes[normalized];
   });
 }
 
