@@ -416,6 +416,13 @@ const {
   padding: 14px 16px 16px;
 }
 
+.repo-panel--history {
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: auto;
+}
+
 .repo-empty {
   margin: 0;
 }
@@ -756,7 +763,7 @@ const {
 .history-row {
   position: relative;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) minmax(150px, 190px);
+  grid-template-columns: minmax(72px, var(--history-graph-width, 112px)) minmax(0, 1fr) minmax(150px, 190px);
   align-items: center;
   gap: 6px;
   min-height: 28px;
@@ -785,37 +792,30 @@ const {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
   align-self: stretch;
+  min-width: 0;
   min-height: 28px;
+  padding-left: 8px;
+  overflow: hidden;
 }
 
-.history-graph__line {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 2px;
-  transform: translateX(-50%);
-  background: var(--border);
+.history-graph__svg {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
-.history-graph__line.is-first {
-  top: 50%;
-}
-
-.history-graph__line.is-last {
-  bottom: 50%;
+.history-graph__segment,
+.history-graph__connector {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .history-graph__node {
-  position: relative;
-  z-index: 1;
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--accent);
-  border-radius: 50%;
-  background: var(--bg-elev);
+  fill: var(--bg-elev);
+  stroke-width: 2;
 }
 
 .history-row__body,
@@ -1116,7 +1116,7 @@ const {
   }
 
   .history-row {
-    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-columns: minmax(72px, min(var(--history-graph-width, 84px), 34vw)) minmax(0, 1fr);
     min-height: 32px;
   }
 
@@ -1125,7 +1125,7 @@ const {
   }
 
   .history-popover {
-    left: 32px;
+    left: 84px;
     width: calc(100vw - 64px);
   }
 
