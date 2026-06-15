@@ -100,6 +100,10 @@ const bulkSyncErrorByRepoId = computed(() => {
   return syncErrorByRepoId();
 });
 
+function isRefreshingRepo(repoId: string) {
+  return workspace.state.refreshingRepoIds.includes(repoId);
+}
+
 interface RepoIssue {
   label: string;
   title: string;
@@ -483,9 +487,16 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
           <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
           <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
           <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
+          <span
+            v-if="isRefreshingRepo(repo.id)"
+            class="sb-row-loader"
+            title="正在刷新仓库"
+            aria-label="正在刷新仓库"
+          >
+            <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
+          </span>
         </RouterLink>
-        <p v-if="workspace.state.scanning" class="sb-tree__empty">正在扫描仓库...</p>
-        <p v-else-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
+        <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
         <p v-else-if="searchOpen && !filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
       </div>
     </div>
@@ -667,6 +678,14 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
   font-weight: 700;
   letter-spacing: 0.6px;
   text-transform: uppercase;
+}
+
+.sb-row-loader {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
 }
 
 .sb-icon-btn {
