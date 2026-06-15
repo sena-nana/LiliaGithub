@@ -416,6 +416,33 @@ export function useRepoDetailController() {
     conflictAcceptConfirm.value = null;
   }
 
+  function shouldOfferSystemGitPush(error: unknown) {
+    const message = String(error);
+    return message.includes("当前 GitHub 绑定无权限") || message.includes("无法认证 GitHub 仓库");
+  }
+
+  async function retryPushWithSystemGitIfConfirmed(error: unknown) {
+    if (!shouldOfferSystemGitPush(error)) {
+      throw error;
+    }
+    const confirmed = window.confirm(
+      "GitHub token 推送失败。是否改用系统 git 推送？\n\n如果系统 git 推送成功，此仓库后续将默认使用系统 git 凭证。",
+    );
+    if (!confirmed) {
+      await workspace.loadRepoDetail(repoId.value).catch(() => undefined);
+      throw error;
+    }
+    await workspace.pushWithSystemGit(repoId.value);
+  }
+
+  async function runPushWithFallback(pushAction: () => Promise<unknown>) {
+    try {
+      await pushAction();
+    } catch (err) {
+      await retryPushWithSystemGitIfConfirmed(err);
+    }
+  }
+
   async function runAction(action: () => Promise<unknown>) {
     actionRunning.value = true;
     actionError.value = null;
@@ -444,7 +471,10 @@ export function useRepoDetailController() {
 
   function commitSelected() {
     void runAction(async () => {
-      await workspace.commit(repoId.value, selectedFileList.value, commitMessage.value, pushAfter.value);
+      const commitAction = () =>
+        workspace.commit(repoId.value, selectedFileList.value, commitMessage.value, pushAfter.value);
+      if (pushAfter.value) await runPushWithFallback(commitAction);
+      else await commitAction();
       selectedFiles.value = new Set();
       commitMessage.value = "";
     });
@@ -458,7 +488,7 @@ export function useRepoDetailController() {
   }
 
   function push() {
-    void runAction(() => workspace.push(repoId.value));
+    void runAction(() => runPushWithFallback(() => workspace.push(repoId.value)));
   }
 
   function showConflicts() {

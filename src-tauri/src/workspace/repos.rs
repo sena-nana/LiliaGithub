@@ -154,6 +154,73 @@ pub(super) fn normalize_clone_directory_name(
     Ok(name)
 }
 
+pub(super) fn normalize_git_remote_error(remote: &str, error: String) -> String {
+    let lower = error.to_ascii_lowercase();
+    let github_full_name = parse_github_remote(remote);
+    if lower.contains("repository not found") {
+        return github_full_name
+            .map(|full_name| {
+                format!(
+                    "无法访问 GitHub 仓库 {full_name}：仓库不存在、是私有仓库且当前 GitHub 绑定无权限，或仓库名输入有误。"
+                )
+            })
+            .unwrap_or_else(|| "无法访问远端仓库：仓库不存在或当前账号无权限。".to_string());
+    }
+    if lower.contains("authentication failed") || lower.contains("could not read username") {
+        return github_full_name
+            .map(|full_name| {
+                format!("无法认证 GitHub 仓库 {full_name}，请重新绑定 GitHub 后再试。")
+            })
+            .unwrap_or_else(|| "远端认证失败，请检查凭证或远端 URL。".to_string());
+    }
+    error
+}
+
+pub(super) fn origin_remote_url(path: &Path) -> Option<String> {
+    git_command_lossy(path, &["remote", "get-url", "origin"]).filter(|value| !value.is_empty())
+}
+
+pub(super) fn map_remote_git_error(path: &Path, error: String) -> String {
+    origin_remote_url(path)
+        .map(|remote| normalize_git_remote_error(&remote, error.clone()))
+        .unwrap_or(error)
+}
+
+pub(super) fn repo_uses_system_git(app: &AppHandle, path: &Path) -> bool {
+    let Ok(root) = workspace_root(app) else {
+        return false;
+    };
+    let id = repo_id(&root, path);
+    load_settings(app)
+        .system_git_repo_ids
+        .iter()
+        .any(|value| value == &id)
+}
+
+pub(super) fn remember_repo_uses_system_git(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let root = workspace_root(app)?;
+    let id = repo_id(&root, path);
+    let mut settings = load_settings(app);
+    if !settings
+        .system_git_repo_ids
+        .iter()
+        .any(|value| value == &id)
+    {
+        settings.system_git_repo_ids.push(id);
+        sort_dedup(&mut settings.system_git_repo_ids);
+        save_settings(app, &settings)?;
+    }
+    Ok(())
+}
+
+pub(super) fn git_auth_for_repo(app: &AppHandle, path: &Path) -> Result<Option<String>, String> {
+    if repo_uses_system_git(app, path) {
+        Ok(None)
+    } else {
+        token_for_binding(app).map(|token| token.map(|value| github_auth_header(&value)))
+    }
+}
+
 pub(super) fn validate_clone_directory_name(name: &str) -> Result<(), String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -837,7 +904,8 @@ pub async fn workspace_clone_repo(
             &root,
             &["clone", remote, directory.as_str()],
             auth_header.as_deref(),
-        )?;
+        )
+        .map_err(|error| normalize_git_remote_error(remote, error))?;
         let mut settings = load_settings(&app);
         add_managed_repo_id(&mut settings, repo_id(&root, &target));
         save_settings(&app, &settings)?;
@@ -1130,6 +1198,21 @@ pub async fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, S
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
         run_push(&app, &path)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_push_with_system_git(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoSummary, String> {
+    run_blocking("使用系统 Git 推送仓库", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        run_system_git_push(&path)?;
+        remember_repo_uses_system_git(&app, &path)?;
         Ok(summarize_repo(&root, &path))
     })
     .await
@@ -2030,18 +2113,30 @@ pub(super) fn parse_track(track: &str) -> (i32, i32) {
 }
 
 pub(super) fn run_pull(app: &AppHandle, path: &Path) -> Result<(), String> {
-    let auth = token_for_binding(app)?.map(|token| github_auth_header(&token));
-    git_command(path, &["pull", "--ff-only"], auth.as_deref()).map(|_| ())
+    let auth = git_auth_for_repo(app, path)?;
+    git_command(path, &["pull", "--ff-only"], auth.as_deref())
+        .map(|_| ())
+        .map_err(|error| map_remote_git_error(path, error))
 }
 
 pub(super) fn run_fetch(app: &AppHandle, path: &Path) -> Result<(), String> {
-    let auth = token_for_binding(app)?.map(|token| github_auth_header(&token));
-    git_command(path, &["fetch"], auth.as_deref()).map(|_| ())
+    let auth = git_auth_for_repo(app, path)?;
+    git_command(path, &["fetch"], auth.as_deref())
+        .map(|_| ())
+        .map_err(|error| map_remote_git_error(path, error))
 }
 
 pub(super) fn run_push(app: &AppHandle, path: &Path) -> Result<(), String> {
-    let auth = token_for_binding(app)?.map(|token| github_auth_header(&token));
-    git_command(path, &["push"], auth.as_deref()).map(|_| ())
+    let auth = git_auth_for_repo(app, path)?;
+    git_command(path, &["push"], auth.as_deref())
+        .map(|_| ())
+        .map_err(|error| map_remote_git_error(path, error))
+}
+
+pub(super) fn run_system_git_push(path: &Path) -> Result<(), String> {
+    git_command(path, &["push"], None)
+        .map(|_| ())
+        .map_err(|error| map_remote_git_error(path, error))
 }
 
 pub(super) fn current_branch_upstream(path: &Path) -> Option<String> {

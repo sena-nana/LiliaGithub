@@ -442,12 +442,11 @@ export async function mergePull(repoId: string) {
   }
 }
 
-export async function push(repoId: string) {
-  const service = await loadWorkspaceService();
+async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSummary>) {
   const updateRecentSync = beginRecentSyncRetry(repoId);
   try {
     await applyRepoMutationWithLanguageStats(repoId, async () => {
-      const summary = await service.pushRepo(repoId);
+      const summary = await pushRepo();
       if (updateRecentSync) {
         finishRecentSyncRetry({
           repoId,
@@ -469,6 +468,16 @@ export async function push(repoId: string) {
     }
     throw err;
   }
+}
+
+export async function push(repoId: string) {
+  const service = await loadWorkspaceService();
+  await runPushMutation(repoId, () => service.pushRepo(repoId));
+}
+
+export async function pushWithSystemGit(repoId: string) {
+  const service = await loadWorkspaceService();
+  await runPushMutation(repoId, () => service.pushRepoWithSystemGit(repoId));
 }
 
 export async function checkout(repoId: string, branch: string) {
