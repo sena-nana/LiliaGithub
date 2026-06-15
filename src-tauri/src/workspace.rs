@@ -1183,7 +1183,12 @@ fn remember_remote_repo_shortcut(
     shortcut: RemoteRepoShortcut,
 ) -> Result<(), String> {
     let shortcut = normalize_remote_repo_shortcut(shortcut)?;
-    shortcuts.retain(|item| item.full_name != shortcut.full_name);
+    let target = normalize_github_repo_input(&shortcut.full_name)?.full_name;
+    shortcuts.retain(|item| {
+        normalize_github_repo_input(&item.full_name)
+            .map(|repo| !repo.full_name.eq_ignore_ascii_case(&target))
+            .unwrap_or(true)
+    });
     shortcuts.push(shortcut);
     shortcuts.sort_by(|a, b| {
         b.opened_at
@@ -1195,7 +1200,12 @@ fn remember_remote_repo_shortcut(
 
 fn forget_remote_repo_shortcut(shortcuts: &mut Vec<RemoteRepoShortcut>, full_name: &str) -> Result<(), String> {
     let repo = normalize_github_repo_input(full_name)?;
-    shortcuts.retain(|item| item.full_name != repo.full_name);
+    let target = repo.full_name;
+    shortcuts.retain(|item| {
+        normalize_github_repo_input(&item.full_name)
+            .map(|current| !current.full_name.eq_ignore_ascii_case(&target))
+            .unwrap_or(true)
+    });
     Ok(())
 }
 
@@ -5446,6 +5456,23 @@ mod tests {
 
         assert_eq!(shortcuts.len(), 1);
         assert_eq!(shortcuts[0].full_name, "sena-nana/Keep");
+    }
+
+    #[test]
+    fn forget_remote_repo_shortcut_removes_matching_when_stored_as_remote_url() {
+        let mut shortcuts = vec![
+            {
+                let mut item = test_remote_shortcut("sena-nana/Keep");
+                item.full_name = "https://github.com/sena-nana/Keep.git".to_string();
+                item
+            },
+            test_remote_shortcut("sena-nana/Remove"),
+        ];
+
+        forget_remote_repo_shortcut(&mut shortcuts, "sena-nana/Keep").unwrap();
+
+        assert_eq!(shortcuts.len(), 1);
+        assert_eq!(shortcuts[0].full_name, "sena-nana/Remove");
     }
 
     #[test]
