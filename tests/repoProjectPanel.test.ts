@@ -1,7 +1,8 @@
 import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
+import { updateGitHubRepoSettings } from "../src/services/workspace/client";
 import type {
   GitHubRepoManagement,
   ProjectLaunchCandidate,
@@ -94,6 +95,10 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
 }
 
 describe("RepoProjectPanel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("本地仓库保留快速启动入口和启动终端", async () => {
     const view = await renderProjectPanel();
 
@@ -133,5 +138,31 @@ describe("RepoProjectPanel", () => {
       expect(view.getByText("删除 GitHub 远端仓库")).toBeInTheDocument();
     });
     expect(view.queryByText("删除本地仓库")).toBeNull();
+  });
+
+  it("仓库设置分区展示并统一保存功能开关", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
+    expect(view.getByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
+    expect(view.getByRole("heading", { level: 4, name: "Pull Request / Merge" })).toBeInTheDocument();
+    expect(view.getByLabelText("本地危险操作")).toBeInTheDocument();
+    expect(view.getByLabelText("远端危险操作")).toBeInTheDocument();
+    expect(view.queryByText("默认分支")).toBeNull();
+
+    const wikiSwitch = view.getByRole("checkbox", { name: /Wiki/ });
+    await fireEvent.click(wikiSwitch);
+    await fireEvent.click(view.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ hasWiki: true }),
+      );
+    });
+    expect(vi.mocked(updateGitHubRepoSettings).mock.calls[0][1]).not.toHaveProperty("defaultBranch");
   });
 });
