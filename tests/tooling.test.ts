@@ -76,14 +76,14 @@ describe("单应用模板工具链", () => {
   });
 
   it("GitHub OAuth 设备授权请求显式协商 JSON 响应并保留错误详情", () => {
-    const workspace = readFileSync(resolve("src-tauri/src/workspace.rs"), "utf-8");
-    const startDeviceFlow = rustFunctionBody(workspace, "github_start_device_flow");
-    const pollDeviceFlow = rustFunctionBody(workspace, "github_poll_device_flow");
+    const github = readFileSync(resolve("src-tauri/src/workspace/github.rs"), "utf-8");
+    const startDeviceFlow = rustFunctionBody(github, "github_start_device_flow");
+    const pollDeviceFlow = rustFunctionBody(github, "github_poll_device_flow");
 
-    expect(workspace).toContain('const GITHUB_OAUTH_ACCEPT: &str = "application/json";');
-    expect(workspace).toContain('const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo";');
-    expect(workspace).toContain("fn github_oauth_headers");
-    expect(workspace).toContain("fn github_http_error");
+    expect(github).toContain('const GITHUB_OAUTH_ACCEPT: &str = "application/json";');
+    expect(github).toContain('const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo";');
+    expect(github).toContain("fn github_oauth_headers");
+    expect(github).toContain("fn github_http_error");
     expect(startDeviceFlow).toContain(".post(\"https://github.com/login/device/code\")");
     expect(startDeviceFlow).toContain("github_oauth_headers(");
     expect(startDeviceFlow).toContain('github_http_error("启动 GitHub 设备授权失败", response)');
