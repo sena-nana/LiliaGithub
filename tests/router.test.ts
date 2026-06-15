@@ -836,6 +836,48 @@ describe("基础路由", () => {
     });
   });
 
+  it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
+    const service = await import("../src/services/workspace");
+    const issueRow = () => {
+      const row = document.querySelector(".project-row--issue[data-issue-number=\"12\"]");
+      if (!row) throw new Error("未找到 Issue 行");
+      return row as HTMLElement;
+    };
+    service.setFallbackGitHubIssuesForTests({
+      "sena-nana/LiliaGithub": [
+        {
+          number: 12,
+          title: "待编辑 Issue",
+          state: "open",
+          body: "初始正文",
+          labels: ["bug", "ui"],
+          assignees: ["alice", "bob"],
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
+          updatedAt: "2026-06-11T12:00:00Z",
+          createdAt: "2026-06-10T12:00:00Z",
+        },
+      ],
+    });
+
+    await renderAt("/repos/LiliaGithub");
+    await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Issues" }));
+
+    expect(await screen.findByText("待编辑 Issue")).toBeInTheDocument();
+    await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 标题"), "编辑后标题");
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 内容"), "新正文");
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("labels, comma separated"), "backend, docs");
+    await fireEvent.update(within(issueRow()).getByPlaceholderText("assignees"), "carol, dana");
+    await fireEvent.click(within(issueRow()).getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByText("#12 编辑后标题")).toBeInTheDocument();
+    expect(screen.getByText("backend, docs · carol, dana")).toBeInTheDocument();
+
+    await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
+    expect(within(issueRow()).getByDisplayValue("新正文")).toBeInTheDocument();
+  });
+
   it("仓库项目信息页无 GitHub 远端时保留 README 并显示远端空态", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackRepoReadmesForTests({

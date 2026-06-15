@@ -63,6 +63,12 @@ const issueTitle = ref("");
 const issueBody = ref("");
 const issueLabels = ref("");
 const issueAssignees = ref("");
+const editingIssueNumber = ref<number | null>(null);
+const editingIssueTitle = ref("");
+const editingIssueBody = ref("");
+const editingIssueLabels = ref("");
+const editingIssueAssignees = ref("");
+const updatingIssue = ref(false);
 const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
 
@@ -140,6 +146,7 @@ function hasRun(runId: number) {
 function clearProjectTargets() {
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
+  cancelEditIssue();
 }
 
 async function focusIssue(issueNumber: number | null | undefined) {
@@ -259,6 +266,7 @@ async function loadGitHub() {
     ]);
     settings.value = nextSettings;
     issues.value = nextIssues;
+    syncEditingIssue();
     applySettingsForm(nextSettings);
   } catch (err) {
     githubError.value = String(err);
@@ -272,6 +280,7 @@ async function loadIssues() {
   githubError.value = null;
   try {
     issues.value = await listGitHubIssues(props.repoFullName, issueState.value);
+    syncEditingIssue();
   } catch (err) {
     githubError.value = String(err);
   }
@@ -345,6 +354,54 @@ async function saveSettings() {
 
 function splitList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function isEditingIssue(issueNumber: number) {
+  return editingIssueNumber.value === issueNumber;
+}
+
+function syncEditingIssue() {
+  if (!hasIssue(editingIssueNumber.value ?? -1)) {
+    cancelEditIssue();
+  }
+}
+
+function startEditIssue(issue: GitHubIssue) {
+  editingIssueNumber.value = issue.number;
+  editingIssueTitle.value = issue.title;
+  editingIssueBody.value = issue.body ?? "";
+  editingIssueLabels.value = issue.labels.join(", ");
+  editingIssueAssignees.value = issue.assignees.join(", ");
+}
+
+function cancelEditIssue() {
+  editingIssueNumber.value = null;
+  editingIssueTitle.value = "";
+  editingIssueBody.value = "";
+  editingIssueLabels.value = "";
+  editingIssueAssignees.value = "";
+}
+
+async function saveIssueEdit(issue: GitHubIssue) {
+  if (!props.repoFullName || updatingIssue.value) return;
+  const nextTitle = editingIssueTitle.value.trim();
+  if (!nextTitle) return;
+  updatingIssue.value = true;
+  githubError.value = null;
+  try {
+    const updated = await updateGitHubIssue(props.repoFullName, issue.number, {
+      title: nextTitle,
+      body: editingIssueBody.value,
+      labels: splitList(editingIssueLabels.value),
+      assignees: splitList(editingIssueAssignees.value),
+    });
+    issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
+    cancelEditIssue();
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    updatingIssue.value = false;
+  }
 }
 
 async function createIssue() {
@@ -456,15 +513,36 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
               :class="{ 'is-target': isIssueRowFocused(issue.number) }"
               :data-issue-number="issue.number"
             >
-              <div>
-                <strong>#{{ issue.number }} {{ issue.title }}</strong>
-                <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
-              </div>
-              <button type="button" class="ghost" @click="toggleIssue(issue)">
-                <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-                <CircleDot v-else :size="14" aria-hidden="true" />
-                {{ issue.state === "open" ? "关闭" : "重开" }}
-              </button>
+              <template v-if="!isEditingIssue(issue.number)">
+                <div>
+                  <strong>#{{ issue.number }} {{ issue.title }}</strong>
+                  <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
+                </div>
+                <div class="project-inline-form">
+                  <button type="button" class="ghost" @click="startEditIssue(issue)">
+                    编辑
+                  </button>
+                  <button type="button" class="ghost" @click="toggleIssue(issue)">
+                    <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
+                    <CircleDot v-else :size="14" aria-hidden="true" />
+                    {{ issue.state === "open" ? "关闭" : "重开" }}
+                  </button>
+                </div>
+              </template>
+              <form
+                v-else
+                class="project-issue-edit-form"
+                @submit.prevent="saveIssueEdit(issue)"
+              >
+                <input v-model="editingIssueTitle" type="text" placeholder="Issue 标题" />
+                <textarea v-model="editingIssueBody" rows="3" placeholder="Issue 内容"></textarea>
+                <div class="project-inline-form">
+                  <input v-model="editingIssueLabels" type="text" placeholder="labels, comma separated" />
+                  <input v-model="editingIssueAssignees" type="text" placeholder="assignees" />
+                  <button type="submit" class="primary" :disabled="updatingIssue || !editingIssueTitle.trim()">保存</button>
+                  <button type="button" class="ghost" @click="cancelEditIssue">取消</button>
+                </div>
+              </form>
             </div>
             <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
           </div>
@@ -771,6 +849,12 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
 
 .project-row--issue {
   align-items: flex-start;
+}
+
+.project-issue-edit-form {
+  width: 100%;
+  display: grid;
+  gap: 10px;
 }
 
 .project-row--action {
