@@ -328,6 +328,7 @@ function createFallbackSettings(): WorkspaceSettings {
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     remoteRepoShortcuts: [],
+    localContributionCache: {},
   };
 }
 
@@ -513,6 +514,14 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     hiddenRepoIds: [...settings.hiddenRepoIds],
     managedRepoIds: [...settings.managedRepoIds],
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
+    localContributionCache: Object.fromEntries(
+      Object.entries(settings.localContributionCache).map(([repoId, days]) => [
+        repoId,
+        Object.fromEntries(
+          Object.entries(days).map(([date, entry]) => [date, { ...entry }]),
+        ),
+      ]),
+    ),
   };
 }
 
@@ -754,9 +763,12 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
       throw new Error(`未找到 Git 仓库：${repoId}`);
     }
     if (!fallbackSettings.hiddenRepoIds.includes(repoId)) {
+      const localContributionCache = { ...fallbackSettings.localContributionCache };
+      delete localContributionCache[repoId];
       fallbackSettings = {
         ...fallbackSettings,
         hiddenRepoIds: [...fallbackSettings.hiddenRepoIds, repoId].sort(),
+        localContributionCache,
       };
     }
     return cloneWorkspaceSettings(fallbackSettings);
@@ -1129,9 +1141,9 @@ export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | 
   });
 }
 
-function fallbackContributionMeta(repoFullName: string): GitHubContributionMeta {
-  const normalized = repoFullName.trim().replace(/^\/+|\/+$/g, "");
-  const repoCount = normalized && normalized.includes("/") ? 1 : 0;
+function fallbackContributionMeta(repoScope: string): GitHubContributionMeta {
+  const normalized = repoScope.trim().replace(/^local:/, "").replace(/^\/+|\/+$/g, "");
+  const repoCount = normalized ? 1 : 0;
   return {
     repoCount,
     requestedRepoCount: repoCount,
@@ -1142,10 +1154,10 @@ function fallbackContributionMeta(repoFullName: string): GitHubContributionMeta 
   };
 }
 
-export function listRepoContribution(repoFullName: string): Promise<GitHubContributionResult> {
-  return call("github_list_repo_contribution", { repoFullName }, () => {
+export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {
+  return call("github_list_repo_contribution", { repoFullName: repoScope }, () => {
     if (fallbackRepoContributionOverride) {
-      const result = fallbackRepoContributionOverride(repoFullName);
+      const result = fallbackRepoContributionOverride(repoScope);
       return {
         days: result.days.map((item) => ({ ...item })),
         meta: { ...result.meta },
@@ -1164,7 +1176,7 @@ export function listRepoContribution(repoFullName: string): Promise<GitHubContri
     });
     return {
       days,
-      meta: fallbackContributionMeta(repoFullName),
+      meta: fallbackContributionMeta(repoScope),
     };
   });
 }

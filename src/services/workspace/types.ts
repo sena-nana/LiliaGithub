@@ -6,6 +6,12 @@ export interface WorkspaceSettings {
   hiddenRepoIds: string[];
   managedRepoIds: string[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
+  localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+}
+
+export interface LocalContributionDayCache {
+  count: number;
+  updatedAt: number;
 }
 
 export interface ProjectLaunchConfig {

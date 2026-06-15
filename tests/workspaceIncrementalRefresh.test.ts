@@ -179,7 +179,7 @@ describe("workspace incremental refresh", () => {
     expect(state.refreshingRepoIds).toEqual([]);
   });
 
-  it("轻量刷新后逐个刷新仓库状态并按 GitHub 仓库列表刷新贡献图", async () => {
+  it("轻量刷新后逐个刷新仓库状态并按本地仓库列表刷新贡献图", async () => {
     service.listManagedRepos.mockResolvedValue([
       repoSummary("LiliaGithub", { githubFullName: null }),
       repoSummary("Lilia", { githubFullName: null }),
@@ -196,8 +196,8 @@ describe("workspace incremental refresh", () => {
       workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
       languageStatsUpdatedAt: 1,
     }));
-    service.listRepoContribution.mockImplementation(async (repoFullName: string) => ({
-      days: [{ date: "2026-06-11", count: repoFullName === "sena-nana/LiliaGithub" ? 1 : 2 }],
+    service.listRepoContribution.mockImplementation(async (repoScope: string) => ({
+      days: [{ date: "2026-06-11", count: repoScope === "local:LiliaGithub" ? 1 : 2 }],
       meta: {
         repoCount: 1,
         requestedRepoCount: 1,
@@ -211,21 +211,82 @@ describe("workspace incremental refresh", () => {
     await refreshRepos();
 
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(4));
-    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(2));
-    expect(service.listRepoContribution).toHaveBeenCalledWith("sena-nana/LiliaGithub");
-    expect(service.listRepoContribution).toHaveBeenCalledWith("sena-nana/Lilia");
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(4));
+    expect(service.listRepoContribution).toHaveBeenCalledWith("local:LiliaGithub");
+    expect(service.listRepoContribution).toHaveBeenCalledWith("local:Lilia");
+    expect(service.listRepoContribution).toHaveBeenCalledWith("local:LocalOnly");
+    expect(service.listRepoContribution).toHaveBeenCalledWith("local:LiliaDuplicate");
     expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
       date: "2026-06-11",
-      count: 3,
+      count: 7,
     });
     expect(state.githubContributions.meta).toMatchObject({
-      repoCount: 2,
-      requestedRepoCount: 2,
+      repoCount: 4,
+      requestedRepoCount: 4,
       repoLimit: 30,
       truncated: false,
       skippedRepoCount: 0,
     });
     expect(state.githubContributions.error).toBeNull();
+  });
+
+  it("本地贡献刷新失败不会回退到 GitHub scope", async () => {
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("LocalOnly", {
+        githubFullName: null,
+        remoteUrl: "https://github.com/sena-nana/LocalOnly.git",
+      }),
+    ]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("LocalOnly", {
+      githubFullName: null,
+      remoteUrl: "https://github.com/sena-nana/LocalOnly.git",
+    }));
+    service.listRepoContribution.mockRejectedValue(new Error("未读取到本地提交"));
+
+    await refreshRepos();
+
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("local:LocalOnly"));
+    await waitFor(() => expect(state.githubContributions.error).toBe("Error: 未读取到本地提交"));
+    expect(service.listRepoContribution).toHaveBeenCalledTimes(1);
+    expect(service.listRepoContribution).not.toHaveBeenCalledWith("github:sena-nana/LocalOnly");
+    expect(state.githubContributions.meta).toMatchObject({
+      requestedRepoCount: 1,
+      skippedRepoCount: 0,
+    });
+  });
+
+  it("本地仓库无远端映射时仍按本地 scope 刷新", async () => {
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("LocalOnly", {
+        githubFullName: null,
+        remoteUrl: null,
+      }),
+    ]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("LocalOnly", {
+      githubFullName: null,
+      remoteUrl: null,
+    }));
+    service.listRepoContribution.mockResolvedValue({
+      days: [{ date: "2026-06-11", count: 2 }],
+      meta: {
+        repoCount: 1,
+        requestedRepoCount: 1,
+        repoLimit: 30,
+        truncated: false,
+        skippedRepoCount: 0,
+        refreshedAt: 1_780_000_000_000,
+      },
+    });
+
+    await refreshRepos();
+
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("local:LocalOnly"));
+    expect(state.githubContributions.error).toBeNull();
+    expect(state.githubContributions.meta).toMatchObject({
+      repoCount: 1,
+      requestedRepoCount: 1,
+      skippedRepoCount: 0,
+    });
   });
 
   it("GitHub 贡献图按仓库结果增量累加，不等待慢仓库完成", async () => {
@@ -247,7 +308,7 @@ describe("workspace incremental refresh", () => {
     await refreshRepos();
 
     await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(2));
-    contributionResolvers.get("sena-nana/FastRepo")?.({
+    contributionResolvers.get("local:FastRepo")?.({
       days: [{ date: "2026-06-11", count: 2 }],
       meta: {
         repoCount: 1,
@@ -265,7 +326,7 @@ describe("workspace incremental refresh", () => {
     }));
     expect(state.githubContributions.loading).toBe(true);
 
-    contributionResolvers.get("sena-nana/SlowRepo")?.({
+    contributionResolvers.get("local:SlowRepo")?.({
       days: [{ date: "2026-06-11", count: 3 }],
       meta: {
         repoCount: 1,
@@ -291,17 +352,12 @@ describe("workspace incremental refresh", () => {
     });
   });
 
-  it("仓库 summary 先完成时立即刷新该仓库贡献图，不等待其他 summary", async () => {
-    const summaryResolvers = new Map<string, (summary: ReturnType<typeof repoSummary>) => void>();
+  it("轻量仓库列表完成时立即刷新本地贡献图，不等待 summary", async () => {
     service.listManagedRepos.mockResolvedValue([
       repoSummary("FastRepo", { githubFullName: null }),
       repoSummary("SlowRepo", { githubFullName: null }),
     ]);
-    service.refreshRepoSummary.mockImplementation((repoId: string) =>
-      new Promise((resolve) => {
-        summaryResolvers.set(repoId, resolve);
-      }),
-    );
+    service.refreshRepoSummary.mockImplementation(() => new Promise<ReturnType<typeof repoSummary>>(() => undefined));
     service.listRepoContribution.mockResolvedValue({
       days: [{ date: "2026-06-11", count: 2 }],
       meta: {
@@ -317,29 +373,19 @@ describe("workspace incremental refresh", () => {
     await refreshRepos();
 
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(2));
-    summaryResolvers.get("FastRepo")?.({
-      ...repoSummary("FastRepo"),
-      githubFullName: "sena-nana/FastRepo",
-    });
-
-    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("sena-nana/FastRepo"));
-    expect(service.listRepoContribution).not.toHaveBeenCalledWith("sena-nana/SlowRepo");
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("local:FastRepo"));
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("local:SlowRepo"));
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
       date: "2026-06-11",
-      count: 2,
+      count: 4,
     }));
     expect(state.githubContributions.meta).toMatchObject({
-      repoCount: 1,
-      requestedRepoCount: 1,
+      repoCount: 2,
+      requestedRepoCount: 2,
       repoLimit: 30,
       truncated: false,
     });
-
-    summaryResolvers.get("SlowRepo")?.({
-      ...repoSummary("SlowRepo"),
-      githubFullName: "sena-nana/SlowRepo",
-    });
-    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("sena-nana/SlowRepo"));
   });
 
   it("单仓库刷新失败不清空项目列表，也不影响其他仓库继续更新", async () => {
@@ -414,7 +460,7 @@ describe("workspace incremental refresh", () => {
     expect(state.repos[0].languageStatsUpdatedAt).toBe(123);
   });
 
-  it("GitHub 贡献图失败不覆盖仓库扫描结果", async () => {
+  it("本地贡献图失败不覆盖仓库扫描结果", async () => {
     const repo = repoSummary("LiliaGithub", { githubFullName: "sena-nana/LiliaGithub" });
     service.listManagedRepos.mockResolvedValue([repoSummary("LiliaGithub", { githubFullName: null })]);
     service.refreshRepoSummary.mockResolvedValue(repo);
@@ -437,9 +483,8 @@ describe("workspace incremental refresh", () => {
     });
   });
 
-  it("没有 GitHub 仓库时写入空贡献图采样信息", async () => {
-    service.listManagedRepos.mockResolvedValue([repoSummary("LocalOnly", { githubFullName: null })]);
-    service.refreshRepoSummary.mockResolvedValue(repoSummary("LocalOnly", { githubFullName: null }));
+  it("没有本地仓库时写入空贡献图采样信息", async () => {
+    service.listManagedRepos.mockResolvedValue([]);
 
     await refreshRepos();
 
@@ -456,6 +501,14 @@ describe("workspace incremental refresh", () => {
   it("隐藏仓库只移除目标仓库和缓存，不触发全量扫描", async () => {
     const target = repoSummary("LiliaGithub");
     state.repos = [target, repoSummary("Lilia")];
+    state.settings = {
+      ...workspaceSettings(),
+      localContributionCache: {
+        [target.id]: {
+          "2026-06-11": { count: 2, updatedAt: 1 },
+        },
+      },
+    };
     state.repoDetails[target.id] = repoDetail(target);
     state.launchConfigs[target.id] = { command: "yarn dev", cwd: null, source: "manual", updatedAt: 1 };
     state.launchStatuses[target.id] = {
@@ -478,6 +531,7 @@ describe("workspace incremental refresh", () => {
     expect(state.launchConfigs[target.id]).toBeUndefined();
     expect(state.launchStatuses[target.id]).toBeUndefined();
     expect(state.launchLogs[target.id]).toBeUndefined();
+    expect(state.settings?.localContributionCache[target.id]).toBeUndefined();
   });
 
   it("恢复仓库只读取目标仓库 summary 并插回列表", async () => {
