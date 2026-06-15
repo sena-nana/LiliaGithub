@@ -6,6 +6,7 @@ import type { CommitSummary, RepoConflictChoice, RepoConflictFile, RepoConflictS
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 
 type RepoTab = "conflicts" | "changes" | "history" | "branches";
+type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
 type RepoView = "project" | "git";
 type HistoryCommit = {
   readonly hash: string;
@@ -24,6 +25,11 @@ export function useRepoDetailController() {
   const workspace = useWorkspace();
   const activeView = ref<RepoView>(normalizeView(route.query.view) ?? "git");
   const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
+  const activeProjectTab = computed<RepoProjectTab>(
+    () => normalizeProjectTab(route.query.projectTab) ?? "readme",
+  );
+  const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
+  const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
   const selectedFiles = ref<Set<string>>(new Set());
   const commitMessage = ref("");
   const pushAfter = ref(true);
@@ -190,7 +196,7 @@ export function useRepoDetailController() {
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
-    activeView.value = "git";
+    activeView.value = normalizeView(route.query.view) ?? "git";
     void load();
   });
 
@@ -227,6 +233,24 @@ export function useRepoDetailController() {
   function normalizeView(value: unknown): RepoView | null {
     if (value === "project" || value === "git") return value;
     return null;
+  }
+
+  function normalizeProjectTab(value: unknown): RepoProjectTab | null {
+    if (
+      value === "readme" ||
+      value === "issues" ||
+      value === "actions" ||
+      value === "settings"
+    ) return value;
+    return null;
+  }
+
+  function normalizePositiveIntegerQuery(value: unknown): number | null {
+    const next = Array.isArray(value) ? value[0] : value;
+    if (typeof next !== "string") return null;
+    const parsed = Number.parseInt(next, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) return null;
+    return parsed;
   }
 
   async function load() {
@@ -556,6 +580,9 @@ export function useRepoDetailController() {
       conflictOperationText,
       conflictAbortText,
       conflictContinueText,
+      activeProjectTab,
+      activeProjectIssue,
+      activeProjectRun,
       tabs,
       views,
       load,

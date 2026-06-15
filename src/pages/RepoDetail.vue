@@ -64,6 +64,9 @@ const {
   conflictOperationText,
   conflictAbortText,
   conflictContinueText,
+  activeProjectTab,
+  activeProjectIssue,
+  activeProjectRun,
   tabs,
   views,
   load,
@@ -188,6 +191,9 @@ const {
           :repo-id="repoId"
           :repo-full-name="summary?.githubFullName"
           :repo-path="summary?.path"
+          :project-tab="activeProjectTab"
+          :project-issue-number="activeProjectIssue"
+          :project-run-id="activeProjectRun"
         />
       </main>
 

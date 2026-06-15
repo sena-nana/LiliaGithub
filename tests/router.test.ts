@@ -394,6 +394,65 @@ describe("基础路由", () => {
     expect(issueIndex).toBeLessThan(errorIndex);
   });
 
+  it("总览页 GitHub 时间线点击 Issue 事件进入仓库详情项目信息 Issues 并定位目标 issue", async () => {
+    const { router } = await renderAt("/");
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const issueLink = await within(timeline).findByRole("link", { name: "Issue #12" });
+    await fireEvent.click(issueLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "项目信息" })).toHaveClass("is-active");
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Issues" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
+    expect(router.currentRoute.value.query).toMatchObject({
+      view: "project",
+      projectTab: "issues",
+      issue: "12",
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-issue-number="12"].project-row--issue.is-target')).toBeInTheDocument();
+    });
+  });
+
+  it("总览页 GitHub 时间线点击 Actions 事件进入仓库详情项目信息 Actions 并定位目标 run", async () => {
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/LiliaGithub");
+    service.setFallbackGitHubWorkflowRunsForTests({
+      [repo.fullName]: [
+        githubWorkflowRun(repo.fullName, 1310, "2026-06-12T14:00:00Z", {
+          status: "completed",
+          conclusion: "success",
+          displayTitle: "release pipeline",
+          branch: "main",
+          event: "workflow_dispatch",
+        }),
+      ],
+    });
+    const { router } = await renderAt("/");
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const workflowLink = await within(timeline).findByRole("link", { name: "Actions 通过" });
+    await fireEvent.click(workflowLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "项目信息" })).toHaveClass("is-active");
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Actions" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
+    expect(router.currentRoute.value.query).toMatchObject({
+      view: "project",
+      projectTab: "actions",
+      run: "1310",
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+    });
+  });
+
   it("总览页 GitHub 时间线命中持久缓存时不重复拉取 issue", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
