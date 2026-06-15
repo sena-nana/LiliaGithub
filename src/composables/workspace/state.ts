@@ -40,6 +40,7 @@ export interface WorkspaceState {
   githubContributions: GitHubContributionsState;
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
+  refreshingRepoIds: string[];
 }
 
 export interface RecentBulkSyncState {
@@ -91,6 +92,7 @@ export const state = reactive<WorkspaceState>({
   },
   tasks: [],
   languageStatsLoadingRepoIds: [],
+  refreshingRepoIds: [],
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -365,5 +367,6 @@ export function resetWorkspaceStateForTests() {
   };
   state.tasks = [];
   state.languageStatsLoadingRepoIds = [];
+  state.refreshingRepoIds = [];
   deviceFlow.value = null;
 }

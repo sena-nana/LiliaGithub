@@ -39,18 +39,15 @@ export async function refreshRepos() {
 }
 
 export async function refreshRepoSummaries() {
-  state.scanning = true;
-  state.error = null;
+  const repos = await loadManagedRepoList();
+  if (!repos) return null;
+  if (!repos.length) return repos;
   try {
-    const service = await loadWorkspaceService();
-    const repos = await service.refreshRepos();
-    replaceRepos(repos);
+    await refreshManagedRepoSummaries(repos.map((repo) => repo.id), { fetchRemote: true });
     return repos;
   } catch (err) {
     state.error = String(err);
     return null;
-  } finally {
-    state.scanning = false;
   }
 }
 
@@ -78,6 +75,7 @@ async function refreshManagedRepoSummaries(
     return;
   }
   state.scanning = true;
+  state.refreshingRepoIds = uniqueRepoIds;
   try {
     const service = await loadWorkspaceService();
     const refreshedRepoIds: string[] = [];
@@ -91,6 +89,7 @@ async function refreshManagedRepoSummaries(
       } catch {
         // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
       } finally {
+        state.refreshingRepoIds = state.refreshingRepoIds.filter((id) => id !== repoId);
         void refreshWorkspaceTasks();
       }
     }
@@ -100,6 +99,7 @@ async function refreshManagedRepoSummaries(
   } finally {
     if (generation === repositoryRuntimeGeneration) {
       state.scanning = false;
+      state.refreshingRepoIds = [];
     }
   }
 }
