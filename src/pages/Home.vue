@@ -44,6 +44,7 @@ import {
   readHomeGitHubOverviewSnapshot,
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
+import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
 import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
 import "../styles/page.css";
@@ -252,11 +253,12 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
   }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived)),
 );
 
-const githubTimelineEvents = computed<GitHubTimelineEvent[]>(() =>
+const githubTimelineNodes = computed<TimelineDisplayNode[]>(() =>
   repoStatusRows.value
     .flatMap((row) => buildGitHubTimelineEvents(row))
     .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, GITHUB_TIMELINE_EVENT_LIMIT),
+    .slice(0, GITHUB_TIMELINE_EVENT_LIMIT)
+    .map(toGitHubTimelineDisplayNode),
 );
 
 let repoOverviewHeightFrame = 0;
@@ -884,6 +886,33 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
 function addTimelineEvent(events: GitHubTimelineEvent[], event: GitHubTimelineEvent) {
   if (!Number.isFinite(event.timestamp) || event.timestamp <= 0) return;
   events.push(event);
+}
+
+function toGitHubTimelineDisplayNode(event: GitHubTimelineEvent): TimelineDisplayNode {
+  return {
+    id: event.id,
+    icon: gitHubTimelineEventIcon(event.kind),
+    title: event.title,
+    detail: event.detail,
+    summary: event.summary,
+    timestamp: event.timestamp,
+    link: timelineNodeLink(event.href),
+    tone: event.tone,
+  };
+}
+
+function gitHubTimelineEventIcon(kind: GitHubTimelineEvent["kind"]) {
+  if (kind === "repo") return FolderGit2;
+  if (kind === "commit") return GitCommitHorizontal;
+  if (kind === "issue") return CircleDot;
+  if (kind === "workflow") return RotateCw;
+  return RefreshCw;
+}
+
+function timelineNodeLink(href: string | undefined): TimelineNodeLink {
+  if (!href) return { kind: "none" };
+  if (href.startsWith("http")) return { kind: "external", href };
+  return { kind: "route", to: href };
 }
 
 function buildContributionWeeks(days: readonly GitHubContributionDay[]) {
@@ -1546,49 +1575,13 @@ async function syncRepo(repo: RepoSummary) {
           </div>
           <div class="home-scroll-card__body">
             <p
-              v-if="(githubReposLoading || githubIssuesLoading || githubWorkflowRunsLoading) && !githubTimelineEvents.length"
+              v-if="(githubReposLoading || githubIssuesLoading || githubWorkflowRunsLoading) && !githubTimelineNodes.length"
               class="repo-status-empty"
             >
               正在加载 GitHub 时间线...
             </p>
-            <p v-else-if="!githubTimelineEvents.length" class="repo-status-empty">暂无 GitHub 事件</p>
-            <ol v-else class="github-timeline-list" aria-label="GitHub 时间线列表">
-              <li
-                v-for="event in githubTimelineEvents"
-                :key="event.id"
-                class="github-timeline-row"
-              >
-                <span class="github-timeline-row__rail" aria-hidden="true">
-                  <span class="github-timeline-row__node" :class="event.tone ? `is-${event.tone}` : null">
-                    <FolderGit2 v-if="event.kind === 'repo'" :size="14" aria-hidden="true" />
-                    <GitCommitHorizontal v-else-if="event.kind === 'commit'" :size="14" aria-hidden="true" />
-                    <CircleDot v-else-if="event.kind === 'issue'" :size="14" aria-hidden="true" />
-                    <RotateCw v-else-if="event.kind === 'workflow'" :size="14" aria-hidden="true" />
-                    <RefreshCw v-else :size="14" aria-hidden="true" />
-                  </span>
-                </span>
-                <div class="github-timeline-row__body">
-                  <div class="github-timeline-row__head">
-                    <a
-                      v-if="event.href?.startsWith('http')"
-                      class="github-timeline-row__title"
-                      :href="event.href"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {{ event.title }}
-                    </a>
-                    <RouterLink v-else-if="event.href" class="github-timeline-row__title" :to="event.href">
-                      {{ event.title }}
-                    </RouterLink>
-                    <strong v-else class="github-timeline-row__title">{{ event.title }}</strong>
-                    <span class="github-timeline-row__detail">{{ event.detail }}</span>
-                    <time :datetime="new Date(event.timestamp).toISOString()">{{ formatTimelineTime(event.timestamp) }}</time>
-                  </div>
-                  <p>{{ event.summary }}</p>
-                </div>
-              </li>
-            </ol>
+            <p v-else-if="!githubTimelineNodes.length" class="repo-status-empty">暂无 GitHub 事件</p>
+            <GitHubTimelineList v-else :nodes="githubTimelineNodes" :format-time="formatTimelineTime" />
           </div>
         </div>
 
@@ -2383,151 +2376,6 @@ async function syncRepo(repo: RepoSummary) {
   display: grid;
   gap: 2px;
   min-width: 0;
-}
-
-.github-timeline-list {
-  position: relative;
-  display: grid;
-  gap: 0;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.github-timeline-row {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 8px;
-  min-height: 56px;
-  padding: 0 4px;
-  border-radius: 6px;
-  font-size: 13px;
-}
-
-.github-timeline-row:hover {
-  background: var(--bg-hover);
-}
-
-.github-timeline-row__rail {
-  position: relative;
-  display: flex;
-  justify-content: center;
-  padding-top: 9px;
-}
-
-.github-timeline-row__rail::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  content: "";
-  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
-}
-
-.github-timeline-row:first-child .github-timeline-row__rail::before {
-  top: 10px;
-}
-
-.github-timeline-row:last-child .github-timeline-row__rail::before {
-  bottom: calc(100% - 10px);
-}
-
-.github-timeline-row__node {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
-  background: var(--bg-elev);
-  border-radius: 4px;
-}
-
-.github-timeline-row:hover .github-timeline-row__node {
-  background: var(--bg-hover);
-}
-
-.github-timeline-row__node,
-.github-timeline-row__title {
-  color: var(--accent);
-}
-
-.github-timeline-row__node.is-error {
-  color: var(--err);
-}
-
-.github-timeline-row__node.is-warn {
-  color: var(--warn);
-}
-
-.github-timeline-row__node.is-ok {
-  color: var(--ok);
-}
-
-.github-timeline-row__node.is-muted {
-  color: var(--text-muted);
-}
-
-.github-timeline-row__body {
-  min-width: 0;
-  padding: 7px 0 8px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.github-timeline-row:last-child .github-timeline-row__body {
-  border-bottom: 0;
-}
-
-.github-timeline-row__head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.github-timeline-row__title {
-  flex: 0 0 auto;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.github-timeline-row__title:hover,
-.github-timeline-row__title:focus-visible {
-  color: var(--accent);
-}
-
-.github-timeline-row__detail {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.github-timeline-row__head time {
-  flex: 0 0 auto;
-  margin-left: auto;
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.github-timeline-row__body p {
-  min-width: 0;
-  margin: 3px 0 2px;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .repo-status-row {
