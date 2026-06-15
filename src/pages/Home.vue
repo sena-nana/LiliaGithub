@@ -153,6 +153,7 @@ const githubWorkflowRunsLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
 const repoOverviewGrid = ref<HTMLElement | null>(null);
 const repoOverviewCardMaxHeight = ref("calc(100dvh - 96px)");
+let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -258,10 +259,11 @@ onUnmounted(() => {
 });
 
 watch(
-  () => [workspace.isReady.value, workspace.state.repoStatusListRefreshToken],
-  ([ready, token], [_, previousToken]) => {
+  () => [workspace.isReady.value, workspace.state.repoStatusListRefreshToken] as const,
+  ([ready, token]) => {
     if (!ready) return;
-    const shouldForceRefresh = previousToken !== undefined && token !== previousToken;
+    const shouldForceRefresh = token !== lastRepoStatusListRefreshToken;
+    lastRepoStatusListRefreshToken = token;
     if (shouldForceRefresh) {
       void loadGitHubRepoStatus({ force: true });
       return;
