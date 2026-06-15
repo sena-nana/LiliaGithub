@@ -186,7 +186,6 @@ const settingsForm = reactive({
   description: "",
   homepage: "",
   private: false,
-  defaultBranch: "",
   hasIssues: true,
   hasWiki: false,
   hasProjects: true,
@@ -199,6 +198,39 @@ const settingsForm = reactive({
   allowForking: true,
   webCommitSignoffRequired: false,
 });
+type SettingsSwitchKey = keyof Pick<
+  typeof settingsForm,
+  | "private"
+  | "hasIssues"
+  | "hasWiki"
+  | "hasProjects"
+  | "hasDiscussions"
+  | "allowForking"
+  | "webCommitSignoffRequired"
+  | "allowMergeCommit"
+  | "allowSquashMerge"
+  | "allowRebaseMerge"
+  | "allowAutoMerge"
+  | "deleteBranchOnMerge"
+>;
+
+const featureSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hint: string }[] = [
+  { key: "private", label: "Private", hint: "限制仓库访问范围。" },
+  { key: "hasIssues", label: "Issues", hint: "启用问题跟踪。" },
+  { key: "hasWiki", label: "Wiki", hint: "启用仓库 Wiki。" },
+  { key: "hasProjects", label: "Projects", hint: "启用项目看板。" },
+  { key: "hasDiscussions", label: "Discussions", hint: "启用社区讨论。" },
+  { key: "allowForking", label: "Forking", hint: "允许其他用户 fork。" },
+  { key: "webCommitSignoffRequired", label: "Web signoff", hint: "要求网页提交签署。" },
+];
+
+const mergeSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hint: string }[] = [
+  { key: "allowMergeCommit", label: "Merge commit", hint: "允许创建 merge commit。" },
+  { key: "allowSquashMerge", label: "Squash", hint: "允许 squash 合并。" },
+  { key: "allowRebaseMerge", label: "Rebase", hint: "允许 rebase 合并。" },
+  { key: "allowAutoMerge", label: "Auto merge", hint: "允许满足条件后自动合并。" },
+  { key: "deleteBranchOnMerge", label: "合并后删分支", hint: "合并 Pull Request 后删除来源分支。" },
+];
 
 const githubUnavailableMessage = computed(() => {
   if (remoteDeleted.value) return "GitHub 远端仓库已删除，本地目录仍保留。";
@@ -433,7 +465,6 @@ function applySettingsForm(next: GitHubRepoManagement) {
   settingsForm.description = next.description ?? "";
   settingsForm.homepage = next.homepage ?? "";
   settingsForm.private = next.private;
-  settingsForm.defaultBranch = next.defaultBranch;
   settingsForm.hasIssues = next.hasIssues;
   settingsForm.hasWiki = next.hasWiki;
   settingsForm.hasProjects = next.hasProjects;
@@ -543,7 +574,6 @@ function changedSettingsRequest(current: GitHubRepoManagement) {
   maybeSet("description", settingsForm.description, current.description ?? "");
   maybeSet("homepage", settingsForm.homepage, current.homepage ?? "");
   maybeSet("private", settingsForm.private, current.private);
-  maybeSet("defaultBranch", settingsForm.defaultBranch, current.defaultBranch);
   maybeSet("hasIssues", settingsForm.hasIssues, current.hasIssues);
   maybeSet("hasWiki", settingsForm.hasWiki, current.hasWiki);
   maybeSet("hasProjects", settingsForm.hasProjects, current.hasProjects);
@@ -1072,33 +1102,60 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           <p v-if="githubUnavailableMessage" class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
           <p v-if="githubError" class="error-line">{{ githubError }}</p>
           <template v-if="settings">
-            <label>
-              <span>描述</span>
-              <input v-model="settingsForm.description" type="text" />
-            </label>
-            <label>
-              <span>Homepage</span>
-              <input v-model="settingsForm.homepage" type="url" />
-            </label>
-            <label>
-              <span>默认分支</span>
-              <input v-model="settingsForm.defaultBranch" type="text" />
-            </label>
-            <div class="project-switches">
-              <label><input v-model="settingsForm.private" type="checkbox" /> Private</label>
-              <label><input v-model="settingsForm.hasIssues" type="checkbox" /> Issues</label>
-              <label><input v-model="settingsForm.hasWiki" type="checkbox" /> Wiki</label>
-              <label><input v-model="settingsForm.hasProjects" type="checkbox" /> Projects</label>
-              <label><input v-model="settingsForm.hasDiscussions" type="checkbox" /> Discussions</label>
-              <label><input v-model="settingsForm.allowForking" type="checkbox" /> Forking</label>
-              <label><input v-model="settingsForm.deleteBranchOnMerge" type="checkbox" /> 合并后删分支</label>
-              <label><input v-model="settingsForm.webCommitSignoffRequired" type="checkbox" /> Web signoff</label>
-              <label><input v-model="settingsForm.allowMergeCommit" type="checkbox" /> Merge commit</label>
-              <label><input v-model="settingsForm.allowSquashMerge" type="checkbox" /> Squash</label>
-              <label><input v-model="settingsForm.allowRebaseMerge" type="checkbox" /> Rebase</label>
-              <label><input v-model="settingsForm.allowAutoMerge" type="checkbox" /> Auto merge</label>
-            </div>
+            <section class="project-settings-group" aria-labelledby="project-settings-general-title">
+              <div class="project-settings-group__head">
+                <h4 id="project-settings-general-title">基础设置</h4>
+                <p>编辑仓库的公开描述和项目主页。</p>
+              </div>
+              <label class="project-settings-field">
+                <span>描述</span>
+                <input v-model="settingsForm.description" type="text" />
+              </label>
+              <label class="project-settings-field">
+                <span>Homepage</span>
+                <input v-model="settingsForm.homepage" type="url" />
+              </label>
+            </section>
+            <section class="project-settings-group" aria-labelledby="project-settings-features-title">
+              <div class="project-settings-group__head">
+                <h4 id="project-settings-features-title">功能开关</h4>
+                <p>控制仓库可见性和协作功能。</p>
+              </div>
+              <div class="project-settings-switches">
+                <label
+                  v-for="switchItem in featureSettingSwitches"
+                  :key="switchItem.key"
+                  class="project-settings-switch"
+                >
+                  <input v-model="settingsForm[switchItem.key]" type="checkbox" />
+                  <span>
+                    <strong>{{ switchItem.label }}</strong>
+                    <em>{{ switchItem.hint }}</em>
+                  </span>
+                </label>
+              </div>
+            </section>
+            <section class="project-settings-group" aria-labelledby="project-settings-merge-title">
+              <div class="project-settings-group__head">
+                <h4 id="project-settings-merge-title">Pull Request / Merge</h4>
+                <p>配置 Pull Request 合并方式。</p>
+              </div>
+              <div class="project-settings-switches">
+                <label
+                  v-for="switchItem in mergeSettingSwitches"
+                  :key="switchItem.key"
+                  class="project-settings-switch"
+                >
+                  <input v-model="settingsForm[switchItem.key]" type="checkbox" />
+                  <span>
+                    <strong>{{ switchItem.label }}</strong>
+                    <em>{{ switchItem.hint }}</em>
+                  </span>
+                </label>
+              </div>
+            </section>
           </template>
+          <div v-if="(!remoteOnly && repoPath) || settings" class="project-settings-danger-list">
           <section v-if="!remoteOnly && repoPath" class="project-danger-zone" aria-label="本地危险操作">
             <div>
               <strong>删除本地仓库</strong>
@@ -1131,6 +1188,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
               删除仓库
             </button>
           </section>
+          </div>
           <Teleport to="body">
             <Transition name="modal">
               <div
@@ -1671,23 +1729,101 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   color: var(--text-muted);
 }
 
-.project-switches {
+.project-settings-group {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-soft);
 }
 
-.project-switches label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.project-settings-group:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.project-settings-group__head {
+  display: grid;
+  gap: 2px;
+}
+
+.project-settings-group__head h4 {
+  margin: 0;
   color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.project-switches input {
+.project-settings-group__head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-settings-field {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-settings-field input {
+  width: 100%;
+}
+
+.project-settings-switches {
+  display: grid;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.project-settings-switch {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.project-settings-switch:last-child {
+  border-bottom: 0;
+}
+
+.project-settings-switch input {
   width: 14px;
   height: 14px;
+  margin: 2px 0 0;
   padding: 0;
+}
+
+.project-settings-switch span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.project-settings-switch strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-settings-switch em {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+
+.project-settings-danger-list {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
 }
 
 .project-danger-zone {
@@ -1695,7 +1831,6 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 4px;
   padding: 12px;
   border: 1px solid var(--err-soft);
   border-radius: 8px;
@@ -1816,10 +1951,6 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
   .project-sidebar {
     order: -1;
-  }
-
-  .project-switches {
-    grid-template-columns: 1fr;
   }
 
   .project-danger-zone {
