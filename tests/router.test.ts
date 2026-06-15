@@ -953,6 +953,31 @@ describe("基础路由", () => {
     expect((await service.listGitHubRepos()).items.some((repo) => repo.fullName === "sena-nana/LiliaGithub")).toBe(false);
   });
 
+  it("仓库设置删除本地仓库需要输入仓库 ID 确认并返回首页", async () => {
+    const service = await import("../src/services/workspace");
+    const { router } = await renderAt("/repos/LiliaGithub");
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    const deleteLocalButton = await screen.findByRole("button", { name: "删除本地" });
+    await fireEvent.click(deleteLocalButton);
+    expect(await screen.findByRole("dialog", { name: "删除本地仓库" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+
+    await fireEvent.update(screen.getByPlaceholderText("LiliaGithub"), "sena-nana/LiliaGithub");
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+
+    await fireEvent.update(screen.getByPlaceholderText("LiliaGithub"), "LiliaGithub");
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "删除本地仓库" })).toBeNull();
+      expect(router.currentRoute.value.fullPath).toBe("/");
+    });
+    expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(false);
+  });
+
   it("未 clone 的远程详情页删除 GitHub 远端后移除侧边栏入口并跳回首页", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([

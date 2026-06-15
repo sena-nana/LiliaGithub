@@ -53,6 +53,7 @@ pub fn run() {
             workspace::repos::workspace_add_repo,
             workspace::repos::workspace_clone_repo,
             workspace::settings::workspace_hide_repo,
+            workspace::settings::workspace_delete_local_repo,
             workspace::settings::workspace_remember_remote_repo,
             workspace::settings::workspace_forget_remote_repo,
             workspace::settings::workspace_unhide_repo,
