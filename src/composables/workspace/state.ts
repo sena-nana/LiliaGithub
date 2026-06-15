@@ -36,6 +36,7 @@ export interface WorkspaceState {
   bulkRunning: boolean;
   recentSync: RecentBulkSyncState | null;
   repoActionErrors: Record<string, RepoActionErrorState | undefined>;
+  repoStatusListRefreshToken: number;
   githubContributions: GitHubContributionsState;
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
@@ -81,6 +82,7 @@ export const state = reactive<WorkspaceState>({
   bulkRunning: false,
   recentSync: null,
   repoActionErrors: {},
+  repoStatusListRefreshToken: 0,
   githubContributions: {
     days: [],
     meta: null,
@@ -329,6 +331,7 @@ export function resetWorkspaceStateForTests() {
   state.bulkRunning = false;
   state.recentSync = null;
   state.repoActionErrors = {};
+  state.repoStatusListRefreshToken = 0;
   state.githubContributions = {
     days: [],
     meta: null,

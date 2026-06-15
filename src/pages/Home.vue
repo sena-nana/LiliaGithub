@@ -258,9 +258,14 @@ onUnmounted(() => {
 });
 
 watch(
-  () => workspace.isReady.value,
-  (ready) => {
+  () => [workspace.isReady.value, workspace.state.repoStatusListRefreshToken],
+  ([ready, token], [_, previousToken]) => {
     if (!ready) return;
+    const shouldForceRefresh = previousToken !== undefined && token !== previousToken;
+    if (shouldForceRefresh) {
+      void loadGitHubRepoStatus({ force: true });
+      return;
+    }
     if (restoreGitHubOverviewSnapshot()) {
       void nextTick(scheduleRepoOverviewCardHeightUpdate);
       return;

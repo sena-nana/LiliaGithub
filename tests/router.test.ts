@@ -902,7 +902,7 @@ describe("基础路由", () => {
 
   it("仓库设置删除 GitHub 远端需要输入完整仓库名确认并保留本地仓库", async () => {
     const service = await import("../src/services/workspace");
-    await renderAt("/repos/LiliaGithub");
+    const { router } = await renderAt("/repos/LiliaGithub");
 
     await fireEvent.click(await screen.findByRole("tab", { name: "项目信息" }));
     await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
@@ -924,6 +924,12 @@ describe("基础路由", () => {
       expect(screen.getByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeInTheDocument();
     });
     expect(screen.getByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    await router.push("/");
+    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    await waitFor(() => {
+      expect(within(repoStatusList).queryByText("sena-nana/LiliaGithub")).toBeNull();
+    });
     expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
     expect((await service.listGitHubRepos()).items.some((repo) => repo.fullName === "sena-nana/LiliaGithub")).toBe(false);
   });
