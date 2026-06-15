@@ -165,8 +165,9 @@ const projectSections: readonly ProjectSectionConfig[] = [
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
+const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
 const activeProjectSection = computed<ProjectContentMode>(() =>
-  props.launchTerminalVisible ? "launch" : activeTab.value,
+  canUseLaunchWorkflow.value && props.launchTerminalVisible ? "launch" : activeTab.value,
 );
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
@@ -694,7 +695,7 @@ async function scrollTerminalToEnd() {
 
 function activateProjectTab(tab: ProjectTab) {
   activeTab.value = tab;
-  if (props.launchTerminalVisible) {
+  if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
     closeLaunchMenu();
     emit("hideTerminal");
   }
@@ -706,16 +707,19 @@ function selectReadme(path: string) {
 }
 
 function runLaunch() {
+  if (!canUseLaunchWorkflow.value) return;
   closeLaunchMenu();
   emit("start");
 }
 
 function stopLaunch() {
+  if (!canUseLaunchWorkflow.value) return;
   closeLaunchMenu();
   emit("stop");
 }
 
 function pickLaunchCandidate(candidate: ProjectLaunchCandidate) {
+  if (!canUseLaunchWorkflow.value) return;
   closeLaunchMenu();
   emit("selectLaunchCandidate", candidate);
 }
@@ -729,7 +733,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   <section class="project-panel">
     <div class="project-layout">
       <main ref="projectMainRef" class="project-main">
-        <section v-if="activeProjectSection === 'launch'" class="project-terminal-card">
+        <section v-if="canUseLaunchWorkflow && activeProjectSection === 'launch'" class="project-terminal-card">
           <div class="project-section__head">
             <div class="launch-head">
               <button
@@ -1075,7 +1079,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           </button>
         </div>
 
-        <div class="project-sidebar__launch">
+        <div v-if="canUseLaunchWorkflow" class="project-sidebar__launch">
           <RepoLaunchPanel
             :loading="loading"
             :launch-config="launchConfig"
