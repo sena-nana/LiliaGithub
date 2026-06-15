@@ -1488,7 +1488,7 @@ fn github_contribution_meta(
 }
 
 fn is_recoverable_github_contribution_status(status: StatusCode) -> bool {
-    matches!(status, StatusCode::NOT_FOUND | StatusCode::CONFLICT)
+    matches!(status, StatusCode::NOT_FOUND | StatusCode::CONFLICT | StatusCode::FORBIDDEN)
 }
 
 fn add_commit_contributions(
@@ -5422,7 +5422,7 @@ mod tests {
     fn treats_missing_or_empty_repos_as_recoverable_contribution_sources() {
         assert!(is_recoverable_github_contribution_status(StatusCode::NOT_FOUND));
         assert!(is_recoverable_github_contribution_status(StatusCode::CONFLICT));
-        assert!(!is_recoverable_github_contribution_status(StatusCode::FORBIDDEN));
+        assert!(is_recoverable_github_contribution_status(StatusCode::FORBIDDEN));
         assert!(!is_recoverable_github_contribution_status(StatusCode::UNAUTHORIZED));
     }
 

@@ -948,6 +948,75 @@ describe("基础路由", () => {
     expect((await service.listGitHubRepos()).items.some((repo) => repo.fullName === "sena-nana/LiliaGithub")).toBe(false);
   });
 
+  it("未 clone 的远程详情页删除 GitHub 远端后移除侧边栏入口并跳回首页", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/DeleteRemoteRepo", {
+            description: "Ready to delete",
+            updatedAt: "2026-06-14T08:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    service.setFallbackGitHubRepoReadmesForTests({
+      "sena-nana/DeleteRemoteRepo": {
+        repoId: "github:sena-nana/DeleteRemoteRepo",
+        path: "README.md",
+        images: {},
+        format: "md",
+        updatedAt: null,
+        content: "# DeleteRemoteRepo\n\n用于验证删除后移除侧边栏入口。",
+      },
+    });
+    await service.rememberRemoteRepo({
+      fullName: "sena-nana/DeleteRemoteRepo",
+      name: "DeleteRemoteRepo",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: "https://github.com/sena-nana/DeleteRemoteRepo",
+      cloneUrl: "https://github.com/sena-nana/DeleteRemoteRepo.git",
+      openedAt: Date.now(),
+    });
+    const { router } = await renderAt("/");
+
+    expect(await screen.findByText("远程仓库 1")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "打开 sena-nana/DeleteRemoteRepo" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("link", { name: "打开 sena-nana/DeleteRemoteRepo" }));
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FDeleteRemoteRepo?view=project");
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "DeleteRemoteRepo" })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    const deleteRepoButton = await screen.findByRole("button", { name: "删除仓库" });
+    await waitFor(() => expect(deleteRepoButton).toBeEnabled(), { timeout: 3000 });
+    await fireEvent.click(deleteRepoButton);
+    expect(await screen.findByRole("dialog", { name: "删除 GitHub 仓库" })).toBeInTheDocument();
+
+    await fireEvent.update(screen.getByPlaceholderText("sena-nana/DeleteRemoteRepo"), "sena-nana/DeleteRemoteRepo");
+    await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
+      expect(screen.getByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/");
+      expect(screen.queryByText("远程仓库 1")).toBeNull();
+    });
+    const latestSettings = await service.getWorkspaceSettings();
+    expect(
+      latestSettings.remoteRepoShortcuts.some((repo) =>
+        repo.fullName.toLowerCase() === "sena-nana/deleteremoterepo",
+      ),
+    ).toBe(false);
+    expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+  });
+
   it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
     const service = await import("../src/services/workspace");
     const issueRow = () => {
