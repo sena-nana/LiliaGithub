@@ -379,6 +379,10 @@ export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => fallback.pushRepo(repoId));
 }
 
+export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
+  return call("repo_push_with_system_git", { repoId }, () => fallback.pushRepoWithSystemGit(repoId));
+}
+
 export function checkoutBranch(repoId: string, branch: string): Promise<RepoSummary> {
   return call("repo_checkout_branch", { repoId, branch }, () => fallback.checkoutBranch(repoId, branch));
 }

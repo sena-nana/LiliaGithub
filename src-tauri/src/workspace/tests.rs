@@ -423,6 +423,33 @@ fn normalizes_clone_directory_name_with_user_override() {
 }
 
 #[test]
+fn normalizes_github_clone_not_found_error() {
+    let error = normalize_git_remote_error(
+        "https://github.com/meijustory123/TapdClient.git",
+        "remote: Repository not found.\nfatal: repository 'https://github.com/meijustory123/TapdClient.git/' not found"
+            .to_string(),
+    );
+
+    assert_eq!(
+        error,
+        "无法访问 GitHub 仓库 meijustory123/TapdClient：仓库不存在、是私有仓库且当前 GitHub 绑定无权限，或仓库名输入有误。"
+    );
+}
+
+#[test]
+fn normalizes_github_clone_authentication_error() {
+    let error = normalize_git_remote_error(
+        "https://github.com/sena-nana/private.git",
+        "fatal: Authentication failed for 'https://github.com/sena-nana/private.git/'".to_string(),
+    );
+
+    assert_eq!(
+        error,
+        "无法认证 GitHub 仓库 sena-nana/private，请重新绑定 GitHub 后再试。"
+    );
+}
+
+#[test]
 fn parses_status_pair_and_path() {
     assert_eq!(
         status_pair(" M src/main.ts"),

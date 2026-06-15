@@ -327,6 +327,7 @@ function createFallbackSettings(): WorkspaceSettings {
     projectLaunchConfigs: {},
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
+    systemGitRepoIds: [],
     remoteRepoShortcuts: [],
     localContributionCache: {},
   };
@@ -513,6 +514,7 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     projectLaunchConfigs: { ...settings.projectLaunchConfigs },
     hiddenRepoIds: [...settings.hiddenRepoIds],
     managedRepoIds: [...settings.managedRepoIds],
+    systemGitRepoIds: [...settings.systemGitRepoIds],
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
     localContributionCache: Object.fromEntries(
       Object.entries(settings.localContributionCache).map(([repoId, days]) => [
@@ -1587,6 +1589,16 @@ export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
 
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => {
+    const repo = fallbackRepo(repoId);
+    return { ...repo, ahead: 0 };
+  });
+}
+
+export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
+  return call("repo_push_with_system_git", { repoId }, () => {
+    if (!fallbackSettings.systemGitRepoIds.includes(repoId)) {
+      fallbackSettings.systemGitRepoIds = [...fallbackSettings.systemGitRepoIds, repoId].sort();
+    }
     const repo = fallbackRepo(repoId);
     return { ...repo, ahead: 0 };
   });

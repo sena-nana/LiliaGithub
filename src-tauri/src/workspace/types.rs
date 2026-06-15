@@ -12,6 +12,8 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub managed_repo_ids: Vec<String>,
     #[serde(default)]
+    pub system_git_repo_ids: Vec<String>,
+    #[serde(default)]
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
     #[serde(default)]
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,

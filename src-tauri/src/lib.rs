@@ -98,6 +98,7 @@ pub fn run() {
             workspace::repos::repo_pull,
             workspace::repos::repo_merge_pull,
             workspace::repos::repo_push,
+            workspace::repos::repo_push_with_system_git,
             workspace::repos::repo_checkout_branch,
             workspace::repos::repo_accept_conflict_file,
             workspace::repos::repo_resolve_conflict_file,

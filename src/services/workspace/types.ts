@@ -5,6 +5,7 @@ export interface WorkspaceSettings {
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
   hiddenRepoIds: string[];
   managedRepoIds: string[];
+  systemGitRepoIds: string[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
 }
