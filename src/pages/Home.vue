@@ -1016,8 +1016,8 @@ async function syncRepo(repo: RepoSummary) {
                   'is-expired': workspace.state.authFlowStatus === 'expired',
                 }"
               >
-                <span>{{ workspace.authPendingStatusText.value }}</span>
-                <span v-if="workspace.authRemainingText.value">剩余 {{ workspace.authRemainingText.value }}</span>
+                {{ workspace.authPendingStatusText.value }}
+                <template v-if="workspace.authRemainingText.value">，剩余 {{ workspace.authRemainingText.value }}</template>
               </p>
             </div>
           </div>
@@ -2131,19 +2131,16 @@ async function syncRepo(repo: RepoSummary) {
 
 .repo-status-row {
   min-height: 34px;
-  padding: 5px 8px;
+  min-height: 28px;
+  padding: 3px 6px;
   border: 1px solid transparent;
   border-radius: 6px;
   color: inherit;
-  cursor: default;
+  cursor: pointer;
   font-size: 13px;
 }
 
-.repo-status-row.is-cloned {
-  cursor: pointer;
-}
-
-.repo-status-row.is-cloned:hover {
+.repo-status-row:hover {
   background: var(--bg-hover);
 }
 
@@ -2244,6 +2241,7 @@ async function syncRepo(repo: RepoSummary) {
   align-items: center;
   justify-content: center;
   min-height: 22px;
+  height: 22px;
   padding: 0 7px;
   border: 0;
   border-radius: 6px;
@@ -2254,6 +2252,11 @@ async function syncRepo(repo: RepoSummary) {
   line-height: 1;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.repo-status-row .repo-action-link .sb-spin {
+  width: 11px;
+  height: 11px;
 }
 
 .repo-action-link:hover,
@@ -2425,12 +2428,12 @@ async function syncRepo(repo: RepoSummary) {
     max-height: min(520px, var(--repo-overview-card-max-height));
   }
 
-  .repo-status-row {
-    grid-template-columns: minmax(0, 1fr) max-content;
-    gap: 4px 10px;
-    align-items: center;
-    padding: 8px;
-  }
+.repo-status-row {
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 6px;
+}
 
   .repo-status-row__name {
     grid-column: 1;
