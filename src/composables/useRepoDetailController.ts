@@ -15,7 +15,6 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 
 type RepoTab = "conflicts" | "changes" | "history" | "branches";
 type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
-type RepoView = "project" | "git";
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -31,13 +30,6 @@ export function useRepoDetailController() {
   const route = useRoute();
   const router = useRouter();
   const workspace = useWorkspace();
-  const initialRepoId = String(route.params.repoId ?? "");
-  const initialView = normalizeView(route.query.view);
-  const activeView = ref<RepoView>(
-    parseRemoteRepoId(initialRepoId) && initialView === "git"
-      ? "project"
-      : initialView ?? defaultViewForRepoId(initialRepoId),
-  );
   const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
   const activeProjectTab = computed<RepoProjectTab>(
     () => normalizeProjectTab(route.query.projectTab) ?? "readme",
@@ -208,12 +200,6 @@ export function useRepoDetailController() {
     { key: "history", label: "历史" },
     { key: "branches", label: "分支" },
   ];
-  const localViews: Array<{ key: RepoView; label: string }> = [
-    { key: "project", label: "项目信息" },
-    { key: "git", label: "Git 信息" },
-  ];
-  const views = computed(() => remoteOnly.value ? localViews.slice(0, 1) : localViews);
-
   onMounted(() => {
     void load();
     launchPollTimer = window.setInterval(() => {
@@ -238,17 +224,8 @@ export function useRepoDetailController() {
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
-    activeView.value = normalizeView(route.query.view) ?? defaultViewForRepoId(repoId.value);
     void load();
   });
-
-  watch(
-    () => route.query.view,
-    (view) => {
-      const normalized = normalizeView(view);
-      if (normalized) activeView.value = remoteOnly.value && normalized === "git" ? "project" : normalized;
-    },
-  );
 
   watch(
     () => route.query.tab,
@@ -270,15 +247,6 @@ export function useRepoDetailController() {
       value === "branches"
     ) return value;
     return null;
-  }
-
-  function normalizeView(value: unknown): RepoView | null {
-    if (value === "project" || value === "git") return value;
-    return null;
-  }
-
-  function defaultViewForRepoId(value: string): RepoView {
-    return parseRemoteRepoId(value) ? "project" : "git";
   }
 
   function normalizeProjectTab(value: unknown): RepoProjectTab | null {
@@ -303,7 +271,6 @@ export function useRepoDetailController() {
     if (!repoId.value) return;
     actionError.value = null;
     if (remoteOnly.value) {
-      activeView.value = "project";
       return;
     }
     try {
@@ -605,7 +572,6 @@ export function useRepoDetailController() {
       actionError,
       actionRunning,
       conflictAcceptConfirm,
-      activeView,
       launchTerminalVisible,
       conflictChoices,
       repoId,
@@ -650,7 +616,6 @@ export function useRepoDetailController() {
       activeProjectIssue,
       activeProjectRun,
       tabs,
-      views,
       load,
       refreshLaunch,
       focusChange,
