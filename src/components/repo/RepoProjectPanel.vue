@@ -14,6 +14,10 @@ import {
   X,
 } from "@lucide/vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
+import RepoBranchesPanel from "./RepoBranchesPanel.vue";
+import RepoChangesPanel from "./RepoChangesPanel.vue";
+import RepoConflictsPanel from "./RepoConflictsPanel.vue";
+import RepoHistoryPanel from "./RepoHistoryPanel.vue";
 import RepoLaunchPanel from "./RepoLaunchPanel.vue";
 import { useWorkspace } from "../../composables/useWorkspace";
 import {
@@ -30,6 +34,8 @@ import {
   openUrl,
 } from "../../services/workspace/client";
 import type {
+  BranchSummary,
+  CommitSummary,
   GitHubIssue,
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
@@ -38,18 +44,23 @@ import type {
   ProjectLaunchConfig,
   ProjectLaunchLog,
   ProjectLaunchStatus,
+  RepoChange,
+  RepoConflictFile,
+  RepoConflictState,
   RepoReadme,
 } from "../../services/workspace/types";
 import { isWorkflowRunFailure, streamLabel, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 
+type GitTab = "conflicts" | "changes" | "history" | "branches";
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
-type ProjectContentMode = "launch" | ProjectTab;
+type ProjectContentMode = "launch" | ProjectTab | GitTab;
 type ProjectSectionConfig = {
-  key: Exclude<ProjectContentMode, "launch" | "readme">;
+  key: Exclude<ProjectTab, "readme">;
   label: string;
 };
+type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
@@ -66,6 +77,35 @@ const props = defineProps<{
   actionRunning: boolean;
   launchRunning: boolean;
   remoteOnly?: boolean;
+  activeGitTab: GitTab;
+  gitTabs: readonly { key: GitTab; label: string }[];
+  changes: readonly RepoChange[];
+  selectedFiles: ReadonlySet<string>;
+  selectedSummaryText: string;
+  selectedFilePreview: string[];
+  selectedFileCount: number;
+  previewChange: RepoChange | null;
+  commitMessage: string;
+  pushAfter: boolean;
+  hasConflicts: boolean;
+  canCommit: boolean;
+  statusCommits: readonly CommitSummary[];
+  branches: readonly BranchSummary[];
+  conflictOperationText: string;
+  conflictSummaryText: string;
+  conflictContinueText: string;
+  conflictAbortText: string;
+  conflictFiles: readonly RepoConflictFile[];
+  conflictOperationActive: boolean;
+  conflicts: RepoConflictState;
+  focusedConflict: RepoConflictFile | null;
+  conflictChoices: Record<string, "ours" | "theirs">;
+  conflictSelectedCount: number;
+  conflictAcceptConfirm: "ours" | "theirs" | null;
+  canContinueConflictOperation: boolean;
+  canResolveSelectedConflict: boolean;
+  supportedConflictOperation: boolean;
+  commitMetaTitle: (commit: CommitSummary) => string;
   projectTab?: ProjectTab;
   projectIssueNumber?: number | null;
   projectRunId?: number | null;
@@ -77,12 +117,31 @@ const emit = defineEmits<{
   openTerminal: [];
   hideTerminal: [];
   selectLaunchCandidate: [candidate: ProjectLaunchCandidate];
+  updateActiveGitTab: [tab: GitTab];
+  updateCommitMessage: [value: string];
+  updatePushAfter: [value: boolean];
+  selectAll: [];
+  stageSelected: [];
+  unstageSelected: [];
+  focusChange: [path: string];
+  toggleFile: [path: string];
+  commit: [];
+  checkout: [branchName: string];
+  openCommit: [commit: HistoryCommit];
+  continueConflict: [];
+  abortConflict: [];
+  focusConflict: [path: string];
+  pickConflictHunk: [hunkId: string, side: "ours" | "theirs"];
+  resolveSelectedConflict: [];
+  acceptConflict: [side: "ours" | "theirs"];
+  markConflictResolved: [];
+  openConflictFolder: [];
 }>();
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
 
-const activeTab = ref<ProjectTab>("readme");
+const activeSection = ref<ProjectTab | GitTab>(props.remoteOnly ? "readme" : props.activeGitTab);
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const terminalBody = ref<HTMLElement | null>(null);
 const launchMenuOpen = ref(false);
@@ -167,7 +226,7 @@ const projectSections: readonly ProjectSectionConfig[] = [
 ];
 const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
 const activeProjectSection = computed<ProjectContentMode>(() =>
-  canUseLaunchWorkflow.value && props.launchTerminalVisible ? "launch" : activeTab.value,
+  canUseLaunchWorkflow.value && props.launchTerminalVisible ? "launch" : activeSection.value,
 );
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
@@ -206,6 +265,7 @@ const activeLaunchValue = computed(() =>
 const hasLaunchCommand = computed(() => Boolean(props.launchConfig?.command.trim()));
 const launchButtonDisabled = computed(() => props.loading || props.actionRunning || props.launchRunning);
 const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
+const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 
 onMounted(() => {
   void applyProjectRouteState();
@@ -215,7 +275,7 @@ onMounted(() => {
 });
 
 watch(() => props.repoId, () => {
-  activeTab.value = projectTab.value;
+  activeSection.value = props.remoteOnly ? projectTab.value : props.activeGitTab;
   activeReadmePath.value = null;
   closeLaunchMenu();
   closeDeleteDialog();
@@ -242,15 +302,23 @@ watch(issueState, () => {
 });
 
 watch(
-  [projectTab, () => props.projectIssueNumber, () => props.projectRunId],
+  [routedProjectTab, () => props.projectIssueNumber, () => props.projectRunId],
   () => {
     void applyProjectRouteState();
   },
 );
 
+watch(() => props.activeGitTab, (tab) => {
+  if (!props.remoteOnly && isGitSection(activeSection.value)) activeSection.value = tab;
+});
+
 function normalizeProjectTab(value: unknown): ProjectTab | null {
   if (value === "readme" || value === "issues" || value === "actions" || value === "settings") return value;
   return null;
+}
+
+function isGitSection(value: ProjectTab | GitTab): value is GitTab {
+  return value === "conflicts" || value === "changes" || value === "history" || value === "branches";
 }
 
 function hasIssue(issueNumber: number) {
@@ -309,17 +377,17 @@ async function focusRun(runId: number | null | undefined) {
 }
 
 function isIssueRowFocused(issueNumber: number) {
-  return focusedIssueNumber.value === issueNumber && activeTab.value === "issues";
+  return focusedIssueNumber.value === issueNumber && activeSection.value === "issues";
 }
 
 function isRunRowFocused(runId: number) {
-  return focusedRunId.value === runId && activeTab.value === "actions";
+  return focusedRunId.value === runId && activeSection.value === "actions";
 }
 
 async function applyProjectRouteState() {
   const targetTab = projectTab.value;
-  if (activeTab.value !== targetTab) {
-    activeTab.value = targetTab;
+  if (props.remoteOnly || routedProjectTab.value) {
+    activeSection.value = targetTab;
     await nextTick();
   }
   clearProjectTargets();
@@ -694,7 +762,16 @@ async function scrollTerminalToEnd() {
 }
 
 function activateProjectTab(tab: ProjectTab) {
-  activeTab.value = tab;
+  activeSection.value = tab;
+  if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
+    closeLaunchMenu();
+    emit("hideTerminal");
+  }
+}
+
+function activateGitTab(tab: GitTab) {
+  activeSection.value = tab;
+  emit("updateActiveGitTab", tab);
   if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
     closeLaunchMenu();
     emit("hideTerminal");
@@ -793,6 +870,69 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 </span></code></pre>
           </div>
         </section>
+
+        <RepoChangesPanel
+          v-else-if="!remoteOnly && activeProjectSection === 'changes'"
+          :commit-message="commitMessage"
+          :push-after="pushAfter"
+          :changes="changes"
+          :selected-files="selectedFiles"
+          :selected-summary-text="selectedSummaryText"
+          :selected-file-preview="selectedFilePreview"
+          :selected-file-count="selectedFileCount"
+          :has-conflicts="hasConflicts"
+          :can-commit="canCommit"
+          :action-running="actionRunning"
+          :preview-change="previewChange"
+          @select-all="emit('selectAll')"
+          @stage-selected="emit('stageSelected')"
+          @unstage-selected="emit('unstageSelected')"
+          @focus-change="emit('focusChange', $event)"
+          @toggle-file="emit('toggleFile', $event)"
+          @commit="emit('commit')"
+          @update:commit-message="emit('updateCommitMessage', $event)"
+          @update:push-after="emit('updatePushAfter', $event)"
+        />
+
+        <RepoConflictsPanel
+          v-else-if="!remoteOnly && activeProjectSection === 'conflicts'"
+          :conflict-operation-text="conflictOperationText"
+          :conflict-summary-text="conflictSummaryText"
+          :conflict-continue-text="conflictContinueText"
+          :conflict-abort-text="conflictAbortText"
+          :conflict-files="conflictFiles"
+          :conflict-operation-active="conflictOperationActive"
+          :conflicts="conflicts"
+          :focused-conflict="focusedConflict"
+          :conflict-choices="conflictChoices"
+          :conflict-selected-count="conflictSelectedCount"
+          :conflict-accept-confirm="conflictAcceptConfirm"
+          :can-continue-conflict-operation="canContinueConflictOperation"
+          :can-resolve-selected-conflict="canResolveSelectedConflict"
+          :supported-conflict-operation="supportedConflictOperation"
+          :action-running="actionRunning"
+          @continue-conflict="emit('continueConflict')"
+          @abort-conflict="emit('abortConflict')"
+          @focus-conflict="emit('focusConflict', $event)"
+          @pick-conflict-hunk="(hunkId, side) => emit('pickConflictHunk', hunkId, side)"
+          @resolve-selected-conflict="emit('resolveSelectedConflict')"
+          @accept-conflict="emit('acceptConflict', $event)"
+          @mark-conflict-resolved="emit('markConflictResolved')"
+          @open-conflict-folder="emit('openConflictFolder')"
+        />
+
+        <RepoHistoryPanel
+          v-else-if="!remoteOnly && activeProjectSection === 'history'"
+          :commits="statusCommits"
+          :commit-meta-title="commitMetaTitle"
+          @open-commit="emit('openCommit', $event)"
+        />
+
+        <RepoBranchesPanel
+          v-else-if="!remoteOnly && activeProjectSection === 'branches'"
+          :branches="branches"
+          @checkout="emit('checkout', $event)"
+        />
 
         <section v-else-if="activeProjectSection === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
@@ -1047,6 +1187,21 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
       </main>
 
       <aside class="project-sidebar">
+        <div v-if="!remoteOnly" class="project-sidebar__card" role="tablist" aria-label="本地 Git 视图">
+          <button
+            v-for="tab in gitTabs"
+            :key="tab.key"
+            type="button"
+            class="project-sidebar__item"
+            :class="{ 'is-active': isProjectSectionActive(tab.key) }"
+            role="tab"
+            :aria-selected="isProjectSectionActive(tab.key)"
+            @click="activateGitTab(tab.key)"
+          >
+            <strong>{{ tab.label }}</strong>
+          </button>
+        </div>
+
         <div class="project-sidebar__card" role="tablist" aria-label="README 列表">
           <button
             v-for="item in readmes"
@@ -1149,6 +1304,8 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
 .project-main {
   display: grid;
+  grid-column: 1;
+  grid-row: 1;
   grid-template-rows: minmax(0, 1fr);
   align-content: start;
   align-self: stretch;
@@ -1157,6 +1314,9 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   height: 100%;
   max-height: 100%;
   overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
 }
 
 .project-readme-card,
@@ -1176,9 +1336,9 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   max-height: 100%;
   overflow: auto;
   padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .project-terminal-card {
@@ -1191,9 +1351,9 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   max-height: 100%;
   overflow: hidden;
   padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .launch-head {
@@ -1339,6 +1499,8 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
 .project-sidebar {
   display: grid;
+  grid-column: 2;
+  grid-row: 1;
   gap: 14px;
   min-width: 0;
   min-height: 0;
@@ -1644,6 +1806,12 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   .project-layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .project-main,
+  .project-sidebar {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .project-sidebar {
