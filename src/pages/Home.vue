@@ -1115,7 +1115,15 @@ async function syncRepo(repo: RepoSummary) {
         <div class="card contribution-card">
           <div class="card-heading">
             <div>
-              <h2>最近工作结果</h2>
+              <h2>
+                最近工作结果
+                <LoaderCircle
+                  v-if="workspace.state.githubContributions.loading"
+                  :size="13"
+                  aria-hidden="true"
+                  class="card-title-loader"
+                />
+              </h2>
               <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
               <p v-if="skippedContributionRepoCount > 0" class="contribution-notice">
                 已跳过 {{ skippedContributionRepoCount }} 个不可读取仓库
@@ -1259,7 +1267,15 @@ async function syncRepo(repo: RepoSummary) {
       >
         <div class="card github-timeline-card">
           <div class="repo-status-heading">
-            <h2>GitHub 时间线</h2>
+            <h2>
+              GitHub 时间线
+              <LoaderCircle
+                v-if="githubIssuesLoading || githubReposLoading || githubWorkflowRunsLoading"
+                :size="13"
+                aria-hidden="true"
+                class="card-title-loader"
+              />
+            </h2>
           </div>
           <div class="home-scroll-card__body">
             <p
@@ -1311,7 +1327,10 @@ async function syncRepo(repo: RepoSummary) {
 
         <div class="card repo-status-card">
           <div class="repo-status-heading">
-            <h2>仓库状态</h2>
+            <h2>
+              仓库状态
+              <LoaderCircle v-if="githubReposLoading" :size="13" aria-hidden="true" class="card-title-loader" />
+            </h2>
             <span>{{ repoStatusRows.length }} 个 GitHub 项目</span>
           </div>
           <p v-if="githubReposError" class="repo-status-error">
