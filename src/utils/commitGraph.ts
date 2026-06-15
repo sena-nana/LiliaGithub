@@ -34,6 +34,8 @@ interface LaneState {
   color: string;
 }
 
+type LaneSlot = LaneState | null;
+
 interface MutableRow extends Omit<CommitGraphRow, "maxLaneCount"> {
   maxLaneCount?: number;
 }
@@ -71,8 +73,32 @@ function colorForHash(hash: string, colorByHash: Map<string, string>) {
   return next;
 }
 
-function removeLaneAt(lanes: LaneState[], index: number) {
-  if (index >= 0 && index < lanes.length) lanes.splice(index, 1);
+function cloneLanes(lanes: LaneSlot[]) {
+  return lanes.map((lane) => (lane ? { ...lane } : null));
+}
+
+function ensureLane(lanes: LaneSlot[], index: number) {
+  while (lanes.length <= index) lanes.push(null);
+}
+
+function setLane(lanes: LaneSlot[], index: number, lane: LaneState) {
+  ensureLane(lanes, index);
+  lanes[index] = lane;
+}
+
+function releaseLaneAt(lanes: LaneSlot[], index: number) {
+  if (index >= 0 && index < lanes.length) lanes[index] = null;
+}
+
+function trimTrailingReleasedLanes(lanes: LaneSlot[]) {
+  while (lanes.length && !lanes[lanes.length - 1]) lanes.pop();
+}
+
+function firstOpenLaneAtOrAfter(lanes: LaneSlot[], start: number) {
+  for (let index = Math.max(0, start); index < lanes.length; index += 1) {
+    if (!lanes[index]) return index;
+  }
+  return lanes.length;
 }
 
 function nodeIconType(parentCount: number): CommitGraphNodeIconType {
@@ -83,6 +109,10 @@ function nodeIconType(parentCount: number): CommitGraphNodeIconType {
 
 function uniqueLanes(lanes: readonly number[]) {
   return Array.from(new Set(lanes)).sort((left, right) => left - right);
+}
+
+function lineTargetLanes(line: CommitGraphLine) {
+  return line.targetLanes.length ? line.targetLanes : [line.lane];
 }
 
 function makeLine(
@@ -113,7 +143,7 @@ function mergeLines(lines: CommitGraphLine[]) {
       merged.set(key, { ...line, targetLanes: [...line.targetLanes] });
       return;
     }
-    existing.targetLanes = uniqueLanes([...existing.targetLanes, ...line.targetLanes]);
+    existing.targetLanes = uniqueLanes([...lineTargetLanes(existing), ...lineTargetLanes(line)]);
     existing.id = `${existing.id.split(":").slice(0, 3).join(":")}:${existing.targetLanes.join(",")}`;
   });
   return Array.from(merged.values());
@@ -132,19 +162,19 @@ export function buildCommitGraph(commits: readonly CommitSummary[]): CommitGraph
   const knownHashes = new Set(commits.map((commit) => commit.hash));
   const colorByHash = new Map<string, string>();
   const rows: MutableRow[] = [];
-  let lanes: LaneState[] = [];
+  let lanes: LaneSlot[] = [];
   let maxLaneCount = 1;
 
   commits.forEach((commit, rowIndex) => {
-    let nodeLane = lanes.findIndex((lane) => lane.hash === commit.hash);
+    let nodeLane = lanes.findIndex((lane) => lane?.hash === commit.hash);
     const isHeadNode = nodeLane < 0;
     if (nodeLane < 0) {
-      nodeLane = lanes.length;
-      lanes.push({ hash: commit.hash, color: colorByHash.get(commit.hash) ?? colorAt(colorByHash.size) });
+      nodeLane = firstOpenLaneAtOrAfter(lanes, 0);
+      setLane(lanes, nodeLane, { hash: commit.hash, color: colorByHash.get(commit.hash) ?? colorAt(colorByHash.size) });
     }
 
-    const before = lanes.map((lane) => ({ ...lane }));
-    const after = before.map((lane) => ({ ...lane }));
+    const before = cloneLanes(lanes);
+    const after = cloneLanes(before);
     const nodeColor = before[nodeLane]?.color ?? colorByHash.get(commit.hash) ?? colorAt(colorByHash.size);
     const topJoins: CommitGraphLine[] = [];
     const bottomJoins: CommitGraphLine[] = [];
@@ -152,24 +182,27 @@ export function buildCommitGraph(commits: readonly CommitSummary[]): CommitGraph
     const danglingBottom = new Map<number, string>();
     const parents = uniqueHashes(commit.parents);
     const duplicateLanes = before
-      .map((lane, index) => (lane.hash === commit.hash && index !== nodeLane ? index : -1))
+      .map((lane, index) => (lane?.hash === commit.hash && index !== nodeLane ? index : -1))
       .filter((index) => index >= 0);
+    const releasedLaneColors = new Map<number, string>();
 
     duplicateLanes.forEach((lane) => {
-      topJoins.push(makeLine(rowIndex, "top", nodeLane, before[lane]?.color ?? nodeColor, [lane]));
+      const color = before[lane]?.color ?? nodeColor;
+      releasedLaneColors.set(lane, color);
+      topJoins.push(makeLine(rowIndex, "top", nodeLane, color, [lane]));
     });
-    [...duplicateLanes].sort((left, right) => right - left).forEach((lane) => removeLaneAt(after, lane));
+    duplicateLanes.forEach((lane) => releaseLaneAt(after, lane));
 
     if (!parents.length) {
-      removeLaneAt(after, nodeLane);
+      releaseLaneAt(after, nodeLane);
     } else {
       const firstParent = parents[0];
       if (knownHashes.has(firstParent)) {
-        after[nodeLane] = { hash: firstParent, color: nodeColor };
+        setLane(after, nodeLane, { hash: firstParent, color: nodeColor });
         if (!colorByHash.has(firstParent)) colorByHash.set(firstParent, nodeColor);
       } else {
         danglingBottom.set(nodeLane, nodeColor);
-        removeLaneAt(after, nodeLane);
+        releaseLaneAt(after, nodeLane);
       }
 
       let insertedParents = 0;
@@ -177,28 +210,33 @@ export function buildCommitGraph(commits: readonly CommitSummary[]): CommitGraph
         const fallbackLane = nodeLane + 1 + insertedParents;
         const parentColor = colorForHash(parent, colorByHash);
 
+        const targetLane = firstOpenLaneAtOrAfter(after, fallbackLane);
+        const targetColor = releasedLaneColors.get(targetLane) ?? parentColor;
+
         if (!knownHashes.has(parent)) {
-          danglingBottom.set(fallbackLane, parentColor);
-          bottomJoins.push(makeLine(rowIndex, "bottom", nodeLane, nodeColor, [fallbackLane]));
-          bottomJoinTargets.add(fallbackLane);
+          danglingBottom.set(targetLane, targetColor);
+          bottomJoins.push(makeLine(rowIndex, "bottom", nodeLane, targetColor, [targetLane]));
+          bottomJoinTargets.add(targetLane);
           insertedParents += 1;
           return;
         }
 
-        const existingLane = after.findIndex((lane) => lane.hash === parent);
+        const existingLane = after.findIndex((lane) => lane?.hash === parent);
         if (existingLane >= 0) {
-          bottomJoins.push(makeLine(rowIndex, "bottom", nodeLane, nodeColor, [existingLane]));
-          bottomJoinTargets.add(existingLane);
+          bottomJoins.push(makeLine(rowIndex, "bottom", nodeLane, after[existingLane]?.color ?? nodeColor, [existingLane]));
+          if (before[existingLane]?.hash !== parent) bottomJoinTargets.add(existingLane);
           return;
         }
 
-        const targetLane = Math.min(fallbackLane, after.length);
-        after.splice(targetLane, 0, { hash: parent, color: parentColor });
-        bottomJoins.push(makeLine(rowIndex, "bottom", nodeLane, parentColor, [targetLane]));
+        setLane(after, targetLane, { hash: parent, color: targetColor });
+        if (!colorByHash.has(parent)) colorByHash.set(parent, targetColor);
+        bottomJoins.push(makeLine(rowIndex, "bottom", nodeLane, targetColor, [targetLane]));
         bottomJoinTargets.add(targetLane);
         insertedParents += 1;
       });
     }
+
+    trimTrailingReleasedLanes(after);
 
     const laneCount = Math.max(
       1,
