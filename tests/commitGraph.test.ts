@@ -173,6 +173,116 @@ describe("buildCommitGraph", () => {
     expectRowsInBounds(rows);
   });
 
+  it("keeps outer branch lanes stable after an inner branch rejoins", () => {
+    const rows = buildCommitGraph([
+      commit("merge", ["main", "inner", "outer"]),
+      commit("main", ["base"]),
+      commit("inner", ["base"]),
+      commit("base", ["root"]),
+      commit("outer", ["outer-root"]),
+      commit("outer-root"),
+      commit("root"),
+    ]);
+
+    expect(rows[0].bottomLine.filter((line) => line.targetLanes.length).flatMap((line) => line.targetLanes)).toEqual([1, 2]);
+    expect(rows[2].node).toEqual({ lane: 1, color: "#22a06b", iconType: "commit" });
+    expect(rows[3].topLine).toContainEqual({
+      id: "3:top:0:1",
+      hidden: false,
+      lane: 0,
+      targetLanes: [1],
+      color: "#22a06b",
+      role: "top",
+    });
+    expect(rows[3].bottomLine).toContainEqual({
+      id: "3:bottom:2:",
+      hidden: false,
+      lane: 2,
+      targetLanes: [],
+      color: "#d97706",
+      role: "bottom",
+    });
+    expect(rows[4].node).toEqual({ lane: 2, color: "#d97706", iconType: "commit" });
+    expectRowsInBounds(rows);
+  });
+
+  it("keeps both parent connections when a merged branch continues afterward", () => {
+    const rows = buildCommitGraph([
+      commit("continued", ["merged-parent"]),
+      commit("merge", ["main-parent", "merged-parent"]),
+      commit("main-parent", ["main-root"]),
+      commit("merged-parent", ["merged-root"]),
+      commit("main-root", ["root"]),
+      commit("merged-root", ["root"]),
+      commit("root"),
+    ]);
+
+    expect(rows[1].node).toEqual({ lane: 1, color: "#22a06b", iconType: "merge" });
+    expect(rows[1].bottomLine).toContainEqual({
+      id: "1:bottom:1:",
+      hidden: false,
+      lane: 1,
+      targetLanes: [],
+      color: "#22a06b",
+      role: "bottom",
+    });
+    expect(rows[1].bottomLine).toContainEqual({
+      id: "1:bottom:1:0",
+      hidden: false,
+      lane: 1,
+      targetLanes: [0],
+      color: "#3b82f6",
+      role: "bottom",
+    });
+    expect(rows[3].topLine).toContainEqual({
+      id: "3:top:0:",
+      hidden: false,
+      lane: 0,
+      targetLanes: [],
+      color: "#3b82f6",
+      role: "top",
+    });
+    expectRowsInBounds(rows);
+  });
+
+  it("keeps an already-active merge parent lane continuous", () => {
+    const rows = buildCommitGraph([
+      commit("child", ["merge"]),
+      commit("side-child", ["side-parent"]),
+      commit("merge", ["main-parent", "side-parent"]),
+      commit("side-parent", ["shared-root"]),
+      commit("main-parent", ["shared-root"]),
+      commit("shared-root"),
+    ]);
+
+    expect(rows[2].node).toEqual({ lane: 0, color: "#3b82f6", iconType: "merge" });
+    expect(rows[2].topLine).toContainEqual({
+      id: "2:top:1:",
+      hidden: false,
+      lane: 1,
+      targetLanes: [],
+      color: "#22a06b",
+      role: "top",
+    });
+    expect(rows[2].bottomLine).toContainEqual({
+      id: "2:bottom:1:",
+      hidden: false,
+      lane: 1,
+      targetLanes: [],
+      color: "#22a06b",
+      role: "bottom",
+    });
+    expect(rows[2].bottomLine).toContainEqual({
+      id: "2:bottom:0:1",
+      hidden: false,
+      lane: 0,
+      targetLanes: [1],
+      color: "#22a06b",
+      role: "bottom",
+    });
+    expectRowsInBounds(rows);
+  });
+
   it("releases merged lanes at the shared root commit", () => {
     const rows = buildCommitGraph([
       commit("merge", ["main", "feature"]),
@@ -229,7 +339,7 @@ describe("buildCommitGraph", () => {
     expectRowsInBounds(rows);
   });
 
-  it("keeps current node lines colored by the current lane when joining an existing parent lane", () => {
+  it("keeps joined parent lines colored by their target branch lane", () => {
     const rows = buildCommitGraph([
       commit("merge", ["main", "feature-a", "feature-b"]),
       commit("main", ["main-next", "feature-a"]),
@@ -241,14 +351,14 @@ describe("buildCommitGraph", () => {
 
     expect(rows[1].node).toEqual({ lane: 0, color: "#3b82f6", iconType: "merge" });
     expect(rows[1].bottomLine).toContainEqual({
-      id: "1:bottom:0:1",
+      id: "1:bottom:0:",
       hidden: false,
       lane: 0,
-      targetLanes: [1],
+      targetLanes: [],
       color: "#3b82f6",
       role: "bottom",
     });
-    expect(rows[1].bottomLine).not.toContainEqual({
+    expect(rows[1].bottomLine).toContainEqual({
       id: "1:bottom:0:1",
       hidden: false,
       lane: 0,
