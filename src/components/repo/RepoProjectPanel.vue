@@ -37,10 +37,14 @@ const props = defineProps<{
   repoId: string;
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
+  projectTab?: ProjectTab;
+  projectIssueNumber?: number | null;
+  projectRunId?: number | null;
 }>();
 
 const activeTab = ref<ProjectTab>("readme");
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
+const projectMainRef = ref<HTMLElement | null>(null);
 const readmes = ref<RepoReadme[]>([]);
 const activeReadmePath = ref<string | null>(null);
 const readmeLoading = ref(false);
@@ -59,6 +63,8 @@ const issueTitle = ref("");
 const issueBody = ref("");
 const issueLabels = ref("");
 const issueAssignees = ref("");
+const focusedIssueNumber = ref<number | null>(null);
+const focusedRunId = ref<number | null>(null);
 
 const settingsForm = reactive({
   description: "",
@@ -88,16 +94,21 @@ const tabs: Array<{ key: Exclude<ProjectTab, "readme">; label: string }> = [
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
+const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
 
 onMounted(() => {
+  void applyProjectRouteState();
   void loadReadme();
   void loadGitHub();
   void loadActions();
 });
 
 watch(() => props.repoId, () => {
-  activeTab.value = "readme";
+  activeTab.value = projectTab.value;
   activeReadmePath.value = null;
+  focusedIssueNumber.value = null;
+  focusedRunId.value = null;
+  void applyProjectRouteState();
   void loadReadme();
 });
 
@@ -106,9 +117,95 @@ watch(() => props.repoFullName, () => {
   void loadActions();
 });
 
-watch(issueState, () => {
-  void loadIssues();
-});
+watch(
+  [projectTab, () => props.projectIssueNumber, () => props.projectRunId],
+  () => {
+    void applyProjectRouteState();
+  },
+);
+
+function normalizeProjectTab(value: unknown): ProjectTab | null {
+  if (value === "readme" || value === "issues" || value === "actions" || value === "settings") return value;
+  return null;
+}
+
+function hasIssue(issueNumber: number) {
+  return issues.value.some((issue) => issue.number === issueNumber);
+}
+
+function hasRun(runId: number) {
+  return workflowRuns.value.some((run) => run.id === runId);
+}
+
+function clearProjectTargets() {
+  focusedIssueNumber.value = null;
+  focusedRunId.value = null;
+}
+
+async function focusIssue(issueNumber: number | null | undefined) {
+  focusedRunId.value = null;
+  if (!issueNumber) {
+    clearProjectTargets();
+    return;
+  }
+  if (issueState.value !== "all" && !hasIssue(issueNumber)) issueState.value = "all";
+  await loadIssues();
+  if (!hasIssue(issueNumber)) {
+    focusedIssueNumber.value = null;
+    return;
+  }
+  focusedIssueNumber.value = issueNumber;
+  await nextTick();
+  const row = projectMainRef.value?.querySelector<HTMLElement>(
+    `.project-row--issue[data-issue-number="${issueNumber}"]`,
+  );
+  row?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+}
+
+async function focusRun(runId: number | null | undefined) {
+  focusedIssueNumber.value = null;
+  if (!runId) {
+    clearProjectTargets();
+    return;
+  }
+  if (!hasRun(runId)) {
+    await loadActions();
+  }
+  if (!hasRun(runId)) {
+    focusedRunId.value = null;
+    return;
+  }
+  focusedRunId.value = runId;
+  await nextTick();
+  const row = projectMainRef.value?.querySelector<HTMLElement>(
+    `.project-row--action[data-run-id="${runId}"]`,
+  );
+  row?.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+}
+
+function isIssueRowFocused(issueNumber: number) {
+  return focusedIssueNumber.value === issueNumber && activeTab.value === "issues";
+}
+
+function isRunRowFocused(runId: number) {
+  return focusedRunId.value === runId && activeTab.value === "actions";
+}
+
+async function applyProjectRouteState() {
+  const targetTab = projectTab.value;
+  if (activeTab.value !== targetTab) {
+    activeTab.value = targetTab;
+    await nextTick();
+  }
+  clearProjectTargets();
+  if (targetTab === "issues") {
+    await focusIssue(props.projectIssueNumber);
+    return;
+  }
+  if (targetTab === "actions") {
+    await focusRun(props.projectRunId);
+  }
+}
 
 function applySettingsForm(next: GitHubRepoManagement) {
   settingsForm.description = next.description ?? "";
@@ -311,7 +408,7 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
 <template>
   <section class="project-panel">
     <div class="project-layout">
-      <main class="project-main">
+      <main ref="projectMainRef" class="project-main">
         <section v-if="activeTab === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
@@ -335,7 +432,7 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
         <section v-else-if="activeTab === 'issues'" class="project-section">
           <div class="project-section__head">
             <h3>Issues</h3>
-            <select v-model="issueState">
+            <select v-model="issueState" @change="loadIssues">
               <option value="open">Open</option>
               <option value="closed">Closed</option>
               <option value="all">All</option>
@@ -352,7 +449,13 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
             </div>
           </form>
           <div class="project-list">
-            <div v-for="issue in issues" :key="issue.number" class="project-row project-row--issue">
+            <div
+              v-for="issue in issues"
+              :key="issue.number"
+              class="project-row project-row--issue"
+              :class="{ 'is-target': isIssueRowFocused(issue.number) }"
+              :data-issue-number="issue.number"
+            >
               <div>
                 <strong>#{{ issue.number }} {{ issue.title }}</strong>
                 <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
@@ -375,7 +478,13 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
           <p v-if="actionsError" class="error-line">{{ actionsError }}</p>
           <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
           <div class="project-list">
-            <div v-for="run in workflowRuns" :key="run.id" class="project-row project-row--action">
+            <div
+              v-for="run in workflowRuns"
+              :key="run.id"
+              class="project-row project-row--action"
+              :class="{ 'is-target': isRunRowFocused(run.id) }"
+              :data-run-id="run.id"
+            >
               <span
                 class="project-action-status"
                 :class="`project-action-status--${workflowRunStatusTone(run)}`"
@@ -667,6 +776,11 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
 .project-row--action {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.project-row.is-target {
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
 }
 
 .project-action-status {

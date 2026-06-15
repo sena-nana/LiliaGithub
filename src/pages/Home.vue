@@ -117,6 +117,8 @@ type LanguageTotal = {
   repoBytes: Map<string, number>;
 };
 
+type ProjectTabRef = "issues" | "actions";
+
 type LanguageScope = "head" | "workingTree";
 
 const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
@@ -271,6 +273,18 @@ watch(
 function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   const path = `/repos/${encodeURIComponent(repo.id)}`;
   return tab ? `${path}?tab=${tab}` : path;
+}
+
+function repoProjectPath(
+  repo: Pick<RepoSummary, "id">,
+  tab: ProjectTabRef,
+  focusId: number,
+) {
+  const path = `/repos/${encodeURIComponent(repo.id)}`;
+  if (tab === "issues") {
+    return `${path}?view=project&projectTab=issues&issue=${focusId}`;
+  }
+  return `${path}?view=project&projectTab=actions&run=${focusId}`;
 }
 
 function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
@@ -739,6 +753,7 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
   }
 
   for (const issue of githubIssuesByRepo.value[githubRepo.fullName] ?? []) {
+    const href = localRepo ? repoProjectPath(localRepo, "issues", issue.number) : undefined;
     addTimelineEvent(events, {
       id: `issue-created:${githubRepo.fullName}:${issue.number}`,
       kind: "issue",
@@ -746,12 +761,13 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
       detail: issue.title,
       summary: githubRepo.fullName,
       timestamp: parseGitHubTime(issue.updatedAt),
-      href: issue.htmlUrl,
+      href,
     });
   }
 
   for (const run of githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []) {
     const overview = workflowRunOverview(run);
+    const href = localRepo ? repoProjectPath(localRepo, "actions", run.id) : undefined;
     addTimelineEvent(events, {
       id: `workflow:${githubRepo.fullName}:${run.id}`,
       kind: "workflow",
@@ -759,7 +775,7 @@ function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
       detail: run.displayTitle,
       summary: `${githubRepo.fullName} · ${overview.detail} · ${run.event}`,
       timestamp: parseGitHubTime(run.updatedAt),
-      href: run.htmlUrl,
+      href,
       tone: overview.tone,
     });
   }
