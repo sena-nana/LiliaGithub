@@ -19,7 +19,6 @@ const isSettingsMode = computed(() => sidebarVariant.value === "settings");
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
 const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
-const secondaryPanel = ref<InstanceType<typeof SecondaryPanel> | null>(null);
 const searchOpen = ref(false);
 const searchQuery = ref("");
 void workspace.initialize();
@@ -53,13 +52,8 @@ async function toggleSearch() {
   }
 }
 
-function openCloneDialog() {
-  secondaryPanel.value?.openCloneDialog();
-}
-
 provideShellRepoActions({
   searchOpen,
-  openCloneDialog,
   toggleSearch,
 });
 </script>
@@ -89,7 +83,6 @@ provideShellRepoActions({
     />
     <SecondaryPanel
       v-else-if="!isSetupOverlay"
-      ref="secondaryPanel"
       v-model:search-open="searchOpen"
       v-model:search-query="searchQuery"
     />

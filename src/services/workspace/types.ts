@@ -5,6 +5,14 @@ export interface WorkspaceSettings {
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
   hiddenRepoIds: string[];
   managedRepoIds: string[];
+  systemGitRepoIds: string[];
+  remoteRepoShortcuts: RemoteRepoShortcut[];
+  localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+}
+
+export interface LocalContributionDayCache {
+  count: number;
+  updatedAt: number;
 }
 
 export interface ProjectLaunchConfig {
@@ -82,6 +90,7 @@ export interface GitHubContributionMeta {
   requestedRepoCount: number;
   repoLimit: number;
   truncated: boolean;
+  skippedRepoCount: number;
   refreshedAt: number;
 }
 
@@ -109,6 +118,17 @@ export interface GitHubRepoSummary {
 export interface GitHubRepoPage {
   items: GitHubRepoSummary[];
   nextPage: number | null;
+}
+
+export interface RemoteRepoShortcut {
+  fullName: string;
+  name: string;
+  private: boolean;
+  archived: boolean;
+  defaultBranch: string | null;
+  htmlUrl: string;
+  cloneUrl: string;
+  openedAt: number;
 }
 
 export interface GitHubRepoOwner {
@@ -224,6 +244,10 @@ export interface RepoSummary {
   languageStats: readonly LanguageStat[];
   workingTreeLanguageStats: readonly LanguageStat[];
   languageStatsUpdatedAt: number;
+}
+
+export interface RepoRefreshSummaryOptions {
+  fetchRemote?: boolean;
 }
 
 export interface RepoChange {

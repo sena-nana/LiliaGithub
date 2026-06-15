@@ -8,7 +8,9 @@ import { clearGitHubRepoCache, resetWorkspaceFallbacksForTests } from "../src/se
 afterEach(async () => {
   cleanup();
   const { resetAuthFlowRuntimeForTests } = await import("../src/composables/workspace/auth");
+  const { resetRepositoryRuntimeForTests } = await import("../src/composables/workspace/repositories");
   resetAuthFlowRuntimeForTests();
+  resetRepositoryRuntimeForTests();
   resetWorkspaceStateForTests();
   clearHomeGitHubOverviewSnapshot();
   resetWorkspaceFallbacksForTests();

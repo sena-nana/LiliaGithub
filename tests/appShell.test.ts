@@ -161,6 +161,82 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("侧边栏底部显示打开过的远程仓库并可移除跳转", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.settings = {
+      ...state.settings!,
+      remoteRepoShortcuts: [
+        {
+          fullName: "sena-nana/RemoteOnly",
+          name: "RemoteOnly",
+          private: true,
+          archived: false,
+          defaultBranch: "main",
+          htmlUrl: "https://github.com/sena-nana/RemoteOnly",
+          cloneUrl: "https://github.com/sena-nana/RemoteOnly.git",
+          openedAt: 10,
+        },
+      ],
+    };
+
+    await waitFor(() => {
+      expect(view.getByText("远程仓库 1")).toBeInTheDocument();
+      expect(sidebarRowForText(view.container, "RemoteOnly")).toHaveAttribute("title", "sena-nana/RemoteOnly");
+    });
+
+    await fireEvent.click(sidebarRowForText(view.container, "RemoteOnly"));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteOnly?view=project");
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "移除 sena-nana/RemoteOnly" }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/");
+      expect(() => sidebarRowForText(view.container, "RemoteOnly")).toThrow("未找到侧边栏行: RemoteOnly");
+    });
+  });
+
+  it("侧边栏远程仓库在同名仓库已 clone 后自动去重", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.settings = {
+      ...state.settings!,
+      remoteRepoShortcuts: [
+        {
+          fullName: "sena-nana/RemoteOnly",
+          name: "RemoteOnly",
+          private: false,
+          archived: false,
+          defaultBranch: "main",
+          htmlUrl: "https://github.com/sena-nana/RemoteOnly",
+          cloneUrl: "https://github.com/sena-nana/RemoteOnly.git",
+          openedAt: 10,
+        },
+      ],
+    };
+    state.repos = [
+      ...state.repos,
+      repoSummary("RemoteOnly", { githubFullName: "sena-nana/RemoteOnly" }),
+    ];
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "RemoteOnly")).toHaveAttribute(
+        "title",
+        "sena-nana/RemoteOnly · C:\\Files\\workspace\\RemoteOnly",
+      );
+      expect(view.queryByText("远程仓库 1")).toBeNull();
+    });
+  });
+
   it("总览页一键同步运行中显示按钮和仓库行状态", async () => {
     const view = await renderAppShell("/");
 
@@ -170,7 +246,7 @@ describe("AppShell sidebar", () => {
 
     state.bulkPreview = {
       operation: "sync",
-      eligible: [{ repo: state.repos[0], reason: "有本地提交待推送" }],
+      eligible: [{ repo: repoSummary("LiliaGithub", { ahead: 1 }), reason: "有本地提交待推送" }],
       blocked: [],
       warnings: [],
     };
@@ -289,35 +365,6 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("未绑定 GitHub 时首页保持初始化页且不显示总览操作卡片", async () => {
-    setFallbackGitHubBindingStatusForTests({
-      state: "unbound",
-      clientIdConfigured: true,
-      clientIdSource: "bundled",
-      binding: null,
-    });
-    const view = await renderAppShell("/");
-
-    expect(await view.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
-    expect(view.queryByLabelText("项目总览操作")).toBeNull();
-    expect(view.queryByRole("navigation", { name: "主导航" })).toBeNull();
-  });
-
-  it("首页初始绑定会自动复制授权码并提示已复制", async () => {
-    setFallbackGitHubBindingStatusForTests({
-      state: "unbound",
-      clientIdConfigured: true,
-      clientIdSource: "bundled",
-      binding: null,
-    });
-    const view = await renderAppShell("/");
-
-    await fireEvent.click(view.getByRole("button", { name: "绑定 GitHub" }));
-
-    expect(await view.findByText("授权码已复制，请在 GitHub 授权页粘贴。")).toBeInTheDocument();
-    expect(view.getByText("ABCD-1234")).toBeInTheDocument();
-  });
-
   it("已绑定 GitHub 时克隆弹窗展示账号仓库列表并可选择克隆", async () => {
     const view = await renderAppShell("/");
 
@@ -368,6 +415,35 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("已绑定 GitHub 时支持完整 GitHub 链接直接克隆", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
+    const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+
+    await fireEvent.update(input, "https://github.com/meijustory123/TapdClient");
+    await waitFor(() => {
+      expect(view.getByText("直接克隆 meijustory123/TapdClient")).toBeInTheDocument();
+      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("TapdClient");
+    });
+
+    await fireEvent.update(input, "https://github.com/meijustory123/TapdClient.git");
+    await waitFor(() => {
+      expect(view.getByText("直接克隆 meijustory123/TapdClient")).toBeInTheDocument();
+      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("TapdClient");
+    });
+    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/TapdClient");
+      expect(sidebarRowForText(view.container, "TapdClient")).toBeInTheDocument();
+    });
+  });
+
   it("GitHub 仓库列表绑定失效时提供重新绑定入口", async () => {
     setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
     const view = await renderAppShell("/");
@@ -389,6 +465,35 @@ describe("AppShell sidebar", () => {
       expect(view.router.currentRoute.value.path).toBe("/settings");
       expect(view.router.currentRoute.value.query.tab).toBe("repositories");
     });
+  });
+
+  it("未绑定 GitHub 时首页保持初始化页且不显示总览操作卡片", async () => {
+    setFallbackGitHubBindingStatusForTests({
+      state: "unbound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: null,
+    });
+    const view = await renderAppShell("/");
+
+    expect(await view.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
+    expect(view.queryByLabelText("项目总览操作")).toBeNull();
+    expect(view.queryByRole("navigation", { name: "主导航" })).toBeNull();
+  });
+
+  it("首页初始绑定会自动复制授权码并提示已复制", async () => {
+    setFallbackGitHubBindingStatusForTests({
+      state: "unbound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: null,
+    });
+    const view = await renderAppShell("/");
+
+    await fireEvent.click(view.getByRole("button", { name: "绑定 GitHub" }));
+
+    expect(await view.findByText("授权码已复制，请在 GitHub 授权页粘贴。")).toBeInTheDocument();
+    expect(view.getByText("ABCD-1234")).toBeInTheDocument();
   });
 
   it("仓库右键菜单可隐藏仓库并从详情页返回总览", async () => {

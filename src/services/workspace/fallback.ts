@@ -28,8 +28,10 @@ import type {
   RepoConflictState,
   RepoDetail,
   RepoMergePullResult,
+  RepoRefreshSummaryOptions,
   RepoReadme,
   RepoSummary,
+  RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
@@ -103,45 +105,49 @@ const defaultFallbackBinding: GitHubBindingStatus = {
     login: "lilia-user",
     avatarUrl: null,
     boundAt: Date.now(),
-    scopes: ["repo", "workflow", "read:user"],
+    scopes: ["repo", "workflow", "read:user", "delete_repo"],
     clientIdSource: "bundled",
   },
 };
 
 const CONTRIBUTION_DAYS = 371;
 const CONTRIBUTION_REPO_LIMIT = 30;
-const fallbackGitHubRepos: GitHubRepoSummary[] = [
-  {
-    id: 1,
-    name: "LiliaGithub",
-    fullName: "sena-nana/LiliaGithub",
-    ownerLogin: "sena-nana",
-    private: false,
-    disabled: false,
-    archived: false,
-    description: "Local GitHub workspace manager",
-    defaultBranch: "main",
-    createdAt: "2026-06-08T09:00:00Z",
-    updatedAt: "2026-06-11T00:00:00Z",
-    cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
-    htmlUrl: "https://github.com/sena-nana/LiliaGithub",
-  },
-  {
-    id: 2,
-    name: "Lilia",
-    fullName: "sena-nana/Lilia",
-    ownerLogin: "sena-nana",
-    private: true,
-    disabled: false,
-    archived: false,
-    description: "Desktop agent workbench",
-    defaultBranch: "main",
-    createdAt: "2026-06-07T09:00:00Z",
-    updatedAt: "2026-06-10T00:00:00Z",
-    cloneUrl: "https://github.com/sena-nana/Lilia.git",
-    htmlUrl: "https://github.com/sena-nana/Lilia",
-  },
-];
+function createFallbackGitHubRepos(): GitHubRepoSummary[] {
+  return [
+    {
+      id: 1,
+      name: "LiliaGithub",
+      fullName: "sena-nana/LiliaGithub",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: "Local GitHub workspace manager",
+      defaultBranch: "main",
+      createdAt: "2026-06-08T09:00:00Z",
+      updatedAt: "2026-06-11T00:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+    },
+    {
+      id: 2,
+      name: "Lilia",
+      fullName: "sena-nana/Lilia",
+      ownerLogin: "sena-nana",
+      private: true,
+      disabled: false,
+      archived: false,
+      description: "Desktop agent workbench",
+      defaultBranch: "main",
+      createdAt: "2026-06-07T09:00:00Z",
+      updatedAt: "2026-06-10T00:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/Lilia.git",
+      htmlUrl: "https://github.com/sena-nana/Lilia",
+    },
+  ];
+}
+
+let fallbackGitHubRepos: GitHubRepoSummary[] = createFallbackGitHubRepos();
 
 function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
   return { ...repo };
@@ -283,11 +289,28 @@ function createFallbackRepoReadmes(): Record<string, RepoReadme[]> {
   };
 }
 
+function createFallbackGitHubRepoReadmes(): Record<string, RepoReadme[]> {
+  return Object.fromEntries(
+    Object.entries(createFallbackRepoReadmes()).map(([repoId, readmes]) => {
+      const repo = fallbackRepos.find((item) => item.id === repoId);
+      return [
+        repo?.githubFullName ?? repoId,
+        readmes.map((readme) => ({
+          ...readme,
+          repoId: repo?.githubFullName ? `github:${repo.githubFullName}` : readme.repoId,
+          images: { ...readme.images },
+        })),
+      ];
+    }),
+  );
+}
+
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
 let fallbackRepoReadmes = createFallbackRepoReadmes();
+let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
 
 type FallbackGitHubIssueListCall = {
   repoFullName: string;
@@ -305,13 +328,18 @@ function createFallbackSettings(): WorkspaceSettings {
     projectLaunchConfigs: {},
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
+    systemGitRepoIds: [],
+    remoteRepoShortcuts: [],
+    localContributionCache: {},
   };
 }
 
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
-let fallbackRepoContributionsOverride: ((repoFullNames: string[]) => GitHubContributionResult) | null = null;
+let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContributionResult) | null = null;
+let fallbackGitHubWorkflowRunsOverride:
+  ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null = null;
 let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
@@ -334,16 +362,19 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
-  fallbackRepoContributionsOverride = null;
+  fallbackRepoContributionOverride = null;
+  fallbackGitHubWorkflowRunsOverride = null;
   fallbackRepoRemoteSyncOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
   fallbackGitHubRepoPagesOverride = null;
+  fallbackGitHubRepos = createFallbackGitHubRepos();
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackRepoReadmes = createFallbackRepoReadmes();
+  fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
   fallbackGitHubIssueListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
   fallbackOpenPathCalls = [];
@@ -374,10 +405,16 @@ export function setFallbackConflictOverrideForTests(
   fallbackConflictOverride = override;
 }
 
-export function setFallbackRepoContributionsOverrideForTests(
-  override: ((repoFullNames: string[]) => GitHubContributionResult) | null,
+export function setFallbackRepoContributionOverrideForTests(
+  override: ((repoFullName: string) => GitHubContributionResult) | null,
 ) {
-  fallbackRepoContributionsOverride = override;
+  fallbackRepoContributionOverride = override;
+}
+
+export function setFallbackGitHubWorkflowRunsOverrideForTests(
+  override: ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null,
+) {
+  fallbackGitHubWorkflowRunsOverride = override;
 }
 
 export function setFallbackRepoRemoteSyncOverrideForTests(
@@ -461,6 +498,51 @@ function cloneRepoReadme(readme: RepoReadme): RepoReadme {
   };
 }
 
+function cloneRemoteRepoShortcut(shortcut: RemoteRepoShortcut): RemoteRepoShortcut {
+  return { ...shortcut };
+}
+
+function normalizeRemoteRepoId(fullName: string): string | null {
+  const trimmed = fullName.trim().replace(/^\/+|\/+$/g, "");
+  if (!trimmed) return null;
+
+  const direct = trimmed
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/^git@github\.com:/i, "")
+    .replace(/^ssh:\/\/git@github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .trim();
+
+  const parts = direct.split("/").filter((part) => part.length > 0);
+  if (parts.length !== 2) return null;
+
+  return parts.join("/");
+}
+
+function normalizeRemoteRepoIdKey(fullName: string): string | null {
+  const normalized = normalizeRemoteRepoId(fullName);
+  return normalized ? normalized.toLowerCase() : null;
+}
+
+function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings {
+  return {
+    ...settings,
+    projectLaunchConfigs: { ...settings.projectLaunchConfigs },
+    hiddenRepoIds: [...settings.hiddenRepoIds],
+    managedRepoIds: [...settings.managedRepoIds],
+    systemGitRepoIds: [...settings.systemGitRepoIds],
+    remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
+    localContributionCache: Object.fromEntries(
+      Object.entries(settings.localContributionCache).map(([repoId, days]) => [
+        repoId,
+        Object.fromEntries(
+          Object.entries(days).map(([date, entry]) => [date, { ...entry }]),
+        ),
+      ]),
+    ),
+  };
+}
+
 export function setFallbackRepoReadmesForTests(readmesByRepo: Record<string, RepoReadme | RepoReadme[] | null>) {
   fallbackRepoReadmes = Object.fromEntries(
     Object.entries(readmesByRepo).map(([repoId, readmes]) => {
@@ -470,7 +552,16 @@ export function setFallbackRepoReadmesForTests(readmesByRepo: Record<string, Rep
   );
 }
 
-async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T): Promise<T> {
+export function setFallbackGitHubRepoReadmesForTests(readmesByRepo: Record<string, RepoReadme | RepoReadme[] | null>) {
+  fallbackGitHubRepoReadmes = Object.fromEntries(
+    Object.entries(readmesByRepo).map(([repoFullName, readmes]) => {
+      const list = Array.isArray(readmes) ? readmes : readmes ? [readmes] : [];
+      return [repoFullName, list.map(cloneRepoReadme)];
+    }),
+  );
+}
+
+async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T | Promise<T>): Promise<T> {
   if (fallback) return fallback();
   throw new Error("Workspace fallback is unavailable for this command");
 }
@@ -509,13 +600,13 @@ function repoRefreshPartialFailureMessage(
 }
 
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
-  return call("workspace_get_settings", undefined, () => ({ ...fallbackSettings }));
+  return call("workspace_get_settings", undefined, () => cloneWorkspaceSettings(fallbackSettings));
 }
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
-    return { ...fallbackSettings };
+    return cloneWorkspaceSettings(fallbackSettings);
   });
 }
 
@@ -547,6 +638,12 @@ export function refreshRepos(): Promise<RepoSummary[]> {
     );
     return repos;
   });
+}
+
+export function listManagedRepos(): Promise<RepoSummary[]> {
+  return call("workspace_list_managed_repos", undefined, () =>
+    visibleManagedFallbackRepos().map(lightweightRepoSummary),
+  );
 }
 
 export function discoverRepos(): Promise<RepoSummary[]> {
@@ -618,8 +715,34 @@ export function getRepoSummary(repoId: string): Promise<RepoSummary> {
   return call("repo_get_summary", { repoId }, () => ({ ...fallbackRepo(repoId) }));
 }
 
+export function refreshRepoSummary(
+  repoId: string,
+  options: RepoRefreshSummaryOptions = {},
+): Promise<RepoSummary> {
+  return call("repo_refresh_summary", { repoId, options }, () => {
+    const repo = fallbackRepo(repoId);
+    const error = options.fetchRemote && repo.remoteUrl ? fallbackRepoRemoteSyncOverride?.(repo) : null;
+    recordFallbackTask(
+      "repoStatus",
+      "normal",
+      repo.id,
+      error ? "error" : "success",
+      error ? `仓库状态已刷新，远端同步失败：${error}` : "仓库状态已更新",
+    );
+    return { ...repo };
+  });
+}
+
 function allFallbackRepos() {
   return [...fallbackRepos, ...fallbackClonedRepos].map((repo) => fallbackRepoOverrides[repo.id] ?? repo);
+}
+
+function visibleManagedFallbackRepos() {
+  const managed = new Set(fallbackSettings.managedRepoIds);
+  const hidden = new Set(fallbackSettings.hiddenRepoIds);
+  return allFallbackRepos()
+    .filter((repo) => managed.has(repo.id) && !hidden.has(repo.id))
+    .map((repo) => ({ ...repo }));
 }
 
 function visibleFallbackRepos() {
@@ -629,18 +752,93 @@ function visibleFallbackRepos() {
     .map((repo) => ({ ...repo }));
 }
 
+function lightweightRepoSummary(repo: RepoSummary): RepoSummary {
+  return {
+    id: repo.id,
+    name: repo.name,
+    path: repo.path,
+    relativePath: repo.relativePath,
+    currentBranch: null,
+    remoteUrl: null,
+    githubFullName: null,
+    ahead: 0,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: null,
+    lastCommitMessage: null,
+    languageStats: [],
+    workingTreeLanguageStats: [],
+    languageStatsUpdatedAt: 0,
+  };
+}
+
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_hide_repo", { repoId }, () => {
     if (!allFallbackRepos().some((repo) => repo.id === repoId)) {
       throw new Error(`未找到 Git 仓库：${repoId}`);
     }
     if (!fallbackSettings.hiddenRepoIds.includes(repoId)) {
+      const localContributionCache = { ...fallbackSettings.localContributionCache };
+      delete localContributionCache[repoId];
       fallbackSettings = {
         ...fallbackSettings,
         hiddenRepoIds: [...fallbackSettings.hiddenRepoIds, repoId].sort(),
+        localContributionCache,
       };
     }
-    return { ...fallbackSettings };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+function normalizeRemoteRepoShortcut(repo: RemoteRepoShortcut): RemoteRepoShortcut {
+  const fullName = repo.fullName.trim().replace(/^\/+|\/+$/g, "");
+  const parts = fullName.split("/").filter(Boolean);
+  const name = repo.name.trim() || parts[parts.length - 1] || fullName;
+  return {
+    fullName,
+    name,
+    private: repo.private,
+    archived: repo.archived,
+    defaultBranch: repo.defaultBranch?.trim() || null,
+    htmlUrl: repo.htmlUrl.trim() || `https://github.com/${fullName}`,
+    cloneUrl: repo.cloneUrl.trim() || `https://github.com/${fullName}.git`,
+    openedAt: Date.now(),
+  };
+}
+
+export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
+  return call("workspace_remember_remote_repo", { repo }, () => {
+    const shortcut = normalizeRemoteRepoShortcut(repo);
+    const shortcutKey = normalizeRemoteRepoIdKey(shortcut.fullName);
+    fallbackSettings = {
+      ...fallbackSettings,
+      remoteRepoShortcuts: [
+        shortcut,
+        ...fallbackSettings.remoteRepoShortcuts.filter((item) => {
+          const key = normalizeRemoteRepoIdKey(item.fullName);
+          return key === null || key !== shortcutKey;
+        }),
+      ].sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {
+  return call("workspace_forget_remote_repo", { fullName }, () => {
+    const target = normalizeRemoteRepoIdKey(fullName);
+    if (!target) return cloneWorkspaceSettings(fallbackSettings);
+    fallbackSettings = {
+      ...fallbackSettings,
+      remoteRepoShortcuts: fallbackSettings.remoteRepoShortcuts.filter((repo) => {
+        const key = normalizeRemoteRepoIdKey(repo.fullName);
+        return key === null || key !== target;
+      }),
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
   });
 }
 
@@ -650,7 +848,7 @@ export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
       ...fallbackSettings,
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
     };
-    return { ...fallbackSettings };
+    return cloneWorkspaceSettings(fallbackSettings);
   });
 }
 
@@ -722,7 +920,7 @@ export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
 function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
   const existing = fallbackGitHubRepoManagement[repoFullName];
   if (existing) return { ...existing };
-  const repo = fallbackGitHubRepos.find((item) => item.fullName === repoFullName);
+  const repo = allFallbackGitHubRepos().find((item) => item.fullName === repoFullName);
   if (!repo) throw new Error(`未找到 GitHub 仓库：${repoFullName}`);
   const management: GitHubRepoManagement = {
     fullName: repo.fullName,
@@ -746,6 +944,15 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
   };
   fallbackGitHubRepoManagement[repoFullName] = management;
   return { ...management };
+}
+
+function allFallbackGitHubRepos() {
+  const fromPages = fallbackGitHubRepoPagesOverride?.flatMap((page) => page.items) ?? [];
+  const repos = new Map<string, GitHubRepoSummary>();
+  for (const repo of [...fallbackGitHubRepos, ...fromPages]) {
+    repos.set(repo.fullName, repo);
+  }
+  return [...repos.values()].map(cloneGitHubRepoSummary);
 }
 
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
@@ -818,6 +1025,25 @@ export function updateGitHubRepoSettings(
     };
     fallbackGitHubRepoManagement[repoFullName] = updated;
     return { ...updated };
+  });
+}
+
+export function deleteGitHubRepo(repoFullName: string): Promise<void> {
+  return call("github_delete_repo", { repoFullName }, () => {
+    const normalized = repoFullName.trim().replace(/^\/+|\/+$/g, "");
+    const exists = fallbackGitHubRepos.some((repo) => repo.fullName === normalized) ||
+      fallbackGitHubRepoPagesOverride?.some((page) => page.items.some((repo) => repo.fullName === normalized)) ||
+      Boolean(fallbackGitHubRepoManagement[normalized]);
+    if (!exists) throw new Error(`未找到 GitHub 仓库：${normalized}`);
+    fallbackGitHubRepos = fallbackGitHubRepos.filter((repo) => repo.fullName !== normalized);
+    fallbackGitHubRepoPagesOverride = fallbackGitHubRepoPagesOverride?.map((page) => ({
+      ...page,
+      items: page.items.filter((repo) => repo.fullName !== normalized),
+    })) ?? null;
+    delete fallbackGitHubRepoManagement[normalized];
+    delete fallbackGitHubIssues[normalized];
+    delete fallbackGitHubWorkflowRuns[normalized];
+    delete fallbackGitHubRepoReadmes[normalized];
   });
 }
 
@@ -922,41 +1148,40 @@ export function updateGitHubIssue(
 
 export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | null): Promise<GitHubWorkflowRun[]> {
   fallbackGitHubWorkflowRunListCalls.push({ repoFullName, perPage: perPage ?? null });
-  return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, () =>
-    [...(fallbackGitHubWorkflowRuns[repoFullName] ?? [])]
+  return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, async () => {
+    const source = fallbackGitHubWorkflowRunsOverride
+      ? await fallbackGitHubWorkflowRunsOverride(repoFullName, perPage ?? null)
+      : fallbackGitHubWorkflowRuns[repoFullName] ?? [];
+    return [...source]
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .slice(0, perPage ?? undefined)
-      .map((run) => ({ ...run })),
-  );
+      .map((run) => ({ ...run }));
+  });
 }
 
-function fallbackContributionMeta(repoFullNames: string[]): GitHubContributionMeta {
-  const requestedRepoCount = Array.from(new Set(
-    repoFullNames
-      .map((name) => name.trim().replace(/^\/+|\/+$/g, ""))
-      .filter((name) => name && name.includes("/")),
-  )).length;
-  const repoCount = Math.min(requestedRepoCount, CONTRIBUTION_REPO_LIMIT);
+function fallbackContributionMeta(repoScope: string): GitHubContributionMeta {
+  const normalized = repoScope.trim().replace(/^local:/, "").replace(/^\/+|\/+$/g, "");
+  const repoCount = normalized ? 1 : 0;
   return {
     repoCount,
-    requestedRepoCount,
+    requestedRepoCount: repoCount,
     repoLimit: CONTRIBUTION_REPO_LIMIT,
-    truncated: requestedRepoCount > repoCount,
+    truncated: false,
+    skippedRepoCount: 0,
     refreshedAt: Date.now(),
   };
 }
 
-export function listRepoContributions(repoFullNames: string[]): Promise<GitHubContributionResult> {
-  return call("github_list_repo_contributions", { repoFullNames }, () => {
-    if (fallbackRepoContributionsOverride) {
-      const result = fallbackRepoContributionsOverride(repoFullNames);
+export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {
+  return call("github_list_repo_contribution", { repoFullName: repoScope }, () => {
+    if (fallbackRepoContributionOverride) {
+      const result = fallbackRepoContributionOverride(repoScope);
       return {
         days: result.days.map((item) => ({ ...item })),
         meta: { ...result.meta },
       };
     }
     const end = new Date("2026-06-11T00:00:00Z");
-    const repoFactor = Math.max(1, repoFullNames.filter((name) => name.trim()).length);
     const days = Array.from({ length: CONTRIBUTION_DAYS }, (_, index) => {
       const date = new Date(end);
       date.setUTCDate(end.getUTCDate() - (CONTRIBUTION_DAYS - 1 - index));
@@ -964,12 +1189,12 @@ export function listRepoContributions(repoFullNames: string[]): Promise<GitHubCo
       const active = dayIndex % 5 === 0 || dayIndex % 17 === 0 || dayIndex > Math.floor(end.getTime() / 86_400_000) - 45;
       return {
         date: date.toISOString().slice(0, 10),
-        count: active ? ((dayIndex % 4) + 1) * repoFactor : 0,
+        count: active ? ((dayIndex % 4) + 1) : 0,
       };
     });
     return {
       days,
-      meta: fallbackContributionMeta(repoFullNames),
+      meta: fallbackContributionMeta(repoScope),
     };
   });
 }
@@ -996,6 +1221,12 @@ export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
 export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
   return call("repo_list_readmes", { repoId }, () =>
     (fallbackRepoReadmes[repoId] ?? []).map(cloneRepoReadme),
+  );
+}
+
+export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[]> {
+  return call("github_list_repo_readmes", { repoFullName }, () =>
+    (fallbackGitHubRepoReadmes[repoFullName] ?? []).map(cloneRepoReadme),
   );
 }
 
@@ -1405,6 +1636,16 @@ export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
 
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => {
+    const repo = fallbackRepo(repoId);
+    return { ...repo, ahead: 0 };
+  });
+}
+
+export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
+  return call("repo_push_with_system_git", { repoId }, () => {
+    if (!fallbackSettings.systemGitRepoIds.includes(repoId)) {
+      fallbackSettings.systemGitRepoIds = [...fallbackSettings.systemGitRepoIds, repoId].sort();
+    }
     const repo = fallbackRepo(repoId);
     return { ...repo, ahead: 0 };
   });

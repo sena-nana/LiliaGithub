@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  ExternalLink,
   FolderOpen,
   GitPullRequestArrow,
   RefreshCw,
@@ -29,6 +28,7 @@ const {
   launchTerminalVisible,
   conflictChoices,
   repoId,
+  remoteOnly,
   detail,
   summary,
   repoTitle,
@@ -61,6 +61,9 @@ const {
   conflictOperationText,
   conflictAbortText,
   conflictContinueText,
+  activeProjectTab,
+  activeProjectIssue,
+  activeProjectRun,
   tabs,
   views,
   load,
@@ -85,7 +88,6 @@ const {
   selectLaunchCandidate,
   checkout,
   openCommit,
-  openGitHub,
   openFolder,
   openConflictFolder,
   commitMetaTitle,
@@ -117,6 +119,7 @@ const {
             </button>
           </div>
           <button
+            v-if="!remoteOnly"
             type="button"
             class="overview-actions__btn"
             title="刷新"
@@ -127,6 +130,7 @@ const {
             <RefreshCw :size="17" aria-hidden="true" />
           </button>
           <button
+            v-if="!remoteOnly"
             type="button"
             class="overview-actions__btn"
             title="文件夹"
@@ -137,16 +141,7 @@ const {
             <FolderOpen :size="17" aria-hidden="true" />
           </button>
           <button
-            type="button"
-            class="overview-actions__btn"
-            title="GitHub"
-            aria-label="GitHub"
-            :disabled="!summary?.githubFullName"
-            @click="openGitHub"
-          >
-            <ExternalLink :size="17" aria-hidden="true" />
-          </button>
-          <button
+            v-if="!remoteOnly"
             type="button"
             class="overview-actions__btn"
             title="拉取"
@@ -157,7 +152,7 @@ const {
             <GitPullRequestArrow :size="17" aria-hidden="true" />
           </button>
           <button
-            v-if="hasConflicts"
+            v-if="!remoteOnly && hasConflicts"
             type="button"
             class="overview-actions__btn overview-actions__btn--primary"
             :disabled="actionRunning"
@@ -167,7 +162,7 @@ const {
             处理冲突
           </button>
           <button
-            v-else
+            v-else-if="!remoteOnly"
             type="button"
             class="overview-actions__btn overview-actions__btn--primary"
             :disabled="actionRunning || !summary?.ahead"
@@ -210,6 +205,10 @@ const {
           @open-terminal="launchTerminalVisible = true"
           @hide-terminal="launchTerminalVisible = false"
           @select-launch-candidate="selectLaunchCandidate"
+          :remote-only="remoteOnly"
+          :project-tab="activeProjectTab"
+          :project-issue-number="activeProjectIssue"
+          :project-run-id="activeProjectRun"
         />
       </main>
 
