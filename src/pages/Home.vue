@@ -5,7 +5,6 @@ import {
   AlertCircle,
   CheckCircle2,
   CircleDot,
-  FilePlus2,
   FolderOpen,
   FolderGit2,
   GitCommitHorizontal,
@@ -139,7 +138,6 @@ type GitHubTimelineIssueCache = Record<string, GitHubTimelineIssueCacheEntry | u
 
 const languageScope = ref<LanguageScope>("head");
 const discovering = ref(false);
-const addingRepo = ref(false);
 const githubRepos = ref<GitHubRepoSummary[]>([]);
 const githubReposNextPage = ref<number | null>(null);
 const githubReposLoading = ref(false);
@@ -160,6 +158,9 @@ const contributionMonthLabels = computed(() =>
 
 const totalContributions = computed(() =>
   workspace.state.githubContributions.days.reduce((total, day) => total + day.count, 0),
+);
+const skippedContributionRepoCount = computed(() =>
+  workspace.state.githubContributions.meta?.skippedRepoCount ?? 0,
 );
 
 const languageOverview = computed<LanguageOverview>(() => {
@@ -866,10 +867,6 @@ function formatTimelineTime(timestamp: number) {
   }).format(new Date(timestamp));
 }
 
-function openCloneDialog() {
-  shellActions?.openCloneDialog();
-}
-
 function toggleSearch() {
   void shellActions?.toggleSearch();
 }
@@ -915,19 +912,6 @@ async function syncRepo(repo: RepoSummary) {
     /* action error is surfaced by workspace state */
   } finally {
     syncingRepoId.value = null;
-  }
-}
-
-async function addLocalRepo() {
-  if (addingRepo.value) return;
-  addingRepo.value = true;
-  try {
-    const summary = await workspace.addLocalRepo();
-    if (summary) {
-      await router.push(`/repos/${encodeURIComponent(summary.id)}`);
-    }
-  } finally {
-    addingRepo.value = false;
   }
 }
 
@@ -1028,26 +1012,6 @@ async function addLocalRepo() {
           <button
             type="button"
             class="overview-actions__btn"
-            title="克隆仓库"
-            aria-label="克隆仓库"
-            :disabled="!workspace.workspaceRoot.value"
-            @click="openCloneDialog"
-          >
-            <FilePlus2 :size="17" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="overview-actions__btn"
-            title="添加本地仓库"
-            aria-label="添加本地仓库"
-            :disabled="!workspace.workspaceRoot.value || addingRepo"
-            @click="addLocalRepo"
-          >
-            <FolderGit2 :size="17" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="overview-actions__btn"
             :class="{ 'is-active': searchOpen }"
             title="搜索"
             aria-label="搜索"
@@ -1104,6 +1068,9 @@ async function addLocalRepo() {
             <div>
               <h2>最近工作结果</h2>
               <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
+              <p v-if="skippedContributionRepoCount > 0" class="contribution-notice">
+                已跳过 {{ skippedContributionRepoCount }} 个不可读取仓库
+              </p>
             </div>
             <button
               v-if="workspace.state.githubContributions.error"
@@ -1652,6 +1619,12 @@ async function addLocalRepo() {
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+}
+
+.contribution-notice {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .contribution-retry {

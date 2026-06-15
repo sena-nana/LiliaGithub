@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  ExternalLink,
   FolderOpen,
   GitPullRequestArrow,
   RefreshCw,
@@ -92,7 +91,6 @@ const {
   saveLaunchConfig,
   checkout,
   openCommit,
-  openGitHub,
   openFolder,
   openConflictFolder,
   commitMetaTitle,
@@ -141,16 +139,6 @@ const {
           @click="openFolder"
         >
           <FolderOpen :size="17" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="overview-actions__btn"
-          title="GitHub"
-          aria-label="GitHub"
-          :disabled="!summary?.githubFullName"
-          @click="openGitHub"
-        >
-          <ExternalLink :size="17" aria-hidden="true" />
         </button>
         <button
           type="button"

@@ -670,7 +670,7 @@ describe("基础路由", () => {
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label"))
         .filter(Boolean),
-    ).toEqual(["刷新", "文件夹", "GitHub", "拉取"]);
+    ).toEqual(["刷新", "文件夹", "拉取"]);
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
