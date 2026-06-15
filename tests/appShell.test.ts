@@ -365,6 +365,79 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("已绑定 GitHub 时克隆弹窗展示账号仓库列表并可选择克隆", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
+
+    expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
+    const dialog = view.getByRole("dialog", { name: "克隆仓库" });
+    const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+    expect(view.getByText(/当前绑定账号：/)).toBeInTheDocument();
+
+    await fireEvent.focus(input);
+    expect(await within(dialog).findByText("sena-nana/Lilia")).toBeInTheDocument();
+
+    await fireEvent.click(within(dialog).getByText("sena-nana/Lilia"));
+    expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("Lilia");
+
+    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/Lilia");
+    });
+  });
+
+  it("已绑定 GitHub 时支持 owner/repo 直接克隆", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
+    const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+
+    await fireEvent.update(input, "sena-nana/NewRepo");
+    await waitFor(() => {
+      expect(view.getByText("直接克隆 sena-nana/NewRepo")).toBeInTheDocument();
+      expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("NewRepo");
+    });
+    await fireEvent.click(view.getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
+      expect(sidebarRowForText(view.container, "NewRepo")).toBeInTheDocument();
+    });
+  });
+
+  it("GitHub 仓库列表绑定失效时提供重新绑定入口", async () => {
+    setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "克隆仓库" }));
+
+    expect(await view.findByText("GitHub 绑定已失效，请重新绑定。")).toBeInTheDocument();
+    const dialog = view.getByRole("dialog", { name: "克隆仓库" });
+    await fireEvent.focus(view.getByPlaceholderText("搜索仓库，或直接输入 owner/repo"));
+    expect(within(dialog).getByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
+
+    await fireEvent.click(view.getByRole("button", { name: "重新绑定 GitHub" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.path).toBe("/settings");
+      expect(view.router.currentRoute.value.query.tab).toBe("repositories");
+    });
+  });
+
   it("未绑定 GitHub 时首页保持初始化页且不显示总览操作卡片", async () => {
     setFallbackGitHubBindingStatusForTests({
       state: "unbound",

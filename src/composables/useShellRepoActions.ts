@@ -2,7 +2,6 @@ import { inject, provide, type InjectionKey, type Ref } from "vue";
 
 export interface ShellRepoActions {
   searchOpen: Ref<boolean>;
-  openCloneDialog: () => void;
   toggleSearch: () => void | Promise<void>;
 }
 

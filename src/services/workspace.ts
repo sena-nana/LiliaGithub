@@ -9,11 +9,12 @@ export {
   setFallbackGitHubBindingStatusForTests,
   setFallbackGitHubIssuesForTests,
   setFallbackGitHubWorkflowRunsForTests,
+  setFallbackGitHubWorkflowRunsOverrideForTests,
   setFallbackRepoReadmesForTests,
   setFallbackGitHubRepoReadmesForTests,
   setFallbackGitHubRepoPagesForTests,
   setFallbackGitHubReposErrorForTests,
-  setFallbackRepoContributionsOverrideForTests,
+  setFallbackRepoContributionOverrideForTests,
   setFallbackRepoOverridesForTests,
   setFallbackRepoRemoteSyncOverrideForTests,
 } from "./workspace/fallback";

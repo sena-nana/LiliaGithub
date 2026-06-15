@@ -9,11 +9,21 @@ import {
   upsertRepo,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
-import type { RemoteRepoShortcut, RepoConflictChoice, RepoSummary } from "../../services/workspace";
+import type {
+  GitHubContributionDay,
+  GitHubContributionMeta,
+  RemoteRepoShortcut,
+  RepoConflictChoice,
+  RepoSummary,
+} from "../../services/workspace";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 const REPO_REFRESH_CONCURRENCY = 4;
 let repositoryRuntimeGeneration = 0;
+let contributionRefreshGeneration = 0;
+let contributionRefreshPendingCount = 0;
+let contributionRefreshSeenFullNames = new Set<string>();
+let contributionRefreshSampledCount = 0;
 
 async function applyRepoMutation(
   repoId: string,
@@ -44,7 +54,7 @@ export async function refreshRepoSummaries() {
   if (!repos) return null;
   if (!repos.length) return repos;
   try {
-    await refreshManagedRepoSummaries(repos.map((repo) => repo.id), { fetchRemote: true });
+    await refreshManagedRepoSummaries(repos.map((repo) => repo.id), { fetchRemote: true, refreshBackground: false });
     return repos;
   } catch (err) {
     state.error = String(err);
@@ -67,7 +77,7 @@ async function loadManagedRepoList() {
 
 async function refreshManagedRepoSummaries(
   repoIds: string[],
-  options: { fetchRemote?: boolean } = {},
+  options: { fetchRemote?: boolean; refreshBackground?: boolean } = {},
 ) {
   const generation = ++repositoryRuntimeGeneration;
   const uniqueRepoIds = Array.from(new Set(repoIds));
@@ -77,6 +87,13 @@ async function refreshManagedRepoSummaries(
   }
   state.scanning = true;
   state.refreshingRepoIds = uniqueRepoIds;
+  const shouldRefreshBackground = options.refreshBackground ?? true;
+  const contributionGeneration = shouldRefreshBackground ? beginContributionRefresh() : null;
+  if (contributionGeneration != null) {
+    for (const fullName of repoFullNames()) {
+      scheduleRepoContributionRefresh(fullName, contributionGeneration);
+    }
+  }
   try {
     const service = await loadWorkspaceService();
     const refreshedRepoIds: string[] = [];
@@ -87,6 +104,9 @@ async function refreshManagedRepoSummaries(
         if (generation !== repositoryRuntimeGeneration) return;
         upsertRepo(summary);
         refreshedRepoIds.push(summary.id);
+        if (contributionGeneration != null && summary.githubFullName) {
+          scheduleRepoContributionRefresh(summary.githubFullName, contributionGeneration);
+        }
       } catch {
         // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
       } finally {
@@ -94,8 +114,8 @@ async function refreshManagedRepoSummaries(
         void refreshWorkspaceTasks();
       }
     });
-    if (generation === repositoryRuntimeGeneration) {
-      scheduleLowPriorityRefresh(refreshedRepoIds);
+    if (generation === repositoryRuntimeGeneration && shouldRefreshBackground) {
+      void refreshLanguageStatsForRepos(refreshedRepoIds);
     }
   } finally {
     if (generation === repositoryRuntimeGeneration) {
@@ -142,32 +162,115 @@ function repoFullNames() {
 }
 
 export async function refreshRepoContributions() {
-  const fullNames = repoFullNames();
-  state.githubContributions.loading = true;
-  state.githubContributions.error = null;
-  const refreshedAt = Date.now();
-  try {
-    if (!fullNames.length) {
-      state.githubContributions.days = [];
-      state.githubContributions.meta = {
-        repoCount: 0,
-        requestedRepoCount: 0,
-        repoLimit: CONTRIBUTION_REPO_LIMIT,
-        truncated: false,
-        skippedRepoCount: 0,
-        refreshedAt,
-      };
-      return;
-    }
-    const service = await loadWorkspaceService();
-    const result = await service.listRepoContributions(fullNames);
-    state.githubContributions.days = result.days;
-    state.githubContributions.meta = result.meta;
-  } catch (err) {
-    state.githubContributions.error = String(err);
-  } finally {
-    state.githubContributions.loading = false;
+  const generation = beginContributionRefresh();
+  for (const fullName of repoFullNames()) {
+    scheduleRepoContributionRefresh(fullName, generation);
   }
+}
+
+function beginContributionRefresh() {
+  const generation = ++contributionRefreshGeneration;
+  const refreshedAt = Date.now();
+  contributionRefreshPendingCount = 0;
+  contributionRefreshSeenFullNames = new Set();
+  contributionRefreshSampledCount = 0;
+  state.githubContributions.loading = false;
+  state.githubContributions.error = null;
+  state.githubContributions.days = emptyContributionDays(refreshedAt);
+  state.githubContributions.meta = {
+    repoCount: 0,
+    requestedRepoCount: 0,
+    repoLimit: CONTRIBUTION_REPO_LIMIT,
+    truncated: false,
+    skippedRepoCount: 0,
+    refreshedAt,
+  };
+  return generation;
+}
+
+function scheduleRepoContributionRefresh(fullName: string, generation: number) {
+  const normalized = fullName.trim();
+  if (!normalized || contributionRefreshSeenFullNames.has(normalized) || generation !== contributionRefreshGeneration) {
+    return;
+  }
+  contributionRefreshSeenFullNames.add(normalized);
+  updateContributionMeta({
+    requestedRepoCount: contributionRefreshSeenFullNames.size,
+    sampledRepoCount: contributionRefreshSampledCount,
+  });
+  if (contributionRefreshSampledCount >= CONTRIBUTION_REPO_LIMIT) return;
+  contributionRefreshSampledCount += 1;
+  updateContributionMeta({
+    requestedRepoCount: contributionRefreshSeenFullNames.size,
+    sampledRepoCount: contributionRefreshSampledCount,
+  });
+  contributionRefreshPendingCount += 1;
+  state.githubContributions.loading = true;
+  void refreshSingleRepoContribution(normalized, generation);
+}
+
+async function refreshSingleRepoContribution(fullName: string, generation: number) {
+  try {
+    const service = await loadWorkspaceService();
+    const result = await service.listRepoContribution(fullName);
+    if (generation !== contributionRefreshGeneration) return;
+    state.githubContributions.days = mergeContributionDays(state.githubContributions.days, result.days);
+    updateContributionMeta({
+      repoCount: (state.githubContributions.meta?.repoCount ?? 0) + (result.meta.repoCount ?? 1),
+      requestedRepoCount: contributionRefreshSeenFullNames.size,
+      sampledRepoCount: contributionRefreshSampledCount,
+      skippedRepoCount: (state.githubContributions.meta?.skippedRepoCount ?? 0) + (result.meta.skippedRepoCount ?? 0),
+    });
+  } catch (err) {
+    if (generation === contributionRefreshGeneration) {
+      state.githubContributions.error = String(err);
+    }
+  } finally {
+    finishRepoContributionRefresh(generation);
+  }
+}
+
+function finishRepoContributionRefresh(generation: number) {
+  if (generation !== contributionRefreshGeneration) return;
+  contributionRefreshPendingCount = Math.max(0, contributionRefreshPendingCount - 1);
+  state.githubContributions.loading = contributionRefreshPendingCount > 0;
+}
+
+function emptyContributionDays(now = Date.now()) {
+  const endDay = Math.floor(now / 86_400_000);
+  return Array.from({ length: 371 }, (_, index) => ({
+    date: new Date((endDay - 370 + index) * 86_400_000).toISOString().slice(0, 10),
+    count: 0,
+  }));
+}
+
+function mergeContributionDays(
+  current: GitHubContributionDay[],
+  incoming: GitHubContributionDay[],
+) {
+  const counts = new Map(current.map((day) => [day.date, day.count]));
+  for (const day of incoming) {
+    counts.set(day.date, (counts.get(day.date) ?? 0) + day.count);
+  }
+  return [...counts.entries()]
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function updateContributionMeta(update: Partial<GitHubContributionMeta> & {
+  sampledRepoCount?: number;
+}) {
+  const current = state.githubContributions.meta;
+  const requestedRepoCount = update.requestedRepoCount ?? current?.requestedRepoCount ?? 0;
+  const sampledRepoCount = update.sampledRepoCount ?? Math.min(requestedRepoCount, CONTRIBUTION_REPO_LIMIT);
+  state.githubContributions.meta = {
+    repoCount: Math.min(sampledRepoCount, update.repoCount ?? current?.repoCount ?? 0),
+    requestedRepoCount,
+    repoLimit: CONTRIBUTION_REPO_LIMIT,
+    truncated: requestedRepoCount > sampledRepoCount,
+    skippedRepoCount: update.skippedRepoCount ?? current?.skippedRepoCount ?? 0,
+    refreshedAt: update.refreshedAt ?? current?.refreshedAt ?? Date.now(),
+  };
 }
 
 export async function refreshWorkspaceTasks() {
@@ -222,8 +325,17 @@ export async function refreshRepoLanguageStats(
     const service = await loadWorkspaceService();
     const summary = await service.refreshRepoLanguageStats(repoId);
     if (generation !== repositoryRuntimeGeneration) return null;
-    upsertRepo(summary);
-    return summary;
+    const current = state.repos.find((repo) => repo.id === summary.id);
+    const nextSummary = current
+      ? {
+        ...current,
+        languageStats: summary.languageStats,
+        workingTreeLanguageStats: summary.workingTreeLanguageStats,
+        languageStatsUpdatedAt: summary.languageStatsUpdatedAt,
+      }
+      : summary;
+    upsertRepo(nextSummary);
+    return nextSummary;
   } catch (err) {
     if (options.silent) return null;
     throw err;
@@ -235,6 +347,10 @@ export async function refreshRepoLanguageStats(
 
 export function resetRepositoryRuntimeForTests() {
   repositoryRuntimeGeneration += 1;
+  contributionRefreshGeneration += 1;
+  contributionRefreshPendingCount = 0;
+  contributionRefreshSeenFullNames = new Set();
+  contributionRefreshSampledCount = 0;
 }
 
 export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {
