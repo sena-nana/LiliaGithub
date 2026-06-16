@@ -364,6 +364,8 @@ pub struct BranchSummary {
     pub upstream: Option<String>,
     pub ahead: i32,
     pub behind: i32,
+    #[serde(default)]
+    pub protected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,6 +5,10 @@ defineProps<{
   open: boolean;
   title: string;
   message: string;
+  modelValue?: string;
+  requiredText?: string;
+  inputLabel?: string;
+  inputPlaceholder?: string;
   confirmText?: string;
   cancelText?: string;
   danger?: boolean;
@@ -15,6 +19,7 @@ defineProps<{
 const emit = defineEmits<{
   confirm: [];
   cancel: [];
+  "update:modelValue": [value: string];
 }>();
 
 function onKeydown(event: KeyboardEvent) {
@@ -45,6 +50,16 @@ function onKeydown(event: KeyboardEvent) {
           </div>
           <div class="dialog-card__body">
             <p>{{ message }}</p>
+            <label v-if="requiredText != null" class="dialog-card__field">
+              <span>{{ inputLabel ?? "输入确认文本" }}</span>
+              <input
+                :value="modelValue ?? ''"
+                type="text"
+                :placeholder="inputPlaceholder ?? requiredText"
+                :disabled="busy"
+                @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+              />
+            </label>
           </div>
           <div class="dialog-card__actions">
             <button type="button" class="ghost" :disabled="busy" @click="emit('cancel')">
@@ -53,7 +68,7 @@ function onKeydown(event: KeyboardEvent) {
             <button
               type="button"
               :class="danger ? 'ghost danger' : 'primary'"
-              :disabled="busy"
+              :disabled="busy || (requiredText != null && (modelValue ?? '') !== requiredText)"
               @click="emit('confirm')"
             >
               {{ busy ? (busyText ?? "处理中...") : (confirmText ?? "确认") }}
@@ -137,6 +152,18 @@ function onKeydown(event: KeyboardEvent) {
   color: var(--text);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.dialog-card__field {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.dialog-card__field input {
+  width: 100%;
 }
 
 .dialog-card__actions {

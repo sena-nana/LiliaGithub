@@ -23,9 +23,11 @@ import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
+  deleteGitHubBranch,
   getGitHubRepoManagement,
   listGitHubRepoReadmes,
   listRepoReadmes,
+  listGitHubBranches,
   listGitHubIssues,
   listGitHubWorkflowRuns,
   updateGitHubIssue,
@@ -58,7 +60,7 @@ type GitTab = "conflicts" | "changes" | "history" | "branches";
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
 type ProjectContentMode = "launch" | ProjectTab | GitTab;
 type ProjectSectionConfig = {
-  key: Exclude<ProjectTab, "readme">;
+  key: Exclude<ProjectTab, "readme"> | "branches";
   label: string;
 };
 type HistoryCommit = CommitSummary;
@@ -166,6 +168,7 @@ const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const issues = ref<GitHubIssue[]>([]);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
+const remoteBranches = ref<BranchSummary[]>([]);
 const issueState = ref<"open" | "closed" | "all">("open");
 const issueTitle = ref("");
 const issueBody = ref("");
@@ -179,9 +182,13 @@ const editingIssueAssignees = ref("");
 const updatingIssue = ref(false);
 const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
+const remoteBranchesLoading = ref(false);
+const remoteBranchesError = ref<string | null>(null);
+const remoteBranchActionRunning = ref(false);
 let githubLoadRunId = 0;
 let issueLoadRunId = 0;
 let actionsLoadRunId = 0;
+let branchLoadRunId = 0;
 
 const settingsForm = reactive({
   description: "",
@@ -257,10 +264,16 @@ const projectSections: readonly ProjectSectionConfig[] = [
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
+const remoteProjectSections: readonly ProjectSectionConfig[] = [
+  ...projectSections,
+  { key: "branches", label: "分支" },
+];
+const visibleProjectSections = computed(() => props.remoteOnly ? remoteProjectSections : projectSections);
 const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
 const activeProjectSection = computed<ProjectContentMode>(() =>
   canUseLaunchWorkflow.value && props.launchTerminalVisible ? "launch" : activeSection.value,
 );
+const panelBranches = computed(() => props.remoteOnly ? remoteBranches.value : props.branches);
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
   if (section === "readme") {
@@ -305,6 +318,7 @@ onMounted(() => {
   void loadReadme();
   void loadGitHub();
   void loadActions();
+  void loadRemoteBranchesIfNeeded();
 });
 
 watch(() => props.repoId, () => {
@@ -314,15 +328,21 @@ watch(() => props.repoId, () => {
   closeDeleteDialog();
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
+  remoteBranches.value = [];
+  remoteBranchesError.value = null;
   void applyProjectRouteState();
   void loadReadme();
+  void loadRemoteBranchesIfNeeded();
 });
 
 watch(() => props.repoFullName, () => {
   remoteDeleted.value = false;
+  remoteBranches.value = [];
+  remoteBranchesError.value = null;
   closeDeleteDialog();
   void loadGitHub();
   void loadActions();
+  void loadRemoteBranchesIfNeeded();
 });
 
 watch([() => props.launchLogs.length, () => props.launchRunning], () => {
@@ -343,6 +363,10 @@ watch(
 
 watch(() => props.activeGitTab, (tab) => {
   if (!props.remoteOnly && isGitSection(activeSection.value)) activeSection.value = tab;
+});
+
+watch(activeSection, () => {
+  void loadRemoteBranchesIfNeeded();
 });
 
 function normalizeProjectTab(value: unknown): ProjectTab | null {
@@ -560,6 +584,62 @@ async function loadActions() {
     actionsError.value = String(err);
   } finally {
     actionsLoading.value = false;
+  }
+}
+
+async function loadRemoteBranchesIfNeeded() {
+  if (!props.remoteOnly || activeSection.value !== "branches") return;
+  await loadRemoteBranches();
+}
+
+async function loadRemoteBranches() {
+  const runId = ++branchLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) {
+    remoteBranches.value = [];
+    remoteBranchesError.value = null;
+    return;
+  }
+  remoteBranchesLoading.value = true;
+  remoteBranchesError.value = null;
+  try {
+    const nextBranches = await listGitHubBranches(repoFullName);
+    if (runId !== branchLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    remoteBranches.value = nextBranches;
+  } catch (err) {
+    remoteBranchesError.value = String(err);
+  } finally {
+    remoteBranchesLoading.value = false;
+  }
+}
+
+async function setDefaultRemoteBranch(branchName: string) {
+  if (!props.remoteOnly || !props.repoFullName || remoteBranchActionRunning.value) return;
+  remoteBranchActionRunning.value = true;
+  remoteBranchesError.value = null;
+  try {
+    const nextSettings = await updateGitHubRepoSettings(props.repoFullName, { defaultBranch: branchName });
+    settings.value = nextSettings;
+    applySettingsForm(nextSettings);
+    await loadRemoteBranches();
+  } catch (err) {
+    remoteBranchesError.value = String(err);
+  } finally {
+    remoteBranchActionRunning.value = false;
+  }
+}
+
+async function deleteRemoteBranch(branchName: string) {
+  if (!props.remoteOnly || !props.repoFullName || remoteBranchActionRunning.value) return;
+  remoteBranchActionRunning.value = true;
+  remoteBranchesError.value = null;
+  try {
+    await deleteGitHubBranch(props.repoFullName, branchName);
+    await loadRemoteBranches();
+  } catch (err) {
+    remoteBranchesError.value = String(err);
+  } finally {
+    remoteBranchActionRunning.value = false;
   }
 }
 
@@ -801,6 +881,14 @@ function activateProjectTab(tab: ProjectTab) {
   }
 }
 
+function activateProjectSection(tab: ProjectSectionConfig["key"]) {
+  if (tab === "branches") {
+    activateGitTab(tab);
+    return;
+  }
+  activateProjectTab(tab);
+}
+
 function activateGitTab(tab: GitTab) {
   activeSection.value = tab;
   emit("updateActiveGitTab", tab);
@@ -961,9 +1049,16 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         />
 
         <RepoBranchesPanel
-          v-else-if="!remoteOnly && activeProjectSection === 'branches'"
-          :branches="branches"
+          v-else-if="activeProjectSection === 'branches'"
+          :branches="panelBranches"
+          :remote-mode="remoteOnly"
+          :loading="remoteBranchesLoading"
+          :error="remoteBranchesError"
+          :action-running="actionRunning || remoteBranchActionRunning"
+          :default-branch="settings?.defaultBranch"
           @checkout="emit('checkout', $event)"
+          @set-default="setDefaultRemoteBranch"
+          @delete-remote-branch="deleteRemoteBranch"
         />
 
         <section v-else-if="activeProjectSection === 'readme'" class="project-readme-card">
@@ -1266,14 +1361,14 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
         <div class="project-sidebar__card" role="tablist" aria-label="项目信息视图">
           <button
-            v-for="tab in projectSections"
+            v-for="tab in visibleProjectSections"
             :key="tab.key"
             type="button"
             class="project-sidebar__item"
             :class="{ 'is-active': isProjectSectionActive(tab.key) }"
             role="tab"
             :aria-selected="isProjectSectionActive(tab.key)"
-            @click="activateProjectTab(tab.key)"
+            @click="activateProjectSection(tab.key)"
           >
             <strong>{{ tab.label }}</strong>
           </button>

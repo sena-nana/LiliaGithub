@@ -4,6 +4,7 @@ import type {
   BulkOperation,
   BulkSyncPreview,
   BulkSyncResult,
+  BranchSummary,
   CommitDetail,
   GitHubBindingStatus,
   GitHubContributionResult,
@@ -273,6 +274,16 @@ export function updateGitHubRepoSettings(
 export async function deleteGitHubRepo(repoFullName: string): Promise<void> {
   await call("github_delete_repo", { repoFullName }, () => fallback.deleteGitHubRepo(repoFullName));
   clearGitHubRepoCache();
+}
+
+export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
+  return call("github_list_branches", { repoFullName }, () => fallback.listGitHubBranches(repoFullName));
+}
+
+export function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
+  return call("github_delete_branch", { repoFullName, branchName }, () =>
+    fallback.deleteGitHubBranch(repoFullName, branchName)
+  );
 }
 
 export function listGitHubIssues(
