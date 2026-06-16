@@ -946,6 +946,32 @@ describe("基础路由", () => {
     expect((await service.listGitHubRepos()).items.some((repo) => repo.fullName === "sena-nana/LiliaGithub")).toBe(false);
   });
 
+  it("删除 GitHub 远端后返回首页不会恢复旧的仓库状态快照", async () => {
+    const { router } = await renderAt("/");
+
+    const repoStatusList = await screen.findByLabelText("仓库状态列表");
+    expect(await within(repoStatusList).findByText("sena-nana/LiliaGithub")).toBeInTheDocument();
+
+    await router.push("/repos/LiliaGithub");
+    await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    const deleteRepoButton = await screen.findByRole("button", { name: "删除仓库" });
+    await waitFor(() => expect(deleteRepoButton).toBeEnabled(), { timeout: 3000 });
+    await fireEvent.click(deleteRepoButton);
+
+    await fireEvent.update(screen.getByPlaceholderText("sena-nana/LiliaGithub"), "sena-nana/LiliaGithub");
+    await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
+    });
+    await router.push("/");
+
+    const refreshedRepoStatusList = await screen.findByLabelText("仓库状态列表");
+    await waitFor(() => {
+      expect(within(refreshedRepoStatusList).queryByText("sena-nana/LiliaGithub")).toBeNull();
+    });
+  });
+
   it("仓库设置删除本地仓库需要输入仓库 ID 确认并返回首页", async () => {
     const service = await import("../src/services/workspace");
     const { router } = await renderAt("/repos/LiliaGithub");
