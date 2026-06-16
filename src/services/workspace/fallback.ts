@@ -2,6 +2,7 @@ import type {
   BulkOperation,
   BulkSyncPreview,
   BulkSyncResult,
+  BranchSummary,
   CommitDetail,
   GitHubBindingStatus,
   GitHubContributionMeta,
@@ -263,6 +264,42 @@ function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]>
   };
 }
 
+function createFallbackGitHubBranches(): Record<string, BranchSummary[]> {
+  return {
+    "sena-nana/LiliaGithub": [
+      {
+        name: "main",
+        remote: true,
+        current: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        protected: true,
+      },
+      {
+        name: "codex/project-view",
+        remote: true,
+        current: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        protected: false,
+      },
+    ],
+    "sena-nana/Lilia": [
+      {
+        name: "main",
+        remote: true,
+        current: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        protected: true,
+      },
+    ],
+  };
+}
+
 function createFallbackRepoReadmes(): Record<string, RepoReadme[]> {
   return {
     LiliaGithub: [
@@ -318,6 +355,7 @@ let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+let fallbackGitHubBranches = createFallbackGitHubBranches();
 let fallbackRepoReadmes = createFallbackRepoReadmes();
 let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
 
@@ -383,6 +421,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+  fallbackGitHubBranches = createFallbackGitHubBranches();
   fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
   fallbackGitHubIssueListCalls = [];
@@ -1039,6 +1078,17 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       htmlUrl: repo.htmlUrl,
     };
     fallbackGitHubIssues[fullName] = [];
+    fallbackGitHubBranches[fullName] = repo.defaultBranch
+      ? [{
+        name: repo.defaultBranch,
+        remote: true,
+        current: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        protected: false,
+      }]
+      : [];
     return { ...repo };
   });
 }
@@ -1079,7 +1129,38 @@ export function deleteGitHubRepo(repoFullName: string): Promise<void> {
     delete fallbackGitHubRepoManagement[normalized];
     delete fallbackGitHubIssues[normalized];
     delete fallbackGitHubWorkflowRuns[normalized];
+    delete fallbackGitHubBranches[normalized];
     delete fallbackGitHubRepoReadmes[normalized];
+  });
+}
+
+export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
+  return call("github_list_branches", { repoFullName }, () => {
+    const management = fallbackRepoManagement(repoFullName);
+    const branches = fallbackGitHubBranches[repoFullName] ?? [{
+      name: management.defaultBranch || "main",
+      remote: true,
+      current: false,
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+      protected: false,
+    }];
+    return branches.map((branch) => ({ ...branch }));
+  });
+}
+
+export function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
+  return call("github_delete_branch", { repoFullName, branchName }, () => {
+    const branch = branchName.trim();
+    if (!branch) throw new Error("分支名不能为空");
+    const management = fallbackRepoManagement(repoFullName);
+    if (branch === management.defaultBranch) throw new Error("不能删除默认分支");
+    const branches = fallbackGitHubBranches[repoFullName] ?? [];
+    const target = branches.find((item) => item.name === branch);
+    if (!target) throw new Error(`未找到 GitHub 分支：${branch}`);
+    if (target.protected) throw new Error("受保护分支不能删除");
+    fallbackGitHubBranches[repoFullName] = branches.filter((item) => item.name !== branch);
   });
 }
 
@@ -1448,6 +1529,7 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           upstream: "origin/main",
           ahead: summary.ahead,
           behind: summary.behind,
+          protected: false,
         },
         {
           name: "origin/main",
@@ -1456,6 +1538,7 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           upstream: null,
           ahead: 0,
           behind: 0,
+          protected: false,
         },
       ],
       conflicts,

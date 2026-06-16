@@ -2,8 +2,9 @@ import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
-import { updateGitHubRepoSettings } from "../src/services/workspace/client";
+import { deleteGitHubBranch, listGitHubBranches, updateGitHubRepoSettings } from "../src/services/workspace/client";
 import type {
+  BranchSummary,
   GitHubRepoManagement,
   ProjectLaunchCandidate,
   ProjectLaunchConfig,
@@ -30,10 +31,33 @@ const githubSettings: GitHubRepoManagement = {
   htmlUrl: "https://github.com/sena-nana/remote-repo",
 };
 
+const remoteBranches: BranchSummary[] = [
+  {
+    name: "main",
+    remote: true,
+    current: false,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    protected: true,
+  },
+  {
+    name: "release",
+    remote: true,
+    current: false,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    protected: false,
+  },
+];
+
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubIssue: vi.fn(),
+  deleteGitHubBranch: vi.fn(async () => undefined),
   deleteGitHubRepo: vi.fn(),
   getGitHubRepoManagement: vi.fn(async () => githubSettings),
+  listGitHubBranches: vi.fn(async () => remoteBranches),
   listGitHubIssues: vi.fn(async () => []),
   listGitHubRepoReadmes: vi.fn(async () => []),
   listGitHubWorkflowRuns: vi.fn(async () => []),
@@ -83,6 +107,40 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
       actionRunning: false,
       launchRunning: false,
       remoteOnly: false,
+      activeGitTab: "changes",
+      gitTabs: [
+        { key: "conflicts", label: "冲突" },
+        { key: "changes", label: "变更" },
+        { key: "history", label: "历史" },
+        { key: "branches", label: "分支" },
+      ],
+      changes: [],
+      selectedFiles: new Set<string>(),
+      selectedSummaryText: "",
+      selectedFilePreview: [],
+      selectedFileCount: 0,
+      previewChange: null,
+      commitMessage: "",
+      pushAfter: false,
+      hasConflicts: false,
+      canCommit: false,
+      statusCommits: [],
+      branches: [],
+      conflictOperationText: "",
+      conflictSummaryText: "",
+      conflictContinueText: "",
+      conflictAbortText: "",
+      conflictFiles: [],
+      conflictOperationActive: false,
+      conflicts: { operation: "none", files: [], allResolved: false },
+      focusedConflict: null,
+      conflictChoices: {},
+      conflictSelectedCount: 0,
+      conflictAcceptConfirm: null,
+      canContinueConflictOperation: false,
+      canResolveSelectedConflict: false,
+      supportedConflictOperation: true,
+      commitMetaTitle: () => "",
       projectTab: "readme",
       projectIssueNumber: null,
       projectRunId: null,
@@ -133,11 +191,96 @@ describe("RepoProjectPanel", () => {
     expect(view.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
+    expect(view.getByRole("tab", { name: "分支" })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(view.getByText("删除 GitHub 远端仓库")).toBeInTheDocument();
     });
     expect(view.queryByText("删除本地仓库")).toBeNull();
+  });
+
+  it("本地仓库分支栏展示本地分支并保留 checkout", async () => {
+    const view = await renderProjectPanel({
+      branches: [
+        {
+          name: "main",
+          remote: false,
+          current: true,
+          upstream: "origin/main",
+          ahead: 1,
+          behind: 0,
+          protected: false,
+        },
+        {
+          name: "feature/local",
+          remote: false,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: false,
+        },
+      ],
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "分支" }));
+
+    expect(view.getByText("feature/local")).toBeInTheDocument();
+    await fireEvent.click(view.getAllByRole("button", { name: /Checkout/ })[1]);
+    expect(view.emitted("checkout")).toEqual([["feature/local"]]);
+  });
+
+  it("远程仓库分支栏加载 GitHub 分支并可设默认分支", async () => {
+    const view = await renderProjectPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoFullName: "sena-nana/remote-repo",
+      repoPath: "",
+      remoteOnly: true,
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "分支" }));
+
+    await waitFor(() => {
+      expect(listGitHubBranches).toHaveBeenCalledWith("sena-nana/remote-repo");
+    });
+    expect(await view.findByText("release")).toBeInTheDocument();
+
+    await fireEvent.click(view.getAllByRole("button", { name: "设为默认" })[1]);
+
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ defaultBranch: "release" }),
+      );
+    });
+  });
+
+  it("远程仓库删除分支需要输入完整分支名", async () => {
+    const view = await renderProjectPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoFullName: "sena-nana/remote-repo",
+      repoPath: "",
+      remoteOnly: true,
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "分支" }));
+    expect(await view.findByText("release")).toBeInTheDocument();
+
+    const deleteButtons = view.getAllByRole("button", { name: "删除" });
+    expect(deleteButtons[0]).toBeDisabled();
+    await fireEvent.click(deleteButtons[1]);
+
+    const dialog = await view.findByRole("dialog", { name: "删除远程分支" });
+    const confirm = within(dialog).getByRole("button", { name: "确认删除" });
+    expect(confirm).toBeDisabled();
+
+    await fireEvent.update(within(dialog).getByPlaceholderText("release"), "release");
+    expect(confirm).not.toBeDisabled();
+    await fireEvent.click(confirm);
+
+    await waitFor(() => {
+      expect(deleteGitHubBranch).toHaveBeenCalledWith("sena-nana/remote-repo", "release");
+    });
   });
 
   it("仓库设置分区展示并统一保存功能开关", async () => {

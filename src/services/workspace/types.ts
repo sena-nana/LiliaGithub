@@ -357,6 +357,7 @@ export interface BranchSummary {
   upstream: string | null;
   ahead: number;
   behind: number;
+  protected: boolean;
 }
 
 export interface RepoDetail {

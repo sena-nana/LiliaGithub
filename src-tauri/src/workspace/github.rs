@@ -161,6 +161,13 @@ pub(super) struct GitHubWorkflowRunResponse {
     pub(super) updated_at: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubBranchResponse {
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) protected: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NormalizedGitHubRepo {
     pub(super) owner: String,
@@ -567,6 +574,18 @@ pub(super) fn github_workflow_run_from_response(
         html_url: run.html_url,
         created_at: run.created_at,
         updated_at: run.updated_at,
+    }
+}
+
+pub(super) fn github_branch_from_response(branch: GitHubBranchResponse) -> BranchSummary {
+    BranchSummary {
+        name: branch.name,
+        remote: true,
+        current: false,
+        upstream: None,
+        ahead: 0,
+        behind: 0,
+        protected: branch.protected,
     }
 }
 
@@ -996,6 +1015,67 @@ pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Resul
         )?;
         if !response.status().is_success() {
             return Err(github_http_error("删除 GitHub 仓库失败", response));
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_branches(
+    app: AppHandle,
+    repo_full_name: String,
+) -> Result<Vec<BranchSummary>, String> {
+    run_blocking("读取 GitHub 分支", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let repo_url = github_repo_api_url(&repo_full_name)?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 分支失败",
+            github_headers(
+                client
+                    .get(format!("{repo_url}/branches"))
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let branches = github_json::<Vec<GitHubBranchResponse>>("读取 GitHub 分支失败", response)?;
+        Ok(branches
+            .into_iter()
+            .map(github_branch_from_response)
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_delete_branch(
+    app: AppHandle,
+    repo_full_name: String,
+    branch_name: String,
+) -> Result<(), String> {
+    run_blocking("删除 GitHub 分支", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let branch = branch_name.trim();
+        if branch.is_empty() {
+            return Err("分支名不能为空".to_string());
+        }
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "删除 GitHub 分支失败",
+            github_headers(
+                client.delete(format!(
+                    "{}/git/refs/heads/{}",
+                    github_repo_api_url(&repo_full_name)?,
+                    url_encode_path_segment(branch)
+                )),
+                Some(&token),
+            ),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error("删除 GitHub 分支失败", response));
         }
         Ok(())
     })

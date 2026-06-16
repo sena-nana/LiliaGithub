@@ -689,10 +689,16 @@ fn repo_history_reads_all_branch_topology() {
     fs::write(path.join("main.txt"), "main").unwrap();
     run_git(&path, &["add", "main.txt"]);
     run_git(&path, &["commit", "-m", "main"]);
-    run_git(&path, &["merge", "--no-ff", "feature", "-m", "merge feature"]);
+    run_git(
+        &path,
+        &["merge", "--no-ff", "feature", "-m", "merge feature"],
+    );
 
     let history = repo_history(&path);
-    let subjects: Vec<_> = history.iter().map(|commit| commit.subject.as_str()).collect();
+    let subjects: Vec<_> = history
+        .iter()
+        .map(|commit| commit.subject.as_str())
+        .collect();
     let merge = history
         .iter()
         .find(|commit| commit.subject == "merge feature")
@@ -702,6 +708,42 @@ fn repo_history_reads_all_branch_topology() {
     assert!(subjects.contains(&"feature"));
     assert_eq!(merge.parents.len(), 2);
     assert!(merge.refs.iter().any(|item| item.contains("main")));
+}
+
+#[test]
+fn repo_branches_marks_local_branches_unprotected() {
+    let path = temp_dir("branches-unprotected");
+    init_git_repo(&path);
+
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+
+    let branches = repo_branches(&path);
+
+    assert!(!branches.is_empty());
+    assert!(branches
+        .iter()
+        .all(|branch| !branch.remote && !branch.protected));
+}
+
+#[test]
+fn repo_branches_hides_remote_namespace_refs() {
+    let path = temp_dir("branches-hide-origin");
+    init_git_repo(&path);
+
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["update-ref", "refs/remotes/origin", "HEAD"]);
+
+    let branches = repo_branches(&path);
+    let names = branches
+        .iter()
+        .map(|branch| branch.name.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(!names.contains(&"origin"));
 }
 
 #[test]
@@ -1238,6 +1280,29 @@ fn maps_github_workflow_runs_with_defaults() {
     assert_eq!(mapped.conclusion.as_deref(), Some("success"));
     assert_eq!(mapped.branch, "main");
     assert_eq!(mapped.event, "push");
+}
+
+#[test]
+fn maps_github_branches_with_default_and_protection() {
+    let main = github_branch_from_response(GitHubBranchResponse {
+        name: "main".to_string(),
+        protected: true,
+    });
+    let feature = github_branch_from_response(GitHubBranchResponse {
+        name: "feature".to_string(),
+        protected: false,
+    });
+
+    assert_eq!(main.name, "main");
+    assert!(main.remote);
+    assert!(!main.current);
+    assert!(main.protected);
+    assert_eq!(main.ahead, 0);
+    assert_eq!(main.behind, 0);
+    assert_eq!(feature.name, "feature");
+    assert!(feature.remote);
+    assert!(!feature.current);
+    assert!(!feature.protected);
 }
 
 #[test]

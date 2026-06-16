@@ -2059,7 +2059,7 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
         &[
             "branch",
             "--all",
-            "--format=%(HEAD)%x1f%(refname:short)%x1f%(upstream:short)%x1f%(upstream:track)",
+            "--format=%(HEAD)\x1f%(refname:short)\x1f%(upstream:short)\x1f%(upstream:track)",
         ],
     )
     .unwrap_or_default();
@@ -2067,26 +2067,31 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
     output
         .lines()
         .filter_map(|line| {
-            let mut parts = line.split('\x1f');
-            let current = parts.next().unwrap_or("") == "*";
-            let raw_name = parts.next().unwrap_or("").trim();
-            if raw_name.is_empty() || raw_name == "remotes/origin/HEAD" {
-                return None;
-            }
+            let parts = if line.contains('\x1f') {
+                line.split('\x1f').collect::<Vec<_>>()
+            } else {
+                line.split("%x1f").collect::<Vec<_>>()
+            };
+            let current = parts.first().copied().unwrap_or("").trim() == "*";
+            let raw_name = parts.get(1).copied().unwrap_or("").trim();
             let remote = raw_name.starts_with("remotes/");
             let name = raw_name
                 .strip_prefix("remotes/")
                 .unwrap_or(raw_name)
                 .to_string();
+            if raw_name.is_empty() || name == "origin" || name.ends_with("/HEAD") {
+                return None;
+            }
             if !seen.insert(format!("{remote}:{name}")) {
                 return None;
             }
             let upstream = parts
-                .next()
+                .get(2)
+                .copied()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
-            let track = parts.next().unwrap_or("");
+            let track = parts.get(3).copied().unwrap_or("");
             let (ahead, behind) = parse_track(track);
             Some(BranchSummary {
                 name,
@@ -2095,6 +2100,7 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
                 upstream,
                 ahead,
                 behind,
+                protected: false,
             })
         })
         .collect()
