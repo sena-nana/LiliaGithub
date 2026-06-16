@@ -89,4 +89,18 @@ describe("RepoHistoryPanel", () => {
     expect(view.container.querySelectorAll(".history-graph__node")).toHaveLength(4);
     expectValidGraphGeometry(view.container);
   });
+
+  it("marks the selected commit without rendering detail content", async () => {
+    const commits = [commit("1234567890abcdef")];
+    const view = render(RepoHistoryPanel, {
+      props: {
+        commits,
+        commitMetaTitle: (item: CommitSummary) => item.hash,
+        selectedCommitHash: commits[0].hash,
+      },
+    });
+
+    expect(view.getByRole("button", { name: /1234567890abcdef/ })).toHaveClass("is-active");
+    expect(view.queryByLabelText("提交详情卡片")).toBeNull();
+  });
 });

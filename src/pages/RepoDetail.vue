@@ -23,6 +23,7 @@ const {
   conflictAcceptConfirm,
   launchTerminalVisible,
   conflictChoices,
+  selectedCommitHash,
   repoId,
   remoteOnly,
   detail,
@@ -85,6 +86,7 @@ const {
   selectLaunchCandidate,
   checkout,
   openCommit,
+  closeCommit,
   openFolder,
   openConflictFolder,
   commitMetaTitle,
@@ -188,6 +190,7 @@ const {
       <main class="workbench-main workbench-main--project">
         <RepoProjectPanel
           :repo-id="repoId"
+          :repo-title="repoTitle"
           :repo-full-name="summary?.githubFullName"
           :repo-path="summary?.path"
           :active-git-tab="activeTab"
@@ -203,6 +206,7 @@ const {
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
           :status-commits="statusCommits"
+          :selected-commit-hash="selectedCommitHash"
           :branches="detail?.branches ?? []"
           :conflict-operation-text="conflictOperationText"
           :conflict-summary-text="conflictSummaryText"
@@ -247,6 +251,7 @@ const {
           @commit="commitSelected"
           @checkout="checkout"
           @open-commit="openCommit"
+          @close-commit="closeCommit"
           @continue-conflict="continueConflict"
           @abort-conflict="abortConflict"
           @focus-conflict="focusConflict"
@@ -443,8 +448,10 @@ const {
 }
 
 .repo-panel--history {
+  align-self: stretch;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   max-height: 100%;
   overflow: auto;
 }
@@ -805,7 +812,8 @@ const {
 }
 
 .history-row:hover,
-.history-row:focus-visible {
+.history-row:focus-visible,
+.history-row.is-active {
   background: var(--bg-hover);
 }
 

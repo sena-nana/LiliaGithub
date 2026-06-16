@@ -56,6 +56,7 @@ vi.mock("../src/services/workspace/client", () => ({
   createGitHubIssue: vi.fn(),
   deleteGitHubBranch: vi.fn(async () => undefined),
   deleteGitHubRepo: vi.fn(),
+  getRepoCommitDetail: vi.fn(),
   getGitHubRepoManagement: vi.fn(async () => githubSettings),
   listGitHubBranches: vi.fn(async () => remoteBranches),
   listGitHubIssues: vi.fn(async () => []),

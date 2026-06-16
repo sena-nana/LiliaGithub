@@ -7,6 +7,7 @@ import { formatCompactRepoTime, formatRepoTime } from "../../utils/repoDisplay";
 const props = defineProps<{
   commits: readonly CommitSummary[];
   commitMetaTitle: (commit: CommitSummary) => string;
+  selectedCommitHash?: string | null;
 }>();
 
 defineEmits<{
@@ -77,6 +78,7 @@ function lineKey(line: CommitGraphLine, targetLane: number) {
         :key="row.commit.hash"
         type="button"
         class="history-row"
+        :class="{ 'is-active': selectedCommitHash === row.commit.hash }"
         :title="commitMetaTitle(row.commit)"
         @click="$emit('openCommit', row.commit)"
       >

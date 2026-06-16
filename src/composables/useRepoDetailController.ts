@@ -1,5 +1,5 @@
 ﻿import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
 import type {
@@ -28,7 +28,6 @@ type HistoryCommit = {
 
 export function useRepoDetailController() {
   const route = useRoute();
-  const router = useRouter();
   const workspace = useWorkspace();
   const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
   const activeProjectTab = computed<RepoProjectTab>(
@@ -46,6 +45,7 @@ export function useRepoDetailController() {
   const launchTerminalVisible = ref(false);
   const focusedChangePath = ref<string | null>(null);
   const focusedConflictPath = ref<string | null>(null);
+  const selectedCommitHash = ref<string | null>(null);
   const conflictChoices = ref<Record<string, "ours" | "theirs">>({});
   let launchPollTimer: number | null = null;
 
@@ -222,6 +222,7 @@ export function useRepoDetailController() {
     launchTerminalVisible.value = false;
     focusedChangePath.value = null;
     focusedConflictPath.value = null;
+    selectedCommitHash.value = null;
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
@@ -238,6 +239,19 @@ export function useRepoDetailController() {
 
   watch(changes, () => {
     syncFocusedChange();
+  });
+
+  watch(activeTab, (tab) => {
+    if (tab !== "history") selectedCommitHash.value = null;
+  });
+
+  watch(statusCommits, () => {
+    if (
+      selectedCommitHash.value &&
+      !statusCommits.value.some((commit) => commit.hash === selectedCommitHash.value)
+    ) {
+      selectedCommitHash.value = null;
+    }
   });
 
   function normalizeTab(value: unknown): RepoTab | null {
@@ -544,7 +558,12 @@ export function useRepoDetailController() {
   }
 
   function openCommit(commit: HistoryCommit) {
-    void router.push(`/repos/${repoId.value}/commits/${commit.hash}`);
+    activeTab.value = "history";
+    selectedCommitHash.value = commit.hash;
+  }
+
+  function closeCommit() {
+    selectedCommitHash.value = null;
   }
 
   function openFolder() {
@@ -579,6 +598,7 @@ export function useRepoDetailController() {
       conflictAcceptConfirm,
       launchTerminalVisible,
       conflictChoices,
+      selectedCommitHash,
       repoId,
       remoteOnly,
       detail,
@@ -646,6 +666,7 @@ export function useRepoDetailController() {
       selectLaunchCandidate,
       checkout,
       openCommit,
+      closeCommit,
       openFolder,
       openConflictFolder,
       commitMetaTitle,
