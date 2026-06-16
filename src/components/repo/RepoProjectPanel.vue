@@ -269,6 +269,9 @@ const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
 const activeProjectSection = computed<ProjectContentMode>(() =>
   canUseLaunchWorkflow.value && props.launchTerminalVisible ? "launch" : activeSection.value,
 );
+const showCommitDetail = computed(() =>
+  !props.remoteOnly && activeProjectSection.value === "history" && Boolean(props.selectedCommitHash),
+);
 const panelBranches = computed(() => props.remoteOnly ? remoteBranches.value : props.branches);
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
@@ -924,7 +927,10 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
 <template>
   <section class="project-panel">
-    <div class="project-layout">
+    <div
+      class="project-layout"
+      :class="{ 'project-layout--with-commit-detail': showCommitDetail }"
+    >
       <main ref="projectMainRef" class="project-main">
         <section v-if="canUseLaunchWorkflow && activeProjectSection === 'launch'" class="project-terminal-card">
           <div class="project-section__head">
@@ -1331,7 +1337,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
       </main>
 
       <CommitDetailCard
-        v-if="!remoteOnly && activeProjectSection === 'history' && selectedCommitHash"
+        v-if="showCommitDetail"
         class="project-commit-detail-card"
         :repo-id="repoId"
         :repo-title="repoTitle || repoId"
@@ -1447,7 +1453,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 .project-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   gap: 14px;
   align-items: stretch;
   min-width: 0;
@@ -1455,6 +1461,10 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   height: 100%;
   max-height: 100%;
   overflow: auto;
+}
+
+.project-layout--with-commit-detail {
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .project-main {
@@ -1662,12 +1672,16 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 .project-sidebar {
   display: grid;
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1;
   gap: 14px;
   min-width: 0;
   min-height: 0;
   align-content: start;
   align-self: start;
+}
+
+.project-layout--with-commit-detail .project-sidebar {
+  grid-row: 1 / span 2;
 }
 
 .project-sidebar__card {
