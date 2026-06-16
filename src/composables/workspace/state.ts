@@ -216,6 +216,10 @@ export function repoById(repoId: string) {
   return state.repos.find((repo) => repo.id === repoId) ?? null;
 }
 
+export function repoUsesSystemGit(repoId: string) {
+  return state.settings?.systemGitRepoIds.includes(repoId) ?? false;
+}
+
 export function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPreview) {
   if (!preview || !["push", "sync"].includes(preview.operation)) return new Set<string>();
   const ids = new Set<string>();

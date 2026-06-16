@@ -8,6 +8,7 @@ import {
   isAuthorized,
   isReady,
   repoById,
+  repoUsesSystemGit,
   state,
   workspaceRoot,
 } from "./workspace/state";
@@ -39,6 +40,7 @@ import {
   pull,
   push,
   pushWithSystemGit,
+  useDefaultTokenAuthForRepo,
   refreshRepoContributions,
   refreshRepoLanguageStats,
   refreshLanguageStatsForRepos,
@@ -111,6 +113,7 @@ export function useWorkspace() {
     mergePull,
     push,
     pushWithSystemGit,
+    useDefaultTokenAuthForRepo,
     checkout,
     acceptConflictFile,
     resolveConflictFile,
@@ -122,6 +125,7 @@ export function useWorkspace() {
     syncAll,
     closeBulkPreview,
     repoById,
+    repoUsesSystemGit,
     openPath,
     openUrl,
   };

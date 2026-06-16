@@ -33,6 +33,18 @@ pub(super) fn add_managed_repo_id(settings: &mut WorkspaceSettings, repo_id: Str
     }
 }
 
+pub(super) fn remove_system_git_repo_id(
+    settings: &mut WorkspaceSettings,
+    repo_id: &str,
+) -> Result<(), String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    settings.system_git_repo_ids.retain(|id| id != normalized);
+    Ok(())
+}
+
 pub(super) fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
     let settings = load_settings(app);
     let Some(root) = settings.workspace_root else {
@@ -172,6 +184,17 @@ pub fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<Workspac
     let normalized = repo_id.trim();
     let mut settings = load_settings(&app);
     settings.hidden_repo_ids.retain(|id| id != normalized);
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn repo_use_default_token_auth(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<WorkspaceSettings, String> {
+    let mut settings = load_settings(&app);
+    remove_system_git_repo_id(&mut settings, &repo_id)?;
     save_settings(&app, &settings)?;
     Ok(settings)
 }

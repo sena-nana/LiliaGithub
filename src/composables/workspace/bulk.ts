@@ -22,6 +22,9 @@ export async function executeBulk(repoIds = bulkExecutionRepoIds()) {
   try {
     const service = await loadWorkspaceService();
     applyBulkResults(await service.bulkSyncExecute(state.bulkPreview.operation, repoIds));
+    if (state.bulkPreview.operation === "push" || state.bulkPreview.operation === "sync") {
+      state.settings = await service.getWorkspaceSettings();
+    }
   } finally {
     state.bulkRunning = false;
   }
@@ -34,6 +37,7 @@ export async function syncAll() {
     const service = await loadWorkspaceService();
     applyBulkPreview(await service.bulkSyncPreview("sync", state.repos));
     applyBulkResults(await service.bulkSyncExecute("sync", bulkExecutionRepoIds() ?? []));
+    state.settings = await service.getWorkspaceSettings();
   } finally {
     state.bulkRunning = false;
   }

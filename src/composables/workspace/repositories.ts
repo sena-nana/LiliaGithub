@@ -490,6 +490,12 @@ export async function push(repoId: string) {
 export async function pushWithSystemGit(repoId: string) {
   const service = await loadWorkspaceService();
   await runPushMutation(repoId, () => service.pushRepoWithSystemGit(repoId));
+  state.settings = await service.getWorkspaceSettings();
+}
+
+export async function useDefaultTokenAuthForRepo(repoId: string) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.useDefaultTokenAuthForRepo(repoId);
 }
 
 export async function checkout(repoId: string, branch: string) {
