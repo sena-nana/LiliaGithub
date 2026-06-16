@@ -155,7 +155,7 @@ function stopResize() {
 function startHeightResize(event: PointerEvent) {
   if (!props.embedded) return;
   startResize(event, (start, current) => {
-    panelHeight.value = clamp(start.height + current.clientY - start.y, 300, 760);
+    panelHeight.value = clamp(start.height + start.y - current.clientY, 300, 760);
   });
 }
 
@@ -204,6 +204,14 @@ function clamp(value: number, min: number, max: number) {
     :style="cardStyle"
     aria-label="提交详情卡片"
   >
+    <div
+      v-if="embedded"
+      class="commit-detail-card__height-resizer"
+      role="separator"
+      aria-orientation="horizontal"
+      @pointerdown="startHeightResize"
+    />
+
     <p v-if="error" class="error-line commit-detail-card__state">{{ error }}</p>
     <p v-else-if="loading" class="muted commit-detail-card__state">正在读取提交详情...</p>
 
@@ -300,7 +308,13 @@ function clamp(value: number, min: number, max: number) {
         </section>
       </aside>
 
-      <div v-if="embedded" class="commit-detail-card__splitter" role="separator" aria-orientation="vertical" @pointerdown="startSplitResize" />
+      <div
+        v-if="embedded"
+        class="commit-detail-card__splitter"
+        role="separator"
+        aria-orientation="vertical"
+        @pointerdown="startSplitResize"
+      />
 
       <section class="commit-diff-panel" aria-label="改动文件 diff">
         <template v-if="activeFile">
@@ -338,14 +352,6 @@ function clamp(value: number, min: number, max: number) {
         <p v-else class="muted commit-file-diff__empty">此提交没有可展示的文件改动。</p>
       </section>
     </div>
-
-    <div
-      v-if="embedded"
-      class="commit-detail-card__height-resizer"
-      role="separator"
-      aria-orientation="horizontal"
-      @pointerdown="startHeightResize"
-    />
   </section>
 </template>
 
@@ -363,6 +369,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 .commit-detail-card--embedded {
+  grid-template-rows: 3px minmax(0, 1fr);
   height: var(--commit-detail-height);
   min-height: 300px;
 }
@@ -394,7 +401,7 @@ function clamp(value: number, min: number, max: number) {
 .commit-detail-card__content {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(280px, var(--commit-detail-left, 38%)) 8px minmax(360px, 1fr);
+  grid-template-columns: minmax(280px, var(--commit-detail-left, 38%)) 2px minmax(360px, 1fr);
   min-height: 0;
 }
 
@@ -417,21 +424,16 @@ function clamp(value: number, min: number, max: number) {
   border-right: 1px solid var(--border-soft);
 }
 
-.commit-detail-card__splitter {
-  cursor: col-resize;
+.commit-detail-card__splitter,
+.commit-detail-card__height-resizer {
   background: var(--border-soft);
 }
 
-.commit-detail-card__splitter:hover {
-  background: var(--accent);
+.commit-detail-card__splitter {
+  cursor: col-resize;
 }
 
 .commit-detail-card__height-resizer {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 8px;
   cursor: ns-resize;
 }
 
@@ -574,7 +576,7 @@ function clamp(value: number, min: number, max: number) {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
-  padding: 8px 0 10px 10px;
+  padding: 8px 10px 10px;
 }
 
 .commit-file-picker__header {
