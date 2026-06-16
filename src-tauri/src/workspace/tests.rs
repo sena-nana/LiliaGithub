@@ -909,6 +909,17 @@ fn push_preview_blocks_repo_without_upstream() {
 }
 
 #[test]
+fn queue_push_fallback_only_matches_github_token_auth_failures() {
+    assert!(should_retry_push_with_system_git(
+        "无法认证 GitHub 仓库 a/repo，请重新绑定 GitHub 后再试。"
+    ));
+    assert!(should_retry_push_with_system_git(
+        "无法访问 GitHub 仓库 a/repo：仓库不存在、是私有仓库且当前 GitHub 绑定无权限，或仓库名输入有误。"
+    ));
+    assert!(!should_retry_push_with_system_git("non-fast-forward"));
+}
+
+#[test]
 fn sync_preview_classifies_pull_push_merge_and_idle_repos() {
     let pull_only = test_repo_summary(|summary| {
         summary.id = "pull-only".to_string();

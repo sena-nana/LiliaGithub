@@ -672,6 +672,69 @@ describe("workspace incremental refresh", () => {
     expect(state.recentSync?.results).toEqual(state.bulkResults);
   });
 
+  it("批量 push 的系统 git 兜底结果仍通过 bulk 执行契约更新状态", async () => {
+    const first = repoSummary("LiliaGithub", { ahead: 1 });
+    const second = repoSummary("Lilia", { ahead: 2 });
+    const firstUpdated = repoSummary(first.id, { ahead: 0 });
+    const secondUpdated = repoSummary(second.id, { ahead: 0 });
+    state.repos = [first, second];
+    service.bulkSyncPreview.mockResolvedValue({
+      operation: "push",
+      eligible: [
+        { repo: first, reason: "有本地提交待推送" },
+        { repo: second, reason: "有本地提交待推送" },
+      ],
+      blocked: [],
+      warnings: [],
+    });
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: first.id, status: "success", message: "完成", summary: firstUpdated },
+      { repoId: second.id, status: "success", message: "完成", summary: secondUpdated },
+    ]);
+
+    await previewBulk("push");
+    await executeBulk();
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [first.id, second.id]);
+    expect(service.pushRepo).not.toHaveBeenCalled();
+    expect(state.repos.find((repo) => repo.id === first.id)?.ahead).toBe(0);
+    expect(state.repos.find((repo) => repo.id === second.id)?.ahead).toBe(0);
+    expect(state.recentSync?.results).toEqual(state.bulkResults);
+  });
+
+  it("一键同步的系统 git 兜底结果仍按队列结果刷新仓库", async () => {
+    const first = repoSummary("LiliaGithub", { ahead: 1 });
+    const second = repoSummary("Lilia", { ahead: 1 });
+    const firstUpdated = repoSummary(first.id, { ahead: 0 });
+    const secondUpdated = repoSummary(second.id, { ahead: 0 });
+    state.repos = [first, second];
+    service.bulkSyncPreview.mockResolvedValue({
+      operation: "sync",
+      eligible: [
+        { repo: first, reason: "有本地提交待推送" },
+        { repo: second, reason: "有本地提交待推送" },
+      ],
+      blocked: [],
+      warnings: [],
+    });
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: first.id, status: "success", message: "完成", summary: firstUpdated },
+      { repoId: second.id, status: "success", message: "完成", summary: secondUpdated },
+    ]);
+
+    await syncAll();
+
+    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync", expect.any(Array));
+    expect(service.bulkSyncPreview.mock.calls[0][1].map((repo) => repo.id)).toEqual([first.id, second.id]);
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, second.id]);
+    expect(service.pushRepo).not.toHaveBeenCalled();
+    expect(state.repos.map((repo) => [repo.id, repo.ahead])).toEqual([
+      [first.id, 0],
+      [second.id, 0],
+    ]);
+    expect(state.recentSync?.results).toEqual(state.bulkResults);
+  });
+
   it("关闭内部 sync 快照后仍保留最近一次执行失败结果", async () => {
     const blocked = repoSummary("Lilia", { ahead: 1, behind: 1 });
     const failed = repoSummary("LiliaGithub", { ahead: 1 });
