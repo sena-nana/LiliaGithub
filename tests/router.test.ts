@@ -1251,8 +1251,18 @@ describe("基础路由", () => {
     expect(writeText).toHaveBeenCalledWith("1234567890abcdef");
     expect(await screen.findByText("完整 hash 已复制")).toBeInTheDocument();
     expect(await screen.findByLabelText("改动文件列表")).toHaveTextContent("src/pages/Home.vue");
-    expect(await screen.findByLabelText("改动文件 diff")).toHaveTextContent("@@ -1,3 +1,4 @@");
-    expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("<h1>LiliaGithub</h1>");
+    const diffPanel = await screen.findByLabelText("改动文件 diff");
+    const collapseToggle = within(diffPanel).getByRole("button", { name: "折叠 diff" });
+    expect(collapseToggle).toHaveAttribute("aria-pressed", "true");
+    expect(diffPanel).toHaveTextContent("@@ -1,3 +1,4 @@");
+    expect(diffPanel).toHaveTextContent("<h1>LiliaGithub</h1>");
+
+    await fireEvent.click(collapseToggle);
+
+    expect(collapseToggle).toHaveAttribute("aria-pressed", "false");
+    expect(diffPanel).toHaveTextContent("diff --git a/src/pages/Home.vue b/src/pages/Home.vue");
+
+    await fireEvent.click(collapseToggle);
 
     await fireEvent.click(screen.getByRole("button", { name: /src-tauri\/src\/workspace.rs/ }));
 
@@ -1269,7 +1279,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "提交详情" })).toBeInTheDocument();
     expect(await screen.findByText("改动文件")).toBeInTheDocument();
-    expect(screen.getAllByText("修改").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("button", { name: "折叠 diff" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("+42")).toBeInTheDocument();
     expect(screen.getByText("-3")).toBeInTheDocument();
     expect(screen.getByText("@@ -1,3 +1,4 @@")).toBeInTheDocument();
