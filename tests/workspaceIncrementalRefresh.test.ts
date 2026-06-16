@@ -11,6 +11,7 @@ import {
   mergePull,
   pull,
   push,
+  useDefaultTokenAuthForRepo,
   refreshRepos,
   resolveConflictFile,
   stage,
@@ -56,6 +57,8 @@ const service = {
   pullRepo: vi.fn(),
   mergePullRepo: vi.fn(),
   pushRepo: vi.fn(),
+  pushRepoWithSystemGit: vi.fn(),
+  useDefaultTokenAuthForRepo: vi.fn(),
   checkoutBranch: vi.fn(),
   acceptConflictFile: vi.fn(),
   resolveConflictFile: vi.fn(),
@@ -548,6 +551,22 @@ describe("workspace incremental refresh", () => {
     expect(state.repos.find((repo) => repo.id === restored.id)?.ahead).toBe(2);
   });
 
+  it("撤销系统 git 凭证偏好后同步 settings 状态", async () => {
+    state.settings = {
+      ...workspaceSettings(),
+      systemGitRepoIds: ["Lilia", "LiliaGithub"],
+    };
+    service.useDefaultTokenAuthForRepo.mockResolvedValue({
+      ...workspaceSettings(),
+      systemGitRepoIds: ["Lilia"],
+    });
+
+    await useDefaultTokenAuthForRepo("LiliaGithub");
+
+    expect(service.useDefaultTokenAuthForRepo).toHaveBeenCalledWith("LiliaGithub");
+    expect(state.settings?.systemGitRepoIds).toEqual(["Lilia"]);
+  });
+
   it("批量执行后只按返回的 summaries 更新相关仓库", async () => {
     const before = repoSummary("LiliaGithub", { ahead: 1 });
     const after = repoSummary("LiliaGithub", { ahead: 0 });
@@ -569,6 +588,29 @@ describe("workspace incremental refresh", () => {
     expect(state.repos.find((repo) => repo.id === before.id)?.ahead).toBe(0);
     expect(state.repoDetails[before.id]?.summary.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === "Lilia")?.ahead).toBe(3);
+  });
+
+  it("批量 push 后同步系统 git 凭证 settings", async () => {
+    const repo = repoSummary("LiliaGithub", { ahead: 1 });
+    state.repos = [repo];
+    state.bulkPreview = {
+      operation: "push",
+      eligible: [{ repo, reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    };
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: repo.id, status: "success", message: "完成", summary: { ...repo, ahead: 0 } },
+    ]);
+    service.getWorkspaceSettings.mockResolvedValue({
+      ...workspaceSettings(),
+      systemGitRepoIds: [repo.id],
+    });
+
+    await executeBulk();
+
+    expect(service.getWorkspaceSettings).toHaveBeenCalled();
+    expect(state.settings?.systemGitRepoIds).toEqual([repo.id]);
   });
 
   it("一键同步直接预检并执行可同步仓库，不再调用单仓库 push", async () => {

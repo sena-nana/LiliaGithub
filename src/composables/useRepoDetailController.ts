@@ -132,6 +132,7 @@ export function useRepoDetailController() {
   const languageStatsRefreshing = computed(() =>
     workspace.state.languageStatsLoadingRepoIds.includes(repoId.value),
   );
+  const usingSystemGit = computed(() => workspace.repoUsesSystemGit(repoId.value));
   const launchRunning = computed(() => launchStatus.value?.state === "running");
   const selectedSummaryText = computed(() => {
     if (!selectedFileList.value.length) return "未选择文件";
@@ -455,6 +456,10 @@ export function useRepoDetailController() {
     void runAction(() => runPushWithFallback(() => workspace.push(repoId.value)));
   }
 
+  function useDefaultTokenAuth() {
+    void runAction(() => workspace.useDefaultTokenAuthForRepo(repoId.value));
+  }
+
   function showConflicts() {
     activeTab.value = "conflicts";
   }
@@ -599,6 +604,7 @@ export function useRepoDetailController() {
       launchLogs,
       launchLoading,
       languageStatsRefreshing,
+      usingSystemGit,
       launchRunning,
       selectedSummaryText,
       selectedFilePreview,
@@ -628,6 +634,7 @@ export function useRepoDetailController() {
       commitSelected,
       mergePull,
       push,
+      useDefaultTokenAuth,
       showConflicts,
       acceptConflict,
       resolveSelectedConflict,

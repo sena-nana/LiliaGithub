@@ -1687,6 +1687,13 @@ export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
   });
 }
 
+export function useDefaultTokenAuthForRepo(repoId: string): Promise<WorkspaceSettings> {
+  return call("repo_use_default_token_auth", { repoId }, () => {
+    fallbackSettings.systemGitRepoIds = fallbackSettings.systemGitRepoIds.filter((id) => id !== repoId);
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
 export function checkoutBranch(repoId: string, branch: string): Promise<RepoSummary> {
   return call("repo_checkout_branch", { repoId, branch }, () => {
     const repo = fallbackRepo(repoId);

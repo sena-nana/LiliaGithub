@@ -920,6 +920,29 @@ fn queue_push_fallback_only_matches_github_token_auth_failures() {
 }
 
 #[test]
+fn removing_system_git_repo_id_restores_default_token_auth() {
+    let mut settings = WorkspaceSettings {
+        system_git_repo_ids: vec![
+            "Lilia".to_string(),
+            "LiliaGithub".to_string(),
+            "Tools/Nested".to_string(),
+        ],
+        ..WorkspaceSettings::default()
+    };
+
+    remove_system_git_repo_id(&mut settings, " LiliaGithub ").unwrap();
+
+    assert_eq!(
+        settings.system_git_repo_ids,
+        vec!["Lilia".to_string(), "Tools/Nested".to_string()]
+    );
+    assert_eq!(
+        remove_system_git_repo_id(&mut settings, "   ").unwrap_err(),
+        "仓库 ID 不能为空"
+    );
+}
+
+#[test]
 fn sync_preview_classifies_pull_push_merge_and_idle_repos() {
     let pull_only = test_repo_summary(|summary| {
         summary.id = "pull-only".to_string();

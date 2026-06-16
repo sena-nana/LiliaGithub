@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { FolderGit2, GitBranchPlus, LoaderCircle, Radar, RotateCcw, ShieldCheck, X } from "@lucide/vue";
+import { computed, onMounted, ref } from "vue";
+import { FolderGit2, GitBranchPlus, KeyRound, LoaderCircle, Radar, RotateCcw, ShieldCheck, X } from "@lucide/vue";
 import { useWorkspace } from "../../composables/useWorkspace";
 import {
   createGitHubRepo,
@@ -15,6 +15,7 @@ const hiddenRepos = ref<HiddenRepo[]>([]);
 const repoOwners = ref<GitHubRepoOwner[]>([]);
 const loading = ref(false);
 const restoringRepoId = ref<string | null>(null);
+const resettingSystemGitRepoId = ref<string | null>(null);
 const discovering = ref(false);
 const addingRepo = ref(false);
 const createDialogOpen = ref(false);
@@ -34,6 +35,18 @@ const createForm = ref({
   licenseTemplate: "",
   hasIssues: true,
   hasWiki: false,
+});
+
+const systemGitRepos = computed(() => {
+  const reposById = new Map(workspace.state.repos.map((repo) => [repo.id, repo]));
+  return (workspace.state.settings?.systemGitRepoIds ?? []).map((id) => {
+    const repo = reposById.get(id);
+    return {
+      id,
+      name: repo?.name ?? id,
+      path: repo?.relativePath ?? repo?.path ?? id,
+    };
+  });
 });
 
 async function loadHiddenRepos() {
@@ -70,6 +83,18 @@ async function restoreRepo(repoId: string) {
     error.value = String(err);
   } finally {
     restoringRepoId.value = null;
+  }
+}
+
+async function useDefaultTokenAuth(repoId: string) {
+  resettingSystemGitRepoId.value = repoId;
+  error.value = null;
+  try {
+    await workspace.useDefaultTokenAuthForRepo(repoId);
+  } catch (err) {
+    error.value = String(err);
+  } finally {
+    resettingSystemGitRepoId.value = null;
   }
 }
 
@@ -202,6 +227,39 @@ onMounted(() => {
           新建 GitHub 仓库
         </button>
       </div>
+      <section class="system-git-list" aria-labelledby="system-git-list-title">
+        <div class="system-git-list__head">
+          <KeyRound :size="15" aria-hidden="true" />
+          <div>
+            <h3 id="system-git-list-title">系统 git 凭证</h3>
+            <p>这些仓库 push 时会优先使用本机 git 凭证。</p>
+          </div>
+        </div>
+        <p v-if="!systemGitRepos.length" class="muted">没有仓库切到系统 git 凭证。</p>
+        <ul v-else class="system-git-list__items">
+          <li v-for="repo in systemGitRepos" :key="repo.id" class="system-git-list__item">
+            <div class="system-git-list__meta">
+              <span class="system-git-list__name">{{ repo.name }}</span>
+              <span class="system-git-list__id">{{ repo.path }}</span>
+            </div>
+            <button
+              type="button"
+              class="ghost"
+              :disabled="resettingSystemGitRepoId === repo.id"
+              @click="useDefaultTokenAuth(repo.id)"
+            >
+              <LoaderCircle
+                v-if="resettingSystemGitRepoId === repo.id"
+                :size="14"
+                aria-hidden="true"
+                class="sb-spin"
+              />
+              <RotateCcw v-else :size="14" aria-hidden="true" />
+              恢复默认 token
+            </button>
+          </li>
+        </ul>
+      </section>
       <p v-if="loading" class="muted">正在读取隐藏仓库...</p>
       <p v-else-if="!hiddenRepos.length" class="muted">没有隐藏仓库。</p>
       <ul v-else class="hidden-repo-list">
@@ -367,6 +425,83 @@ onMounted(() => {
 .repo-create-actions .primary,
 .repo-create-result .primary,
 .repo-create-dialog .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.system-git-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.system-git-list__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.system-git-list__head svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.system-git-list__head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.system-git-list__head p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.system-git-list__items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.system-git-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.system-git-list__meta {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.system-git-list__name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-git-list__id {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.system-git-list__item .ghost {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -578,6 +713,11 @@ onMounted(() => {
   }
 
   .hidden-repo-list__item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .system-git-list__item {
     align-items: flex-start;
     flex-direction: column;
   }

@@ -2,7 +2,9 @@
 import {
   FolderOpen,
   GitPullRequestArrow,
+  KeyRound,
   RefreshCw,
+  RotateCcw,
   TriangleAlert,
   Upload,
 } from "@lucide/vue";
@@ -42,6 +44,7 @@ const {
   launchLogs,
   launchLoading,
   languageStatsRefreshing,
+  usingSystemGit,
   launchRunning,
   selectedSummaryText,
   selectedFilePreview,
@@ -70,6 +73,7 @@ const {
   commitSelected,
   mergePull,
   push,
+  useDefaultTokenAuth,
   showConflicts,
   acceptConflict,
   resolveSelectedConflict,
@@ -94,9 +98,24 @@ const {
           <h1>{{ repoTitle }}</h1>
           <div class="repo-header__meta" :title="repoMetaItems.join(' · ')">
             <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
+            <span v-if="usingSystemGit" class="repo-header__credential">
+              <KeyRound :size="12" aria-hidden="true" />
+              系统 git 凭证
+            </span>
           </div>
         </div>
         <div class="repo-header__actions overview-actions" aria-label="仓库操作">
+          <button
+            v-if="!remoteOnly && usingSystemGit"
+            type="button"
+            class="overview-actions__btn"
+            title="恢复默认 token 推送"
+            aria-label="恢复默认 token 推送"
+            :disabled="actionRunning"
+            @click="useDefaultTokenAuth"
+          >
+            <RotateCcw :size="17" aria-hidden="true" />
+          </button>
           <button
             v-if="!remoteOnly"
             type="button"
@@ -294,6 +313,13 @@ const {
   content: "·";
   margin-left: 8px;
   color: var(--text-faint);
+}
+
+.repo-header__credential {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
 }
 
 .repo-header__actions,
