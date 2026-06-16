@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronDown, Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lucide/vue";
 import { getRepoCommitDetail, type CommitDetail, type CommitFileChange } from "../../services/workspace";
 import { copyText } from "../../composables/workspace/system";
+import DiffCodeRenderer from "./DiffCodeRenderer.vue";
 import {
   commitFileStatusText,
   formatRepoTime,
@@ -335,25 +336,20 @@ function clamp(value: number, min: number, max: number) {
           </button>
         </header>
         <template v-if="activeFile">
-          <div v-if="diffCollapsed && activeFile.hunks.length" class="commit-diff-table">
-            <template v-for="hunk in activeFile.hunks" :key="`${activeFile.path}:${hunk.header}`">
-              <div class="commit-diff-hunk" role="row">
-                <span class="commit-diff-hunk__header">{{ hunk.header }}</span>
-              </div>
-              <div
-                v-for="(line, index) in hunk.lines"
-                :key="`${activeFile.path}:${hunk.header}:${index}`"
-                class="commit-diff-line"
-                :class="`is-${line.kind}`"
-                role="row"
-              >
-                <span class="commit-diff-line__number">{{ line.oldLine ?? "" }}</span>
-                <span class="commit-diff-line__number">{{ line.newLine ?? "" }}</span>
-                <span class="commit-diff-line__content">{{ line.content || " " }}</span>
-              </div>
-            </template>
-          </div>
-          <pre v-else-if="!diffCollapsed && activeFile.patch" class="commit-diff-raw"><code>{{ activeFile.patch }}</code></pre>
+          <DiffCodeRenderer
+            v-if="diffCollapsed && activeFile.hunks.length"
+            :file-path="activeFile.path"
+            :hunks="activeFile.hunks"
+            :patch="activeFile.patch"
+            mode="hunks"
+          />
+          <DiffCodeRenderer
+            v-else-if="!diffCollapsed && activeFile.patch"
+            :file-path="activeFile.path"
+            :hunks="activeFile.hunks"
+            :patch="activeFile.patch"
+            mode="raw"
+          />
           <p v-else class="muted commit-file-diff__empty">
             仅文件元数据变更、二进制文件或无可展示的文本差异。
           </p>
@@ -772,85 +768,6 @@ function clamp(value: number, min: number, max: number) {
   background: var(--accent-soft);
 }
 
-.commit-diff-table {
-  display: grid;
-  overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.commit-diff-hunk,
-.commit-diff-line {
-  display: grid;
-  grid-template-columns: 34px 34px max-content;
-  width: max-content;
-  min-width: 100%;
-  min-height: 19px;
-}
-
-.commit-diff-hunk {
-  align-items: center;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-top: 1px solid var(--border-soft);
-}
-
-.commit-diff-hunk:first-child {
-  border-top: 0;
-}
-
-.commit-diff-hunk__header {
-  grid-column: 1 / -1;
-  padding: 2px 8px;
-  white-space: pre;
-}
-
-.commit-diff-line {
-  line-height: 1.25;
-  white-space: pre;
-}
-
-.commit-diff-line.is-added {
-  background: color-mix(in srgb, var(--ok) 10%, transparent);
-}
-
-.commit-diff-line.is-deleted {
-  background: color-mix(in srgb, var(--err) 10%, transparent);
-}
-
-.commit-diff-line.is-meta {
-  color: var(--text-muted);
-}
-
-.commit-diff-line__number {
-  padding: 1px 5px;
-  color: var(--text-muted);
-  text-align: right;
-  user-select: none;
-}
-
-.commit-diff-line__content {
-  min-width: 0;
-  padding: 1px 10px 1px 8px;
-  color: var(--text);
-}
-
-.commit-diff-raw {
-  min-width: max-content;
-  margin: 0;
-  padding: 10px 12px;
-  overflow: auto;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre;
-}
-
-.commit-diff-raw code {
-  font-family: inherit;
-}
-
 .commit-file-diff__empty {
   margin: 0;
   padding: 12px 10px;
@@ -886,9 +803,5 @@ function clamp(value: number, min: number, max: number) {
     padding: 4px 8px;
   }
 
-  .commit-diff-hunk,
-  .commit-diff-line {
-    grid-template-columns: 30px 30px max-content;
-  }
 }
 </style>

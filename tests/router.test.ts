@@ -1256,11 +1256,15 @@ describe("基础路由", () => {
     expect(collapseToggle).toHaveAttribute("aria-pressed", "true");
     expect(diffPanel).toHaveTextContent("@@ -1,3 +1,4 @@");
     expect(diffPanel).toHaveTextContent("<h1>LiliaGithub</h1>");
+    expect(diffPanel.querySelector(".diff-code__token--type")).toHaveTextContent("template");
+    expect(diffPanel.querySelector(".diff-code__line.is-added .diff-code__token--type")).toHaveTextContent("h1");
 
     await fireEvent.click(collapseToggle);
 
     expect(collapseToggle).toHaveAttribute("aria-pressed", "false");
     expect(diffPanel).toHaveTextContent("diff --git a/src/pages/Home.vue b/src/pages/Home.vue");
+    expect(diffPanel.querySelector(".diff-code__raw-line.is-meta")).toHaveTextContent("diff --git");
+    expect(diffPanel.querySelector(".diff-code__raw-line.is-added .diff-code__token--type")).toHaveTextContent("h1");
 
     await fireEvent.click(collapseToggle);
 
@@ -1268,6 +1272,7 @@ describe("基础路由", () => {
 
     expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("@@ -10,4 +10,5 @@");
     expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("pub github_full_name: Option<String>,");
+    expect(screen.getByLabelText("改动文件 diff").querySelector(".diff-code__token--keyword")).toHaveTextContent("pub");
 
     await fireEvent.click(screen.getByRole("button", { name: "关闭提交详情" }));
 
