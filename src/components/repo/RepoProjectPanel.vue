@@ -13,6 +13,7 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
+import CommitDetailCard from "./CommitDetailCard.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoBranchesPanel from "./RepoBranchesPanel.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
@@ -69,6 +70,7 @@ type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
 const props = defineProps<{
   repoId: string;
+  repoTitle?: string;
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
   loading: boolean;
@@ -93,6 +95,7 @@ const props = defineProps<{
   hasConflicts: boolean;
   canCommit: boolean;
   statusCommits: readonly CommitSummary[];
+  selectedCommitHash?: string | null;
   branches: readonly BranchSummary[];
   conflictOperationText: string;
   conflictSummaryText: string;
@@ -131,6 +134,7 @@ const emit = defineEmits<{
   commit: [];
   checkout: [branchName: string];
   openCommit: [commit: HistoryCommit];
+  closeCommit: [];
   continueConflict: [];
   abortConflict: [];
   focusConflict: [path: string];
@@ -1045,6 +1049,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           v-else-if="!remoteOnly && activeProjectSection === 'history'"
           :commits="statusCommits"
           :commit-meta-title="commitMetaTitle"
+          :selected-commit-hash="selectedCommitHash"
           @open-commit="emit('openCommit', $event)"
         />
 
@@ -1341,6 +1346,17 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         </form>
       </main>
 
+      <CommitDetailCard
+        v-if="!remoteOnly && activeProjectSection === 'history' && selectedCommitHash"
+        class="project-commit-detail-card"
+        :repo-id="repoId"
+        :repo-title="repoTitle || repoId"
+        :hash="selectedCommitHash"
+        embedded
+        closable
+        @close="emit('closeCommit')"
+      />
+
       <aside class="project-sidebar">
         <div class="project-sidebar__card" role="tablist" aria-label="README 列表">
           <button
@@ -1447,14 +1463,14 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 .project-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 14px;
   align-items: stretch;
   min-width: 0;
   min-height: 0;
   height: 100%;
   max-height: 100%;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .project-main {
@@ -1472,6 +1488,13 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elev);
+}
+
+.project-commit-detail-card {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  min-width: 0;
 }
 
 .project-readme-card,
@@ -1655,7 +1678,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 .project-sidebar {
   display: grid;
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 1 / span 2;
   gap: 14px;
   min-width: 0;
   min-height: 0;
@@ -2037,10 +2060,11 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 @media (max-width: 900px) {
   .project-layout {
     grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
   }
 
   .project-main,
+  .project-commit-detail-card,
   .project-sidebar {
     grid-column: auto;
     grid-row: auto;

@@ -1232,24 +1232,43 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
   });
 
-  it("提交历史行点击后进入提交详情页", async () => {
-    await renderAt("/repos/LiliaGithub");
+  it("提交历史行点击后在主区域卡片下方显示提交详情卡片", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const { router } = await renderAt("/repos/LiliaGithub");
 
     await fireEvent.click(await screen.findByRole("tab", { name: "历史" }));
     await fireEvent.click(await screen.findByRole("button", { name: /搭建 LiliaGithub MVP/ }));
 
-    expect(await screen.findByRole("heading", { level: 1, name: "搭建 LiliaGithub MVP" })).toBeInTheDocument();
-    expect(screen.getByLabelText("提交元数据")).toHaveTextContent("1234567890abcdef");
-    expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("src-tauri/src/workspace.rs");
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    expect(await screen.findByLabelText("提交详情卡片")).toBeInTheDocument();
+    expect(await screen.findByLabelText("提交元数据")).toHaveTextContent("1234567");
+    expect(screen.getByLabelText("提交元数据")).not.toHaveTextContent("1234567890abcdef");
+    await fireEvent.click(screen.getByRole("button", { name: "复制完整 hash 1234567" }));
+    expect(writeText).toHaveBeenCalledWith("1234567890abcdef");
+    expect(await screen.findByText("完整 hash 已复制")).toBeInTheDocument();
+    expect(await screen.findByLabelText("改动文件列表")).toHaveTextContent("src/pages/Home.vue");
+    expect(await screen.findByLabelText("改动文件 diff")).toHaveTextContent("@@ -1,3 +1,4 @@");
+    expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("<h1>LiliaGithub</h1>");
+
+    await fireEvent.click(screen.getByRole("button", { name: /src-tauri\/src\/workspace.rs/ }));
+
     expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("@@ -10,4 +10,5 @@");
     expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("pub github_full_name: Option<String>,");
+
+    await fireEvent.click(screen.getByRole("button", { name: "关闭提交详情" }));
+
+    expect(screen.queryByLabelText("提交详情卡片")).toBeNull();
   });
 
   it("提交详情页可通过独立路由打开并返回仓库历史", async () => {
     await renderAt("/repos/LiliaGithub/commits/1234567890abcdef");
 
-    expect(await screen.findByRole("heading", { level: 1, name: "搭建 LiliaGithub MVP" })).toBeInTheDocument();
-    expect(screen.getByText("改动文件")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "提交详情" })).toBeInTheDocument();
+    expect(await screen.findByText("改动文件")).toBeInTheDocument();
     expect(screen.getAllByText("修改").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("+42")).toBeInTheDocument();
     expect(screen.getByText("-3")).toBeInTheDocument();
