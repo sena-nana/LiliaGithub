@@ -34,6 +34,7 @@ let resizeCleanup: (() => void) | null = null;
 const hasFilePrefix = computed(() => Boolean(slots["file-prefix"]));
 const hasHeaderStat = computed(() => props.showStats || props.files.some((file) => Boolean(file.statText)));
 const hasDiffActions = computed(() => Boolean(slots["diff-actions"]));
+const hasSidebar = computed(() => Boolean(slots.sidebar));
 const totalAdditions = computed(() => props.files.reduce((sum, file) => sum + (file.additions ?? 0), 0));
 const totalDeletions = computed(() => props.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0));
 const workspaceStyle = computed(() => ({
@@ -92,7 +93,11 @@ function clamp(value: number, min: number, max: number) {
     }"
     :style="workspaceStyle"
   >
-    <aside class="commit-detail-card__sidebar">
+    <aside v-if="hasSidebar" class="commit-detail-card__sidebar commit-detail-card__sidebar--custom">
+      <slot name="sidebar" />
+    </aside>
+
+    <aside v-else class="commit-detail-card__sidebar">
       <slot name="meta" />
 
       <section class="commit-file-picker" aria-label="改动文件列表">
@@ -203,6 +208,10 @@ function clamp(value: number, min: number, max: number) {
   min-height: 0;
   overflow: hidden;
   border-right: 1px solid var(--border-soft);
+}
+
+.commit-detail-card__sidebar--custom {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .commit-detail-card__splitter {

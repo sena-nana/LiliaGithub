@@ -85,10 +85,6 @@ const props = defineProps<{
   activeGitTab: GitTab;
   gitTabs: readonly { key: GitTab; label: string }[];
   changes: readonly RepoChange[];
-  selectedFiles: ReadonlySet<string>;
-  selectedSummaryText: string;
-  selectedFilePreview: string[];
-  selectedFileCount: number;
   previewChange: RepoChange | null;
   commitMessage: string;
   pushAfter: boolean;
@@ -126,11 +122,9 @@ const emit = defineEmits<{
   updateActiveGitTab: [tab: GitTab];
   updateCommitMessage: [value: string];
   updatePushAfter: [value: boolean];
-  selectAll: [];
-  stageSelected: [];
-  unstageSelected: [];
+  stageUnstagedChanges: [];
+  unstageStagedChanges: [];
   focusChange: [path: string];
-  toggleFile: [path: string];
   commit: [];
   checkout: [branchName: string];
   openCommit: [commit: HistoryCommit];
@@ -1000,19 +994,13 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           :commit-message="commitMessage"
           :push-after="pushAfter"
           :changes="changes"
-          :selected-files="selectedFiles"
-          :selected-summary-text="selectedSummaryText"
-          :selected-file-preview="selectedFilePreview"
-          :selected-file-count="selectedFileCount"
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
           :action-running="actionRunning"
           :preview-change="previewChange"
-          @select-all="emit('selectAll')"
-          @stage-selected="emit('stageSelected')"
-          @unstage-selected="emit('unstageSelected')"
+          @stage-unstaged-changes="emit('stageUnstagedChanges')"
+          @unstage-staged-changes="emit('unstageStagedChanges')"
           @focus-change="emit('focusChange', $event)"
-          @toggle-file="emit('toggleFile', $event)"
           @commit="emit('commit')"
           @update:commit-message="emit('updateCommitMessage', $event)"
           @update:push-after="emit('updatePushAfter', $event)"

@@ -806,16 +806,21 @@ describe("基础路由", () => {
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
+    expect(screen.getByLabelText("未暂存变更")).toBeInTheDocument();
+    expect(screen.getByLabelText("已暂存变更")).toBeInTheDocument();
+    expect(screen.getByLabelText("提交内容")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "暂存全部未暂存变更" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "取消暂存全部已暂存变更" })).toBeEnabled();
     expect(screen.getByPlaceholderText("提交说明")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
-    expect(screen.getByText("未选择文件")).toBeInTheDocument();
+    expect(screen.getByText("1 个已暂存文件")).toBeInTheDocument();
 
     expect(screen.getByRole("button", { name: "运行" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(await screen.findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: /src\/pages\/Home\.vue已暂存/ }));
+    await fireEvent.click(screen.getByText("src/pages/Home.vue").closest("button")!);
     const diffPreview = await screen.findByLabelText("变更预览");
     expect(diffPreview).toBeInTheDocument();
     expect(diffPreview).toHaveTextContent("@@ -1 +1 @@");
