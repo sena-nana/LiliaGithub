@@ -4,7 +4,6 @@ import { ChevronDown, Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lu
 import { getRepoCommitDetail, type CommitDetail, type CommitFileChange } from "../../services/workspace";
 import { copyText } from "../../composables/workspace/system";
 import {
-  commitDiffLineMark,
   commitFileStatusText,
   formatRepoTime,
 } from "../../utils/repoDisplay";
@@ -350,7 +349,7 @@ function clamp(value: number, min: number, max: number) {
               >
                 <span class="commit-diff-line__number">{{ line.oldLine ?? "" }}</span>
                 <span class="commit-diff-line__number">{{ line.newLine ?? "" }}</span>
-                <code class="commit-diff-line__content"><span class="commit-diff-line__inline-mark">{{ commitDiffLineMark(line.kind) || " " }}</span>{{ line.content || " " }}</code>
+                <span class="commit-diff-line__content">{{ line.content || " " }}</span>
               </div>
             </template>
           </div>
@@ -783,8 +782,10 @@ function clamp(value: number, min: number, max: number) {
 .commit-diff-hunk,
 .commit-diff-line {
   display: grid;
-  grid-template-columns: 34px 34px minmax(420px, 1fr);
-  min-height: 24px;
+  grid-template-columns: 34px 34px max-content;
+  width: max-content;
+  min-width: 100%;
+  min-height: 19px;
 }
 
 .commit-diff-hunk {
@@ -800,12 +801,12 @@ function clamp(value: number, min: number, max: number) {
 
 .commit-diff-hunk__header {
   grid-column: 1 / -1;
-  padding: 4px 10px;
+  padding: 2px 8px;
   white-space: pre;
 }
 
 .commit-diff-line {
-  line-height: 1.45;
+  line-height: 1.25;
   white-space: pre;
 }
 
@@ -822,34 +823,16 @@ function clamp(value: number, min: number, max: number) {
 }
 
 .commit-diff-line__number {
-  padding: 3px 5px;
+  padding: 1px 5px;
   color: var(--text-muted);
   text-align: right;
   user-select: none;
-  border-right: 1px solid var(--border-soft);
 }
 
 .commit-diff-line__content {
   min-width: 0;
-  padding: 3px 10px 3px 8px;
+  padding: 1px 10px 1px 8px;
   color: var(--text);
-  font-family: inherit;
-}
-
-.commit-diff-line__inline-mark {
-  display: inline-block;
-  width: 1ch;
-  margin-right: 1ch;
-  color: var(--text-muted);
-  user-select: none;
-}
-
-.commit-diff-line.is-added .commit-diff-line__inline-mark {
-  color: var(--ok);
-}
-
-.commit-diff-line.is-deleted .commit-diff-line__inline-mark {
-  color: var(--err);
 }
 
 .commit-diff-raw {
@@ -905,7 +888,7 @@ function clamp(value: number, min: number, max: number) {
 
   .commit-diff-hunk,
   .commit-diff-line {
-    grid-template-columns: 30px 30px minmax(320px, 1fr);
+    grid-template-columns: 30px 30px max-content;
   }
 }
 </style>
