@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lucide/vue";
+import { ChevronDown, Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lucide/vue";
 import { getRepoCommitDetail, type CommitDetail, type CommitFileChange } from "../../services/workspace";
 import { copyText } from "../../composables/workspace/system";
 import {
@@ -30,6 +30,7 @@ const error = ref<string | null>(null);
 const detail = ref<CommitDetail | null>(null);
 const activeFilePath = ref<string | null>(null);
 const copyNotice = ref<string | null>(null);
+const diffCollapsed = ref(true);
 const panelHeight = ref(460);
 const splitPercent = ref(38);
 let resizeCleanup: (() => void) | null = null;
@@ -120,6 +121,10 @@ function fileStatusLetter(status: string) {
 
 function selectFile(file: CommitFileChange) {
   activeFilePath.value = file.path;
+}
+
+function toggleDiffCollapsed() {
+  diffCollapsed.value = !diffCollapsed.value;
 }
 
 async function copyHash() {
@@ -216,17 +221,6 @@ function clamp(value: number, min: number, max: number) {
     <p v-else-if="loading" class="muted commit-detail-card__state">正在读取提交详情...</p>
 
     <div v-else-if="detail" class="commit-detail-card__content">
-      <button
-        v-if="closable"
-        type="button"
-        class="ghost commit-detail-card__close"
-        aria-label="关闭提交详情"
-        title="关闭提交详情"
-        @click="emit('close')"
-      >
-        <X :size="16" aria-hidden="true" />
-      </button>
-
       <aside class="commit-detail-card__sidebar">
         <section class="commit-detail-meta" aria-label="提交元数据">
           <p class="commit-detail-meta__repo">{{ repoTitle || repoId }}</p>
@@ -317,16 +311,32 @@ function clamp(value: number, min: number, max: number) {
       />
 
       <section class="commit-diff-panel" aria-label="改动文件 diff">
+        <header class="commit-file-diff__header">
+          <button
+            v-if="activeFile"
+            type="button"
+            class="commit-file-diff__action commit-file-diff__toggle"
+            :class="{ 'is-active': diffCollapsed }"
+            aria-label="折叠 diff"
+            :aria-pressed="diffCollapsed"
+            :title="diffCollapsed ? '显示原始 diff' : '折叠 diff'"
+            @click="toggleDiffCollapsed"
+          >
+            <ChevronDown :size="13" aria-hidden="true" />
+          </button>
+          <button
+            v-if="closable"
+            type="button"
+            class="commit-file-diff__action"
+            aria-label="关闭提交详情"
+            title="关闭提交详情"
+            @click="emit('close')"
+          >
+            <X :size="13" aria-hidden="true" />
+          </button>
+        </header>
         <template v-if="activeFile">
-          <header class="commit-file-diff__header">
-            <span class="commit-file-diff__status">{{ commitFileStatusText(activeFile.status) }}</span>
-            <span class="commit-file-diff__path" :title="fileTitle(activeFile)">
-              <template v-if="activeFile.oldPath">{{ activeFile.oldPath }} -> </template>{{ activeFile.path }}
-            </span>
-            <span class="commit-file-diff__stat commit-file-diff__stat--add">+{{ activeFile.additions }}</span>
-            <span class="commit-file-diff__stat commit-file-diff__stat--del">-{{ activeFile.deletions }}</span>
-          </header>
-          <div v-if="activeFile.hunks.length" class="commit-diff-table">
+          <div v-if="diffCollapsed && activeFile.hunks.length" class="commit-diff-table">
             <template v-for="hunk in activeFile.hunks" :key="`${activeFile.path}:${hunk.header}`">
               <div class="commit-diff-hunk" role="row">
                 <span class="commit-diff-hunk__header">{{ hunk.header }}</span>
@@ -340,11 +350,11 @@ function clamp(value: number, min: number, max: number) {
               >
                 <span class="commit-diff-line__number">{{ line.oldLine ?? "" }}</span>
                 <span class="commit-diff-line__number">{{ line.newLine ?? "" }}</span>
-                <span class="commit-diff-line__mark">{{ commitDiffLineMark(line.kind) }}</span>
-                <code class="commit-diff-line__content">{{ line.content || " " }}</code>
+                <code class="commit-diff-line__content"><span class="commit-diff-line__inline-mark">{{ commitDiffLineMark(line.kind) || " " }}</span>{{ line.content || " " }}</code>
               </div>
             </template>
           </div>
+          <pre v-else-if="!diffCollapsed && activeFile.patch" class="commit-diff-raw"><code>{{ activeFile.patch }}</code></pre>
           <p v-else class="muted commit-file-diff__empty">
             仅文件元数据变更、二进制文件或无可展示的文本差异。
           </p>
@@ -369,7 +379,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 .commit-detail-card--embedded {
-  grid-template-rows: 3px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: var(--commit-detail-height);
   min-height: 300px;
 }
@@ -380,17 +390,6 @@ function clamp(value: number, min: number, max: number) {
 .commit-detail-meta h3,
 .commit-detail-meta__body {
   margin: 0;
-}
-
-.commit-detail-card__close {
-  position: absolute;
-  z-index: 3;
-  top: 8px;
-  right: 8px;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  background: var(--bg-elev);
 }
 
 .commit-detail-card__state {
@@ -434,7 +433,14 @@ function clamp(value: number, min: number, max: number) {
 }
 
 .commit-detail-card__height-resizer {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 6px;
   cursor: ns-resize;
+  background: transparent;
 }
 
 .commit-detail-meta {
@@ -652,9 +658,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 .commit-file-picker__status,
-.commit-file-picker__stat,
-.commit-file-diff__status,
-.commit-file-diff__stat {
+.commit-file-picker__stat {
   color: var(--text-muted);
   font-size: 11px;
 }
@@ -692,8 +696,7 @@ function clamp(value: number, min: number, max: number) {
   background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
 
-.commit-file-picker__path,
-.commit-file-diff__path {
+.commit-file-picker__path {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -702,8 +705,7 @@ function clamp(value: number, min: number, max: number) {
   font-size: 11px;
 }
 
-.commit-file-picker__stat,
-.commit-file-diff__stat {
+.commit-file-picker__stat {
   justify-self: end;
   font-variant-numeric: tabular-nums;
 }
@@ -717,13 +719,11 @@ function clamp(value: number, min: number, max: number) {
   text-align: right;
 }
 
-.commit-file-picker__stat--add,
-.commit-file-diff__stat--add {
+.commit-file-picker__stat--add {
   color: var(--ok);
 }
 
-.commit-file-picker__stat--del,
-.commit-file-diff__stat--del {
+.commit-file-picker__stat--del {
   color: var(--err);
 }
 
@@ -739,14 +739,38 @@ function clamp(value: number, min: number, max: number) {
   position: sticky;
   z-index: 1;
   top: 0;
-  display: grid;
-  grid-template-columns: 70px minmax(0, 1fr) 56px 56px;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 0 10px;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-subtle);
+}
+
+.commit-file-diff__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.commit-file-diff__action:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.commit-file-diff__toggle.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .commit-diff-table {
@@ -759,7 +783,7 @@ function clamp(value: number, min: number, max: number) {
 .commit-diff-hunk,
 .commit-diff-line {
   display: grid;
-  grid-template-columns: 48px 48px 22px minmax(420px, 1fr);
+  grid-template-columns: 34px 34px minmax(420px, 1fr);
   min-height: 24px;
 }
 
@@ -797,23 +821,50 @@ function clamp(value: number, min: number, max: number) {
   color: var(--text-muted);
 }
 
-.commit-diff-line__number,
-.commit-diff-line__mark {
-  padding: 3px 8px;
+.commit-diff-line__number {
+  padding: 3px 5px;
   color: var(--text-muted);
   text-align: right;
   user-select: none;
   border-right: 1px solid var(--border-soft);
 }
 
-.commit-diff-line__mark {
-  text-align: center;
-}
-
 .commit-diff-line__content {
   min-width: 0;
-  padding: 3px 10px;
+  padding: 3px 10px 3px 8px;
   color: var(--text);
+  font-family: inherit;
+}
+
+.commit-diff-line__inline-mark {
+  display: inline-block;
+  width: 1ch;
+  margin-right: 1ch;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.commit-diff-line.is-added .commit-diff-line__inline-mark {
+  color: var(--ok);
+}
+
+.commit-diff-line.is-deleted .commit-diff-line__inline-mark {
+  color: var(--err);
+}
+
+.commit-diff-raw {
+  min-width: max-content;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.commit-diff-raw code {
   font-family: inherit;
 }
 
@@ -849,17 +900,12 @@ function clamp(value: number, min: number, max: number) {
 
 @media (max-width: 640px) {
   .commit-file-diff__header {
-    grid-template-columns: 1fr 56px 56px;
-    padding: 8px 10px;
-  }
-
-  .commit-file-diff__status {
-    grid-column: 1 / -1;
+    padding: 4px 8px;
   }
 
   .commit-diff-hunk,
   .commit-diff-line {
-    grid-template-columns: 40px 40px 20px minmax(320px, 1fr);
+    grid-template-columns: 30px 30px minmax(320px, 1fr);
   }
 }
 </style>
