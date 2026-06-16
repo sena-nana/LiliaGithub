@@ -790,6 +790,7 @@ const {
 
 .history-list {
   display: grid;
+  align-content: start;
   position: relative;
 }
 
