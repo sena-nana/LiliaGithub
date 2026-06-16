@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -27,14 +27,30 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:commitMessage": [value: string];
-  stageUnstagedChanges: [];
-  unstageStagedChanges: [];
-  changeAction: [action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath", change: RepoChange];
+  stageUnstagedChanges: [paths?: string[]];
+  unstageStagedChanges: [paths?: string[]];
+  changeAction: [
+    action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath",
+    change: RepoChange,
+    paths?: string[],
+  ];
   focusChange: [path: string];
   commit: [pushAfter: boolean];
 }>();
 
+type ChangeGroupKey = "staged" | "unstaged";
+type ChangeGroupBase = {
+  key: ChangeGroupKey;
+  changes: readonly RepoChange[];
+};
+type ActionChangeGroup = ChangeGroupBase & {
+  action: "stageUnstagedChanges" | "unstageStagedChanges";
+};
+
 const diffMode = ref<RepoDiffWorkspaceMode>("hunks");
+const selectedChangePaths = ref<Set<string>>(new Set());
+const selectedChangeGroup = ref<ChangeGroupKey | null>(null);
+const selectionAnchor = ref<{ group: ChangeGroupKey; path: string } | null>(null);
 
 function changeStatusLetter(change: RepoChange) {
   if (change.conflicted) return "!";
@@ -96,41 +112,125 @@ const activeWorkspaceFile = computed(() =>
   workspaceFiles.value.find((file) => file.path === props.previewChange?.path) ?? null,
 );
 
+watch(
+  () => props.changes,
+  (changes) => {
+    const currentPaths = new Set(changes.map((change) => change.path));
+    selectedChangePaths.value = new Set([...selectedChangePaths.value].filter((path) => currentPaths.has(path)));
+    if (!selectedChangePaths.value.size) {
+      selectedChangeGroup.value = null;
+    }
+    if (selectionAnchor.value && !currentPaths.has(selectionAnchor.value.path)) {
+      selectionAnchor.value = null;
+    }
+  },
+);
+
 function selectFile(file: RepoDiffWorkspaceFile) {
   emit("focusChange", file.path);
 }
 
-function changeContextMenu(change: RepoChange, group: "staged" | "unstaged"): ContextMenuItem[] {
+function isSelectedChange(change: RepoChange, group: ChangeGroupKey) {
+  return selectedChangeGroup.value === group && selectedChangePaths.value.has(change.path);
+}
+
+function selectedGroupChanges(group: ChangeGroupBase) {
+  if (selectedChangeGroup.value !== group.key) return [];
+  return group.changes.filter((change) => selectedChangePaths.value.has(change.path));
+}
+
+function selectedGroupPaths(group: ChangeGroupBase) {
+  return selectedGroupChanges(group).map((change) => change.path);
+}
+
+function replaceSelectedPaths(group: ChangeGroupKey, paths: readonly string[]) {
+  selectedChangePaths.value = new Set(paths);
+  selectedChangeGroup.value = paths.length ? group : null;
+}
+
+function clearSelectedPaths(paths: readonly string[]) {
+  const next = new Set(selectedChangePaths.value);
+  for (const path of paths) next.delete(path);
+  selectedChangePaths.value = next;
+  if (!next.size) {
+    selectedChangeGroup.value = null;
+    selectionAnchor.value = null;
+  }
+}
+
+function toggleSelectedPath(group: ChangeGroupKey, path: string) {
+  const next = selectedChangeGroup.value === group ? new Set(selectedChangePaths.value) : new Set<string>();
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  selectedChangePaths.value = next;
+  selectedChangeGroup.value = next.size ? group : null;
+}
+
+function selectChange(change: RepoChange, group: ChangeGroupBase, event: MouseEvent) {
+  emit("focusChange", change.path);
+
+  if (event.shiftKey && selectionAnchor.value?.group === group.key) {
+    const anchorIndex = group.changes.findIndex((item) => item.path === selectionAnchor.value?.path);
+    const currentIndex = group.changes.findIndex((item) => item.path === change.path);
+    if (anchorIndex >= 0 && currentIndex >= 0) {
+      const [start, end] = anchorIndex < currentIndex ? [anchorIndex, currentIndex] : [currentIndex, anchorIndex];
+      replaceSelectedPaths(group.key, group.changes.slice(start, end + 1).map((item) => item.path));
+      return;
+    }
+  }
+
+  if (event.ctrlKey || event.metaKey) {
+    toggleSelectedPath(group.key, change.path);
+    selectionAnchor.value = { group: group.key, path: change.path };
+    return;
+  }
+
+  replaceSelectedPaths(group.key, [change.path]);
+  selectionAnchor.value = { group: group.key, path: change.path };
+}
+
+function changeContextMenu(change: RepoChange, group: ChangeGroupBase): ContextMenuItem[] {
   const mutationDisabled = props.actionRunning;
-  const staged = group === "staged";
+  const staged = group.key === "staged";
+  const targets = isSelectedChange(change, group.key) ? selectedGroupChanges(group) : [];
+  const actionTargets = targets.length ? targets : [change];
+  const paths = actionTargets.map((item) => item.path);
+  const hasUntrackedTarget = actionTargets.some((item) => item.untracked);
   return [
     {
-      id: `${group}-stage-${change.path}`,
+      id: `${group.key}-stage-${change.path}`,
       label: staged ? "移出暂存" : "暂存",
       icon: staged ? ArrowUpFromLine : ArrowDownToLine,
       disabled: mutationDisabled,
       onSelect: () => {
-        emit("changeAction", staged ? "unstage" : "stage", change);
+        emit("changeAction", staged ? "unstage" : "stage", change, paths);
+        clearSelectedPaths(paths);
       },
     },
     {
-      id: `${group}-discard-${change.path}`,
+      id: `${group.key}-discard-${change.path}`,
       label: "放弃更改",
       icon: RotateCcw,
       danger: true,
       disabled: mutationDisabled || staged,
       confirmLabel: "确认放弃？再点一次",
-      onSelect: () => emit("changeAction", "discard", change),
+      onSelect: () => {
+        emit("changeAction", "discard", change, paths);
+        clearSelectedPaths(paths);
+      },
     },
     {
-      id: `${group}-gitignore-${change.path}`,
+      id: `${group.key}-gitignore-${change.path}`,
       label: "添加到 gitignore",
       icon: ListPlus,
-      disabled: mutationDisabled || !change.untracked,
-      onSelect: () => emit("changeAction", "gitignore", change),
+      disabled: mutationDisabled || !hasUntrackedTarget,
+      onSelect: () => {
+        emit("changeAction", "gitignore", change, paths);
+        clearSelectedPaths(paths);
+      },
     },
     {
-      id: `${group}-copy-path-${change.path}`,
+      id: `${group.key}-copy-path-${change.path}`,
       label: "复制文件路径",
       icon: Copy,
       onSelect: () => emit("changeAction", "copyPath", change),
@@ -138,9 +238,11 @@ function changeContextMenu(change: RepoChange, group: "staged" | "unstaged"): Co
   ];
 }
 
-function runGroupAction(action: "stageUnstagedChanges" | "unstageStagedChanges") {
-  if (action === "stageUnstagedChanges") emit("stageUnstagedChanges");
-  else emit("unstageStagedChanges");
+function runGroupAction(group: ActionChangeGroup) {
+  const paths = selectedGroupPaths(group);
+  if (group.action === "stageUnstagedChanges") emit("stageUnstagedChanges", paths.length ? paths : undefined);
+  else emit("unstageStagedChanges", paths.length ? paths : undefined);
+  if (paths.length) clearSelectedPaths(paths);
 }
 
 function toggleDiffMode() {
@@ -186,7 +288,7 @@ function submitCommit(pushAfter: boolean) {
                 :disabled="!group.changes.length || actionRunning"
                 :aria-label="group.actionLabel"
                 :title="group.actionLabel"
-                @click="runGroupAction(group.action)"
+                @click="runGroupAction(group)"
               >
                 <component :is="group.icon" :size="15" aria-hidden="true" />
               </button>
@@ -198,10 +300,11 @@ function submitCommit(pushAfter: boolean) {
                 :key="changeKey(change, group.key)"
                 type="button"
                 class="changes-group__item"
-                :class="{ 'is-active': previewChange?.path === change.path }"
+                :class="{ 'is-active': previewChange?.path === change.path, 'is-selected': isSelectedChange(change, group.key) }"
+                :aria-pressed="isSelectedChange(change, group.key)"
                 :title="changeTitle(change)"
-                v-context-menu="changeContextMenu(change, group.key)"
-                @click="$emit('focusChange', change.path)"
+                v-context-menu="changeContextMenu(change, group)"
+                @click="selectChange(change, group, $event)"
               >
                 <span class="changes-group__status" :class="changeStatusTone(change)" :title="changeStatusText(change)">
                   {{ changeStatusLetter(change) }}
@@ -375,6 +478,10 @@ function submitCommit(pushAfter: boolean) {
 .changes-group__item:hover,
 .changes-group__item.is-active {
   background: var(--bg-hover);
+}
+
+.changes-group__item.is-selected {
+  background: var(--accent-soft);
 }
 
 .changes-group__item.is-active {

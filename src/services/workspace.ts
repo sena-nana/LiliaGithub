@@ -16,6 +16,7 @@ export {
   setFallbackGitHubRepoPagesForTests,
   setFallbackGitHubReposErrorForTests,
   setFallbackRepoContributionOverrideForTests,
+  setFallbackRepoDetailOverrideForTests,
   setFallbackRepoOverridesForTests,
   setFallbackRepoRemoteSyncOverrideForTests,
 } from "./workspace/fallback";

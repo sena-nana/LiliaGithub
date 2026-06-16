@@ -5,8 +5,8 @@ import App from "../src/App.vue";
 import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoConflictState } from "../src/services/workspace";
-import { conflictState, repoSummary } from "./fixtures/workspace";
+import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoChange, RepoConflictState } from "../src/services/workspace";
+import { conflictState, repoDetail, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 
@@ -107,6 +107,21 @@ function githubIssue(repoFullName: string, number: number, updatedAt: string, cr
     htmlUrl: `https://github.com/${repoFullName}/issues/${number}`,
     updatedAt,
     createdAt,
+  };
+}
+
+function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChange {
+  return {
+    path,
+    oldPath: null,
+    indexStatus: " ",
+    worktreeStatus: "M",
+    staged: false,
+    unstaged: true,
+    untracked: false,
+    conflicted: false,
+    diff: `@@ -1 +1 @@\n-old\n+${path}`,
+    ...overrides,
   };
 }
 
@@ -909,6 +924,145 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "分支" }));
     expect(screen.getByText("origin/main")).toBeInTheDocument();
+  });
+
+  it("变更页文件列表支持多选后批量处理变更", async () => {
+    const service = await import("../src/services/workspace");
+    const stageFiles = vi.spyOn(service, "stageFiles");
+    const unstageFiles = vi.spyOn(service, "unstageFiles");
+    const addFilesToGitignore = vi.spyOn(service, "addFilesToGitignore");
+    const discardFiles = vi.spyOn(service, "discardFiles");
+    service.setFallbackRepoDetailOverrideForTests((repoId) => {
+      if (repoId !== "LiliaGithub") return null;
+      const summary = repoSummary("LiliaGithub", {
+        stagedCount: 2,
+        unstagedCount: 3,
+        untrackedCount: 0,
+      });
+      return repoDetail(summary, {
+        changes: [
+          repoChange("src/staged-a.ts", {
+            indexStatus: "M",
+            worktreeStatus: " ",
+            staged: true,
+            unstaged: false,
+            diff: "@@ -1 +1 @@\n-old\n+staged-a",
+          }),
+          repoChange("src/staged-b.ts", {
+            indexStatus: "M",
+            worktreeStatus: " ",
+            staged: true,
+            unstaged: false,
+            diff: "@@ -1 +1 @@\n-old\n+staged-b",
+          }),
+          repoChange("src/alpha.ts", { indexStatus: "?", worktreeStatus: "?", untracked: true }),
+          repoChange("src/beta.ts", { indexStatus: "?", worktreeStatus: "?", untracked: true }),
+          repoChange("src/gamma.ts", { indexStatus: "?", worktreeStatus: "?", untracked: true }),
+        ],
+      });
+    });
+
+    await renderAt("/repos/LiliaGithub");
+
+    const unstagedGroup = await screen.findByLabelText("未暂存变更");
+    const alphaRow = (await within(unstagedGroup).findByText("src/alpha.ts")).closest("button")!;
+    const betaRow = within(unstagedGroup).getByText("src/beta.ts").closest("button")!;
+    const gammaRow = within(unstagedGroup).getByText("src/gamma.ts").closest("button")!;
+    const waitUnstagedReady = () =>
+      waitFor(() => expect(screen.getByRole("button", { name: "暂存全部未暂存变更" })).toBeEnabled());
+    const waitStagedReady = () =>
+      waitFor(() => expect(screen.getByRole("button", { name: "取消暂存全部已暂存变更" })).toBeEnabled());
+    const selectBetaGamma = async () => {
+      await fireEvent.click(betaRow);
+      await fireEvent.click(gammaRow, { ctrlKey: true });
+    };
+    const selectContextMenuItem = async (row: Element, name: string) => {
+      await fireEvent.contextMenu(row);
+      await fireEvent.click(await screen.findByRole("menuitem", { name }));
+    };
+
+    await fireEvent.click(alphaRow);
+    expect(alphaRow).toHaveAttribute("aria-pressed", "true");
+    expect(betaRow).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByLabelText("变更预览")).toHaveTextContent("src/alpha.ts");
+
+    await fireEvent.click(gammaRow, { ctrlKey: true });
+    expect(alphaRow).toHaveAttribute("aria-pressed", "true");
+    expect(gammaRow).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("变更预览")).toHaveTextContent("src/gamma.ts");
+
+    await fireEvent.click(gammaRow, { ctrlKey: true });
+    expect(alphaRow).toHaveAttribute("aria-pressed", "true");
+    expect(gammaRow).toHaveAttribute("aria-pressed", "false");
+
+    await fireEvent.click(betaRow, { ctrlKey: true });
+    await fireEvent.click(gammaRow, { shiftKey: true });
+    expect(alphaRow).toHaveAttribute("aria-pressed", "false");
+    expect(betaRow).toHaveAttribute("aria-pressed", "true");
+    expect(gammaRow).toHaveAttribute("aria-pressed", "true");
+
+    await selectContextMenuItem(betaRow, "暂存");
+    await waitFor(() =>
+      expect(stageFiles).toHaveBeenCalledWith("LiliaGithub", ["src/beta.ts", "src/gamma.ts"]),
+    );
+    expect(betaRow).toHaveAttribute("aria-pressed", "false");
+    expect(gammaRow).toHaveAttribute("aria-pressed", "false");
+    await waitUnstagedReady();
+
+    stageFiles.mockClear();
+    await selectContextMenuItem(alphaRow, "暂存");
+    await waitFor(() =>
+      expect(stageFiles).toHaveBeenCalledWith("LiliaGithub", ["src/alpha.ts"]),
+    );
+    await waitUnstagedReady();
+
+    await selectBetaGamma();
+    await selectContextMenuItem(gammaRow, "添加到 gitignore");
+    await waitFor(() =>
+      expect(addFilesToGitignore).toHaveBeenCalledWith("LiliaGithub", ["src/beta.ts", "src/gamma.ts"]),
+    );
+    await waitUnstagedReady();
+
+    await selectBetaGamma();
+    await fireEvent.contextMenu(betaRow);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "放弃更改" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "确认放弃？再点一次" }));
+    await waitFor(() =>
+      expect(discardFiles).toHaveBeenCalledWith("LiliaGithub", ["src/beta.ts", "src/gamma.ts"]),
+    );
+    await waitUnstagedReady();
+
+    await selectBetaGamma();
+    await fireEvent.click(screen.getByRole("button", { name: "暂存全部未暂存变更" }));
+    await waitFor(() =>
+      expect(stageFiles).toHaveBeenCalledWith("LiliaGithub", ["src/beta.ts", "src/gamma.ts"]),
+    );
+    await waitStagedReady();
+
+    const stagedGroup = screen.getByLabelText("已暂存变更");
+    const stagedARow = within(stagedGroup).getByText("src/staged-a.ts").closest("button")!;
+    const stagedBRow = within(stagedGroup).getByText("src/staged-b.ts").closest("button")!;
+
+    await fireEvent.click(stagedARow);
+    await fireEvent.click(stagedBRow, { metaKey: true });
+    expect(stagedARow).toHaveAttribute("aria-pressed", "true");
+    expect(stagedBRow).toHaveAttribute("aria-pressed", "true");
+
+    await selectContextMenuItem(stagedBRow, "移出暂存");
+    await waitFor(() =>
+      expect(unstageFiles).toHaveBeenCalledWith("LiliaGithub", ["src/staged-a.ts", "src/staged-b.ts"]),
+    );
+    expect(stagedARow).toHaveAttribute("aria-pressed", "false");
+    expect(stagedBRow).toHaveAttribute("aria-pressed", "false");
+    await waitStagedReady();
+
+    unstageFiles.mockClear();
+    await fireEvent.click(stagedARow);
+    await fireEvent.click(stagedBRow, { metaKey: true });
+    await fireEvent.click(screen.getByRole("button", { name: "取消暂存全部已暂存变更" }));
+    await waitFor(() =>
+      expect(unstageFiles).toHaveBeenCalledWith("LiliaGithub", ["src/staged-a.ts", "src/staged-b.ts"]),
+    );
   });
 
   it("仓库项目信息页显示 README、Issues、Actions 和 Settings", async () => {

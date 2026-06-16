@@ -388,6 +388,7 @@ let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContribut
 let fallbackGitHubWorkflowRunsOverride:
   ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null = null;
 let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
+let fallbackRepoDetailOverride: ((repoId: string) => RepoDetail | null) | null = null;
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
@@ -412,6 +413,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoContributionOverride = null;
   fallbackGitHubWorkflowRunsOverride = null;
   fallbackRepoRemoteSyncOverride = null;
+  fallbackRepoDetailOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
   fallbackGitHubRepoPagesOverride = null;
@@ -470,6 +472,10 @@ export function setFallbackRepoRemoteSyncOverrideForTests(
   override: ((repo: RepoSummary) => string | null) | null,
 ) {
   fallbackRepoRemoteSyncOverride = override;
+}
+
+export function setFallbackRepoDetailOverrideForTests(override: ((repoId: string) => RepoDetail | null) | null) {
+  fallbackRepoDetailOverride = override;
 }
 
 export function setFallbackRepoOverridesForTests(overrides: Record<string, RepoSummary>) {
@@ -1460,6 +1466,8 @@ function pushFallbackLaunchLog(repoId: string, stream: ProjectLaunchLog["stream"
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => {
+    const override = fallbackRepoDetailOverride?.(repoId);
+    if (override) return override;
     const summary = fallbackRepo(repoId);
     const conflicts = fallbackConflictState(repoId);
     return {

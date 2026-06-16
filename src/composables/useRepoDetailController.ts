@@ -416,23 +416,24 @@ export function useRepoDetailController() {
     }
   }
 
-  function stageUnstagedChanges() {
+  function stageUnstagedChanges(paths?: string[]) {
     void runAction(async () => {
-      await workspace.stage(repoId.value, unstagedChangePaths.value);
+      await workspace.stage(repoId.value, paths?.length ? paths : unstagedChangePaths.value);
     });
   }
 
-  function unstageStagedChanges() {
+  function unstageStagedChanges(paths?: string[]) {
     void runAction(async () => {
-      await workspace.unstage(repoId.value, stagedChangePaths.value);
+      await workspace.unstage(repoId.value, paths?.length ? paths : stagedChangePaths.value);
     });
   }
 
   function runChangeAction(
     action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath",
     change: RepoChange,
+    paths?: string[],
   ) {
-    const files = [change.path];
+    const files = paths?.length ? paths : [change.path];
     void runAction(() => {
       if (action === "stage") return workspace.stage(repoId.value, files);
       if (action === "unstage") return workspace.unstage(repoId.value, files);

@@ -120,9 +120,13 @@ const emit = defineEmits<{
   selectLaunchCandidate: [candidate: ProjectLaunchCandidate];
   updateActiveGitTab: [tab: GitTab];
   updateCommitMessage: [value: string];
-  stageUnstagedChanges: [];
-  unstageStagedChanges: [];
-  changeAction: [action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath", change: RepoChange];
+  stageUnstagedChanges: [paths?: string[]];
+  unstageStagedChanges: [paths?: string[]];
+  changeAction: [
+    action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath",
+    change: RepoChange,
+    paths?: string[],
+  ];
   focusChange: [path: string];
   commit: [pushAfter: boolean];
   checkout: [branchName: string];
@@ -1002,9 +1006,9 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           :can-commit="canCommit"
           :action-running="actionRunning"
           :preview-change="previewChange"
-          @stage-unstaged-changes="emit('stageUnstagedChanges')"
-          @unstage-staged-changes="emit('unstageStagedChanges')"
-          @change-action="(action, change) => emit('changeAction', action, change)"
+          @stage-unstaged-changes="emit('stageUnstagedChanges', $event)"
+          @unstage-staged-changes="emit('unstageStagedChanges', $event)"
+          @change-action="(action, change, paths) => emit('changeAction', action, change, paths)"
           @focus-change="emit('focusChange', $event)"
           @commit="emit('commit', $event)"
           @update:commit-message="emit('updateCommitMessage', $event)"
