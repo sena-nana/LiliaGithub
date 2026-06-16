@@ -133,9 +133,3 @@ export function commitFileStatusText(status: string) {
   if (status === "copied") return "复制";
   return "修改";
 }
-
-export function commitDiffLineMark(kind: string) {
-  if (kind === "added") return "+";
-  if (kind === "deleted") return "-";
-  return "";
-}
