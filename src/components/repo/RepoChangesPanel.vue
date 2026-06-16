@@ -73,6 +73,7 @@ function selectFile(file: RepoDiffWorkspaceFile) {
       empty-diff-text="当前没有可展示的差异内容。"
       mode="hunks"
       fill
+      splitter
       @select-file="selectFile"
     >
       <template #meta>

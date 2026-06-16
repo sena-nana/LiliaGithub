@@ -33,7 +33,6 @@ const activeFilePath = ref<string | null>(null);
 const copyNotice = ref<string | null>(null);
 const diffCollapsed = ref(true);
 const panelHeight = ref(460);
-const splitPercent = ref(38);
 let resizeCleanup: (() => void) | null = null;
 let copyNoticeTimer: number | null = null;
 
@@ -84,7 +83,6 @@ const activeWorkspaceFile = computed(() =>
 );
 const cardStyle = computed(() => ({
   "--commit-detail-height": `${panelHeight.value}px`,
-  "--commit-detail-left": `${splitPercent.value}%`,
 }));
 
 onMounted(() => {
@@ -171,20 +169,6 @@ function startHeightResize(event: PointerEvent) {
   });
 }
 
-function startSplitResize(event: PointerEvent) {
-  if (!props.embedded) return;
-  const target = event.currentTarget;
-  if (!(target instanceof HTMLElement)) return;
-  const shell = target.closest(".commit-detail-card");
-  if (!(shell instanceof HTMLElement)) return;
-  const rect = shell.getBoundingClientRect();
-  startResize(event, (_start, current) => {
-    if (!rect.width) return;
-    const next = ((current.clientX - rect.left) / rect.width) * 100;
-    splitPercent.value = clamp(next, 28, 55);
-  });
-}
-
 function startResize(
   event: PointerEvent,
   apply: (start: { x: number; y: number; height: number }, current: PointerEvent) => void,
@@ -238,7 +222,6 @@ function clamp(value: number, min: number, max: number) {
       :show-stats="true"
       :splitter="embedded"
       @select-file="selectFile"
-      @start-split-resize="startSplitResize"
     >
       <template #meta>
         <section class="commit-detail-meta" aria-label="提交元数据">

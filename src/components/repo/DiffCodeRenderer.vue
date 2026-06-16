@@ -115,6 +115,7 @@ function rawDiffLineKind(line: string): RawDiffLineKind {
 
 .diff-code--hunks {
   display: grid;
+  align-content: start;
   overflow-x: auto;
 }
 
