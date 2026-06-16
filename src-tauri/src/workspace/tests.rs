@@ -36,6 +36,64 @@ fn init_git_repo(path: &Path) {
     run_git(path, &["config", "user.name", "Test User"]);
 }
 
+#[test]
+fn repo_discards_tracked_worktree_changes() {
+    let path = temp_dir("discard-tracked");
+    init_git_repo(&path);
+    fs::write(path.join("app.ts"), "before\n").unwrap();
+    run_git(&path, &["add", "app.ts"]);
+    run_git(&path, &["commit", "-m", "initial"]);
+    fs::write(path.join("app.ts"), "after\n").unwrap();
+
+    discard_repo_files(&path, vec!["app.ts".to_string()]).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(path.join("app.ts")).unwrap().replace("\r\n", "\n"),
+        "before\n"
+    );
+    assert!(repo_status_entries(&path).is_empty());
+}
+
+#[test]
+fn repo_discards_untracked_files() {
+    let path = temp_dir("discard-untracked");
+    init_git_repo(&path);
+    fs::write(path.join("tracked.ts"), "tracked\n").unwrap();
+    run_git(&path, &["add", "tracked.ts"]);
+    run_git(&path, &["commit", "-m", "initial"]);
+    fs::write(path.join("scratch.ts"), "scratch\n").unwrap();
+
+    discard_repo_files(&path, vec!["scratch.ts".to_string()]).unwrap();
+
+    assert!(!path.join("scratch.ts").exists());
+    assert!(repo_status_entries(&path).is_empty());
+}
+
+#[test]
+fn repo_adds_untracked_files_to_gitignore_once() {
+    let path = temp_dir("gitignore-untracked");
+    init_git_repo(&path);
+    fs::write(path.join("tracked.ts"), "tracked\n").unwrap();
+    run_git(&path, &["add", "tracked.ts"]);
+    run_git(&path, &["commit", "-m", "initial"]);
+    fs::create_dir_all(path.join("logs")).unwrap();
+    fs::write(path.join("logs").join("output.log"), "log\n").unwrap();
+
+    add_repo_files_to_gitignore(
+        &path,
+        vec![
+            "logs/output.log".to_string(),
+            "logs/output.log".to_string(),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(path.join(".gitignore")).unwrap(),
+        "logs/output.log\n"
+    );
+}
+
 fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
     let mut summary = RepoSummary {
         id: "repo".to_string(),

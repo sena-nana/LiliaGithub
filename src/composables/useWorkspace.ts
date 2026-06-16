@@ -29,6 +29,8 @@ import {
   discoverRepos,
   commit,
   continueConflictOperation,
+  addFilesToGitignore,
+  discardChanges,
   refreshRepoStatusList,
   forgetRemoteRepo,
   deleteLocalRepo,
@@ -68,6 +70,7 @@ import {
 import {
   openPath,
   openUrl,
+  copyText,
 } from "./workspace/system";
 
 export function useWorkspace() {
@@ -108,6 +111,8 @@ export function useWorkspace() {
     stopLaunch,
     stage,
     unstage,
+    discardChanges,
+    addFilesToGitignore,
     commit,
     pull,
     mergePull,
@@ -128,5 +133,6 @@ export function useWorkspace() {
     repoUsesSystemGit,
     openPath,
     openUrl,
+    copyText,
   };
 }

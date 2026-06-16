@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue
 import { createMemoryHistory } from "vue-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
+import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
 import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoConflictState } from "../src/services/workspace";
@@ -10,6 +11,7 @@ import { conflictState, repoSummary } from "./fixtures/workspace";
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 
 async function renderAt(path: string) {
+  installContextMenu();
   const router = createLiliaGithubRouter(createMemoryHistory());
   await router.push(path);
   await router.isReady();
@@ -785,6 +787,15 @@ describe("基础路由", () => {
   });
 
   it("仓库详情页提供变更、历史、分支和提交视图", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const service = await import("../src/services/workspace");
+    const addFilesToGitignore = vi.spyOn(service, "addFilesToGitignore");
+    const stageFiles = vi.spyOn(service, "stageFiles");
+    const unstageFiles = vi.spyOn(service, "unstageFiles");
     await renderAt("/repos/LiliaGithub");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
@@ -839,6 +850,52 @@ describe("基础路由", () => {
     await fireEvent.pointerMove(window, { clientX: 500, pointerId: 1 });
     expect(diffWorkspace.style.getPropertyValue("--commit-detail-left")).toBe("50%");
     await fireEvent.pointerUp(window, { clientX: 500, pointerId: 1 });
+
+    const diffToggle = within(diffPreview).getByRole("button", { name: "折叠 diff" });
+    expect(diffToggle).toHaveAttribute("aria-pressed", "true");
+    await fireEvent.click(diffToggle);
+    expect(diffToggle).toHaveAttribute("aria-pressed", "false");
+    expect(diffPreview.querySelector(".diff-code__raw-line")).toBeInTheDocument();
+    await fireEvent.click(diffToggle);
+    expect(diffToggle).toHaveAttribute("aria-pressed", "true");
+    expect(diffPreview.querySelector(".diff-code__line.is-added")).toHaveTextContent("LiliaGithub");
+
+    const unstagedGroup = screen.getByLabelText("未暂存变更");
+    const untrackedRow = within(unstagedGroup).getByText("src-tauri/src/workspace.rs").closest("button")!;
+    await fireEvent.contextMenu(untrackedRow);
+    expect(await screen.findByRole("menuitem", { name: "暂存" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "放弃更改" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "添加到 gitignore" })).toBeEnabled();
+    expect(screen.getByRole("menuitem", { name: "复制文件路径" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("menuitem", { name: "添加到 gitignore" }));
+    await waitFor(() =>
+      expect(addFilesToGitignore).toHaveBeenCalledWith("LiliaGithub", ["src-tauri/src/workspace.rs"]),
+    );
+
+    await fireEvent.contextMenu(untrackedRow);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "复制文件路径" }));
+    expect(writeText).toHaveBeenCalledWith("src-tauri/src/workspace.rs");
+    await waitFor(() => expect(screen.getByRole("button", { name: "暂存全部未暂存变更" })).toBeEnabled());
+
+    await fireEvent.contextMenu(untrackedRow);
+    expect(await screen.findByRole("menuitem", { name: "暂存" })).toBeEnabled();
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "暂存" }));
+    await waitFor(() =>
+      expect(stageFiles).toHaveBeenCalledWith("LiliaGithub", ["src-tauri/src/workspace.rs"]),
+    );
+
+    const stagedGroup = screen.getByLabelText("已暂存变更");
+    const stagedRow = within(stagedGroup).getByText("src/pages/Home.vue").closest("button")!;
+    await waitFor(() => expect(screen.getByRole("button", { name: "取消暂存全部已暂存变更" })).toBeEnabled());
+    await fireEvent.contextMenu(stagedRow);
+    expect(await screen.findByRole("menuitem", { name: "移出暂存" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "放弃更改" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "添加到 gitignore" })).toBeDisabled();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "移出暂存" }));
+    await waitFor(() =>
+      expect(unstageFiles).toHaveBeenCalledWith("LiliaGithub", ["src/pages/Home.vue"]),
+    );
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);

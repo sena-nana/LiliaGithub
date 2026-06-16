@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { ArrowDownToLine, ArrowUpFromLine, ChevronDown, GitCommitHorizontal, Upload } from "@lucide/vue";
+import { computed, ref } from "vue";
+import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ChevronDown,
+  Copy,
+  GitCommitHorizontal,
+  ListPlus,
+  RotateCcw,
+  Upload,
+} from "@lucide/vue";
+import type { ContextMenuItem } from "../../composables/useContextMenu";
 import type { RepoChange } from "../../services/workspace";
 import { changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
-import { parseRepoDiffHunks, type RepoDiffWorkspaceFile } from "./repoDiffWorkspace";
+import { parseRepoDiffHunks, type RepoDiffWorkspaceFile, type RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 
 const props = defineProps<{
   changes: readonly RepoChange[];
@@ -19,9 +29,12 @@ const emit = defineEmits<{
   "update:commitMessage": [value: string];
   stageUnstagedChanges: [];
   unstageStagedChanges: [];
+  changeAction: [action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath", change: RepoChange];
   focusChange: [path: string];
   commit: [pushAfter: boolean];
 }>();
+
+const diffMode = ref<RepoDiffWorkspaceMode>("hunks");
 
 function changeStatusLetter(change: RepoChange) {
   if (change.conflicted) return "!";
@@ -87,9 +100,51 @@ function selectFile(file: RepoDiffWorkspaceFile) {
   emit("focusChange", file.path);
 }
 
+function changeContextMenu(change: RepoChange, group: "staged" | "unstaged"): ContextMenuItem[] {
+  const mutationDisabled = props.actionRunning;
+  const staged = group === "staged";
+  return [
+    {
+      id: `${group}-stage-${change.path}`,
+      label: staged ? "移出暂存" : "暂存",
+      icon: staged ? ArrowUpFromLine : ArrowDownToLine,
+      disabled: mutationDisabled,
+      onSelect: () => {
+        emit("changeAction", staged ? "unstage" : "stage", change);
+      },
+    },
+    {
+      id: `${group}-discard-${change.path}`,
+      label: "放弃更改",
+      icon: RotateCcw,
+      danger: true,
+      disabled: mutationDisabled || staged,
+      confirmLabel: "确认放弃？再点一次",
+      onSelect: () => emit("changeAction", "discard", change),
+    },
+    {
+      id: `${group}-gitignore-${change.path}`,
+      label: "添加到 gitignore",
+      icon: ListPlus,
+      disabled: mutationDisabled || !change.untracked,
+      onSelect: () => emit("changeAction", "gitignore", change),
+    },
+    {
+      id: `${group}-copy-path-${change.path}`,
+      label: "复制文件路径",
+      icon: Copy,
+      onSelect: () => emit("changeAction", "copyPath", change),
+    },
+  ];
+}
+
 function runGroupAction(action: "stageUnstagedChanges" | "unstageStagedChanges") {
   if (action === "stageUnstagedChanges") emit("stageUnstagedChanges");
   else emit("unstageStagedChanges");
+}
+
+function toggleDiffMode() {
+  diffMode.value = diffMode.value === "hunks" ? "raw" : "hunks";
 }
 
 function submitCommit(pushAfter: boolean) {
@@ -106,7 +161,7 @@ function submitCommit(pushAfter: boolean) {
       diff-panel-label="变更预览"
       empty-file-text="没有本地变更。"
       empty-diff-text="当前没有可展示的差异内容。"
-      mode="hunks"
+      :mode="diffMode"
       fill
       splitter
       @select-file="selectFile"
@@ -145,6 +200,7 @@ function submitCommit(pushAfter: boolean) {
                 class="changes-group__item"
                 :class="{ 'is-active': previewChange?.path === change.path }"
                 :title="changeTitle(change)"
+                v-context-menu="changeContextMenu(change, group.key)"
                 @click="$emit('focusChange', change.path)"
               >
                 <span class="changes-group__status" :class="changeStatusTone(change)" :title="changeStatusText(change)">
@@ -188,14 +244,16 @@ function submitCommit(pushAfter: boolean) {
         </div>
       </template>
 
-      <template #diff-actions="{ file }">
+      <template #diff-actions="{ file, mode }">
         <button
           v-if="file?.patch"
           type="button"
-          class="commit-file-diff__action commit-file-diff__toggle is-active"
-          aria-label="结构化 diff"
-          aria-pressed="true"
-          title="结构化 diff"
+          class="commit-file-diff__action commit-file-diff__toggle"
+          :class="{ 'is-active': mode === 'hunks' }"
+          aria-label="折叠 diff"
+          :aria-pressed="mode === 'hunks'"
+          :title="mode === 'hunks' ? '显示原始 diff' : '显示结构化 diff'"
+          @click="toggleDiffMode"
         >
           <ChevronDown :size="13" aria-hidden="true" />
         </button>
@@ -278,7 +336,7 @@ function submitCommit(pushAfter: boolean) {
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   color: var(--text-muted);
-  background: var(--bg);
+  background: transparent;
 }
 
 .changes-group__arrow:not(:disabled):hover {

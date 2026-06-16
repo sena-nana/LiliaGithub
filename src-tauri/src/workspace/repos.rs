@@ -1106,6 +1106,36 @@ pub async fn repo_unstage_files(
 }
 
 #[tauri::command]
+pub async fn repo_discard_files(
+    app: AppHandle,
+    repo_id: String,
+    files: Vec<String>,
+) -> Result<RepoSummary, String> {
+    run_blocking("放弃文件更改", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        discard_repo_files(&path, files)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_add_files_to_gitignore(
+    app: AppHandle,
+    repo_id: String,
+    files: Vec<String>,
+) -> Result<RepoSummary, String> {
+    run_blocking("添加文件到 gitignore", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        add_repo_files_to_gitignore(&path, files)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn repo_commit(
     app: AppHandle,
     repo_id: String,
@@ -1579,6 +1609,68 @@ pub(super) fn selected_repo_files(path: &Path, files: Vec<String>) -> Result<Vec
         return Err("请选择要提交的文件".to_string());
     }
     Ok(selected)
+}
+
+pub(super) fn discard_repo_files(path: &Path, files: Vec<String>) -> Result<(), String> {
+    for file in selected_repo_files(path, files)? {
+        let entry = repo_status_entries(path)
+            .into_iter()
+            .find(|entry| entry.path == file)
+            .ok_or_else(|| format!("选择的文件不在当前变更中：{file}"))?;
+        if entry.index != " " && entry.index != "?" {
+            return Err(format!("请先将文件移出暂存：{file}"));
+        }
+        if entry.index == "?" && entry.worktree == "?" {
+            let file_path = safe_repo_file_path(path, &file)?;
+            if file_path.is_dir() {
+                fs::remove_dir_all(&file_path).map_err(|e| format!("删除未跟踪目录失败：{e}"))?;
+            } else if file_path.exists() {
+                fs::remove_file(&file_path).map_err(|e| format!("删除未跟踪文件失败：{e}"))?;
+            }
+        } else {
+            git_command(path, &["restore", "--", &file], None)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn add_repo_files_to_gitignore(path: &Path, files: Vec<String>) -> Result<(), String> {
+    let entries = repo_status_entries(path);
+    let mut selected = Vec::new();
+    for file in selected_repo_files(path, files)? {
+        let entry = entries
+            .iter()
+            .find(|entry| entry.path == file)
+            .ok_or_else(|| format!("选择的文件不在当前变更中：{file}"))?;
+        if entry.index != "?" || entry.worktree != "?" {
+            return Err(format!("只能将未跟踪文件添加到 gitignore：{file}"));
+        }
+        selected.push(file);
+    }
+
+    let gitignore_path = path.join(".gitignore");
+    let current = fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let mut lines: Vec<String> = current.lines().map(ToString::to_string).collect();
+    let existing: HashSet<String> = lines
+        .iter()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let mut changed = false;
+    for file in selected {
+        let normalized = file.replace('\\', "/");
+        if existing.contains(&normalized) {
+            continue;
+        }
+        lines.push(normalized);
+        changed = true;
+    }
+    if changed {
+        let mut next = lines.join("\n");
+        next.push('\n');
+        fs::write(&gitignore_path, next).map_err(|e| format!("写入 .gitignore 失败：{e}"))?;
+    }
+    Ok(())
 }
 
 pub(super) fn repo_changes(path: &Path) -> Vec<RepoChange> {

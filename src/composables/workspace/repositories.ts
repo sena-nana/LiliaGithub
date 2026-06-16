@@ -430,6 +430,16 @@ export async function unstage(repoId: string, files: string[]) {
   await loadRepoDetail(repoId);
 }
 
+export async function discardChanges(repoId: string, files: string[]) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.discardFiles(repoId, files));
+}
+
+export async function addFilesToGitignore(repoId: string, files: string[]) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.addFilesToGitignore(repoId, files));
+}
+
 export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
   const service = await loadWorkspaceService();
   await applyRepoMutationWithLanguageStats(repoId, () => service.commitRepo(repoId, files, message, pushAfter));

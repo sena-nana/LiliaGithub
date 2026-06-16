@@ -122,6 +122,7 @@ const emit = defineEmits<{
   updateCommitMessage: [value: string];
   stageUnstagedChanges: [];
   unstageStagedChanges: [];
+  changeAction: [action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath", change: RepoChange];
   focusChange: [path: string];
   commit: [pushAfter: boolean];
   checkout: [branchName: string];
@@ -1003,6 +1004,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           :preview-change="previewChange"
           @stage-unstaged-changes="emit('stageUnstagedChanges')"
           @unstage-staged-changes="emit('unstageStagedChanges')"
+          @change-action="(action, change) => emit('changeAction', action, change)"
           @focus-change="emit('focusChange', $event)"
           @commit="emit('commit', $event)"
           @update:commit-message="emit('updateCommitMessage', $event)"
@@ -1337,7 +1339,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
       </main>
 
       <CommitDetailCard
-        v-if="showCommitDetail"
+        v-if="showCommitDetail && selectedCommitHash"
         class="project-commit-detail-card"
         :repo-id="repoId"
         :repo-title="repoTitle || repoId"

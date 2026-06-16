@@ -5,6 +5,7 @@ import { recentSyncErrorForRepo } from "./workspace/state";
 import type {
   CommitSummary,
   ProjectLaunchCandidate,
+  RepoChange,
   RepoConflictChoice,
   RepoConflictFile,
   RepoConflictState,
@@ -427,6 +428,20 @@ export function useRepoDetailController() {
     });
   }
 
+  function runChangeAction(
+    action: "stage" | "unstage" | "discard" | "gitignore" | "copyPath",
+    change: RepoChange,
+  ) {
+    const files = [change.path];
+    void runAction(() => {
+      if (action === "stage") return workspace.stage(repoId.value, files);
+      if (action === "unstage") return workspace.unstage(repoId.value, files);
+      if (action === "discard") return workspace.discardChanges(repoId.value, files);
+      if (action === "gitignore") return workspace.addFilesToGitignore(repoId.value, files);
+      return workspace.copyText(change.path);
+    });
+  }
+
   function commitSelected(pushAfter: boolean) {
     void runAction(async () => {
       const commitAction = () =>
@@ -622,6 +637,7 @@ export function useRepoDetailController() {
       pickConflictHunk,
       stageUnstagedChanges,
       unstageStagedChanges,
+      runChangeAction,
       commitSelected,
       mergePull,
       push,
