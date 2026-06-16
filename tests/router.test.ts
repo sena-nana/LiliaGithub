@@ -819,6 +819,8 @@ describe("基础路由", () => {
     const diffPreview = await screen.findByLabelText("变更预览");
     expect(diffPreview).toBeInTheDocument();
     expect(diffPreview).toHaveTextContent("@@ -1 +1 @@");
+    expect(diffPreview.querySelector(".diff-code__line.is-added")).toHaveTextContent("LiliaGithub");
+    expect(diffPreview.querySelector(".diff-code__raw-line")).toBeNull();
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
