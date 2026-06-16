@@ -821,6 +821,16 @@ describe("基础路由", () => {
     expect(diffPreview).toHaveTextContent("@@ -1 +1 @@");
     expect(diffPreview.querySelector(".diff-code__line.is-added")).toHaveTextContent("LiliaGithub");
     expect(diffPreview.querySelector(".diff-code__raw-line")).toBeNull();
+    const diffWorkspace = diffPreview.closest(".repo-diff-workspace") as HTMLElement;
+    Object.defineProperty(diffWorkspace, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, width: 1000 }),
+    });
+    const splitter = within(diffWorkspace).getByRole("separator");
+    await fireEvent.pointerDown(splitter, { clientX: 380, pointerId: 1 });
+    await fireEvent.pointerMove(window, { clientX: 500, pointerId: 1 });
+    expect(diffWorkspace.style.getPropertyValue("--commit-detail-left")).toBe("50%");
+    await fireEvent.pointerUp(window, { clientX: 500, pointerId: 1 });
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);

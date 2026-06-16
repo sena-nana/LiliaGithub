@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, useSlots } from "vue";
+import { computed, onUnmounted, ref, useSlots } from "vue";
 import DiffCodeRenderer from "./DiffCodeRenderer.vue";
 import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 
@@ -25,23 +25,64 @@ const props = withDefaults(defineProps<{
 
 defineEmits<{
   selectFile: [file: RepoDiffWorkspaceFile];
-  startSplitResize: [event: PointerEvent];
 }>();
 
 const slots = useSlots();
+const workspaceRef = ref<HTMLElement | null>(null);
+const splitPercent = ref(38);
+let resizeCleanup: (() => void) | null = null;
 const hasFilePrefix = computed(() => Boolean(slots["file-prefix"]));
 const hasHeaderStat = computed(() => props.showStats || props.files.some((file) => Boolean(file.statText)));
 const hasDiffActions = computed(() => Boolean(slots["diff-actions"]));
 const totalAdditions = computed(() => props.files.reduce((sum, file) => sum + (file.additions ?? 0), 0));
 const totalDeletions = computed(() => props.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0));
+const workspaceStyle = computed(() => ({
+  "--commit-detail-left": `${splitPercent.value}%`,
+}));
+
+onUnmounted(() => {
+  stopResize();
+});
 
 function fileTitle(file: RepoDiffWorkspaceFile) {
   return file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path;
+}
+
+function startSplitResize(event: PointerEvent) {
+  const shell = workspaceRef.value;
+  if (!shell) return;
+  const rect = shell.getBoundingClientRect();
+  event.preventDefault();
+  stopResize();
+  const onMove = (moveEvent: PointerEvent) => {
+    if (!rect.width) return;
+    const next = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+    splitPercent.value = clamp(next, 28, 55);
+  };
+  const onEnd = () => stopResize();
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onEnd, { once: true });
+  window.addEventListener("pointercancel", onEnd, { once: true });
+  resizeCleanup = () => {
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onEnd);
+    window.removeEventListener("pointercancel", onEnd);
+  };
+}
+
+function stopResize() {
+  resizeCleanup?.();
+  resizeCleanup = null;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 </script>
 
 <template>
   <div
+    ref="workspaceRef"
     class="repo-diff-workspace commit-detail-card__content"
     :class="{
       'repo-diff-workspace--with-prefix': hasFilePrefix,
@@ -49,6 +90,7 @@ function fileTitle(file: RepoDiffWorkspaceFile) {
       'repo-diff-workspace--fill': fill,
       'repo-diff-workspace--splitter': splitter,
     }"
+    :style="workspaceStyle"
   >
     <aside class="commit-detail-card__sidebar">
       <slot name="meta" />
@@ -106,7 +148,7 @@ function fileTitle(file: RepoDiffWorkspaceFile) {
       class="commit-detail-card__splitter"
       role="separator"
       aria-orientation="vertical"
-      @pointerdown="$emit('startSplitResize', $event)"
+      @pointerdown="startSplitResize"
     />
 
     <section class="commit-diff-panel" :aria-label="diffPanelLabel">
