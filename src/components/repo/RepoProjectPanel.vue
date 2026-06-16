@@ -87,7 +87,6 @@ const props = defineProps<{
   changes: readonly RepoChange[];
   previewChange: RepoChange | null;
   commitMessage: string;
-  pushAfter: boolean;
   hasConflicts: boolean;
   canCommit: boolean;
   statusCommits: readonly CommitSummary[];
@@ -121,11 +120,10 @@ const emit = defineEmits<{
   selectLaunchCandidate: [candidate: ProjectLaunchCandidate];
   updateActiveGitTab: [tab: GitTab];
   updateCommitMessage: [value: string];
-  updatePushAfter: [value: boolean];
   stageUnstagedChanges: [];
   unstageStagedChanges: [];
   focusChange: [path: string];
-  commit: [];
+  commit: [pushAfter: boolean];
   checkout: [branchName: string];
   openCommit: [commit: HistoryCommit];
   closeCommit: [];
@@ -992,7 +990,6 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         <RepoChangesPanel
           v-else-if="!remoteOnly && activeProjectSection === 'changes'"
           :commit-message="commitMessage"
-          :push-after="pushAfter"
           :changes="changes"
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
@@ -1001,9 +998,8 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           @stage-unstaged-changes="emit('stageUnstagedChanges')"
           @unstage-staged-changes="emit('unstageStagedChanges')"
           @focus-change="emit('focusChange', $event)"
-          @commit="emit('commit')"
+          @commit="emit('commit', $event)"
           @update:commit-message="emit('updateCommitMessage', $event)"
-          @update:push-after="emit('updatePushAfter', $event)"
         />
 
         <RepoConflictsPanel

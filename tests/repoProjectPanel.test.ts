@@ -118,7 +118,6 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
       changes: [],
       previewChange: null,
       commitMessage: "",
-      pushAfter: false,
       hasConflicts: false,
       canCommit: false,
       statusCommits: [],
