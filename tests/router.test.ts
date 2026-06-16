@@ -165,10 +165,13 @@ describe("基础路由", () => {
 
     const repoLink = await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" });
     await waitFor(() => expect(repoLink).toHaveAttribute("title", "C:\\Files\\workspace\\LiliaGithub"), { timeout: 3000 });
-    await fireEvent.click(screen.getByRole("link", { name: "打开 sena-nana/LiliaGithub" }));
+    await fireEvent.click(repoLink);
 
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" }, { timeout: 3000 }))
+      .toBeInTheDocument();
   });
 
   it("总览页未 clone 的 GitHub 项目可进入远程详情并屏蔽本地 Git 功能", async () => {
