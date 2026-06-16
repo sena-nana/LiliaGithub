@@ -28,7 +28,9 @@ yarn dev
 yarn tauri:dev
 ```
 
-`yarn tauri:dev` 会自动寻找可用本地端口,再把对应 `devUrl` 传给 Tauri。
+`yarn dev` 只启动 Vite 前端。浏览器中没有 Tauri runtime 时,前端会使用内置开发 mock 数据,用于快速浏览页面和调试界面。
+
+`yarn tauri:dev` 会自动寻找可用本地端口,再把对应 `devUrl` 传给 Tauri。此模式和生产包一样通过现有 Tauri command 访问真实工作区、Git 和 GitHub 能力。
 
 ## 验证
 
