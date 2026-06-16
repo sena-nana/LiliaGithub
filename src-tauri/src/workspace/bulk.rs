@@ -269,7 +269,7 @@ pub(super) fn bulk_sync_repo(
     } else if summary.ahead <= 0 {
         Err("没有需要推送的提交，已跳过 push".to_string())
     } else {
-        run_push(app, &path)
+        run_push_with_system_git_fallback(app, &path)
     };
 
     match run {
@@ -316,7 +316,8 @@ pub(super) fn sync_repo(
                 format!("{reason}，已跳过同步"),
             ))
         } else {
-            run_push(app, path).map_err(|err| bulk_error_result_for(&repo_id, err))
+            run_push_with_system_git_fallback(app, path)
+                .map_err(|err| bulk_error_result_for(&repo_id, err))
         }
     } else {
         Err(skip("没有需要同步的更新，已跳过同步"))
@@ -341,7 +342,8 @@ pub(super) fn run_merge_pull_then_push(
 ) -> Result<(), BulkSyncResult> {
     run_fetch(app, path).map_err(|err| bulk_error_result_for(&repo_id, err))?;
     match git_command(path, &["merge", "--no-edit", "@{u}"], None) {
-        Ok(_) => run_push(app, path).map_err(|err| bulk_error_result(repo_id, err)),
+        Ok(_) => run_push_with_system_git_fallback(app, path)
+            .map_err(|err| bulk_error_result(repo_id, err)),
         Err(err) => {
             let conflicts = repo_conflicts(path);
             if conflicts.files.is_empty() {
@@ -355,6 +357,27 @@ pub(super) fn run_merge_pull_then_push(
                 })
             }
         }
+    }
+}
+
+pub(super) fn should_retry_push_with_system_git(error: &str) -> bool {
+    error.contains("当前 GitHub 绑定无权限") || error.contains("无法认证 GitHub 仓库")
+}
+
+pub(super) fn run_push_with_system_git_fallback(
+    app: &AppHandle,
+    path: &Path,
+) -> Result<(), String> {
+    if repo_uses_system_git(app, path) {
+        return run_push(app, path);
+    }
+    match run_push(app, path) {
+        Ok(()) => Ok(()),
+        Err(err) if should_retry_push_with_system_git(&err) => {
+            run_system_git_push(path)?;
+            remember_repo_uses_system_git(app, path)
+        }
+        Err(err) => Err(err),
     }
 }
 
