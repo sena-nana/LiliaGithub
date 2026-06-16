@@ -1,15 +1,53 @@
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("/fonts/noto-sans-sc-chinese-simplified-400-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url("/fonts/noto-sans-sc-chinese-simplified-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url("/fonts/noto-sans-sc-chinese-simplified-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("/fonts/noto-sans-sc-chinese-simplified-700-normal.woff2") format("woff2");
+}
+
 :root {
   color-scheme: dark;
   --font-sans:
-    -apple-system, BlinkMacSystemFont,
+    "Noto Sans SC",
     "Segoe UI Variable Text", "Segoe UI",
-    Inter, Roboto, "Helvetica Neue", Arial,
-    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
-    "Source Han Sans SC", "Noto Sans SC",
-    sans-serif;
+    "Microsoft YaHei UI", "Microsoft YaHei",
+    system-ui, -apple-system, BlinkMacSystemFont,
+    "PingFang SC", "Source Han Sans SC",
+    Roboto, "Helvetica Neue", Arial,
+    sans-serif,
+    "Segoe UI Emoji", "Apple Color Emoji", "Segoe UI Symbol";
   --font-mono:
-    ui-monospace, "SF Mono", "Cascadia Mono", "Cascadia Code",
-    "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    "Cascadia Code", "Cascadia Mono",
+    "JetBrains Mono", "Fira Code", "Source Code Pro",
+    Consolas, "Roboto Mono",
+    ui-monospace, "SF Mono", Menlo, "Liberation Mono",
+    "Microsoft YaHei UI",
+    monospace;
   --bg: #181818;
   --bg-elev: #202020;
   --bg-subtle: #1c1c1c;
