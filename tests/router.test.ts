@@ -808,12 +808,15 @@ describe("基础路由", () => {
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
     expect(screen.getByLabelText("未暂存变更")).toBeInTheDocument();
     expect(screen.getByLabelText("已暂存变更")).toBeInTheDocument();
-    expect(screen.getByLabelText("提交内容")).toBeInTheDocument();
+    expect(screen.getByLabelText("提交操作")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "暂存全部未暂存变更" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "取消暂存全部已暂存变更" })).toBeEnabled();
     expect(screen.getByPlaceholderText("提交说明")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "提交" })).toBeDisabled();
-    expect(screen.getByText("1 个已暂存文件")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "提交并推送" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "仅提交" })).toBeDisabled();
+    expect(screen.queryByText("提交内容")).toBeNull();
+    expect(screen.queryByText("1 个已暂存文件")).toBeNull();
+    expect(screen.queryByText("提交后立即 push")).toBeNull();
 
     expect(screen.getByRole("button", { name: "运行" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();

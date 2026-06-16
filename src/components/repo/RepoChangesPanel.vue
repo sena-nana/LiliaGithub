@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ArrowDownToLine, ArrowUpFromLine, ChevronDown, GitCommitHorizontal } from "@lucide/vue";
+import { ArrowDownToLine, ArrowUpFromLine, ChevronDown, GitCommitHorizontal, Upload } from "@lucide/vue";
 import type { RepoChange } from "../../services/workspace";
 import { changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
@@ -13,16 +13,14 @@ const props = defineProps<{
   actionRunning: boolean;
   previewChange: RepoChange | null;
   commitMessage: string;
-  pushAfter: boolean;
 }>();
 
 const emit = defineEmits<{
   "update:commitMessage": [value: string];
-  "update:pushAfter": [value: boolean];
   stageUnstagedChanges: [];
   unstageStagedChanges: [];
   focusChange: [path: string];
-  commit: [];
+  commit: [pushAfter: boolean];
 }>();
 
 function changeStatusLetter(change: RepoChange) {
@@ -93,6 +91,10 @@ function runGroupAction(action: "stageUnstagedChanges" | "unstageStagedChanges")
   if (action === "stageUnstagedChanges") emit("stageUnstagedChanges");
   else emit("unstageStagedChanges");
 }
+
+function submitCommit(pushAfter: boolean) {
+  emit("commit", pushAfter);
+}
 </script>
 
 <template>
@@ -155,31 +157,33 @@ function runGroupAction(action: "stageUnstagedChanges" | "unstageStagedChanges")
             </div>
           </section>
 
-          <section class="commit-box" aria-label="提交内容">
-            <header class="commit-box__header">
-              <h3>提交内容</h3>
-              <span>{{ stagedChanges.length }} 个已暂存文件</span>
-            </header>
-            <p v-if="hasConflicts" class="muted">当前存在冲突，先完成冲突处理再提交。</p>
-            <p v-else-if="!stagedChanges.length" class="muted">先暂存需要提交的文件。</p>
+          <section class="commit-box" aria-label="提交操作">
             <input
               :value="commitMessage"
               type="text"
               placeholder="提交说明"
               @input="$emit('update:commitMessage', ($event.target as HTMLInputElement).value)"
             />
-            <label class="checkbox-line">
-              <input
-                :checked="pushAfter"
-                type="checkbox"
-                @change="$emit('update:pushAfter', ($event.target as HTMLInputElement).checked)"
-              />
-              <span>提交后立即 push</span>
-            </label>
-            <button type="button" class="primary" :disabled="!canCommit || actionRunning || hasConflicts" @click="$emit('commit')">
-              <GitCommitHorizontal :size="14" aria-hidden="true" />
-              提交
-            </button>
+            <div class="commit-box__actions">
+              <button
+                type="button"
+                class="primary commit-box__submit commit-box__submit--push"
+                :disabled="!canCommit || actionRunning || hasConflicts"
+                @click="submitCommit(true)"
+              >
+                <Upload :size="14" aria-hidden="true" />
+                提交并推送
+              </button>
+              <button
+                type="button"
+                class="commit-box__submit commit-box__submit--commit"
+                :disabled="!canCommit || actionRunning || hasConflicts"
+                @click="submitCommit(false)"
+              >
+                <GitCommitHorizontal :size="14" aria-hidden="true" />
+                仅提交
+              </button>
+            </div>
           </section>
         </div>
       </template>
@@ -232,8 +236,7 @@ function runGroupAction(action: "stageUnstagedChanges" | "unstageStagedChanges")
   padding: 10px;
 }
 
-.changes-group__header,
-.commit-box__header {
+.changes-group__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -241,20 +244,25 @@ function runGroupAction(action: "stageUnstagedChanges" | "unstageStagedChanges")
   min-width: 0;
 }
 
-.changes-group__title,
-.commit-box__header {
+.changes-group__title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
 }
 
-.changes-group__title h3,
-.commit-box__header h3 {
+.changes-group__title h3 {
+  min-width: 0;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   line-height: 1.35;
 }
 
-.changes-group__title span,
-.commit-box__header span {
+.changes-group__title span {
+  flex: 0 0 auto;
   color: var(--text-muted);
   font-size: 11px;
 }
@@ -380,31 +388,32 @@ function runGroupAction(action: "stageUnstagedChanges" | "unstageStagedChanges")
   border-bottom: 0;
 }
 
-.commit-box p {
-  margin: 0;
-  font-size: 12px;
-}
-
 .commit-box input[type="text"] {
   width: 100%;
 }
 
-.commit-box > button.primary {
-  justify-self: stretch;
-}
-
-.checkbox-line {
+.commit-box__actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
-.checkbox-line input {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  padding: 0;
+.commit-box__submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.commit-box__submit--push {
+  flex: 2 1 0;
+}
+
+.commit-box__submit--commit {
+  flex: 1 1 0;
 }
 
 @media (max-width: 1180px) {

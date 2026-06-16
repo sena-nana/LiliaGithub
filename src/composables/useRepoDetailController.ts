@@ -36,7 +36,6 @@ export function useRepoDetailController() {
   const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
   const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
   const commitMessage = ref("");
-  const pushAfter = ref(true);
   const actionError = ref<string | null>(null);
   const actionRunning = ref(false);
   const conflictAbortConfirm = ref(false);
@@ -428,11 +427,11 @@ export function useRepoDetailController() {
     });
   }
 
-  function commitSelected() {
+  function commitSelected(pushAfter: boolean) {
     void runAction(async () => {
       const commitAction = () =>
-        workspace.commit(repoId.value, stagedChangePaths.value, commitMessage.value.trim(), pushAfter.value);
-      if (pushAfter.value) await runPushWithFallback(commitAction);
+        workspace.commit(repoId.value, stagedChangePaths.value, commitMessage.value.trim(), pushAfter);
+      if (pushAfter) await runPushWithFallback(commitAction);
       else await commitAction();
       commitMessage.value = "";
     });
@@ -570,7 +569,6 @@ export function useRepoDetailController() {
     return {
       activeTab,
       commitMessage,
-      pushAfter,
       actionError,
       actionRunning,
       conflictAcceptConfirm,

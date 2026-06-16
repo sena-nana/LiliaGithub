@@ -16,7 +16,6 @@ import "../styles/page.css";
 const {
   activeTab,
   commitMessage,
-  pushAfter,
   actionError,
   actionRunning,
   conflictAcceptConfirm,
@@ -192,7 +191,6 @@ const {
           :changes="changes"
           :preview-change="previewChange"
           :commit-message="commitMessage"
-          :push-after="pushAfter"
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
           :status-commits="statusCommits"
@@ -232,7 +230,6 @@ const {
           :project-run-id="activeProjectRun"
           @update-active-git-tab="activeTab = $event"
           @update-commit-message="commitMessage = $event"
-          @update-push-after="pushAfter = $event"
           @stage-unstaged-changes="stageUnstagedChanges"
           @unstage-staged-changes="unstageStagedChanges"
           @focus-change="focusChange"
