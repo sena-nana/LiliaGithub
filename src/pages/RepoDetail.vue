@@ -64,6 +64,7 @@ const {
   pickConflictHunk,
   stageUnstagedChanges,
   unstageStagedChanges,
+  runChangeAction,
   commitSelected,
   mergePull,
   push,
@@ -232,6 +233,7 @@ const {
           @update-commit-message="commitMessage = $event"
           @stage-unstaged-changes="stageUnstagedChanges"
           @unstage-staged-changes="unstageStagedChanges"
+          @change-action="runChangeAction"
           @focus-change="focusChange"
           @commit="commitSelected"
           @checkout="checkout"

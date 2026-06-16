@@ -396,6 +396,14 @@ export function unstageFiles(repoId: string, files: string[]): Promise<void> {
   return call("repo_unstage_files", { repoId, files }, () => fallback.unstageFiles(repoId, files));
 }
 
+export function discardFiles(repoId: string, files: string[]): Promise<RepoSummary> {
+  return call("repo_discard_files", { repoId, files }, () => fallback.discardFiles(repoId, files));
+}
+
+export function addFilesToGitignore(repoId: string, files: string[]): Promise<RepoSummary> {
+  return call("repo_add_files_to_gitignore", { repoId, files }, () => fallback.addFilesToGitignore(repoId, files));
+}
+
 export function commitRepo(
   repoId: string,
   files: string[],

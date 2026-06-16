@@ -1721,6 +1721,14 @@ export function unstageFiles(repoId: string, files: string[]): Promise<void> {
   return call("repo_unstage_files", { repoId, files }, () => undefined);
 }
 
+export function discardFiles(repoId: string, files: string[]): Promise<RepoSummary> {
+  return call("repo_discard_files", { repoId, files }, () => fallbackRepo(repoId));
+}
+
+export function addFilesToGitignore(repoId: string, files: string[]): Promise<RepoSummary> {
+  return call("repo_add_files_to_gitignore", { repoId, files }, () => fallbackRepo(repoId));
+}
+
 export function commitRepo(
   repoId: string,
   files: string[],

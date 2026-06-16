@@ -98,6 +98,8 @@ pub fn run() {
             workspace::launch::repo_stop_launch,
             workspace::repos::repo_stage_files,
             workspace::repos::repo_unstage_files,
+            workspace::repos::repo_discard_files,
+            workspace::repos::repo_add_files_to_gitignore,
             workspace::repos::repo_commit,
             workspace::repos::repo_pull,
             workspace::repos::repo_merge_pull,

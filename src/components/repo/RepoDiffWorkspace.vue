@@ -158,7 +158,7 @@ function clamp(value: number, min: number, max: number) {
 
     <section class="commit-diff-panel" :aria-label="diffPanelLabel">
       <header v-if="hasDiffActions" class="commit-file-diff__header">
-        <slot name="diff-actions" :file="activeFile" />
+        <slot name="diff-actions" :file="activeFile" :mode="mode" />
       </header>
       <template v-if="activeFile">
         <DiffCodeRenderer
