@@ -20,6 +20,7 @@ import RepoConflictsPanel from "./RepoConflictsPanel.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
 import RepoLaunchPanel from "./RepoLaunchPanel.vue";
 import { useWorkspace } from "../../composables/useWorkspace";
+import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
   getGitHubRepoManagement,
@@ -653,6 +654,7 @@ async function confirmDeleteRepo() {
   try {
     await deleteGitHubRepo(props.repoFullName);
     await workspace.forgetRemoteRepo(props.repoFullName);
+    clearHomeGitHubOverviewSnapshot();
     workspace.refreshRepoStatusList();
     remoteDeleted.value = true;
     settings.value = null;

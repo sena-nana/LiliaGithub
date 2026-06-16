@@ -132,8 +132,7 @@ pub async fn workspace_delete_local_repo(
         if canonical_path == canonical_root || !canonical_path.starts_with(&canonical_root) {
             return Err("只能删除当前工作区内的仓库目录".to_string());
         }
-        fs::remove_dir_all(&canonical_path)
-            .map_err(|e| format!("删除本地仓库失败：{e}"))?;
+        fs::remove_dir_all(&canonical_path).map_err(|e| format!("删除本地仓库失败：{e}"))?;
         let mut settings = load_settings(&app);
         settings.managed_repo_ids.retain(|id| id != normalized);
         settings.hidden_repo_ids.retain(|id| id != normalized);
