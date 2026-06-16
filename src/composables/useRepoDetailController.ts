@@ -35,7 +35,6 @@ export function useRepoDetailController() {
   );
   const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
   const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
-  const selectedFiles = ref<Set<string>>(new Set());
   const commitMessage = ref("");
   const pushAfter = ref(true);
   const actionError = ref<string | null>(null);
@@ -100,15 +99,18 @@ export function useRepoDetailController() {
     conflicts.value.operation === "rebase" ||
     conflicts.value.operation === "cherry-pick",
   );
-  const selectedFileList = computed(() => Array.from(selectedFiles.value));
+  const unstagedChangePaths = computed(() =>
+    changes.value
+      .filter((change) => change.unstaged || change.untracked || change.conflicted)
+      .map((change) => change.path),
+  );
+  const stagedChangePaths = computed(() =>
+    changes.value.filter((change) => change.staged).map((change) => change.path),
+  );
   const focusedChange = computed(() =>
     changes.value.find((change) => change.path === focusedChangePath.value) ?? null,
   );
-  const previewChange = computed(() => {
-    if (focusedChange.value) return focusedChange.value;
-    if (selectedFileList.value.length !== 1) return null;
-    return changes.value.find((change) => change.path === selectedFileList.value[0]) ?? null;
-  });
+  const previewChange = computed(() => focusedChange.value);
   const conflictFiles = computed(() => conflicts.value.files ?? []);
   const focusedConflict = computed(() =>
     conflictFiles.value.find((file) => file.path === focusedConflictPath.value) ?? conflictFiles.value[0] ?? null,
@@ -123,7 +125,7 @@ export function useRepoDetailController() {
     ),
   );
   const canContinueConflictOperation = computed(() => supportedConflictOperation.value && !conflictFiles.value.length);
-  const canCommit = computed(() => selectedFiles.value.size > 0 && commitMessage.value.trim().length > 0);
+  const canCommit = computed(() => stagedChangePaths.value.length > 0 && commitMessage.value.trim().length > 0);
   const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
   const launchCandidates = computed(() => workspace.state.launchCandidates[repoId.value] ?? []);
   const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
@@ -134,12 +136,6 @@ export function useRepoDetailController() {
   );
   const usingSystemGit = computed(() => workspace.repoUsesSystemGit(repoId.value));
   const launchRunning = computed(() => launchStatus.value?.state === "running");
-  const selectedSummaryText = computed(() => {
-    if (!selectedFileList.value.length) return "未选择文件";
-    if (selectedFileList.value.length === 1) return `已选 1 个文件`;
-    return `已选 ${selectedFileList.value.length} 个文件`;
-  });
-  const selectedFilePreview = computed(() => selectedFileList.value.slice(0, 3));
   const statusCommits = computed<CommitSummary[]>(() =>
     (detail.value?.commits ?? []).map((commit) => ({
       ...commit,
@@ -217,7 +213,6 @@ export function useRepoDetailController() {
   });
 
   watch(repoId, () => {
-    selectedFiles.value = new Set();
     commitMessage.value = "";
     launchTerminalVisible.value = false;
     focusedChangePath.value = null;
@@ -356,19 +351,6 @@ export function useRepoDetailController() {
     syncConflictChoices();
   }
 
-  function toggleFile(path: string) {
-    const next = new Set(selectedFiles.value);
-    if (next.has(path)) next.delete(path);
-    else next.add(path);
-    selectedFiles.value = next;
-    focusedChangePath.value = path;
-  }
-
-  function selectAll() {
-    selectedFiles.value = new Set(changes.value.map((change) => change.path));
-    focusedChangePath.value = changes.value[0]?.path ?? null;
-  }
-
   function syncConflictChoices() {
     const current = focusedConflict.value;
     if (!current) {
@@ -434,27 +416,24 @@ export function useRepoDetailController() {
     }
   }
 
-  function stageSelected() {
+  function stageUnstagedChanges() {
     void runAction(async () => {
-      await workspace.stage(repoId.value, selectedFileList.value);
-      selectedFiles.value = new Set();
+      await workspace.stage(repoId.value, unstagedChangePaths.value);
     });
   }
 
-  function unstageSelected() {
+  function unstageStagedChanges() {
     void runAction(async () => {
-      await workspace.unstage(repoId.value, selectedFileList.value);
-      selectedFiles.value = new Set();
+      await workspace.unstage(repoId.value, stagedChangePaths.value);
     });
   }
 
   function commitSelected() {
     void runAction(async () => {
       const commitAction = () =>
-        workspace.commit(repoId.value, selectedFileList.value, commitMessage.value, pushAfter.value);
+        workspace.commit(repoId.value, stagedChangePaths.value, commitMessage.value.trim(), pushAfter.value);
       if (pushAfter.value) await runPushWithFallback(commitAction);
       else await commitAction();
-      selectedFiles.value = new Set();
       commitMessage.value = "";
     });
   }
@@ -590,7 +569,6 @@ export function useRepoDetailController() {
 
     return {
       activeTab,
-      selectedFiles,
       commitMessage,
       pushAfter,
       actionError,
@@ -609,7 +587,6 @@ export function useRepoDetailController() {
       conflicts,
       conflictOperationActive,
       supportedConflictOperation,
-      selectedFileList,
       previewChange,
       conflictFiles,
       focusedConflict,
@@ -626,8 +603,6 @@ export function useRepoDetailController() {
       languageStatsRefreshing,
       usingSystemGit,
       launchRunning,
-      selectedSummaryText,
-      selectedFilePreview,
       statusCommits,
       panelConflictFiles,
       panelConflicts,
@@ -646,11 +621,9 @@ export function useRepoDetailController() {
       refreshLaunch,
       focusChange,
       focusConflict,
-      toggleFile,
-      selectAll,
       pickConflictHunk,
-      stageSelected,
-      unstageSelected,
+      stageUnstagedChanges,
+      unstageStagedChanges,
       commitSelected,
       mergePull,
       push,

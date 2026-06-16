@@ -15,7 +15,6 @@ import "../styles/page.css";
 
 const {
   activeTab,
-  selectedFiles,
   commitMessage,
   pushAfter,
   actionError,
@@ -33,7 +32,6 @@ const {
   changes,
   conflictOperationActive,
   supportedConflictOperation,
-  selectedFileList,
   previewChange,
   conflictSelectedCount,
   canResolveSelectedConflict,
@@ -47,8 +45,6 @@ const {
   languageStatsRefreshing,
   usingSystemGit,
   launchRunning,
-  selectedSummaryText,
-  selectedFilePreview,
   statusCommits,
   panelConflictFiles,
   panelConflicts,
@@ -66,11 +62,9 @@ const {
   load,
   focusChange,
   focusConflict,
-  toggleFile,
-  selectAll,
   pickConflictHunk,
-  stageSelected,
-  unstageSelected,
+  stageUnstagedChanges,
+  unstageStagedChanges,
   commitSelected,
   mergePull,
   push,
@@ -196,10 +190,6 @@ const {
           :active-git-tab="activeTab"
           :git-tabs="tabs"
           :changes="changes"
-          :selected-files="selectedFiles"
-          :selected-summary-text="selectedSummaryText"
-          :selected-file-preview="selectedFilePreview"
-          :selected-file-count="selectedFileList.length"
           :preview-change="previewChange"
           :commit-message="commitMessage"
           :push-after="pushAfter"
@@ -243,11 +233,9 @@ const {
           @update-active-git-tab="activeTab = $event"
           @update-commit-message="commitMessage = $event"
           @update-push-after="pushAfter = $event"
-          @select-all="selectAll"
-          @stage-selected="stageSelected"
-          @unstage-selected="unstageSelected"
+          @stage-unstaged-changes="stageUnstagedChanges"
+          @unstage-staged-changes="unstageStagedChanges"
           @focus-change="focusChange"
-          @toggle-file="toggleFile"
           @commit="commitSelected"
           @checkout="checkout"
           @open-commit="openCommit"

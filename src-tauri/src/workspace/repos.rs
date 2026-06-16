@@ -1120,9 +1120,7 @@ pub async fn repo_commit(
         if trimmed.is_empty() {
             return Err("提交说明不能为空".to_string());
         }
-        for file in selected_repo_files(&path, files)? {
-            git_command(&path, &["add", "--", &file], None)?;
-        }
+        let _selected = selected_repo_files(&path, files)?;
         git_command(&path, &["commit", "-m", trimmed], None)?;
         if push_after {
             run_push(&app, &path)?;
