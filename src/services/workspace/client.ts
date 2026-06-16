@@ -38,6 +38,7 @@ import type {
 } from "./types";
 
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
+const isDev = typeof import.meta !== "undefined" && import.meta.env?.DEV === true;
 const GITHUB_REPO_CACHE_TTL_MS = 5 * 60 * 1000;
 
 let githubRepoCache: {
@@ -47,15 +48,34 @@ let githubRepoCache: {
 } | null = null;
 let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
 
-function canInvoke() {
-  return !isTest && typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+export function resolveWorkspaceRuntimeForTests(probe: {
+  hasWindow: boolean;
+  hasTauriInternals: boolean;
+  isDev: boolean;
+  isTest: boolean;
+}): "tauri" | "mock" | "unavailable" {
+  if (probe.hasTauriInternals && !probe.isTest) return "tauri";
+  if (probe.isTest || (probe.hasWindow && probe.isDev)) return "mock";
+  return "unavailable";
 }
 
 async function call<T>(command: string, args: Record<string, unknown> | undefined, fallbackCall: () => Promise<T>): Promise<T> {
-  if (canInvoke()) {
+  const hasWindow = typeof window !== "undefined";
+  const runtime = resolveWorkspaceRuntimeForTests({
+    hasWindow,
+    hasTauriInternals: hasWindow && "__TAURI_INTERNALS__" in window,
+    isDev,
+    isTest,
+  });
+  if (runtime === "tauri") {
     return invoke<T>(command, args);
   }
-  return fallbackCall();
+  if (runtime === "mock") {
+    return fallbackCall();
+  }
+  throw new Error(
+    `Tauri command ${command} is unavailable outside Tauri. Use yarn tauri:dev, or yarn dev for the development mock mode.`,
+  );
 }
 
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
