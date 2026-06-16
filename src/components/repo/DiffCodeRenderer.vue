@@ -15,6 +15,7 @@ const props = defineProps<{
   hunks?: readonly CommitDiffHunk[];
   patch?: string;
   mode: DiffCodeMode;
+  fill?: boolean;
 }>();
 
 const language = computed(() => inferDiffCodeLanguage(props.filePath));
@@ -93,7 +94,7 @@ function rawDiffLineKind(line: string): RawDiffLineKind {
     </template>
   </div>
 
-  <pre v-else class="diff-code diff-code--raw"><code><span
+  <pre v-else class="diff-code diff-code--raw" :class="{ 'diff-code--fill': fill }"><code><span
     v-for="line in rawLines"
     :key="line.index"
     class="diff-code__raw-line"
@@ -189,6 +190,14 @@ function rawDiffLineKind(line: string): RawDiffLineKind {
   color: var(--text);
   line-height: 1.45;
   white-space: pre;
+}
+
+.diff-code--raw.diff-code--fill {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: 100%;
 }
 
 .diff-code--raw code {

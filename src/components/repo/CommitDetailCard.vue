@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronDown, Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lucide/vue";
-import { getRepoCommitDetail, type CommitDetail, type CommitFileChange } from "../../services/workspace";
+import { getRepoCommitDetail, type CommitDetail } from "../../services/workspace";
 import { copyText } from "../../composables/workspace/system";
-import DiffCodeRenderer from "./DiffCodeRenderer.vue";
+import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
+import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 import {
   commitFileStatusText,
   formatRepoTime,
@@ -42,10 +43,6 @@ const totalAdditions = computed(() =>
 const totalDeletions = computed(() =>
   detail.value?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0,
 );
-const activeFile = computed(() => {
-  const files = detail.value?.files ?? [];
-  return files.find((file) => file.path === activeFilePath.value) ?? files[0] ?? null;
-});
 const shortHash = computed(() => detail.value?.shortHash || props.hash.slice(0, 7));
 const parentText = computed(() => {
   const parents = detail.value?.parents ?? [];
@@ -67,6 +64,24 @@ const fileStatusSummary = computed(() => {
     .map(([label, count]) => `${label} ${count}`)
     .join(" ");
 });
+const diffMode = computed<RepoDiffWorkspaceMode>(() => diffCollapsed.value ? "hunks" : "raw");
+const workspaceFiles = computed<RepoDiffWorkspaceFile[]>(() =>
+  (detail.value?.files ?? []).map((file) => ({
+    key: `${file.oldPath ?? ""}:${file.path}`,
+    path: file.path,
+    oldPath: file.oldPath,
+    statusLabel: commitFileStatusText(file.status),
+    statusClass: `is-${file.status}`,
+    statusLetter: fileStatusLetter(file.status),
+    additions: file.additions,
+    deletions: file.deletions,
+    patch: file.patch,
+    hunks: file.hunks,
+  })),
+);
+const activeWorkspaceFile = computed(() =>
+  workspaceFiles.value.find((file) => file.path === activeFilePath.value) ?? workspaceFiles.value[0] ?? null,
+);
 const cardStyle = computed(() => ({
   "--commit-detail-height": `${panelHeight.value}px`,
   "--commit-detail-left": `${splitPercent.value}%`,
@@ -103,14 +118,6 @@ async function load() {
   }
 }
 
-function fileKey(file: CommitFileChange) {
-  return `${file.oldPath ?? ""}:${file.path}`;
-}
-
-function fileTitle(file: CommitFileChange) {
-  return file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path;
-}
-
 function fileStatusLetter(status: string) {
   if (status === "renamed") return "R";
   if (status === "added") return "A";
@@ -119,7 +126,7 @@ function fileStatusLetter(status: string) {
   return "M";
 }
 
-function selectFile(file: CommitFileChange) {
+function selectFile(file: RepoDiffWorkspaceFile) {
   activeFilePath.value = file.path;
 }
 
@@ -220,8 +227,20 @@ function clamp(value: number, min: number, max: number) {
     <p v-if="error" class="error-line commit-detail-card__state">{{ error }}</p>
     <p v-else-if="loading" class="muted commit-detail-card__state">正在读取提交详情...</p>
 
-    <div v-else-if="detail" class="commit-detail-card__content">
-      <aside class="commit-detail-card__sidebar">
+    <RepoDiffWorkspace
+      v-else-if="detail"
+      :files="workspaceFiles"
+      :active-file="activeWorkspaceFile"
+      :file-count-label="`${detail.files.length} 个文件`"
+      empty-file-text="此提交没有可展示的文件改动。"
+      empty-diff-text="仅文件元数据变更、二进制文件或无可展示的文本差异。"
+      :mode="diffMode"
+      :show-stats="true"
+      :splitter="embedded"
+      @select-file="selectFile"
+      @start-split-resize="startSplitResize"
+    >
+      <template #meta>
         <section class="commit-detail-meta" aria-label="提交元数据">
           <p class="commit-detail-meta__repo">{{ repoTitle || repoId }}</p>
           <h3>{{ detail.subject }}</h3>
@@ -260,103 +279,33 @@ function clamp(value: number, min: number, max: number) {
             <strong class="commit-file-picker__stat--del">-{{ totalDeletions }}</strong>
           </div>
         </section>
+      </template>
 
-        <section class="commit-file-picker" aria-label="改动文件列表">
-          <div class="commit-file-picker__header">
-            <div class="commit-file-picker__header-title">
-              <h3>改动文件</h3>
-              <span class="muted">{{ detail.files.length }} 个文件</span>
-            </div>
-            <p class="commit-file-picker__stat commit-file-picker__header-stat">
-              <span class="commit-file-picker__stat--add">+{{ totalAdditions }}</span>
-              <span class="commit-file-picker__stat--del">-{{ totalDeletions }}</span>
-            </p>
-          </div>
-          <p v-if="!detail.files.length" class="muted commit-file-picker__empty">此提交没有可展示的文件改动。</p>
-          <div v-else class="commit-file-picker__list">
-            <button
-              v-for="file in detail.files"
-              :key="fileKey(file)"
-              type="button"
-              class="commit-file-picker__item"
-              :class="{ 'is-active': activeFile?.path === file.path }"
-              :title="fileTitle(file)"
-              @click="selectFile(file)"
-            >
-              <span
-                class="commit-file-picker__status"
-                :class="`is-${file.status}`"
-                :title="commitFileStatusText(file.status)"
-              >
-                {{ fileStatusLetter(file.status) }}
-              </span>
-              <span class="commit-file-picker__path">
-                <template v-if="file.oldPath">{{ file.oldPath }} -> </template>{{ file.path }}
-              </span>
-              <span class="commit-file-picker__stat">
-                <span class="commit-file-picker__stat--add">+{{ file.additions }}</span>
-                <span class="commit-file-picker__stat--del">-{{ file.deletions }}</span>
-              </span>
-            </button>
-          </div>
-        </section>
-      </aside>
-
-      <div
-        v-if="embedded"
-        class="commit-detail-card__splitter"
-        role="separator"
-        aria-orientation="vertical"
-        @pointerdown="startSplitResize"
-      />
-
-      <section class="commit-diff-panel" aria-label="改动文件 diff">
-        <header class="commit-file-diff__header">
-          <button
-            v-if="activeFile"
-            type="button"
-            class="commit-file-diff__action commit-file-diff__toggle"
-            :class="{ 'is-active': diffCollapsed }"
-            aria-label="折叠 diff"
-            :aria-pressed="diffCollapsed"
-            :title="diffCollapsed ? '显示原始 diff' : '折叠 diff'"
-            @click="toggleDiffCollapsed"
-          >
-            <ChevronDown :size="13" aria-hidden="true" />
-          </button>
-          <button
-            v-if="closable"
-            type="button"
-            class="commit-file-diff__action"
-            aria-label="关闭提交详情"
-            title="关闭提交详情"
-            @click="emit('close')"
-          >
-            <X :size="13" aria-hidden="true" />
-          </button>
-        </header>
-        <template v-if="activeFile">
-          <DiffCodeRenderer
-            v-if="diffCollapsed && activeFile.hunks.length"
-            :file-path="activeFile.path"
-            :hunks="activeFile.hunks"
-            :patch="activeFile.patch"
-            mode="hunks"
-          />
-          <DiffCodeRenderer
-            v-else-if="!diffCollapsed && activeFile.patch"
-            :file-path="activeFile.path"
-            :hunks="activeFile.hunks"
-            :patch="activeFile.patch"
-            mode="raw"
-          />
-          <p v-else class="muted commit-file-diff__empty">
-            仅文件元数据变更、二进制文件或无可展示的文本差异。
-          </p>
-        </template>
-        <p v-else class="muted commit-file-diff__empty">此提交没有可展示的文件改动。</p>
-      </section>
-    </div>
+      <template #diff-actions="{ file }">
+        <button
+          v-if="file"
+          type="button"
+          class="commit-file-diff__action commit-file-diff__toggle"
+          :class="{ 'is-active': diffCollapsed }"
+          aria-label="折叠 diff"
+          :aria-pressed="diffCollapsed"
+          :title="diffCollapsed ? '显示原始 diff' : '折叠 diff'"
+          @click="toggleDiffCollapsed"
+        >
+          <ChevronDown :size="13" aria-hidden="true" />
+        </button>
+        <button
+          v-if="closable"
+          type="button"
+          class="commit-file-diff__action"
+          aria-label="关闭提交详情"
+          title="关闭提交详情"
+          @click="emit('close')"
+        >
+          <X :size="13" aria-hidden="true" />
+        </button>
+      </template>
+    </RepoDiffWorkspace>
   </section>
 </template>
 
@@ -379,8 +328,6 @@ function clamp(value: number, min: number, max: number) {
   min-height: 300px;
 }
 
-.commit-file-picker__header h3,
-.commit-file-picker__header p,
 .commit-detail-meta__repo,
 .commit-detail-meta h3,
 .commit-detail-meta__body {
@@ -390,41 +337,6 @@ function clamp(value: number, min: number, max: number) {
 .commit-detail-card__state {
   margin: 0;
   padding: 14px;
-}
-
-.commit-detail-card__content {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(280px, var(--commit-detail-left, 38%)) 2px minmax(360px, 1fr);
-  min-height: 0;
-}
-
-.commit-detail-card:not(.commit-detail-card--embedded) .commit-detail-card__content {
-  grid-template-columns: minmax(300px, 38%) minmax(360px, 1fr);
-}
-
-.commit-diff-panel {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-}
-
-.commit-detail-card__sidebar {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border-right: 1px solid var(--border-soft);
-}
-
-.commit-detail-card__splitter,
-.commit-detail-card__height-resizer {
-  background: var(--border-soft);
-}
-
-.commit-detail-card__splitter {
-  cursor: col-resize;
 }
 
 .commit-detail-card__height-resizer {
@@ -571,206 +483,12 @@ function clamp(value: number, min: number, max: number) {
   white-space: nowrap;
 }
 
-.commit-file-picker {
-  --commit-file-status-width: 16px;
-  --commit-file-stat-width: 68px;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  padding: 8px 10px 10px;
-}
-
-.commit-file-picker__header {
-  display: grid;
-  grid-template-columns: var(--commit-file-status-width) minmax(0, 1fr) var(--commit-file-stat-width);
-  align-items: end;
-  gap: 6px;
-  margin-bottom: 4px;
-  padding: 0 5px;
-}
-
-.commit-file-picker__header-title {
-  grid-column: 1 / 3;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.commit-file-picker__header h3 {
-  font-size: 13px;
-}
-
-.commit-file-picker__header span,
-.commit-file-picker__header p {
-  font-size: 11px;
-}
-
-.commit-file-picker__header-stat {
-  grid-column: 3;
-  margin: 0;
-}
-
-.commit-file-picker__list {
-  display: grid;
-  align-content: start;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.commit-file-picker__item {
-  display: grid;
-  grid-template-columns: var(--commit-file-status-width) minmax(0, 1fr) var(--commit-file-stat-width);
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  padding: 0 5px;
-  border: 0;
-  border-top: 1px solid var(--border-soft);
-  border-radius: 6px;
-  text-align: left;
-  color: var(--text);
-  background: transparent;
-}
-
-.commit-file-picker__item:first-child {
-  border-top: 0;
-}
-
-.commit-file-picker__item:hover,
-.commit-file-picker__item.is-active {
-  background: var(--bg-hover);
-}
-
-.commit-file-picker__item.is-active {
-  background: var(--bg-active);
-}
-
-.commit-file-picker__item:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
-}
-
-.commit-file-picker__status,
-.commit-file-picker__stat {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.commit-file-picker__status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--commit-file-status-width);
-  height: 16px;
-  border-radius: 3px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.commit-file-picker__status.is-added {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
-}
-
-.commit-file-picker__status.is-deleted {
-  color: var(--err);
-  background: color-mix(in srgb, var(--err) 12%, transparent);
-}
-
-.commit-file-picker__status.is-renamed,
-.commit-file-picker__status.is-copied {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.commit-file-picker__status.is-modified {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 12%, transparent);
-}
-
-.commit-file-picker__path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.commit-file-picker__stat {
-  justify-self: end;
-  font-variant-numeric: tabular-nums;
-}
-
-.commit-file-picker__stat {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  width: 100%;
-  font-family: var(--font-mono);
-  text-align: right;
-}
-
 .commit-file-picker__stat--add {
   color: var(--ok);
 }
 
 .commit-file-picker__stat--del {
   color: var(--err);
-}
-
-.commit-file-picker__empty {
-  margin: 0;
-}
-
-.commit-diff-panel {
-  background: var(--bg);
-}
-
-.commit-file-diff__header {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  min-height: 32px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-subtle);
-}
-
-.commit-file-diff__action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  color: var(--text-muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.commit-file-diff__action:hover {
-  color: var(--text);
-  background: var(--bg-hover);
-}
-
-.commit-file-diff__toggle.is-active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.commit-file-diff__empty {
-  margin: 0;
-  padding: 12px 10px;
 }
 
 .error-line {
@@ -781,27 +499,5 @@ function clamp(value: number, min: number, max: number) {
   .commit-detail-card--embedded {
     height: min(var(--commit-detail-height), 78vh);
   }
-
-  .commit-detail-card__content,
-  .commit-detail-card:not(.commit-detail-card--embedded) .commit-detail-card__content {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 38%) minmax(0, 1fr);
-  }
-
-  .commit-detail-card__sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--border-soft);
-  }
-
-  .commit-detail-card__splitter {
-    display: none;
-  }
-}
-
-@media (max-width: 640px) {
-  .commit-file-diff__header {
-    padding: 4px 8px;
-  }
-
 }
 </style>
