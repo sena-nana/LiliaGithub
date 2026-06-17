@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import {
-  ChevronDown,
   FolderOpen,
   GitBranch,
   GitCompare,
@@ -14,6 +13,7 @@ import {
   TriangleAlert,
   Upload,
 } from "@lucide/vue";
+import Dropdown from "../components/Dropdown.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
 import RepoPushError from "../components/repo/RepoPushError.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
@@ -94,6 +94,9 @@ const {
   selectLaunchCandidate,
   selectLaunchCandidateByValue,
   checkout,
+  mergeBranch,
+  deleteBranch,
+  updateCurrentBranch,
   checkoutBranchByValue,
   openCommit,
   closeCommit,
@@ -101,14 +104,6 @@ const {
   openConflictFolder,
   commitMetaTitle,
 } = useRepoDetailController();
-
-function onLaunchSelect(event: Event) {
-  selectLaunchCandidateByValue((event.target as HTMLSelectElement).value);
-}
-
-function onBranchSelect(event: Event) {
-  checkoutBranchByValue((event.target as HTMLSelectElement).value);
-}
 </script>
 <template>
   <section class="repo-workbench">
@@ -134,6 +129,7 @@ function onBranchSelect(event: Event) {
               >
                 <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
                 <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
+                <GitBranch v-else-if="tab.key === 'branches'" :size="17" aria-hidden="true" />
                 <History v-else :size="17" aria-hidden="true" />
                 <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge repo-toolbar__badge--warn">
                   {{ changes.length }}
@@ -141,50 +137,36 @@ function onBranchSelect(event: Event) {
               </RouterLink>
             </nav>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__context-card" aria-label="分支">
-              <label
-                class="repo-toolbar__chip repo-toolbar__chip--branch"
-                :class="{ 'is-disabled': actionRunning || !branchOptions.length }"
-                title="切换分支"
-              >
-                <GitBranch :size="15" aria-hidden="true" />
-                <span>{{ activeBranchName }}</span>
-                <select
-                  :value="activeBranchValue"
-                  :disabled="actionRunning || !branchOptions.length"
-                  aria-label="切换分支"
-                  @change="onBranchSelect"
-                >
-                  <option v-if="!branchOptions.length" :value="activeBranchValue">{{ activeBranchName }}</option>
-                  <option v-for="branch in branchOptions" :key="branch.value" :value="branch.value">
-                    {{ branch.label }}{{ branch.hint ? ` · ${branch.hint}` : "" }}
-                  </option>
-                </select>
-                <ChevronDown :size="12" aria-hidden="true" />
-              </label>
+            <div v-if="!remoteOnly" class="repo-toolbar__context-card" aria-label="分支">
+              <Dropdown
+                :model-value="activeBranchValue"
+                :options="branchOptions"
+                :icon="GitBranch"
+                :display-label="activeBranchName"
+                placeholder="detached"
+                placement="bottom"
+                button-class="repo-toolbar__chip repo-toolbar__chip--branch"
+                menu-width="220px"
+                menu-label="分支候选"
+                :disabled="actionRunning || !branchOptions.length"
+                @update:model-value="checkoutBranchByValue"
+              />
             </div>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__context-card" aria-label="命令执行">
-              <label
-                class="repo-toolbar__chip repo-toolbar__chip--command"
-                :class="{ 'is-disabled': actionRunning || launchRunning || !launchCommandOptions.length }"
-                title="命令执行"
-              >
-                <SquareTerminal :size="15" aria-hidden="true" />
-                <span>{{ launchCommandText }}</span>
-                <select
-                  :value="activeLaunchValue"
-                  :disabled="actionRunning || launchRunning || !launchCommandOptions.length"
-                  aria-label="选择启动指令"
-                  @change="onLaunchSelect"
-                >
-                  <option v-if="!launchCommandOptions.length" :value="activeLaunchValue">选择启动指令</option>
-                  <option v-for="item in launchCommandOptions" :key="item.value" :value="item.value">
-                    {{ item.label }}{{ item.hint ? ` · ${item.hint}` : "" }}
-                  </option>
-                </select>
-                <ChevronDown :size="12" aria-hidden="true" />
-              </label>
+            <div v-if="!remoteOnly" class="repo-toolbar__context-card" aria-label="命令执行">
+              <Dropdown
+                :model-value="activeLaunchValue"
+                :options="launchCommandOptions"
+                :icon="SquareTerminal"
+                :display-label="launchCommandText"
+                placeholder="选择启动指令"
+                placement="bottom"
+                button-class="repo-toolbar__chip repo-toolbar__chip--command"
+                menu-width="280px"
+                menu-label="启动指令候选"
+                :disabled="actionRunning || launchRunning || !launchCommandOptions.length"
+                @update:model-value="selectLaunchCandidateByValue"
+              />
             </div>
 
             <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__actions" aria-label="仓库操作">
@@ -237,6 +219,7 @@ function onBranchSelect(event: Event) {
                 class="repo-toolbar__btn repo-toolbar__btn--status"
                 disabled
                 title="冲突解决功能将重新设计"
+                aria-label="有冲突"
               >
                 <TriangleAlert :size="17" aria-hidden="true" />
               </button>
@@ -336,6 +319,9 @@ function onBranchSelect(event: Event) {
           @focus-change="focusChange"
           @commit="commitSelected"
           @checkout="checkout"
+          @merge-branch="mergeBranch"
+          @delete-branch="deleteBranch"
+          @update-current-branch="updateCurrentBranch"
           @open-commit="openCommit"
           @close-commit="closeCommit"
           @continue-conflict="continueConflict"
@@ -419,8 +405,12 @@ function onBranchSelect(event: Event) {
 }
 
 .repo-toolbar__context-card {
+  display: inline-flex;
+  align-items: center;
   flex: 0 1 auto;
+  min-width: 0;
   max-width: min(100%, 320px);
+  height: 28px;
 }
 
 .repo-toolbar__actions {
@@ -490,8 +480,8 @@ function onBranchSelect(event: Event) {
   min-width: 0;
   width: max-content;
   max-width: 100%;
-  height: 32px;
-  padding: 0 8px;
+  height: 28px;
+  padding: 0 7px;
   border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
@@ -514,24 +504,14 @@ function onBranchSelect(event: Event) {
   max-width: 220px;
 }
 
-.repo-toolbar__chip span {
+.repo-toolbar__chip .chat-chip__label {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
-}
-
-.repo-toolbar__chip select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  opacity: 0;
-  cursor: inherit;
 }
 
 .repo-toolbar__badge {
@@ -1225,6 +1205,7 @@ function onBranchSelect(event: Event) {
   }
 
   .repo-toolbar__context-card {
+    height: 28px;
     max-width: 100%;
   }
 

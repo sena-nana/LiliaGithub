@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { Check, GitBranch, Trash2 } from "@lucide/vue";
+import { Check, GitBranch, GitMerge, RefreshCw, Trash2 } from "@lucide/vue";
 import ConfirmDialog from "../ConfirmDialog.vue";
+import type { ContextMenuItem } from "../../composables/useContextMenu";
+import { vContextMenu } from "../../directives/contextMenu";
 import type { BranchSummary } from "../../services/workspace";
 
 const props = withDefaults(defineProps<{
@@ -21,12 +23,16 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   checkout: [branchName: string];
+  mergeBranch: [branchName: string];
+  deleteLocalBranch: [branchName: string];
+  updateCurrentBranch: [];
   setDefault: [branchName: string];
   deleteRemoteBranch: [branchName: string];
 }>();
 
 const deleteTarget = ref<BranchSummary | null>(null);
 const deleteConfirmInput = ref("");
+const selectedBranchName = ref<string | null>(null);
 const deleteConfirmMatches = computed(() => {
   const target = deleteTarget.value;
   return Boolean(target) && deleteConfirmInput.value.trim() === target?.name;
@@ -52,6 +58,59 @@ function confirmDelete() {
 function isDefaultBranch(branch: BranchSummary) {
   return props.remoteMode && Boolean(props.defaultBranch) && branch.name === props.defaultBranch;
 }
+
+function selectBranch(branch: BranchSummary) {
+  selectedBranchName.value = branch.name;
+}
+
+function isSelectedBranch(branch: BranchSummary) {
+  return selectedBranchName.value === branch.name || (!selectedBranchName.value && branch.current);
+}
+
+function checkoutBranch(branch: BranchSummary) {
+  if (props.remoteMode || props.actionRunning || branch.remote || branch.current) return;
+  emit("checkout", branch.name);
+}
+
+function branchContextMenu(branch: BranchSummary): ContextMenuItem[] {
+  if (props.remoteMode || branch.remote) return [];
+  if (branch.current) {
+    return [
+      {
+        id: `update:${branch.name}`,
+        label: "更新",
+        icon: RefreshCw,
+        disabled: props.actionRunning,
+        onSelect: () => emit("updateCurrentBranch"),
+      },
+    ];
+  }
+  return [
+    {
+      id: `checkout:${branch.name}`,
+      label: "切换",
+      icon: Check,
+      disabled: props.actionRunning,
+      onSelect: () => emit("checkout", branch.name),
+    },
+    {
+      id: `merge:${branch.name}`,
+      label: "合并到当前分支",
+      icon: GitMerge,
+      disabled: props.actionRunning,
+      onSelect: () => emit("mergeBranch", branch.name),
+    },
+    {
+      id: `delete:${branch.name}`,
+      label: "删除",
+      confirmLabel: "确认删除",
+      icon: Trash2,
+      danger: true,
+      disabled: props.actionRunning,
+      onSelect: () => emit("deleteLocalBranch", branch.name),
+    },
+  ];
+}
 </script>
 
 <template>
@@ -66,7 +125,18 @@ function isDefaultBranch(branch: BranchSummary) {
     <p v-else-if="loading" class="muted repo-empty">正在读取分支。</p>
     <p v-else-if="!branches.length" class="muted repo-empty">没有分支信息。</p>
     <div v-else class="repo-list-panel">
-      <div v-for="branch in branches" :key="`${branch.remote}:${branch.name}`" class="branch-row">
+      <div
+        v-for="branch in branches"
+        :key="`${branch.remote}:${branch.name}`"
+        v-context-menu="branchContextMenu(branch)"
+        class="branch-row"
+        :class="{ 'is-selected': isSelectedBranch(branch), 'is-current': branch.current }"
+        role="button"
+        tabindex="0"
+        :aria-selected="isSelectedBranch(branch)"
+        @click="selectBranch(branch)"
+        @dblclick="checkoutBranch(branch)"
+      >
         <GitBranch :size="14" aria-hidden="true" />
         <div class="branch-row__main">
           <strong>{{ branch.name }}</strong>
@@ -74,16 +144,7 @@ function isDefaultBranch(branch: BranchSummary) {
           <span v-if="branch.protected" class="branch-row__label">protected</span>
           <span v-if="!remoteMode" class="branch-row__meta">↑{{ branch.ahead }} / ↓{{ branch.behind }}</span>
         </div>
-        <button
-          v-if="!remoteMode"
-          type="button"
-          class="ghost"
-          :disabled="branch.current || branch.remote"
-          @click="emit('checkout', branch.name)"
-        >
-          <Check :size="14" aria-hidden="true" />
-          Checkout
-        </button>
+        <span v-if="!remoteMode" class="branch-row__hint">双击切换 / 右键操作</span>
         <div v-else class="branch-row__actions">
           <button
             type="button"
@@ -129,6 +190,16 @@ function isDefaultBranch(branch: BranchSummary) {
   gap: 8px;
   min-height: 34px;
   padding: 6px 0;
+  cursor: default;
+  user-select: none;
+}
+
+.branch-row.is-selected {
+  background: var(--bg-active);
+}
+
+.branch-row:not(.is-selected):hover {
+  background: var(--bg-hover);
 }
 
 .branch-row__main {
@@ -168,8 +239,15 @@ function isDefaultBranch(branch: BranchSummary) {
   gap: 6px;
 }
 
-.branch-row__actions {
+.branch-row__actions,
+.branch-row__hint {
   justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.branch-row__hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
 }
 </style>

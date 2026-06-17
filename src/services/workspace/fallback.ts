@@ -1769,6 +1769,22 @@ export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
   });
 }
 
+export function mergeBranch(repoId: string, branch: string): Promise<RepoMergePullResult> {
+  return call("repo_merge_branch", { repoId, branch }, () => {
+    const repo = fallbackRepo(repoId);
+    const target = branch.trim();
+    if (!target) throw new Error("分支名不能为空");
+    if (target === repo.currentBranch) throw new Error("不能合并当前分支");
+    const conflicts = fallbackConflictState(repoId);
+    return {
+      status: conflicts.files.length ? "conflicts" : "success",
+      message: conflicts.files.length ? "合并产生冲突，请处理后提交" : "合并完成",
+      summary: { ...repo },
+      conflicts,
+    };
+  });
+}
+
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => {
     const repo = fallbackRepo(repoId);
@@ -1797,6 +1813,16 @@ export function checkoutBranch(repoId: string, branch: string): Promise<RepoSumm
   return call("repo_checkout_branch", { repoId, branch }, () => {
     const repo = fallbackRepo(repoId);
     return { ...repo, currentBranch: branch };
+  });
+}
+
+export function deleteBranch(repoId: string, branch: string): Promise<RepoSummary> {
+  return call("repo_delete_branch", { repoId, branch }, () => {
+    const repo = fallbackRepo(repoId);
+    const target = branch.trim();
+    if (!target) throw new Error("分支名不能为空");
+    if (target === repo.currentBranch) throw new Error("不能删除当前分支");
+    return { ...repo };
   });
 }
 

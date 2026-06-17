@@ -6,15 +6,20 @@ interface Option {
   value: T;
   label: string;
   hint?: string;
+  disabled?: boolean;
 }
 
 const props = defineProps<{
   modelValue: T;
-  options: Option[];
+  options: readonly Option[];
   icon?: unknown;
   placeholder?: string;
+  displayLabel?: string;
   placement?: "top" | "bottom";
   disabled?: boolean;
+  buttonClass?: string;
+  menuWidth?: string;
+  menuLabel?: string;
 }>();
 
 const emit = defineEmits<{ "update:modelValue": [value: T] }>();
@@ -32,6 +37,7 @@ function toggle() {
 }
 
 function pick(option: Option) {
+  if (option.disabled) return;
   emit("update:modelValue", option.value);
   open.value = false;
 }
@@ -70,7 +76,7 @@ onBeforeUnmount(() => {
     <button
       type="button"
       class="chat-chip"
-      :class="{ 'is-open': open, 'is-disabled': disabled }"
+      :class="[buttonClass, { 'is-open': open, 'is-disabled': disabled }]"
       :disabled="disabled"
       :aria-haspopup="true"
       :aria-expanded="open"
@@ -78,7 +84,7 @@ onBeforeUnmount(() => {
     >
       <component v-if="icon" :is="icon" :size="13" aria-hidden="true" />
       <span class="chat-chip__label">
-        {{ current?.label ?? placeholder ?? "-" }}
+        {{ displayLabel ?? current?.label ?? placeholder ?? "-" }}
       </span>
       <ChevronDown :size="12" aria-hidden="true" class="chat-chip__caret" />
     </button>
@@ -87,7 +93,9 @@ onBeforeUnmount(() => {
       v-if="open"
       class="dd__menu"
       :class="placement === 'bottom' ? 'dd__menu--bottom' : 'dd__menu--top'"
+      :style="menuWidth ? { width: menuWidth } : undefined"
       role="listbox"
+      :aria-label="menuLabel"
     >
       <button
         v-for="option in options"
@@ -95,6 +103,7 @@ onBeforeUnmount(() => {
         type="button"
         class="dd__item"
         :class="{ 'is-active': option.value === modelValue }"
+        :disabled="option.disabled"
         role="option"
         :aria-selected="option.value === modelValue"
         @click="pick(option)"
@@ -110,21 +119,24 @@ onBeforeUnmount(() => {
 .dd {
   position: relative;
   display: inline-flex;
+  min-width: 0;
 }
 
 .chat-chip {
-  height: 28px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   color: var(--text-muted);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-size: 12px;
   font-weight: 500;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-chip:hover:not(.is-disabled):not(:disabled),
@@ -148,13 +160,15 @@ onBeforeUnmount(() => {
   max-width: 280px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px;
+  border-radius: var(--radius-md);
+  padding: 3px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
   box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
   z-index: 20;
+  max-height: 280px;
+  overflow: auto;
 }
 
 .dd__menu--top {
@@ -167,18 +181,23 @@ onBeforeUnmount(() => {
 
 .dd__item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 6px 10px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   cursor: pointer;
   text-align: left;
+  min-height: 26px;
   height: auto;
   font-weight: 500;
+  font-size: 12px;
+  line-height: 1.45;
+  width: 100%;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .dd__item:hover,
@@ -187,8 +206,30 @@ onBeforeUnmount(() => {
   filter: none;
 }
 
+.dd__item:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.dd__item:disabled:hover {
+  background: transparent;
+}
+
+.dd__item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .dd__item-hint {
-  font-size: 11px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  line-height: 1.4;
   color: var(--text-faint);
 }
 </style>

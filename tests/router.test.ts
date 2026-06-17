@@ -814,13 +814,13 @@ describe("基础路由", () => {
     expect(screen.queryByLabelText("快速启动")).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
-    expect(screen.getByRole("button", { name: "Push" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "推送" })).toBeInTheDocument();
     expect(
       within(screen.getByLabelText("仓库操作"))
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label"))
         .filter(Boolean),
-    ).toEqual(["刷新", "文件夹", "拉取"]);
+    ).toEqual(["刷新", "文件夹", "拉取", "推送"]);
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
@@ -1372,8 +1372,8 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "有冲突" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Push" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
+    expect(screen.queryByRole("button", { name: "推送" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "文件查看" })).toHaveClass("is-active");
     expect(screen.queryByRole("tab", { name: "冲突" })).toBeNull();
     expect(screen.queryByLabelText("冲突分段处理")).toBeNull();
     expect(screen.queryByRole("button", { name: "整文件采用 ours" })).toBeNull();
@@ -1449,15 +1449,15 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "命令运行" })).toHaveClass("is-active");
+    expect(screen.queryByRole("tab", { name: "命令运行" })).toBeNull();
     expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
 
     const launchTerminal = screen.getByLabelText("启动终端");
     const launchCard = launchTerminal.closest(".project-terminal-card");
     if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
+    expect(within(launchCard).getByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
     await fireEvent.click(within(launchCard).getByRole("button", { name: /yarn tauri:dev/ }));
     expect(await within(launchCard).findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("option", { name: /^dev/ }));

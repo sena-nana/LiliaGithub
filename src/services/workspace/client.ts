@@ -423,6 +423,10 @@ export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
   return call("repo_merge_pull", { repoId }, () => fallback.mergePullRepo(repoId));
 }
 
+export function mergeBranch(repoId: string, branch: string): Promise<RepoMergePullResult> {
+  return call("repo_merge_branch", { repoId, branch }, () => fallback.mergeBranch(repoId, branch));
+}
+
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => fallback.pushRepo(repoId));
 }
@@ -437,6 +441,10 @@ export function useDefaultTokenAuthForRepo(repoId: string): Promise<WorkspaceSet
 
 export function checkoutBranch(repoId: string, branch: string): Promise<RepoSummary> {
   return call("repo_checkout_branch", { repoId, branch }, () => fallback.checkoutBranch(repoId, branch));
+}
+
+export function deleteBranch(repoId: string, branch: string): Promise<RepoSummary> {
+  return call("repo_delete_branch", { repoId, branch }, () => fallback.deleteBranch(repoId, branch));
 }
 
 export function getRepoConflicts(repoId: string): Promise<RepoConflictState> {

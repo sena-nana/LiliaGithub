@@ -1,7 +1,9 @@
 import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
+import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { deleteGitHubBranch, listGitHubBranches, updateGitHubRepoSettings } from "../src/services/workspace/client";
 import type {
   BranchSummary,
@@ -144,6 +146,8 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
 
 describe("RepoProjectPanel", () => {
   beforeEach(() => {
+    closeContextMenu();
+    installContextMenu();
     vi.clearAllMocks();
   });
 
@@ -183,7 +187,7 @@ describe("RepoProjectPanel", () => {
     expect(view.queryByText("删除本地仓库")).toBeNull();
   });
 
-  it("本地仓库分支栏展示本地分支并保留 checkout", async () => {
+  it("本地仓库分支栏单击只选中，双击才切换分支", async () => {
     const view = await renderProjectPanel({
       activeGitTab: "branches",
       branches: [
@@ -209,8 +213,55 @@ describe("RepoProjectPanel", () => {
     });
 
     expect(view.getByText("feature/local")).toBeInTheDocument();
-    await fireEvent.click(view.getAllByRole("button", { name: /Checkout/ })[1]);
+    const featureRow = view.getByRole("button", { name: /feature\/local/ });
+    await fireEvent.click(featureRow);
+    expect(view.emitted("checkout")).toBeUndefined();
+
+    await fireEvent.dblClick(featureRow);
     expect(view.emitted("checkout")).toEqual([["feature/local"]]);
+  });
+
+  it("本地仓库分支右键提供更新、合并和二次确认删除", async () => {
+    const view = await renderProjectPanel({
+      activeGitTab: "branches",
+      branches: [
+        {
+          name: "main",
+          remote: false,
+          current: true,
+          upstream: "origin/main",
+          ahead: 1,
+          behind: 0,
+          protected: false,
+        },
+        {
+          name: "feature/local",
+          remote: false,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: false,
+        },
+      ],
+    });
+    render(ContextMenuHost);
+
+    await fireEvent.contextMenu(view.getByRole("button", { name: /main/ }));
+    expect(await view.findByRole("menuitem", { name: "更新" })).toBeInTheDocument();
+    expect(view.queryByRole("menuitem", { name: "合并到当前分支" })).toBeNull();
+    await fireEvent.click(view.getByRole("menuitem", { name: "更新" }));
+    expect(view.emitted("updateCurrentBranch")).toHaveLength(1);
+
+    await fireEvent.contextMenu(view.getByRole("button", { name: /feature\/local/ }));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "合并到当前分支" }));
+    expect(view.emitted("mergeBranch")).toEqual([["feature/local"]]);
+
+    await fireEvent.contextMenu(view.getByRole("button", { name: /feature\/local/ }));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "删除" }));
+    expect(view.emitted("deleteBranch")).toBeUndefined();
+    await fireEvent.click(view.getByRole("menuitem", { name: "确认删除" }));
+    expect(view.emitted("deleteBranch")).toEqual([["feature/local"]]);
   });
 
   it("远程仓库分支栏加载 GitHub 分支并可设默认分支", async () => {
