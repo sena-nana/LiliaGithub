@@ -17,6 +17,7 @@ import {
 } from "../services/workspace";
 import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
+import { repoRoute } from "../utils/repoRoutes";
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -151,7 +152,7 @@ function closeSearch() {
 async function openFirstSearchResult() {
   const repo = filteredRepoItems.value[0]?.repo;
   if (!repo) return;
-  await router.push(`/repos/${encodeURIComponent(repo.id)}`);
+  await router.push(repoRoute(repo.id));
 }
 
 async function openRemoteRepo(fullName: string) {
@@ -229,7 +230,7 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
         <RouterLink
           v-for="{ repo, dirtyCount, issue } in filteredRepoItems"
           :key="repo.id"
-          :to="`/repos/${encodeURIComponent(repo.id)}`"
+          :to="repoRoute(repo.id)"
           class="sb-tree__row sb-tree__row--project"
           active-class="is-active"
           :title="repoDisplayTitle(repo)"

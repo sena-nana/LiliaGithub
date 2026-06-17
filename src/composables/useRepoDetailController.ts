@@ -1,5 +1,5 @@
 ﻿import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
 import type {
@@ -13,8 +13,8 @@ import type {
 } from "../services/workspace";
 import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
+import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
-type RepoTab = "conflicts" | "changes" | "history" | "branches";
 type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
 type HistoryCommit = {
   readonly hash: string;
@@ -29,8 +29,9 @@ type HistoryCommit = {
 
 export function useRepoDetailController() {
   const route = useRoute();
+  const router = useRouter();
   const workspace = useWorkspace();
-  const activeTab = ref<RepoTab>(normalizeTab(route.query.tab) ?? "changes");
+  const activeTab = computed<RepoRouteTab>(() => repoRouteTabFromRoute(route));
   const activeProjectTab = computed<RepoProjectTab>(
     () => normalizeProjectTab(route.query.projectTab) ?? "readme",
   );
@@ -191,11 +192,12 @@ export function useRepoDetailController() {
     return "完成合并";
   });
 
-  const tabs: Array<{ key: RepoTab; label: string }> = [
-    { key: "conflicts", label: "冲突" },
+  const tabs: Array<{ key: RepoRouteTab; label: string }> = [
+    { key: "repo", label: "Repo" },
     { key: "changes", label: "变更" },
     { key: "history", label: "历史" },
     { key: "branches", label: "分支" },
+    { key: "run", label: "命令运行" },
   ];
   onMounted(() => {
     void load();
@@ -224,14 +226,6 @@ export function useRepoDetailController() {
     void load();
   });
 
-  watch(
-    () => route.query.tab,
-    (tab) => {
-      const normalized = normalizeTab(tab);
-      if (normalized) activeTab.value = normalized;
-    },
-  );
-
   watch(changes, () => {
     syncFocusedChange();
   });
@@ -248,16 +242,6 @@ export function useRepoDetailController() {
       selectedCommitHash.value = null;
     }
   });
-
-  function normalizeTab(value: unknown): RepoTab | null {
-    if (
-      value === "conflicts" ||
-      value === "changes" ||
-      value === "history" ||
-      value === "branches"
-    ) return value;
-    return null;
-  }
 
   function normalizeProjectTab(value: unknown): RepoProjectTab | null {
     if (
@@ -284,7 +268,7 @@ export function useRepoDetailController() {
       return;
     }
     try {
-      const [nextDetail] = await Promise.all([
+      await Promise.all([
         workspace.loadRepoDetail(repoId.value),
         workspace.loadLaunch(repoId.value),
       ]);
@@ -293,14 +277,6 @@ export function useRepoDetailController() {
       });
       syncFocusedChange();
       syncFocusedConflict();
-      if (
-        (nextDetail.summary.conflictCount > 0 ||
-          nextDetail.conflicts.files.length > 0 ||
-          nextDetail.conflicts.operation !== "none") &&
-        activeTab.value !== "conflicts"
-      ) {
-        activeTab.value = "conflicts";
-      }
     } catch (err) {
       actionError.value = String(err);
     }
@@ -336,9 +312,6 @@ export function useRepoDetailController() {
 
   watch(conflictFiles, () => {
     syncFocusedConflict();
-    if (!conflictFiles.value.length && activeTab.value === "conflicts") {
-      activeTab.value = "changes";
-    }
   });
 
   function focusChange(path: string) {
@@ -456,7 +429,6 @@ export function useRepoDetailController() {
   function mergePull() {
     void runAction(async () => {
       await workspace.mergePull(repoId.value);
-      if (hasConflicts.value) activeTab.value = "conflicts";
     });
   }
 
@@ -466,10 +438,6 @@ export function useRepoDetailController() {
 
   function useDefaultTokenAuth() {
     void runAction(() => workspace.useDefaultTokenAuthForRepo(repoId.value));
-  }
-
-  function showConflicts() {
-    activeTab.value = "conflicts";
   }
 
   function acceptConflict(side: "ours" | "theirs") {
@@ -552,7 +520,7 @@ export function useRepoDetailController() {
   }
 
   function openCommit(commit: HistoryCommit) {
-    activeTab.value = "history";
+    void router.push(repoRoute(repoId.value, "history"));
     selectedCommitHash.value = commit.hash;
   }
 
@@ -643,7 +611,6 @@ export function useRepoDetailController() {
       mergePull,
       push,
       useDefaultTokenAuth,
-      showConflicts,
       acceptConflict,
       resolveSelectedConflict,
       markConflictResolved,

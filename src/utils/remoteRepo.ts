@@ -1,4 +1,5 @@
 import type { GitHubRepoSummary, RemoteRepoShortcut } from "../services/workspace";
+import { repoRoute } from "./repoRoutes";
 
 const REMOTE_REPO_ID_PREFIX = "github:";
 
@@ -13,7 +14,7 @@ export function parseRemoteRepoId(repoId: string): string | null {
 }
 
 export function remoteRepoRoute(fullName: string) {
-  return `/repos/${encodeURIComponent(remoteRepoId(fullName))}?view=project`;
+  return repoRoute(remoteRepoId(fullName));
 }
 
 export function normalizeRemoteRepoFullName(fullName: string) {

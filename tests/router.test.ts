@@ -5,8 +5,8 @@ import App from "../src/App.vue";
 import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoChange, RepoConflictState } from "../src/services/workspace";
-import { conflictState, repoDetail, repoSummary } from "./fixtures/workspace";
+import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoChange } from "../src/services/workspace";
+import { repoDetail, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 
@@ -26,11 +26,6 @@ async function renderAt(path: string) {
   });
 
   return { router };
-}
-
-async function overrideLiliaConflict(conflict: RepoConflictState) {
-  const service = await import("../src/services/workspace");
-  service.setFallbackConflictOverrideForTests((repoId) => repoId === "Lilia" ? conflict : null);
 }
 
 async function clickOverviewSync() {
@@ -169,7 +164,6 @@ describe("基础路由", () => {
     expect(repoStatusList).toBeInTheDocument();
     expect(repoStatusList).toHaveTextContent("sena-nana/LiliaGithub");
     expect(repoStatusList).not.toHaveTextContent("分支");
-    expect(repoStatusList).not.toHaveTextContent("变更");
     expect(repoStatusList).not.toHaveTextContent("同步");
     expect(repoStatusList).not.toHaveTextContent("更新时间");
     expect(screen.getByRole("link", { name: "打开 sena-nana/LiliaGithub" })).toBeInTheDocument();
@@ -221,7 +215,7 @@ describe("基础路由", () => {
     await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/NewRepo" }));
 
     await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo?view=project");
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo");
     });
     expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Git 信息" })).toBeNull();
@@ -249,7 +243,7 @@ describe("基础路由", () => {
       "sena-nana/EmptyRemote": null,
     });
 
-    await renderAt("/repos/github%3Asena-nana%2FEmptyRemote?view=project");
+    await renderAt("/repos/github%3Asena-nana%2FEmptyRemote");
 
     expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
     expect(await screen.findByText("当前远程仓库没有 README。")).toBeInTheDocument();
@@ -499,7 +493,6 @@ describe("基础路由", () => {
     });
     expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
     expect(router.currentRoute.value.query).toMatchObject({
-      view: "project",
       projectTab: "issues",
       issue: "12",
     });
@@ -534,7 +527,6 @@ describe("基础路由", () => {
     });
     expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
     expect(router.currentRoute.value.query).toMatchObject({
-      view: "project",
       projectTab: "actions",
       run: "1310",
     });
@@ -811,15 +803,15 @@ describe("基础路由", () => {
     const addFilesToGitignore = vi.spyOn(service, "addFilesToGitignore");
     const stageFiles = vi.spyOn(service, "stageFiles");
     const unstageFiles = vi.spyOn(service, "unstageFiles");
-    await renderAt("/repos/LiliaGithub");
+    await renderAt("/repos/LiliaGithub/changes");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(screen.queryByText("C:\\Files\\workspace\\LiliaGithub")).toBeNull();
     expect(screen.queryByLabelText("仓库状态条")).toBeNull();
     expect(screen.queryByText("仓库健康")).toBeNull();
     expect(screen.queryByRole("tab", { name: "Git 信息" })).toBeNull();
-    expect(screen.getByRole("tablist", { name: "本地 Git 视图" })).toBeInTheDocument();
-    expect(screen.getByLabelText("快速启动")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("快速启动")).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByRole("button", { name: "Push" })).toBeInTheDocument();
@@ -843,11 +835,6 @@ describe("基础路由", () => {
     expect(screen.queryByText("提交内容")).toBeNull();
     expect(screen.queryByText("1 个已暂存文件")).toBeNull();
     expect(screen.queryByText("提交后立即 push")).toBeNull();
-
-    expect(screen.getByRole("button", { name: "运行" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
-    expect(await screen.findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByText("src/pages/Home.vue").closest("button")!);
     const diffPreview = await screen.findByLabelText("变更预览");
@@ -913,6 +900,9 @@ describe("基础路由", () => {
     );
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "历史" })).toHaveClass("is-active");
+    });
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("提交历史密集列表")).toBeInTheDocument();
     expect(screen.queryByText("提交历史")).toBeNull();
@@ -962,7 +952,7 @@ describe("基础路由", () => {
       });
     });
 
-    await renderAt("/repos/LiliaGithub");
+    await renderAt("/repos/LiliaGithub/changes");
 
     const unstagedGroup = await screen.findByLabelText("未暂存变更");
     const alphaRow = (await within(unstagedGroup).findByText("src/alpha.ts")).closest("button")!;
@@ -1270,7 +1260,7 @@ describe("基础路由", () => {
     await fireEvent.click(screen.getByRole("link", { name: "打开 sena-nana/DeleteRemoteRepo" }));
 
     await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FDeleteRemoteRepo?view=project");
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FDeleteRemoteRepo");
     });
     expect(await screen.findByRole("heading", { level: 1, name: "DeleteRemoteRepo" })).toBeInTheDocument();
     await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
@@ -1377,90 +1367,16 @@ describe("基础路由", () => {
     expect(screen.getByText("当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。")).toBeInTheDocument();
   });
 
-  it("冲突仓库默认进入冲突视图并支持分段处理入口", async () => {
+  it("冲突仓库不再暴露旧冲突解决入口", async () => {
     await renderAt("/repos/Lilia");
 
     expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "处理冲突" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "有冲突" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Push" })).toBeNull();
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "冲突" })).toHaveClass("is-active");
-    });
-    const conflictPanel = screen.getByLabelText("冲突分段处理");
-    expect(screen.getByText("合并冲突")).toBeInTheDocument();
-    expect(within(conflictPanel).getByText("src/pages/TaskDetail.vue")).toBeInTheDocument();
-    expect(within(conflictPanel).getByText("hunk-1")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "采用此段" }).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByRole("button", { name: "解决并暂存" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
-
-    await fireEvent.click(screen.getAllByRole("button", { name: "采用此段" })[0]);
-    await fireEvent.click(screen.getAllByRole("button", { name: "采用此段" })[3]);
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "解决并暂存" })).toBeEnabled();
-    });
-  });
-
-  it("整文件采用 ours 需要二次确认", async () => {
-    await renderAt("/repos/Lilia");
-
-    const firstButton = await screen.findByRole("button", { name: "整文件采用 ours" });
-    await fireEvent.click(firstButton);
-
-    expect(screen.getByRole("button", { name: "确认整文件采用 ours 并暂存" })).toBeInTheDocument();
-  });
-
-  it("rebase 冲突支持应用内继续和终止入口", async () => {
-    await overrideLiliaConflict(conflictState({
-      operation: "rebase",
-      allResolved: false,
-      files: [
-        {
-          path: "src/rebase.ts",
-          status: "UU",
-          resolved: false,
-          binary: false,
-          hunks: [
-            {
-              id: "hunk-1",
-              startLine: 1,
-              endLine: 5,
-              oursLabel: "HEAD",
-              theirsLabel: "feature",
-              oursLines: ["ours"],
-              theirsLines: ["theirs"],
-            },
-          ],
-        },
-      ],
-    }));
-
-    await renderAt("/repos/Lilia");
-
-    expect(await screen.findByText("rebase 冲突")).toBeInTheDocument();
-    expect(screen.queryByText(/第一版暂不支持/)).toBeNull();
-    expect(screen.getByRole("button", { name: "继续 rebase" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "终止 rebase" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
-  });
-
-  it("cherry-pick 冲突文件处理完后仍禁用普通提交并允许继续", async () => {
-    await overrideLiliaConflict(conflictState({
-      operation: "cherry-pick",
-      allResolved: true,
-      files: [],
-    }));
-
-    await renderAt("/repos/Lilia");
-
-    expect(await screen.findByText("cherry-pick 冲突")).toBeInTheDocument();
-    expect(screen.queryByText(/第一版暂不支持/)).toBeNull();
-    expect(screen.getByText("冲突文件已处理，可继续当前操作。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "继续 cherry-pick" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "终止 cherry-pick" })).toBeEnabled();
-    expect(screen.queryByText("当前存在冲突，先完成冲突处理再提交。")).toBeNull();
-    expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
+    expect(screen.queryByRole("tab", { name: "冲突" })).toBeNull();
+    expect(screen.queryByLabelText("冲突分段处理")).toBeNull();
+    expect(screen.queryByRole("button", { name: "整文件采用 ours" })).toBeNull();
   });
 
   it("提交历史行点击后在主区域卡片下方显示提交详情卡片", async () => {
@@ -1474,7 +1390,7 @@ describe("基础路由", () => {
     await fireEvent.click(await screen.findByRole("tab", { name: "历史" }));
     await fireEvent.click(await screen.findByRole("button", { name: /搭建 LiliaGithub MVP/ }));
 
-    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/history");
     expect(await screen.findByLabelText("提交详情卡片")).toBeInTheDocument();
     expect(await screen.findByLabelText("提交元数据")).toHaveTextContent("1234567");
     expect(screen.getByLabelText("提交元数据")).not.toHaveTextContent("1234567890abcdef");
@@ -1527,33 +1443,18 @@ describe("基础路由", () => {
     expect(await screen.findByLabelText("提交历史密集列表")).toBeInTheDocument();
   });
 
-  it("仓库详情页可配置、运行并查看快速启动终端", async () => {
-    await renderAt("/repos/LiliaGithub");
+  it("仓库详情页可配置、运行并查看命令运行终端", async () => {
+    await renderAt("/repos/LiliaGithub/run");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
-
-    expect(await screen.findByLabelText("快速启动")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "命令运行" })).toHaveClass("is-active");
+    expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
 
-    await fireEvent.click(screen.getByRole("tab", { name: "变更" }));
-    expect(screen.getByLabelText("快速启动")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
-
-    await fireEvent.click(screen.getByRole("tab", { name: "README.md" }));
-    expect(await screen.findByLabelText("README 内容")).toBeInTheDocument();
-    const readmeTab = screen.getByRole("tab", { name: "README.md" });
-    const launchPanel = screen.getByLabelText("快速启动");
-    const launchSidebarButton = within(launchPanel).getByRole("button", { name: /yarn tauri:dev/ });
-    await fireEvent.click(screen.getByRole("button", { name: /yarn tauri:dev/ }));
-    expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
-    expect(screen.queryByLabelText("README 内容")).toBeNull();
-    expect(readmeTab).not.toHaveClass("is-active");
-    expect(launchPanel).not.toHaveClass("is-active");
-    expect(launchSidebarButton).toHaveClass("is-active");
     const launchTerminal = screen.getByLabelText("启动终端");
     const launchCard = launchTerminal.closest(".project-terminal-card");
     if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
@@ -1640,7 +1541,7 @@ describe("基础路由", () => {
     const status = document.querySelector(".repo-workbench__status");
     if (!(status instanceof HTMLElement)) throw new Error("未找到仓库状态区");
     expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
-    expect(screen.getByLabelText("快速启动")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
 
     service.setFallbackBulkExecuteOverrideForTests(null);
     await fireEvent.click(within(screen.getByLabelText("最近同步失败")).getByRole("button", { name: "重试" }));
@@ -1649,7 +1550,7 @@ describe("基础路由", () => {
       expect(screen.queryByLabelText("最近同步失败")).toBeNull();
     });
     expect(document.querySelector(".repo-workbench__status")).toBeNull();
-    expect(screen.getByLabelText("快速启动")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
   });
 
   it("总览页可直接进入最近同步失败仓库继续处理", async () => {
@@ -1669,16 +1570,16 @@ describe("基础路由", () => {
     expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
   });
 
-  it("总览页可直接进入冲突仓库的冲突处理视图", async () => {
+  it("总览页冲突仓库入口进入变更页", async () => {
     const { router } = await renderAt("/");
 
-    expect(await screen.findByRole("link", { name: "处理冲突" })).toHaveAttribute("title", "1 个冲突待处理");
-    await fireEvent.click(screen.getByRole("link", { name: "处理冲突" }));
+    expect(await screen.findByRole("link", { name: "查看变更" })).toHaveAttribute("title", "1 个冲突待处理，冲突解决功能将重新设计");
+    await fireEvent.click(screen.getByRole("link", { name: "查看变更" }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
-    expect(router.currentRoute.value.fullPath).toBe("/repos/Lilia?tab=conflicts");
+    expect(router.currentRoute.value.fullPath).toBe("/repos/Lilia/changes");
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "冲突" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     });
   });
 

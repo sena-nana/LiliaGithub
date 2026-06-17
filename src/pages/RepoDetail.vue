@@ -11,6 +11,7 @@ import {
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
 import RepoPushError from "../components/repo/RepoPushError.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
+import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
 const {
@@ -69,7 +70,6 @@ const {
   mergePull,
   push,
   useDefaultTokenAuth,
-  showConflicts,
   acceptConflict,
   resolveSelectedConflict,
   markConflictResolved,
@@ -90,9 +90,23 @@ const {
   <section class="repo-workbench">
     <div class="repo-workbench__top">
       <header class="repo-header">
-        <div class="repo-header__identity">
-          <h1>{{ repoTitle }}</h1>
+        <div class="repo-header__tabs-wrap">
+          <h1 class="repo-header__sr-title">{{ repoTitle }}</h1>
+          <nav class="repo-header__tabs" role="tablist" aria-label="仓库页面">
+            <RouterLink
+              v-for="tab in tabs"
+              :key="tab.key"
+              class="repo-header__tab"
+              :class="{ 'is-active': activeTab === tab.key }"
+              role="tab"
+              :aria-selected="activeTab === tab.key"
+              :to="repoRoute(repoId, tab.key)"
+            >
+              {{ tab.label }}
+            </RouterLink>
+          </nav>
           <div class="repo-header__meta" :title="repoMetaItems.join(' · ')">
+            <span>{{ repoTitle }}</span>
             <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
             <span v-if="usingSystemGit" class="repo-header__credential">
               <KeyRound :size="12" aria-hidden="true" />
@@ -148,12 +162,12 @@ const {
           <button
             v-if="!remoteOnly && hasConflicts"
             type="button"
-            class="overview-actions__btn overview-actions__btn--primary"
-            :disabled="actionRunning"
-            @click="showConflicts"
+            class="overview-actions__btn overview-actions__btn--status"
+            disabled
+            title="冲突解决功能将重新设计"
           >
             <TriangleAlert :size="17" aria-hidden="true" />
-            处理冲突
+            有冲突
           </button>
           <button
             v-else-if="!remoteOnly"
@@ -188,7 +202,6 @@ const {
           :repo-full-name="summary?.githubFullName"
           :repo-path="summary?.path"
           :active-git-tab="activeTab"
-          :git-tabs="tabs"
           :changes="changes"
           :preview-change="previewChange"
           :commit-message="commitMessage"
@@ -229,7 +242,6 @@ const {
           :project-tab="activeProjectTab"
           :project-issue-number="activeProjectIssue"
           :project-run-id="activeProjectRun"
-          @update-active-git-tab="activeTab = $event"
           @update-commit-message="commitMessage = $event"
           @stage-unstaged-changes="stageUnstagedChanges"
           @unstage-staged-changes="unstageStagedChanges"
@@ -276,15 +288,57 @@ const {
   gap: 12px;
 }
 
-.repo-header__identity {
+.repo-header__tabs-wrap {
+  display: grid;
+  gap: 6px;
   min-width: 0;
 }
 
-.repo-header h1 {
-  margin: 0;
-  font-size: 18px;
+.repo-header__sr-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.repo-header__tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.repo-header__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
   font-weight: 600;
-  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.repo-header__tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.repo-header__tab.is-active {
+  border-bottom-color: var(--accent);
+  background: transparent;
+  color: var(--text);
 }
 
 .repo-header__meta {

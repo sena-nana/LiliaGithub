@@ -47,6 +47,7 @@ import {
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
 import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
+import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
@@ -328,8 +329,7 @@ watch(cloneRemoteUrl, (value) => {
 });
 
 function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
-  const path = `/repos/${encodeURIComponent(repo.id)}`;
-  return tab ? `${path}?tab=${tab}` : path;
+  return tab === "conflicts" ? repoRoute(repo.id, "changes") : repoRoute(repo.id);
 }
 
 function repoProjectPath(
@@ -337,11 +337,7 @@ function repoProjectPath(
   tab: ProjectTabRef,
   focusId: number,
 ) {
-  const path = `/repos/${encodeURIComponent(repo.id)}`;
-  if (tab === "issues") {
-    return `${path}?view=project&projectTab=issues&issue=${focusId}`;
-  }
-  return `${path}?view=project&projectTab=actions&run=${focusId}`;
+  return repoProjectRoute(repo.id, tab, focusId);
 }
 
 function remoteRepoProjectPath(
@@ -349,11 +345,7 @@ function remoteRepoProjectPath(
   tab: ProjectTabRef,
   focusId: number,
 ) {
-  const base = remoteRepoRoute(repo.fullName);
-  if (tab === "issues") {
-    return `${base}&projectTab=issues&issue=${focusId}`;
-  }
-  return `${base}&projectTab=actions&run=${focusId}`;
+  return repoProjectRoute(`github:${repo.fullName}`, tab, focusId);
 }
 
 function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
@@ -728,7 +720,7 @@ function buildLanguageSlice(
     percent,
     color,
     offset,
-    to: primaryRepoId ? `/repos/${encodeURIComponent(primaryRepoId)}` : "/",
+    to: primaryRepoId ? repoRoute(primaryRepoId) : "/",
     title: baseTitle,
     linkTitle: target
       ? `${baseTitle}，点击进入 ${target}${repoIds.length > 1 ? ` 等 ${repoIds.length} 个仓库` : ""}`
@@ -749,8 +741,8 @@ function repoAction(repo: RepoSummary): RepoAction | null {
   if (repo.conflictCount > 0) {
     return {
       kind: "link",
-      label: "处理冲突",
-      title: `${repo.conflictCount} 个冲突待处理`,
+      label: "查看变更",
+      title: `${repo.conflictCount} 个冲突待处理，冲突解决功能将重新设计`,
       to: repoDetailPath(repo, "conflicts"),
     };
   }
@@ -1149,7 +1141,7 @@ async function submitClone() {
       cloneDirectoryName.value.trim() || selected?.name || null,
     );
     cloneOpen.value = false;
-    await router.push(`/repos/${encodeURIComponent(summary.id)}`);
+    await router.push(repoRoute(summary.id));
   } catch (err) {
     if (isGitHubBindingExpiredError(err)) {
       showCloneRepoLoadError(err);

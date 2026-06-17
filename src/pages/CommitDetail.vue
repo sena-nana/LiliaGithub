@@ -5,6 +5,7 @@ import { ArrowLeft } from "@lucide/vue";
 import CommitDetailCard from "../components/repo/CommitDetailCard.vue";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoDisplayName } from "../utils/repoDisplay";
+import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
 const route = useRoute();
@@ -19,7 +20,7 @@ const repoTitle = computed(() => repoDisplayName(summary.value) || repoId.value)
 <template>
   <section class="commit-detail-page">
     <header class="commit-detail-header">
-      <RouterLink class="ghost commit-detail-back" :to="`/repos/${repoId}?tab=history`">
+      <RouterLink class="ghost commit-detail-back" :to="repoRoute(repoId, 'history')">
         <ArrowLeft :size="14" aria-hidden="true" />
         返回历史
       </RouterLink>
