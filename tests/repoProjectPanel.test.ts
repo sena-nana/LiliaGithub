@@ -6,7 +6,6 @@ import { closeContextMenu, installContextMenu } from "../src/composables/useCont
 import { updateGitHubRepoSettings } from "../src/services/workspace/client";
 import type {
   GitHubRepoManagement,
-  ProjectLaunchCandidate,
   ProjectLaunchConfig,
 } from "../src/services/workspace/types";
 
@@ -53,16 +52,6 @@ const launchConfig: ProjectLaunchConfig = {
   updatedAt: null,
 };
 
-const launchCandidates: ProjectLaunchCandidate[] = [
-  {
-    command: "yarn dev",
-    label: "Vite dev",
-    hint: "package.json",
-    kind: "package",
-    cwd: null,
-  },
-];
-
 async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProjectPanel>["$props"]> = {}) {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -76,9 +65,7 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
       repoId: "local-repo",
       repoFullName: null,
       repoPath: "C:\\Files\\workspace\\local-repo",
-      loading: false,
       launchConfig,
-      launchCandidates,
       launchLogs: [],
       launchTerminalVisible: false,
       actionRunning: false,
@@ -131,7 +118,8 @@ describe("RepoProjectPanel", () => {
     expect(terminalCard).toBeInstanceOf(HTMLElement);
     const terminal = view.getByLabelText("启动终端");
     expect(within(terminal).getByText("当前指令：yarn dev")).toBeInTheDocument();
-    expect(within(terminalCard as HTMLElement).getByRole("button", { name: "yarn dev" })).toBeInTheDocument();
+    expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "yarn dev" })).toBeNull();
+    expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "隐藏" })).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "运行" })).toBeNull();
   });
 

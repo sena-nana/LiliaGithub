@@ -40,6 +40,7 @@ export function useRepoDetailController() {
   const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
+  const launchError = ref<string | null>(null);
   const actionRunning = ref(false);
   const conflictAbortConfirm = ref(false);
   const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
@@ -302,22 +303,27 @@ export function useRepoDetailController() {
   async function load() {
     if (!repoId.value) return;
     actionError.value = null;
+    launchError.value = null;
     if (remoteOnly.value) {
       return;
     }
     try {
-      await Promise.all([
-        workspace.loadRepoDetail(repoId.value),
-        workspace.loadLaunch(repoId.value),
-      ]);
-      await workspace.refreshRepoLanguageStats(repoId.value).catch((err) => {
-        actionError.value = String(err);
-      });
+      await workspace.loadRepoDetail(repoId.value);
       syncFocusedChange();
       syncFocusedConflict();
     } catch (err) {
       actionError.value = String(err);
     }
+    try {
+      await workspace.loadLaunch(repoId.value);
+    } catch (err) {
+      const message = String(err);
+      if (activeTab.value === "run") launchError.value = message;
+      else actionError.value ??= message;
+    }
+    await workspace.refreshRepoLanguageStats(repoId.value).catch((err) => {
+      actionError.value = String(err);
+    });
   }
 
   async function refreshLaunch() {
@@ -422,6 +428,21 @@ export function useRepoDetailController() {
       await action();
     } catch (err) {
       actionError.value = String(err);
+    } finally {
+      actionRunning.value = false;
+    }
+  }
+
+  async function runLaunchAction(action: () => Promise<unknown>) {
+    actionRunning.value = true;
+    launchError.value = null;
+    actionError.value = null;
+    try {
+      await action();
+    } catch (err) {
+      const message = String(err);
+      if (activeTab.value === "run") launchError.value = message;
+      else actionError.value = message;
     } finally {
       actionRunning.value = false;
     }
@@ -532,7 +553,7 @@ export function useRepoDetailController() {
   }
 
   function startLaunch() {
-    void runAction(async () => {
+    void runLaunchAction(async () => {
       await workspace.loadLaunch(repoId.value);
       await workspace.startLaunch(repoId.value);
       launchTerminalVisible.value = true;
@@ -540,14 +561,14 @@ export function useRepoDetailController() {
   }
 
   function stopLaunch() {
-    void runAction(() => workspace.stopLaunch(repoId.value));
+    void runLaunchAction(() => workspace.stopLaunch(repoId.value));
   }
 
   function selectLaunchCandidate(candidate: ProjectLaunchCandidate) {
     if (launchRunning.value) return;
     const current = launchConfig.value;
     if (current?.command === candidate.command && current.cwd === candidate.cwd) return;
-    void runAction(async () => {
+    void runLaunchAction(async () => {
       await workspace.saveLaunchConfig(repoId.value, candidate.command, candidate.cwd);
       launchTerminalVisible.value = true;
     });
@@ -622,6 +643,7 @@ export function useRepoDetailController() {
       activeTab,
       commitMessage,
       actionError,
+      launchError,
       actionRunning,
       conflictAcceptConfirm,
       launchTerminalVisible,

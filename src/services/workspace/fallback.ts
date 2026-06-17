@@ -405,6 +405,7 @@ const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
 let fallbackLaunchLogIndex = 1;
 let fallbackLaunchCandidatesOverride: Record<string, ProjectLaunchCandidate[]> | null = null;
+let fallbackStopLaunchOverride: ((repoId: string) => Promise<ProjectLaunchStatus> | ProjectLaunchStatus) | null = null;
 
 export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
@@ -442,6 +443,7 @@ export function resetWorkspaceFallbacksForTests() {
   }
   fallbackLaunchLogIndex = 1;
   fallbackLaunchCandidatesOverride = null;
+  fallbackStopLaunchOverride = null;
 }
 
 export function setFallbackBulkExecuteOverrideForTests(
@@ -495,6 +497,12 @@ export function setFallbackLaunchCandidatesForTests(
         ]),
       )
     : null;
+}
+
+export function setFallbackStopLaunchOverrideForTests(
+  override: ((repoId: string) => Promise<ProjectLaunchStatus> | ProjectLaunchStatus) | null,
+) {
+  fallbackStopLaunchOverride = override;
 }
 
 export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingStatus) {
@@ -1706,6 +1714,9 @@ export function startRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
 
 export function stopRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
   return call("repo_stop_launch", { repoId }, () => {
+    if (fallbackStopLaunchOverride) {
+      return fallbackStopLaunchOverride(repoId);
+    }
     const current = fallbackLaunchStatuses[repoId] ?? fallbackIdleStatus(repoId);
     const status: ProjectLaunchStatus = {
       ...current,
