@@ -43,7 +43,7 @@
     "@testing-library/vue": "^8.1.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/compiler-sfc": "^3.5.35",
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "jsdom": "^29.1.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.16",
