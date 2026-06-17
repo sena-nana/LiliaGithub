@@ -7,6 +7,7 @@ import { updateGitHubRepoSettings } from "../src/services/workspace/client";
 import type {
   GitHubRepoManagement,
   ProjectLaunchConfig,
+  ProjectLaunchLog,
 } from "../src/services/workspace/types";
 
 const githubSettings: GitHubRepoManagement = {
@@ -121,6 +122,30 @@ describe("RepoProjectPanel", () => {
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "yarn dev" })).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "隐藏" })).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "运行" })).toBeNull();
+  });
+
+  it("启动终端按终端输出渲染 ANSI 颜色和多行日志", async () => {
+    const launchLogs: ProjectLaunchLog[] = [
+      { index: 1, repoId: "local-repo", stream: "system", line: "启动命令：yarn dev", timestamp: 1 },
+      { index: 2, repoId: "local-repo", stream: "stdout", line: "line 1\nline 2", timestamp: 2 },
+      { index: 3, repoId: "local-repo", stream: "stdout", line: "\u001b[32mready\u001b[0m <tag>", timestamp: 3 },
+      { index: 4, repoId: "local-repo", stream: "stderr", line: "plain error", timestamp: 4 },
+    ];
+
+    const view = await renderProjectPanel({
+      activeGitTab: "run",
+      launchRunning: true,
+      launchLogs,
+    });
+
+    const terminal = view.getByLabelText("启动终端");
+    expect(terminal).toHaveTextContent("启动命令：yarn dev");
+    expect(terminal.textContent).toContain("line 1\nline 2\nready <tag>\nplain error");
+    expect(terminal).not.toHaveTextContent("[stdout]");
+    expect(terminal).not.toHaveTextContent("[stderr]");
+    expect(terminal.querySelector('span[style*="rgb(0,187,0)"]')).toBeInstanceOf(HTMLElement);
+    expect(terminal.innerHTML).toContain("&lt;tag&gt;");
+    expect(terminal.querySelector(".launch-log--stderr")).toHaveTextContent("plain error");
   });
 
   it("远程仓库只显示项目 tabs，不进入启动工作流", async () => {
