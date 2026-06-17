@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { AnsiUp } from "ansi_up";
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
@@ -42,7 +43,7 @@ import type {
   RepoConflictState,
   RepoReadme,
 } from "../../services/workspace/types";
-import { isWorkflowRunFailure, streamLabel, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
+import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import type { RepoRouteTab } from "../../utils/repoRoutes";
@@ -249,6 +250,7 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "actions" ||
   activeSection.value === "settings",
 );
+const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
   if (section === "readme") {
@@ -326,6 +328,13 @@ function clearProjectTargets() {
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
   cancelEditIssue();
+}
+
+function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
+  const ansiUp = new AnsiUp();
+  return logs
+    .map((entry) => `<span class="launch-log launch-log--${entry.stream}">${ansiUp.ansi_to_html(entry.line)}</span>`)
+    .join("\n");
 }
 
 async function focusIssue(issueNumber: number | null | undefined) {
@@ -754,18 +763,13 @@ function selectReadme(path: string) {
       <main ref="projectMainRef" class="project-main">
         <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
           <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
-            <p v-if="launchError" class="error-line project-terminal__error">{{ launchError }}</p>
+            <div v-if="launchError" class="project-terminal__line project-terminal__line--error">{{ launchError }}</div>
             <div v-if="!launchRunning" class="project-terminal__empty">
-              <p class="muted repo-empty project-empty">请选择一个启动指令并运行。</p>
-              <p class="muted repo-empty project-empty">当前指令：{{ launchConfig?.command || "未配置" }}</p>
+              <div class="project-terminal__line project-terminal__line--muted">请选择一个启动指令并运行。</div>
+              <div class="project-terminal__line project-terminal__line--muted">当前指令：{{ launchConfig?.command || "未配置" }}</div>
             </div>
-            <p v-else-if="!launchLogs.length" class="muted repo-empty project-empty">暂无输出。</p>
-            <pre v-else><code><span
-              v-for="entry in launchLogs"
-              :key="entry.index"
-              :class="`launch-log launch-log--${entry.stream}`"
-            >[{{ streamLabel(entry.stream) }}] {{ entry.line }}
-</span></code></pre>
+            <div v-else-if="!launchLogs.length" class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
+            <pre v-else class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
           </div>
         </section>
 
@@ -1229,52 +1233,71 @@ function selectReadme(path: string) {
 
 .project-terminal-card {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  align-self: start;
-  gap: 10px;
+  grid-template-rows: minmax(0, 1fr);
+  align-self: stretch;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   max-height: 100%;
   overflow: hidden;
-  padding: 12px 14px;
+  padding: 0;
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background: #0a0d12;
 }
 
 .project-terminal__body {
   display: grid;
   align-content: start;
-  gap: 10px;
   min-height: 0;
+  height: 100%;
   overflow: auto;
-}
-
-.project-terminal__error {
-  margin: 0;
-}
-
-.project-terminal__body pre {
-  max-height: none;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.launch-log {
-  display: block;
+  padding: 14px 16px;
+  background: #0a0d12;
+  color: #d6deeb;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+.project-terminal__line {
+  margin: 0;
+}
+
+.project-terminal__line--error {
+  color: #ff8a8a;
+}
+
+.project-terminal__line--muted {
+  color: #8b949e;
+}
+
+.project-terminal__output {
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.project-terminal__output code {
+  font: inherit;
+}
+
+.launch-log {
+  display: inline;
+}
+
 .launch-log--stderr {
-  color: var(--err);
+  color: #ff8a8a;
 }
 
 .launch-log--system {
-  color: var(--text-muted);
+  color: #8b949e;
 }
 
 .project-terminal__empty {

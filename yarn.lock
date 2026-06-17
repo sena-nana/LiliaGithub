@@ -2085,6 +2085,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"ansi_up@npm:^6.0.6":
+  version: 6.0.6
+  resolution: "ansi_up@npm:6.0.6"
+  checksum: 10c0/a94109bf8bb0da87260178c7d251fbbd3c4b7f079399bfc2de02a9ddcc82424a5392a813cc00270a25a3ae858cb2d30adc10e4999dd6da071ef4d59062cb440d
+  languageName: node
+  linkType: hard
+
 "aria-query@npm:5.1.3":
   version: 5.1.3
   resolution: "aria-query@npm:5.1.3"
@@ -3428,6 +3435,7 @@ __metadata:
     "@testing-library/vue": "npm:^8.1.0"
     "@vitejs/plugin-vue": "npm:^6.0.7"
     "@vue/compiler-sfc": "npm:^3.5.35"
+    ansi_up: "npm:^6.0.6"
     esbuild: "npm:^0.28.0"
     jsdom: "npm:^29.1.1"
     typescript: "npm:^6.0.3"
