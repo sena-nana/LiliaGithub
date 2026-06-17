@@ -55,6 +55,7 @@ export async function refreshLaunchLogs(repoId: string) {
 
 export async function startLaunch(repoId: string) {
   const service = await loadWorkspaceService();
+  state.launchLogs[repoId] = [];
   const status = await service.startRepoLaunch(repoId);
   state.launchStatuses[repoId] = status;
   await refreshLaunchLogs(repoId);

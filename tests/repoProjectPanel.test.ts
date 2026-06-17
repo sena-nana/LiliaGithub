@@ -112,13 +112,15 @@ describe("RepoProjectPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("本地仓库在命令运行页显示启动终端", async () => {
+  it("本地仓库在命令运行页无日志时只显示空输出状态", async () => {
     const view = await renderProjectPanel({ activeGitTab: "run" });
 
     const terminalCard = view.container.querySelector(".project-terminal-card");
     expect(terminalCard).toBeInstanceOf(HTMLElement);
     const terminal = view.getByLabelText("启动终端");
-    expect(within(terminal).getByText("当前指令：yarn dev")).toBeInTheDocument();
+    expect(within(terminal).getByText("暂无输出。")).toBeInTheDocument();
+    expect(within(terminal).queryByText("请选择一个启动指令并运行。")).toBeNull();
+    expect(within(terminal).queryByText("当前指令：yarn dev")).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "yarn dev" })).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "隐藏" })).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "运行" })).toBeNull();
@@ -134,7 +136,7 @@ describe("RepoProjectPanel", () => {
 
     const view = await renderProjectPanel({
       activeGitTab: "run",
-      launchRunning: true,
+      launchRunning: false,
       launchLogs,
     });
 

@@ -764,12 +764,8 @@ function selectReadme(path: string) {
         <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
           <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
             <div v-if="launchError" class="project-terminal__line project-terminal__line--error">{{ launchError }}</div>
-            <div v-if="!launchRunning" class="project-terminal__empty">
-              <div class="project-terminal__line project-terminal__line--muted">请选择一个启动指令并运行。</div>
-              <div class="project-terminal__line project-terminal__line--muted">当前指令：{{ launchConfig?.command || "未配置" }}</div>
-            </div>
-            <div v-else-if="!launchLogs.length" class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
-            <pre v-else class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
+            <pre v-if="launchLogs.length" class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
+            <div v-else class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
           </div>
         </section>
 
