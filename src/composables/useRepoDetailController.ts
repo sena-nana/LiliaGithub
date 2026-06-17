@@ -16,7 +16,7 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
-type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history" | "branches">;
+type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history">;
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -197,7 +197,6 @@ export function useRepoDetailController() {
     { key: "repo", title: "文件查看" },
     { key: "changes", title: "变更" },
     { key: "history", title: "历史" },
-    { key: "branches", title: "分支" },
   ];
   const launchCommandOptions = computed(() => {
     const candidates = [...launchCandidates.value];

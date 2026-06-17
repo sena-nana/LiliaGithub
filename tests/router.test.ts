@@ -912,8 +912,11 @@ describe("基础路由", () => {
     expect(screen.queryByText("1234567")).toBeNull();
     expect(screen.getAllByText("HEAD -> main").length).toBeGreaterThanOrEqual(1);
 
-    await fireEvent.click(screen.getByRole("tab", { name: "分支" }));
-    expect(screen.getByText("origin/main")).toBeInTheDocument();
+    const viewTabs = screen.getByRole("tablist", { name: "仓库页面" });
+    expect(within(viewTabs).queryByRole("tab", { name: "分支" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "当前分支" })).toBeNull();
+    await fireEvent.click(within(viewTabs).getByRole("button", { name: "main" }));
+    expect(await within(viewTabs).findByRole("listbox", { name: "分支候选" })).toBeInTheDocument();
   });
 
   it("变更页文件列表支持多选后批量处理变更", async () => {
@@ -1444,12 +1447,26 @@ describe("基础路由", () => {
   });
 
   it("仓库详情页可配置、运行并查看命令运行终端", async () => {
-    await renderAt("/repos/LiliaGithub/run");
+    const { router } = await renderAt("/repos/LiliaGithub");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "命令运行" })).toBeNull();
+    const viewTabs = screen.getByRole("tablist", { name: "仓库页面" });
+    expect(within(viewTabs).queryByRole("tab", { name: "分支" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "当前分支" })).toBeNull();
+    expect(within(viewTabs).getByRole("button", { name: "main" })).toBeInTheDocument();
+
+    const launchGroup = screen.getByRole("group", { name: "命令执行" });
+    expect(await within(launchGroup).findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
+    });
+    await fireEvent.click(within(launchGroup).getByRole("link", { name: "日志" }));
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/run");
+    });
     expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
@@ -1457,30 +1474,30 @@ describe("基础路由", () => {
     const launchTerminal = screen.getByLabelText("启动终端");
     const launchCard = launchTerminal.closest(".project-terminal-card");
     if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
-    expect(within(launchCard).getByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
-    await fireEvent.click(within(launchCard).getByRole("button", { name: /yarn tauri:dev/ }));
-    expect(await within(launchCard).findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
+    await fireEvent.click(within(launchGroup).getByRole("button", { name: /yarn tauri:dev/ }));
+    expect(await within(launchGroup).findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("option", { name: /^dev/ }));
     await waitFor(() => {
-      expect(within(launchCard).getByRole("button", { name: /yarn dev/ })).toBeInTheDocument();
+      expect(within(launchGroup).getByRole("button", { name: /yarn dev/ })).toBeInTheDocument();
     });
     const idleTerminal = screen.getByLabelText("启动终端");
     expect(idleTerminal).toHaveTextContent("请选择一个启动指令并运行。");
     expect(idleTerminal).toHaveTextContent("当前指令：yarn dev");
     expect(idleTerminal).not.toHaveTextContent("启动命令：");
 
-    await fireEvent.click(within(launchCard).getByRole("button", { name: "运行" }));
+    await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
 
     await waitFor(() => {
       const terminal = screen.getByLabelText("启动终端");
       expect(terminal).toHaveTextContent("启动命令：yarn dev");
       expect(terminal).toHaveTextContent("开发服务已启动");
     });
-    expect(within(launchCard).getByRole("button", { name: "停止" })).toBeEnabled();
+    expect(within(launchGroup).getByRole("button", { name: "停止" })).toBeEnabled();
+    expect(within(launchCard).queryByRole("button", { name: "停止" })).toBeNull();
 
-    await fireEvent.click(within(launchCard).getByRole("button", { name: "停止" }));
+    await fireEvent.click(within(launchGroup).getByRole("button", { name: "停止" }));
     await waitFor(() => {
-      expect(within(launchCard).getByRole("button", { name: "运行" })).toBeEnabled();
+      expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
     expect(screen.getByLabelText("启动终端")).toHaveTextContent("请选择一个启动指令并运行。");
   });

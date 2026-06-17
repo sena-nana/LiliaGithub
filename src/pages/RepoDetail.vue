@@ -7,8 +7,11 @@ import {
   History,
   KeyRound,
   Monitor,
+  Play,
   RefreshCw,
   RotateCcw,
+  ScrollText,
+  Square,
   SquareTerminal,
   TriangleAlert,
   Upload,
@@ -44,7 +47,6 @@ const {
   canContinueConflictOperation,
   canCommit,
   launchConfig,
-  launchStatus,
   launchCandidates,
   launchLogs,
   launchLoading,
@@ -93,10 +95,6 @@ const {
   stopLaunch,
   selectLaunchCandidate,
   selectLaunchCandidateByValue,
-  checkout,
-  mergeBranch,
-  deleteBranch,
-  updateCurrentBranch,
   checkoutBranchByValue,
   openCommit,
   closeCommit,
@@ -129,31 +127,28 @@ const {
               >
                 <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
                 <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
-                <GitBranch v-else-if="tab.key === 'branches'" :size="17" aria-hidden="true" />
                 <History v-else :size="17" aria-hidden="true" />
                 <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge repo-toolbar__badge--warn">
                   {{ changes.length }}
                 </span>
               </RouterLink>
-            </nav>
-
-            <div v-if="!remoteOnly" class="repo-toolbar__context-card" aria-label="分支">
               <Dropdown
+                v-if="!remoteOnly"
                 :model-value="activeBranchValue"
                 :options="branchOptions"
                 :icon="GitBranch"
                 :display-label="activeBranchName"
                 placeholder="detached"
                 placement="bottom"
-                button-class="repo-toolbar__chip repo-toolbar__chip--branch"
+                button-class="repo-toolbar__btn repo-toolbar__branch-select"
                 menu-width="220px"
                 menu-label="分支候选"
                 :disabled="actionRunning || !branchOptions.length"
                 @update:model-value="checkoutBranchByValue"
               />
-            </div>
+            </nav>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__context-card" aria-label="命令执行">
+            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__launch" role="group" aria-label="命令执行">
               <Dropdown
                 :model-value="activeLaunchValue"
                 :options="launchCommandOptions"
@@ -161,15 +156,35 @@ const {
                 :display-label="launchCommandText"
                 placeholder="选择启动指令"
                 placement="bottom"
-                button-class="repo-toolbar__chip repo-toolbar__chip--command"
+                button-class="repo-toolbar__btn repo-toolbar__command-select"
                 menu-width="280px"
                 menu-label="启动指令候选"
                 :disabled="actionRunning || launchRunning || !launchCommandOptions.length"
                 @update:model-value="selectLaunchCandidateByValue"
               />
+              <button
+                type="button"
+                class="repo-toolbar__btn"
+                :aria-label="launchRunning ? '停止' : '运行'"
+                :title="launchRunning ? '停止' : '运行'"
+                :disabled="actionRunning || (!launchRunning && !launchConfig?.command?.trim())"
+                @click="launchRunning ? stopLaunch() : startLaunch()"
+              >
+                <Square v-if="launchRunning" :size="17" aria-hidden="true" />
+                <Play v-else :size="17" aria-hidden="true" />
+              </button>
+              <RouterLink
+                class="repo-toolbar__btn"
+                :class="{ 'is-active': activeTab === 'run' }"
+                :to="repoRoute(repoId, 'run')"
+                title="日志"
+                aria-label="日志"
+              >
+                <ScrollText :size="17" aria-hidden="true" />
+              </RouterLink>
             </div>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__actions" aria-label="仓库操作">
+            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
               <button
                 v-if="usingSystemGit"
                 type="button"
@@ -279,7 +294,6 @@ const {
           :can-commit="canCommit"
           :status-commits="statusCommits"
           :selected-commit-hash="selectedCommitHash"
-          :branches="detail?.branches ?? []"
           :conflict-operation-text="conflictOperationText"
           :conflict-summary-text="conflictSummaryText"
           :conflict-continue-text="conflictContinueText"
@@ -297,15 +311,11 @@ const {
           :commit-meta-title="commitMetaTitle"
           :loading="launchLoading"
           :launch-config="launchConfig"
-          :launch-status="launchStatus"
           :launch-candidates="launchCandidates"
           :launch-logs="launchLogs"
           :launch-terminal-visible="launchTerminalVisible"
           :action-running="actionRunning"
           :launch-running="launchRunning"
-          @start="startLaunch"
-          @stop="stopLaunch"
-          @open-terminal="launchTerminalVisible = true"
           @hide-terminal="launchTerminalVisible = false"
           @select-launch-candidate="selectLaunchCandidate"
           :remote-only="remoteOnly"
@@ -318,10 +328,6 @@ const {
           @change-action="runChangeAction"
           @focus-change="focusChange"
           @commit="commitSelected"
-          @checkout="checkout"
-          @merge-branch="mergeBranch"
-          @delete-branch="deleteBranch"
-          @update-current-branch="updateCurrentBranch"
           @open-commit="openCommit"
           @close-commit="closeCommit"
           @continue-conflict="continueConflict"
@@ -404,13 +410,9 @@ const {
   flex: 0 0 auto;
 }
 
-.repo-toolbar__context-card {
-  display: inline-flex;
-  align-items: center;
+.repo-toolbar__launch {
   flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(100%, 320px);
-  height: 28px;
+  max-width: min(100%, 380px);
 }
 
 .repo-toolbar__actions {
@@ -439,6 +441,30 @@ const {
   width: auto;
   min-width: 32px;
   padding: 0 7px;
+}
+
+.repo-toolbar__branch-select {
+  gap: 6px;
+  width: auto;
+  min-width: 32px;
+  max-width: 160px;
+  padding: 0 7px;
+}
+
+.repo-toolbar__command-select {
+  justify-content: flex-start;
+  gap: 6px;
+  width: auto;
+  min-width: 32px;
+  max-width: 280px;
+  padding: 0 7px;
+}
+
+.repo-toolbar .chat-chip.repo-toolbar__btn {
+  height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
 }
 
 .repo-toolbar__btn:hover {
@@ -470,41 +496,18 @@ const {
   color: var(--warn);
 }
 
-.repo-toolbar__chip {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  flex: 0 1 auto;
-  min-width: 0;
-  width: max-content;
-  max-width: 100%;
-  height: 28px;
-  padding: 0 7px;
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.repo-toolbar__chip:hover:not(.is-disabled) {
+.repo-toolbar .chat-chip.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
+.repo-toolbar .chat-chip.repo-toolbar__btn.is-open {
   background: var(--bg-hover);
+  color: var(--text);
 }
 
-.repo-toolbar__chip.is-disabled {
+.repo-toolbar .chat-chip.repo-toolbar__btn.is-disabled {
   color: var(--text-faint);
   cursor: default;
 }
 
-.repo-toolbar__chip--command {
-  max-width: 280px;
-}
-
-.repo-toolbar__chip--branch {
-  max-width: 220px;
-}
-
-.repo-toolbar__chip .chat-chip__label {
+.repo-toolbar .chat-chip.repo-toolbar__btn .chat-chip__label {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -512,6 +515,18 @@ const {
   white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
+}
+
+.repo-toolbar__branch-select .chat-chip__label {
+  max-width: 96px;
+}
+
+.repo-toolbar__command-select .chat-chip__label {
+  max-width: 180px;
+}
+
+.repo-toolbar__launch .repo-toolbar__command-select {
+  flex: 1 1 auto;
 }
 
 .repo-toolbar__badge {
@@ -1114,52 +1129,6 @@ const {
   overflow-wrap: anywhere;
 }
 
-.launch-panel {
-  display: flex;
-  align-items: stretch;
-  gap: 8px;
-  min-width: 0;
-  padding: 10px;
-  margin-bottom: 0;
-}
-
-.launch-command-button {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 34px;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  text-align: left;
-  color: var(--text);
-}
-
-.launch-command-button:hover {
-  background: var(--bg-hover);
-}
-
-.launch-command-button strong {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.launch-run-button {
-  flex: 0 0 auto;
-  width: 36px;
-  min-width: 36px;
-  padding: 0;
-  justify-content: center;
-}
-
 .error-line {
   margin: 0;
   color: var(--err);
@@ -1204,8 +1173,7 @@ const {
     min-height: 40px;
   }
 
-  .repo-toolbar__context-card {
-    height: 28px;
+  .repo-toolbar__launch {
     max-width: 100%;
   }
 
@@ -1213,8 +1181,7 @@ const {
     margin-left: 0;
   }
 
-  .repo-toolbar__chip--command,
-  .repo-toolbar__chip--branch {
+  .repo-toolbar__command-select {
     max-width: 100%;
   }
 
