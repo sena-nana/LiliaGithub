@@ -8,6 +8,7 @@ import {
   continueConflictOperation,
   hideRepo,
   markConflictFileResolved,
+  mergeBranch,
   mergePull,
   pull,
   push,
@@ -17,6 +18,7 @@ import {
   stage,
   unhideRepo,
   unstage,
+  deleteBranch,
 } from "../src/composables/workspace/repositories";
 import { initialize } from "../src/composables/workspace/lifecycle";
 import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/composables/workspace/bulk";
@@ -56,10 +58,12 @@ const service = {
   commitRepo: vi.fn(),
   pullRepo: vi.fn(),
   mergePullRepo: vi.fn(),
+  mergeBranch: vi.fn(),
   pushRepo: vi.fn(),
   pushRepoWithSystemGit: vi.fn(),
   useDefaultTokenAuthForRepo: vi.fn(),
   checkoutBranch: vi.fn(),
+  deleteBranch: vi.fn(),
   acceptConflictFile: vi.fn(),
   resolveConflictFile: vi.fn(),
   markFileResolved: vi.fn(),
@@ -847,6 +851,30 @@ describe("workspace incremental refresh", () => {
     await push(initial.id);
 
     expect(repoActionErrorForRepo(initial.id)).toBeNull();
+  });
+
+  it("单仓库本地分支合并和删除后刷新当前仓库状态", async () => {
+    const initial = repoSummary("LiliaGithub", { currentBranch: "main" });
+    const merged = repoSummary("LiliaGithub", { currentBranch: "main" });
+    const deleted = repoSummary("LiliaGithub", { currentBranch: "main" });
+    state.repos = [initial];
+    service.getRepoDetail.mockResolvedValue(repoDetail(deleted));
+    service.mergeBranch.mockResolvedValue({
+      status: "success",
+      message: "合并完成",
+      summary: merged,
+      conflicts: conflictState(),
+    });
+    service.deleteBranch.mockResolvedValue(deleted);
+
+    await mergeBranch(initial.id, "feature/local");
+    await deleteBranch(initial.id, "feature/local");
+
+    expect(service.mergeBranch).toHaveBeenCalledWith(initial.id, "feature/local");
+    expect(service.deleteBranch).toHaveBeenCalledWith(initial.id, "feature/local");
+    expect(service.getRepoDetail).toHaveBeenCalledTimes(2);
+    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(1);
+    expect(service.refreshRepoLanguageStats).toHaveBeenCalledWith(initial.id);
   });
 
   it("单仓库提交、拉取、推送和切换分支后刷新当前仓库语言统计", async () => {

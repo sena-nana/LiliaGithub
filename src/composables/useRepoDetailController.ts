@@ -16,7 +16,7 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
-type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history">;
+type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history" | "branches">;
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -197,6 +197,7 @@ export function useRepoDetailController() {
     { key: "repo", title: "文件查看" },
     { key: "changes", title: "变更" },
     { key: "history", title: "历史" },
+    { key: "branches", title: "分支" },
   ];
   const launchCommandOptions = computed(() => {
     const candidates = [...launchCandidates.value];
@@ -563,6 +564,20 @@ export function useRepoDetailController() {
     void runAction(() => workspace.checkout(repoId.value, branch));
   }
 
+  function mergeBranch(branch: string) {
+    if (!branch || branch === summary.value?.currentBranch) return;
+    void runAction(() => workspace.mergeBranch(repoId.value, branch));
+  }
+
+  function deleteBranch(branch: string) {
+    if (!branch || branch === summary.value?.currentBranch) return;
+    void runAction(() => workspace.deleteBranch(repoId.value, branch));
+  }
+
+  function updateCurrentBranch() {
+    mergePull();
+  }
+
   function checkoutBranchByValue(value: string) {
     if (!value || value === summary.value?.currentBranch) return;
     if (!branchOptions.value.some((branch) => branch.value === value)) return;
@@ -683,6 +698,9 @@ export function useRepoDetailController() {
       selectLaunchCandidate,
       selectLaunchCandidateByValue,
       checkout,
+      mergeBranch,
+      deleteBranch,
+      updateCurrentBranch,
       checkoutBranchByValue,
       openCommit,
       closeCommit,

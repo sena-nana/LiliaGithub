@@ -805,6 +805,79 @@ fn repo_branches_hides_remote_namespace_refs() {
 }
 
 #[test]
+fn delete_branch_blocks_current_branch_and_safely_deletes_merged_branch() {
+    let path = temp_dir("delete-local-branch");
+    init_git_repo(&path);
+
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["branch", "-M", "main"]);
+    run_git(&path, &["checkout", "-b", "feature"]);
+    fs::write(path.join("feature.txt"), "feature").unwrap();
+    run_git(&path, &["add", "feature.txt"]);
+    run_git(&path, &["commit", "-m", "feature"]);
+    run_git(&path, &["checkout", "main"]);
+    run_git(&path, &["merge", "--no-ff", "feature", "-m", "merge feature"]);
+
+    assert_eq!(
+        delete_branch_at(&path, &path, "main").unwrap_err(),
+        "不能删除当前分支"
+    );
+
+    delete_branch_at(&path, &path, "feature").unwrap();
+    let branches = repo_branches(&path);
+    assert!(!branches
+        .iter()
+        .any(|branch| !branch.remote && branch.name == "feature"));
+}
+
+#[test]
+fn merge_branch_merges_target_into_current_branch() {
+    let path = temp_dir("merge-local-branch");
+    init_git_repo(&path);
+
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["branch", "-M", "main"]);
+    run_git(&path, &["checkout", "-b", "feature"]);
+    fs::write(path.join("feature.txt"), "feature").unwrap();
+    run_git(&path, &["add", "feature.txt"]);
+    run_git(&path, &["commit", "-m", "feature"]);
+    run_git(&path, &["checkout", "main"]);
+
+    let result = merge_branch_at(&path, &path, "feature").unwrap();
+
+    assert_eq!(result.status, "success");
+    assert_eq!(result.summary.current_branch.as_deref(), Some("main"));
+    assert!(path.join("feature.txt").exists());
+}
+
+#[test]
+fn merge_branch_returns_conflict_result() {
+    let path = temp_dir("merge-local-branch-conflict");
+    init_git_repo(&path);
+
+    fs::write(path.join("file.txt"), "root\n").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["branch", "-M", "main"]);
+    run_git(&path, &["checkout", "-b", "feature"]);
+    fs::write(path.join("file.txt"), "feature\n").unwrap();
+    run_git(&path, &["commit", "-am", "feature"]);
+    run_git(&path, &["checkout", "main"]);
+    fs::write(path.join("file.txt"), "main\n").unwrap();
+    run_git(&path, &["commit", "-am", "main"]);
+
+    let result = merge_branch_at(&path, &path, "feature").unwrap();
+
+    assert_eq!(result.status, "conflicts");
+    assert_eq!(result.conflicts.operation, "merge");
+    assert!(!result.conflicts.files.is_empty());
+}
+
+#[test]
 fn parses_commit_patch_hunks_and_line_numbers() {
     let patch = "\
 diff --git a/src/app.ts b/src/app.ts

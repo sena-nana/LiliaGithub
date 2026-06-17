@@ -464,6 +464,20 @@ export async function mergePull(repoId: string) {
   }
 }
 
+export async function mergeBranch(repoId: string, branch: string) {
+  const service = await loadWorkspaceService();
+  clearRepoActionError(repoId);
+  try {
+    await applyRepoMutation(repoId, async () => {
+      const result = await service.mergeBranch(repoId, branch);
+      return result.summary;
+    });
+  } catch (err) {
+    setRepoActionError(repoId, String(err));
+    throw err;
+  }
+}
+
 async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSummary>) {
   const updateRecentSync = beginRecentSyncRetry(repoId);
   try {
@@ -511,6 +525,11 @@ export async function useDefaultTokenAuthForRepo(repoId: string) {
 export async function checkout(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutationWithLanguageStats(repoId, () => service.checkoutBranch(repoId, branch));
+}
+
+export async function deleteBranch(repoId: string, branch: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutationWithLanguageStats(repoId, () => service.deleteBranch(repoId, branch));
 }
 
 export async function acceptConflictFile(

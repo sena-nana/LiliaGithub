@@ -4,9 +4,9 @@ import { useRoute, useRouter } from "vue-router";
 import {
   CircleDot,
   CircleOff,
-  ChevronDown,
   ExternalLink,
   LoaderCircle,
+  SquareTerminal,
   Save,
   Square,
   Play,
@@ -14,6 +14,7 @@ import {
   X,
 } from "@lucide/vue";
 import CommitDetailCard from "./CommitDetailCard.vue";
+import Dropdown from "../Dropdown.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoBranchesPanel from "./RepoBranchesPanel.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
@@ -127,6 +128,9 @@ const emit = defineEmits<{
   focusChange: [path: string];
   commit: [pushAfter: boolean];
   checkout: [branchName: string];
+  mergeBranch: [branchName: string];
+  deleteBranch: [branchName: string];
+  updateCurrentBranch: [];
   openCommit: [commit: HistoryCommit];
   closeCommit: [];
   continueConflict: [];
@@ -145,7 +149,6 @@ const router = useRouter();
 const activeSection = ref<ProjectContentMode>(routeTabToSection(props.activeGitTab));
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const terminalBody = ref<HTMLElement | null>(null);
-const launchMenuOpen = ref(false);
 const projectMainRef = ref<HTMLElement | null>(null);
 const readmes = ref<RepoReadme[]>([]);
 const activeReadmePath = ref<string | null>(null);
@@ -323,7 +326,6 @@ onMounted(() => {
 watch(() => props.repoId, () => {
   activeSection.value = routeTabToSection(props.activeGitTab);
   activeReadmePath.value = null;
-  closeLaunchMenu();
   closeDeleteDialog();
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
@@ -456,35 +458,6 @@ async function applyProjectRouteState() {
   if (targetTab === "actions") {
     await focusRun(props.projectRunId);
   }
-}
-
-watch(launchMenuOpen, async (open, _previous, onCleanup) => {
-  if (!open) return;
-  await nextTick();
-  document.addEventListener("pointerdown", onDocumentPointerDown, true);
-  document.addEventListener("keydown", onMenuKeydown);
-  onCleanup(() => {
-    document.removeEventListener("pointerdown", onDocumentPointerDown, true);
-    document.removeEventListener("keydown", onMenuKeydown);
-  });
-});
-
-function closeLaunchMenu() {
-  launchMenuOpen.value = false;
-}
-
-function onDocumentPointerDown(event: PointerEvent) {
-  const target = event.target as Node | null;
-  if (!target) return;
-  const root = terminalBody.value?.closest(".project-terminal-card");
-  if (!(root instanceof HTMLElement)) return;
-  if (!root.contains(target)) closeLaunchMenu();
-}
-
-function onMenuKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return;
-  closeLaunchMenu();
-  event.stopPropagation();
 }
 
 function applySettingsForm(next: GitHubRepoManagement) {
@@ -877,7 +850,6 @@ async function scrollTerminalToEnd() {
 function activateProjectTab(tab: ProjectTab) {
   activeSection.value = tab;
   if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
-    closeLaunchMenu();
     emit("hideTerminal");
   }
 }
@@ -893,25 +865,21 @@ function selectReadme(path: string) {
 
 function runLaunch() {
   if (!canUseLaunchWorkflow.value) return;
-  closeLaunchMenu();
   emit("start");
 }
 
 function stopLaunch() {
   if (!canUseLaunchWorkflow.value) return;
-  closeLaunchMenu();
   emit("stop");
 }
 
-function pickLaunchCandidate(candidate: ProjectLaunchCandidate) {
+function pickLaunchCandidateByValue(value: string) {
   if (!canUseLaunchWorkflow.value) return;
-  closeLaunchMenu();
-  emit("selectLaunchCandidate", candidate);
+  const item = launchMenuItems.value.find((option) => option.value === value);
+  if (!item) return;
+  emit("selectLaunchCandidate", item.candidate);
 }
 
-function launchButtonTitle(candidate: ProjectLaunchCandidate) {
-  return [candidate.kind, candidate.hint, candidate.cwd].filter(Boolean).join(" · ");
-}
 </script>
 
 <template>
@@ -927,33 +895,19 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
           <div class="project-section__head">
             <div class="launch-head">
-              <button
-                type="button"
-                class="launch-command-button"
-                :class="{ 'is-open': launchMenuOpen }"
+              <Dropdown
+                :model-value="activeLaunchValue"
+                :options="launchMenuItems"
+                :icon="SquareTerminal"
+                :display-label="launchCommandText"
+                placeholder="选择启动指令"
+                placement="bottom"
+                button-class="launch-command-button"
+                menu-width="100%"
+                menu-label="启动指令候选"
                 :disabled="launchButtonDisabled"
-                :aria-expanded="launchMenuOpen"
-                aria-haspopup="true"
-                @click="launchMenuOpen = !launchMenuOpen"
-              >
-                <strong>{{ launchCommandText }}</strong>
-                <ChevronDown :size="12" aria-hidden="true" />
-              </button>
-              <div v-if="launchMenuOpen" class="launch-menu" role="listbox" aria-label="启动指令候选">
-                <button
-                  v-for="item in launchMenuItems"
-                  :key="item.value"
-                  type="button"
-                  class="launch-menu__item"
-                  :class="{ 'is-active': item.value === activeLaunchValue }"
-                  role="option"
-                  :aria-selected="item.value === activeLaunchValue"
-                  @click="pickLaunchCandidate(item.candidate)"
-                >
-                  <span class="launch-menu__label">{{ item.label }}</span>
-                  <span class="launch-menu__hint">{{ launchButtonTitle(item.candidate) }}</span>
-                </button>
-              </div>
+                @update:model-value="pickLaunchCandidateByValue"
+              />
             </div>
             <div class="launch-actions">
               <button
@@ -1018,6 +972,9 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           :action-running="actionRunning || remoteBranchActionRunning"
           :default-branch="settings?.defaultBranch"
           @checkout="emit('checkout', $event)"
+          @merge-branch="emit('mergeBranch', $event)"
+          @delete-local-branch="emit('deleteBranch', $event)"
+          @update-current-branch="emit('updateCurrentBranch')"
           @set-default="setDefaultRemoteBranch"
           @delete-remote-branch="deleteRemoteBranch"
         />
@@ -1481,16 +1438,21 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   max-width: min(520px, 100%);
 }
 
-.launch-command-button {
+.launch-head :deep(.dd) {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+:deep(.launch-command-button) {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
-  min-height: 32px;
-  padding: 6px 8px;
+  min-height: 28px;
+  padding: 4px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
@@ -1498,73 +1460,18 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   color: var(--text);
 }
 
-.launch-command-button strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.launch-command-button.is-open,
-.launch-command-button:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.launch-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 20;
-  width: 100%;
-  min-width: 0;
-  max-width: none;
-  max-height: 280px;
-  overflow: auto;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.4);
-}
-
-.launch-menu__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: auto;
-  min-height: 30px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  text-align: left;
-}
-
-.launch-menu__item.is-active,
-.launch-menu__item:hover {
-  background: var(--bg-hover);
-}
-
-.launch-menu__label {
-  flex: 0 1 auto;
+:deep(.launch-command-button .chat-chip__label) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text);
 }
 
-.launch-menu__hint {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+:deep(.launch-command-button.is-open),
+:deep(.launch-command-button:hover:not(:disabled)) {
+  background: var(--bg-hover);
 }
 
 .launch-actions {

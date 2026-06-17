@@ -1266,6 +1266,34 @@ pub async fn repo_checkout_branch(
 }
 
 #[tauri::command]
+pub async fn repo_merge_branch(
+    app: AppHandle,
+    repo_id: String,
+    branch: String,
+) -> Result<RepoMergePullResult, String> {
+    run_blocking("合并分支", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        merge_branch_at(&root, &path, &branch)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_delete_branch(
+    app: AppHandle,
+    repo_id: String,
+    branch: String,
+) -> Result<RepoSummary, String> {
+    run_blocking("删除分支", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        delete_branch_at(&root, &path, &branch)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn repo_accept_conflict_file(
     app: AppHandle,
     repo_id: String,
@@ -2194,6 +2222,64 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
             })
         })
         .collect()
+}
+
+pub(super) fn merge_branch_at(
+    root: &Path,
+    path: &Path,
+    branch: &str,
+) -> Result<RepoMergePullResult, String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    let summary = summarize_repo(root, path);
+    if summary.current_branch.as_deref() == Some(branch) {
+        return Err("不能合并当前分支".to_string());
+    }
+    let existing_conflicts = repo_conflicts(path);
+    if !existing_conflicts.files.is_empty() || summary.conflict_count > 0 {
+        return Err("当前仓库存在未处理冲突，已阻止合并".to_string());
+    }
+
+    match git_command(path, &["merge", "--no-edit", branch], None) {
+        Ok(_) => {
+            let summary = summarize_repo(root, path);
+            Ok(RepoMergePullResult {
+                status: "success".to_string(),
+                message: "合并完成".to_string(),
+                conflicts: repo_conflicts(path),
+                summary,
+            })
+        }
+        Err(err) => {
+            let conflicts = repo_conflicts(path);
+            let summary = summarize_repo(root, path);
+            if conflicts.files.is_empty() {
+                Err(err)
+            } else {
+                Ok(RepoMergePullResult {
+                    status: "conflicts".to_string(),
+                    message: "合并产生冲突，请处理后提交".to_string(),
+                    summary,
+                    conflicts,
+                })
+            }
+        }
+    }
+}
+
+pub(super) fn delete_branch_at(root: &Path, path: &Path, branch: &str) -> Result<RepoSummary, String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    let summary = summarize_repo(root, path);
+    if summary.current_branch.as_deref() == Some(branch) {
+        return Err("不能删除当前分支".to_string());
+    }
+    git_command(path, &["branch", "-d", branch], None)?;
+    Ok(summarize_repo(root, path))
 }
 
 pub(super) fn parse_track(track: &str) -> (i32, i32) {
