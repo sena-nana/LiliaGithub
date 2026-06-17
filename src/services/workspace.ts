@@ -11,6 +11,7 @@ export {
   setFallbackGitHubWorkflowRunsForTests,
   setFallbackGitHubWorkflowRunsOverrideForTests,
   setFallbackLaunchCandidatesForTests,
+  setFallbackStopLaunchOverrideForTests,
   setFallbackRepoReadmesForTests,
   setFallbackGitHubRepoReadmesForTests,
   setFallbackGitHubRepoPagesForTests,

@@ -121,8 +121,10 @@ function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChan
 }
 
 describe("基础路由", () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
+    const service = await import("../src/services/workspace");
+    service.setFallbackStopLaunchOverrideForTests(null);
   });
 
   it("默认首页显示 Git 项目总览", async () => {
@@ -1484,6 +1486,8 @@ describe("基础路由", () => {
     expect(idleTerminal).toHaveTextContent("请选择一个启动指令并运行。");
     expect(idleTerminal).toHaveTextContent("当前指令：yarn dev");
     expect(idleTerminal).not.toHaveTextContent("启动命令：");
+    expect(within(launchCard).queryByRole("button", { name: /yarn dev/ })).toBeNull();
+    expect(within(launchCard).queryByRole("button", { name: "隐藏" })).toBeNull();
 
     await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
 
@@ -1500,6 +1504,36 @@ describe("基础路由", () => {
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
     expect(screen.getByLabelText("启动终端")).toHaveTextContent("请选择一个启动指令并运行。");
+  });
+
+  it("运行失败信息显示在命令卡片内而不是页头状态区", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackStopLaunchOverrideForTests(() => {
+      throw new Error("停止失败：operation attempted is not supported");
+    });
+
+    await renderAt("/repos/LiliaGithub");
+
+    const launchGroup = screen.getByRole("group", { name: "命令执行" });
+    await waitFor(() => {
+      expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
+    });
+    await fireEvent.click(within(launchGroup).getByRole("link", { name: "日志" }));
+    expect(await screen.findByLabelText("启动终端")).toBeInTheDocument();
+
+    await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
+    await waitFor(() => {
+      expect(within(launchGroup).getByRole("button", { name: "停止" })).toBeEnabled();
+    });
+
+    await fireEvent.click(within(launchGroup).getByRole("button", { name: "停止" }));
+
+    const launchCard = document.querySelector(".project-terminal-card");
+    if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
+    await waitFor(() => {
+      expect(within(launchCard).getByText("Error: 停止失败：operation attempted is not supported")).toBeInTheDocument();
+    });
+    expect(document.querySelector(".repo-workbench__status")).toBeNull();
   });
 
   it("总览页一键同步直接执行且不打开预检弹层", async () => {

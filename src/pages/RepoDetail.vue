@@ -27,6 +27,7 @@ const {
   activeTab,
   commitMessage,
   actionError,
+  launchError,
   actionRunning,
   conflictAcceptConfirm,
   launchTerminalVisible,
@@ -47,9 +48,7 @@ const {
   canContinueConflictOperation,
   canCommit,
   launchConfig,
-  launchCandidates,
   launchLogs,
-  launchLoading,
   languageStatsRefreshing,
   usingSystemGit,
   launchRunning,
@@ -93,7 +92,6 @@ const {
   continueConflict,
   startLaunch,
   stopLaunch,
-  selectLaunchCandidate,
   selectLaunchCandidateByValue,
   checkoutBranchByValue,
   openCommit,
@@ -267,10 +265,10 @@ const {
         </div>
       </header>
 
-      <div v-if="actionError || recentSyncError" class="repo-workbench__status">
-        <p v-if="actionError" class="error-line">{{ actionError }}</p>
-        <RepoPushError
-          v-if="recentSyncError"
+    <div v-if="actionError || recentSyncError" class="repo-workbench__status">
+      <p v-if="actionError" class="error-line">{{ actionError }}</p>
+      <RepoPushError
+        v-if="recentSyncError"
           :message="recentSyncError.message"
           :retrying="recentSyncError.retrying"
           :action-running="actionRunning"
@@ -309,15 +307,13 @@ const {
           :can-resolve-selected-conflict="canResolveSelectedConflict"
           :supported-conflict-operation="supportedConflictOperation"
           :commit-meta-title="commitMetaTitle"
-          :loading="launchLoading"
           :launch-config="launchConfig"
-          :launch-candidates="launchCandidates"
           :launch-logs="launchLogs"
+          :launch-error="launchError"
           :launch-terminal-visible="launchTerminalVisible"
           :action-running="actionRunning"
           :launch-running="launchRunning"
           @hide-terminal="launchTerminalVisible = false"
-          @select-launch-candidate="selectLaunchCandidate"
           :remote-only="remoteOnly"
           :project-tab="activeProjectTab"
           :project-issue-number="activeProjectIssue"

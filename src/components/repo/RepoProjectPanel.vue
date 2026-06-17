@@ -6,13 +6,11 @@ import {
   CircleOff,
   ExternalLink,
   LoaderCircle,
-  SquareTerminal,
   Save,
   Trash2,
   X,
 } from "@lucide/vue";
 import CommitDetailCard from "./CommitDetailCard.vue";
-import Dropdown from "../Dropdown.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
@@ -37,7 +35,6 @@ import type {
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
-  ProjectLaunchCandidate,
   ProjectLaunchConfig,
   ProjectLaunchLog,
   RepoChange,
@@ -66,10 +63,9 @@ const props = defineProps<{
   repoTitle?: string;
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
-  loading: boolean;
   launchConfig: ProjectLaunchConfig | null;
-  launchCandidates: readonly ProjectLaunchCandidate[];
   launchLogs: readonly ProjectLaunchLog[];
+  launchError?: string | null;
   launchTerminalVisible: boolean;
   actionRunning: boolean;
   launchRunning: boolean;
@@ -104,7 +100,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   hideTerminal: [];
-  selectLaunchCandidate: [candidate: ProjectLaunchCandidate];
   updateCommitMessage: [value: string];
   stageUnstagedChanges: [paths?: string[]];
   unstageStagedChanges: [paths?: string[]];
@@ -261,34 +256,6 @@ function isProjectSectionActive(section: ProjectContentMode, options?: { readmeP
   }
   return activeSection.value === section;
 }
-const launchCommandText = computed(() => props.launchConfig?.command?.trim() || "选择启动指令");
-const launchCandidateOptions = computed(() => {
-  const candidates = [...props.launchCandidates];
-  const current = props.launchConfig?.command?.trim()
-    ? candidates.find((item) => item.command === props.launchConfig?.command && item.cwd === props.launchConfig?.cwd)
-    : null;
-  if (current) return candidates;
-  if (!props.launchConfig?.command.trim()) return candidates;
-  return [{
-    command: props.launchConfig.command,
-    label: "当前指令",
-    hint: props.launchConfig.cwd || null,
-    kind: "current",
-    cwd: props.launchConfig.cwd,
-  }, ...candidates];
-});
-const launchMenuItems = computed(() =>
-  launchCandidateOptions.value.map((candidate) => ({
-    value: `${candidate.command}::${candidate.cwd ?? ""}`,
-    label: candidate.label,
-    hint: candidate.hint ?? candidate.cwd ?? undefined,
-    candidate,
-  })),
-);
-const activeLaunchValue = computed(() =>
-  `${props.launchConfig?.command ?? ""}::${props.launchConfig?.cwd ?? ""}`,
-);
-const launchButtonDisabled = computed(() => props.loading || props.actionRunning || props.launchRunning);
 const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 
@@ -773,13 +740,6 @@ function selectReadme(path: string) {
   activateProjectTab("readme");
 }
 
-function pickLaunchCandidateByValue(value: string) {
-  if (!canUseLaunchWorkflow.value) return;
-  const item = launchMenuItems.value.find((option) => option.value === value);
-  if (!item) return;
-  emit("selectLaunchCandidate", item.candidate);
-}
-
 </script>
 
 <template>
@@ -793,27 +753,8 @@ function pickLaunchCandidateByValue(value: string) {
     >
       <main ref="projectMainRef" class="project-main">
         <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
-          <div class="project-section__head">
-            <div class="launch-head">
-              <Dropdown
-                :model-value="activeLaunchValue"
-                :options="launchMenuItems"
-                :icon="SquareTerminal"
-                :display-label="launchCommandText"
-                placeholder="选择启动指令"
-                placement="bottom"
-                button-class="launch-command-button"
-                menu-width="100%"
-                menu-label="启动指令候选"
-                :disabled="launchButtonDisabled"
-                @update:model-value="pickLaunchCandidateByValue"
-              />
-            </div>
-            <div class="launch-actions">
-              <button type="button" class="ghost" @click="emit('hideTerminal')">隐藏</button>
-            </div>
-          </div>
           <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
+            <p v-if="launchError" class="error-line project-terminal__error">{{ launchError }}</p>
             <div v-if="!launchRunning" class="project-terminal__empty">
               <p class="muted repo-empty project-empty">请选择一个启动指令并运行。</p>
               <p class="muted repo-empty project-empty">当前指令：{{ launchConfig?.command || "未配置" }}</p>
@@ -1199,17 +1140,14 @@ function pickLaunchCandidateByValue(value: string) {
 
 .project-section__head,
 .project-row,
-.project-inline-form,
-.launch-head,
-.launch-actions {
+.project-inline-form {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .project-section__head,
-.project-row,
-.launch-head {
+.project-row {
   justify-content: space-between;
 }
 
@@ -1304,56 +1242,16 @@ function pickLaunchCandidateByValue(value: string) {
   background: transparent;
 }
 
-.launch-head {
-  position: relative;
-  min-width: 0;
-  flex: 1 1 auto;
-  max-width: min(520px, 100%);
-}
-
-.launch-head :deep(.dd) {
-  flex: 1 1 auto;
-  width: 100%;
-}
-
-:deep(.launch-command-button) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  flex: 1 1 auto;
-  width: 100%;
-  min-width: 0;
-  min-height: 28px;
-  padding: 4px 7px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
-  text-align: left;
-  color: var(--text);
-}
-
-:deep(.launch-command-button .chat-chip__label) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-:deep(.launch-command-button.is-open),
-:deep(.launch-command-button:hover:not(:disabled)) {
-  background: var(--bg-hover);
-}
-
-.launch-actions {
-  flex: 0 0 auto;
-}
-
 .project-terminal__body {
+  display: grid;
+  align-content: start;
+  gap: 10px;
   min-height: 0;
   overflow: auto;
+}
+
+.project-terminal__error {
+  margin: 0;
 }
 
 .project-terminal__body pre {
