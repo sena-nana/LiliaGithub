@@ -25,7 +25,7 @@
   height: 40px;
   padding: 4px;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-subtle);
 }
 
@@ -34,7 +34,7 @@
   height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
 }
@@ -75,7 +75,7 @@
 .card {
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 14px 16px;
   margin-bottom: 12px;
   overflow: hidden;
@@ -88,6 +88,98 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-row:first-child {
+  padding-top: 4px;
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+.settings-row__label {
+  min-width: 0;
+}
+
+.settings-row__hint {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-row__control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-row__radius-control {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 44px;
+}
+
+.settings-row__radius-control input {
+  width: 100%;
+  padding-inline: 0;
+}
+
+.settings-row__radius-control output {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.segmented,
+.ui-segmented {
+  display: inline-flex;
+  height: 34px;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.segmented button,
+.ui-segmented > button {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.segmented button:hover:not(.is-active),
+.ui-segmented > button:hover:not(.is-active) {
+  background: var(--bg-hover);
+  color: var(--text);
+  filter: none;
+}
+
+.segmented button.is-active,
+.ui-segmented > button.is-active {
+  background: var(--bg-active);
+  color: var(--text);
+  filter: none;
 }
 
 .kv {
@@ -128,5 +220,12 @@
 @keyframes card-title-loader-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

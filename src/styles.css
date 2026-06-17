@@ -69,6 +69,13 @@
   --ok-soft: rgba(63, 185, 80, 0.14);
   --warn-soft: rgba(212, 168, 91, 0.16);
   --err-soft: rgba(244, 113, 116, 0.14);
+  --app-corner-shape: squircle;
+  --app-corner-radius: 8px;
+  --radius-xs: calc(var(--app-corner-radius) * 0.5);
+  --radius-sm: calc(var(--app-corner-radius) * 0.75);
+  --radius-md: var(--app-corner-radius);
+  --radius-lg: calc(var(--app-corner-radius) * 1.25);
+  --radius-pill: 999px;
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.55;
@@ -103,10 +110,20 @@
   --err-soft: rgba(201, 60, 60, 0.10);
 }
 
+:root[data-corners="round"] {
+  --app-corner-shape: round;
+}
+
 * {
   box-sizing: border-box;
   scrollbar-color: var(--border-strong) transparent;
   scrollbar-width: thin;
+}
+
+@supports (corner-shape: squircle) {
+  * {
+    corner-shape: var(--app-corner-shape);
+  }
 }
 
 html,
@@ -135,7 +152,7 @@ code,
 kbd {
   font-size: 0.92em;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-subtle);
   border: 1px solid var(--border-soft);
   color: var(--text);
@@ -144,7 +161,7 @@ kbd {
 pre {
   margin: 0;
   padding: 12px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-subtle);
   border: 1px solid var(--border-soft);
   overflow: auto;
@@ -170,7 +187,7 @@ pre code {
 
 *::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 *::-webkit-scrollbar-thumb:hover {
@@ -187,7 +204,7 @@ select {
   font: inherit;
   height: 32px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--bg-subtle);
   color: var(--text);

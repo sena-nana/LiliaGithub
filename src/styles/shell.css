@@ -22,7 +22,7 @@
   overflow: auto;
   padding: 20px 24px;
   background: var(--bg);
-  border-top-left-radius: 10px;
+  border-top-left-radius: var(--radius-lg);
 }
 
 .shell__resizer {

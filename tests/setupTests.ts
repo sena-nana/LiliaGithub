@@ -17,4 +17,6 @@ afterEach(async () => {
   clearGitHubRepoCache();
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
+  document.documentElement.removeAttribute("data-corners");
+  document.documentElement.style.removeProperty("--app-corner-radius");
 });
