@@ -108,13 +108,7 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
       actionRunning: false,
       launchRunning: false,
       remoteOnly: false,
-      activeGitTab: "changes",
-      gitTabs: [
-        { key: "conflicts", label: "冲突" },
-        { key: "changes", label: "变更" },
-        { key: "history", label: "历史" },
-        { key: "branches", label: "分支" },
-      ],
+      activeGitTab: "repo",
       changes: [],
       previewChange: null,
       commitMessage: "",
@@ -153,22 +147,16 @@ describe("RepoProjectPanel", () => {
     vi.clearAllMocks();
   });
 
-  it("本地仓库保留快速启动入口和启动终端", async () => {
-    const view = await renderProjectPanel();
-
-    const quickLaunch = view.getByRole("region", { name: "快速启动" });
-    await fireEvent.click(within(quickLaunch).getByRole("button", { name: "yarn dev" }));
-
-    expect(view.emitted("openTerminal")).toHaveLength(1);
-
-    await view.rerender({ launchTerminalVisible: true });
+  it("本地仓库在命令运行页显示启动终端", async () => {
+    const view = await renderProjectPanel({ activeGitTab: "run" });
 
     const terminalCard = view.container.querySelector(".project-terminal-card");
     expect(terminalCard).toBeInstanceOf(HTMLElement);
     const terminal = view.getByLabelText("启动终端");
     expect(within(terminal).getByText("当前指令：yarn dev")).toBeInTheDocument();
     expect(within(terminalCard as HTMLElement).getByRole("button", { name: "yarn dev" })).toBeInTheDocument();
-    expect(within(terminalCard as HTMLElement).getByRole("button", { name: "运行" })).toBeInTheDocument();
+    await fireEvent.click(within(terminalCard as HTMLElement).getByRole("button", { name: "运行" }));
+    expect(view.emitted("start")).toHaveLength(1);
   });
 
   it("远程仓库只显示项目 tabs，不进入启动工作流", async () => {
@@ -187,7 +175,7 @@ describe("RepoProjectPanel", () => {
     expect(view.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
-    expect(view.getByRole("tab", { name: "分支" })).toBeInTheDocument();
+    expect(view.queryByRole("tab", { name: "分支" })).toBeNull();
 
     await waitFor(() => {
       expect(view.getByText("删除 GitHub 远端仓库")).toBeInTheDocument();
@@ -197,6 +185,7 @@ describe("RepoProjectPanel", () => {
 
   it("本地仓库分支栏展示本地分支并保留 checkout", async () => {
     const view = await renderProjectPanel({
+      activeGitTab: "branches",
       branches: [
         {
           name: "main",
@@ -219,8 +208,6 @@ describe("RepoProjectPanel", () => {
       ],
     });
 
-    await fireEvent.click(view.getByRole("tab", { name: "分支" }));
-
     expect(view.getByText("feature/local")).toBeInTheDocument();
     await fireEvent.click(view.getAllByRole("button", { name: /Checkout/ })[1]);
     expect(view.emitted("checkout")).toEqual([["feature/local"]]);
@@ -232,9 +219,8 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/remote-repo",
       repoPath: "",
       remoteOnly: true,
+      activeGitTab: "branches",
     });
-
-    await fireEvent.click(view.getByRole("tab", { name: "分支" }));
 
     await waitFor(() => {
       expect(listGitHubBranches).toHaveBeenCalledWith("sena-nana/remote-repo");
@@ -257,9 +243,9 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/remote-repo",
       repoPath: "",
       remoteOnly: true,
+      activeGitTab: "branches",
     });
 
-    await fireEvent.click(view.getByRole("tab", { name: "分支" }));
     expect(await view.findByText("release")).toBeInTheDocument();
 
     const deleteButtons = view.getAllByRole("button", { name: "删除" });

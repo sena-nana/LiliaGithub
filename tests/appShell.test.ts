@@ -191,7 +191,7 @@ describe("AppShell sidebar", () => {
 
     await fireEvent.click(sidebarRowForText(view.container, "RemoteOnly"));
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteOnly?view=project");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteOnly");
     });
 
     await fireEvent.click(view.getByRole("button", { name: "移除 sena-nana/RemoteOnly" }));

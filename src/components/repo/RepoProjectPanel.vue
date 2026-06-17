@@ -17,9 +17,7 @@ import CommitDetailCard from "./CommitDetailCard.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoBranchesPanel from "./RepoBranchesPanel.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
-import RepoConflictsPanel from "./RepoConflictsPanel.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
-import RepoLaunchPanel from "./RepoLaunchPanel.vue";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
@@ -56,12 +54,13 @@ import type {
 import { isWorkflowRunFailure, streamLabel, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
+import type { RepoRouteTab } from "../../utils/repoRoutes";
 
-type GitTab = "conflicts" | "changes" | "history" | "branches";
+type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = "readme" | "issues" | "actions" | "settings";
 type ProjectContentMode = "launch" | ProjectTab | GitTab;
 type ProjectSectionConfig = {
-  key: Exclude<ProjectTab, "readme"> | "branches";
+  key: Exclude<ProjectTab, "readme">;
   label: string;
 };
 type HistoryCommit = CommitSummary;
@@ -82,8 +81,7 @@ const props = defineProps<{
   actionRunning: boolean;
   launchRunning: boolean;
   remoteOnly?: boolean;
-  activeGitTab: GitTab;
-  gitTabs: readonly { key: GitTab; label: string }[];
+  activeGitTab: RepoRouteTab;
   changes: readonly RepoChange[];
   previewChange: RepoChange | null;
   commitMessage: string;
@@ -118,7 +116,6 @@ const emit = defineEmits<{
   openTerminal: [];
   hideTerminal: [];
   selectLaunchCandidate: [candidate: ProjectLaunchCandidate];
-  updateActiveGitTab: [tab: GitTab];
   updateCommitMessage: [value: string];
   stageUnstagedChanges: [paths?: string[]];
   unstageStagedChanges: [paths?: string[]];
@@ -145,7 +142,7 @@ const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
 
-const activeSection = ref<ProjectTab | GitTab>(props.remoteOnly ? "readme" : props.activeGitTab);
+const activeSection = ref<ProjectContentMode>(routeTabToSection(props.activeGitTab));
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const terminalBody = ref<HTMLElement | null>(null);
 const launchMenuOpen = ref(false);
@@ -265,25 +262,23 @@ const projectSections: readonly ProjectSectionConfig[] = [
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
-const remoteProjectSections: readonly ProjectSectionConfig[] = [
-  ...projectSections,
-  { key: "branches", label: "分支" },
-];
-const visibleProjectSections = computed(() => props.remoteOnly ? remoteProjectSections : projectSections);
 const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
-const activeProjectSection = computed<ProjectContentMode>(() =>
-  canUseLaunchWorkflow.value && props.launchTerminalVisible ? "launch" : activeSection.value,
-);
 const showCommitDetail = computed(() =>
-  !props.remoteOnly && activeProjectSection.value === "history" && Boolean(props.selectedCommitHash),
+  !props.remoteOnly && activeSection.value === "history" && Boolean(props.selectedCommitHash),
 );
 const panelBranches = computed(() => props.remoteOnly ? remoteBranches.value : props.branches);
+const showProjectSidebar = computed(() =>
+  activeSection.value === "readme" ||
+  activeSection.value === "issues" ||
+  activeSection.value === "actions" ||
+  activeSection.value === "settings",
+);
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
   if (section === "readme") {
-    return activeProjectSection.value === "readme" && activeReadmePath.value === options?.readmePath;
+    return activeSection.value === "readme" && activeReadmePath.value === options?.readmePath;
   }
-  return activeProjectSection.value === section;
+  return activeSection.value === section;
 }
 const launchCommandText = computed(() => props.launchConfig?.command?.trim() || "选择启动指令");
 const launchCandidateOptions = computed(() => {
@@ -326,7 +321,7 @@ onMounted(() => {
 });
 
 watch(() => props.repoId, () => {
-  activeSection.value = props.remoteOnly ? projectTab.value : props.activeGitTab;
+  activeSection.value = routeTabToSection(props.activeGitTab);
   activeReadmePath.value = null;
   closeLaunchMenu();
   closeDeleteDialog();
@@ -366,7 +361,7 @@ watch(
 );
 
 watch(() => props.activeGitTab, (tab) => {
-  if (!props.remoteOnly && isGitSection(activeSection.value)) activeSection.value = tab;
+  activeSection.value = routeTabToSection(tab);
 });
 
 watch(activeSection, () => {
@@ -378,8 +373,10 @@ function normalizeProjectTab(value: unknown): ProjectTab | null {
   return null;
 }
 
-function isGitSection(value: ProjectTab | GitTab): value is GitTab {
-  return value === "conflicts" || value === "changes" || value === "history" || value === "branches";
+function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
+  if (tab === "repo") return normalizeProjectTab(props.projectTab) ?? "readme";
+  if (tab === "run") return "launch";
+  return tab;
 }
 
 function hasIssue(issueNumber: number) {
@@ -447,7 +444,7 @@ function isRunRowFocused(runId: number) {
 
 async function applyProjectRouteState() {
   const targetTab = projectTab.value;
-  if (props.remoteOnly || routedProjectTab.value) {
+  if (props.activeGitTab === "repo" && (props.remoteOnly || routedProjectTab.value)) {
     activeSection.value = targetTab;
     await nextTick();
   }
@@ -886,20 +883,7 @@ function activateProjectTab(tab: ProjectTab) {
 }
 
 function activateProjectSection(tab: ProjectSectionConfig["key"]) {
-  if (tab === "branches") {
-    activateGitTab(tab);
-    return;
-  }
   activateProjectTab(tab);
-}
-
-function activateGitTab(tab: GitTab) {
-  activeSection.value = tab;
-  emit("updateActiveGitTab", tab);
-  if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
-    closeLaunchMenu();
-    emit("hideTerminal");
-  }
 }
 
 function selectReadme(path: string) {
@@ -934,10 +918,13 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   <section class="project-panel">
     <div
       class="project-layout"
-      :class="{ 'project-layout--with-commit-detail': showCommitDetail }"
+      :class="{
+        'project-layout--with-commit-detail': showCommitDetail,
+        'project-layout--full': !showProjectSidebar,
+      }"
     >
       <main ref="projectMainRef" class="project-main">
-        <section v-if="canUseLaunchWorkflow && activeProjectSection === 'launch'" class="project-terminal-card">
+        <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
           <div class="project-section__head">
             <div class="launch-head">
               <button
@@ -999,7 +986,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         </section>
 
         <RepoChangesPanel
-          v-else-if="!remoteOnly && activeProjectSection === 'changes'"
+          v-else-if="!remoteOnly && activeSection === 'changes'"
           :commit-message="commitMessage"
           :changes="changes"
           :has-conflicts="hasConflicts"
@@ -1014,35 +1001,8 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           @update:commit-message="emit('updateCommitMessage', $event)"
         />
 
-        <RepoConflictsPanel
-          v-else-if="!remoteOnly && activeProjectSection === 'conflicts'"
-          :conflict-operation-text="conflictOperationText"
-          :conflict-summary-text="conflictSummaryText"
-          :conflict-continue-text="conflictContinueText"
-          :conflict-abort-text="conflictAbortText"
-          :conflict-files="conflictFiles"
-          :conflict-operation-active="conflictOperationActive"
-          :conflicts="conflicts"
-          :focused-conflict="focusedConflict"
-          :conflict-choices="conflictChoices"
-          :conflict-selected-count="conflictSelectedCount"
-          :conflict-accept-confirm="conflictAcceptConfirm"
-          :can-continue-conflict-operation="canContinueConflictOperation"
-          :can-resolve-selected-conflict="canResolveSelectedConflict"
-          :supported-conflict-operation="supportedConflictOperation"
-          :action-running="actionRunning"
-          @continue-conflict="emit('continueConflict')"
-          @abort-conflict="emit('abortConflict')"
-          @focus-conflict="emit('focusConflict', $event)"
-          @pick-conflict-hunk="(hunkId, side) => emit('pickConflictHunk', hunkId, side)"
-          @resolve-selected-conflict="emit('resolveSelectedConflict')"
-          @accept-conflict="emit('acceptConflict', $event)"
-          @mark-conflict-resolved="emit('markConflictResolved')"
-          @open-conflict-folder="emit('openConflictFolder')"
-        />
-
         <RepoHistoryPanel
-          v-else-if="!remoteOnly && activeProjectSection === 'history'"
+          v-else-if="!remoteOnly && activeSection === 'history'"
           :commits="statusCommits"
           :commit-meta-title="commitMetaTitle"
           :selected-commit-hash="selectedCommitHash"
@@ -1050,7 +1010,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         />
 
         <RepoBranchesPanel
-          v-else-if="activeProjectSection === 'branches'"
+          v-else-if="activeSection === 'branches'"
           :branches="panelBranches"
           :remote-mode="remoteOnly"
           :loading="remoteBranchesLoading"
@@ -1062,7 +1022,11 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           @delete-remote-branch="deleteRemoteBranch"
         />
 
-        <section v-else-if="activeProjectSection === 'readme'" class="project-readme-card">
+        <section v-else-if="activeSection === 'launch'" class="project-section">
+          <p class="muted repo-empty project-empty">命令运行仅支持本地仓库。</p>
+        </section>
+
+        <section v-else-if="activeSection === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
           <p v-else-if="!activeReadme" class="muted repo-empty project-empty">
@@ -1080,11 +1044,11 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           />
         </section>
 
-        <section v-else-if="githubUnavailableMessage && activeProjectSection !== 'settings'" class="project-section">
+        <section v-else-if="githubUnavailableMessage && activeSection !== 'settings'" class="project-section">
           <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
         </section>
 
-        <section v-else-if="activeProjectSection === 'issues'" class="project-section">
+        <section v-else-if="activeSection === 'issues'" class="project-section">
           <div class="project-section__head">
             <h3>Issues</h3>
             <select v-model="issueState" @change="loadIssues">
@@ -1146,7 +1110,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           </div>
         </section>
 
-        <section v-else-if="activeProjectSection === 'actions'" class="project-section">
+        <section v-else-if="activeSection === 'actions'" class="project-section">
           <div class="project-section__head">
             <h3>Actions</h3>
             <span class="muted">{{ workflowRuns.length }} 条运行记录</span>
@@ -1183,7 +1147,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           </div>
         </section>
 
-        <form v-else-if="activeProjectSection === 'settings'" class="project-section project-settings" @submit.prevent="saveSettings">
+        <form v-else-if="activeSection === 'settings'" class="project-section project-settings" @submit.prevent="saveSettings">
           <div class="project-section__head">
             <h3>仓库设置</h3>
             <button
@@ -1353,7 +1317,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
         @close="emit('closeCommit')"
       />
 
-      <aside class="project-sidebar">
+      <aside v-if="showProjectSidebar" class="project-sidebar">
         <div class="project-sidebar__card" role="tablist" aria-label="README 列表">
           <button
             v-for="item in readmes"
@@ -1373,7 +1337,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
         <div class="project-sidebar__card" role="tablist" aria-label="项目信息视图">
           <button
-            v-for="tab in visibleProjectSections"
+            v-for="tab in projectSections"
             :key="tab.key"
             type="button"
             class="project-sidebar__item"
@@ -1386,34 +1350,6 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
           </button>
         </div>
 
-        <div v-if="canUseLaunchWorkflow" class="project-sidebar__launch">
-          <RepoLaunchPanel
-            :loading="loading"
-            :launch-config="launchConfig"
-            :launch-status="launchStatus"
-            :action-running="actionRunning"
-            :launch-running="launchRunning"
-            :active="launchTerminalVisible"
-            @start="emit('start')"
-            @stop="emit('stop')"
-            @open-terminal="emit('openTerminal')"
-          />
-        </div>
-
-        <div v-if="!remoteOnly" class="project-sidebar__card" role="tablist" aria-label="本地 Git 视图">
-          <button
-            v-for="tab in gitTabs"
-            :key="tab.key"
-            type="button"
-            class="project-sidebar__item"
-            :class="{ 'is-active': isProjectSectionActive(tab.key) }"
-            role="tab"
-            :aria-selected="isProjectSectionActive(tab.key)"
-            @click="activateGitTab(tab.key)"
-          >
-            <strong>{{ tab.label }}</strong>
-          </button>
-        </div>
       </aside>
     </div>
   </section>
@@ -1471,6 +1407,10 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 
 .project-layout--with-commit-detail {
   grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.project-layout--full {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .project-main {
@@ -1702,12 +1642,6 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   background: var(--bg-elev);
 }
 
-.project-sidebar__launch {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-
 .project-sidebar__item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1726,11 +1660,6 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 }
 
 .project-sidebar__item.is-active {
-  background: var(--bg-active);
-  color: var(--text);
-}
-
-.project-sidebar__launch :deep(.launch-command-button.is-active) {
   background: var(--bg-active);
   color: var(--text);
 }
