@@ -16,6 +16,7 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
+type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history">;
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -192,13 +193,50 @@ export function useRepoDetailController() {
     return "完成合并";
   });
 
-  const tabs: Array<{ key: RepoRouteTab; label: string }> = [
-    { key: "repo", label: "Repo" },
-    { key: "changes", label: "变更" },
-    { key: "history", label: "历史" },
-    { key: "branches", label: "分支" },
-    { key: "run", label: "命令运行" },
+  const toolbarTabs: Array<{ key: RepoToolbarTab; title: string }> = [
+    { key: "repo", title: "文件查看" },
+    { key: "changes", title: "变更" },
+    { key: "history", title: "历史" },
   ];
+  const launchCommandOptions = computed(() => {
+    const candidates = [...launchCandidates.value];
+    const current = launchConfig.value?.command.trim()
+      ? candidates.find((item) => item.command === launchConfig.value?.command && item.cwd === launchConfig.value?.cwd)
+      : null;
+    const options = current || !launchConfig.value?.command.trim()
+      ? candidates
+      : [{
+          command: launchConfig.value.command,
+          label: "当前指令",
+          hint: launchConfig.value.cwd || null,
+          kind: "current",
+          cwd: launchConfig.value.cwd,
+        } satisfies ProjectLaunchCandidate, ...candidates];
+
+    return options.map((candidate) => ({
+      value: launchOptionValue(candidate.command, candidate.cwd),
+      label: candidate.label || candidate.command,
+      hint: [candidate.kind, candidate.hint, candidate.cwd].filter(Boolean).join(" · "),
+      candidate,
+    }));
+  });
+  const activeLaunchValue = computed(() =>
+    launchOptionValue(launchConfig.value?.command ?? "", launchConfig.value?.cwd ?? null),
+  );
+  const launchCommandText = computed(() => launchConfig.value?.command?.trim() || "选择启动指令");
+  const branchOptions = computed(() =>
+    (detail.value?.branches ?? [])
+      .filter((branch) => !branch.remote)
+      .map((branch) => ({
+        value: branch.name,
+        label: branch.name,
+        hint: branch.current ? "当前" : "",
+      })),
+  );
+  const activeBranchName = computed(() => summary.value?.currentBranch ?? "detached");
+  const activeBranchValue = computed(() => summary.value?.currentBranch ?? "");
+  const aheadCount = computed(() => summary.value?.ahead ?? 0);
+  const behindCount = computed(() => summary.value?.behind ?? 0);
   onMounted(() => {
     void load();
     launchPollTimer = window.setInterval(() => {
@@ -515,8 +553,20 @@ export function useRepoDetailController() {
     });
   }
 
+  function selectLaunchCandidateByValue(value: string) {
+    const option = launchCommandOptions.value.find((item) => item.value === value);
+    if (!option) return;
+    selectLaunchCandidate(option.candidate);
+  }
+
   function checkout(branch: string) {
     void runAction(() => workspace.checkout(repoId.value, branch));
+  }
+
+  function checkoutBranchByValue(value: string) {
+    if (!value || value === summary.value?.currentBranch) return;
+    if (!branchOptions.value.some((branch) => branch.value === value)) return;
+    checkout(value);
   }
 
   function openCommit(commit: HistoryCommit) {
@@ -548,6 +598,10 @@ export function useRepoDetailController() {
       commit.parents.length ? `parents: ${commit.parents.join(", ")}` : "root commit",
       commit.refs.length ? `refs: ${commit.refs.join(", ")}` : "",
     ].filter(Boolean).join("\n");
+  }
+
+  function launchOptionValue(command: string, cwd: string | null) {
+    return JSON.stringify([command, cwd ?? null]);
   }
 
     return {
@@ -598,7 +652,15 @@ export function useRepoDetailController() {
       activeProjectTab,
       activeProjectIssue,
       activeProjectRun,
-      tabs,
+      toolbarTabs,
+      launchCommandOptions,
+      activeLaunchValue,
+      launchCommandText,
+      branchOptions,
+      activeBranchName,
+      activeBranchValue,
+      aheadCount,
+      behindCount,
       load,
       refreshLaunch,
       focusChange,
@@ -619,7 +681,9 @@ export function useRepoDetailController() {
       startLaunch,
       stopLaunch,
       selectLaunchCandidate,
+      selectLaunchCandidateByValue,
       checkout,
+      checkoutBranchByValue,
       openCommit,
       closeCommit,
       openFolder,

@@ -183,6 +183,11 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
     },
   ];
 }
+
+function isRepoActive(repoId: string) {
+  const base = repoRoute(repoId);
+  return route.path === base || route.path.startsWith(`${base}/`);
+}
 </script>
 
 <template>
@@ -232,6 +237,7 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
           :key="repo.id"
           :to="repoRoute(repo.id)"
           class="sb-tree__row sb-tree__row--project"
+          :class="{ 'is-active': isRepoActive(repo.id) }"
           active-class="is-active"
           :title="repoDisplayTitle(repo)"
           v-context-menu="repoContextMenu(repo)"

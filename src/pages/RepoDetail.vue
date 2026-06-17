@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import {
+  ChevronDown,
   FolderOpen,
+  GitBranch,
+  GitCompare,
   GitPullRequestArrow,
+  History,
   KeyRound,
+  Monitor,
   RefreshCw,
   RotateCcw,
+  SquareTerminal,
   TriangleAlert,
   Upload,
 } from "@lucide/vue";
@@ -58,7 +64,15 @@ const {
   activeProjectTab,
   activeProjectIssue,
   activeProjectRun,
-  tabs,
+  toolbarTabs,
+  launchCommandOptions,
+  activeLaunchValue,
+  launchCommandText,
+  branchOptions,
+  activeBranchName,
+  activeBranchValue,
+  aheadCount,
+  behindCount,
   load,
   focusChange,
   focusConflict,
@@ -78,13 +92,23 @@ const {
   startLaunch,
   stopLaunch,
   selectLaunchCandidate,
+  selectLaunchCandidateByValue,
   checkout,
+  checkoutBranchByValue,
   openCommit,
   closeCommit,
   openFolder,
   openConflictFolder,
   commitMetaTitle,
 } = useRepoDetailController();
+
+function onLaunchSelect(event: Event) {
+  selectLaunchCandidateByValue((event.target as HTMLSelectElement).value);
+}
+
+function onBranchSelect(event: Event) {
+  checkoutBranchByValue((event.target as HTMLSelectElement).value);
+}
 </script>
 <template>
   <section class="repo-workbench">
@@ -92,19 +116,140 @@ const {
       <header class="repo-header">
         <div class="repo-header__tabs-wrap">
           <h1 class="repo-header__sr-title">{{ repoTitle }}</h1>
-          <nav class="repo-header__tabs" role="tablist" aria-label="仓库页面">
-            <RouterLink
-              v-for="tab in tabs"
-              :key="tab.key"
-              class="repo-header__tab"
-              :class="{ 'is-active': activeTab === tab.key }"
-              role="tab"
-              :aria-selected="activeTab === tab.key"
-              :to="repoRoute(repoId, tab.key)"
-            >
-              {{ tab.label }}
-            </RouterLink>
-          </nav>
+          <div class="repo-toolbar" aria-label="仓库页面工具条">
+            <nav class="repo-toolbar__group repo-toolbar__views" role="tablist" aria-label="仓库页面">
+              <RouterLink
+                v-for="tab in toolbarTabs"
+                :key="tab.key"
+                class="repo-toolbar__btn"
+                :class="{ 'is-active': activeTab === tab.key }"
+                role="tab"
+                :aria-selected="activeTab === tab.key"
+                :to="repoRoute(repoId, tab.key)"
+                :title="tab.title"
+                :aria-label="tab.title"
+              >
+                <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
+                <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
+                <History v-else :size="17" aria-hidden="true" />
+                <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge">
+                  {{ changes.length }}
+                </span>
+              </RouterLink>
+            </nav>
+
+            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__context-card" aria-label="分支">
+              <label
+                class="repo-toolbar__chip repo-toolbar__chip--branch"
+                :class="{ 'is-disabled': actionRunning || !branchOptions.length }"
+                title="切换分支"
+              >
+                <GitBranch :size="15" aria-hidden="true" />
+                <span>{{ activeBranchName }}</span>
+                <select
+                  :value="activeBranchValue"
+                  :disabled="actionRunning || !branchOptions.length"
+                  aria-label="切换分支"
+                  @change="onBranchSelect"
+                >
+                  <option v-if="!branchOptions.length" :value="activeBranchValue">{{ activeBranchName }}</option>
+                  <option v-for="branch in branchOptions" :key="branch.value" :value="branch.value">
+                    {{ branch.label }}{{ branch.hint ? ` · ${branch.hint}` : "" }}
+                  </option>
+                </select>
+                <ChevronDown :size="12" aria-hidden="true" />
+              </label>
+            </div>
+
+            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__context-card" aria-label="命令执行">
+              <label
+                class="repo-toolbar__chip repo-toolbar__chip--command"
+                :class="{ 'is-disabled': actionRunning || launchRunning || !launchCommandOptions.length }"
+                title="命令执行"
+              >
+                <SquareTerminal :size="15" aria-hidden="true" />
+                <span>{{ launchCommandText }}</span>
+                <select
+                  :value="activeLaunchValue"
+                  :disabled="actionRunning || launchRunning || !launchCommandOptions.length"
+                  aria-label="选择启动指令"
+                  @change="onLaunchSelect"
+                >
+                  <option v-if="!launchCommandOptions.length" :value="activeLaunchValue">选择启动指令</option>
+                  <option v-for="item in launchCommandOptions" :key="item.value" :value="item.value">
+                    {{ item.label }}{{ item.hint ? ` · ${item.hint}` : "" }}
+                  </option>
+                </select>
+                <ChevronDown :size="12" aria-hidden="true" />
+              </label>
+            </div>
+
+            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__actions" aria-label="仓库操作">
+              <button
+                v-if="usingSystemGit"
+                type="button"
+                class="repo-toolbar__btn"
+                title="恢复默认 token 推送"
+                aria-label="恢复默认 token 推送"
+                :disabled="actionRunning"
+                @click="useDefaultTokenAuth"
+              >
+                <RotateCcw :size="17" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="repo-toolbar__btn"
+                title="刷新"
+                aria-label="刷新"
+                :disabled="actionRunning || languageStatsRefreshing"
+                @click="load"
+              >
+                <RefreshCw :size="17" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="repo-toolbar__btn"
+                title="文件夹"
+                aria-label="文件夹"
+                :disabled="!summary?.path"
+                @click="openFolder"
+              >
+                <FolderOpen :size="17" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="repo-toolbar__btn"
+                title="拉取"
+                aria-label="拉取"
+                :disabled="actionRunning || hasConflicts"
+                @click="mergePull"
+              >
+                <GitPullRequestArrow :size="17" aria-hidden="true" />
+                <span v-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
+              </button>
+              <button
+                v-if="hasConflicts"
+                type="button"
+                class="repo-toolbar__btn repo-toolbar__btn--status"
+                disabled
+                title="冲突解决功能将重新设计"
+              >
+                <TriangleAlert :size="17" aria-hidden="true" />
+              </button>
+              <button
+                v-else
+                type="button"
+                class="repo-toolbar__btn"
+                title="推送"
+                aria-label="推送"
+                :disabled="actionRunning || !aheadCount"
+                @click="push"
+              >
+                <Upload :size="17" aria-hidden="true" />
+                <span v-if="aheadCount" class="repo-toolbar__badge">{{ aheadCount }}</span>
+              </button>
+            </div>
+          </div>
           <div class="repo-header__meta" :title="repoMetaItems.join(' · ')">
             <span>{{ repoTitle }}</span>
             <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
@@ -113,72 +258,6 @@ const {
               系统 git 凭证
             </span>
           </div>
-        </div>
-        <div class="repo-header__actions overview-actions" aria-label="仓库操作">
-          <button
-            v-if="!remoteOnly && usingSystemGit"
-            type="button"
-            class="overview-actions__btn"
-            title="恢复默认 token 推送"
-            aria-label="恢复默认 token 推送"
-            :disabled="actionRunning"
-            @click="useDefaultTokenAuth"
-          >
-            <RotateCcw :size="17" aria-hidden="true" />
-          </button>
-          <button
-            v-if="!remoteOnly"
-            type="button"
-            class="overview-actions__btn"
-            title="刷新"
-            aria-label="刷新"
-            :disabled="actionRunning || languageStatsRefreshing"
-            @click="load"
-          >
-            <RefreshCw :size="17" aria-hidden="true" />
-          </button>
-          <button
-            v-if="!remoteOnly"
-            type="button"
-            class="overview-actions__btn"
-            title="文件夹"
-            aria-label="文件夹"
-            :disabled="!summary?.path"
-            @click="openFolder"
-          >
-            <FolderOpen :size="17" aria-hidden="true" />
-          </button>
-          <button
-            v-if="!remoteOnly"
-            type="button"
-            class="overview-actions__btn"
-            title="拉取"
-            aria-label="拉取"
-            :disabled="actionRunning || hasConflicts"
-            @click="mergePull"
-          >
-            <GitPullRequestArrow :size="17" aria-hidden="true" />
-          </button>
-          <button
-            v-if="!remoteOnly && hasConflicts"
-            type="button"
-            class="overview-actions__btn overview-actions__btn--status"
-            disabled
-            title="冲突解决功能将重新设计"
-          >
-            <TriangleAlert :size="17" aria-hidden="true" />
-            有冲突
-          </button>
-          <button
-            v-else-if="!remoteOnly"
-            type="button"
-            class="overview-actions__btn overview-actions__btn--primary"
-            :disabled="actionRunning || !summary?.ahead"
-            @click="push"
-          >
-            <Upload :size="17" aria-hidden="true" />
-            Push
-          </button>
         </div>
       </header>
 
@@ -291,6 +370,7 @@ const {
 .repo-header__tabs-wrap {
   display: grid;
   gap: 6px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -306,39 +386,148 @@ const {
   border: 0;
 }
 
-.repo-header__tabs {
+.repo-toolbar {
   display: flex;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  border-bottom: 1px solid var(--border);
+  max-width: 100%;
 }
 
-.repo-header__tab {
+.repo-toolbar__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 40px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.repo-toolbar__views {
+  flex: 0 0 auto;
+}
+
+.repo-toolbar__context-card {
+  flex: 0 1 auto;
+  max-width: min(100%, 320px);
+}
+
+.repo-toolbar__actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.repo-toolbar__btn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 34px;
-  padding: 0 12px;
-  margin-bottom: -1px;
-  border-bottom: 2px solid transparent;
-  border-radius: 6px 6px 0 0;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
   text-decoration: none;
-  white-space: nowrap;
 }
 
-.repo-header__tab:hover {
+.repo-toolbar__btn:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.repo-header__tab.is-active {
-  border-bottom-color: var(--accent);
-  background: transparent;
+.repo-toolbar__btn.is-active {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.repo-toolbar__btn:disabled,
+.repo-toolbar__btn[disabled] {
+  cursor: default;
+}
+
+.repo-toolbar__btn--status {
+  color: var(--warn);
+}
+
+.repo-toolbar__chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  width: max-content;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
   color: var(--text);
+  cursor: pointer;
+}
+
+.repo-toolbar__chip:hover:not(.is-disabled) {
+  background: var(--bg-hover);
+}
+
+.repo-toolbar__chip.is-disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.repo-toolbar__chip--command {
+  max-width: 280px;
+}
+
+.repo-toolbar__chip--branch {
+  max-width: 220px;
+}
+
+.repo-toolbar__chip span {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.repo-toolbar__chip select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.repo-toolbar__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.repo-toolbar__btn .repo-toolbar__badge {
+  position: absolute;
+  right: -5px;
+  top: -5px;
 }
 
 .repo-header__meta {
@@ -368,23 +557,12 @@ const {
   color: var(--accent);
 }
 
-.repo-header__actions,
 .toolbar,
 .section-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.repo-header__actions {
-  justify-content: flex-end;
-  flex: 0 0 auto;
-}
-
-.repo-header__actions.overview-actions {
-  gap: 2px;
-  flex-wrap: nowrap;
 }
 
 .repo-push-error {
@@ -1006,27 +1184,27 @@ const {
     align-items: stretch;
   }
 
-  .repo-header__actions {
-    align-self: flex-start;
-    justify-content: flex-start;
-  }
-
-  .repo-header__actions.overview-actions {
-    align-self: stretch;
+  .repo-toolbar {
     flex-wrap: wrap;
     width: 100%;
+  }
+
+  .repo-toolbar__group {
     height: auto;
     min-height: 40px;
+  }
+
+  .repo-toolbar__context-card {
     max-width: 100%;
   }
 
-  .repo-header__actions .overview-actions__btn {
-    flex: 0 0 32px;
+  .repo-toolbar__actions {
+    margin-left: 0;
   }
 
-  .repo-header__actions .overview-actions__btn--primary {
-    flex: 1 1 96px;
-    min-width: 96px;
+  .repo-toolbar__chip--command,
+  .repo-toolbar__chip--branch {
+    max-width: 100%;
   }
 
   .repo-header__meta {
