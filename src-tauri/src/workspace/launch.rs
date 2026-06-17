@@ -51,6 +51,13 @@ pub(super) fn push_launch_log(repo_id: &str, stream: &str, line: impl Into<Strin
     }
 }
 
+pub(super) fn clear_launch_logs(repo_id: &str) {
+    launch_logs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(repo_id);
+}
+
 pub(super) fn refresh_launch_entry(repo_id: &str, entry: &mut LaunchEntry) {
     if entry.status.state != "running" {
         return;
@@ -570,6 +577,7 @@ pub fn repo_start_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunc
         }
     }
 
+    clear_launch_logs(&repo_id);
     let mut child = spawn_launch_command(&command, &cwd)?;
     let pid = child.id();
     if let Some(stdout) = child.stdout.take() {

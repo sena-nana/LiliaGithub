@@ -1802,3 +1802,19 @@ fn returns_none_without_known_launch_entrypoint() {
     assert!(infer_launch_config(&path).is_none());
     fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn clears_launch_logs_for_one_repo() {
+    let repo_id = format!("repo-{}", now_millis());
+    let other_repo_id = format!("other-repo-{}", now_millis());
+    push_launch_log(&repo_id, "stdout", "old output");
+    push_launch_log(&other_repo_id, "stdout", "kept output");
+
+    clear_launch_logs(&repo_id);
+
+    let logs = launch_logs().lock().unwrap_or_else(|e| e.into_inner());
+    assert!(logs.get(&repo_id).is_none());
+    assert_eq!(logs.get(&other_repo_id).unwrap().len(), 1);
+    drop(logs);
+    clear_launch_logs(&other_repo_id);
+}
