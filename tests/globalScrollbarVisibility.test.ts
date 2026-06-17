@@ -5,16 +5,20 @@ import {
 } from "../src/composables/useGlobalScrollbarVisibility";
 
 function createScroller(input: {
+  overflow?: string;
   scrollHeight?: number;
+  scrollWidth?: number;
   scrollTop?: number;
 } = {}) {
   const scroller = document.createElement("div");
+  scroller.style.overflowX = input.overflow ?? "auto";
+  scroller.style.overflowY = input.overflow ?? "auto";
   let scrollTop = input.scrollTop ?? 0;
   Object.defineProperties(scroller, {
     clientHeight: { configurable: true, value: 100 },
     clientWidth: { configurable: true, value: 200 },
     scrollHeight: { configurable: true, value: input.scrollHeight ?? 400 },
-    scrollWidth: { configurable: true, value: 200 },
+    scrollWidth: { configurable: true, value: input.scrollWidth ?? 200 },
     scrollTop: {
       configurable: true,
       get: () => scrollTop,
@@ -44,6 +48,10 @@ function createScroller(input: {
 
 function verticalOverlay() {
   return document.querySelector(".global-scrollbar-overlay--vertical");
+}
+
+function horizontalOverlay() {
+  return document.querySelector(".global-scrollbar-overlay--horizontal");
 }
 
 describe("global scrollbar visibility", () => {
@@ -98,6 +106,27 @@ describe("global scrollbar visibility", () => {
     vi.advanceTimersByTime(480);
 
     expect(overlay).not.toHaveClass("is-visible");
+
+    element.remove();
+  });
+
+  it("does not render horizontal overlay for clipped non-scroll containers", () => {
+    installGlobalScrollbarVisibility();
+    const { element } = createScroller({
+      overflow: "hidden",
+      scrollHeight: 100,
+      scrollWidth: 260,
+    });
+
+    element.dispatchEvent(new MouseEvent("pointermove", {
+      bubbles: true,
+      clientX: 50,
+      clientY: 104,
+    }));
+    element.dispatchEvent(new Event("scroll"));
+
+    expect(horizontalOverlay()).toBeNull();
+    expect(verticalOverlay()).toBeNull();
 
     element.remove();
   });

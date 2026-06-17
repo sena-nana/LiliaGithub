@@ -19,6 +19,7 @@ interface ScrollbarMetrics {
 const DEFAULT_HIDE_DELAY = 480;
 const HOVER_HOT_ZONE = 12;
 const TRACK_EDGE_PADDING = 4;
+const SCROLLABLE_OVERFLOW = new Set(["auto", "scroll", "overlay"]);
 
 type ScrollbarVisibilityTarget = {
   key: Element;
@@ -106,6 +107,12 @@ function isDocumentScrollTarget(target: EventTarget | null): boolean {
     target === document.documentElement ||
     target === document.body
   );
+}
+
+function allowsAxisScroll(target: ScrollbarVisibilityTarget, axis: ScrollbarAxis): boolean {
+  if (target.scroller === window) return true;
+  const style = window.getComputedStyle(target.scroller as Element);
+  return SCROLLABLE_OVERFLOW.has(axis === "vertical" ? style.overflowY : style.overflowX);
 }
 
 function resolveScrollTarget(target: EventTarget | null): ScrollbarVisibilityTarget | null {
@@ -199,11 +206,18 @@ function readMetrics(target: ScrollbarVisibilityTarget) {
   };
 }
 
-function isScrollable(metrics: ReturnType<typeof readMetrics>): boolean {
-  return metrics.scrollHeight > metrics.clientHeight + 1 || metrics.scrollWidth > metrics.clientWidth + 1;
+function hasScrollableAxis(
+  target: ScrollbarVisibilityTarget,
+  metrics: ReturnType<typeof readMetrics>,
+  axis: ScrollbarAxis,
+): boolean {
+  const contentSize = axis === "vertical" ? metrics.scrollHeight : metrics.scrollWidth;
+  const visibleSize = axis === "vertical" ? metrics.clientHeight : metrics.clientWidth;
+  return allowsAxisScroll(target, axis) && contentSize > visibleSize + 1;
 }
 
 function isPointerInScrollHotZone(
+  target: ScrollbarVisibilityTarget,
   metrics: ReturnType<typeof readMetrics>,
   clientX: number,
   clientY: number,
@@ -217,10 +231,8 @@ function isPointerInScrollHotZone(
     return false;
   }
 
-  const verticalHotZone =
-    metrics.scrollHeight > metrics.clientHeight + 1 && clientX >= metrics.rect.right - HOVER_HOT_ZONE;
-  const horizontalHotZone =
-    metrics.scrollWidth > metrics.clientWidth + 1 && clientY >= metrics.rect.bottom - HOVER_HOT_ZONE;
+  const verticalHotZone = hasScrollableAxis(target, metrics, "vertical") && clientX >= metrics.rect.right - HOVER_HOT_ZONE;
+  const horizontalHotZone = hasScrollableAxis(target, metrics, "horizontal") && clientY >= metrics.rect.bottom - HOVER_HOT_ZONE;
   return verticalHotZone || horizontalHotZone;
 }
 
@@ -231,7 +243,7 @@ function findScrollableHoverTarget(event: PointerEvent): ScrollbarVisibilityTarg
     const target = resolveScrollTarget(node);
     if (!target) continue;
     const metrics = readMetrics(target);
-    if (isScrollable(metrics) && isPointerInScrollHotZone(metrics, event.clientX, event.clientY)) {
+    if (isPointerInScrollHotZone(target, metrics, event.clientX, event.clientY)) {
       return target;
     }
   }
@@ -239,7 +251,7 @@ function findScrollableHoverTarget(event: PointerEvent): ScrollbarVisibilityTarg
   const documentTarget = resolveScrollTarget(document);
   if (documentTarget) {
     const metrics = readMetrics(documentTarget);
-    if (isScrollable(metrics) && isPointerInScrollHotZone(metrics, event.clientX, event.clientY)) {
+    if (isPointerInScrollHotZone(documentTarget, metrics, event.clientX, event.clientY)) {
       return documentTarget;
     }
   }
@@ -248,8 +260,8 @@ function findScrollableHoverTarget(event: PointerEvent): ScrollbarVisibilityTarg
 
 function updateOverlay(target: ScrollbarVisibilityTarget) {
   const metrics = readMetrics(target);
-  const verticalScrollable = metrics.scrollHeight > metrics.clientHeight + 1;
-  const horizontalScrollable = metrics.scrollWidth > metrics.clientWidth + 1;
+  const verticalScrollable = hasScrollableAxis(target, metrics, "vertical");
+  const horizontalScrollable = hasScrollableAxis(target, metrics, "horizontal");
   if (!verticalScrollable && !horizontalScrollable) {
     removeOverlay(target.key);
     return;
