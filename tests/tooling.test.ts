@@ -158,6 +158,24 @@ describe("单应用模板工具链", () => {
     expect(combined).not.toContain("LiliaCode");
   });
 
+  it("全局滚动条使用隐藏原生条和 overlay 显隐样式", () => {
+    const styles = readFileSync(resolve("src/styles.css"), "utf-8").replace(/\r\n/g, "\n");
+    const main = readFileSync(resolve("src/main.ts"), "utf-8");
+    const scrollbars = readFileSync(resolve("src/composables/useGlobalScrollbarVisibility.ts"), "utf-8");
+
+    expect(styles).toContain("scrollbar-width: none");
+    expect(styles).toContain("::-webkit-scrollbar {\n  width: 0;\n  height: 0;");
+    expect(styles).toContain(".global-scrollbar-overlay");
+    expect(styles).toContain("transition: opacity 0.48s ease");
+    expect(styles).toContain(".global-scrollbar-overlay.is-visible");
+    expect(styles).toContain(".global-scrollbar-overlay--vertical::before {\n  top: 0;\n  right: 0;");
+    expect(main).toContain(
+      'import { installGlobalScrollbarVisibility } from "./composables/useGlobalScrollbarVisibility"',
+    );
+    expect(scrollbars).toContain("export function installGlobalScrollbarVisibility()");
+    expect(scrollbars).toContain("export function uninstallGlobalScrollbarVisibility()");
+  });
+
   it("GitHub Issue 模板不包含 Lilia 业务字段", () => {
     const bug = readFileSync(resolve(".github/ISSUE_TEMPLATE/bug_report.yml"), "utf-8");
     const feature = readFileSync(
