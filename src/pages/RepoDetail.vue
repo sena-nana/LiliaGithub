@@ -5,7 +5,6 @@ import {
   GitCompare,
   GitPullRequestArrow,
   History,
-  KeyRound,
   Monitor,
   Play,
   RefreshCw,
@@ -35,10 +34,8 @@ const {
   selectedCommitHash,
   repoId,
   remoteOnly,
-  detail,
   summary,
   repoTitle,
-  repoMetaItems,
   changes,
   conflictOperationActive,
   supportedConflictOperation,
@@ -253,14 +250,6 @@ const {
                 <span v-if="aheadCount" class="repo-toolbar__badge">{{ aheadCount }}</span>
               </button>
             </div>
-          </div>
-          <div class="repo-header__meta" :title="repoMetaItems.join(' · ')">
-            <span>{{ repoTitle }}</span>
-            <span v-for="item in repoMetaItems" :key="item">{{ item }}</span>
-            <span v-if="usingSystemGit" class="repo-header__credential">
-              <KeyRound :size="12" aria-hidden="true" />
-              系统 git 凭证
-            </span>
           </div>
         </div>
       </header>
@@ -545,37 +534,10 @@ const {
   color: var(--warn);
 }
 
-.repo-toolbar__btn.is-active .repo-toolbar__badge:not(.repo-toolbar__badge--warn),
+.repo-toolbar__btn.is-active .repo-toolbar__badge,
 .repo-toolbar__btn--push-ready .repo-toolbar__badge:not(.repo-toolbar__badge--warn) {
   background: color-mix(in srgb, var(--accent-text) 18%, transparent);
-  color: inherit;
-}
-
-.repo-header__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  margin-top: 4px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.repo-header__meta span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.repo-header__meta span:not(:last-child)::after {
-  content: "·";
-  margin-left: 8px;
-  color: var(--text-faint);
-}
-
-.repo-header__credential {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .toolbar,
@@ -1179,16 +1141,6 @@ const {
 
   .repo-toolbar__command-select {
     max-width: 100%;
-  }
-
-  .repo-header__meta {
-    display: grid;
-    gap: 2px;
-  }
-
-  .repo-header__meta span:not(:last-child)::after {
-    content: "";
-    margin-left: 0;
   }
 
   .branch-row,
