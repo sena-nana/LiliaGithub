@@ -402,7 +402,7 @@ function onBranchSelect(event: Event) {
   height: 40px;
   padding: 4px;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-subtle);
 }
 
@@ -430,7 +430,7 @@ function onBranchSelect(event: Event) {
   height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   text-decoration: none;
@@ -467,7 +467,7 @@ function onBranchSelect(event: Event) {
   max-width: 100%;
   height: 32px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
 }
@@ -1122,7 +1122,7 @@ function onBranchSelect(event: Event) {
   min-height: 34px;
   padding: 7px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
   color: var(--text);

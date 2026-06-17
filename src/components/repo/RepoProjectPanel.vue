@@ -1426,7 +1426,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   max-height: 100%;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev);
 }
 
@@ -1492,7 +1492,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   min-height: 32px;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   text-align: left;
   color: var(--text);
@@ -1524,7 +1524,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   overflow: auto;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev);
   box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.4);
 }
@@ -1537,7 +1537,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   height: auto;
   min-height: 30px;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   text-align: left;
 }
 
@@ -1638,7 +1638,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   overflow: auto;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev);
 }
 
@@ -1649,7 +1649,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   gap: 8px;
   min-height: 34px;
   padding: 7px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   text-align: left;
   color: var(--text-muted);
 }
@@ -1826,7 +1826,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
 .project-settings-switches {
   display: grid;
   border: 1px solid var(--border-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-subtle);
   overflow: hidden;
 }
@@ -1886,7 +1886,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   gap: 12px;
   padding: 12px;
   border: 1px solid var(--err-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--err-soft) 52%, var(--bg-subtle));
 }
 
@@ -1933,7 +1933,7 @@ function launchButtonTitle(candidate: ProjectLaunchCandidate) {
   width: min(520px, 92vw);
   padding: 14px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev);
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
 }
