@@ -122,7 +122,10 @@ function onBranchSelect(event: Event) {
                 v-for="tab in toolbarTabs"
                 :key="tab.key"
                 class="repo-toolbar__btn"
-                :class="{ 'is-active': activeTab === tab.key }"
+                :class="{
+                  'is-active': activeTab === tab.key,
+                  'repo-toolbar__btn--counted': tab.key === 'changes' && changes.length,
+                }"
                 role="tab"
                 :aria-selected="activeTab === tab.key"
                 :to="repoRoute(repoId, tab.key)"
@@ -132,7 +135,7 @@ function onBranchSelect(event: Event) {
                 <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
                 <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
                 <History v-else :size="17" aria-hidden="true" />
-                <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge">
+                <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge repo-toolbar__badge--warn">
                   {{ changes.length }}
                 </span>
               </RouterLink>
@@ -219,6 +222,7 @@ function onBranchSelect(event: Event) {
               <button
                 type="button"
                 class="repo-toolbar__btn"
+                :class="{ 'repo-toolbar__btn--counted': behindCount }"
                 title="拉取"
                 aria-label="拉取"
                 :disabled="actionRunning || hasConflicts"
@@ -240,6 +244,10 @@ function onBranchSelect(event: Event) {
                 v-else
                 type="button"
                 class="repo-toolbar__btn"
+                :class="{
+                  'repo-toolbar__btn--counted': aheadCount,
+                  'repo-toolbar__btn--push-ready': aheadCount,
+                }"
                 title="推送"
                 aria-label="推送"
                 :disabled="actionRunning || !aheadCount"
@@ -436,6 +444,13 @@ function onBranchSelect(event: Event) {
   text-decoration: none;
 }
 
+.repo-toolbar__btn--counted {
+  gap: 5px;
+  width: auto;
+  min-width: 32px;
+  padding: 0 7px;
+}
+
 .repo-toolbar__btn:hover {
   background: var(--bg-hover);
   color: var(--text);
@@ -443,6 +458,16 @@ function onBranchSelect(event: Event) {
 
 .repo-toolbar__btn.is-active {
   background: var(--accent);
+  color: var(--accent-text);
+}
+
+.repo-toolbar__btn--push-ready {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.repo-toolbar__btn--push-ready:hover {
+  background: var(--accent-strong);
   color: var(--accent-text);
 }
 
@@ -524,10 +549,15 @@ function onBranchSelect(event: Event) {
   line-height: 1;
 }
 
-.repo-toolbar__btn .repo-toolbar__badge {
-  position: absolute;
-  right: -5px;
-  top: -5px;
+.repo-toolbar__badge--warn {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+}
+
+.repo-toolbar__btn.is-active .repo-toolbar__badge:not(.repo-toolbar__badge--warn),
+.repo-toolbar__btn--push-ready .repo-toolbar__badge:not(.repo-toolbar__badge--warn) {
+  background: color-mix(in srgb, var(--accent-text) 18%, transparent);
+  color: inherit;
 }
 
 .repo-header__meta {
