@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
@@ -174,6 +174,19 @@ describe("单应用模板工具链", () => {
     );
     expect(scrollbars).toContain("export function installGlobalScrollbarVisibility()");
     expect(scrollbars).toContain("export function uninstallGlobalScrollbarVisibility()");
+  });
+
+  it("主界面高度由 CSS 网格约束，不依赖加载后测量卡片高度", () => {
+    const home = readFileSync(resolve("src/pages/Home.vue"), "utf-8").replace(/\r\n/g, "\n");
+
+    expect(existsSync(resolve("src/composables/useRepoOverviewCardHeight.ts"))).toBe(false);
+    expect(home).not.toContain("useRepoOverviewCardHeight");
+    expect(home).not.toContain("--repo-overview-card-max-height");
+    expect(home).toContain('<section class="home-page"');
+    expect(home).toContain("grid-template-rows: auto auto minmax(0, 1fr);");
+    expect(home).toContain("overflow: hidden;");
+    expect(home).toContain("grid-template-rows: minmax(0, 1fr);");
+    expect(home).toContain(".home-scroll-card__body {\n  flex: 1 1 auto;");
   });
 
   it("GitHub Issue 模板不包含 Lilia 业务字段", () => {

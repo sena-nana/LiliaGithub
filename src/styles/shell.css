@@ -3,11 +3,13 @@
   --sidebar-easing: cubic-bezier(0.2, 0.8, 0.2, 1);
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
-  grid-template-rows: 36px 1fr;
+  grid-template-rows: 36px minmax(0, 1fr);
   grid-template-areas:
     "titlebar titlebar"
     "secondary main";
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg-elev);
   position: relative;
   transition: grid-template-columns 0.24s var(--sidebar-easing);
@@ -19,6 +21,8 @@
 
 .shell__main {
   grid-area: main;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 20px 24px;
   background: var(--bg);

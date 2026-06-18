@@ -21,7 +21,6 @@ import {
 } from "@lucide/vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
-import { useRepoOverviewCardHeight } from "../composables/useRepoOverviewCardHeight";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoActionErrorDetailForRepo, syncErrorDetailsByRepoId } from "../composables/workspace/state";
 import {
@@ -194,11 +193,6 @@ const cloneRepoLoadingMore = ref(false);
 const cloneRepoLoadError = ref<string | null>(null);
 const cloneNextRepoPage = ref<number | null>(null);
 const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
-const {
-  containerRef: repoOverviewGrid,
-  maxHeight: repoOverviewCardMaxHeight,
-  schedule: scheduleRepoOverviewCardHeightUpdate,
-} = useRepoOverviewCardHeight();
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
 const GITHUB_TIMELINE_FETCH_CONCURRENCY = 2;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
@@ -307,7 +301,6 @@ onUnmounted(() => {
   githubTimelineGeneration += 1;
   clearGitHubTimelineActivationHooks();
   resetGitHubTimelineQueues();
-  repoOverviewGrid.value = null;
 });
 
 watch(
@@ -321,11 +314,9 @@ watch(
       return;
     }
     if (restoreGitHubOverviewSnapshot()) {
-      void nextTick(scheduleRepoOverviewCardHeightUpdate);
       return;
     }
     void loadGitHubRepoStatus();
-    void nextTick(scheduleRepoOverviewCardHeightUpdate);
   },
   { immediate: true },
 );
@@ -1415,7 +1406,7 @@ function bulkOperationDescription(operation: BulkOperation) {
 </script>
 
 <template>
-  <section :class="{ 'setup-page': !workspace.isReady.value }">
+  <section class="home-page" :class="{ 'setup-page': !workspace.isReady.value }">
     <div v-if="!workspace.isReady.value" class="setup-screen">
       <div class="page-header">
         <div>
@@ -1762,11 +1753,7 @@ function bulkOperationDescription(operation: BulkOperation) {
         </div>
       </div>
 
-      <div
-        ref="repoOverviewGrid"
-        class="repo-overview-grid"
-        :style="{ '--repo-overview-card-max-height': repoOverviewCardMaxHeight }"
-      >
+      <div class="repo-overview-grid">
         <div ref="githubTimelineCard" class="card github-timeline-card">
           <div class="repo-status-heading">
             <h2>
@@ -2020,9 +2007,23 @@ function bulkOperationDescription(operation: BulkOperation) {
 </template>
 
 <style scoped>
+.home-page {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home-page > .page-header {
+  margin-bottom: 0;
+}
+
 .overview-grid {
   display: grid;
   gap: 12px;
+  min-height: 0;
 }
 
 .setup-screen {
@@ -2035,7 +2036,8 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .setup-page {
-  min-height: 100%;
+  display: flex;
+  min-height: 0;
 }
 
 .setup-screen .page-header {
@@ -2049,6 +2051,10 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .overview-grid {
   grid-template-columns: 1.3fr 1fr;
+}
+
+.overview-grid > .card {
+  margin-bottom: 0;
 }
 
 .setup-step {
@@ -2451,13 +2457,14 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .repo-overview-grid {
-  --repo-overview-card-max-height: calc(100dvh - 96px);
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-  grid-template-rows: minmax(0, auto);
-  align-items: start;
+  grid-template-rows: minmax(0, 1fr);
   gap: 12px;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .github-timeline-card,
@@ -2466,12 +2473,14 @@ function bulkOperationDescription(operation: BulkOperation) {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  max-height: var(--repo-overview-card-max-height);
+  height: 100%;
+  overflow: hidden;
   margin-bottom: 0;
   padding-bottom: 10px;
 }
 
 .home-scroll-card__body {
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -2809,11 +2818,6 @@ function bulkOperationDescription(operation: BulkOperation) {
   .repo-overview-grid,
   .sync-columns {
     grid-template-columns: 1fr;
-  }
-
-  .github-timeline-card,
-  .repo-status-card {
-    max-height: min(520px, var(--repo-overview-card-max-height));
   }
 
 .repo-status-row {
