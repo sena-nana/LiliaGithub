@@ -1767,6 +1767,47 @@ fn infers_js_script_by_lockfile_and_priority() {
 }
 
 #[test]
+fn infers_all_root_package_scripts_in_priority_order() {
+    let path = temp_dir("all-root-scripts");
+    write_package(
+        &path,
+        r#"{
+              "packageManager": "yarn@4.14.1",
+              "scripts": {
+                "verify": "yarn test && yarn build",
+                "build": "vite build",
+                "preview": "vite preview",
+                "docs:dev": "vitepress dev docs",
+                "tauri:dev": "node scripts/tauri-dev.mjs",
+                "dev": "vite",
+                "predev": "node scripts/check-package-manager.mjs"
+              }
+            }"#,
+    );
+
+    let candidates = infer_launch_candidates(&path);
+    let commands = candidates
+        .iter()
+        .map(|candidate| candidate.command.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        commands,
+        vec![
+            "yarn tauri:dev",
+            "yarn dev",
+            "yarn preview",
+            "yarn docs:dev",
+            "yarn build",
+            "yarn predev",
+            "yarn verify"
+        ]
+    );
+    assert!(candidates.iter().any(|candidate| candidate.label == "verify"));
+    assert!(candidates.iter().all(|candidate| candidate.kind == "package"));
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn infers_npm_dev_and_cargo_fallback() {
     let js_path = temp_dir("npm-dev");
     write_package(

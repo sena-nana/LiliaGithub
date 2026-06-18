@@ -150,6 +150,7 @@ const {
                 :icon="SquareTerminal"
                 :display-label="launchCommandText"
                 placeholder="选择启动指令"
+                overflow-hint="更多命令，向下滚动"
                 placement="bottom"
                 button-class="repo-toolbar__btn repo-toolbar__command-select"
                 menu-width="280px"

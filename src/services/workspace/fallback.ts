@@ -1,3 +1,4 @@
+import packageJson from "../../../package.json";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -36,6 +37,8 @@ import type {
   WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
+
+const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
 
 let fallbackRepos: RepoSummary[] = [
   {
@@ -1422,15 +1425,47 @@ function fallbackLaunchConfig(repoId: string): ProjectLaunchConfig | null {
   };
 }
 
+function fallbackPackageManagerName(field: unknown): "yarn" | "pnpm" | "npm" {
+  if (typeof field === "string") {
+    const name = field.split("@")[0]?.trim();
+    if (name === "yarn" || name === "pnpm" || name === "npm") {
+      return name;
+    }
+  }
+  return "npm";
+}
+
+function fallbackPackageScriptCommand(packageManager: "yarn" | "pnpm" | "npm", script: string) {
+  return packageManager === "npm" ? `npm run ${script}` : `${packageManager} ${script}`;
+}
+
+function fallbackRootScriptRank(script: string) {
+  const index = ROOT_SCRIPT_PRIORITY.indexOf(script as typeof ROOT_SCRIPT_PRIORITY[number]);
+  return index === -1 ? ROOT_SCRIPT_PRIORITY.length : index;
+}
+
+function createLiliaGithubLaunchCandidates(): ProjectLaunchCandidate[] {
+  const scripts = packageJson.scripts;
+  if (!scripts || typeof scripts !== "object") {
+    return [];
+  }
+  const packageManager = fallbackPackageManagerName(packageJson.packageManager);
+  return Object.keys(scripts)
+    .sort((left, right) => fallbackRootScriptRank(left) - fallbackRootScriptRank(right) || left.localeCompare(right))
+    .map((script) => ({
+      command: fallbackPackageScriptCommand(packageManager, script),
+      label: script,
+      hint: "package.json script",
+      kind: "package",
+      cwd: null,
+    }));
+}
+
 function fallbackLaunchCandidates(repoId: string): ProjectLaunchCandidate[] {
   const config = fallbackLaunchConfig(repoId);
   const command = config?.command.trim();
   const base = repoId === "LiliaGithub"
-    ? [
-        { command: "yarn tauri:dev", label: "tauri:dev", hint: "package.json script", kind: "package", cwd: null },
-        { command: "yarn dev", label: "dev", hint: "package.json script", kind: "package", cwd: null },
-        { command: "yarn start", label: "start", hint: "package.json script", kind: "package", cwd: null },
-      ]
+    ? createLiliaGithubLaunchCandidates()
     : [
         { command: "yarn dev", label: "dev", hint: "package.json script", kind: "package", cwd: null },
         { command: "cargo run", label: "cargo run", hint: "Cargo.toml", kind: "cargo", cwd: null },

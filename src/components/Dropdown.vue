@@ -15,6 +15,7 @@ const props = defineProps<{
   icon?: unknown;
   placeholder?: string;
   displayLabel?: string;
+  overflowHint?: string;
   placement?: "top" | "bottom";
   disabled?: boolean;
   buttonClass?: string;
@@ -30,6 +31,7 @@ const root = ref<HTMLElement | null>(null);
 const current = computed(() =>
   props.options.find((option) => option.value === props.modelValue),
 );
+const showOverflowHint = computed(() => Boolean(props.overflowHint) && props.options.length > 8);
 
 function toggle() {
   if (props.disabled) return;
@@ -91,26 +93,34 @@ onBeforeUnmount(() => {
 
     <div
       v-if="open"
-      class="dd__menu"
-      :class="placement === 'bottom' ? 'dd__menu--bottom' : 'dd__menu--top'"
+      class="dd__menu-shell"
+      :class="placement === 'bottom' ? 'dd__menu-shell--bottom' : 'dd__menu-shell--top'"
       :style="menuWidth ? { width: menuWidth } : undefined"
-      role="listbox"
-      :aria-label="menuLabel"
     >
-      <button
-        v-for="option in options"
-        :key="String(option.value)"
-        type="button"
-        class="dd__item"
-        :class="{ 'is-active': option.value === modelValue }"
-        :disabled="option.disabled"
-        role="option"
-        :aria-selected="option.value === modelValue"
-        @click="pick(option)"
+      <div
+        class="dd__menu"
+        :class="{ 'has-overflow-hint': showOverflowHint }"
+        role="listbox"
+        :aria-label="menuLabel"
       >
-        <span class="dd__item-label">{{ option.label }}</span>
-        <span v-if="option.hint" class="dd__item-hint">{{ option.hint }}</span>
-      </button>
+        <button
+          v-for="option in options"
+          :key="String(option.value)"
+          type="button"
+          class="dd__item"
+          :class="{ 'is-active': option.value === modelValue }"
+          :disabled="option.disabled"
+          role="option"
+          :aria-selected="option.value === modelValue"
+          @click="pick(option)"
+        >
+          <span class="dd__item-label">{{ option.label }}</span>
+          <span v-if="option.hint" class="dd__item-hint">{{ option.hint }}</span>
+        </button>
+      </div>
+      <div v-if="showOverflowHint" class="dd__overflow-hint" aria-hidden="true">
+        {{ props.overflowHint }}
+      </div>
     </div>
   </div>
 </template>
@@ -153,9 +163,21 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-.dd__menu {
+.dd__menu-shell {
   position: absolute;
   left: 0;
+  z-index: 20;
+}
+
+.dd__menu-shell--top {
+  bottom: calc(100% + 6px);
+}
+
+.dd__menu-shell--bottom {
+  top: calc(100% + 6px);
+}
+
+.dd__menu {
   min-width: 180px;
   max-width: 280px;
   background: var(--bg-elev);
@@ -166,17 +188,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0;
   box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
-  z-index: 20;
   max-height: 280px;
   overflow: auto;
 }
 
-.dd__menu--top {
-  bottom: calc(100% + 6px);
-}
-
-.dd__menu--bottom {
-  top: calc(100% + 6px);
+.dd__menu.has-overflow-hint {
+  padding-bottom: 26px;
 }
 
 .dd__item {
@@ -231,5 +248,19 @@ onBeforeUnmount(() => {
   font-size: 10px;
   line-height: 1.4;
   color: var(--text-faint);
+}
+
+.dd__overflow-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  left: 8px;
+  padding-top: 12px;
+  background: linear-gradient(180deg, transparent 0%, var(--bg-elev) 72%);
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: center;
+  pointer-events: none;
 }
 </style>
