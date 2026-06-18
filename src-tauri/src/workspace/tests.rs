@@ -783,6 +783,7 @@ fn repo_branches_marks_local_branches_unprotected() {
     assert!(branches
         .iter()
         .all(|branch| !branch.remote && !branch.protected));
+    assert!(branches.iter().all(|branch| branch.tip_timestamp.is_some()));
 }
 
 #[test]
@@ -802,6 +803,40 @@ fn repo_branches_hides_remote_namespace_refs() {
         .collect::<Vec<_>>();
 
     assert!(!names.contains(&"origin"));
+}
+
+#[test]
+fn repo_branches_reports_checked_out_worktrees() {
+    let path = temp_dir("branches-worktrees");
+    init_git_repo(&path);
+
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["branch", "-M", "main"]);
+    run_git(&path, &["checkout", "-b", "feature/worktree"]);
+    fs::write(path.join("feature.txt"), "feature").unwrap();
+    run_git(&path, &["add", "feature.txt"]);
+    run_git(&path, &["commit", "-m", "feature"]);
+    run_git(&path, &["checkout", "main"]);
+    let linked = temp_dir("linked-worktree");
+    run_git(
+        &path,
+        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+    );
+
+    let branches = repo_branches(&path);
+    let main = branches.iter().find(|branch| branch.name == "main").unwrap();
+    let feature = branches
+        .iter()
+        .find(|branch| branch.name == "feature/worktree")
+        .unwrap();
+
+    assert_eq!(main.checked_out_worktree_paths, vec![path.to_string_lossy().to_string()]);
+    assert_eq!(
+        feature.checked_out_worktree_paths,
+        vec![linked.to_string_lossy().to_string()]
+    );
 }
 
 #[test]
@@ -830,6 +865,78 @@ fn delete_branch_blocks_current_branch_and_safely_deletes_merged_branch() {
     assert!(!branches
         .iter()
         .any(|branch| !branch.remote && branch.name == "feature"));
+}
+
+#[test]
+fn checkout_remote_branch_creates_tracking_local_branch() {
+    let remote = temp_dir("remote-branch-origin");
+    init_git_repo(&remote);
+    fs::write(remote.join("file.txt"), "root").unwrap();
+    run_git(&remote, &["add", "file.txt"]);
+    run_git(&remote, &["commit", "-m", "root"]);
+    run_git(&remote, &["branch", "-M", "main"]);
+    run_git(&remote, &["checkout", "-b", "feature/notice-update"]);
+    fs::write(remote.join("feature.txt"), "feature").unwrap();
+    run_git(&remote, &["add", "feature.txt"]);
+    run_git(&remote, &["commit", "-m", "feature"]);
+    run_git(&remote, &["checkout", "main"]);
+
+    let path = temp_dir("checkout-remote-branch");
+    run_git(
+        &std::env::temp_dir(),
+        &["clone", remote.to_string_lossy().as_ref(), path.to_string_lossy().as_ref()],
+    );
+    run_git(&path, &["config", "user.email", "test@example.com"]);
+    run_git(&path, &["config", "user.name", "Test User"]);
+
+    let summary = checkout_branch_at(&path, &path, "origin/feature/notice-update").unwrap();
+
+    assert_eq!(
+        summary.current_branch.as_deref(),
+        Some("feature/notice-update")
+    );
+    assert!(local_branch_exists(&path, "feature/notice-update"));
+    assert_eq!(
+        current_branch_upstream(&path).as_deref(),
+        Some("origin/feature/notice-update")
+    );
+}
+
+#[test]
+fn create_branch_supports_checkout_and_plain_branch_modes() {
+    let path = temp_dir("create-branch");
+    init_git_repo(&path);
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["branch", "-M", "main"]);
+
+    let created = create_branch_at(&path, &path, "feature/one", "main", false).unwrap();
+    assert_eq!(created.current_branch.as_deref(), Some("main"));
+    assert!(local_branch_exists(&path, "feature/one"));
+
+    let checked_out = create_branch_at(&path, &path, "feature/two", "main", true).unwrap();
+    assert_eq!(checked_out.current_branch.as_deref(), Some("feature/two"));
+    assert!(local_branch_exists(&path, "feature/two"));
+}
+
+#[test]
+fn rename_branch_supports_current_and_non_current_local_branch() {
+    let path = temp_dir("rename-branch");
+    init_git_repo(&path);
+    fs::write(path.join("file.txt"), "root").unwrap();
+    run_git(&path, &["add", "file.txt"]);
+    run_git(&path, &["commit", "-m", "root"]);
+    run_git(&path, &["branch", "-M", "main"]);
+    run_git(&path, &["branch", "feature/old"]);
+
+    let renamed_non_current = rename_branch_at(&path, &path, "feature/old", "feature/new").unwrap();
+    assert_eq!(renamed_non_current.current_branch.as_deref(), Some("main"));
+    assert!(local_branch_exists(&path, "feature/new"));
+
+    let renamed_current = rename_branch_at(&path, &path, "main", "trunk").unwrap();
+    assert_eq!(renamed_current.current_branch.as_deref(), Some("trunk"));
+    assert!(local_branch_exists(&path, "trunk"));
 }
 
 #[test]
@@ -1429,6 +1536,8 @@ fn maps_github_branches_with_default_and_protection() {
     assert!(!main.current);
     assert!(main.protected);
     assert_eq!(main.ahead, 0);
+    assert_eq!(main.tip_timestamp, None);
+    assert!(main.checked_out_worktree_paths.is_empty());
     assert_eq!(main.behind, 0);
     assert_eq!(feature.name, "feature");
     assert!(feature.remote);

@@ -527,6 +527,16 @@ export async function checkout(repoId: string, branch: string) {
   await applyRepoMutationWithLanguageStats(repoId, () => service.checkoutBranch(repoId, branch));
 }
 
+export async function createBranch(repoId: string, name: string, fromRef: string, checkoutAfter: boolean) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutationWithLanguageStats(repoId, () => service.createBranch(repoId, name, fromRef, checkoutAfter));
+}
+
+export async function renameBranch(repoId: string, oldName: string, newName: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutationWithLanguageStats(repoId, () => service.renameBranch(repoId, oldName, newName));
+}
+
 export async function deleteBranch(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutationWithLanguageStats(repoId, () => service.deleteBranch(repoId, branch));

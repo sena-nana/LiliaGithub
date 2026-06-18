@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import {
   FolderOpen,
-  GitBranch,
   GitCompare,
   GitPullRequestArrow,
   History,
@@ -16,6 +15,7 @@ import {
   Upload,
 } from "@lucide/vue";
 import Dropdown from "../components/Dropdown.vue";
+import RepoBranchPicker from "../components/repo/RepoBranchPicker.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
 import RepoPushError from "../components/repo/RepoPushError.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
@@ -66,9 +66,8 @@ const {
   launchCommandOptions,
   activeLaunchValue,
   launchCommandText,
-  branchOptions,
+  branchItems,
   activeBranchName,
-  activeBranchValue,
   aheadCount,
   behindCount,
   load,
@@ -90,7 +89,12 @@ const {
   startLaunch,
   stopLaunch,
   selectLaunchCandidateByValue,
-  checkoutBranchByValue,
+  checkout,
+  createBranchFromRef,
+  renameBranchTo,
+  mergeBranch,
+  deleteBranch,
+  updateCurrentBranch,
   openCommit,
   closeCommit,
   openFolder,
@@ -127,19 +131,19 @@ const {
                   {{ changes.length }}
                 </span>
               </RouterLink>
-              <Dropdown
+              <RepoBranchPicker
                 v-if="!remoteOnly"
-                :model-value="activeBranchValue"
-                :options="branchOptions"
-                :icon="GitBranch"
                 :display-label="activeBranchName"
-                placeholder="detached"
-                placement="bottom"
+                :branches="branchItems"
                 button-class="repo-toolbar__btn repo-toolbar__branch-select"
-                menu-width="220px"
-                menu-label="分支候选"
-                :disabled="actionRunning || !branchOptions.length"
-                @update:model-value="checkoutBranchByValue"
+                :disabled="actionRunning || !branchItems.length"
+                :action-running="actionRunning"
+                @checkout="checkout"
+                @update-current="updateCurrentBranch"
+                @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
+                @rename-branch="renameBranchTo($event.oldName, $event.newName)"
+                @merge-branch="mergeBranch"
+                @delete-branch="deleteBranch"
               />
             </nav>
 
@@ -665,14 +669,6 @@ const {
   display: grid;
 }
 
-.branch-row {
-  border-top: 1px solid var(--border-soft);
-}
-
-.branch-row:first-of-type {
-  border-top: 0;
-}
-
 .change-badge {
   display: inline-flex;
   align-items: center;
@@ -865,24 +861,6 @@ const {
   min-height: 160px;
   display: flex;
   align-items: center;
-}
-
-.branch-row {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 0;
-}
-
-.branch-row span {
-  display: block;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.branch-row strong {
-  overflow-wrap: anywhere;
 }
 
 .history-list {
@@ -1143,11 +1121,6 @@ const {
     max-width: 100%;
   }
 
-  .branch-row,
-  .branch-row button {
-    grid-column: auto;
-  }
-
   .conflict-hunk__columns {
     grid-template-columns: 1fr;
   }
@@ -1166,8 +1139,5 @@ const {
     width: calc(100vw - 64px);
   }
 
-  .branch-row button {
-    justify-self: start;
-  }
 }
 </style>

@@ -56,6 +56,22 @@ export function formatCompactRepoTime(timestamp: number) {
   });
 }
 
+export function formatRelativeRepoTime(timestamp: number | null | undefined, now = Date.now()) {
+  if (!timestamp) return "无提交";
+  const deltaMs = Math.max(0, now - timestamp * 1000);
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const month = 30 * day;
+  const year = 365 * day;
+  if (deltaMs < minute) return "刚刚";
+  if (deltaMs < hour) return `${Math.floor(deltaMs / minute)} 分钟前`;
+  if (deltaMs < day) return `${Math.floor(deltaMs / hour)} 小时前`;
+  if (deltaMs < month) return `${Math.floor(deltaMs / day)} 天前`;
+  if (deltaMs < year) return `${Math.floor(deltaMs / month)} 个月前`;
+  return `${Math.floor(deltaMs / year)} 年前`;
+}
+
 export function conflictStatusText(file: ConflictStatusSource) {
   if (file.binary) return "二进制 / 不可解析";
   if (!file.hunks.length) return "文件级处理";

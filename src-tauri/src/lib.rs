@@ -107,6 +107,8 @@ pub fn run() {
             workspace::repos::repo_push_with_system_git,
             workspace::settings::repo_use_default_token_auth,
             workspace::repos::repo_checkout_branch,
+            workspace::repos::repo_create_branch,
+            workspace::repos::repo_rename_branch,
             workspace::repos::repo_merge_branch,
             workspace::repos::repo_delete_branch,
             workspace::repos::repo_accept_conflict_file,

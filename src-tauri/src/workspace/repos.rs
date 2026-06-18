@@ -1255,12 +1255,38 @@ pub async fn repo_checkout_branch(
     run_blocking("切换分支", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
-        let branch = branch.trim();
-        if branch.is_empty() {
-            return Err("分支名不能为空".to_string());
-        }
-        git_command(&path, &["checkout", branch], None)?;
-        Ok(summarize_repo(&root, &path))
+        checkout_branch_at(&root, &path, &branch)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_create_branch(
+    app: AppHandle,
+    repo_id: String,
+    name: String,
+    from_ref: String,
+    checkout_after: bool,
+) -> Result<RepoSummary, String> {
+    run_blocking("创建分支", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        create_branch_at(&root, &path, &name, &from_ref, checkout_after)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_rename_branch(
+    app: AppHandle,
+    repo_id: String,
+    old_name: String,
+    new_name: String,
+) -> Result<RepoSummary, String> {
+    run_blocking("重命名分支", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        rename_branch_at(&root, &path, &old_name, &new_name)
     })
     .await
 }
@@ -2171,17 +2197,97 @@ pub(super) fn split_refs(value: &str) -> Vec<String> {
         .collect()
 }
 
+pub(super) fn worktree_branch_paths(path: &Path) -> HashMap<String, Vec<String>> {
+    let output = git_command_lossy(path, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+    let mut branches = HashMap::<String, Vec<String>>::new();
+
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("worktree ") {
+            if let (Some(path), Some(branch)) = (current_path.take(), current_branch.take()) {
+                branches.entry(branch).or_default().push(path);
+            }
+            current_path = Some(
+                normalize_worktree_display_path(
+                    &PathBuf::from(value.trim())
+                        .canonicalize()
+                        .unwrap_or_else(|_| PathBuf::from(value.trim())),
+                ),
+            );
+            current_branch = None;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("branch refs/heads/") {
+            current_branch = Some(value.trim().to_string());
+            continue;
+        }
+        if line.is_empty() {
+            if let (Some(path), Some(branch)) = (current_path.take(), current_branch.take()) {
+                branches.entry(branch).or_default().push(path);
+            }
+            current_path = None;
+            current_branch = None;
+        }
+    }
+
+    if let (Some(path), Some(branch)) = (current_path, current_branch) {
+        branches.entry(branch).or_default().push(path);
+    }
+
+    branches
+}
+
+fn normalize_worktree_display_path(path: &Path) -> String {
+    let raw = path.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        raw
+    }
+}
+
+pub(super) fn local_branch_short_name(remote_branch: &str) -> Option<String> {
+    let (_, tail) = remote_branch.split_once('/')?;
+    let trimmed = tail.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+pub(super) fn local_branch_exists(path: &Path, branch: &str) -> bool {
+    git_command_lossy(
+        path,
+        &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")],
+    )
+    .is_some()
+}
+
+pub(super) fn remote_branch_exists(path: &Path, branch: &str) -> bool {
+    git_command_lossy(
+        path,
+        &["show-ref", "--verify", "--quiet", &format!("refs/remotes/{branch}")],
+    )
+    .is_some()
+}
+
 pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
     let output = git_command_lossy(
         path,
         &[
             "branch",
             "--all",
-            "--format=%(HEAD)\x1f%(refname:short)\x1f%(upstream:short)\x1f%(upstream:track)",
+            "--format=%(HEAD)\x1f%(refname:short)\x1f%(upstream:short)\x1f%(upstream:track)\x1f%(committerdate:unix)",
         ],
     )
     .unwrap_or_default();
     let mut seen = HashSet::new();
+    let worktree_paths = worktree_branch_paths(path);
     output
         .lines()
         .filter_map(|line| {
@@ -2211,6 +2317,19 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
                 .map(ToOwned::to_owned);
             let track = parts.get(3).copied().unwrap_or("");
             let (ahead, behind) = parse_track(track);
+            let tip_timestamp = parts
+                .get(4)
+                .copied()
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .filter(|value| *value > 0);
+            let mut checked_out_worktree_paths = if remote {
+                Vec::new()
+            } else {
+                worktree_paths.get(&name).cloned().unwrap_or_default()
+            };
+            if current && checked_out_worktree_paths.is_empty() {
+                checked_out_worktree_paths.push(path.to_string_lossy().to_string());
+            }
             Some(BranchSummary {
                 name,
                 remote,
@@ -2219,9 +2338,77 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
                 ahead,
                 behind,
                 protected: false,
+                tip_timestamp,
+                checked_out_worktree_paths,
             })
         })
         .collect()
+}
+
+pub(super) fn checkout_branch_at(root: &Path, path: &Path, branch: &str) -> Result<RepoSummary, String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    if local_branch_exists(path, branch) {
+        git_command(path, &["checkout", branch], None)?;
+        return Ok(summarize_repo(root, path));
+    }
+    if remote_branch_exists(path, branch) {
+        if let Some(local_branch) = local_branch_short_name(branch) {
+            if local_branch_exists(path, &local_branch) {
+                git_command(path, &["checkout", &local_branch], None)?;
+            } else {
+                git_command(path, &["checkout", "-b", &local_branch, "--track", branch], None)?;
+            }
+            return Ok(summarize_repo(root, path));
+        }
+    }
+    git_command(path, &["checkout", branch], None)?;
+    Ok(summarize_repo(root, path))
+}
+
+pub(super) fn create_branch_at(
+    root: &Path,
+    path: &Path,
+    name: &str,
+    from_ref: &str,
+    checkout_after: bool,
+) -> Result<RepoSummary, String> {
+    let name = name.trim();
+    let from_ref = from_ref.trim();
+    if name.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    if from_ref.is_empty() {
+        return Err("基准分支不能为空".to_string());
+    }
+    if checkout_after {
+        git_command(path, &["checkout", "-b", name, from_ref], None)?;
+    } else {
+        git_command(path, &["branch", name, from_ref], None)?;
+    }
+    Ok(summarize_repo(root, path))
+}
+
+pub(super) fn rename_branch_at(
+    root: &Path,
+    path: &Path,
+    old_name: &str,
+    new_name: &str,
+) -> Result<RepoSummary, String> {
+    let old_name = old_name.trim();
+    let new_name = new_name.trim();
+    if old_name.is_empty() || new_name.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    let summary = summarize_repo(root, path);
+    if summary.current_branch.as_deref() == Some(old_name) {
+        git_command(path, &["branch", "-m", new_name], None)?;
+    } else {
+        git_command(path, &["branch", "-m", old_name, new_name], None)?;
+    }
+    Ok(summarize_repo(root, path))
 }
 
 pub(super) fn merge_branch_at(

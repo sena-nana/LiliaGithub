@@ -5,6 +5,7 @@ import {
   acceptConflictFile,
   checkout,
   commit,
+  createBranch,
   continueConflictOperation,
   hideRepo,
   markConflictFileResolved,
@@ -12,6 +13,7 @@ import {
   mergePull,
   pull,
   push,
+  renameBranch,
   useDefaultTokenAuthForRepo,
   refreshRepos,
   resolveConflictFile,
@@ -63,6 +65,8 @@ const service = {
   pushRepoWithSystemGit: vi.fn(),
   useDefaultTokenAuthForRepo: vi.fn(),
   checkoutBranch: vi.fn(),
+  createBranch: vi.fn(),
+  renameBranch: vi.fn(),
   deleteBranch: vi.fn(),
   acceptConflictFile: vi.fn(),
   resolveConflictFile: vi.fn(),
@@ -899,6 +903,23 @@ describe("workspace incremental refresh", () => {
     expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(4, initial.id);
     expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
     expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
+  });
+
+  it("单仓库创建和重命名分支后刷新当前仓库语言统计", async () => {
+    const initial = repoSummary("LiliaGithub", { currentBranch: "main" });
+    const updated = repoSummary("LiliaGithub", { currentBranch: "feature/renamed" });
+    state.repos = [initial];
+    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.createBranch.mockResolvedValue(updated);
+    service.renameBranch.mockResolvedValue(updated);
+
+    await createBranch(initial.id, "feature/new", "main", true);
+    await renameBranch(initial.id, "feature/new", "feature/renamed");
+
+    expect(service.createBranch).toHaveBeenCalledWith(initial.id, "feature/new", "main", true);
+    expect(service.renameBranch).toHaveBeenCalledWith(initial.id, "feature/new", "feature/renamed");
+    expect(service.getRepoDetail).toHaveBeenCalledTimes(2);
+    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(2);
   });
 
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {
