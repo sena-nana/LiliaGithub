@@ -52,6 +52,7 @@ const workspace = vi.hoisted(() => ({
   discoverRepos: vi.fn(),
   cloneRepo: vi.fn(),
   refreshRepos: vi.fn(),
+  cancelWorkspaceTask: vi.fn(),
   useDefaultTokenAuthForRepo: vi.fn(async (repoId: string) => {
     workspace.state.settings.systemGitRepoIds = workspace.state.settings.systemGitRepoIds.filter((id) => id !== repoId);
   }),
@@ -98,5 +99,98 @@ describe("RepositoriesSection", () => {
     await waitFor(() => {
       expect(workspace.useDefaultTokenAuthForRepo).toHaveBeenCalledWith("LiliaGithub");
     });
+  });
+
+  it("后台任务区展示状态并为执行中任务提供取消入口", async () => {
+    workspace.state.tasks = [
+      {
+        id: "task-running",
+        kind: "repoStatus",
+        priority: "high",
+        repoId: null,
+        status: "running",
+        message: "同步远端状态",
+        updatedAt: 1,
+      },
+      {
+        id: "task-error",
+        kind: "discoverRepos",
+        priority: "normal",
+        repoId: null,
+        status: "error",
+        message: "扫描失败",
+        updatedAt: 2,
+      },
+      {
+        id: "task-cancelled",
+        kind: "languageStats",
+        priority: "low",
+        repoId: "LiliaGithub",
+        status: "cancelled",
+        message: "已取消",
+        updatedAt: 3,
+      },
+    ];
+
+    let resolveCancel: (() => void) | null = null;
+    workspace.cancelWorkspaceTask.mockImplementation(async (taskId: string) => {
+      await new Promise<void>((resolve) => {
+        resolveCancel = () => {
+          workspace.state.tasks = workspace.state.tasks.map((task) => (
+            task.id === taskId ? { ...task, status: "cancelled", message: "已取消" } : task
+          ));
+          resolve();
+        };
+      });
+    });
+
+    render(RepositoriesSection);
+
+    const taskPanel = screen.getByText("后台任务").closest(".workspace-task-list");
+    if (!(taskPanel instanceof HTMLElement)) throw new Error("未找到后台任务区");
+    expect(within(taskPanel).getByText("执行中")).toBeInTheDocument();
+    expect(within(taskPanel).getByText("失败")).toBeInTheDocument();
+    expect(within(taskPanel).getAllByText("已取消").length).toBeGreaterThan(0);
+    expect(within(taskPanel).getAllByRole("button", { name: "取消" })).toHaveLength(1);
+
+    const cancelButton = within(taskPanel).getByRole("button", { name: "取消" });
+    await fireEvent.click(cancelButton);
+
+    expect(workspace.cancelWorkspaceTask).toHaveBeenCalledWith("task-running");
+    expect(within(taskPanel).getByRole("button", { name: "取消中" })).toBeDisabled();
+
+    resolveCancel?.();
+
+    await waitFor(() => {
+      expect(within(taskPanel).queryByRole("button", { name: "取消中" })).not.toBeInTheDocument();
+    });
+    expect(within(taskPanel).queryAllByRole("button", { name: "取消" })).toHaveLength(0);
+  });
+
+  it("后台任务取消失败时仅在任务行内显示错误", async () => {
+    workspace.state.tasks = [{
+      id: "task-running",
+      kind: "repoStatus",
+      priority: "high",
+      repoId: null,
+      status: "running",
+      message: "同步远端状态",
+      updatedAt: 1,
+    }];
+    workspace.cancelWorkspaceTask.mockRejectedValue(new Error("取消失败：任务已结束"));
+
+    render(RepositoriesSection);
+
+    const taskPanel = screen.getByText("后台任务").closest(".workspace-task-list");
+    if (!(taskPanel instanceof HTMLElement)) throw new Error("未找到后台任务区");
+
+    await fireEvent.click(within(taskPanel).getByRole("button", { name: "取消" }));
+
+    await waitFor(() => {
+      expect(within(taskPanel).getByText("Error: 取消失败：任务已结束")).toBeInTheDocument();
+    });
+    expect(screen.getByText("没有隐藏仓库。")).toBeInTheDocument();
+    expect(screen.queryByText("Error: 取消失败：任务已结束", { selector: ".repo-settings__error" })).toBeNull();
+    expect(within(taskPanel).getByRole("button", { name: "取消" })).toBeEnabled();
   });
 });

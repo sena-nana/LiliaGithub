@@ -275,6 +275,12 @@ export async function refreshWorkspaceTasks() {
   state.tasks = await service.listWorkspaceTasks();
 }
 
+export async function cancelWorkspaceTask(taskId: string) {
+  const service = await loadWorkspaceService();
+  await service.cancelWorkspaceTask(taskId);
+  await refreshWorkspaceTasks();
+}
+
 export async function refreshLanguageStatsForRepos(
   repoIds: string[],
   options: { silent?: boolean } = { silent: true },
