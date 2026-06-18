@@ -71,6 +71,7 @@ const props = defineProps<{
   actionRunning: boolean;
   launchRunning: boolean;
   remoteOnly?: boolean;
+  usingSystemGit?: boolean;
   activeGitTab: RepoRouteTab;
   changes: readonly RepoChange[];
   previewChange: RepoChange | null;
@@ -216,8 +217,11 @@ const mergeSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hi
   { key: "deleteBranchOnMerge", label: "合并后删分支", hint: "合并 Pull Request 后删除来源分支。" },
 ];
 
+const isSystemGitBlocked = computed(() => props.usingSystemGit === true && !props.remoteOnly);
+
 const githubUnavailableMessage = computed(() => {
   if (remoteDeleted.value) return "GitHub 远端仓库已删除，本地目录仍保留。";
+  if (isSystemGitBlocked.value) return "系统 Git 下暂不获取 GitHub 权限内容。";
   if (!props.repoFullName) return "当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。";
   return null;
 });
@@ -283,6 +287,12 @@ watch(() => props.repoFullName, () => {
   closeDeleteDialog();
   void loadGitHub();
   void loadActions();
+});
+
+watch(() => props.usingSystemGit, (usingSystemGit) => {
+  if (usingSystemGit && !props.remoteOnly) {
+    clearBlockedGitHubState();
+  }
 });
 
 watch([() => props.launchLogs.length, () => props.launchRunning], () => {
@@ -442,6 +452,10 @@ async function loadReadme() {
 async function loadGitHub() {
   const runId = ++githubLoadRunId;
   const repoFullName = props.repoFullName;
+  if (isSystemGitBlocked.value) {
+    clearBlockedGitHubState();
+    return;
+  }
   if (!repoFullName || remoteDeleted.value) {
     settings.value = null;
     issues.value = [];
@@ -470,6 +484,10 @@ async function loadGitHub() {
 async function loadIssues() {
   const runId = ++issueLoadRunId;
   const repoFullName = props.repoFullName;
+  if (isSystemGitBlocked.value) {
+    clearBlockedGitHubState();
+    return;
+  }
   if (!repoFullName || remoteDeleted.value) return;
   githubError.value = null;
   try {
@@ -485,6 +503,11 @@ async function loadIssues() {
 async function loadActions() {
   const runId = ++actionsLoadRunId;
   const repoFullName = props.repoFullName;
+  if (isSystemGitBlocked.value) {
+    clearBlockedGitHubState();
+    actionsLoading.value = false;
+    return;
+  }
   if (!repoFullName || remoteDeleted.value) {
     workflowRuns.value = [];
     actionsError.value = null;
@@ -527,6 +550,17 @@ function changedSettingsRequest(current: GitHubRepoManagement) {
   maybeSet("allowForking", settingsForm.allowForking, current.allowForking);
   maybeSet("webCommitSignoffRequired", settingsForm.webCommitSignoffRequired, current.webCommitSignoffRequired);
   return request;
+}
+
+function clearBlockedGitHubState() {
+  settings.value = null;
+  issues.value = [];
+  workflowRuns.value = [];
+  githubError.value = null;
+  actionsError.value = null;
+  cancelEditIssue();
+  focusedIssueNumber.value = null;
+  focusedRunId.value = null;
 }
 
 async function saveSettings() {
