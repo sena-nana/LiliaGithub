@@ -176,6 +176,11 @@ pub(super) fn normalize_git_remote_error(remote: &str, error: String) -> String 
     error
 }
 
+pub(super) fn should_retry_clone_with_system_git(remote: &str, error: &str) -> bool {
+    parse_github_remote(remote).is_some()
+        && (error.contains("当前 GitHub 绑定无权限") || error.contains("无法认证 GitHub 仓库"))
+}
+
 pub(super) fn origin_remote_url(path: &Path) -> Option<String> {
     git_command_lossy(path, &["remote", "get-url", "origin"]).filter(|value| !value.is_empty())
 }
@@ -900,12 +905,21 @@ pub async fn workspace_clone_repo(
         } else {
             None
         };
-        git_command(
-            &root,
-            &["clone", remote, directory.as_str()],
-            auth_header.as_deref(),
-        )
-        .map_err(|error| normalize_git_remote_error(remote, error))?;
+        let run_clone = |auth: Option<&str>| {
+            git_command(
+                &root,
+                &["clone", remote, directory.as_str()],
+                auth,
+            )
+            .map_err(|error| normalize_git_remote_error(remote, error))
+        };
+        if let Err(error) = run_clone(auth_header.as_deref()) {
+            if !should_retry_clone_with_system_git(remote, &error) {
+                return Err(error);
+            }
+            run_clone(None)?;
+            remember_repo_uses_system_git(&app, &target)?;
+        }
         let mut settings = load_settings(&app);
         add_managed_repo_id(&mut settings, repo_id(&root, &target));
         save_settings(&app, &settings)?;
