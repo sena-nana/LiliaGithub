@@ -204,6 +204,23 @@ pre code {
   opacity: 1;
 }
 
+.sb-menu-pop-enter-active,
+.sb-menu-pop-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.sb-menu-pop-leave-active {
+  pointer-events: none;
+}
+
+.sb-menu-pop-enter-from,
+.sb-menu-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
 .global-scrollbar-overlay--vertical {
   width: 12px;
 }

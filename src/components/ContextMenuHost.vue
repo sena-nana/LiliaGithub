@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import {
+  finalizeClosedContextMenu,
   isContextMenuItemPending,
   selectContextMenuItem,
   useContextMenu,
   type ContextMenuItem,
 } from "../composables/useContextMenu";
+import {
+  clampAnchoredMenuPosition,
+  createAnchoredMenuPosition,
+  resolveMenuTransformOrigin,
+  SB_MENU_POP_TRANSITION_MS,
+} from "../composables/menuMotion";
 
 const { state } = useContextMenu();
 
 const menuEl = ref<HTMLElement | null>(null);
-const pos = ref({ x: 0, y: 0 });
+const rendered = ref(false);
+const pos = ref(createAnchoredMenuPosition(0, 0));
+const origin = ref({ x: 0, y: 0 });
 
 function displayLabel(item: ContextMenuItem) {
   return isContextMenuItemPending(item) ? item.confirmLabel : item.label;
@@ -20,47 +29,86 @@ function isDanger(item: ContextMenuItem) {
   return item.danger || isContextMenuItemPending(item);
 }
 
+async function updateGeometry() {
+  const initialPos = createAnchoredMenuPosition(
+    state.x,
+    state.y,
+    state.anchorX,
+    state.anchorY,
+  );
+  pos.value = initialPos;
+  origin.value = resolveMenuTransformOrigin(initialPos);
+  await nextTick();
+  const element = menuEl.value;
+  if (!element) return;
+  const clampedPos = clampAnchoredMenuPosition(
+    initialPos,
+    element.offsetWidth,
+    element.offsetHeight,
+  );
+  pos.value = clampedPos;
+  origin.value = resolveMenuTransformOrigin(
+    clampedPos,
+    element.offsetWidth,
+    element.offsetHeight,
+  );
+}
+
+function onAfterLeave() {
+  finalizeClosedContextMenu();
+}
+
 watch(
-  () => state.open,
-  async (open) => {
-    if (!open) return;
-    pos.value = { x: state.x, y: state.y };
-    await nextTick();
-    const element = menuEl.value;
-    if (!element) return;
-    const x = Math.max(4, Math.min(state.x, window.innerWidth - element.offsetWidth - 4));
-    const y = Math.max(4, Math.min(state.y, window.innerHeight - element.offsetHeight - 4));
-    pos.value = { x, y };
+  () => [state.openSeq, state.open] as const,
+  ([, open]) => {
+    if (!open) {
+      rendered.value = false;
+      return;
+    }
+    rendered.value = true;
+    void updateGeometry();
   },
+  { immediate: true },
 );
 </script>
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="state.open"
-      ref="menuEl"
-      class="ctx-menu"
-      role="menu"
-      :style="{ left: `${pos.x}px`, top: `${pos.y}px` }"
+    <Transition
+      name="sb-menu-pop"
+      :duration="SB_MENU_POP_TRANSITION_MS"
+      @after-leave="onAfterLeave"
     >
-      <button
-        v-for="(item, index) in state.items"
-        :key="item.id ?? index"
-        type="button"
-        class="ctx-menu__item"
-        :class="{
-          'ctx-menu__item--danger': isDanger(item),
-          'ctx-menu__item--pending': isContextMenuItemPending(item),
+      <div
+        v-if="rendered"
+        ref="menuEl"
+        class="ctx-menu"
+        role="menu"
+        :style="{
+          left: `${pos.x}px`,
+          top: `${pos.y}px`,
+          '--sb-menu-origin-x': `${origin.x}px`,
+          '--sb-menu-origin-y': `${origin.y}px`,
         }"
-        :disabled="item.disabled"
-        role="menuitem"
-        @click="selectContextMenuItem(item)"
       >
-        <component v-if="item.icon" :is="item.icon" :size="13" aria-hidden="true" />
-        <span class="ctx-menu__label">{{ displayLabel(item) }}</span>
-      </button>
-    </div>
+        <button
+          v-for="(item, index) in state.items"
+          :key="item.id ?? index"
+          type="button"
+          class="ctx-menu__item"
+          :class="{
+            'ctx-menu__item--danger': isDanger(item),
+            'ctx-menu__item--pending': isContextMenuItemPending(item),
+          }"
+          :disabled="item.disabled"
+          role="menuitem"
+          @click="selectContextMenuItem(item)"
+        >
+          <component v-if="item.icon" :is="item.icon" :size="13" aria-hidden="true" />
+          <span class="ctx-menu__label">{{ displayLabel(item) }}</span>
+        </button>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -80,6 +128,8 @@ watch(
   flex-direction: column;
   gap: 1px;
   user-select: none;
+  transform-origin: var(--sb-menu-origin-x, 0px) var(--sb-menu-origin-y, 0px);
+  will-change: transform, opacity;
 }
 
 .ctx-menu__item {

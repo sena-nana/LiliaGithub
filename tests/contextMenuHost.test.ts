@@ -8,6 +8,7 @@ import {
   openContextMenuAt,
   type ContextMenuItem,
 } from "../src/composables/useContextMenu";
+import { SB_MENU_POP_TRANSITION_MS } from "../src/composables/menuMotion";
 import { vContextMenu } from "../src/directives/contextMenu";
 
 function renderWithTemplate(template: string, setup: () => Record<string, unknown>) {
@@ -22,8 +23,15 @@ function renderWithTemplate(template: string, setup: () => Record<string, unknow
       directives: {
         contextMenu: vContextMenu,
       },
+      stubs: {
+        transition: false,
+      },
     },
   });
+}
+
+async function waitForMenuLeave() {
+  await vi.advanceTimersByTimeAsync(SB_MENU_POP_TRANSITION_MS + 50);
 }
 
 describe("ContextMenuHost", () => {
@@ -38,6 +46,7 @@ describe("ContextMenuHost", () => {
 
   afterEach(() => {
     closeContextMenu();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -138,6 +147,7 @@ describe("ContextMenuHost", () => {
   });
 
   it("Esc 会关闭菜单", async () => {
+    vi.useFakeTimers();
     renderWithTemplate(
       `<button data-testid="target" v-context-menu="items">目标</button>`,
       () => ({
@@ -149,7 +159,9 @@ describe("ContextMenuHost", () => {
     expect(await screen.findByRole("menu")).toBeInTheDocument();
 
     await fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.getByRole("menuitem", { name: "打开" })).toBeInTheDocument();
 
+    await waitForMenuLeave();
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
@@ -162,5 +174,28 @@ describe("ContextMenuHost", () => {
       left: "40px",
       top: "52px",
     });
+  });
+
+  it("退场期间重新打开时应显示新的菜单内容", async () => {
+    vi.useFakeTimers();
+    render(ContextMenuHost, {
+      global: {
+        stubs: {
+          transition: false,
+        },
+      },
+    });
+
+    openContextMenuAt(48, 56, [{ id: "old-item", label: "旧菜单", onSelect: vi.fn() }]);
+    expect(await screen.findByRole("menuitem", { name: "旧菜单" })).toBeInTheDocument();
+
+    closeContextMenu();
+    openContextMenuAt(92, 88, [{ id: "new-item", label: "新菜单", onSelect: vi.fn() }]);
+
+    expect(await screen.findByRole("menuitem", { name: "新菜单" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "旧菜单" })).not.toBeInTheDocument();
+
+    await waitForMenuLeave();
+    expect(screen.getByRole("menuitem", { name: "新菜单" })).toBeInTheDocument();
   });
 });
