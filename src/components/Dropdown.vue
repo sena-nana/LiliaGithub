@@ -15,7 +15,6 @@ const props = defineProps<{
   icon?: unknown;
   placeholder?: string;
   displayLabel?: string;
-  overflowHint?: string;
   placement?: "top" | "bottom";
   disabled?: boolean;
   buttonClass?: string;
@@ -31,7 +30,6 @@ const root = ref<HTMLElement | null>(null);
 const current = computed(() =>
   props.options.find((option) => option.value === props.modelValue),
 );
-const showOverflowHint = computed(() => Boolean(props.overflowHint) && props.options.length > 8);
 
 function toggle() {
   if (props.disabled) return;
@@ -99,7 +97,6 @@ onBeforeUnmount(() => {
     >
       <div
         class="dd__menu"
-        :class="{ 'has-overflow-hint': showOverflowHint }"
         role="listbox"
         :aria-label="menuLabel"
       >
@@ -117,9 +114,6 @@ onBeforeUnmount(() => {
           <span class="dd__item-label">{{ option.label }}</span>
           <span v-if="option.hint" class="dd__item-hint">{{ option.hint }}</span>
         </button>
-      </div>
-      <div v-if="showOverflowHint" class="dd__overflow-hint" aria-hidden="true">
-        {{ props.overflowHint }}
       </div>
     </div>
   </div>
@@ -192,10 +186,6 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
-.dd__menu.has-overflow-hint {
-  padding-bottom: 26px;
-}
-
 .dd__item {
   display: flex;
   align-items: center;
@@ -248,19 +238,5 @@ onBeforeUnmount(() => {
   font-size: 10px;
   line-height: 1.4;
   color: var(--text-faint);
-}
-
-.dd__overflow-hint {
-  position: absolute;
-  right: 8px;
-  bottom: 6px;
-  left: 8px;
-  padding-top: 12px;
-  background: linear-gradient(180deg, transparent 0%, var(--bg-elev) 72%);
-  color: var(--text-faint);
-  font-size: 10px;
-  line-height: 1.3;
-  text-align: center;
-  pointer-events: none;
 }
 </style>

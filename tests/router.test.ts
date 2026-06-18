@@ -1480,7 +1480,6 @@ describe("基础路由", () => {
     expect(await within(launchGroup).findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /^preview/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /^verify/ })).toBeInTheDocument();
-    expect(screen.getByText("更多命令，向下滚动")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("option", { name: /^verify/ }));
     await waitFor(() => {
       expect(within(launchGroup).getByRole("button", { name: /yarn verify/ })).toBeInTheDocument();
