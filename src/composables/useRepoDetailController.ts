@@ -257,9 +257,9 @@ export function useRepoDetailController() {
   );
   const launchCommandText = computed(() => launchConfig.value?.command?.trim() || "选择启动指令");
   const pullStrategyOptions = [
-    { value: "pull", label: "Pull", hint: "仅 fast-forward pull" },
-    { value: "merge", label: "Merge pull", hint: "fetch 后 merge @{u}" },
-    { value: "rebase", label: "Rebase pull", hint: "fetch 后 rebase @{u}" },
+    { value: "pull", label: "仅快进拉取" },
+    { value: "merge", label: "抓取后合并上游" },
+    { value: "rebase", label: "抓取后变基上游" },
   ] as const;
   const activePullStrategyValue = computed(() => pullStrategy.value);
   const branchActionRunning = computed(() =>

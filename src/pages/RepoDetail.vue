@@ -78,7 +78,6 @@ const {
   activeBranchName,
   aheadCount,
   behindCount,
-  load,
   focusChange,
   focusConflict,
   pickConflictHunk,
@@ -239,30 +238,30 @@ const {
               >
                 <RefreshCw :size="17" aria-hidden="true" />
               </button>
-              <Dropdown
-                :model-value="activePullStrategyValue"
-                :options="pullStrategyOptions"
-                :icon="CloudDownload"
-                display-label="拉取策略"
-                placement="bottom"
-                button-class="repo-toolbar__btn repo-toolbar__btn--counted repo-toolbar__pull-strategy"
-                menu-width="220px"
-                menu-label="拉取策略"
-                :disabled="actionRunning || hasConflicts"
-                @update:model-value="selectPullStrategy"
-              />
-              <button
-                type="button"
-                class="repo-toolbar__btn"
-                :class="{ 'repo-toolbar__btn--counted': behindCount }"
-                title="拉取"
-                aria-label="拉取"
-                :disabled="actionRunning || hasConflicts"
-                @click="runSelectedPullStrategy"
-              >
-                <CloudDownload :size="17" aria-hidden="true" />
-                <span v-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
-              </button>
+              <div class="repo-toolbar__pull-group">
+                <button
+                  type="button"
+                  class="repo-toolbar__btn repo-toolbar__pull-main"
+                  :class="{ 'repo-toolbar__btn--counted': behindCount }"
+                  title="拉取"
+                  aria-label="拉取"
+                  :disabled="actionRunning || hasConflicts"
+                  @click="runSelectedPullStrategy"
+                >
+                  <CloudDownload :size="17" aria-hidden="true" />
+                  <span v-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
+                </button>
+                <Dropdown
+                  :model-value="activePullStrategyValue"
+                  :options="pullStrategyOptions"
+                  placement="bottom"
+                  button-class="repo-toolbar__btn repo-toolbar__pull-strategy-toggle"
+                  menu-width="144px"
+                  menu-label="拉取策略"
+                  :disabled="actionRunning || hasConflicts"
+                  @update:model-value="selectPullStrategy"
+                />
+              </div>
               <button
                 v-if="hasConflicts"
                 type="button"
@@ -479,6 +478,16 @@ const {
   margin-left: auto;
 }
 
+.repo-toolbar__pull-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
 .repo-toolbar__btn {
   position: relative;
   display: inline-flex;
@@ -519,8 +528,50 @@ const {
   padding: 0 7px;
 }
 
-.repo-toolbar__pull-strategy .chat-chip__label {
-  max-width: 72px;
+.repo-toolbar__pull-main {
+  width: 28px;
+  min-width: 28px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.repo-toolbar__pull-main.repo-toolbar__btn--counted {
+  width: auto;
+  min-width: 32px;
+  padding: 0 5px;
+}
+
+.repo-toolbar__pull-strategy-toggle.chat-chip {
+  width: 22px;
+  min-width: 22px;
+  max-width: 22px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.repo-toolbar__pull-strategy-toggle .chat-chip__label {
+  display: none;
+}
+
+.repo-toolbar__pull-group > .dd {
+  position: static;
+}
+
+.repo-toolbar__pull-group .dd__menu {
+  right: 0;
+  left: auto;
+  min-width: 144px;
+  max-width: min(144px, calc(100vw - 16px));
+  translate: 0;
+}
+
+.repo-toolbar__pull-group .dd__item {
+  padding: 3px 9px;
+}
+
+.repo-toolbar__pull-group .dd__item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .repo-toolbar .chat-chip.repo-toolbar__btn {
@@ -568,6 +619,25 @@ const {
 .repo-toolbar .chat-chip.repo-toolbar__btn.is-disabled {
   color: var(--text-faint);
   cursor: default;
+}
+
+.repo-toolbar__pull-group:hover,
+.repo-toolbar__pull-group:focus-within,
+.repo-toolbar__pull-group:has(.repo-toolbar__pull-strategy-toggle.is-open) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.repo-toolbar__pull-group:hover .repo-toolbar__btn,
+.repo-toolbar__pull-group:focus-within .repo-toolbar__btn,
+.repo-toolbar__pull-group:has(.repo-toolbar__pull-strategy-toggle.is-open) .repo-toolbar__btn {
+  color: inherit;
+}
+
+.repo-toolbar__pull-group .repo-toolbar__btn:hover,
+.repo-toolbar .repo-toolbar__pull-group .chat-chip.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
+.repo-toolbar .repo-toolbar__pull-group .chat-chip.repo-toolbar__btn.is-open {
+  background: transparent;
 }
 
 .repo-toolbar .chat-chip.repo-toolbar__btn .chat-chip__label {
