@@ -67,6 +67,7 @@ const {
   activeLaunchValue,
   launchCommandText,
   branchItems,
+  branchActionRunning,
   activeBranchName,
   aheadCount,
   behindCount,
@@ -132,12 +133,15 @@ const {
                 </span>
               </RouterLink>
               <RepoBranchPicker
-                v-if="!remoteOnly"
+                v-if="branchItems.length"
                 :display-label="activeBranchName"
                 :branches="branchItems"
                 button-class="repo-toolbar__btn repo-toolbar__branch-select"
-                :disabled="actionRunning || !branchItems.length"
-                :action-running="actionRunning"
+                :disabled="branchActionRunning || !branchItems.length"
+                :action-running="branchActionRunning"
+                :allow-remote-checkout="!remoteOnly"
+                :allow-remote-create="!remoteOnly"
+                :allow-remote-delete="remoteOnly || Boolean(summary?.githubFullName)"
                 @checkout="checkout"
                 @update-current="updateCurrentBranch"
                 @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"

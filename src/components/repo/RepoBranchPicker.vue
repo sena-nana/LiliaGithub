@@ -17,6 +17,7 @@ type RepoBranchPickerItem = {
   canonicalName: string;
   displayName: string;
   sourceLabel: string;
+  defaultBranch?: boolean;
   remote: boolean;
   current: boolean;
   upstream: string | null;
@@ -38,6 +39,9 @@ const props = defineProps<{
   disabled?: boolean;
   actionRunning?: boolean;
   buttonClass?: string;
+  allowRemoteCheckout?: boolean;
+  allowRemoteCreate?: boolean;
+  allowRemoteDelete?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -83,12 +87,17 @@ const filteredGroups = computed(() => {
     .filter((section) => section.items.length > 0);
 });
 
+const remoteCheckoutEnabled = computed(() => props.allowRemoteCheckout !== false);
+const remoteCreateEnabled = computed(() => props.allowRemoteCreate !== false);
+const remoteDeleteEnabled = computed(() => props.allowRemoteDelete === true);
+
 function branchDisplayLabel(branch: RepoBranchPickerItem) {
-  return branch.remote ? `${branch.displayName} (${branch.sourceLabel})` : branch.displayName;
+  if (!branch.remote) return branch.displayName;
+  return branch.sourceLabel ? `${branch.displayName} (${branch.sourceLabel})` : branch.displayName;
 }
 
 function branchAriaLabel(branch: RepoBranchPickerItem) {
-  return branchDisplayLabel(branch);
+  return branch.defaultBranch ? `${branchDisplayLabel(branch)}（默认分支）` : branchDisplayLabel(branch);
 }
 
 function toggle() {
@@ -131,7 +140,12 @@ onBeforeUnmount(() => {
 });
 
 function pickBranch(branch: RepoBranchPickerItem) {
-  if (props.disabled || props.actionRunning || branch.current) return;
+  if (
+    props.disabled ||
+    props.actionRunning ||
+    branch.current ||
+    (branch.remote && !remoteCheckoutEnabled.value)
+  ) return;
   closePicker();
   emit("checkout", branch.canonicalName);
 }
@@ -215,16 +229,37 @@ function branchMenu(branch: RepoBranchPickerItem) {
         }),
       ];
     }
-    return [
-      branchMenuItem(`checkout:${branch.canonicalName}`, "检出", GitBranch, () => pickBranch(branch)),
-      branchMenuItem(`create:${branch.canonicalName}`, "基于此创建本地分支…", GitBranchPlus, () => openCreateDialog(branch)),
-    ];
+    const items: ContextMenuItem[] = [];
+    if (remoteCheckoutEnabled.value) {
+      items.push(branchMenuItem(`checkout:${branch.canonicalName}`, "检出", GitBranch, () => pickBranch(branch)));
+    }
+    if (remoteCreateEnabled.value) {
+      items.push(
+        branchMenuItem(
+          `create:${branch.canonicalName}`,
+          "基于此创建本地分支…",
+          GitBranchPlus,
+          () => openCreateDialog(branch),
+        ),
+      );
+    }
+    if (remoteDeleteEnabled.value) {
+      items.push(
+        branchMenuItem(`delete:${branch.canonicalName}`, "删除", Trash2, () => emit("delete-branch", branch.canonicalName), {
+          danger: true,
+          disabled: branch.defaultBranch || branch.protected,
+          confirmLabel: "确认删除远程分支？再点一次",
+        }),
+      );
+    }
+    return items;
   };
 }
 
 function branchTitle(branch: RepoBranchPickerItem) {
   return [
     branchDisplayLabel(branch),
+    branch.defaultBranch ? "默认分支" : "",
     branch.remote ? `ref: ${branch.canonicalName}` : "",
     branch.upstream ? `upstream: ${branch.upstream}` : "",
     branch.worktreePathsLabel ? `worktree:\n${branch.worktreePathsLabel}` : "",
@@ -278,6 +313,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
               :class="{
                 'is-current': branch.current,
                 'is-remote': branch.remote,
+                'is-passive': branch.remote && !remoteCheckoutEnabled,
               }"
               :aria-selected="branch.current"
               :aria-label="branchAriaLabel(branch)"
@@ -289,7 +325,8 @@ function branchTitle(branch: RepoBranchPickerItem) {
                 <GitBranch v-else :size="14" aria-hidden="true" />
               </span>
               <span class="branch-picker__row-name">{{ branch.displayName }}</span>
-              <span v-if="branch.remote" class="branch-picker__row-source">{{ branch.sourceLabel }}</span>
+              <span v-if="branch.remote && branch.sourceLabel" class="branch-picker__row-source">{{ branch.sourceLabel }}</span>
+              <span v-if="branch.defaultBranch" class="branch-picker__row-source branch-picker__row-source--default">默认</span>
               <span class="branch-picker__row-time">{{ branch.relativeTime }}</span>
               <span
                 v-if="branch.checkedOutInWorktree && !branch.remote"
@@ -533,6 +570,10 @@ function branchTitle(branch: RepoBranchPickerItem) {
   background: var(--bg-hover);
 }
 
+.branch-picker__row.is-passive {
+  cursor: default;
+}
+
 .branch-picker__row-icon,
 .branch-picker__row-worktree {
   display: inline-flex;
@@ -571,6 +612,11 @@ function branchTitle(branch: RepoBranchPickerItem) {
   font-size: 10px;
   line-height: 1.4;
   white-space: nowrap;
+}
+
+.branch-picker__row-source--default {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  color: var(--accent);
 }
 
 .branch-picker__row-time {
