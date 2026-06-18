@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
@@ -12,16 +12,16 @@ import {
   GitPullRequestArrow,
   Info,
   LoaderCircle,
-  Lock,
   Radar,
   RefreshCw,
   RotateCw,
   Search,
   ShieldCheck,
-  Sparkles,
   X,
 } from "@lucide/vue";
+import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
+import { useRepoOverviewCardHeight } from "../composables/useRepoOverviewCardHeight";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoActionErrorDetailForRepo, syncErrorDetailsByRepoId } from "../composables/workspace/state";
 import {
@@ -166,7 +166,6 @@ const cloneDirectoryName = ref("");
 const cloneTouchedDirectory = ref(false);
 const cloneBusy = ref(false);
 const cloneError = ref<string | null>(null);
-const cloneInput = ref<HTMLInputElement | null>(null);
 const cloneBindingStatus = ref<GitHubBindingStatus | null>(null);
 const cloneRepoItems = ref<GitHubRepoSummary[]>([]);
 const cloneRepoDropdownOpen = ref(false);
@@ -175,8 +174,11 @@ const cloneRepoLoadingMore = ref(false);
 const cloneRepoLoadError = ref<string | null>(null);
 const cloneNextRepoPage = ref<number | null>(null);
 const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
-const repoOverviewGrid = ref<HTMLElement | null>(null);
-const repoOverviewCardMaxHeight = ref("calc(100dvh - 96px)");
+const {
+  containerRef: repoOverviewGrid,
+  maxHeight: repoOverviewCardMaxHeight,
+  schedule: scheduleRepoOverviewCardHeightUpdate,
+} = useRepoOverviewCardHeight();
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
@@ -257,45 +259,15 @@ const githubTimelineNodes = computed<TimelineDisplayNode[]>(() =>
     .map(toGitHubTimelineDisplayNode),
 );
 
-let repoOverviewHeightFrame = 0;
 let githubIssuesPendingCount = 0;
 let githubWorkflowRunsPendingCount = 0;
 let githubTimelineGeneration = 0;
-
-function updateRepoOverviewCardHeight() {
-  const grid = repoOverviewGrid.value;
-  if (!grid) return;
-  const bottomPadding = window.innerWidth <= 900 ? 12 : 20;
-  const { top } = grid.getBoundingClientRect();
-  const rowGap = window.innerWidth <= 900 ? 12 : 0;
-  const availableHeight = Math.floor(window.innerHeight - top - bottomPadding - rowGap);
-  repoOverviewCardMaxHeight.value = `${Math.max(160, availableHeight)}px`;
-}
-
-function scheduleRepoOverviewCardHeightUpdate() {
-  if (repoOverviewHeightFrame) return;
-  repoOverviewHeightFrame = window.requestAnimationFrame(() => {
-    repoOverviewHeightFrame = 0;
-    updateRepoOverviewCardHeight();
-  });
-}
-
-onMounted(() => {
-  scheduleRepoOverviewCardHeightUpdate();
-  window.addEventListener("resize", scheduleRepoOverviewCardHeightUpdate);
-  window.addEventListener("scroll", scheduleRepoOverviewCardHeightUpdate, true);
-});
 
 onUnmounted(() => {
   githubTimelineGeneration += 1;
   githubIssuesPendingCount = 0;
   githubWorkflowRunsPendingCount = 0;
-  window.removeEventListener("resize", scheduleRepoOverviewCardHeightUpdate);
-  window.removeEventListener("scroll", scheduleRepoOverviewCardHeightUpdate, true);
-  if (repoOverviewHeightFrame) {
-    window.cancelAnimationFrame(repoOverviewHeightFrame);
-    repoOverviewHeightFrame = 0;
-  }
+  repoOverviewGrid.value = null;
 });
 
 watch(
@@ -1105,8 +1077,6 @@ async function openCloneDialog() {
   } catch (err) {
     cloneError.value = String(err);
   }
-  await nextTick();
-  cloneInput.value?.focus();
 }
 
 function closeCloneDialog() {
@@ -1161,6 +1131,11 @@ function clearSelectedCloneRepoIfNeeded() {
   if (cloneSelectedRepo.value && cloneSelectedRepo.value.fullName !== cloneQueryTrimmed.value) {
     cloneSelectedRepo.value = null;
   }
+}
+
+function useDirectCloneTarget() {
+  cloneSelectedRepo.value = null;
+  cloneRepoDropdownOpen.value = false;
 }
 
 function openCloneRepoDropdown() {
@@ -1683,120 +1658,36 @@ async function syncRepo(repo: RepoSummary) {
       </div>
     </template>
 
-    <div v-if="cloneOpen" class="modal-backdrop modal-backdrop--top" role="presentation">
-      <form class="clone-dialog" role="dialog" aria-modal="true" aria-label="克隆仓库" @submit.prevent="submitClone">
-        <div class="clone-dialog__header">
-          <h2>克隆仓库</h2>
-          <button type="button" class="repo-icon-btn" aria-label="关闭" title="关闭" :disabled="cloneBusy" @click="closeCloneDialog">
-            <X :size="14" aria-hidden="true" />
-          </button>
-        </div>
-        <label v-if="!cloneGitHubBound">
-          <span>远端 URL</span>
-          <input
-            ref="cloneInput"
-            v-model="cloneRemoteUrl"
-            type="text"
-            placeholder="https://github.com/user/repo.git"
-            autofocus
-          />
-        </label>
-        <div v-else class="clone-field">
-          <span>GitHub 仓库</span>
-          <div class="clone-repo-picker">
-            <Search :size="13" aria-hidden="true" />
-            <input
-              ref="cloneInput"
-              v-model="cloneRemoteUrl"
-              type="text"
-              placeholder="搜索仓库，或直接输入 owner/repo"
-              autocomplete="off"
-              spellcheck="false"
-              @focus="openCloneRepoDropdown"
-              @input="handleCloneRepoInput"
-              @keydown.down.prevent="openCloneRepoDropdown"
-            />
-          </div>
-          <div v-if="cloneRepoDropdownOpen" class="clone-repo-menu" role="listbox">
-            <template v-if="filteredCloneRepos.length">
-              <button
-                v-for="repo in filteredCloneRepos"
-                :key="repo.id"
-                type="button"
-                class="clone-repo-item"
-                :class="{ 'is-active': cloneSelectedRepo?.id === repo.id }"
-                role="option"
-                :aria-selected="cloneSelectedRepo?.id === repo.id"
-                @click="selectCloneRepo(repo)"
-              >
-                <span class="clone-repo-item__name">{{ repo.fullName }}</span>
-                <span class="clone-repo-item__meta">
-                  <Lock v-if="repo.private" :size="11" aria-hidden="true" />
-                  {{ repo.private ? "私有" : "公开" }}
-                </span>
-              </button>
-              <button
-                v-if="cloneNextRepoPage && !cloneQueryTrimmed"
-                type="button"
-                class="clone-repo-more"
-                :disabled="cloneRepoLoadingMore"
-                @click="maybeLoadMoreCloneRepos"
-              >
-                <LoaderCircle v-if="cloneRepoLoadingMore" :size="12" aria-hidden="true" class="sb-spin" />
-                加载更多
-              </button>
-            </template>
-            <button
-              v-else-if="cloneDirectGitHubRepo"
-              type="button"
-              class="clone-repo-item"
-              role="option"
-              aria-selected="false"
-              @click="cloneSelectedRepo = null; cloneRepoDropdownOpen = false"
-            >
-              <span class="clone-repo-item__name">直接克隆 {{ cloneDirectGitHubRepo }}</span>
-              <span class="clone-repo-item__meta">
-                <Sparkles :size="11" aria-hidden="true" />
-                手动输入
-              </span>
-            </button>
-            <p v-else-if="cloneRepoLoadError" class="clone-repo-empty">{{ cloneRepoLoadError }}</p>
-            <p v-else-if="cloneRepoLoading" class="clone-repo-empty">正在加载仓库...</p>
-            <p v-else class="clone-repo-empty">没有匹配仓库</p>
-          </div>
-          <p v-if="cloneBindingStatus?.binding" class="clone-dialog__hint">
-            当前绑定账号：<code>{{ cloneBindingStatus.binding.login }}</code>
-          </p>
-        </div>
-        <label>
-          <span>目录名（可选）</span>
-          <input
-            v-model="cloneDirectoryName"
-            type="text"
-            placeholder="默认从 URL 推导"
-            @input="cloneTouchedDirectory = true"
-          />
-        </label>
-        <div v-if="cloneError" class="clone-dialog__error-row">
-          <p class="clone-dialog__error">{{ cloneError }}</p>
-          <button
-            v-if="cloneBindingExpired"
-            type="button"
-            class="ghost"
-            @click="openGitHubBindingSettings"
-          >
-            重新绑定 GitHub
-          </button>
-        </div>
-        <div class="clone-dialog__actions">
-          <button type="button" class="ghost" :disabled="cloneBusy" @click="closeCloneDialog">取消</button>
-          <button type="submit" class="primary" :disabled="!canSubmitClone">
-            <LoaderCircle v-if="cloneBusy" :size="14" aria-hidden="true" class="sb-spin" />
-            克隆
-          </button>
-        </div>
-      </form>
-    </div>
+    <HomeCloneDialog
+      v-if="cloneOpen"
+      :busy="cloneBusy"
+      :can-submit="canSubmitClone"
+      :error="cloneError"
+      :binding-expired="cloneBindingExpired"
+      :git-hub-bound="cloneGitHubBound"
+      :binding-status="cloneBindingStatus"
+      :remote-url="cloneRemoteUrl"
+      :directory-name="cloneDirectoryName"
+      :repo-dropdown-open="cloneRepoDropdownOpen"
+      :filtered-repos="filteredCloneRepos"
+      :repo-loading="cloneRepoLoading"
+      :repo-loading-more="cloneRepoLoadingMore"
+      :repo-load-error="cloneRepoLoadError"
+      :next-repo-page="cloneNextRepoPage"
+      :selected-repo="cloneSelectedRepo"
+      :direct-repo="cloneDirectGitHubRepo"
+      @close="closeCloneDialog"
+      @submit="submitClone"
+      @open-settings="openGitHubBindingSettings"
+      @load-more="maybeLoadMoreCloneRepos"
+      @open-repo-dropdown="openCloneRepoDropdown"
+      @handle-repo-input="handleCloneRepoInput"
+      @select-repo="selectCloneRepo"
+      @update-remote-url="cloneRemoteUrl = $event"
+      @update-directory-name="cloneDirectoryName = $event"
+      @mark-directory-touched="cloneTouchedDirectory = true"
+      @clear-selected-repo="useDirectCloneTarget"
+    />
 
     <div v-if="workspace.state.bulkPreview?.operation === 'pull'" class="modal-backdrop" role="presentation">
       <div class="modal" role="dialog" aria-modal="true" aria-label="批量同步预检">
@@ -2576,169 +2467,6 @@ async function syncRepo(repo: RepoSummary) {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px;
-}
-
-.clone-dialog {
-  width: min(420px, calc(100vw - 48px));
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
-}
-
-.clone-dialog__header,
-.clone-dialog__actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.clone-dialog h2 {
-  margin: 0;
-  font-size: 14px;
-}
-
-.clone-dialog label {
-  display: grid;
-  gap: 6px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.clone-field {
-  position: relative;
-  display: grid;
-  gap: 6px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.clone-dialog input {
-  width: 100%;
-}
-
-.clone-repo-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 9px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text-faint);
-}
-
-.clone-repo-picker input {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.clone-repo-menu {
-  position: absolute;
-  top: 56px;
-  left: 0;
-  right: 0;
-  z-index: 2;
-  max-height: 220px;
-  overflow: auto;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg-elev);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.24);
-}
-
-.clone-repo-item,
-.clone-repo-more {
-  width: 100%;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-}
-
-.clone-repo-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 8px;
-  text-align: left;
-}
-
-.clone-repo-item:hover,
-.clone-repo-item.is-active,
-.clone-repo-more:hover {
-  background: var(--bg-hover);
-}
-
-.clone-repo-item__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.clone-repo-item__meta {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.clone-repo-empty {
-  margin: 0;
-  padding: 10px 8px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.clone-repo-more {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 7px 8px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.clone-dialog__hint {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.clone-dialog__error {
-  margin: 0;
-  color: var(--err);
-  font-size: 12px;
-}
-
-.clone-dialog__error-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.clone-dialog__error-row .ghost {
-  flex-shrink: 0;
-}
-
-.clone-dialog__actions {
-  justify-content: flex-end;
 }
 
 .modal__header,
