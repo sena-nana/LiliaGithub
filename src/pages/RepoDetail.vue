@@ -312,6 +312,7 @@ const {
           :launch-running="launchRunning"
           @hide-terminal="launchTerminalVisible = false"
           :remote-only="remoteOnly"
+          :using-system-git="usingSystemGit"
           :project-tab="activeProjectTab"
           :project-issue-number="activeProjectIssue"
           :project-run-id="activeProjectRun"

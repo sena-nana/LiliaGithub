@@ -400,7 +400,11 @@ export function useRepoDetailController() {
     } catch (err) {
       actionError.value = String(err);
     }
-    await loadGitHubBranches(summary.value?.githubFullName ?? null);
+    if (usingSystemGit.value) {
+      resetGitHubBranchState();
+    } else {
+      await loadGitHubBranches(summary.value?.githubFullName ?? null);
+    }
     try {
       await workspace.loadLaunch(repoId.value);
     } catch (err) {
@@ -415,6 +419,10 @@ export function useRepoDetailController() {
 
   async function loadGitHubBranches(repoFullName: string | null) {
     if (!repoFullName) return;
+    if (usingSystemGit.value) {
+      resetGitHubBranchState();
+      return;
+    }
     githubBranchLoading.value = true;
     githubBranches.value = [];
     githubDefaultBranch.value = null;
@@ -431,6 +439,11 @@ export function useRepoDetailController() {
     } finally {
       if (repoFullName === githubRepoFullName.value) githubBranchLoading.value = false;
     }
+  }
+
+  function resetGitHubBranchState() {
+    githubBranches.value = [];
+    githubDefaultBranch.value = null;
   }
 
   async function refreshLaunch() {
