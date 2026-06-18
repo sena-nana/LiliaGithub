@@ -100,6 +100,11 @@ export function useRepoDetailController() {
       languageStats: [],
       workingTreeLanguageStats: [],
       languageStatsUpdatedAt: 0,
+      worktree: {
+        role: "standalone",
+        sharedRepoKey: fullName,
+        mainRepoId: null,
+      },
     };
   });
   const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);

@@ -46,6 +46,7 @@ import {
 } from "./homeOverviewCache";
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
+import { representativeReposByGitHubFullName, representativeReposBySharedGroup } from "../utils/repoWorktree";
 import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
 import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
@@ -207,7 +208,7 @@ const filteredCloneRepos = computed(() => {
 
 const languageOverview = computed<LanguageOverview>(() => {
   const totals = new Map<string, Omit<LanguageTotal, "language">>();
-  for (const repo of workspace.state.repos) {
+  for (const repo of representativeReposBySharedGroup(workspace.state.repos)) {
     const stats = languageScope.value === "workingTree" ? repo.workingTreeLanguageStats : repo.languageStats;
     for (const stat of stats) {
       const total = totals.get(stat.language) ?? { bytes: 0, repoBytes: new Map<string, number>() };
@@ -234,13 +235,7 @@ const languageOverview = computed<LanguageOverview>(() => {
   return { totalBytes, slices };
 });
 
-const localRepoByGitHubFullName = computed(() => {
-  const repos = new Map<string, RepoSummary>();
-  for (const repo of workspace.state.repos) {
-    if (repo.githubFullName) repos.set(repo.githubFullName, repo);
-  }
-  return repos;
-});
+const localRepoByGitHubFullName = computed(() => representativeReposByGitHubFullName(workspace.state.repos));
 
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {

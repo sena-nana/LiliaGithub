@@ -66,6 +66,50 @@ pub(super) fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, Stri
     Ok(target)
 }
 
+pub(super) fn remove_managed_repo_path(
+    root: &Path,
+    path: &Path,
+    worktree: &ResolvedRepoWorktree,
+) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("读取工作区路径失败：{e}"))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|e| format!("读取仓库路径失败：{e}"))?;
+    if canonical_path == canonical_root || !canonical_path.starts_with(&canonical_root) {
+        return Err("只能删除当前工作区内的仓库目录".to_string());
+    }
+    if worktree.summary.role == "linked" {
+        let command_path = worktree
+            .main_worktree_path
+            .as_deref()
+            .unwrap_or(canonical_path.as_path());
+        git_command(
+            command_path,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                canonical_path.to_string_lossy().as_ref(),
+            ],
+            None,
+        )
+        .map_err(|e| format!("删除工作树失败：{e}"))?;
+    } else {
+        fs::remove_dir_all(&canonical_path).map_err(|e| format!("删除本地仓库失败：{e}"))?;
+    }
+    Ok(())
+}
+
+pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo_id: &str) {
+    settings.managed_repo_ids.retain(|id| id != repo_id);
+    settings.hidden_repo_ids.retain(|id| id != repo_id);
+    settings.system_git_repo_ids.retain(|id| id != repo_id);
+    settings.project_launch_configs.remove(repo_id);
+    remove_local_contribution_cache(settings, repo_id);
+}
+
 #[tauri::command]
 pub fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings {
     load_settings(&app)
@@ -135,22 +179,10 @@ pub async fn workspace_delete_local_repo(
         }
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, normalized)?;
-        let canonical_root = root
-            .canonicalize()
-            .map_err(|e| format!("读取工作区路径失败：{e}"))?;
-        let canonical_path = path
-            .canonicalize()
-            .map_err(|e| format!("读取仓库路径失败：{e}"))?;
-        if canonical_path == canonical_root || !canonical_path.starts_with(&canonical_root) {
-            return Err("只能删除当前工作区内的仓库目录".to_string());
-        }
-        fs::remove_dir_all(&canonical_path).map_err(|e| format!("删除本地仓库失败：{e}"))?;
+        let worktree = resolve_repo_worktree(&root, &path);
+        remove_managed_repo_path(&root, &path, &worktree)?;
         let mut settings = load_settings(&app);
-        settings.managed_repo_ids.retain(|id| id != normalized);
-        settings.hidden_repo_ids.retain(|id| id != normalized);
-        settings.system_git_repo_ids.retain(|id| id != normalized);
-        settings.project_launch_configs.remove(normalized);
-        remove_local_contribution_cache(&mut settings, normalized);
+        prune_deleted_repo_settings(&mut settings, normalized);
         save_settings(&app, &settings)?;
         Ok(settings)
     })

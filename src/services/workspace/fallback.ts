@@ -72,6 +72,11 @@ let fallbackRepos: RepoSummary[] = [
       { language: "CSS", bytes: 10_000 },
     ],
     languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:LiliaGithub",
+      mainRepoId: null,
+    },
   },
   {
     id: "Lilia",
@@ -100,6 +105,11 @@ let fallbackRepos: RepoSummary[] = [
       { language: "CSS", bytes: 8_000 },
     ],
     languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:Lilia",
+      mainRepoId: null,
+    },
   },
 ];
 const baseFallbackRepos = fallbackRepos.map(cloneRepoSummary);
@@ -165,6 +175,7 @@ function cloneRepoSummary(repo: RepoSummary): RepoSummary {
     ...repo,
     languageStats: repo.languageStats.map((stat) => ({ ...stat })),
     workingTreeLanguageStats: repo.workingTreeLanguageStats.map((stat) => ({ ...stat })),
+    worktree: { ...repo.worktree },
   };
 }
 
@@ -999,6 +1010,11 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
       languageStats: [],
       workingTreeLanguageStats: [],
       languageStatsUpdatedAt: Date.now(),
+      worktree: {
+        role: "standalone",
+        sharedRepoKey: `repo:${name}`,
+        mainRepoId: null,
+      },
     };
     fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
     fallbackSettings = {
@@ -1070,6 +1086,7 @@ function lightweightRepoSummary(repo: RepoSummary): RepoSummary {
     languageStats: [],
     workingTreeLanguageStats: [],
     languageStatsUpdatedAt: 0,
+    worktree: { ...repo.worktree },
   };
 }
 

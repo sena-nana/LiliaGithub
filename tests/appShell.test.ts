@@ -161,6 +161,36 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("linked worktree 在侧边栏使用 worktree 图标", async () => {
+    const view = await renderAppShell("/");
+
+    state.repos = [
+      repoSummary("main-repo", {
+        name: "main-repo",
+        worktree: {
+          role: "main",
+          sharedRepoKey: "shared:repo",
+          mainRepoId: "main-repo",
+        },
+      }),
+      repoSummary("linked-repo", {
+        name: "linked-repo",
+        worktree: {
+          role: "linked",
+          sharedRepoKey: "shared:repo",
+          mainRepoId: "main-repo",
+        },
+      }),
+    ];
+
+    await waitFor(() => {
+      const linkedRow = sidebarRowForText(view.container, "linked-repo");
+      expect(linkedRow.querySelector(".sb-tree__repo-icon.is-worktree")).toBeInstanceOf(SVGElement);
+      const mainRow = sidebarRowForText(view.container, "main-repo");
+      expect(mainRow.querySelector(".sb-tree__repo-icon.is-worktree")).toBeNull();
+    });
+  });
+
   it("侧边栏底部显示打开过的远程仓库并可移除跳转", async () => {
     const view = await renderAppShell("/");
 

@@ -225,6 +225,14 @@ export interface LanguageStat {
   bytes: number;
 }
 
+export type RepoWorktreeRole = "standalone" | "main" | "linked";
+
+export interface RepoWorktree {
+  role: RepoWorktreeRole;
+  sharedRepoKey: string;
+  mainRepoId: string | null;
+}
+
 export interface RepoSummary {
   id: string;
   name: string;
@@ -244,6 +252,7 @@ export interface RepoSummary {
   languageStats: readonly LanguageStat[];
   workingTreeLanguageStats: readonly LanguageStat[];
   languageStatsUpdatedAt: number;
+  worktree: RepoWorktree;
 }
 
 export interface RepoRefreshSummaryOptions {

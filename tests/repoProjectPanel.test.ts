@@ -3,12 +3,14 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
+import { state } from "../src/composables/workspace/state";
 import { updateGitHubRepoSettings } from "../src/services/workspace/client";
 import type {
   GitHubRepoManagement,
   ProjectLaunchConfig,
   ProjectLaunchLog,
 } from "../src/services/workspace/types";
+import { repoSummary } from "./fixtures/workspace";
 
 const githubSettings: GitHubRepoManagement = {
   fullName: "sena-nana/remote-repo",
@@ -110,6 +112,7 @@ describe("RepoProjectPanel", () => {
     closeContextMenu();
     installContextMenu();
     vi.clearAllMocks();
+    state.repos = [];
   });
 
   it("本地仓库在命令运行页无日志时只显示空输出状态", async () => {
@@ -172,6 +175,26 @@ describe("RepoProjectPanel", () => {
       expect(view.getByText("删除 GitHub 远端仓库")).toBeInTheDocument();
     });
     expect(view.queryByText("删除本地仓库")).toBeNull();
+  });
+
+  it("linked worktree 在设置区显示删除工作树文案", async () => {
+    state.repos = [
+      repoSummary("local-repo", {
+        worktree: {
+          role: "linked",
+          sharedRepoKey: "shared:repo",
+          mainRepoId: "main-repo",
+        },
+      }),
+    ];
+    const view = await renderProjectPanel({ projectTab: "settings" });
+
+    await waitFor(() => {
+      expect(view.getByRole("button", { name: "删除工作树" })).toBeInTheDocument();
+    });
+    await fireEvent.click(view.getByRole("button", { name: "删除工作树" }));
+    expect(await view.findByRole("dialog", { name: "删除工作树" })).toBeInTheDocument();
+    expect(view.getByText(/从当前共享仓库移除工作树/)).toBeInTheDocument();
   });
 
   it("仓库设置分区展示并统一保存功能开关", async () => {

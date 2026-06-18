@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
-import { AlertCircle, EyeOff, FolderGit2, GitPullRequestArrow, LoaderCircle, Search, X } from "@lucide/vue";
+import { AlertCircle, EyeOff, FolderGit2, GitBranch, GitPullRequestArrow, LoaderCircle, Search, X } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -16,6 +16,7 @@ import {
   type RepoSummary,
 } from "../services/workspace";
 import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
+import { isLinkedWorktree } from "../utils/repoWorktree";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
 
@@ -242,7 +243,13 @@ function isRepoActive(repoId: string) {
           :title="repoDisplayTitle(repo)"
           v-context-menu="repoContextMenu(repo)"
         >
-          <FolderGit2 :size="14" aria-hidden="true" />
+          <component
+            :is="isLinkedWorktree(repo) ? GitBranch : FolderGit2"
+            :size="14"
+            aria-hidden="true"
+            class="sb-tree__repo-icon"
+            :class="{ 'is-worktree': isLinkedWorktree(repo) }"
+          />
           <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
           <span
             v-if="bulkSyncRunningRepoIds.has(repo.id)"

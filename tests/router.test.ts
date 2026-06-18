@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
@@ -122,6 +122,7 @@ function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChan
 
 describe("基础路由", () => {
   afterEach(async () => {
+    cleanup();
     vi.useRealTimers();
     const service = await import("../src/services/workspace");
     service.setFallbackStopLaunchOverrideForTests(null);

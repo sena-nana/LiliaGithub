@@ -16,6 +16,7 @@ import type {
   RepoConflictChoice,
   RepoSummary,
 } from "../../services/workspace";
+import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 const REPO_REFRESH_CONCURRENCY = 4;
@@ -159,7 +160,7 @@ function repoContributionScope(repo: {
 
 function repoContributionScopes() {
   return Array.from(new Set(
-    state.repos.map((repo) => repoContributionScope(repo)),
+    representativeReposBySharedGroup(state.repos).map((repo) => repoContributionScope(repo)),
   ));
 }
 

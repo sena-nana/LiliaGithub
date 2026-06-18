@@ -196,6 +196,7 @@ function mergeRepoSummary(current: RepoSummary, next: RepoSummary) {
       name: next.name,
       path: next.path,
       relativePath: next.relativePath,
+      worktree: next.worktree,
     }
     : next;
   const hasLanguageStats = next.languageStatsUpdatedAt > 0 || next.languageStats.length > 0 || next.workingTreeLanguageStats.length > 0;
