@@ -7,6 +7,7 @@ import { installContextMenu } from "./composables/useContextMenu";
 import { installGlobalScrollbarVisibility } from "./composables/useGlobalScrollbarVisibility";
 import { vContextMenu } from "./directives/contextMenu";
 import "./styles.css";
+import "./styles/diffCodeTokens.css";
 
 installContextMenu();
 installGlobalScrollbarVisibility();

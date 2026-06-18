@@ -15,13 +15,16 @@ import {
   openPath,
   openUrl,
 } from "../../services/workspace/client";
-import type { RepoFilePreview, RepoFileTreeEntry } from "../../services/workspace/types";
+import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../../services/workspace/types";
+import { inferDiffCodeLanguage, tokenizeDiffCodeLines } from "../../utils/diffCode";
+import { changeStatusLetter, changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import MarkdownReadme from "./MarkdownReadme.vue";
 
 const props = defineProps<{
   repoId: string;
   repoPath?: string | null;
+  changes?: readonly RepoChange[];
 }>();
 
 const ROOT_KEY = "";
@@ -36,7 +39,6 @@ const preview = ref<RepoFilePreview | null>(null);
 const previewLoading = ref(false);
 const previewError = ref<string | null>(null);
 
-const visibleEntries = computed(() => flattenEntries(ROOT_KEY, 0));
 const knownMarkdownPaths = computed(() =>
   Array.from(
     new Set(
@@ -47,6 +49,27 @@ const knownMarkdownPaths = computed(() =>
     ),
   ),
 );
+const textPreviewLanguage = computed(() =>
+  preview.value?.previewKind === "text" ? inferDiffCodeLanguage(preview.value.path) : "text",
+);
+const textPreviewLines = computed(() =>
+  preview.value?.previewKind === "text"
+    ? tokenizeDiffCodeLines(preview.value.content ?? "", textPreviewLanguage.value)
+    : [],
+);
+const fileChangeBadges = computed(() =>
+  new Map(
+    (props.changes ?? []).map((change) => [
+      change.path,
+      {
+        className: changeStatusTone(change),
+        label: changeStatusText(change),
+        letter: changeStatusLetter(change),
+      },
+    ]),
+  ),
+);
+const visibleEntries = computed(() => flattenEntries(ROOT_KEY, 0));
 
 onMounted(() => {
   void initializePanel();
@@ -83,11 +106,14 @@ async function initializePanel() {
   }
 }
 
-function flattenEntries(parentPath: string, depth: number): Array<{ entry: RepoFileTreeEntry; depth: number }> {
+function flattenEntries(
+  parentPath: string,
+  depth: number,
+): Array<{ entry: RepoFileTreeEntry; depth: number; badge: ReturnType<typeof treeEntryBadge> }> {
   const entries = directoryEntries.value[parentPath] ?? [];
-  const flattened: Array<{ entry: RepoFileTreeEntry; depth: number }> = [];
+  const flattened: Array<{ entry: RepoFileTreeEntry; depth: number; badge: ReturnType<typeof treeEntryBadge> }> = [];
   for (const entry of entries) {
-    flattened.push({ entry, depth });
+    flattened.push({ entry, depth, badge: treeEntryBadge(entry) });
     if (entry.kind === "dir" && expandedDirectories.value.includes(entry.path)) {
       flattened.push(...flattenEntries(entry.path, depth + 1));
     }
@@ -186,6 +212,11 @@ function isTreeItemActive(entry: RepoFileTreeEntry) {
   return entry.kind === "file" && selectedPath.value === entry.path;
 }
 
+function treeEntryBadge(entry: RepoFileTreeEntry) {
+  if (entry.kind !== "file") return null;
+  return fileChangeBadges.value.get(entry.path) ?? null;
+}
+
 function previewTitle() {
   if (preview.value) return preview.value.path;
   if (selectedPath.value) return selectedPath.value;
@@ -242,7 +273,16 @@ function formatFileSize(size: number) {
         <p v-if="previewError" class="error-line files-main__empty">{{ previewError }}</p>
         <p v-else-if="previewLoading" class="muted files-main__empty">正在读取文件内容。</p>
         <p v-else-if="!preview" class="muted files-main__empty">选择一个文件查看内容。</p>
-        <pre v-else-if="preview.previewKind === 'text'" class="files-main__code"><code>{{ preview.content }}</code></pre>
+        <pre v-else-if="preview.previewKind === 'text'" class="files-main__code"><code><span
+          v-for="line in textPreviewLines"
+          :key="`${preview.path}:${line.index}`"
+          class="files-main__code-line"
+        ><span
+            v-for="(token, tokenIndex) in line.tokens"
+            :key="`${line.index}:${tokenIndex}:${token.type}:${token.text}`"
+            class="diff-code__token"
+            :class="`diff-code__token--${token.type}`"
+          >{{ token.text }}</span>{{ line.index < textPreviewLines.length - 1 ? "\n" : "" }}</span></code></pre>
         <MarkdownReadme
           v-else-if="preview.previewKind === 'markdown' && preview.content"
           ref="markdownReadme"
@@ -273,7 +313,7 @@ function formatFileSize(size: number) {
           <p v-else-if="!visibleEntries.length" class="muted files-sidebar__empty">当前仓库没有可浏览文件。</p>
           <div v-else class="files-tree" role="tree">
             <button
-              v-for="{ entry, depth } in visibleEntries"
+              v-for="{ entry, depth, badge } in visibleEntries"
               :key="entry.path"
               type="button"
               class="files-tree__item"
@@ -307,6 +347,7 @@ function formatFileSize(size: number) {
               />
               <FileText v-else :size="14" aria-hidden="true" />
               <strong>{{ entry.name }}</strong>
+              <span v-if="badge" class="files-tree__badge" :class="badge.className" :title="badge.label" aria-hidden="true">{{ badge.letter }}</span>
               <span v-if="entry.kind === 'dir' && isDirectoryLoading(entry.path)" class="files-tree__meta">加载中</span>
             </button>
           </div>
@@ -444,6 +485,11 @@ function formatFileSize(size: number) {
   font: inherit;
 }
 
+.files-main__code-line {
+  display: block;
+  min-width: 0;
+}
+
 .files-main :deep(.readme-render) {
   padding: 16px;
   overflow: auto;
@@ -526,7 +572,8 @@ function formatFileSize(size: number) {
 }
 
 .files-tree__item strong,
-.files-tree__meta {
+.files-tree__meta,
+.files-tree__badge {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -541,6 +588,42 @@ function formatFileSize(size: number) {
 .files-tree__meta {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.files-tree__badge {
+  justify-self: end;
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.files-tree__badge.change-badge--err {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  color: var(--err);
+}
+
+.files-tree__badge.change-badge--warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+}
+
+.files-tree__badge.change-badge--accent {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.files-tree__badge.change-badge--ok {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+
+.files-tree__badge.change-badge--muted {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
 }
 
 @media (max-width: 900px) {

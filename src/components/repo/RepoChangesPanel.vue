@@ -12,7 +12,7 @@ import {
 } from "@lucide/vue";
 import type { ContextMenuItem } from "../../composables/useContextMenu";
 import type { RepoChange } from "../../services/workspace";
-import { changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
+import { changeStatusLetter, changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
 import { parseRepoDiffHunks, type RepoDiffWorkspaceFile, type RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 
@@ -51,14 +51,6 @@ const diffMode = ref<RepoDiffWorkspaceMode>("hunks");
 const selectedChangePaths = ref<Set<string>>(new Set());
 const selectedChangeGroup = ref<ChangeGroupKey | null>(null);
 const selectionAnchor = ref<{ group: ChangeGroupKey; path: string } | null>(null);
-
-function changeStatusLetter(change: RepoChange) {
-  if (change.conflicted) return "!";
-  if (change.untracked) return "U";
-  if (change.staged && change.unstaged) return "M";
-  if (change.staged) return "S";
-  return "W";
-}
 
 function changeKey(change: RepoChange, group: "staged" | "unstaged") {
   return `${group}:${change.oldPath ?? ""}:${change.path}`;

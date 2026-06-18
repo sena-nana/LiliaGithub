@@ -125,6 +125,13 @@ export function inferDiffCodeLanguage(filePath: string): DiffCodeLanguage {
   return extension ? LANGUAGE_BY_EXTENSION[extension] ?? "text" : "text";
 }
 
+export function tokenizeDiffCodeLines(content: string, language: DiffCodeLanguage) {
+  return content.split("\n").map((line, index) => ({
+    index,
+    tokens: tokenizeDiffCodeLine(line, language),
+  }));
+}
+
 export function tokenizeDiffCodeLine(line: string, language: DiffCodeLanguage): DiffCodeToken[] {
   if (!line) return [{ type: "plain", text: "" }];
   if (language === "text") return [{ type: "plain", text: line }];

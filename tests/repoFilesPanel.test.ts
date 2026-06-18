@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoFilesPanel from "../src/components/repo/RepoFilesPanel.vue";
-import type { RepoFilePreview, RepoFileTreeEntry } from "../src/services/workspace/types";
+import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../src/services/workspace/types";
 
 const clientMocks = vi.hoisted(() => ({
   listRepoFiles: vi.fn<(repoId: string, parentPath?: string | null) => Promise<RepoFileTreeEntry[]>>(),
@@ -19,11 +19,12 @@ vi.mock("../src/services/workspace/client", () => ({
   openUrl: clientMocks.openUrl,
 }));
 
-async function renderFilesPanel() {
+async function renderFilesPanel(props: Record<string, unknown> = {}) {
   return render(RepoFilesPanel, {
     props: {
       repoId: "LiliaGithub",
       repoPath: "C:\\Files\\workspace\\LiliaGithub",
+      ...props,
     },
   });
 }
@@ -43,6 +44,21 @@ function preview(overrides: Partial<RepoFilePreview> & Pick<RepoFilePreview, "pa
     images: {},
     mimeType: null,
     truncated: false,
+    ...overrides,
+  };
+}
+
+function change(overrides: Partial<RepoChange> & Pick<RepoChange, "path">): RepoChange {
+  return {
+    path: overrides.path,
+    oldPath: null,
+    indexStatus: " ",
+    worktreeStatus: "M",
+    staged: false,
+    unstaged: true,
+    untracked: false,
+    conflicted: false,
+    diff: "",
     ...overrides,
   };
 }
@@ -94,16 +110,32 @@ describe("RepoFilesPanel", () => {
     expect(listRepoFiles).toHaveBeenCalledTimes(2);
   });
 
-  it("文件树节点显示完整名称", async () => {
+  it("文件树节点显示完整名称，并在右侧标注变更状态", async () => {
     listRepoFiles.mockResolvedValueOnce([
       dir("docs", "docs"),
+      file("src/main.ts", "main.ts"),
+      file("src/App.vue", "App.vue"),
+      file("README.md", "README.md"),
       file("pnpm-workspace.yaml", "pnpm-workspace.yaml"),
     ]);
 
-    await renderFilesPanel();
+    await renderFilesPanel({
+      changes: [
+        change({ path: "src/main.ts", staged: true, unstaged: true }),
+        change({ path: "src/App.vue" }),
+        change({ path: "README.md", unstaged: false, untracked: true, worktreeStatus: "?" }),
+      ],
+    });
 
     expect(await screen.findByRole("button", { name: /docs/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /pnpm-workspace\.yaml/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector("strong")).not.toHaveClass("diff-code__token--keyword");
+    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".files-tree__badge")).toHaveTextContent("M");
+    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".files-tree__badge")).toHaveClass("change-badge--accent");
+    expect(screen.getByRole("button", { name: /App\.vue/ }).querySelector(".files-tree__badge")).toHaveTextContent("W");
+    expect(screen.getByRole("button", { name: /App\.vue/ }).querySelector(".files-tree__badge")).toHaveClass("change-badge--muted");
+    expect(screen.getByRole("button", { name: /README\.md/ }).querySelector(".files-tree__badge")).toHaveTextContent("U");
+    expect(screen.getByRole("button", { name: /README\.md/ }).querySelector(".files-tree__badge")).toHaveClass("change-badge--warn");
+    expect(screen.getByRole("button", { name: /pnpm-workspace\.yaml/ }).querySelector(".files-tree__badge")).toBeNull();
   });
 
   it("点击文本文件时显示原始文本预览", async () => {
@@ -121,6 +153,25 @@ describe("RepoFilesPanel", () => {
 
     await waitFor(() => {
       expect(document.querySelector(".files-main__code")?.textContent).toBe("line 1\nline 2");
+    });
+  });
+
+  it("代码文本预览复用 diff token 高亮", async () => {
+    listRepoFiles.mockResolvedValueOnce([file("src/main.ts", "main.ts")]);
+    getRepoFilePreview.mockResolvedValueOnce(preview({
+      path: "src/main.ts",
+      name: "main.ts",
+      previewKind: "text",
+      content: "export const title = \"Lilia\";",
+      size: 29,
+    }));
+
+    await renderFilesPanel();
+    await fireEvent.click(await screen.findByRole("button", { name: /main\.ts/ }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".files-main__code .diff-code__token--keyword")).toHaveTextContent("export");
+      expect(document.querySelector(".files-main__code .diff-code__token--string")).toHaveTextContent("\"Lilia\"");
     });
   });
 
