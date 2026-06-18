@@ -583,6 +583,15 @@ export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | nul
   })) ?? null;
 }
 
+export function setFallbackGitHubBranchesForTests(branchesByRepo: Record<string, BranchSummary[]>) {
+  fallbackGitHubBranches = Object.fromEntries(
+    Object.entries(branchesByRepo).map(([repoFullName, branches]) => [
+      repoFullName,
+      branches.map(cloneBranchSummary),
+    ]),
+  );
+}
+
 export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueListCall[] {
   return fallbackGitHubIssueListCalls.map((call) => ({ ...call }));
 }

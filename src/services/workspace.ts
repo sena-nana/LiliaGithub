@@ -15,6 +15,7 @@ export {
   setFallbackRepoReadmesForTests,
   setFallbackGitHubRepoReadmesForTests,
   setFallbackGitHubRepoPagesForTests,
+  setFallbackGitHubBranchesForTests,
   setFallbackGitHubReposErrorForTests,
   setFallbackRepoContributionOverrideForTests,
   setFallbackRepoDetailOverrideForTests,

@@ -64,9 +64,29 @@ const branches = [
     worktreePathsLabel: "",
     searchText: "feature/notice-update origin/feature/notice-update origin",
   },
+  {
+    name: "origin/release",
+    canonicalName: "origin/release",
+    displayName: "release",
+    sourceLabel: "origin",
+    defaultBranch: true,
+    remote: true,
+    current: false,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    protected: true,
+    tipTimestamp: 1_784_100_000,
+    checkedOutWorktreePaths: [],
+    section: "remote" as const,
+    relativeTime: "2 个月前",
+    checkedOutInWorktree: false,
+    worktreePathsLabel: "",
+    searchText: "release origin/release origin 默认分支",
+  },
 ];
 
-function renderPicker(handlers: Record<string, unknown> = {}) {
+function renderPicker(handlers: Record<string, unknown> = {}, pickerProps: Record<string, unknown> = {}) {
   const resolvedHandlers = {
     onCheckout: vi.fn(),
     onUpdateCurrent: vi.fn(),
@@ -76,13 +96,22 @@ function renderPicker(handlers: Record<string, unknown> = {}) {
     onDeleteBranch: vi.fn(),
     ...handlers,
   };
+  const resolvedProps = {
+    allowRemoteCheckout: true,
+    allowRemoteCreate: true,
+    allowRemoteDelete: false,
+    ...pickerProps,
+  };
   const Wrapper = defineComponent({
     components: { RepoBranchPicker, ContextMenuHost },
-    setup: () => resolvedHandlers,
+    setup: () => ({ ...resolvedHandlers, ...resolvedProps }),
     template: `
       <RepoBranchPicker
         :branches="branches"
         display-label="main"
+        :allow-remote-checkout="allowRemoteCheckout"
+        :allow-remote-create="allowRemoteCreate"
+        :allow-remote-delete="allowRemoteDelete"
         @checkout="onCheckout"
         @update-current="onUpdateCurrent"
         @create-branch="onCreateBranch"
@@ -126,7 +155,7 @@ describe("RepoBranchPicker", () => {
     expect(screen.getByText("远程分支")).toBeInTheDocument();
     expect(screen.getByText("16 小时前")).toBeInTheDocument();
     expect(screen.queryByText("local")).toBeNull();
-    expect(screen.getByText("origin")).toBeInTheDocument();
+    expect(screen.getAllByText("origin").length).toBeGreaterThan(0);
     expect(view.container.querySelectorAll(".branch-picker__row-worktree svg")).toHaveLength(1);
 
     await fireEvent.update(screen.getByLabelText("搜索分支"), "notice-update");
@@ -160,6 +189,29 @@ describe("RepoBranchPicker", () => {
     expect(await screen.findByRole("menuitem", { name: "检出" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "基于此创建本地分支…" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "合并到当前分支" })).toBeNull();
+  });
+
+  it("远程菜单区分默认分支并提供删除确认", async () => {
+    const onDeleteBranch = vi.fn();
+    renderPicker(
+      { onDeleteBranch },
+      { allowRemoteCheckout: false, allowRemoteCreate: false, allowRemoteDelete: true },
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "main" }));
+    const listbox = screen.getByRole("listbox", { name: "分支候选" });
+
+    expect(screen.getByText("默认")).toBeInTheDocument();
+
+    await fireEvent.contextMenu(within(listbox).getByRole("button", { name: "release (origin)（默认分支）" }));
+    expect(await screen.findByRole("menuitem", { name: "删除" })).toBeDisabled();
+
+    await fireEvent.contextMenu(within(listbox).getByRole("button", { name: "feature/notice-update (origin)" }));
+    const deleteItem = await screen.findByRole("menuitem", { name: "删除" });
+    expect(deleteItem).not.toBeDisabled();
+    await fireEvent.click(deleteItem);
+    const confirmDelete = screen.getByRole("menuitem", { name: "确认删除远程分支？再点一次" });
+    await fireEvent.click(confirmDelete);
+    expect(onDeleteBranch).toHaveBeenCalledWith("origin/feature/notice-update");
   });
 
   it("创建和重命名弹窗发出对应事件", async () => {

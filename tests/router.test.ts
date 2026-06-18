@@ -933,6 +933,74 @@ describe("基础路由", () => {
     );
   });
 
+  it("本地仓库页的本地分支和远程分支右键菜单都提供删除入口", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubBranchesForTests({
+      "sena-nana/LiliaGithub": [
+        {
+          name: "main",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: true,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: [],
+        },
+        {
+          name: "dev",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: false,
+          tipTimestamp: 1_784_998_000,
+          checkedOutWorktreePaths: [],
+        },
+        {
+          name: "feature/notice-update",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: false,
+          tipTimestamp: 1_784_200_000,
+          checkedOutWorktreePaths: [],
+        },
+      ],
+    });
+
+    await renderAt("/repos/LiliaGithub");
+
+    const viewTabs = await screen.findByRole("tablist", { name: "仓库页面" });
+    const branchTrigger = await within(viewTabs).findByRole("button", { name: "main" });
+    await waitFor(() => expect(branchTrigger).toBeEnabled());
+    await fireEvent.click(branchTrigger);
+    const branchList = await within(viewTabs).findByRole("listbox", { name: "分支候选" });
+
+    await fireEvent.contextMenu(within(branchList).getByRole("button", { name: "dev" }));
+    expect(await screen.findByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+
+    await fireEvent.contextMenu(within(branchList).getByRole("button", { name: "feature/notice-update (origin)" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "确认删除远程分支？再点一次" }));
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("listbox", { name: "分支候选" })).queryByRole("button", {
+          name: "feature/notice-update (origin)",
+        }),
+      ).toBeNull();
+    });
+    await expect(service.listGitHubBranches("sena-nana/LiliaGithub")).resolves.toEqual([
+      expect.objectContaining({ name: "main" }),
+      expect.objectContaining({ name: "dev" }),
+    ]);
+  });
+
   it("变更页文件列表支持多选后批量处理变更", async () => {
     const service = await import("../src/services/workspace");
     const stageFiles = vi.spyOn(service, "stageFiles");
@@ -1304,6 +1372,75 @@ describe("基础路由", () => {
       ),
     ).toBe(false);
     expect(screen.getByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+  });
+
+  it("未 clone 的远程详情页在现有分支选择器中展示并删除 GitHub 远程分支", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [
+          githubRepoSummary("sena-nana/RemoteBranchMenu", {
+            description: "Branch picker integration",
+            updatedAt: "2026-06-15T08:00:00Z",
+          }),
+        ],
+        nextPage: null,
+      },
+    ]);
+    service.setFallbackGitHubBranchesForTests({
+      "sena-nana/RemoteBranchMenu": [
+        {
+          name: "main",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: true,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: [],
+        },
+        {
+          name: "feature/cleanup",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: false,
+          tipTimestamp: 1_784_990_000,
+          checkedOutWorktreePaths: [],
+        },
+      ],
+    });
+    await service.rememberRemoteRepo({
+      fullName: "sena-nana/RemoteBranchMenu",
+      name: "RemoteBranchMenu",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: "https://github.com/sena-nana/RemoteBranchMenu",
+      cloneUrl: "https://github.com/sena-nana/RemoteBranchMenu.git",
+      openedAt: Date.now(),
+    });
+
+    await renderAt("/repos/github%3Asena-nana%2FRemoteBranchMenu");
+
+    const trigger = await screen.findByRole("button", { name: "main" });
+    await fireEvent.click(trigger);
+    expect(screen.getByText("默认")).toBeInTheDocument();
+
+    const branchList = screen.getByRole("listbox", { name: "分支候选" });
+    await fireEvent.contextMenu(within(branchList).getByRole("button", { name: "feature/cleanup" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "确认删除远程分支？再点一次" }));
+
+    await waitFor(() => {
+      expect(within(screen.getByRole("listbox", { name: "分支候选" })).queryByRole("button", { name: "feature/cleanup" })).toBeNull();
+    });
+    await expect(service.listGitHubBranches("sena-nana/RemoteBranchMenu")).resolves.toEqual([
+      expect.objectContaining({ name: "main" }),
+    ]);
   });
 
   it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {

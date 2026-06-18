@@ -1,5 +1,6 @@
 ﻿import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches } from "../services/workspace";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
 import type {
@@ -33,6 +34,7 @@ type RepoBranchPickerItem = BranchSummary & {
   readonly canonicalName: string;
   readonly displayName: string;
   readonly sourceLabel: string;
+  readonly defaultBranch?: boolean;
   readonly section: "current" | "local" | "remote";
   readonly relativeTime: string;
   readonly checkedOutInWorktree: boolean;
@@ -61,6 +63,11 @@ export function useRepoDetailController() {
   const focusedConflictPath = ref<string | null>(null);
   const selectedCommitHash = ref<string | null>(null);
   const conflictChoices = ref<Record<string, "ours" | "theirs">>({});
+  const githubBranches = ref<BranchSummary[]>([]);
+  const githubDefaultBranch = ref<string | null>(null);
+  const githubBranchLoading = ref(false);
+  const deletingRemoteBranchName = ref<string | null>(null);
+  const deletedRemoteBranchNames = ref<string[]>([]);
   let launchPollTimer: number | null = null;
 
   const repoId = computed(() => String(route.params.repoId ?? ""));
@@ -69,6 +76,7 @@ export function useRepoDetailController() {
   const remoteShortcut = computed(() =>
     workspace.state.settings?.remoteRepoShortcuts.find((repo) => repo.fullName === remoteFullName.value) ?? null,
   );
+  const githubRepoFullName = computed(() => remoteFullName.value ?? summary.value?.githubFullName ?? null);
   const remoteSummary = computed<RepoSummary | null>(() => {
     const fullName = remoteFullName.value;
     if (!fullName) return null;
@@ -78,7 +86,7 @@ export function useRepoDetailController() {
       name: shortcut?.name ?? remoteRepoName(fullName),
       path: "",
       relativePath: fullName,
-      currentBranch: shortcut?.defaultBranch ?? null,
+      currentBranch: githubDefaultBranch.value ?? shortcut?.defaultBranch ?? null,
       remoteUrl: shortcut?.cloneUrl ?? `https://github.com/${fullName}.git`,
       githubFullName: fullName,
       ahead: 0,
@@ -237,35 +245,63 @@ export function useRepoDetailController() {
     launchOptionValue(launchConfig.value?.command ?? "", launchConfig.value?.cwd ?? null),
   );
   const launchCommandText = computed(() => launchConfig.value?.command?.trim() || "选择启动指令");
+  const branchActionRunning = computed(() =>
+    actionRunning.value || githubBranchLoading.value || deletingRemoteBranchName.value !== null,
+  );
   const branchItems = computed<RepoBranchPickerItem[]>(() =>
-    [...(detail.value?.branches ?? [])]
+    [...(remoteOnly.value ? githubBranches.value : (detail.value?.branches ?? []))]
+      .filter((branch) =>
+        !branch.remote ||
+        remoteOnly.value ||
+        !deletedRemoteBranchNames.value.includes(remoteBranchShortName(branch.name)),
+      )
       .map((branch) => {
         const section: RepoBranchPickerItem["section"] =
-          branch.current && !branch.remote ? "current" : branch.remote ? "remote" : "local";
+          remoteOnly.value ? "remote" : branch.current && !branch.remote ? "current" : branch.remote ? "remote" : "local";
         const checkedOutWorktreePaths = [...branch.checkedOutWorktreePaths];
         const canonicalName = branch.name;
-        const displayName = branch.remote ? remoteBranchShortName(canonicalName) : canonicalName;
-        const sourceLabel = branch.remote ? remoteBranchSourceLabel(canonicalName) : "";
+        const displayName = remoteOnly.value
+          ? canonicalName
+          : branch.remote ? remoteBranchShortName(canonicalName) : canonicalName;
+        const sourceLabel = remoteOnly.value ? "" : branch.remote ? remoteBranchSourceLabel(canonicalName) : "";
+        const githubBranch = branch.remote
+          ? githubBranches.value.find((item) => item.name === displayName) ?? null
+          : null;
+        const defaultBranch = branch.remote
+          ? displayName === githubDefaultBranch.value
+          : false;
         return {
           ...branch,
+          protected: githubBranch?.protected ?? branch.protected,
           canonicalName,
           displayName,
           sourceLabel,
+          defaultBranch,
           checkedOutWorktreePaths,
           section,
           relativeTime: formatRelativeRepoTime(branch.tipTimestamp),
           checkedOutInWorktree: !branch.remote && checkedOutWorktreePaths.length > 0,
           worktreePathsLabel: checkedOutWorktreePaths.join("\n"),
-          searchText: [displayName, canonicalName, branch.upstream ?? "", sourceLabel].join(" ").toLowerCase(),
+          searchText: [
+            displayName,
+            canonicalName,
+            branch.upstream ?? "",
+            sourceLabel,
+            defaultBranch ? "默认分支" : "",
+          ].join(" ").toLowerCase(),
         };
       })
       .sort((a, b) =>
+        Number(Boolean(b.defaultBranch)) - Number(Boolean(a.defaultBranch)) ||
         branchSectionOrder(a.section) - branchSectionOrder(b.section) ||
         (b.tipTimestamp ?? 0) - (a.tipTimestamp ?? 0) ||
         a.name.localeCompare(b.name),
       ),
   );
-  const activeBranchName = computed(() => summary.value?.currentBranch ?? "detached");
+  const activeBranchName = computed(() => {
+    if (remoteOnly.value) return githubDefaultBranch.value ?? summary.value?.currentBranch ?? "远程分支";
+    return summary.value?.currentBranch ?? "detached";
+  });
   const aheadCount = computed(() => summary.value?.ahead ?? 0);
   const behindCount = computed(() => summary.value?.behind ?? 0);
   onMounted(() => {
@@ -292,6 +328,11 @@ export function useRepoDetailController() {
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
+    githubBranches.value = [];
+    githubDefaultBranch.value = null;
+    githubBranchLoading.value = false;
+    deletingRemoteBranchName.value = null;
+    deletedRemoteBranchNames.value = [];
     void load();
   });
 
@@ -349,6 +390,7 @@ export function useRepoDetailController() {
     actionError.value = null;
     launchError.value = null;
     if (remoteOnly.value) {
+      await loadGitHubBranches(remoteFullName.value);
       return;
     }
     try {
@@ -358,6 +400,7 @@ export function useRepoDetailController() {
     } catch (err) {
       actionError.value = String(err);
     }
+    await loadGitHubBranches(summary.value?.githubFullName ?? null);
     try {
       await workspace.loadLaunch(repoId.value);
     } catch (err) {
@@ -368,6 +411,26 @@ export function useRepoDetailController() {
     await workspace.refreshRepoLanguageStats(repoId.value).catch((err) => {
       actionError.value = String(err);
     });
+  }
+
+  async function loadGitHubBranches(repoFullName: string | null) {
+    if (!repoFullName) return;
+    githubBranchLoading.value = true;
+    githubBranches.value = [];
+    githubDefaultBranch.value = null;
+    try {
+      const [management, branches] = await Promise.all([
+        getGitHubRepoManagement(repoFullName),
+        listGitHubBranches(repoFullName),
+      ]);
+      if (repoFullName !== githubRepoFullName.value) return;
+      githubDefaultBranch.value = management.defaultBranch || null;
+      githubBranches.value = branches;
+    } catch (err) {
+      actionError.value = String(err);
+    } finally {
+      if (repoFullName === githubRepoFullName.value) githubBranchLoading.value = false;
+    }
   }
 
   async function refreshLaunch() {
@@ -650,7 +713,32 @@ export function useRepoDetailController() {
   }
 
   function deleteBranch(branch: string) {
-    if (!branch || branch === summary.value?.currentBranch) return;
+    if (!branch) return;
+    const target = branchItems.value.find((item) => item.canonicalName === branch);
+    if (!target) return;
+    if (target.remote) {
+      const repoFullName = githubRepoFullName.value;
+      if (!repoFullName || target.defaultBranch || target.protected || deletingRemoteBranchName.value) return;
+      const branchName = remoteOnly.value ? target.name : remoteBranchShortName(target.canonicalName);
+      if (!branchName) return;
+      deletingRemoteBranchName.value = branchName;
+      actionError.value = null;
+      void (async () => {
+        try {
+          await deleteGitHubBranch(repoFullName, branchName);
+          githubBranches.value = githubBranches.value.filter((item) => item.name !== branchName);
+          if (!deletedRemoteBranchNames.value.includes(branchName)) {
+            deletedRemoteBranchNames.value = [...deletedRemoteBranchNames.value, branchName];
+          }
+        } catch (err) {
+          actionError.value = String(err);
+        } finally {
+          deletingRemoteBranchName.value = null;
+        }
+      })();
+      return;
+    }
+    if (branch === summary.value?.currentBranch) return;
     void runAction(() => workspace.deleteBranch(repoId.value, branch));
   }
 
@@ -747,6 +835,7 @@ export function useRepoDetailController() {
       activeLaunchValue,
       launchCommandText,
       branchItems,
+      branchActionRunning,
       activeBranchName,
       aheadCount,
       behindCount,
