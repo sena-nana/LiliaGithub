@@ -1,19 +1,19 @@
 <script setup lang="ts">
 import {
+  CloudDownload,
+  CloudUpload,
+  RefreshCw,
   FolderTree,
   FolderOpen,
   GitCompare,
-  GitPullRequestArrow,
   History,
   Monitor,
   Play,
-  RefreshCw,
   RotateCcw,
   ScrollText,
   Square,
   SquareTerminal,
   TriangleAlert,
-  Upload,
 } from "@lucide/vue";
 import { defineAsyncComponent } from "vue";
 import Dropdown from "../components/Dropdown.vue";
@@ -86,7 +86,7 @@ const {
   unstageStagedChanges,
   runChangeAction,
   commitSelected,
-  fetchRepo,
+  refreshAndFetchRepo,
   selectPullStrategy,
   runSelectedPullStrategy,
   push,
@@ -222,26 +222,6 @@ const {
               <button
                 type="button"
                 class="repo-toolbar__btn"
-                title="刷新"
-                aria-label="刷新"
-                :disabled="actionRunning || languageStatsRefreshing"
-                @click="load"
-              >
-                <RefreshCw :size="17" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="repo-toolbar__btn"
-                title="抓取远端"
-                aria-label="抓取远端"
-                :disabled="actionRunning || hasConflicts"
-                @click="fetchRepo"
-              >
-                <RefreshCw :size="17" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="repo-toolbar__btn"
                 title="文件夹"
                 aria-label="文件夹"
                 :disabled="!summary?.path"
@@ -249,10 +229,20 @@ const {
               >
                 <FolderOpen :size="17" aria-hidden="true" />
               </button>
+              <button
+                type="button"
+                class="repo-toolbar__btn"
+                title="刷新并抓取"
+                aria-label="刷新并抓取"
+                :disabled="actionRunning || hasConflicts || languageStatsRefreshing"
+                @click="refreshAndFetchRepo"
+              >
+                <RefreshCw :size="17" aria-hidden="true" />
+              </button>
               <Dropdown
                 :model-value="activePullStrategyValue"
                 :options="pullStrategyOptions"
-                :icon="GitPullRequestArrow"
+                :icon="CloudDownload"
                 display-label="拉取策略"
                 placement="bottom"
                 button-class="repo-toolbar__btn repo-toolbar__btn--counted repo-toolbar__pull-strategy"
@@ -270,7 +260,7 @@ const {
                 :disabled="actionRunning || hasConflicts"
                 @click="runSelectedPullStrategy"
               >
-                <GitPullRequestArrow :size="17" aria-hidden="true" />
+                <CloudDownload :size="17" aria-hidden="true" />
                 <span v-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
               </button>
               <button
@@ -296,7 +286,7 @@ const {
                 :disabled="actionRunning || !aheadCount"
                 @click="push"
               >
-                <Upload :size="17" aria-hidden="true" />
+                <CloudUpload :size="17" aria-hidden="true" />
                 <span v-if="aheadCount" class="repo-toolbar__badge">{{ aheadCount }}</span>
               </button>
             </div>
