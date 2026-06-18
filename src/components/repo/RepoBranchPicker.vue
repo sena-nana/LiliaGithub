@@ -248,57 +248,68 @@ function branchTitle(branch: RepoBranchPickerItem) {
       <span class="branch-picker__trigger-label">{{ displayLabel }}</span>
     </button>
 
-    <div v-if="open" class="branch-picker__panel" role="dialog" aria-label="分支选择器">
-      <label class="branch-picker__search">
-        <Search :size="14" aria-hidden="true" />
-        <input
-          ref="searchInput"
-          v-model="search"
-          type="text"
-          placeholder="搜索分支"
-          aria-label="搜索分支"
-        />
-      </label>
+    <Transition name="sb-menu-pop">
+      <div
+        v-if="open"
+        class="branch-picker__panel"
+        role="dialog"
+        aria-label="分支选择器"
+      >
+        <label class="branch-picker__search">
+          <Search :size="14" aria-hidden="true" />
+          <input
+            ref="searchInput"
+            v-model="search"
+            type="text"
+            placeholder="搜索分支"
+            aria-label="搜索分支"
+          />
+        </label>
 
-      <div class="branch-picker__list" role="listbox" aria-label="分支候选">
-        <template v-for="group in filteredGroups" :key="group.key">
-          <div class="branch-picker__section">{{ group.label }}</div>
-          <button
-            v-for="branch in group.items"
-            :key="`${branch.remote ? 'remote' : 'local'}:${branch.name}`"
-            v-context-menu="branchMenu(branch)"
-            type="button"
-            class="branch-picker__row"
-            :class="{
-              'is-current': branch.current,
-              'is-remote': branch.remote,
-            }"
-            :aria-selected="branch.current"
-            :aria-label="branchAriaLabel(branch)"
-            :title="branchTitle(branch)"
-            @click="pickBranch(branch)"
-          >
-            <span class="branch-picker__row-icon">
-              <Check v-if="branch.current" :size="14" aria-hidden="true" />
-              <GitBranch v-else :size="14" aria-hidden="true" />
-            </span>
-            <span class="branch-picker__row-name">{{ branch.displayName }}</span>
-            <span v-if="branch.remote" class="branch-picker__row-source">{{ branch.sourceLabel }}</span>
-            <span class="branch-picker__row-time">{{ branch.relativeTime }}</span>
-            <span
-              v-if="branch.checkedOutInWorktree && !branch.remote"
-              class="branch-picker__row-worktree"
-              :title="branch.worktreePathsLabel"
+        <div class="branch-picker__list" role="listbox" aria-label="分支候选">
+          <template v-for="group in filteredGroups" :key="group.key">
+            <div class="branch-picker__section">{{ group.label }}</div>
+            <button
+              v-for="branch in group.items"
+              :key="`${branch.remote ? 'remote' : 'local'}:${branch.name}`"
+              v-context-menu="branchMenu(branch)"
+              type="button"
+              class="branch-picker__row"
+              :class="{
+                'is-current': branch.current,
+                'is-remote': branch.remote,
+              }"
+              :aria-selected="branch.current"
+              :aria-label="branchAriaLabel(branch)"
+              :title="branchTitle(branch)"
+              @click="pickBranch(branch)"
             >
-              <FolderGit2 :size="13" aria-hidden="true" />
-            </span>
-            <span v-else class="branch-picker__row-worktree branch-picker__row-worktree--empty" aria-hidden="true"></span>
-          </button>
-        </template>
+              <span class="branch-picker__row-icon">
+                <Check v-if="branch.current" :size="14" aria-hidden="true" />
+                <GitBranch v-else :size="14" aria-hidden="true" />
+              </span>
+              <span class="branch-picker__row-name">{{ branch.displayName }}</span>
+              <span v-if="branch.remote" class="branch-picker__row-source">{{ branch.sourceLabel }}</span>
+              <span class="branch-picker__row-time">{{ branch.relativeTime }}</span>
+              <span
+                v-if="branch.checkedOutInWorktree && !branch.remote"
+                class="branch-picker__row-worktree"
+                :title="branch.worktreePathsLabel"
+              >
+                <FolderGit2 :size="13" aria-hidden="true" />
+              </span>
+              <span
+                v-else
+                class="branch-picker__row-worktree branch-picker__row-worktree--empty"
+                aria-hidden="true"
+              ></span>
+            </button>
+          </template>
 
-        <p v-if="!filteredGroups.length" class="branch-picker__empty">没有匹配的分支</p>
+          <p v-if="!filteredGroups.length" class="branch-picker__empty">没有匹配的分支</p>
+        </div>
       </div>
-    </div>
+    </Transition>
 
     <Teleport to="body">
       <Transition name="modal">
@@ -445,6 +456,8 @@ function branchTitle(branch: RepoBranchPickerItem) {
   box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.5);
   display: grid;
   gap: 8px;
+  transform-origin: top left;
+  will-change: transform, opacity;
 }
 
 .branch-picker__search {
