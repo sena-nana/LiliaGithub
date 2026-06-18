@@ -394,6 +394,34 @@ pub struct RepoReadme {
     pub updated_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoFileTreeEntry {
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub has_children: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoFilePreview {
+    pub path: String,
+    pub name: String,
+    pub preview_kind: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub data_url: Option<String>,
+    #[serde(default)]
+    pub images: HashMap<String, String>,
+    pub size: u64,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkSyncPreview {

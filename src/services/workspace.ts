@@ -17,6 +17,8 @@ export {
   setFallbackGitHubRepoPagesForTests,
   setFallbackGitHubBranchesForTests,
   setFallbackGitHubReposErrorForTests,
+  setFallbackRepoFilePreviewsForTests,
+  setFallbackRepoFilesForTests,
   setFallbackRepoContributionOverrideForTests,
   setFallbackRepoDetailOverrideForTests,
   setFallbackRepoOverridesForTests,

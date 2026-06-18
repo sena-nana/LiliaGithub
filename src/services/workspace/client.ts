@@ -29,6 +29,8 @@ import type {
   RepoConflictChoice,
   RepoConflictState,
   RepoDetail,
+  RepoFilePreview,
+  RepoFileTreeEntry,
   RepoMergePullResult,
   RepoRefreshSummaryOptions,
   RepoReadme,
@@ -344,6 +346,14 @@ export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
 
 export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[]> {
   return call("github_list_repo_readmes", { repoFullName }, () => fallback.listGitHubRepoReadmes(repoFullName));
+}
+
+export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {
+  return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () => fallback.listRepoFiles(repoId, parentPath));
+}
+
+export function getRepoFilePreview(repoId: string, path: string): Promise<RepoFilePreview> {
+  return call("repo_get_file_preview", { repoId, path }, () => fallback.getRepoFilePreview(repoId, path));
 }
 
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {

@@ -81,6 +81,8 @@ pub fn run() {
             workspace::repos::repo_get_summary,
             workspace::repos::repo_refresh_summary,
             workspace::repos::repo_refresh_language_stats,
+            workspace::file_browser::repo_list_files,
+            workspace::file_browser::repo_get_file_preview,
             workspace::readme::repo_get_readme,
             workspace::readme::repo_list_readmes,
             workspace::repos::repo_get_changes,

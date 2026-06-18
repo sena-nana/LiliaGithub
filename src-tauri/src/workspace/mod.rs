@@ -26,6 +26,7 @@ use std::os::windows::process::CommandExt;
 use std::os::unix::process::CommandExt;
 
 pub(crate) mod bulk;
+pub(crate) mod file_browser;
 pub(crate) mod github;
 pub(crate) mod launch;
 pub(crate) mod readme;
@@ -39,6 +40,8 @@ mod types;
 pub use types::*;
 
 use github::*;
+#[cfg(test)]
+use file_browser::*;
 use readme::*;
 use repos::*;
 use settings::*;

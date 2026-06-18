@@ -1,6 +1,6 @@
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
-export type RepoRouteTab = "repo" | "changes" | "history" | "run";
+export type RepoRouteTab = "files" | "repo" | "changes" | "history" | "run";
 export type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
 
 export function repoRoute(repoId: string, tab: RepoRouteTab = "repo") {
@@ -29,5 +29,5 @@ export function repoRouteTabFromRoute(route: Pick<RouteLocationNormalizedLoaded,
 }
 
 function isRepoRouteTab(value: unknown): value is RepoRouteTab {
-  return value === "repo" || value === "changes" || value === "history" || value === "run";
+  return value === "files" || value === "repo" || value === "changes" || value === "history" || value === "run";
 }

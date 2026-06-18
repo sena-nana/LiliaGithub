@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  FolderTree,
   FolderOpen,
   GitCompare,
   GitPullRequestArrow,
@@ -14,6 +15,7 @@ import {
   TriangleAlert,
   Upload,
 } from "@lucide/vue";
+import { defineAsyncComponent } from "vue";
 import Dropdown from "../components/Dropdown.vue";
 import RepoBranchPicker from "../components/repo/RepoBranchPicker.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
@@ -21,6 +23,8 @@ import RepoPushError from "../components/repo/RepoPushError.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
+
+const RepoFilesPanel = defineAsyncComponent(() => import("../components/repo/RepoFilesPanel.vue"));
 
 const {
   activeTab,
@@ -125,7 +129,8 @@ const {
                 :title="tab.title"
                 :aria-label="tab.title"
               >
-                <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
+                <FolderTree v-if="tab.key === 'files'" :size="17" aria-hidden="true" />
+                <Monitor v-else-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
                 <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
                 <History v-else :size="17" aria-hidden="true" />
                 <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge repo-toolbar__badge--warn">
@@ -276,7 +281,13 @@ const {
 
     <div class="repo-workbench__body">
       <main class="workbench-main workbench-main--project">
+        <RepoFilesPanel
+          v-if="activeTab === 'files'"
+          :repo-id="repoId"
+          :repo-path="summary?.path ?? null"
+        />
         <RepoProjectPanel
+          v-else
           :repo-id="repoId"
           :repo-title="repoTitle"
           :repo-full-name="summary?.githubFullName"
