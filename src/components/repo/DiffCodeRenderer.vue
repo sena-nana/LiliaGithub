@@ -216,38 +216,6 @@ function rawDiffLineKind(line: string): RawDiffLineKind {
   color: var(--text-muted);
 }
 
-.diff-code__token--keyword {
-  color: var(--accent-strong);
-  font-weight: 600;
-}
-
-.diff-code__token--string {
-  color: var(--ok);
-}
-
-.diff-code__token--comment {
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-.diff-code__token--number {
-  color: var(--warn);
-}
-
-.diff-code__token--type {
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.diff-code__token--property {
-  color: var(--warn);
-  font-weight: 600;
-}
-
-.diff-code__token--punctuation {
-  color: var(--text-muted);
-}
-
 @media (max-width: 640px) {
   .diff-code__hunk,
   .diff-code__line {

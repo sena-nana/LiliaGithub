@@ -38,6 +38,14 @@ export function changeStatusTone(change: RepoChange) {
   return "change-badge--muted";
 }
 
+export function changeStatusLetter(change: RepoChange) {
+  if (change.conflicted) return "!";
+  if (change.untracked) return "U";
+  if (change.staged && change.unstaged) return "M";
+  if (change.staged) return "S";
+  return "W";
+}
+
 export function formatRepoTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString();
 }

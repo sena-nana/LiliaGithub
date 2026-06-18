@@ -285,6 +285,7 @@ const {
           v-if="activeTab === 'files'"
           :repo-id="repoId"
           :repo-path="summary?.path ?? null"
+          :changes="changes"
         />
         <RepoProjectPanel
           v-else
