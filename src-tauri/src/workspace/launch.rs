@@ -3,6 +3,8 @@ use super::*;
 pub(super) const LAUNCH_LOG_LIMIT: usize = 500;
 #[cfg(target_os = "windows")]
 pub(super) const CREATE_NO_WINDOW: u32 = 0x08000000;
+pub(super) const ROOT_SCRIPT_PRIORITY: [&str; 6] =
+    ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"];
 
 pub(super) struct LaunchEntry {
     pub(super) child: Option<Child>,
@@ -123,6 +125,21 @@ pub(super) fn package_script_command(pm: &str, script: &str) -> String {
     }
 }
 
+pub(super) fn root_script_rank(script: &str) -> usize {
+    ROOT_SCRIPT_PRIORITY
+        .iter()
+        .position(|name| *name == script)
+        .unwrap_or(ROOT_SCRIPT_PRIORITY.len())
+}
+
+pub(super) fn sort_root_script_names(script_names: &mut [String]) {
+    script_names.sort_by(|left, right| {
+        root_script_rank(left)
+            .cmp(&root_script_rank(right))
+            .then_with(|| left.cmp(right))
+    });
+}
+
 pub(super) fn push_launch_candidate(
     candidates: &mut Vec<ProjectLaunchCandidate>,
     command: String,
@@ -240,36 +257,11 @@ pub(super) fn infer_launch_candidates(repo_path: &Path) -> Vec<ProjectLaunchCand
                     .and_then(|value| value.as_str()),
             );
             if let Some(scripts) = scripts {
-                if repo_path.join("src-tauri").exists() && scripts.contains_key("tauri:dev") {
-                    push_launch_candidate(
-                        &mut candidates,
-                        package_script_command(pm, "tauri:dev"),
-                        "tauri:dev".to_string(),
-                        Some("package.json".to_string()),
-                        "package",
-                        None,
-                    );
-                }
-                for script in ["dev", "start", "serve"] {
-                    if scripts.contains_key(script) {
-                        push_launch_candidate(
-                            &mut candidates,
-                            package_script_command(pm, script),
-                            script.to_string(),
-                            Some("package.json".to_string()),
-                            "package",
-                            None,
-                        );
-                    }
-                }
                 let mut script_names: Vec<_> = scripts
                     .keys()
                     .map(|name| name.to_string())
-                    .filter(|name| {
-                        !matches!(name.as_str(), "tauri:dev" | "dev" | "start" | "serve")
-                    })
                     .collect();
-                script_names.sort();
+                sort_root_script_names(&mut script_names);
                 for script in script_names {
                     push_launch_candidate(
                         &mut candidates,

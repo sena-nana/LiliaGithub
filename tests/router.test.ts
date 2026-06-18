@@ -1478,22 +1478,24 @@ describe("基础路由", () => {
     if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
     await fireEvent.click(within(launchGroup).getByRole("button", { name: /yarn tauri:dev/ }));
     expect(await within(launchGroup).findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("option", { name: /^dev/ }));
+    expect(screen.getByRole("option", { name: /^preview/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /^verify/ })).toBeInTheDocument();
+    expect(screen.getByText("更多命令，向下滚动")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("option", { name: /^verify/ }));
     await waitFor(() => {
-      expect(within(launchGroup).getByRole("button", { name: /yarn dev/ })).toBeInTheDocument();
+      expect(within(launchGroup).getByRole("button", { name: /yarn verify/ })).toBeInTheDocument();
     });
     const idleTerminal = screen.getByLabelText("启动终端");
-    expect(idleTerminal).toHaveTextContent("请选择一个启动指令并运行。");
-    expect(idleTerminal).toHaveTextContent("当前指令：yarn dev");
+    expect(idleTerminal).toHaveTextContent("暂无输出。");
     expect(idleTerminal).not.toHaveTextContent("启动命令：");
-    expect(within(launchCard).queryByRole("button", { name: /yarn dev/ })).toBeNull();
+    expect(within(launchCard).queryByRole("button", { name: /yarn verify/ })).toBeNull();
     expect(within(launchCard).queryByRole("button", { name: "隐藏" })).toBeNull();
 
     await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
 
     await waitFor(() => {
       const terminal = screen.getByLabelText("启动终端");
-      expect(terminal).toHaveTextContent("启动命令：yarn dev");
+      expect(terminal).toHaveTextContent("启动命令：yarn verify");
       expect(terminal).toHaveTextContent("开发服务已启动");
     });
     expect(within(launchGroup).getByRole("button", { name: "停止" })).toBeEnabled();
@@ -1503,7 +1505,10 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
-    expect(screen.getByLabelText("启动终端")).toHaveTextContent("请选择一个启动指令并运行。");
+    expect(screen.getByLabelText("启动终端")).toHaveTextContent("启动命令：yarn verify");
+    await waitFor(() => {
+      expect(screen.getByLabelText("启动终端")).toHaveTextContent("已停止快速启动进程");
+    });
   });
 
   it("运行失败信息显示在命令卡片内而不是页头状态区", async () => {
