@@ -8,6 +8,7 @@ import {
   type GitHubRepoOwner,
   type GitHubRepoSummary,
   type HiddenRepo,
+  type WorkspaceTask,
 } from "../../services/workspace";
 
 const workspace = useWorkspace();
@@ -24,6 +25,8 @@ const cloningCreatedRepo = ref(false);
 const createdRepo = ref<GitHubRepoSummary | null>(null);
 const error = ref<string | null>(null);
 const createError = ref<string | null>(null);
+const cancellingTaskIds = ref<string[]>([]);
+const taskCancelErrors = ref<Record<string, string | undefined>>({});
 const createForm = ref({
   owner: "",
   ownerKind: "user",
@@ -48,6 +51,34 @@ const systemGitRepos = computed(() => {
     };
   });
 });
+
+const WORKSPACE_TASK_STATUS_TEXT: Record<WorkspaceTask["status"], string> = {
+  pending: "等待中",
+  running: "执行中",
+  success: "完成",
+  error: "失败",
+  cancelled: "已取消",
+};
+
+function taskStatusText(status: WorkspaceTask["status"]) {
+  return WORKSPACE_TASK_STATUS_TEXT[status];
+}
+
+function taskStatusClass(status: WorkspaceTask["status"]) {
+  return `is-${status}`;
+}
+
+function isTaskCancellable(task: WorkspaceTask) {
+  return task.status === "pending" || task.status === "running";
+}
+
+function isCancellingTask(taskId: string) {
+  return cancellingTaskIds.value.includes(taskId);
+}
+
+function taskMessage(task: WorkspaceTask) {
+  return task.message ?? taskStatusText(task.status);
+}
 
 async function loadHiddenRepos() {
   loading.value = true;
@@ -174,6 +205,20 @@ async function cloneCreatedRepo() {
   }
 }
 
+async function cancelTask(taskId: string) {
+  if (isCancellingTask(taskId)) return;
+  cancellingTaskIds.value.push(taskId);
+  delete taskCancelErrors.value[taskId];
+  try {
+    await workspace.cancelWorkspaceTask(taskId);
+  } catch (err) {
+    taskCancelErrors.value[taskId] = String(err);
+  } finally {
+    const index = cancellingTaskIds.value.indexOf(taskId);
+    if (index >= 0) cancellingTaskIds.value.splice(index, 1);
+  }
+}
+
 onMounted(() => {
   void loadHiddenRepos();
   void loadRepoOwners();
@@ -283,9 +328,35 @@ onMounted(() => {
       <div v-if="workspace.state.tasks.length" class="workspace-task-list">
         <h3>后台任务</h3>
         <ul>
-          <li v-for="task in workspace.state.tasks.slice(0, 6)" :key="task.id">
-            <span>{{ task.kind }}</span>
-            <em>{{ task.message ?? task.status }}</em>
+          <li v-for="task in workspace.state.tasks.slice(0, 6)" :key="task.id" class="workspace-task-list__item">
+            <span class="workspace-task-list__kind">{{ task.kind }}</span>
+            <div class="workspace-task-list__detail">
+              <div class="workspace-task-list__summary">
+                <span class="workspace-task-list__status" :class="taskStatusClass(task.status)">
+                  {{ taskStatusText(task.status) }}
+                </span>
+                <em :title="taskMessage(task)">{{ taskMessage(task) }}</em>
+              </div>
+              <p v-if="taskCancelErrors[task.id]" class="workspace-task-list__error">
+                {{ taskCancelErrors[task.id] }}
+              </p>
+            </div>
+            <button
+              v-if="isTaskCancellable(task)"
+              type="button"
+              class="ghost workspace-task-list__action"
+              :disabled="isCancellingTask(task.id)"
+              @click="cancelTask(task.id)"
+            >
+              <LoaderCircle
+                v-if="isCancellingTask(task.id)"
+                :size="14"
+                aria-hidden="true"
+                class="sb-spin"
+              />
+              <X v-else :size="14" aria-hidden="true" />
+              {{ isCancellingTask(task.id) ? "取消中" : "取消" }}
+            </button>
           </li>
         </ul>
       </div>
@@ -586,18 +657,75 @@ onMounted(() => {
 
 .workspace-task-list li {
   display: grid;
-  grid-template-columns: minmax(0, 120px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 120px) minmax(0, 1fr) auto;
   gap: 8px;
-  padding: 5px 0;
+  padding: 6px 0;
   color: var(--text-muted);
   font-size: 12px;
+  align-items: center;
+}
+
+.workspace-task-list__kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-task-list__detail {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.workspace-task-list__summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .workspace-task-list em {
+  min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-style: normal;
+}
+
+.workspace-task-list__status {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.workspace-task-list__status.is-pending,
+.workspace-task-list__status.is-running {
+  color: var(--warn);
+}
+
+.workspace-task-list__status.is-success {
+  color: var(--ok);
+}
+
+.workspace-task-list__status.is-error {
+  color: var(--err);
+}
+
+.workspace-task-list__error {
+  margin: 0;
+  color: var(--err);
+}
+
+.workspace-task-list__action {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .repo-create-backdrop {
@@ -720,6 +848,19 @@ onMounted(() => {
   .system-git-list__item {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .workspace-task-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .workspace-task-list__kind {
+    grid-column: 1 / -1;
+  }
+
+  .workspace-task-list__summary {
+    flex-wrap: wrap;
   }
 
   .repo-create-grid,
