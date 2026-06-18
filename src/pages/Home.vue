@@ -148,6 +148,23 @@ type GitHubTimelineIssueCacheEntry = {
 
 type GitHubTimelineIssueCache = Record<string, GitHubTimelineIssueCacheEntry | undefined>;
 
+type IdleRequestWindow = Window & {
+  requestIdleCallback?: (callback: () => void) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
+type GitHubTimelineIssueTask = {
+  repo: GitHubRepoSummary;
+  generation: number;
+  since: string;
+  cache: GitHubTimelineIssueCache;
+};
+
+type GitHubTimelineWorkflowTask = {
+  repo: GitHubRepoSummary;
+  generation: number;
+};
+
 const languageScope = ref<LanguageScope>("head");
 const discovering = ref(false);
 const githubRepos = ref<GitHubRepoSummary[]>([]);
@@ -159,6 +176,8 @@ const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
 const githubIssuesLoading = ref(false);
 const githubWorkflowRunsByRepo = ref<Record<string, GitHubWorkflowRun[] | undefined>>({});
 const githubWorkflowRunsLoading = ref(false);
+const githubTimelineCard = ref<HTMLElement | null>(null);
+const githubTimelineActivated = ref(false);
 const cloningFullName = ref<string | null>(null);
 const cloneOpen = ref(false);
 const cloneRemoteUrl = ref("");
@@ -180,6 +199,7 @@ const {
   schedule: scheduleRepoOverviewCardHeightUpdate,
 } = useRepoOverviewCardHeight();
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
+const GITHUB_TIMELINE_FETCH_CONCURRENCY = 2;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -258,15 +278,34 @@ const githubTimelineNodes = computed<TimelineDisplayNode[]>(() =>
     .slice(0, GITHUB_TIMELINE_EVENT_LIMIT)
     .map(toGitHubTimelineDisplayNode),
 );
+const githubTimelineWaitingForActivation = computed(() =>
+  !githubTimelineActivated.value && (githubIssuesPendingCount.value > 0 || githubWorkflowRunsPendingCount.value > 0),
+);
+const githubTimelineBusy = computed(() =>
+  githubReposLoading.value ||
+  githubIssuesLoading.value ||
+  githubWorkflowRunsLoading.value ||
+  githubTimelineWaitingForActivation.value,
+);
 
-let githubIssuesPendingCount = 0;
-let githubWorkflowRunsPendingCount = 0;
+const githubIssuesPendingCount = ref(0);
+const githubWorkflowRunsPendingCount = ref(0);
 let githubTimelineGeneration = 0;
+let githubTimelineIssueQueue: GitHubTimelineIssueTask[] = [];
+let githubTimelineWorkflowQueue: GitHubTimelineWorkflowTask[] = [];
+let githubTimelineIssuePendingRepos = new Set<string>();
+let githubTimelineWorkflowPendingRepos = new Set<string>();
+let githubTimelineIssueInFlightCount = 0;
+let githubTimelineWorkflowInFlightCount = 0;
+let githubTimelineActivationQueued = false;
+let githubTimelineObserver: IntersectionObserver | null = null;
+let githubTimelineIdleHandle: number | null = null;
+let githubTimelineIdleFallbackTimer: number | null = null;
 
 onUnmounted(() => {
   githubTimelineGeneration += 1;
-  githubIssuesPendingCount = 0;
-  githubWorkflowRunsPendingCount = 0;
+  clearGitHubTimelineActivationHooks();
+  resetGitHubTimelineQueues();
   repoOverviewGrid.value = null;
 });
 
@@ -331,12 +370,15 @@ function applyGitHubRepoPage(
   append = false,
   refreshIssues = false,
 ) {
+  if (!append || refreshIssues) {
+    githubTimelineGeneration += 1;
+    resetGitHubTimelineQueues();
+  }
   githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
   githubReposNextPage.value = page.nextPage;
   githubReposError.value = null;
   writeGitHubOverviewSnapshot();
-  void loadGitHubTimelineIssues(page.items, refreshIssues);
-  void loadGitHubTimelineWorkflowRuns(page.items, refreshIssues);
+  prepareGitHubTimeline(page.items, refreshIssues);
 }
 
 function restoreGitHubOverviewSnapshot() {
@@ -347,6 +389,7 @@ function restoreGitHubOverviewSnapshot() {
   githubIssuesByRepo.value = snapshot.issuesByRepo;
   githubWorkflowRunsByRepo.value = snapshot.workflowRunsByRepo;
   githubReposError.value = null;
+  prepareGitHubTimeline(snapshot.repos);
   return true;
 }
 
@@ -372,7 +415,6 @@ function loadGitHubTimelineWorkflowRuns(
   repos: GitHubRepoSummary[],
   refresh = false,
 ) {
-  const generation = githubTimelineGeneration;
   let nextWorkflowRunsByRepo = { ...githubWorkflowRunsByRepo.value };
   if (refresh) {
     for (const repo of repos) {
@@ -382,21 +424,7 @@ function loadGitHubTimelineWorkflowRuns(
   githubWorkflowRunsByRepo.value = nextWorkflowRunsByRepo;
   writeGitHubOverviewSnapshot();
   const missingRepos = repos.filter((repo) => nextWorkflowRunsByRepo[repo.fullName] == null);
-  if (!missingRepos.length) return;
-  githubWorkflowRunsPendingCount += missingRepos.length;
-  githubWorkflowRunsLoading.value = true;
-  scheduleGitHubTimelineRepoTasks(missingRepos, generation, async (repo) => {
-    const [repoFullName, runs] = await fetchGitHubTimelineWorkflowRuns(repo);
-    if (generation !== githubTimelineGeneration) return;
-    githubWorkflowRunsByRepo.value = {
-      ...githubWorkflowRunsByRepo.value,
-      [repoFullName]: runs,
-    };
-    writeGitHubOverviewSnapshot();
-  }, () => {
-    githubWorkflowRunsPendingCount = Math.max(0, githubWorkflowRunsPendingCount - 1);
-    githubWorkflowRunsLoading.value = githubWorkflowRunsPendingCount > 0;
-  });
+  enqueueGitHubTimelineWorkflowRepos(missingRepos);
 }
 
 async function fetchGitHubTimelineWorkflowRuns(
@@ -415,7 +443,6 @@ function loadGitHubTimelineIssues(
   repos: GitHubRepoSummary[],
   refresh = false,
 ) {
-  const generation = githubTimelineGeneration;
   const since = gitHubTimelineIssueSince();
   const now = Date.now();
   const cache = readGitHubTimelineIssueCache();
@@ -436,41 +463,7 @@ function loadGitHubTimelineIssues(
   githubIssuesByRepo.value = nextIssuesByRepo;
   writeGitHubOverviewSnapshot();
   const missingRepos = repos.filter((repo) => nextIssuesByRepo[repo.fullName] == null);
-  if (!missingRepos.length) return;
-  githubIssuesPendingCount += missingRepos.length;
-  githubIssuesLoading.value = true;
-  scheduleGitHubTimelineRepoTasks(missingRepos, generation, async (repo) => {
-    const [repoFullName, issues] = await fetchGitHubTimelineIssues(repo, since);
-    if (generation !== githubTimelineGeneration) return;
-    githubIssuesByRepo.value = {
-      ...githubIssuesByRepo.value,
-      [repoFullName]: issues,
-    };
-    writeGitHubOverviewSnapshot();
-    writeGitHubTimelineIssueCache(cache, [[repoFullName, issues]], since);
-  }, () => {
-    githubIssuesPendingCount = Math.max(0, githubIssuesPendingCount - 1);
-    githubIssuesLoading.value = githubIssuesPendingCount > 0;
-  });
-}
-
-function scheduleGitHubTimelineRepoTasks(
-  repos: GitHubRepoSummary[],
-  generation: number,
-  worker: (repo: GitHubRepoSummary) => Promise<void>,
-  onSettled: () => void,
-) {
-  for (const repo of repos) {
-    void (async () => {
-      try {
-        await worker(repo);
-      } catch {
-        // Per-repo fetch helpers already normalize expected failures; keep other repos moving.
-      } finally {
-        if (generation === githubTimelineGeneration) onSettled();
-      }
-    })();
-  }
+  enqueueGitHubTimelineIssueRepos(missingRepos, since, cache);
 }
 
 async function fetchGitHubTimelineIssues(
@@ -626,6 +619,192 @@ function clearGitHubTimelineIssueCache() {
 function clearGitHubTimelineWorkflowRuns() {
   githubWorkflowRunsByRepo.value = {};
   clearHomeGitHubOverviewSnapshot();
+}
+
+function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
+  loadGitHubTimelineIssues(repos, refresh);
+  loadGitHubTimelineWorkflowRuns(repos, refresh);
+  if (githubTimelineActivated.value) {
+    drainGitHubTimelineIssueQueue();
+    drainGitHubTimelineWorkflowQueue();
+    return;
+  }
+  scheduleGitHubTimelineActivation();
+}
+
+function enqueueGitHubTimelineIssueRepos(
+  repos: GitHubRepoSummary[],
+  since: string,
+  cache: GitHubTimelineIssueCache,
+) {
+  let queuedCount = 0;
+  for (const repo of repos) {
+    if (githubTimelineIssuePendingRepos.has(repo.fullName)) continue;
+    githubTimelineIssuePendingRepos.add(repo.fullName);
+    githubTimelineIssueQueue.push({
+      repo,
+      generation: githubTimelineGeneration,
+      since,
+      cache,
+    });
+    queuedCount += 1;
+  }
+  if (!queuedCount) return;
+  githubIssuesPendingCount.value += queuedCount;
+  githubIssuesLoading.value = githubIssuesPendingCount.value > 0;
+}
+
+function enqueueGitHubTimelineWorkflowRepos(repos: GitHubRepoSummary[]) {
+  let queuedCount = 0;
+  for (const repo of repos) {
+    if (githubTimelineWorkflowPendingRepos.has(repo.fullName)) continue;
+    githubTimelineWorkflowPendingRepos.add(repo.fullName);
+    githubTimelineWorkflowQueue.push({
+      repo,
+      generation: githubTimelineGeneration,
+    });
+    queuedCount += 1;
+  }
+  if (!queuedCount) return;
+  githubWorkflowRunsPendingCount.value += queuedCount;
+  githubWorkflowRunsLoading.value = githubWorkflowRunsPendingCount.value > 0;
+}
+
+function drainGitHubTimelineIssueQueue() {
+  while (
+    githubTimelineActivated.value &&
+    githubTimelineIssueInFlightCount < GITHUB_TIMELINE_FETCH_CONCURRENCY &&
+    githubTimelineIssueQueue.length
+  ) {
+    const task = githubTimelineIssueQueue.shift();
+    if (!task) return;
+    githubTimelineIssuePendingRepos.delete(task.repo.fullName);
+    githubTimelineIssueInFlightCount += 1;
+    void (async () => {
+      try {
+        const [repoFullName, issues] = await fetchGitHubTimelineIssues(task.repo, task.since);
+        if (task.generation !== githubTimelineGeneration) return;
+        githubIssuesByRepo.value = {
+          ...githubIssuesByRepo.value,
+          [repoFullName]: issues,
+        };
+        writeGitHubOverviewSnapshot();
+        writeGitHubTimelineIssueCache(task.cache, [[repoFullName, issues]], task.since);
+      } catch {
+        // Per-repo fetch helpers already normalize expected failures; keep other repos moving.
+      } finally {
+        if (task.generation !== githubTimelineGeneration) return;
+        githubTimelineIssueInFlightCount = Math.max(0, githubTimelineIssueInFlightCount - 1);
+        githubIssuesPendingCount.value = Math.max(0, githubIssuesPendingCount.value - 1);
+        githubIssuesLoading.value = githubIssuesPendingCount.value > 0;
+        drainGitHubTimelineIssueQueue();
+      }
+    })();
+  }
+}
+
+function drainGitHubTimelineWorkflowQueue() {
+  while (
+    githubTimelineActivated.value &&
+    githubTimelineWorkflowInFlightCount < GITHUB_TIMELINE_FETCH_CONCURRENCY &&
+    githubTimelineWorkflowQueue.length
+  ) {
+    const task = githubTimelineWorkflowQueue.shift();
+    if (!task) return;
+    githubTimelineWorkflowPendingRepos.delete(task.repo.fullName);
+    githubTimelineWorkflowInFlightCount += 1;
+    void (async () => {
+      try {
+        const [repoFullName, runs] = await fetchGitHubTimelineWorkflowRuns(task.repo);
+        if (task.generation !== githubTimelineGeneration) return;
+        githubWorkflowRunsByRepo.value = {
+          ...githubWorkflowRunsByRepo.value,
+          [repoFullName]: runs,
+        };
+        writeGitHubOverviewSnapshot();
+      } catch {
+        // Per-repo fetch helpers already normalize expected failures; keep other repos moving.
+      } finally {
+        if (task.generation !== githubTimelineGeneration) return;
+        githubTimelineWorkflowInFlightCount = Math.max(0, githubTimelineWorkflowInFlightCount - 1);
+        githubWorkflowRunsPendingCount.value = Math.max(0, githubWorkflowRunsPendingCount.value - 1);
+        githubWorkflowRunsLoading.value = githubWorkflowRunsPendingCount.value > 0;
+        drainGitHubTimelineWorkflowQueue();
+      }
+    })();
+  }
+}
+
+function scheduleGitHubTimelineActivation() {
+  if (githubTimelineActivated.value || githubTimelineActivationQueued) return;
+  if (!githubIssuesPendingCount.value && !githubWorkflowRunsPendingCount.value) return;
+  githubTimelineActivationQueued = true;
+  void nextTick(() => {
+    githubTimelineActivationQueued = false;
+    if (githubTimelineActivated.value) return;
+    if (!githubIssuesPendingCount.value && !githubWorkflowRunsPendingCount.value) return;
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      activateGitHubTimeline();
+      return;
+    }
+    clearGitHubTimelineActivationHooks();
+    const card = githubTimelineCard.value;
+    const scrollRoot = document.querySelector(".shell__main");
+    const hasVisibilityObserver = typeof IntersectionObserver === "function" && card && scrollRoot instanceof Element;
+    if (hasVisibilityObserver) {
+      githubTimelineObserver = new IntersectionObserver((entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        activateGitHubTimeline();
+      }, {
+        root: scrollRoot,
+      });
+      githubTimelineObserver.observe(card);
+    }
+    const idleWindow = window as IdleRequestWindow;
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      githubTimelineIdleHandle = idleWindow.requestIdleCallback(() => activateGitHubTimeline());
+      return;
+    }
+    if (!hasVisibilityObserver) {
+      queueMicrotask(() => activateGitHubTimeline());
+      return;
+    }
+    githubTimelineIdleFallbackTimer = window.setTimeout(() => activateGitHubTimeline(), 0);
+  });
+}
+
+function activateGitHubTimeline() {
+  clearGitHubTimelineActivationHooks();
+  githubTimelineActivated.value = true;
+  drainGitHubTimelineIssueQueue();
+  drainGitHubTimelineWorkflowQueue();
+}
+
+function clearGitHubTimelineActivationHooks() {
+  githubTimelineObserver?.disconnect();
+  githubTimelineObserver = null;
+  const idleWindow = typeof window === "undefined" ? null : window as IdleRequestWindow;
+  if (idleWindow && githubTimelineIdleHandle != null && typeof idleWindow.cancelIdleCallback === "function") {
+    idleWindow.cancelIdleCallback(githubTimelineIdleHandle);
+  }
+  githubTimelineIdleHandle = null;
+  if (typeof window !== "undefined" && githubTimelineIdleFallbackTimer != null) {
+    window.clearTimeout(githubTimelineIdleFallbackTimer);
+  }
+  githubTimelineIdleFallbackTimer = null;
+}
+
+function resetGitHubTimelineQueues() {
+  githubTimelineIssueQueue = [];
+  githubTimelineWorkflowQueue = [];
+  githubTimelineIssuePendingRepos = new Set<string>();
+  githubTimelineWorkflowPendingRepos = new Set<string>();
+  githubTimelineIssueInFlightCount = 0;
+  githubTimelineWorkflowInFlightCount = 0;
+  githubIssuesPendingCount.value = 0;
+  githubWorkflowRunsPendingCount.value = 0;
+  githubIssuesLoading.value = false;
+  githubWorkflowRunsLoading.value = false;
 }
 
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
@@ -1523,12 +1702,12 @@ async function syncRepo(repo: RepoSummary) {
         class="repo-overview-grid"
         :style="{ '--repo-overview-card-max-height': repoOverviewCardMaxHeight }"
       >
-        <div class="card github-timeline-card">
+        <div ref="githubTimelineCard" class="card github-timeline-card">
           <div class="repo-status-heading">
             <h2>
               GitHub 时间线
               <LoaderCircle
-                v-if="githubIssuesLoading || githubReposLoading || githubWorkflowRunsLoading"
+                v-if="githubTimelineBusy"
                 :size="13"
                 aria-hidden="true"
                 class="card-title-loader"
@@ -1537,10 +1716,10 @@ async function syncRepo(repo: RepoSummary) {
           </div>
           <div class="home-scroll-card__body">
             <p
-              v-if="(githubReposLoading || githubIssuesLoading || githubWorkflowRunsLoading) && !githubTimelineNodes.length"
+              v-if="githubTimelineBusy && !githubTimelineNodes.length"
               class="repo-status-empty"
             >
-              正在加载 GitHub 时间线...
+              {{ githubTimelineWaitingForActivation ? "正在准备 GitHub 时间线..." : "正在加载 GitHub 时间线..." }}
             </p>
             <p v-else-if="!githubTimelineNodes.length" class="repo-status-empty">暂无 GitHub 事件</p>
             <GitHubTimelineList v-else :nodes="githubTimelineNodes" :format-time="formatTimelineTime" />
