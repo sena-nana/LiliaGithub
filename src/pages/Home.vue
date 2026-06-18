@@ -11,6 +11,8 @@ import {
   GitCommitHorizontal,
   GitPullRequestArrow,
   Info,
+  CloudDownload,
+  CloudUpload,
   LoaderCircle,
   Radar,
   RefreshCw,
@@ -1387,10 +1389,6 @@ function previewBulkOperation(operation: BulkOperation) {
   void workspace.previewBulk(operation);
 }
 
-function runFetchAll() {
-  void workspace.fetchAll();
-}
-
 function bulkOperationLabel(operation: BulkOperation) {
   if (operation === "pull") return "拉取";
   if (operation === "push") return "推送";
@@ -1521,26 +1519,6 @@ function bulkOperationDescription(operation: BulkOperation) {
           <button
             type="button"
             class="overview-actions__btn"
-            title="刷新仓库"
-            aria-label="刷新仓库"
-            :disabled="workspace.state.scanning || githubReposLoading"
-            @click="refreshOverviewRepos"
-          >
-            <RefreshCw :size="17" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="overview-actions__btn"
-            title="抓取全部"
-            aria-label="抓取全部"
-            :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
-            @click="runFetchAll"
-          >
-            <RotateCw :size="17" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="overview-actions__btn"
             title="发现仓库"
             aria-label="发现仓库"
             :disabled="!workspace.workspaceRoot.value || discovering"
@@ -1548,6 +1526,16 @@ function bulkOperationDescription(operation: BulkOperation) {
           >
             <LoaderCircle v-if="discovering" :size="17" aria-hidden="true" class="sb-spin" />
             <Radar v-else :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
+            title="刷新并抓取"
+            aria-label="刷新并抓取"
+            :disabled="!workspace.isReady.value || workspace.state.scanning || workspace.state.bulkRunning || githubReposLoading"
+            @click="refreshOverviewRepos"
+          >
+            <RefreshCw :size="17" aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -1564,7 +1552,7 @@ function bulkOperationDescription(operation: BulkOperation) {
               aria-hidden="true"
               class="sb-spin"
             />
-            <GitPullRequestArrow v-else :size="17" aria-hidden="true" />
+            <CloudDownload v-else :size="17" aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -1581,7 +1569,7 @@ function bulkOperationDescription(operation: BulkOperation) {
               aria-hidden="true"
               class="sb-spin"
             />
-            <RotateCw v-else :size="17" aria-hidden="true" />
+            <CloudUpload v-else :size="17" aria-hidden="true" />
           </button>
           <button
             type="button"

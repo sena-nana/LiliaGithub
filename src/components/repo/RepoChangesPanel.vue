@@ -7,8 +7,8 @@ import {
   Copy,
   GitCommitHorizontal,
   ListPlus,
+  CloudUpload,
   RotateCcw,
-  Upload,
 } from "@lucide/vue";
 import type { ContextMenuItem } from "../../composables/useContextMenu";
 import type { RepoChange } from "../../services/workspace";
@@ -322,7 +322,7 @@ function submitCommit(pushAfter: boolean) {
                 :disabled="!canCommit || actionRunning || hasConflicts"
                 @click="submitCommit(true)"
               >
-                <Upload :size="14" aria-hidden="true" />
+                <CloudUpload :size="14" aria-hidden="true" />
                 提交并推送
               </button>
               <button

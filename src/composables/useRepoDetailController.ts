@@ -640,9 +640,19 @@ export function useRepoDetailController() {
     });
   }
 
-  function fetchRepo() {
-    void runAction(() => workspace.fetch(repoId.value));
-  }
+function fetchRepo() {
+  void runAction(() => workspace.fetch(repoId.value));
+}
+
+function refreshAndFetchRepo() {
+  const targetRepoId = repoId.value;
+  if (!targetRepoId) return;
+
+  void runAction(async () => {
+    await workspace.fetch(targetRepoId);
+    await load();
+  });
+}
 
   function selectPullStrategy(value: string) {
     if (value === "pull" || value === "merge" || value === "rebase") {
@@ -977,6 +987,7 @@ export function useRepoDetailController() {
       unstageStagedChanges,
       runChangeAction,
       commitSelected,
+      refreshAndFetchRepo,
       fetchRepo,
       selectPullStrategy,
       runSelectedPullStrategy,
