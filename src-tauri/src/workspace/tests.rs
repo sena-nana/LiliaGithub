@@ -114,6 +114,11 @@ fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         language_stats: Vec::new(),
         working_tree_language_stats: Vec::new(),
         language_stats_updated_at: 0,
+        worktree: RepoWorktree {
+            role: "standalone".to_string(),
+            shared_repo_key: "repo:repo".to_string(),
+            main_repo_id: None,
+        },
     };
     overrides(&mut summary);
     summary
@@ -870,6 +875,82 @@ fn repo_branches_reports_checked_out_worktrees() {
         feature.checked_out_worktree_paths,
         vec![linked.to_string_lossy().to_string()]
     );
+}
+
+#[test]
+fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
+    let root = temp_dir("resolve-worktree-roles");
+    let standalone = root.join("standalone");
+    init_git_repo(&standalone);
+    fs::write(standalone.join("file.txt"), "standalone").unwrap();
+    run_git(&standalone, &["add", "file.txt"]);
+    run_git(&standalone, &["commit", "-m", "standalone"]);
+
+    let main = root.join("main-repo");
+    init_git_repo(&main);
+    fs::write(main.join("file.txt"), "main").unwrap();
+    run_git(&main, &["add", "file.txt"]);
+    run_git(&main, &["commit", "-m", "main"]);
+    run_git(&main, &["branch", "-M", "main"]);
+    run_git(&main, &["checkout", "-b", "feature/worktree"]);
+    fs::write(main.join("feature.txt"), "feature").unwrap();
+    run_git(&main, &["add", "feature.txt"]);
+    run_git(&main, &["commit", "-m", "feature"]);
+    run_git(&main, &["checkout", "main"]);
+
+    let linked = root.join("linked-worktree");
+    run_git(
+        &main,
+        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+    );
+
+    let standalone_worktree = resolve_repo_worktree(&root, &standalone);
+    let main_worktree = resolve_repo_worktree(&root, &main);
+    let linked_worktree = resolve_repo_worktree(&root, &linked);
+
+    assert_eq!(standalone_worktree.summary.role, "standalone");
+    assert_eq!(standalone_worktree.summary.main_repo_id, None);
+    assert!(!standalone_worktree.summary.shared_repo_key.is_empty());
+
+    assert_eq!(main_worktree.summary.role, "main");
+    assert_eq!(main_worktree.summary.main_repo_id.as_deref(), Some("main-repo"));
+
+    assert_eq!(linked_worktree.summary.role, "linked");
+    assert_eq!(linked_worktree.summary.main_repo_id.as_deref(), Some("main-repo"));
+    assert_eq!(
+        linked_worktree.summary.shared_repo_key,
+        main_worktree.summary.shared_repo_key
+    );
+}
+
+#[test]
+fn remove_managed_repo_path_removes_linked_worktree_directory() {
+    let root = temp_dir("remove-linked-worktree");
+    let main = root.join("main-repo");
+    init_git_repo(&main);
+    fs::write(main.join("file.txt"), "main").unwrap();
+    run_git(&main, &["add", "file.txt"]);
+    run_git(&main, &["commit", "-m", "main"]);
+    run_git(&main, &["branch", "-M", "main"]);
+    run_git(&main, &["checkout", "-b", "feature/worktree"]);
+    fs::write(main.join("feature.txt"), "feature").unwrap();
+    run_git(&main, &["add", "feature.txt"]);
+    run_git(&main, &["commit", "-m", "feature"]);
+    run_git(&main, &["checkout", "main"]);
+
+    let linked = root.join("linked-worktree");
+    run_git(
+        &main,
+        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+    );
+    let worktree = resolve_repo_worktree(&root, &linked);
+
+    remove_managed_repo_path(&root, &linked, &worktree).unwrap();
+
+    assert!(!linked.exists());
+    assert!(!git_worktree_entries(&main)
+        .iter()
+        .any(|entry| entry.path == canonical_repo_path(&linked)));
 }
 
 #[test]
@@ -1824,7 +1905,45 @@ fn lightweight_managed_repos_returns_visible_repo_list_without_git_metadata() {
     assert_eq!(repos[0].conflict_count, 0);
     assert_eq!(repos[0].last_commit_at, None);
     assert_eq!(repos[0].last_commit_message, None);
+    assert_eq!(repos[0].worktree.role, "standalone");
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn prune_deleted_repo_settings_clears_all_repo_scoped_state() {
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec!["repo".to_string(), "other".to_string()],
+        hidden_repo_ids: vec!["repo".to_string()],
+        system_git_repo_ids: vec!["repo".to_string()],
+        project_launch_configs: HashMap::from([(
+            "repo".to_string(),
+            ProjectLaunchConfig {
+                command: "yarn dev".to_string(),
+                cwd: None,
+                source: "manual".to_string(),
+                updated_at: None,
+            },
+        )]),
+        local_contribution_cache: HashMap::from([(
+            "repo".to_string(),
+            HashMap::from([(
+                "2026-06-18".to_string(),
+                LocalContributionDayCache {
+                    count: 1,
+                    updated_at: 1,
+                },
+            )]),
+        )]),
+        ..WorkspaceSettings::default()
+    };
+
+    prune_deleted_repo_settings(&mut settings, "repo");
+
+    assert_eq!(settings.managed_repo_ids, vec!["other"]);
+    assert!(settings.hidden_repo_ids.is_empty());
+    assert!(settings.system_git_repo_ids.is_empty());
+    assert!(settings.project_launch_configs.is_empty());
+    assert!(settings.local_contribution_cache.is_empty());
 }
 
 #[test]

@@ -190,6 +190,15 @@ pub struct LanguageStat {
     pub bytes: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoWorktree {
+    pub role: String,
+    pub shared_repo_key: String,
+    #[serde(default)]
+    pub main_repo_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoSummary {
@@ -214,6 +223,7 @@ pub struct RepoSummary {
     pub working_tree_language_stats: Vec<LanguageStat>,
     #[serde(default)]
     pub language_stats_updated_at: i64,
+    pub worktree: RepoWorktree,
 }
 
 #[derive(Debug, Clone, Deserialize)]

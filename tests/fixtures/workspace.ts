@@ -20,6 +20,11 @@ export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): R
     languageStats: [],
     workingTreeLanguageStats: [],
     languageStatsUpdatedAt: 0,
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: `repo:${id}`,
+      mainRepoId: null,
+    },
     ...overrides,
   };
 }

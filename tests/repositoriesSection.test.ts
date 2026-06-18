@@ -35,6 +35,11 @@ const workspace = vi.hoisted(() => ({
         languageStats: [],
         workingTreeLanguageStats: [],
         languageStatsUpdatedAt: 0,
+        worktree: {
+          role: "standalone",
+          sharedRepoKey: "repo:LiliaGithub",
+          mainRepoId: null,
+        },
       },
     ],
     authLoading: false,

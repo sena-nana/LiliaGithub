@@ -44,6 +44,7 @@ import type {
   RepoReadme,
 } from "../../services/workspace/types";
 import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
+import { isLinkedWorktree } from "../../utils/repoWorktree";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import type { RepoRouteTab } from "../../utils/repoRoutes";
@@ -126,6 +127,7 @@ const emit = defineEmits<{
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
+const linkedWorktree = computed(() => isLinkedWorktree(workspace.repoById(props.repoId)));
 
 const activeSection = ref<ProjectContentMode>(routeTabToSection(props.activeGitTab));
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
@@ -231,8 +233,9 @@ const deleteConfirmMatches = computed(() =>
 const deleteExpectedInput = computed(() =>
   deleteDialogTarget.value === "remote" ? props.repoFullName : props.repoId,
 );
+const localDeleteTitle = computed(() => linkedWorktree.value ? "删除工作树" : "删除本地仓库");
 const deleteDialogTitle = computed(() =>
-  deleteDialogTarget.value === "remote" ? "删除 GitHub 仓库" : "删除本地仓库",
+  deleteDialogTarget.value === "remote" ? "删除 GitHub 仓库" : localDeleteTitle.value,
 );
 const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.value);
 const activeReadme = computed(() =>
@@ -1025,8 +1028,14 @@ function selectReadme(path: string) {
           <div v-if="(!remoteOnly && repoPath) || settings" class="project-settings-danger-list">
           <section v-if="!remoteOnly && repoPath" class="project-danger-zone" aria-label="本地危险操作">
             <div>
-              <strong>删除本地仓库</strong>
-              <span>删除工作区内的本地目录，并从本地仓库列表移除。</span>
+              <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
+              <span>
+                {{
+                  linkedWorktree
+                    ? "从当前共享仓库移除该工作树，并从工作区仓库列表移除。"
+                    : "删除工作区内的本地目录，并从本地仓库列表移除。"
+                }}
+              </span>
             </div>
             <button
               type="button"
@@ -1036,7 +1045,7 @@ function selectReadme(path: string) {
             >
               <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
               <Trash2 v-else :size="14" aria-hidden="true" />
-              删除本地
+              {{ linkedWorktree ? "删除工作树" : "删除本地" }}
             </button>
           </section>
           <section v-if="settings" class="project-danger-zone" aria-label="远端危险操作">
@@ -1076,8 +1085,14 @@ function selectReadme(path: string) {
                     Issues、Actions 和 Settings 将不可用。
                   </p>
                   <p v-else>
-                    这会删除本地目录 <strong>{{ repoPath }}</strong>，并从工作区仓库列表移除。GitHub
-                    远端仓库不会被删除。
+                    <template v-if="linkedWorktree">
+                      这会从当前共享仓库移除工作树 <strong>{{ repoPath }}</strong>，并从工作区仓库列表移除。GitHub
+                      远端仓库不会被删除。
+                    </template>
+                    <template v-else>
+                      这会删除本地目录 <strong>{{ repoPath }}</strong>，并从工作区仓库列表移除。GitHub
+                      远端仓库不会被删除。
+                    </template>
                   </p>
                   <p v-if="deleteError" class="error-line">{{ deleteError }}</p>
                   <label>

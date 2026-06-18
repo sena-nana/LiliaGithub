@@ -17,6 +17,18 @@ pub(super) struct RepoFetchFailure {
     pub(super) error: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct GitWorktreeEntry {
+    pub(super) path: PathBuf,
+    pub(super) branch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedRepoWorktree {
+    pub(super) summary: RepoWorktree,
+    pub(super) main_worktree_path: Option<PathBuf>,
+}
+
 pub(super) fn git_command(
     repo_path: &Path,
     args: &[&str],
@@ -73,6 +85,115 @@ pub(super) fn should_skip_dir(path: &Path) -> bool {
 
 pub(super) fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
+}
+
+pub(super) fn canonical_repo_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+pub(super) fn git_worktree_entries(path: &Path) -> Vec<GitWorktreeEntry> {
+    let output = git_command_lossy(path, &["worktree", "list", "--porcelain"]).unwrap_or_default();
+    let mut entries = Vec::new();
+    let mut current_path: Option<PathBuf> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("worktree ") {
+            if let Some(path) = current_path.take() {
+                entries.push(GitWorktreeEntry {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+            current_path = Some(canonical_repo_path(Path::new(value.trim())));
+            current_branch = None;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("branch refs/heads/") {
+            current_branch = Some(value.trim().to_string());
+            continue;
+        }
+        if line.is_empty() {
+            if let Some(path) = current_path.take() {
+                entries.push(GitWorktreeEntry {
+                    path,
+                    branch: current_branch.take(),
+                });
+            }
+            current_branch = None;
+        }
+    }
+
+    if let Some(path) = current_path {
+        entries.push(GitWorktreeEntry {
+            path,
+            branch: current_branch,
+        });
+    }
+
+    if entries.is_empty() {
+        entries.push(GitWorktreeEntry {
+            path: canonical_repo_path(path),
+            branch: None,
+        });
+    }
+
+    entries
+}
+
+pub(super) fn git_common_dir(path: &Path) -> Option<PathBuf> {
+    let raw = git_command_lossy(path, &["rev-parse", "--git-common-dir"])?;
+    if raw.is_empty() {
+        return None;
+    }
+    let common_dir = PathBuf::from(raw.trim());
+    let absolute = if common_dir.is_absolute() {
+        common_dir
+    } else {
+        path.join(common_dir)
+    };
+    Some(canonical_repo_path(&absolute))
+}
+
+fn repo_id_within_root(root: &Path, path: &Path) -> Option<String> {
+    let canonical_root = canonical_repo_path(root);
+    let canonical_path = canonical_repo_path(path);
+    if !canonical_path.starts_with(&canonical_root) || !is_git_repo(&canonical_path) {
+        return None;
+    }
+    Some(repo_id(&canonical_root, &canonical_path))
+}
+
+pub(super) fn resolve_repo_worktree(root: &Path, path: &Path) -> ResolvedRepoWorktree {
+    let current_path = canonical_repo_path(path);
+    let shared_repo_key = normalize_worktree_display_path(
+        &git_common_dir(path).unwrap_or_else(|| current_path.join(".git")),
+    );
+    let worktrees = git_worktree_entries(path);
+    if worktrees.len() <= 1 {
+        return ResolvedRepoWorktree {
+            summary: RepoWorktree {
+                role: "standalone".to_string(),
+                shared_repo_key,
+                main_repo_id: None,
+            },
+            main_worktree_path: None,
+        };
+    }
+
+    let main_path = worktrees
+        .first()
+        .map(|entry| entry.path.clone())
+        .unwrap_or_else(|| current_path.clone());
+    let current_is_main = current_path == main_path;
+    ResolvedRepoWorktree {
+        summary: RepoWorktree {
+            role: if current_is_main { "main" } else { "linked" }.to_string(),
+            shared_repo_key,
+            main_repo_id: repo_id_within_root(root, &main_path),
+        },
+        main_worktree_path: Some(main_path),
+    }
 }
 
 pub(super) fn repo_id(root: &Path, path: &Path) -> String {
@@ -435,6 +556,7 @@ pub(super) fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
     let status = git_command_lossy(path, &["status", "--porcelain=v1", "-b", "--ahead-behind"])
         .unwrap_or_default();
     let entries = repo_status_entries(path);
+    let worktree = resolve_repo_worktree(root, path).summary;
     let mut current_branch = None;
     let mut ahead = 0;
     let mut behind = 0;
@@ -511,11 +633,13 @@ pub(super) fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
         language_stats: Vec::new(),
         working_tree_language_stats: Vec::new(),
         language_stats_updated_at: 0,
+        worktree,
     }
 }
 
 pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary {
     let relative_path = repo_id(root, path);
+    let worktree = resolve_repo_worktree(root, path).summary;
     RepoSummary {
         id: relative_path.clone(),
         name: path
@@ -539,6 +663,7 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
         language_stats: Vec::new(),
         working_tree_language_stats: Vec::new(),
         language_stats_updated_at: 0,
+        worktree,
     }
 }
 
@@ -2212,43 +2337,15 @@ pub(super) fn split_refs(value: &str) -> Vec<String> {
 }
 
 pub(super) fn worktree_branch_paths(path: &Path) -> HashMap<String, Vec<String>> {
-    let output = git_command_lossy(path, &["worktree", "list", "--porcelain"]).unwrap_or_default();
-    let mut current_path: Option<String> = None;
-    let mut current_branch: Option<String> = None;
     let mut branches = HashMap::<String, Vec<String>>::new();
-
-    for line in output.lines() {
-        if let Some(value) = line.strip_prefix("worktree ") {
-            if let (Some(path), Some(branch)) = (current_path.take(), current_branch.take()) {
-                branches.entry(branch).or_default().push(path);
-            }
-            current_path = Some(
-                normalize_worktree_display_path(
-                    &PathBuf::from(value.trim())
-                        .canonicalize()
-                        .unwrap_or_else(|_| PathBuf::from(value.trim())),
-                ),
-            );
-            current_branch = None;
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("branch refs/heads/") {
-            current_branch = Some(value.trim().to_string());
-            continue;
-        }
-        if line.is_empty() {
-            if let (Some(path), Some(branch)) = (current_path.take(), current_branch.take()) {
-                branches.entry(branch).or_default().push(path);
-            }
-            current_path = None;
-            current_branch = None;
+    for entry in git_worktree_entries(path) {
+        if let Some(branch) = entry.branch {
+            branches
+                .entry(branch)
+                .or_default()
+                .push(normalize_worktree_display_path(&entry.path));
         }
     }
-
-    if let (Some(path), Some(branch)) = (current_path, current_branch) {
-        branches.entry(branch).or_default().push(path);
-    }
-
     branches
 }
 

@@ -241,6 +241,65 @@ describe("workspace incremental refresh", () => {
     expect(state.githubContributions.error).toBeNull();
   });
 
+  it("共享 worktree 只按代表仓库刷新一次本地贡献图", async () => {
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("main-repo", {
+        githubFullName: null,
+        worktree: {
+          role: "main",
+          sharedRepoKey: "shared:repo",
+          mainRepoId: "main-repo",
+        },
+      }),
+      repoSummary("linked-repo", {
+        githubFullName: null,
+        worktree: {
+          role: "linked",
+          sharedRepoKey: "shared:repo",
+          mainRepoId: "main-repo",
+        },
+      }),
+      repoSummary("standalone-repo", { githubFullName: null }),
+    ]);
+    service.refreshRepoSummary.mockImplementation(async (repoId: string) => ({
+      ...repoSummary(repoId, { githubFullName: null }),
+      worktree: repoId === "main-repo"
+        ? { role: "main", sharedRepoKey: "shared:repo", mainRepoId: "main-repo" }
+        : repoId === "linked-repo"
+          ? { role: "linked", sharedRepoKey: "shared:repo", mainRepoId: "main-repo" }
+          : { role: "standalone", sharedRepoKey: "repo:standalone-repo", mainRepoId: null },
+    }));
+    service.listRepoContribution.mockImplementation(async (repoScope: string) => ({
+      days: [{ date: "2026-06-11", count: repoScope === "local:main-repo" ? 3 : 2 }],
+      meta: {
+        repoCount: 1,
+        requestedRepoCount: 1,
+        repoLimit: 30,
+        truncated: false,
+        skippedRepoCount: 0,
+        refreshedAt: 1_780_000_000_000,
+      },
+    }));
+
+    await refreshRepos();
+
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(2));
+    expect(service.listRepoContribution).toHaveBeenCalledWith("local:main-repo");
+    expect(service.listRepoContribution).toHaveBeenCalledWith("local:standalone-repo");
+    expect(service.listRepoContribution).not.toHaveBeenCalledWith("local:linked-repo");
+    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
+      date: "2026-06-11",
+      count: 5,
+    });
+    expect(state.githubContributions.meta).toMatchObject({
+      repoCount: 2,
+      requestedRepoCount: 2,
+      repoLimit: 30,
+      truncated: false,
+      skippedRepoCount: 0,
+    });
+  });
+
   it("本地贡献刷新失败不会回退到 GitHub scope", async () => {
     service.listManagedRepos.mockResolvedValue([
       repoSummary("LocalOnly", {
