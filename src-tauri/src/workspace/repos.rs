@@ -1360,11 +1360,79 @@ pub async fn repo_merge_pull(
 }
 
 #[tauri::command]
+pub async fn repo_fetch(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+    run_blocking("抓取远端引用", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        run_fetch(&app, &path)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_start_rebase(
+    app: AppHandle,
+    repo_id: String,
+    onto_ref: Option<String>,
+) -> Result<RepoOperationResult, String> {
+    run_blocking("执行 rebase", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        ensure_repo_ready_for_rewrite(&root, &path, "rebase")?;
+        let target = normalize_rebase_target(&path, onto_ref)?;
+        if target == "@{u}" || target.contains('/') {
+            run_fetch(&app, &path)?;
+        }
+        run_repo_operation_with_conflicts(
+            &root,
+            &path,
+            &["rebase", target.as_str()],
+            None,
+            "rebase 完成",
+            "rebase 产生冲突，请处理后继续",
+        )
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
     run_blocking("推送仓库", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
         run_push(&app, &path)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_push_new_branch(
+    app: AppHandle,
+    repo_id: String,
+    remote_name: Option<String>,
+    branch_name: Option<String>,
+) -> Result<RepoSummary, String> {
+    run_blocking("推送新分支", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let summary = summarize_repo(&root, &path);
+        let branch = normalize_branch_ref(
+            branch_name
+                .as_deref()
+                .or(summary.current_branch.as_deref())
+                .unwrap_or(""),
+            "分支名不能为空",
+        )?;
+        let remote = normalize_remote_name(remote_name.as_deref().unwrap_or("origin"))?;
+        let auth = git_auth_for_repo(&app, &path)?;
+        git_command(
+            &path,
+            &["push", "-u", remote.as_str(), branch.as_str()],
+            auth.as_deref(),
+        )
+        .map_err(|error| map_remote_git_error(&path, error))?;
         Ok(summarize_repo(&root, &path))
     })
     .await
@@ -1454,6 +1522,205 @@ pub async fn repo_delete_branch(
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
         delete_branch_at(&root, &path, &branch)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_set_upstream(
+    app: AppHandle,
+    repo_id: String,
+    branch: String,
+    upstream: String,
+) -> Result<RepoSummary, String> {
+    run_blocking("设置分支 upstream", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let branch = normalize_branch_ref(&branch, "分支名不能为空")?;
+        let upstream = normalize_branch_ref(&upstream, "upstream 不能为空")?;
+        git_command(
+            &path,
+            &["branch", "--set-upstream-to", upstream.as_str(), branch.as_str()],
+            None,
+        )?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_list_stashes(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<Vec<RepoStashEntry>, String> {
+    run_blocking("读取 stash 列表", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        repo_stashes(&path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_stash_save(
+    app: AppHandle,
+    repo_id: String,
+    message: Option<String>,
+) -> Result<RepoSummary, String> {
+    run_blocking("保存 stash", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let summary = summarize_repo(&root, &path);
+        if repo_dirty_count(&summary) == 0 {
+            return Err("当前没有可保存的改动".to_string());
+        }
+        let message = normalize_optional_string(message).unwrap_or_else(|| {
+            summary
+                .current_branch
+                .as_deref()
+                .map(|branch| format!("保存工作区：{branch}"))
+                .unwrap_or_else(|| "保存工作区".to_string())
+        });
+        git_command(&path, &["stash", "push", "-u", "-m", message.as_str()], None)?;
+        Ok(summarize_repo(&root, &path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_stash_apply(
+    app: AppHandle,
+    repo_id: String,
+    stash_id: String,
+) -> Result<RepoOperationResult, String> {
+    run_blocking("应用 stash", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let stash = normalize_stash_id(&stash_id)?;
+        run_repo_operation_with_conflicts(
+            &root,
+            &path,
+            &["stash", "apply", stash.as_str()],
+            None,
+            "stash 已应用",
+            "stash 应用产生冲突，请处理后继续",
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_stash_pop(
+    app: AppHandle,
+    repo_id: String,
+    stash_id: String,
+) -> Result<RepoOperationResult, String> {
+    run_blocking("弹出 stash", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let stash = normalize_stash_id(&stash_id)?;
+        run_repo_operation_with_conflicts(
+            &root,
+            &path,
+            &["stash", "pop", stash.as_str()],
+            None,
+            "stash 已弹出",
+            "stash 弹出产生冲突，请处理后继续",
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_stash_drop(
+    app: AppHandle,
+    repo_id: String,
+    stash_id: String,
+) -> Result<Vec<RepoStashEntry>, String> {
+    run_blocking("删除 stash", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let stash = normalize_stash_id(&stash_id)?;
+        git_command(&path, &["stash", "drop", stash.as_str()], None)?;
+        repo_stashes(&path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_list_remotes(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<Vec<RepoRemote>, String> {
+    run_blocking("读取远端配置", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        repo_remotes(&path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_cherry_pick_commit(
+    app: AppHandle,
+    repo_id: String,
+    hash: String,
+) -> Result<RepoOperationResult, String> {
+    run_blocking("执行 cherry-pick", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        ensure_repo_ready_for_rewrite(&root, &path, "cherry-pick")?;
+        let hash = normalize_commit_hash(&hash)?;
+        run_repo_operation_with_conflicts(
+            &root,
+            &path,
+            &["cherry-pick", hash.as_str()],
+            None,
+            "cherry-pick 完成",
+            "cherry-pick 产生冲突，请处理后继续",
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_revert_commit(
+    app: AppHandle,
+    repo_id: String,
+    hash: String,
+) -> Result<RepoOperationResult, String> {
+    run_blocking("回退提交", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        ensure_repo_ready_for_rewrite(&root, &path, "revert")?;
+        let hash = normalize_commit_hash(&hash)?;
+        run_repo_operation_with_conflicts(
+            &root,
+            &path,
+            &["revert", "--no-edit", hash.as_str()],
+            None,
+            "revert 完成",
+            "revert 产生冲突，请处理后继续",
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn repo_reset_to_commit(
+    app: AppHandle,
+    repo_id: String,
+    hash: String,
+    mode: Option<String>,
+) -> Result<RepoSummary, String> {
+    run_blocking("重置到提交", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let summary = summarize_repo(&root, &path);
+        if summary.conflict_count > 0 || !repo_conflicts(&path).files.is_empty() {
+            return Err("当前仓库存在未处理冲突，已阻止 reset".to_string());
+        }
+        let hash = normalize_commit_hash(&hash)?;
+        let mode = normalize_reset_mode(mode)?;
+        git_command(&path, &["reset", mode.as_str(), hash.as_str()], None)?;
+        Ok(summarize_repo(&root, &path))
     })
     .await
 }
@@ -1563,6 +1830,51 @@ pub(super) fn repo_conflicts(path: &Path) -> RepoConflictState {
         operation: conflict_operation(path),
         all_resolved: files.is_empty(),
         files,
+    }
+}
+
+pub(super) fn build_repo_operation_result(
+    root: &Path,
+    path: &Path,
+    status: &str,
+    message: &str,
+) -> RepoOperationResult {
+    RepoOperationResult {
+        status: status.to_string(),
+        message: message.to_string(),
+        summary: summarize_repo(root, path),
+        conflicts: repo_conflicts(path),
+    }
+}
+
+pub(super) fn run_repo_operation_with_conflicts(
+    root: &Path,
+    path: &Path,
+    args: &[&str],
+    auth_header: Option<&str>,
+    success_message: &str,
+    conflict_message: &str,
+) -> Result<RepoOperationResult, String> {
+    match git_command(path, args, auth_header) {
+        Ok(_) => Ok(build_repo_operation_result(
+            root,
+            path,
+            "success",
+            success_message,
+        )),
+        Err(err) => {
+            let conflicts = repo_conflicts(path);
+            if conflicts.files.is_empty() {
+                Err(err)
+            } else {
+                Ok(RepoOperationResult {
+                    status: "conflicts".to_string(),
+                    message: conflict_message.to_string(),
+                    summary: summarize_repo(root, path),
+                    conflicts,
+                })
+            }
+        }
     }
 }
 
@@ -2594,6 +2906,158 @@ pub(super) fn parse_track(track: &str) -> (i32, i32) {
         }
     }
     (ahead, behind)
+}
+
+pub(super) fn repo_stashes(path: &Path) -> Result<Vec<RepoStashEntry>, String> {
+    let output = git_command_lossy(path, &["stash", "list", "--format=%gd\x1f%gs"]).unwrap_or_default();
+    Ok(output
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let (id, message) = line.split_once('\x1f')?;
+            let trimmed_id = id.trim();
+            if trimmed_id.is_empty() {
+                return None;
+            }
+            Some(RepoStashEntry {
+                id: trimmed_id.to_string(),
+                index,
+                branch: stash_branch_from_message(message),
+                message: message.trim().to_string(),
+            })
+        })
+        .collect())
+}
+
+pub(super) fn repo_remotes(path: &Path) -> Result<Vec<RepoRemote>, String> {
+    let output = git_command(path, &["remote", "-v"], None)?;
+    let current_upstream = current_branch_upstream(path);
+    let mut remotes = Vec::new();
+    let mut order = Vec::new();
+    let mut map = HashMap::<String, RepoRemote>::new();
+    for line in output.lines() {
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        if parts.len() < 3 {
+            continue;
+        }
+        let name = parts[0].trim();
+        let url = parts[1].trim();
+        let kind = parts[2].trim();
+        if name.is_empty() || url.is_empty() {
+            continue;
+        }
+        let entry = map.entry(name.to_string()).or_insert_with(|| {
+            order.push(name.to_string());
+            RepoRemote {
+                name: name.to_string(),
+                fetch_url: String::new(),
+                push_url: None,
+                current: current_upstream
+                    .as_deref()
+                    .map(|value| value.starts_with(&format!("{name}/")))
+                    .unwrap_or(false),
+            }
+        });
+        if kind == "(fetch)" {
+            entry.fetch_url = url.to_string();
+        } else if kind == "(push)" {
+            entry.push_url = Some(url.to_string());
+        }
+    }
+    for name in order {
+        if let Some(remote) = map.remove(&name) {
+            remotes.push(remote);
+        }
+    }
+    Ok(remotes)
+}
+
+pub(super) fn stash_branch_from_message(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    let branch = trimmed
+        .strip_prefix("On ")
+        .and_then(|value| value.split_once(':').map(|(head, _)| head.trim().to_string()))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("WIP on ")
+                .and_then(|value| value.split_once(':').map(|(head, _)| head.trim().to_string()))
+        })?;
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch)
+    }
+}
+
+pub(super) fn normalize_commit_hash(hash: &str) -> Result<String, String> {
+    let trimmed = hash.trim();
+    if trimmed.is_empty() {
+        return Err("提交 hash 不能为空".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+pub(super) fn normalize_branch_ref(value: &str, error_message: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(error_message.to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+pub(super) fn normalize_remote_name(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("remote 名称不能为空".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+pub(super) fn normalize_stash_id(stash_id: &str) -> Result<String, String> {
+    let trimmed = stash_id.trim();
+    if trimmed.is_empty() {
+        return Err("stash 标识不能为空".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+pub(super) fn normalize_reset_mode(mode: Option<String>) -> Result<String, String> {
+    match mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("--mixed")
+    {
+        "soft" | "--soft" => Ok("--soft".to_string()),
+        "mixed" | "--mixed" => Ok("--mixed".to_string()),
+        "hard" | "--hard" => Ok("--hard".to_string()),
+        _ => Err("reset 模式只能是 soft、mixed 或 hard".to_string()),
+    }
+}
+
+pub(super) fn normalize_rebase_target(
+    path: &Path,
+    onto_ref: Option<String>,
+) -> Result<String, String> {
+    if let Some(target) = normalize_optional_string(onto_ref) {
+        return Ok(target);
+    }
+    current_branch_upstream(path).ok_or_else(|| "当前分支没有 upstream".to_string())
+}
+
+pub(super) fn ensure_repo_ready_for_rewrite(
+    root: &Path,
+    path: &Path,
+    operation: &str,
+) -> Result<(), String> {
+    let summary = summarize_repo(root, path);
+    if summary.conflict_count > 0 || !repo_conflicts(path).files.is_empty() {
+        return Err(format!("当前仓库存在未处理冲突，已阻止 {operation}"));
+    }
+    if repo_dirty_count(&summary) > 0 {
+        return Err(format!("存在未提交变更，已阻止 {operation}"));
+    }
+    Ok(())
 }
 
 pub(super) fn run_pull(app: &AppHandle, path: &Path) -> Result<(), String> {

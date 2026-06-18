@@ -6,13 +6,18 @@ import { closeContextMenu, installContextMenu } from "../src/composables/useCont
 import { state } from "../src/composables/workspace/state";
 import {
   getGitHubRepoManagement,
+  listGitHubPullRequestChecks,
+  listGitHubPullRequests,
   listGitHubIssues,
   listGitHubWorkflowRuns,
   listRepoReadmes,
+  mergeGitHubPullRequest,
   updateGitHubRepoSettings,
 } from "../src/services/workspace/client";
 import type {
   GitHubIssue,
+  GitHubPullRequest,
+  GitHubPullRequestCheck,
   GitHubRepoManagement,
   GitHubWorkflowRun,
   ProjectLaunchConfig,
@@ -74,14 +79,46 @@ const githubWorkflowRuns: GitHubWorkflowRun[] = [{
   updatedAt: "2026-06-18T08:00:00Z",
 }];
 
+const githubPullRequests: GitHubPullRequest[] = [{
+  number: 52,
+  title: "接入 Pull Request 工作流",
+  state: "open",
+  draft: false,
+  body: null,
+  htmlUrl: "https://github.com/sena-nana/remote-repo/pull/52",
+  updatedAt: "2026-06-18T08:00:00Z",
+  createdAt: "2026-06-18T08:00:00Z",
+  author: "sena",
+  baseBranch: "main",
+  headBranch: "feature/pr-flow",
+  merged: false,
+  mergeable: true,
+  mergeableState: "clean",
+}];
+
+const githubPullRequestChecks: GitHubPullRequestCheck[] = [{
+  id: 1,
+  name: "ci / build",
+  status: "completed",
+  conclusion: "success",
+  detailsUrl: null,
+  htmlUrl: null,
+  startedAt: "2026-06-18T08:00:00Z",
+  completedAt: "2026-06-18T08:05:00Z",
+}];
+
 vi.mock("../src/services/workspace/client", () => ({
+  createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
   deleteGitHubRepo: vi.fn(),
   getRepoCommitDetail: vi.fn(),
   getGitHubRepoManagement: vi.fn(),
+  listGitHubPullRequestChecks: vi.fn(),
+  listGitHubPullRequests: vi.fn(),
   listGitHubIssues: vi.fn(),
   listGitHubRepoReadmes: vi.fn(async () => []),
   listGitHubWorkflowRuns: vi.fn(),
+  mergeGitHubPullRequest: vi.fn(),
   listRepoReadmes: vi.fn(async () => []),
   openPath: vi.fn(),
   openUrl: vi.fn(),
@@ -139,6 +176,7 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
       commitMetaTitle: () => "",
       projectTab: "readme",
       projectIssueNumber: null,
+      projectPullRequestNumber: null,
       projectRunId: null,
       ...props,
     },
@@ -154,6 +192,9 @@ describe("RepoProjectPanel", () => {
     installContextMenu();
     vi.clearAllMocks();
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
+    vi.mocked(listGitHubPullRequests).mockResolvedValue([]);
+    vi.mocked(listGitHubPullRequestChecks).mockResolvedValue([]);
+    vi.mocked(mergeGitHubPullRequest).mockImplementation(async () => ({ ...githubPullRequests[0], merged: true, state: "closed" }));
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
     vi.mocked(listRepoReadmes).mockResolvedValue([]);
@@ -257,6 +298,26 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
     expect(await view.findByText("release pipeline")).toBeInTheDocument();
     expect(listGitHubWorkflowRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("Pull Requests 分区按需加载列表、checks，并支持合并", async () => {
+    vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
+    vi.mocked(listGitHubPullRequestChecks).mockResolvedValue(githubPullRequestChecks);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
+    expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+    expect(await view.findByText("1 个 checks")).toBeInTheDocument();
+    expect(view.getByText("ci / build")).toBeInTheDocument();
+    expect(listGitHubPullRequests).toHaveBeenCalledWith("sena-nana/remote-repo", "open");
+    expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
+
+    await fireEvent.click(view.getByRole("button", { name: "合并" }));
+    await waitFor(() => {
+      expect(mergeGitHubPullRequest).toHaveBeenCalledWith("sena-nana/remote-repo", 52, { method: "merge" });
+    });
   });
 
   it("issues 过滤切换只触发一次刷新请求", async () => {

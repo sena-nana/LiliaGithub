@@ -14,11 +14,16 @@ import type {
   GitHubDeviceFlowStart,
   GitHubIssue,
   GitHubIssueListOptions,
+  GitHubMergePullRequestRequest,
+  GitHubPullRequest,
+  GitHubPullRequestCheck,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
   GitHubWorkflowRun,
+  GitHubCreatePullRequestRequest,
+  GitHubUpdatePullRequestRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
@@ -32,9 +37,13 @@ import type {
   RepoFilePreview,
   RepoFileTreeEntry,
   RepoMergePullResult,
+  RepoOperationResult,
+  RepoRemote,
   RepoRefreshSummaryOptions,
   RepoReadme,
+  RepoResetMode,
   RepoSummary,
+  RepoStashEntry,
   RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
@@ -186,6 +195,22 @@ function cloneBranchSummary(branch: BranchSummary): BranchSummary {
   };
 }
 
+function clonePullRequest(pullRequest: GitHubPullRequest): GitHubPullRequest {
+  return { ...pullRequest };
+}
+
+function clonePullRequestCheck(check: GitHubPullRequestCheck): GitHubPullRequestCheck {
+  return { ...check };
+}
+
+function cloneRepoStashEntry(entry: RepoStashEntry): RepoStashEntry {
+  return { ...entry };
+}
+
+function cloneRepoRemote(remote: RepoRemote): RepoRemote {
+  return { ...remote };
+}
+
 function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
   return [
     { login: "lilia-user", kind: "user" },
@@ -253,6 +278,48 @@ function createFallbackGitHubIssues(): Record<string, GitHubIssue[]> {
         createdAt: "2026-06-16T12:00:00Z",
       },
     ],
+  };
+}
+
+function createFallbackGitHubPullRequests(): Record<string, GitHubPullRequest[]> {
+  return {
+    "sena-nana/LiliaGithub": [
+      {
+        number: 7,
+        title: "补齐 Git 仓库批量操作",
+        state: "open",
+        draft: false,
+        body: "补齐 pull / push / sync / fetch all 基础能力。",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/7",
+        updatedAt: "2026-06-17T12:20:00Z",
+        createdAt: "2026-06-16T09:00:00Z",
+        author: "lilia-user",
+        baseBranch: "main",
+        headBranch: "codex/project-view",
+        merged: false,
+        mergeable: true,
+        mergeableState: "clean",
+      },
+    ],
+  };
+}
+
+function createFallbackGitHubPullRequestChecks(): Record<string, Record<number, GitHubPullRequestCheck[]>> {
+  return {
+    "sena-nana/LiliaGithub": {
+      7: [
+        {
+          id: 9001,
+          name: "verify",
+          status: "completed",
+          conclusion: "success",
+          detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+          startedAt: "2026-06-17T12:00:00Z",
+          completedAt: "2026-06-17T12:08:00Z",
+        },
+      ],
+    },
   };
 }
 
@@ -366,6 +433,35 @@ function createFallbackRepoBranches(): Record<string, BranchSummary[]> {
         remote: true,
         tipTimestamp: 1_784_990_000,
       }),
+    ],
+  };
+}
+
+function createFallbackRepoStashes(): Record<string, RepoStashEntry[]> {
+  return {
+    LiliaGithub: [
+      { id: "stash@{0}", index: 0, branch: "main", message: "On main: WIP toolbar" },
+    ],
+  };
+}
+
+function createFallbackRepoRemotes(): Record<string, RepoRemote[]> {
+  return {
+    LiliaGithub: [
+      {
+        name: "origin",
+        fetchUrl: "https://github.com/sena-nana/LiliaGithub.git",
+        pushUrl: "https://github.com/sena-nana/LiliaGithub.git",
+        current: true,
+      },
+    ],
+    Lilia: [
+      {
+        name: "origin",
+        fetchUrl: "https://github.com/sena-nana/Lilia.git",
+        pushUrl: "https://github.com/sena-nana/Lilia.git",
+        current: true,
+      },
     ],
   };
 }
@@ -548,8 +644,12 @@ function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFil
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
+let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
+let fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
 let fallbackGitHubBranches = createFallbackGitHubBranches();
+let fallbackRepoStashes = createFallbackRepoStashes();
+let fallbackRepoRemotes = createFallbackRepoRemotes();
 let fallbackRepoBranches = createFallbackRepoBranches();
 let fallbackRepoReadmes = createFallbackRepoReadmes();
 let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
@@ -620,8 +720,12 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
+  fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
+  fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackGitHubBranches = createFallbackGitHubBranches();
+  fallbackRepoStashes = createFallbackRepoStashes();
+  fallbackRepoRemotes = createFallbackRepoRemotes();
   fallbackRepoBranches = createFallbackRepoBranches();
   fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
@@ -1344,6 +1448,8 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       htmlUrl: repo.htmlUrl,
     };
     fallbackGitHubIssues[fullName] = [];
+    fallbackGitHubPullRequests[fullName] = [];
+    fallbackGitHubPullRequestChecks[fullName] = {};
     fallbackGitHubBranches[fullName] = repo.defaultBranch
       ? [buildBranchSummary({ name: repo.defaultBranch, remote: true })]
       : [];
@@ -1386,6 +1492,8 @@ export function deleteGitHubRepo(repoFullName: string): Promise<void> {
     })) ?? null;
     delete fallbackGitHubRepoManagement[normalized];
     delete fallbackGitHubIssues[normalized];
+    delete fallbackGitHubPullRequests[normalized];
+    delete fallbackGitHubPullRequestChecks[normalized];
     delete fallbackGitHubWorkflowRuns[normalized];
     delete fallbackGitHubBranches[normalized];
     delete fallbackGitHubRepoReadmes[normalized];
@@ -1414,6 +1522,118 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
     if (target.protected) throw new Error("受保护分支不能删除");
     fallbackGitHubBranches[repoFullName] = branches.filter((item) => item.name !== branch);
   });
+}
+
+export function listGitHubPullRequests(
+  repoFullName: string,
+  state: "open" | "closed" | "all" | null = "open",
+): Promise<GitHubPullRequest[]> {
+  return call("github_list_pull_requests", { repoFullName, state: state ?? null }, () =>
+    [...(fallbackGitHubPullRequests[repoFullName] ?? [])]
+      .filter((pullRequest) => !state || state === "all" || pullRequest.state === state)
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .map(clonePullRequest),
+  );
+}
+
+export function getGitHubPullRequest(repoFullName: string, pullNumber: number): Promise<GitHubPullRequest> {
+  return call("github_get_pull_request", { repoFullName, pullNumber }, () => {
+    const current = (fallbackGitHubPullRequests[repoFullName] ?? []).find((pullRequest) => pullRequest.number === pullNumber);
+    if (!current) throw new Error(`未找到 Pull Request #${pullNumber}`);
+    return clonePullRequest(current);
+  });
+}
+
+export function createGitHubPullRequest(
+  repoFullName: string,
+  request: GitHubCreatePullRequestRequest,
+): Promise<GitHubPullRequest> {
+  return call("github_create_pull_request", { repoFullName, request }, () => {
+    const title = request.title.trim();
+    const head = request.head.trim();
+    const base = request.base.trim();
+    if (!title || !head || !base) throw new Error("Pull Request 标题、head 和 base 不能为空");
+    const pullRequests = fallbackGitHubPullRequests[repoFullName] ?? [];
+    const pullRequest: GitHubPullRequest = {
+      number: Math.max(0, ...pullRequests.map((item) => item.number)) + 1,
+      title,
+      state: "open",
+      draft: request.draft === true,
+      body: request.body?.trim() || null,
+      htmlUrl: `https://github.com/${repoFullName}/pull/${pullRequests.length + 1}`,
+      updatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      author: fallbackBinding.binding?.login ?? "lilia-user",
+      baseBranch: base,
+      headBranch: head,
+      merged: false,
+      mergeable: true,
+      mergeableState: "clean",
+    };
+    fallbackGitHubPullRequests[repoFullName] = [pullRequest, ...pullRequests];
+    fallbackGitHubPullRequestChecks[repoFullName] = {
+      ...(fallbackGitHubPullRequestChecks[repoFullName] ?? {}),
+      [pullRequest.number]: [],
+    };
+    return clonePullRequest(pullRequest);
+  });
+}
+
+export function updateGitHubPullRequest(
+  repoFullName: string,
+  pullNumber: number,
+  request: GitHubUpdatePullRequestRequest,
+): Promise<GitHubPullRequest> {
+  return call("github_update_pull_request", { repoFullName, pullNumber, request }, () => {
+    const pullRequests = fallbackGitHubPullRequests[repoFullName] ?? [];
+    const current = pullRequests.find((pullRequest) => pullRequest.number === pullNumber);
+    if (!current) throw new Error(`未找到 Pull Request #${pullNumber}`);
+    const updated: GitHubPullRequest = {
+      ...current,
+      title: request.title?.trim() || current.title,
+      body: request.body ?? current.body,
+      state: request.state?.trim() || current.state,
+      baseBranch: request.base?.trim() || current.baseBranch,
+      updatedAt: new Date().toISOString(),
+    };
+    fallbackGitHubPullRequests[repoFullName] = pullRequests.map((pullRequest) =>
+      pullRequest.number === pullNumber ? updated : pullRequest
+    );
+    return clonePullRequest(updated);
+  });
+}
+
+export function mergeGitHubPullRequest(
+  repoFullName: string,
+  pullNumber: number,
+  _request: GitHubMergePullRequestRequest = {},
+): Promise<GitHubPullRequest> {
+  return call("github_merge_pull_request", { repoFullName, pullNumber, request: _request }, () => {
+    const pullRequests = fallbackGitHubPullRequests[repoFullName] ?? [];
+    const current = pullRequests.find((pullRequest) => pullRequest.number === pullNumber);
+    if (!current) throw new Error(`未找到 Pull Request #${pullNumber}`);
+    const updated: GitHubPullRequest = {
+      ...current,
+      state: "closed",
+      merged: true,
+      mergeable: false,
+      mergeableState: "merged",
+      updatedAt: new Date().toISOString(),
+    };
+    fallbackGitHubPullRequests[repoFullName] = pullRequests.map((pullRequest) =>
+      pullRequest.number === pullNumber ? updated : pullRequest
+    );
+    return clonePullRequest(updated);
+  });
+}
+
+export function listGitHubPullRequestChecks(
+  repoFullName: string,
+  pullNumber: number,
+): Promise<GitHubPullRequestCheck[]> {
+  return call("github_list_pull_request_checks", { repoFullName, pullNumber }, () =>
+    [...(fallbackGitHubPullRequestChecks[repoFullName]?.[pullNumber] ?? [])].map(clonePullRequestCheck),
+  );
 }
 
 export function listGitHubIssues(
@@ -2098,9 +2318,51 @@ export function mergeBranch(repoId: string, branch: string): Promise<RepoMergePu
   });
 }
 
+function fallbackOperationResult(
+  repoId: string,
+  message: string,
+  summaryOverride?: Partial<RepoSummary>,
+): RepoOperationResult {
+  const repo = fallbackRepo(repoId);
+  const conflicts = fallbackConflictState(repoId);
+  return {
+    status: conflicts.files.length ? "conflicts" : "success",
+    message: conflicts.files.length ? `${message}，请处理后继续` : message,
+    summary: { ...repo, ...summaryOverride },
+    conflicts,
+  };
+}
+
+export function fetchRepo(repoId: string): Promise<RepoSummary> {
+  return call("repo_fetch", { repoId }, () => fallbackRepo(repoId));
+}
+
+export function startRebaseRepo(repoId: string, ontoRef?: string | null): Promise<RepoOperationResult> {
+  return call("repo_start_rebase", { repoId, ontoRef: ontoRef ?? null }, () =>
+    fallbackOperationResult(repoId, "rebase 完成"),
+  );
+}
+
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => {
     const repo = fallbackRepo(repoId);
+    return { ...repo, ahead: 0 };
+  });
+}
+
+export function pushNewBranchRepo(
+  repoId: string,
+  remoteName?: string | null,
+  branchName?: string | null,
+): Promise<RepoSummary> {
+  return call("repo_push_new_branch", { repoId, remoteName: remoteName ?? null, branchName: branchName ?? null }, () => {
+    const repo = fallbackRepo(repoId);
+    const currentBranch = branchName?.trim() || repo.currentBranch;
+    if (!currentBranch) throw new Error("分支名不能为空");
+    const upstream = `${remoteName?.trim() || "origin"}/${currentBranch}`;
+    fallbackRepoBranches[repoId] = syncFallbackRepoBranchState(repoId).map((branch) =>
+      !branch.remote && branch.name === currentBranch ? { ...branch, upstream } : branch
+    );
     return { ...repo, ahead: 0 };
   });
 }
@@ -2202,6 +2464,85 @@ export function deleteBranch(repoId: string, branch: string): Promise<RepoSummar
     const branches = syncFallbackRepoBranchState(repoId);
     fallbackRepoBranches[repoId] = branches.filter((item) => item.remote || item.name !== target).map(cloneBranchSummary);
     return { ...repo };
+  });
+}
+
+export function setBranchUpstream(repoId: string, branch: string, upstream: string): Promise<RepoSummary> {
+  return call("repo_set_upstream", { repoId, branch, upstream }, () => {
+    const branchName = branch.trim();
+    const upstreamName = upstream.trim();
+    if (!branchName || !upstreamName) throw new Error("分支名和 upstream 不能为空");
+    fallbackRepoBranches[repoId] = syncFallbackRepoBranchState(repoId).map((item) =>
+      !item.remote && item.name === branchName ? { ...item, upstream: upstreamName } : item
+    );
+    return fallbackRepo(repoId);
+  });
+}
+
+export function listRepoStashes(repoId: string): Promise<RepoStashEntry[]> {
+  return call("repo_list_stashes", { repoId }, () => [...(fallbackRepoStashes[repoId] ?? [])].map(cloneRepoStashEntry));
+}
+
+export function saveRepoStash(repoId: string, message?: string | null): Promise<RepoSummary> {
+  return call("repo_stash_save", { repoId, message: message ?? null }, () => {
+    const repo = fallbackRepo(repoId);
+    const existing = (fallbackRepoStashes[repoId] ?? []).map((entry, index) => ({
+      ...entry,
+      index: index + 1,
+      id: `stash@{${index + 1}}`,
+    }));
+    fallbackRepoStashes[repoId] = [{
+      id: "stash@{0}",
+      index: 0,
+      branch: repo.currentBranch,
+      message: message?.trim() || `On ${repo.currentBranch ?? "detached"}: 工作区暂存`,
+    }, ...existing];
+    return { ...repo, stagedCount: 0, unstagedCount: 0, untrackedCount: 0 };
+  });
+}
+
+export function applyRepoStash(repoId: string, stashId: string): Promise<RepoOperationResult> {
+  return call("repo_stash_apply", { repoId, stashId }, () => fallbackOperationResult(repoId, "stash 已应用"));
+}
+
+export function popRepoStash(repoId: string, stashId: string): Promise<RepoOperationResult> {
+  return call("repo_stash_pop", { repoId, stashId }, () => {
+    fallbackRepoStashes[repoId] = (fallbackRepoStashes[repoId] ?? [])
+      .filter((entry) => entry.id !== stashId)
+      .map((entry, index) => ({ ...entry, index, id: `stash@{${index}}` }));
+    return fallbackOperationResult(repoId, "stash 已弹出");
+  });
+}
+
+export function dropRepoStash(repoId: string, stashId: string): Promise<RepoStashEntry[]> {
+  return call("repo_stash_drop", { repoId, stashId }, () => {
+    fallbackRepoStashes[repoId] = (fallbackRepoStashes[repoId] ?? [])
+      .filter((entry) => entry.id !== stashId)
+      .map((entry, index) => ({ ...entry, index, id: `stash@{${index}}` }));
+    return [...(fallbackRepoStashes[repoId] ?? [])].map(cloneRepoStashEntry);
+  });
+}
+
+export function listRepoRemotes(repoId: string): Promise<RepoRemote[]> {
+  return call("repo_list_remotes", { repoId }, () => [...(fallbackRepoRemotes[repoId] ?? [])].map(cloneRepoRemote));
+}
+
+export function cherryPickRepoCommit(repoId: string, hash: string): Promise<RepoOperationResult> {
+  return call("repo_cherry_pick_commit", { repoId, hash }, () => fallbackOperationResult(repoId, "cherry-pick 完成"));
+}
+
+export function revertRepoCommit(repoId: string, hash: string): Promise<RepoOperationResult> {
+  return call("repo_revert_commit", { repoId, hash }, () => fallbackOperationResult(repoId, "revert 完成"));
+}
+
+export function resetRepoToCommit(
+  repoId: string,
+  hash: string,
+  mode: RepoResetMode = "mixed",
+): Promise<RepoSummary> {
+  return call("repo_reset_to_commit", { repoId, hash, mode }, () => {
+    const repo = fallbackRepo(repoId);
+    return { ...repo, stagedCount: 0, unstagedCount: 0, untrackedCount: mode === "soft" ? repo.untrackedCount : 0 };
   });
 }
 

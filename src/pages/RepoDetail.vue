@@ -65,11 +65,14 @@ const {
   conflictContinueText,
   activeProjectTab,
   activeProjectIssue,
+  activeProjectPullRequest,
   activeProjectRun,
   toolbarTabs,
   launchCommandOptions,
   activeLaunchValue,
   launchCommandText,
+  pullStrategyOptions,
+  activePullStrategyValue,
   branchItems,
   branchActionRunning,
   activeBranchName,
@@ -83,8 +86,16 @@ const {
   unstageStagedChanges,
   runChangeAction,
   commitSelected,
-  mergePull,
+  fetchRepo,
+  selectPullStrategy,
+  runSelectedPullStrategy,
   push,
+  pushCurrentBranchWithUpstream,
+  setCurrentBranchUpstream,
+  stashChanges,
+  applyStash,
+  popStash,
+  dropStash,
   useDefaultTokenAuth,
   acceptConflict,
   resolveSelectedConflict,
@@ -102,6 +113,10 @@ const {
   updateCurrentBranch,
   openCommit,
   closeCommit,
+  cherryPickCommit,
+  revertCommit,
+  resetCommit,
+  createBranchFromCommit,
   openFolder,
   openConflictFolder,
   commitMetaTitle,
@@ -217,6 +232,16 @@ const {
               <button
                 type="button"
                 class="repo-toolbar__btn"
+                title="抓取远端"
+                aria-label="抓取远端"
+                :disabled="actionRunning || hasConflicts"
+                @click="fetchRepo"
+              >
+                <RefreshCw :size="17" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="repo-toolbar__btn"
                 title="文件夹"
                 aria-label="文件夹"
                 :disabled="!summary?.path"
@@ -224,6 +249,18 @@ const {
               >
                 <FolderOpen :size="17" aria-hidden="true" />
               </button>
+              <Dropdown
+                :model-value="activePullStrategyValue"
+                :options="pullStrategyOptions"
+                :icon="GitPullRequestArrow"
+                display-label="拉取策略"
+                placement="bottom"
+                button-class="repo-toolbar__btn repo-toolbar__btn--counted repo-toolbar__pull-strategy"
+                menu-width="220px"
+                menu-label="拉取策略"
+                :disabled="actionRunning || hasConflicts"
+                @update:model-value="selectPullStrategy"
+              />
               <button
                 type="button"
                 class="repo-toolbar__btn"
@@ -231,7 +268,7 @@ const {
                 title="拉取"
                 aria-label="拉取"
                 :disabled="actionRunning || hasConflicts"
-                @click="mergePull"
+                @click="runSelectedPullStrategy"
               >
                 <GitPullRequestArrow :size="17" aria-hidden="true" />
                 <span v-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
@@ -266,6 +303,27 @@ const {
           </div>
         </div>
       </header>
+
+      <div v-if="!remoteOnly" class="repo-secondary-actions" role="group" aria-label="扩展仓库操作">
+        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning" @click="pushCurrentBranchWithUpstream">
+          推送并建立 upstream
+        </button>
+        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning" @click="setCurrentBranchUpstream">
+          设置 upstream
+        </button>
+        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="stashChanges">
+          保存 stash
+        </button>
+        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="applyStash">
+          Apply stash
+        </button>
+        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="popStash">
+          Pop stash
+        </button>
+        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="dropStash">
+          Drop stash
+        </button>
+      </div>
 
     <div v-if="actionError || recentSyncError" class="repo-workbench__status">
       <p v-if="actionError" class="error-line">{{ actionError }}</p>
@@ -327,6 +385,7 @@ const {
           :using-system-git="usingSystemGit"
           :project-tab="activeProjectTab"
           :project-issue-number="activeProjectIssue"
+          :project-pull-request-number="activeProjectPullRequest"
           :project-run-id="activeProjectRun"
           @update-commit-message="commitMessage = $event"
           @stage-unstaged-changes="stageUnstagedChanges"
@@ -336,6 +395,10 @@ const {
           @commit="commitSelected"
           @open-commit="openCommit"
           @close-commit="closeCommit"
+          @cherry-pick-commit="cherryPickCommit"
+          @revert-commit="revertCommit"
+          @reset-commit="resetCommit"
+          @create-branch-from-commit="createBranchFromCommit"
           @continue-conflict="continueConflict"
           @abort-conflict="abortConflict"
           @focus-conflict="focusConflict"
@@ -464,6 +527,10 @@ const {
   min-width: 32px;
   max-width: 280px;
   padding: 0 7px;
+}
+
+.repo-toolbar__pull-strategy .chat-chip__label {
+  max-width: 72px;
 }
 
 .repo-toolbar .chat-chip.repo-toolbar__btn {
@@ -609,6 +676,29 @@ const {
   grid-template-rows: minmax(0, auto);
   gap: 14px;
   min-height: 0;
+}
+
+.repo-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.repo-secondary-actions__btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.repo-secondary-actions__btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .repo-workbench__body {

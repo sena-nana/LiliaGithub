@@ -37,6 +37,7 @@ import {
   type GitHubIssue,
   type GitHubRepoSummary,
   type GitHubWorkflowRun,
+  type BulkOperation,
   type RepoSummary,
 } from "../services/workspace";
 import {
@@ -1391,6 +1392,26 @@ async function syncRepo(repo: RepoSummary) {
   }
 }
 
+function previewBulkOperation(operation: BulkOperation) {
+  void workspace.previewBulk(operation);
+}
+
+function runFetchAll() {
+  void workspace.fetchAll();
+}
+
+function bulkOperationLabel(operation: BulkOperation) {
+  if (operation === "pull") return "拉取";
+  if (operation === "push") return "推送";
+  return "同步";
+}
+
+function bulkOperationDescription(operation: BulkOperation) {
+  if (operation === "pull") return "确认后逐仓库执行 pull 预检通过的项。";
+  if (operation === "push") return "确认后逐仓库执行 push，错误不会中断后续仓库。";
+  return "确认后逐仓库执行同步链路，错误不会中断后续仓库。";
+}
+
 </script>
 
 <template>
@@ -1519,6 +1540,16 @@ async function syncRepo(repo: RepoSummary) {
           <button
             type="button"
             class="overview-actions__btn"
+            title="抓取全部"
+            aria-label="抓取全部"
+            :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
+            @click="runFetchAll"
+          >
+            <RotateCw :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
             title="发现仓库"
             aria-label="发现仓库"
             :disabled="!workspace.workspaceRoot.value || discovering"
@@ -1526,6 +1557,40 @@ async function syncRepo(repo: RepoSummary) {
           >
             <LoaderCircle v-if="discovering" :size="17" aria-hidden="true" class="sb-spin" />
             <Radar v-else :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
+            :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'pull' }"
+            title="批量拉取"
+            aria-label="批量拉取"
+            :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
+            @click="previewBulkOperation('pull')"
+          >
+            <LoaderCircle
+              v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'pull'"
+              :size="17"
+              aria-hidden="true"
+              class="sb-spin"
+            />
+            <GitPullRequestArrow v-else :size="17" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="overview-actions__btn"
+            :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push' }"
+            title="批量推送"
+            aria-label="批量推送"
+            :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
+            @click="previewBulkOperation('push')"
+          >
+            <LoaderCircle
+              v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push'"
+              :size="17"
+              aria-hidden="true"
+              class="sb-spin"
+            />
+            <RotateCw v-else :size="17" aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -1868,12 +1933,16 @@ async function syncRepo(repo: RepoSummary) {
       @clear-selected-repo="useDirectCloneTarget"
     />
 
-    <div v-if="workspace.state.bulkPreview?.operation === 'pull'" class="modal-backdrop" role="presentation">
+    <div
+      v-if="workspace.state.bulkPreview && workspace.state.bulkPreview.operation !== 'sync'"
+      class="modal-backdrop"
+      role="presentation"
+    >
       <div class="modal" role="dialog" aria-modal="true" aria-label="批量同步预检">
         <div class="modal__header">
           <div>
-            <h2>一键拉取预检</h2>
-            <p class="muted">确认后按队列逐仓库执行，错误不会中断后续仓库。</p>
+            <h2>{{ bulkOperationLabel(workspace.state.bulkPreview.operation) }}预检</h2>
+            <p class="muted">{{ bulkOperationDescription(workspace.state.bulkPreview.operation) }}</p>
           </div>
           <button type="button" class="ghost" aria-label="关闭" @click="workspace.closeBulkPreview">
             <X :size="14" aria-hidden="true" />

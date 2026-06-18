@@ -136,6 +136,67 @@ pub(super) struct GitHubIssueResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubPullRequestUserResponse {
+    pub(super) login: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubPullRequestBranchRefResponse {
+    #[serde(rename = "ref")]
+    pub(super) branch: String,
+    #[serde(default)]
+    pub(super) sha: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubPullRequestResponse {
+    pub(super) number: u64,
+    pub(super) title: String,
+    pub(super) state: String,
+    #[serde(default)]
+    pub(super) draft: bool,
+    #[serde(default)]
+    pub(super) body: Option<String>,
+    pub(super) html_url: String,
+    pub(super) updated_at: String,
+    pub(super) created_at: String,
+    #[serde(default)]
+    pub(super) user: Option<GitHubPullRequestUserResponse>,
+    pub(super) base: GitHubPullRequestBranchRefResponse,
+    pub(super) head: GitHubPullRequestBranchRefResponse,
+    #[serde(default)]
+    pub(super) merged_at: Option<String>,
+    #[serde(default)]
+    pub(super) mergeable: Option<bool>,
+    #[serde(default)]
+    pub(super) mergeable_state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubPullRequestCheckRunsResponse {
+    #[serde(default)]
+    pub(super) check_runs: Vec<GitHubPullRequestCheckRunResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubPullRequestCheckRunResponse {
+    pub(super) id: u64,
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) status: Option<String>,
+    #[serde(default)]
+    pub(super) conclusion: Option<String>,
+    #[serde(default)]
+    pub(super) details_url: Option<String>,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
+    #[serde(default)]
+    pub(super) started_at: Option<String>,
+    #[serde(default)]
+    pub(super) completed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubWorkflowRunsResponse {
     #[serde(default)]
     pub(super) workflow_runs: Vec<GitHubWorkflowRunResponse>,
@@ -460,6 +521,28 @@ pub(super) fn github_repo_api_url(repo_full_name: &str) -> Result<String, String
     ))
 }
 
+pub(super) fn github_fetch_pull_request_response(
+    app: &AppHandle,
+    repo_full_name: &str,
+    pull_number: u64,
+    token: &str,
+    prefix: &str,
+) -> Result<GitHubPullRequestResponse, String> {
+    let client = build_client()?;
+    let response = github_send(
+        app,
+        prefix,
+        github_headers(
+            client.get(format!(
+                "{}/pulls/{pull_number}",
+                github_repo_api_url(repo_full_name)?
+            )),
+            Some(token),
+        ),
+    )?;
+    github_json::<GitHubPullRequestResponse>(prefix, response)
+}
+
 pub(super) fn github_update_repo_settings_payload(
     request: GitHubUpdateRepoSettingsRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -555,6 +638,45 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
         updated_at: issue.updated_at,
         created_at: issue.created_at,
     })
+}
+
+pub(super) fn github_pull_request_from_response(
+    pull_request: GitHubPullRequestResponse,
+) -> GitHubPullRequest {
+    GitHubPullRequest {
+        number: pull_request.number,
+        title: pull_request.title,
+        state: pull_request.state,
+        draft: pull_request.draft,
+        body: pull_request.body,
+        html_url: pull_request.html_url,
+        updated_at: pull_request.updated_at,
+        created_at: pull_request.created_at,
+        author: pull_request
+            .user
+            .map(|user| user.login)
+            .unwrap_or_else(|| "unknown".to_string()),
+        base_branch: pull_request.base.branch,
+        head_branch: pull_request.head.branch,
+        merged: pull_request.merged_at.is_some(),
+        mergeable: pull_request.mergeable,
+        mergeable_state: normalize_optional_string(pull_request.mergeable_state),
+    }
+}
+
+pub(super) fn github_pull_request_check_from_response(
+    check: GitHubPullRequestCheckRunResponse,
+) -> GitHubPullRequestCheck {
+    GitHubPullRequestCheck {
+        id: check.id,
+        name: check.name,
+        status: normalize_optional_string(check.status).unwrap_or_else(|| "queued".to_string()),
+        conclusion: normalize_optional_string(check.conclusion),
+        details_url: normalize_optional_string(check.details_url.clone()),
+        html_url: normalize_optional_string(check.html_url).or(check.details_url),
+        started_at: normalize_optional_string(check.started_at),
+        completed_at: normalize_optional_string(check.completed_at),
+    }
 }
 
 pub(super) fn github_workflow_run_from_response(
@@ -1080,6 +1202,264 @@ pub async fn github_delete_branch(
             return Err(github_http_error("删除 GitHub 分支失败", response));
         }
         Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_pull_requests(
+    app: AppHandle,
+    repo_full_name: String,
+    state: Option<String>,
+) -> Result<Vec<GitHubPullRequest>, String> {
+    run_blocking("读取 GitHub Pull Requests", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let pull_state = match state.as_deref() {
+            Some("closed") => "closed",
+            Some("all") => "all",
+            _ => "open",
+        };
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Pull Requests 失败",
+            github_headers(
+                client
+                    .get(format!("{}/pulls", github_repo_api_url(&repo_full_name)?))
+                    .query(&[("state", pull_state), ("per_page", "50"), ("sort", "updated"), ("direction", "desc")]),
+                Some(&token),
+            ),
+        )?;
+        let pull_requests = github_json::<Vec<GitHubPullRequestResponse>>(
+            "读取 GitHub Pull Requests 失败",
+            response,
+        )?;
+        Ok(pull_requests
+            .into_iter()
+            .map(github_pull_request_from_response)
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_pull_request(
+    app: AppHandle,
+    repo_full_name: String,
+    pull_number: u64,
+) -> Result<GitHubPullRequest, String> {
+    run_blocking("读取 GitHub Pull Request", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let pull_request = github_fetch_pull_request_response(
+            &app,
+            &repo_full_name,
+            pull_number,
+            &token,
+            "读取 GitHub Pull Request 失败",
+        )?;
+        Ok(github_pull_request_from_response(pull_request))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_create_pull_request(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubCreatePullRequestRequest,
+) -> Result<GitHubPullRequest, String> {
+    run_blocking("创建 GitHub Pull Request", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let title = request.title.trim();
+        let head = request.head.trim();
+        let base = request.base.trim();
+        if title.is_empty() || head.is_empty() || base.is_empty() {
+            return Err("Pull Request 标题、head 和 base 不能为空".to_string());
+        }
+        let mut payload = serde_json::json!({
+            "title": title,
+            "head": head,
+            "base": base,
+            "draft": request.draft,
+        });
+        if let Some(map) = payload.as_object_mut() {
+            if let Some(value) = normalize_optional_string(request.body) {
+                map.insert("body".to_string(), serde_json::Value::String(value));
+            }
+        }
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "创建 GitHub Pull Request 失败",
+            github_headers(
+                client
+                    .post(format!("{}/pulls", github_repo_api_url(&repo_full_name)?))
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        let pull_request = github_json::<GitHubPullRequestResponse>(
+            "创建 GitHub Pull Request 失败",
+            response,
+        )?;
+        Ok(github_pull_request_from_response(pull_request))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_update_pull_request(
+    app: AppHandle,
+    repo_full_name: String,
+    pull_number: u64,
+    request: GitHubUpdatePullRequestRequest,
+) -> Result<GitHubPullRequest, String> {
+    run_blocking("更新 GitHub Pull Request", move || {
+        if pull_number == 0 {
+            return Err("Pull Request 编号不合法".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let mut payload = serde_json::Map::new();
+        if let Some(value) = normalize_optional_string(request.title) {
+            payload.insert("title".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = request.body {
+            payload.insert("body".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = request.state {
+            let trimmed = value.trim().to_string();
+            if trimmed != "open" && trimmed != "closed" {
+                return Err("Pull Request 状态只能是 open 或 closed".to_string());
+            }
+            payload.insert("state".to_string(), serde_json::Value::String(trimmed));
+        }
+        if let Some(value) = normalize_optional_string(request.base) {
+            payload.insert("base".to_string(), serde_json::Value::String(value));
+        }
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "更新 GitHub Pull Request 失败",
+            github_headers(
+                client
+                    .patch(format!(
+                        "{}/pulls/{pull_number}",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        let pull_request = github_json::<GitHubPullRequestResponse>(
+            "更新 GitHub Pull Request 失败",
+            response,
+        )?;
+        Ok(github_pull_request_from_response(pull_request))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_merge_pull_request(
+    app: AppHandle,
+    repo_full_name: String,
+    pull_number: u64,
+    request: GitHubMergePullRequestRequest,
+) -> Result<GitHubPullRequest, String> {
+    run_blocking("合并 GitHub Pull Request", move || {
+        if pull_number == 0 {
+            return Err("Pull Request 编号不合法".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let mut payload = serde_json::Map::new();
+        if let Some(value) = normalize_optional_string(request.method) {
+            payload.insert("merge_method".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = normalize_optional_string(request.commit_title) {
+            payload.insert("commit_title".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = normalize_optional_string(request.commit_message) {
+            payload.insert("commit_message".to_string(), serde_json::Value::String(value));
+        }
+        if let Some(value) = normalize_optional_string(request.sha) {
+            payload.insert("sha".to_string(), serde_json::Value::String(value));
+        }
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "合并 GitHub Pull Request 失败",
+            github_headers(
+                client
+                    .put(format!(
+                        "{}/pulls/{pull_number}/merge",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error("合并 GitHub Pull Request 失败", response));
+        }
+        let pull_request = github_fetch_pull_request_response(
+            &app,
+            &repo_full_name,
+            pull_number,
+            &token,
+            "读取合并后的 Pull Request 失败",
+        )?;
+        Ok(github_pull_request_from_response(pull_request))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_pull_request_checks(
+    app: AppHandle,
+    repo_full_name: String,
+    pull_number: u64,
+) -> Result<Vec<GitHubPullRequestCheck>, String> {
+    run_blocking("读取 GitHub Pull Request Checks", move || {
+        if pull_number == 0 {
+            return Err("Pull Request 编号不合法".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let pull_request = github_fetch_pull_request_response(
+            &app,
+            &repo_full_name,
+            pull_number,
+            &token,
+            "读取 GitHub Pull Request Checks 失败",
+        )?;
+        let head_sha = pull_request
+            .head
+            .sha
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Pull Request 缺少 head sha".to_string())?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Pull Request Checks 失败",
+            github_headers(
+                client
+                    .get(format!(
+                        "{}/commits/{}/check-runs",
+                        github_repo_api_url(&repo_full_name)?,
+                        url_encode_path_segment(&head_sha)
+                    ))
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let checks = github_json::<GitHubPullRequestCheckRunsResponse>(
+            "读取 GitHub Pull Request Checks 失败",
+            response,
+        )?;
+        Ok(checks
+            .check_runs
+            .into_iter()
+            .map(github_pull_request_check_from_response)
+            .collect())
     })
     .await
 }

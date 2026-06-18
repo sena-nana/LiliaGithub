@@ -184,6 +184,56 @@ export interface GitHubIssue {
   createdAt: string;
 }
 
+export interface GitHubPullRequest {
+  number: number;
+  title: string;
+  state: "open" | "closed" | string;
+  draft: boolean;
+  body: string | null;
+  htmlUrl: string;
+  updatedAt: string;
+  createdAt: string;
+  author: string;
+  baseBranch: string;
+  headBranch: string;
+  merged: boolean;
+  mergeable: boolean | null;
+  mergeableState: string | null;
+}
+
+export interface GitHubPullRequestCheck {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  detailsUrl: string | null;
+  htmlUrl: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface GitHubCreatePullRequestRequest {
+  title: string;
+  body?: string | null;
+  head: string;
+  base: string;
+  draft?: boolean;
+}
+
+export interface GitHubUpdatePullRequestRequest {
+  title?: string | null;
+  body?: string | null;
+  state?: "open" | "closed" | string | null;
+  base?: string | null;
+}
+
+export interface GitHubMergePullRequestRequest {
+  method?: "merge" | "squash" | "rebase" | string | null;
+  commitTitle?: string | null;
+  commitMessage?: string | null;
+  sha?: string | null;
+}
+
 export interface GitHubWorkflowRun {
   id: number;
   name: string;
@@ -307,6 +357,13 @@ export interface RepoMergePullResult {
   conflicts: RepoConflictState;
 }
 
+export interface RepoOperationResult {
+  status: "success" | "conflicts";
+  message: string;
+  summary: RepoSummary;
+  conflicts: RepoConflictState;
+}
+
 export interface CommitSummary {
   hash: string;
   shortHash: string;
@@ -357,6 +414,20 @@ export interface CommitDetail {
   parents: string[];
   refs: string[];
   files: CommitFileChange[];
+}
+
+export interface RepoStashEntry {
+  id: string;
+  index: number;
+  branch: string | null;
+  message: string;
+}
+
+export interface RepoRemote {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string | null;
+  current: boolean;
 }
 
 export interface BranchSummary {
@@ -435,6 +506,8 @@ export interface HiddenRepo {
   name: string;
 }
 
+export type RepoResetMode = "soft" | "mixed" | "hard";
+export type RepoPullStrategy = "pull" | "merge" | "rebase";
 export type WorkspaceTaskPriority = "high" | "normal" | "low";
 export type WorkspaceTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
 export type WorkspaceTaskKind = "repoStatus" | "repoDetail" | "discoverRepos" | "languageStats" | "contributions";
