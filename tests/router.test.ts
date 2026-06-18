@@ -283,6 +283,67 @@ describe("基础路由", () => {
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
   });
 
+  it("直接进入仓库详情默认页时不预取 issue 和 workflow runs", async () => {
+    const service = await import("../src/services/workspace");
+    const initialIssueCalls = service.getFallbackGitHubIssueListCallsForTests().length;
+    const initialWorkflowRunCalls = service.getFallbackGitHubWorkflowRunListCallsForTests().length;
+
+    await renderAt("/repos/LiliaGithub");
+
+    expect(await screen.findByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
+    });
+    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(initialIssueCalls);
+    expect(service.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(initialWorkflowRunCalls);
+  });
+
+  it("直接进入 issue 深链时按需拉取并定位目标 issue", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubIssuesForTests({
+      "sena-nana/LiliaGithub": [
+        githubIssue("sena-nana/LiliaGithub", 12, "2026-06-18T08:00:00Z"),
+      ],
+    });
+
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=issues&issue=12");
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Issues" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.query).toMatchObject({
+      projectTab: "issues",
+      issue: "12",
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-issue-number="12"].project-row--issue.is-target')).toBeInTheDocument();
+    });
+  });
+
+  it("直接进入 actions 深链时按需拉取并定位目标 run", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubWorkflowRunsForTests({
+      "sena-nana/LiliaGithub": [
+        githubWorkflowRun("sena-nana/LiliaGithub", 1310, "2026-06-18T08:00:00Z", {
+          displayTitle: "release pipeline",
+        }),
+      ],
+    });
+
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=actions&run=1310");
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Actions" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.query).toMatchObject({
+      projectTab: "actions",
+      run: "1310",
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+    });
+  });
+
   it("远端仓库不显示文件树一级 tab，直接访问 /files 会回退到默认页", async () => {
     const { router } = await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/files");
 

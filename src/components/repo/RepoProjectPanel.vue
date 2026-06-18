@@ -135,6 +135,7 @@ const terminalBody = ref<HTMLElement | null>(null);
 const projectMainRef = ref<HTMLElement | null>(null);
 const readmes = ref<RepoReadme[]>([]);
 const activeReadmePath = ref<string | null>(null);
+const readmesLoaded = ref(false);
 const readmeLoading = ref(false);
 const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
@@ -150,8 +151,11 @@ const deleteDialogTarget = ref<DeleteTarget | null>(null);
 const deleteConfirmInput = ref("");
 const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
+const settingsLoaded = ref(false);
 const issues = ref<GitHubIssue[]>([]);
+const issuesLoadedState = ref<"open" | "closed" | "all" | null>(null);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
+const actionsLoaded = ref(false);
 const issueState = ref<"open" | "closed" | "all">("open");
 const issueTitle = ref("");
 const issueBody = ref("");
@@ -168,6 +172,12 @@ const focusedRunId = ref<number | null>(null);
 let githubLoadRunId = 0;
 let issueLoadRunId = 0;
 let actionsLoadRunId = 0;
+let suppressIssueStateReload = false;
+let readmeLoadPromise: Promise<void> | null = null;
+let settingsLoadPromise: Promise<void> | null = null;
+let issuesLoadPromise: Promise<void> | null = null;
+let issuesLoadState: "open" | "closed" | "all" | null = null;
+let actionsLoadPromise: Promise<void> | null = null;
 
 const settingsForm = reactive({
   description: "",
@@ -270,26 +280,19 @@ const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectT
 
 onMounted(() => {
   void applyProjectRouteState();
-  void loadReadme();
-  void loadGitHub();
-  void loadActions();
 });
 
 watch(() => props.repoId, () => {
-  activeSection.value = routeTabToSection(props.activeGitTab);
-  activeReadmePath.value = null;
+  resetProjectSectionState();
   closeDeleteDialog();
-  focusedIssueNumber.value = null;
-  focusedRunId.value = null;
   void applyProjectRouteState();
-  void loadReadme();
 });
 
 watch(() => props.repoFullName, () => {
   remoteDeleted.value = false;
+  resetGitHubSectionState();
   closeDeleteDialog();
-  void loadGitHub();
-  void loadActions();
+  void applyProjectRouteState();
 });
 
 watch(() => props.usingSystemGit, (usingSystemGit) => {
@@ -304,7 +307,13 @@ watch([() => props.launchLogs.length, () => props.launchRunning], () => {
 });
 
 watch(issueState, () => {
-  void loadIssues();
+  if (suppressIssueStateReload) {
+    suppressIssueStateReload = false;
+    return;
+  }
+  if (activeSection.value === "issues") {
+    void loadIssues(true);
+  }
 });
 
 watch(
@@ -316,6 +325,9 @@ watch(
 
 watch(() => props.activeGitTab, (tab) => {
   activeSection.value = routeTabToSection(tab);
+  if (tab !== "repo" || !routedProjectTab.value) {
+    void ensureSectionData(activeSection.value);
+  }
 });
 
 function normalizeProjectTab(value: unknown): ProjectTab | null {
@@ -356,7 +368,10 @@ async function focusIssue(issueNumber: number | null | undefined) {
     clearProjectTargets();
     return;
   }
-  if (issueState.value !== "all" && !hasIssue(issueNumber)) issueState.value = "all";
+  if (issueState.value !== "all" && !hasIssue(issueNumber)) {
+    suppressIssueStateReload = true;
+    issueState.value = "all";
+  }
   await loadIssues();
   if (!hasIssue(issueNumber)) {
     focusedIssueNumber.value = null;
@@ -377,7 +392,7 @@ async function focusRun(runId: number | null | undefined) {
     return;
   }
   if (!hasRun(runId)) {
-    await loadActions();
+    await loadActions(true);
   }
   if (!hasRun(runId)) {
     focusedRunId.value = null;
@@ -400,11 +415,13 @@ function isRunRowFocused(runId: number) {
 }
 
 async function applyProjectRouteState() {
-  const targetTab = projectTab.value;
-  if (props.activeGitTab === "repo" && (props.remoteOnly || routedProjectTab.value)) {
-    activeSection.value = targetTab;
-    await nextTick();
+  activeSection.value = routeTabToSection(props.activeGitTab);
+  if (props.activeGitTab !== "repo") {
+    clearProjectTargets();
+    return;
   }
+  const targetTab = projectTab.value;
+  await nextTick();
   clearProjectTargets();
   if (targetTab === "issues") {
     await focusIssue(props.projectIssueNumber);
@@ -412,7 +429,9 @@ async function applyProjectRouteState() {
   }
   if (targetTab === "actions") {
     await focusRun(props.projectRunId);
+    return;
   }
+  await ensureSectionData(targetTab);
 }
 
 function applySettingsForm(next: GitHubRepoManagement) {
@@ -434,25 +453,35 @@ function applySettingsForm(next: GitHubRepoManagement) {
 
 async function loadReadme() {
   if (!props.repoId) return;
-  readmeLoading.value = true;
-  readmeError.value = null;
-  const previousPath = activeReadmePath.value;
-  try {
-    const nextReadmes = props.remoteOnly && props.repoFullName
-      ? await listGitHubRepoReadmes(props.repoFullName)
-      : await listRepoReadmes(props.repoId);
-    readmes.value = nextReadmes;
-    activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
-      ? previousPath
-      : nextReadmes[0]?.path ?? null;
-  } catch (err) {
-    readmeError.value = String(err);
-  } finally {
-    readmeLoading.value = false;
+  if (readmesLoaded.value) return;
+  if (readmeLoadPromise) {
+    await readmeLoadPromise;
+    return;
   }
+  readmeLoadPromise = (async () => {
+    readmeLoading.value = true;
+    readmeError.value = null;
+    const previousPath = activeReadmePath.value;
+    try {
+      const nextReadmes = props.remoteOnly && props.repoFullName
+        ? await listGitHubRepoReadmes(props.repoFullName)
+        : await listRepoReadmes(props.repoId);
+      readmes.value = nextReadmes;
+      activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
+        ? previousPath
+        : nextReadmes[0]?.path ?? null;
+      readmesLoaded.value = true;
+    } catch (err) {
+      readmeError.value = String(err);
+    } finally {
+      readmeLoading.value = false;
+      readmeLoadPromise = null;
+    }
+  })();
+  await readmeLoadPromise;
 }
 
-async function loadGitHub() {
+async function loadSettings() {
   const runId = ++githubLoadRunId;
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
@@ -461,30 +490,34 @@ async function loadGitHub() {
   }
   if (!repoFullName || remoteDeleted.value) {
     settings.value = null;
-    issues.value = [];
     githubError.value = null;
     return;
   }
-  githubLoading.value = true;
-  githubError.value = null;
-  try {
-    const [nextSettings, nextIssues] = await Promise.all([
-      getGitHubRepoManagement(repoFullName),
-      listGitHubIssues(repoFullName, issueState.value),
-    ]);
-    if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-    settings.value = nextSettings;
-    issues.value = nextIssues;
-    syncEditingIssue();
-    applySettingsForm(nextSettings);
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    githubLoading.value = false;
+  if (settingsLoaded.value) return;
+  if (settingsLoadPromise) {
+    await settingsLoadPromise;
+    return;
   }
+  settingsLoadPromise = (async () => {
+    githubLoading.value = true;
+    githubError.value = null;
+    try {
+      const nextSettings = await getGitHubRepoManagement(repoFullName);
+      if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      settings.value = nextSettings;
+      applySettingsForm(nextSettings);
+      settingsLoaded.value = true;
+    } catch (err) {
+      githubError.value = String(err);
+    } finally {
+      githubLoading.value = false;
+      settingsLoadPromise = null;
+    }
+  })();
+  await settingsLoadPromise;
 }
 
-async function loadIssues() {
+async function loadIssues(force = false) {
   const runId = ++issueLoadRunId;
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
@@ -492,18 +525,31 @@ async function loadIssues() {
     return;
   }
   if (!repoFullName || remoteDeleted.value) return;
-  githubError.value = null;
-  try {
-    const nextIssues = await listGitHubIssues(repoFullName, issueState.value);
-    if (runId !== issueLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-    issues.value = nextIssues;
-    syncEditingIssue();
-  } catch (err) {
-    githubError.value = String(err);
+  if (!force && issuesLoadedState.value === issueState.value) return;
+  if (!force && issuesLoadPromise && issuesLoadState === issueState.value) {
+    await issuesLoadPromise;
+    return;
   }
+  githubError.value = null;
+  issuesLoadState = issueState.value;
+  issuesLoadPromise = (async () => {
+    try {
+      const nextIssues = await listGitHubIssues(repoFullName, issueState.value);
+      if (runId !== issueLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      issues.value = nextIssues;
+      issuesLoadedState.value = issueState.value;
+      syncEditingIssue();
+    } catch (err) {
+      githubError.value = String(err);
+    } finally {
+      issuesLoadPromise = null;
+      issuesLoadState = null;
+    }
+  })();
+  await issuesLoadPromise;
 }
 
-async function loadActions() {
+async function loadActions(force = false) {
   const runId = ++actionsLoadRunId;
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
@@ -516,16 +562,44 @@ async function loadActions() {
     actionsError.value = null;
     return;
   }
-  actionsLoading.value = true;
-  actionsError.value = null;
-  try {
-    const nextRuns = await listGitHubWorkflowRuns(repoFullName, 20);
-    if (runId !== actionsLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-    workflowRuns.value = nextRuns;
-  } catch (err) {
-    actionsError.value = String(err);
-  } finally {
-    actionsLoading.value = false;
+  if (!force && actionsLoaded.value) return;
+  if (!force && actionsLoadPromise) {
+    await actionsLoadPromise;
+    return;
+  }
+  actionsLoadPromise = (async () => {
+    actionsLoading.value = true;
+    actionsError.value = null;
+    try {
+      const nextRuns = await listGitHubWorkflowRuns(repoFullName, 20);
+      if (runId !== actionsLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      workflowRuns.value = nextRuns;
+      actionsLoaded.value = true;
+    } catch (err) {
+      actionsError.value = String(err);
+    } finally {
+      actionsLoading.value = false;
+      actionsLoadPromise = null;
+    }
+  })();
+  await actionsLoadPromise;
+}
+
+async function ensureSectionData(section: ProjectContentMode) {
+  if (section === "readme") {
+    await loadReadme();
+    return;
+  }
+  if (section === "issues") {
+    await loadIssues();
+    return;
+  }
+  if (section === "actions") {
+    await loadActions();
+    return;
+  }
+  if (section === "settings") {
+    await loadSettings();
   }
 }
 
@@ -556,11 +630,35 @@ function changedSettingsRequest(current: GitHubRepoManagement) {
 }
 
 function clearBlockedGitHubState() {
+  resetGitHubSectionState();
+  githubLoading.value = false;
+  actionsLoading.value = false;
+}
+
+function resetProjectSectionState() {
+  activeSection.value = routeTabToSection(props.activeGitTab);
+  readmes.value = [];
+  activeReadmePath.value = null;
+  readmesLoaded.value = false;
+  readmeLoading.value = false;
+  readmeError.value = null;
+  readmeLoadPromise = null;
+  resetGitHubSectionState();
+}
+
+function resetGitHubSectionState() {
   settings.value = null;
+  settingsLoaded.value = false;
   issues.value = [];
+  issuesLoadedState.value = null;
   workflowRuns.value = [];
+  actionsLoaded.value = false;
   githubError.value = null;
   actionsError.value = null;
+  settingsLoadPromise = null;
+  issuesLoadPromise = null;
+  issuesLoadState = null;
+  actionsLoadPromise = null;
   cancelEditIssue();
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
@@ -775,6 +873,7 @@ function activateProjectTab(tab: ProjectTab) {
   if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
     emit("hideTerminal");
   }
+  void ensureSectionData(tab);
 }
 
 function activateProjectSection(tab: ProjectSectionConfig["key"]) {
@@ -859,7 +958,7 @@ function selectReadme(path: string) {
         <section v-else-if="activeSection === 'issues'" class="project-section">
           <div class="project-section__head">
             <h3>Issues</h3>
-            <select v-model="issueState" @change="loadIssues">
+            <select v-model="issueState">
               <option value="open">Open</option>
               <option value="closed">Closed</option>
               <option value="all">All</option>
