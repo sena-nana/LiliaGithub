@@ -14,11 +14,16 @@ import type {
   GitHubDeviceFlowStart,
   GitHubIssue,
   GitHubIssueListOptions,
+  GitHubMergePullRequestRequest,
+  GitHubPullRequest,
+  GitHubPullRequestCheck,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
   GitHubWorkflowRun,
+  GitHubCreatePullRequestRequest,
+  GitHubUpdatePullRequestRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
@@ -32,9 +37,13 @@ import type {
   RepoFilePreview,
   RepoFileTreeEntry,
   RepoMergePullResult,
+  RepoOperationResult,
+  RepoRemote,
   RepoRefreshSummaryOptions,
   RepoReadme,
+  RepoResetMode,
   RepoSummary,
+  RepoStashEntry,
   RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
@@ -288,6 +297,59 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
   );
 }
 
+export function listGitHubPullRequests(
+  repoFullName: string,
+  state?: "open" | "closed" | "all" | null,
+): Promise<GitHubPullRequest[]> {
+  return call("github_list_pull_requests", { repoFullName, state: state ?? null }, () =>
+    fallback.listGitHubPullRequests(repoFullName, state),
+  );
+}
+
+export function getGitHubPullRequest(repoFullName: string, pullNumber: number): Promise<GitHubPullRequest> {
+  return call("github_get_pull_request", { repoFullName, pullNumber }, () =>
+    fallback.getGitHubPullRequest(repoFullName, pullNumber),
+  );
+}
+
+export function createGitHubPullRequest(
+  repoFullName: string,
+  request: GitHubCreatePullRequestRequest,
+): Promise<GitHubPullRequest> {
+  return call("github_create_pull_request", { repoFullName, request }, () =>
+    fallback.createGitHubPullRequest(repoFullName, request),
+  );
+}
+
+export function updateGitHubPullRequest(
+  repoFullName: string,
+  pullNumber: number,
+  request: GitHubUpdatePullRequestRequest,
+): Promise<GitHubPullRequest> {
+  return call("github_update_pull_request", { repoFullName, pullNumber, request }, () =>
+    fallback.updateGitHubPullRequest(repoFullName, pullNumber, request),
+  );
+}
+
+export function mergeGitHubPullRequest(
+  repoFullName: string,
+  pullNumber: number,
+  request: GitHubMergePullRequestRequest = {},
+): Promise<GitHubPullRequest> {
+  return call("github_merge_pull_request", { repoFullName, pullNumber, request }, () =>
+    fallback.mergeGitHubPullRequest(repoFullName, pullNumber, request),
+  );
+}
+
+export function listGitHubPullRequestChecks(
+  repoFullName: string,
+  pullNumber: number,
+): Promise<GitHubPullRequestCheck[]> {
+  return call("github_list_pull_request_checks", { repoFullName, pullNumber }, () =>
+    fallback.listGitHubPullRequestChecks(repoFullName, pullNumber),
+  );
+}
+
 export function listGitHubIssues(
   repoFullName: string,
   stateOrOptions?: string | null | GitHubIssueListOptions,
@@ -433,12 +495,35 @@ export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
   return call("repo_merge_pull", { repoId }, () => fallback.mergePullRepo(repoId));
 }
 
+export function fetchRepo(repoId: string): Promise<RepoSummary> {
+  return call("repo_fetch", { repoId }, () => fallback.fetchRepo(repoId));
+}
+
+export function startRebaseRepo(
+  repoId: string,
+  ontoRef?: string | null,
+): Promise<RepoOperationResult> {
+  return call("repo_start_rebase", { repoId, ontoRef: ontoRef ?? null }, () =>
+    fallback.startRebaseRepo(repoId, ontoRef),
+  );
+}
+
 export function mergeBranch(repoId: string, branch: string): Promise<RepoMergePullResult> {
   return call("repo_merge_branch", { repoId, branch }, () => fallback.mergeBranch(repoId, branch));
 }
 
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => fallback.pushRepo(repoId));
+}
+
+export function pushNewBranchRepo(
+  repoId: string,
+  remoteName?: string | null,
+  branchName?: string | null,
+): Promise<RepoSummary> {
+  return call("repo_push_new_branch", { repoId, remoteName: remoteName ?? null, branchName: branchName ?? null }, () =>
+    fallback.pushNewBranchRepo(repoId, remoteName, branchName),
+  );
 }
 
 export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
@@ -476,6 +561,58 @@ export function renameBranch(
 
 export function deleteBranch(repoId: string, branch: string): Promise<RepoSummary> {
   return call("repo_delete_branch", { repoId, branch }, () => fallback.deleteBranch(repoId, branch));
+}
+
+export function setBranchUpstream(
+  repoId: string,
+  branch: string,
+  upstream: string,
+): Promise<RepoSummary> {
+  return call("repo_set_upstream", { repoId, branch, upstream }, () =>
+    fallback.setBranchUpstream(repoId, branch, upstream),
+  );
+}
+
+export function listRepoStashes(repoId: string): Promise<RepoStashEntry[]> {
+  return call("repo_list_stashes", { repoId }, () => fallback.listRepoStashes(repoId));
+}
+
+export function saveRepoStash(repoId: string, message?: string | null): Promise<RepoSummary> {
+  return call("repo_stash_save", { repoId, message: message ?? null }, () =>
+    fallback.saveRepoStash(repoId, message),
+  );
+}
+
+export function applyRepoStash(repoId: string, stashId: string): Promise<RepoOperationResult> {
+  return call("repo_stash_apply", { repoId, stashId }, () => fallback.applyRepoStash(repoId, stashId));
+}
+
+export function popRepoStash(repoId: string, stashId: string): Promise<RepoOperationResult> {
+  return call("repo_stash_pop", { repoId, stashId }, () => fallback.popRepoStash(repoId, stashId));
+}
+
+export function dropRepoStash(repoId: string, stashId: string): Promise<RepoStashEntry[]> {
+  return call("repo_stash_drop", { repoId, stashId }, () => fallback.dropRepoStash(repoId, stashId));
+}
+
+export function listRepoRemotes(repoId: string): Promise<RepoRemote[]> {
+  return call("repo_list_remotes", { repoId }, () => fallback.listRepoRemotes(repoId));
+}
+
+export function cherryPickRepoCommit(repoId: string, hash: string): Promise<RepoOperationResult> {
+  return call("repo_cherry_pick_commit", { repoId, hash }, () => fallback.cherryPickRepoCommit(repoId, hash));
+}
+
+export function revertRepoCommit(repoId: string, hash: string): Promise<RepoOperationResult> {
+  return call("repo_revert_commit", { repoId, hash }, () => fallback.revertRepoCommit(repoId, hash));
+}
+
+export function resetRepoToCommit(
+  repoId: string,
+  hash: string,
+  mode: RepoResetMode = "mixed",
+): Promise<RepoSummary> {
+  return call("repo_reset_to_commit", { repoId, hash, mode }, () => fallback.resetRepoToCommit(repoId, hash, mode));
 }
 
 export function getRepoConflicts(repoId: string): Promise<RepoConflictState> {

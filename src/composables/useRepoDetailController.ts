@@ -17,8 +17,9 @@ import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../util
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
-type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
+type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
 type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history">;
+type RepoPullStrategy = "pull" | "merge" | "rebase";
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -51,6 +52,7 @@ export function useRepoDetailController() {
     () => normalizeProjectTab(route.query.projectTab) ?? "readme",
   );
   const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
+  const activeProjectPullRequest = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.pr));
   const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
@@ -59,6 +61,7 @@ export function useRepoDetailController() {
   const conflictAbortConfirm = ref(false);
   const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
   const launchTerminalVisible = ref(false);
+  const pullStrategy = ref<RepoPullStrategy>("merge");
   const focusedChangePath = ref<string | null>(null);
   const focusedConflictPath = ref<string | null>(null);
   const selectedCommitHash = ref<string | null>(null);
@@ -253,6 +256,12 @@ export function useRepoDetailController() {
     launchOptionValue(launchConfig.value?.command ?? "", launchConfig.value?.cwd ?? null),
   );
   const launchCommandText = computed(() => launchConfig.value?.command?.trim() || "选择启动指令");
+  const pullStrategyOptions = [
+    { value: "pull", label: "Pull", hint: "仅 fast-forward pull" },
+    { value: "merge", label: "Merge pull", hint: "fetch 后 merge @{u}" },
+    { value: "rebase", label: "Rebase pull", hint: "fetch 后 rebase @{u}" },
+  ] as const;
+  const activePullStrategyValue = computed(() => pullStrategy.value);
   const branchActionRunning = computed(() =>
     actionRunning.value || githubBranchLoading.value || deletingRemoteBranchName.value !== null,
   );
@@ -374,6 +383,7 @@ export function useRepoDetailController() {
     if (
       value === "readme" ||
       value === "issues" ||
+      value === "pulls" ||
       value === "actions" ||
       value === "settings"
     ) return value;
@@ -630,8 +640,72 @@ export function useRepoDetailController() {
     });
   }
 
+  function fetchRepo() {
+    void runAction(() => workspace.fetch(repoId.value));
+  }
+
+  function selectPullStrategy(value: string) {
+    if (value === "pull" || value === "merge" || value === "rebase") {
+      pullStrategy.value = value;
+    }
+  }
+
+  function runSelectedPullStrategy() {
+    void runAction(async () => {
+      if (pullStrategy.value === "pull") {
+        await workspace.pull(repoId.value);
+        return;
+      }
+      if (pullStrategy.value === "rebase") {
+        await workspace.startRebase(repoId.value, null);
+        return;
+      }
+      await workspace.mergePull(repoId.value);
+    });
+  }
+
   function push() {
     void runAction(() => runPushWithFallback(() => workspace.push(repoId.value)));
+  }
+
+  function pushCurrentBranchWithUpstream() {
+    void runAction(() =>
+      runPushWithFallback(() =>
+        workspace.pushNewBranch(repoId.value, "origin", summary.value?.currentBranch ?? null)
+      )
+    );
+  }
+
+  function setCurrentBranchUpstream() {
+    const branch = summary.value?.currentBranch?.trim();
+    if (!branch) return;
+    const next = window.prompt("输入 upstream（例如 origin/main）", `origin/${branch}`)?.trim();
+    if (!next) return;
+    void runAction(() => workspace.setUpstream(repoId.value, branch, next));
+  }
+
+  function stashChanges() {
+    const message = window.prompt("stash 说明（可选）", "") ?? "";
+    void runAction(() => workspace.saveStash(repoId.value, message));
+  }
+
+  async function withLatestStash(action: (stashId: string) => Promise<unknown>) {
+    const stashes = await workspace.listStashes(repoId.value);
+    const current = stashes[0];
+    if (!current) throw new Error("当前没有 stash");
+    await action(current.id);
+  }
+
+  function applyStash() {
+    void runAction(() => withLatestStash((stashId) => workspace.applyStash(repoId.value, stashId)));
+  }
+
+  function popStash() {
+    void runAction(() => withLatestStash((stashId) => workspace.popStash(repoId.value, stashId)));
+  }
+
+  function dropStash() {
+    void runAction(() => withLatestStash((stashId) => workspace.dropStash(repoId.value, stashId)));
   }
 
   function useDefaultTokenAuth() {
@@ -781,6 +855,28 @@ export function useRepoDetailController() {
     selectedCommitHash.value = commit.hash;
   }
 
+  function cherryPickCommit(hash: string) {
+    void runAction(() => workspace.cherryPickCommit(repoId.value, hash));
+  }
+
+  function revertCommit(hash: string) {
+    void runAction(() => workspace.revertCommit(repoId.value, hash));
+  }
+
+  function resetCommit(hash: string, mode: "soft" | "mixed" | "hard" = "mixed") {
+    const confirmed = mode === "hard"
+      ? window.confirm("hard reset 会丢弃当前工作区改动，确认继续？")
+      : true;
+    if (!confirmed) return;
+    void runAction(() => workspace.resetToCommit(repoId.value, hash, mode));
+  }
+
+  function createBranchFromCommit(hash: string) {
+    const name = window.prompt("新分支名", "feature/from-commit")?.trim();
+    if (!name) return;
+    void runAction(() => workspace.createBranch(repoId.value, name, hash, true));
+  }
+
   function closeCommit() {
     selectedCommitHash.value = null;
   }
@@ -859,11 +955,14 @@ export function useRepoDetailController() {
       conflictContinueText,
       activeProjectTab,
       activeProjectIssue,
+      activeProjectPullRequest,
       activeProjectRun,
       toolbarTabs,
       launchCommandOptions,
       activeLaunchValue,
       launchCommandText,
+      pullStrategyOptions,
+      activePullStrategyValue,
       branchItems,
       branchActionRunning,
       activeBranchName,
@@ -878,8 +977,16 @@ export function useRepoDetailController() {
       unstageStagedChanges,
       runChangeAction,
       commitSelected,
-      mergePull,
+      fetchRepo,
+      selectPullStrategy,
+      runSelectedPullStrategy,
       push,
+      pushCurrentBranchWithUpstream,
+      setCurrentBranchUpstream,
+      stashChanges,
+      applyStash,
+      popStash,
+      dropStash,
       useDefaultTokenAuth,
       acceptConflict,
       resolveSelectedConflict,
@@ -898,6 +1005,10 @@ export function useRepoDetailController() {
       updateCurrentBranch,
       openCommit,
       closeCommit,
+      cherryPickCommit,
+      revertCommit,
+      resetCommit,
+      createBranchFromCommit,
       openFolder,
       openConflictFolder,
       commitMetaTitle,

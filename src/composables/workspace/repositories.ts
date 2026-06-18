@@ -44,6 +44,18 @@ async function applyRepoMutationWithLanguageStats(
   await refreshRepoLanguageStats(repoId, { silent: true });
 }
 
+async function applyRepoOperationWithLanguageStats(
+  repoId: string,
+  loadOperation: () => Promise<import("../../services/workspace").RepoOperationResult>,
+) {
+  const result = await loadOperation();
+  upsertRepo(result.summary);
+  clearRepoActionError(repoId);
+  await loadRepoDetail(repoId);
+  await refreshRepoLanguageStats(repoId, { silent: true });
+  return result;
+}
+
 export async function refreshRepos() {
   const repos = await loadManagedRepoList();
   if (repos) {
@@ -62,6 +74,10 @@ export async function refreshRepoSummaries() {
     state.error = String(err);
     return null;
   }
+}
+
+export async function fetchAll() {
+  return refreshRepoSummaries();
 }
 
 async function loadManagedRepoList() {
@@ -457,6 +473,11 @@ export async function pull(repoId: string) {
   await applyRepoMutationWithLanguageStats(repoId, () => service.pullRepo(repoId));
 }
 
+export async function fetch(repoId: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutationWithLanguageStats(repoId, () => service.fetchRepo(repoId));
+}
+
 export async function mergePull(repoId: string) {
   const service = await loadWorkspaceService();
   clearRepoActionError(repoId);
@@ -483,6 +504,11 @@ export async function mergeBranch(repoId: string, branch: string) {
     setRepoActionError(repoId, String(err));
     throw err;
   }
+}
+
+export async function startRebase(repoId: string, ontoRef?: string | null) {
+  const service = await loadWorkspaceService();
+  return applyRepoOperationWithLanguageStats(repoId, () => service.startRebaseRepo(repoId, ontoRef));
 }
 
 async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSummary>) {
@@ -518,6 +544,11 @@ export async function push(repoId: string) {
   await runPushMutation(repoId, () => service.pushRepo(repoId));
 }
 
+export async function pushNewBranch(repoId: string, remoteName?: string | null, branchName?: string | null) {
+  const service = await loadWorkspaceService();
+  await runPushMutation(repoId, () => service.pushNewBranchRepo(repoId, remoteName, branchName));
+}
+
 export async function pushWithSystemGit(repoId: string) {
   const service = await loadWorkspaceService();
   await runPushMutation(repoId, () => service.pushRepoWithSystemGit(repoId));
@@ -547,6 +578,60 @@ export async function renameBranch(repoId: string, oldName: string, newName: str
 export async function deleteBranch(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
   await applyRepoMutationWithLanguageStats(repoId, () => service.deleteBranch(repoId, branch));
+}
+
+export async function setUpstream(repoId: string, branch: string, upstream: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutationWithLanguageStats(repoId, () => service.setBranchUpstream(repoId, branch, upstream));
+}
+
+export async function listStashes(repoId: string) {
+  const service = await loadWorkspaceService();
+  return service.listRepoStashes(repoId);
+}
+
+export async function saveStash(repoId: string, message?: string | null) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutationWithLanguageStats(repoId, () => service.saveRepoStash(repoId, message));
+}
+
+export async function applyStash(repoId: string, stashId: string) {
+  const service = await loadWorkspaceService();
+  return applyRepoOperationWithLanguageStats(repoId, () => service.applyRepoStash(repoId, stashId));
+}
+
+export async function popStash(repoId: string, stashId: string) {
+  const service = await loadWorkspaceService();
+  return applyRepoOperationWithLanguageStats(repoId, () => service.popRepoStash(repoId, stashId));
+}
+
+export async function dropStash(repoId: string, stashId: string) {
+  const service = await loadWorkspaceService();
+  return service.dropRepoStash(repoId, stashId);
+}
+
+export async function listRemotes(repoId: string) {
+  const service = await loadWorkspaceService();
+  return service.listRepoRemotes(repoId);
+}
+
+export async function cherryPickCommit(repoId: string, hash: string) {
+  const service = await loadWorkspaceService();
+  return applyRepoOperationWithLanguageStats(repoId, () => service.cherryPickRepoCommit(repoId, hash));
+}
+
+export async function revertCommit(repoId: string, hash: string) {
+  const service = await loadWorkspaceService();
+  return applyRepoOperationWithLanguageStats(repoId, () => service.revertRepoCommit(repoId, hash));
+}
+
+export async function resetToCommit(
+  repoId: string,
+  hash: string,
+  mode: import("../../services/workspace").RepoResetMode = "mixed",
+) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutationWithLanguageStats(repoId, () => service.resetRepoToCommit(repoId, hash, mode));
 }
 
 export async function acceptConflictFile(

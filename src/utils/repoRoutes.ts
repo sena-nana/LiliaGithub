@@ -1,7 +1,7 @@
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
 export type RepoRouteTab = "files" | "repo" | "changes" | "history" | "run";
-export type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
+export type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
 
 export function repoRoute(repoId: string, tab: RepoRouteTab = "repo") {
   const base = `/repos/${encodeURIComponent(repoId)}`;
@@ -15,6 +15,7 @@ export function repoProjectRoute(
 ) {
   const query = new URLSearchParams({ projectTab });
   if (projectTab === "issues" && focusId) query.set("issue", String(focusId));
+  if (projectTab === "pulls" && focusId) query.set("pr", String(focusId));
   if (projectTab === "actions" && focusId) query.set("run", String(focusId));
   return `${repoRoute(repoId)}?${query.toString()}`;
 }

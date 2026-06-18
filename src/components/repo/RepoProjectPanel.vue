@@ -7,6 +7,7 @@ import {
   CircleOff,
   ExternalLink,
   LoaderCircle,
+  GitMerge,
   Save,
   Trash2,
   X,
@@ -19,12 +20,17 @@ import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
+  createGitHubPullRequest,
   getGitHubRepoManagement,
   listGitHubRepoReadmes,
   listRepoReadmes,
   listGitHubIssues,
+  listGitHubPullRequestChecks,
+  listGitHubPullRequests,
   listGitHubWorkflowRuns,
+  mergeGitHubPullRequest,
   updateGitHubIssue,
+  updateGitHubPullRequest,
   updateGitHubRepoSettings,
   deleteGitHubRepo,
   openPath,
@@ -33,6 +39,8 @@ import {
 import type {
   CommitSummary,
   GitHubIssue,
+  GitHubPullRequest,
+  GitHubPullRequestCheck,
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
@@ -50,7 +58,7 @@ import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import type { RepoRouteTab } from "../../utils/repoRoutes";
 
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
-type ProjectTab = "readme" | "issues" | "actions" | "settings";
+type ProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
 type ProjectContentMode = "launch" | ProjectTab | GitTab;
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
@@ -98,6 +106,7 @@ const props = defineProps<{
   commitMetaTitle: (commit: CommitSummary) => string;
   projectTab?: ProjectTab;
   projectIssueNumber?: number | null;
+  projectPullRequestNumber?: number | null;
   projectRunId?: number | null;
 }>();
 
@@ -115,6 +124,10 @@ const emit = defineEmits<{
   commit: [pushAfter: boolean];
   openCommit: [commit: HistoryCommit];
   closeCommit: [];
+  cherryPickCommit: [hash: string];
+  revertCommit: [hash: string];
+  resetCommit: [hash: string, mode: "soft" | "mixed" | "hard"];
+  createBranchFromCommit: [hash: string];
   continueConflict: [];
   abortConflict: [];
   focusConflict: [path: string];
@@ -140,6 +153,21 @@ const readmeLoading = ref(false);
 const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
 const githubError = ref<string | null>(null);
+const pulls = ref<GitHubPullRequest[]>([]);
+const pullState = ref<"open" | "closed" | "all">("open");
+const pullChecks = ref<Record<number, GitHubPullRequestCheck[]>>({});
+const pullsLoading = ref(false);
+const pullChecksLoading = ref(false);
+const pullsLoadedState = ref<"open" | "closed" | "all" | null>(null);
+const focusedPullRequestNumber = ref<number | null>(null);
+const creatingPullRequest = ref(false);
+const updatingPullRequest = ref(false);
+const pullRequestTitle = ref("");
+const pullRequestBody = ref("");
+const pullRequestBase = ref("");
+const pullRequestHead = ref("");
+const pullRequestDraft = ref(false);
+const pullRequestMergeMethod = ref<"merge" | "squash" | "rebase">("merge");
 const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
 const savingSettings = ref(false);
@@ -171,12 +199,17 @@ const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
 let githubLoadRunId = 0;
 let issueLoadRunId = 0;
+let pullLoadRunId = 0;
+let pullChecksRunId = 0;
 let actionsLoadRunId = 0;
 let suppressIssueStateReload = false;
+let suppressPullStateReload = false;
 let readmeLoadPromise: Promise<void> | null = null;
 let settingsLoadPromise: Promise<void> | null = null;
 let issuesLoadPromise: Promise<void> | null = null;
 let issuesLoadState: "open" | "closed" | "all" | null = null;
+let pullsLoadPromise: Promise<void> | null = null;
+let pullsLoadState: "open" | "closed" | "all" | null = null;
 let actionsLoadPromise: Promise<void> | null = null;
 
 const settingsForm = reactive({
@@ -251,9 +284,11 @@ const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.
 const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
+const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
 const readmePaths = computed(() => readmes.value.map((item) => item.path));
 const projectSections: readonly ProjectSectionConfig[] = [
   { key: "issues", label: "Issues" },
+  { key: "pulls", label: "Pull Requests" },
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
@@ -264,10 +299,17 @@ const showCommitDetail = computed(() =>
 const showProjectSidebar = computed(() =>
   activeSection.value === "readme" ||
   activeSection.value === "issues" ||
+  activeSection.value === "pulls" ||
   activeSection.value === "actions" ||
   activeSection.value === "settings",
 );
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
+const focusedPullRequest = computed(() =>
+  pulls.value.find((pull) => pull.number === focusedPullRequestNumber.value) ?? null,
+);
+const focusedPullChecks = computed(() =>
+  focusedPullRequestNumber.value ? (pullChecks.value[focusedPullRequestNumber.value] ?? []) : [],
+);
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
   if (section === "readme") {
@@ -277,6 +319,7 @@ function isProjectSectionActive(section: ProjectContentMode, options?: { readmeP
 }
 const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
+const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
 
 onMounted(() => {
   void applyProjectRouteState();
@@ -316,8 +359,18 @@ watch(issueState, () => {
   }
 });
 
+watch(pullState, () => {
+  if (suppressPullStateReload) {
+    suppressPullStateReload = false;
+    return;
+  }
+  if (activeSection.value === "pulls") {
+    void loadPullRequests(true);
+  }
+});
+
 watch(
-  [routedProjectTab, () => props.projectIssueNumber, () => props.projectRunId],
+  [routedProjectTab, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId],
   () => {
     void applyProjectRouteState();
   },
@@ -331,8 +384,16 @@ watch(() => props.activeGitTab, (tab) => {
 });
 
 function normalizeProjectTab(value: unknown): ProjectTab | null {
-  if (value === "readme" || value === "issues" || value === "actions" || value === "settings") return value;
+  if (value === "readme" || value === "issues" || value === "pulls" || value === "actions" || value === "settings") return value;
   return null;
+}
+
+function normalizePositiveNumber(value: unknown) {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (typeof next !== "string") return null;
+  const parsed = Number.parseInt(next, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return null;
+  return parsed;
 }
 
 function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
@@ -345,12 +406,17 @@ function hasIssue(issueNumber: number) {
   return issues.value.some((issue) => issue.number === issueNumber);
 }
 
+function hasPullRequest(pullNumber: number) {
+  return pulls.value.some((pull) => pull.number === pullNumber);
+}
+
 function hasRun(runId: number) {
   return workflowRuns.value.some((run) => run.id === runId);
 }
 
 function clearProjectTargets() {
   focusedIssueNumber.value = null;
+  focusedPullRequestNumber.value = null;
   focusedRunId.value = null;
   cancelEditIssue();
 }
@@ -363,6 +429,7 @@ function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
 }
 
 async function focusIssue(issueNumber: number | null | undefined) {
+  focusedPullRequestNumber.value = null;
   focusedRunId.value = null;
   if (!issueNumber) {
     clearProjectTargets();
@@ -387,6 +454,7 @@ async function focusIssue(issueNumber: number | null | undefined) {
 
 async function focusRun(runId: number | null | undefined) {
   focusedIssueNumber.value = null;
+  focusedPullRequestNumber.value = null;
   if (!runId) {
     clearProjectTargets();
     return;
@@ -406,12 +474,45 @@ async function focusRun(runId: number | null | undefined) {
   row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
 }
 
+async function focusPullRequest(pullNumber: number | null | undefined) {
+  focusedIssueNumber.value = null;
+  focusedRunId.value = null;
+  if (!pullNumber) {
+    await loadPullRequests();
+    focusedPullRequestNumber.value = pulls.value[0]?.number ?? null;
+    if (focusedPullRequestNumber.value) {
+      await loadPullRequestChecks(focusedPullRequestNumber.value);
+    }
+    return;
+  }
+  if (pullState.value !== "all" && !hasPullRequest(pullNumber)) {
+    suppressPullStateReload = true;
+    pullState.value = "all";
+  }
+  await loadPullRequests();
+  if (!hasPullRequest(pullNumber)) {
+    focusedPullRequestNumber.value = null;
+    return;
+  }
+  focusedPullRequestNumber.value = pullNumber;
+  await loadPullRequestChecks(pullNumber);
+  await nextTick();
+  const row = projectMainRef.value?.querySelector<HTMLElement>(
+    `.project-row--pull[data-pull-number="${pullNumber}"]`,
+  );
+  row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
+}
+
 function isIssueRowFocused(issueNumber: number) {
   return focusedIssueNumber.value === issueNumber && activeSection.value === "issues";
 }
 
 function isRunRowFocused(runId: number) {
   return focusedRunId.value === runId && activeSection.value === "actions";
+}
+
+function isPullRequestRowFocused(pullNumber: number) {
+  return focusedPullRequestNumber.value === pullNumber && activeSection.value === "pulls";
 }
 
 async function applyProjectRouteState() {
@@ -425,6 +526,10 @@ async function applyProjectRouteState() {
   clearProjectTargets();
   if (targetTab === "issues") {
     await focusIssue(props.projectIssueNumber);
+    return;
+  }
+  if (targetTab === "pulls") {
+    await focusPullRequest(props.projectPullRequestNumber ?? routedProjectPullRequest.value);
     return;
   }
   if (targetTab === "actions") {
@@ -506,6 +611,7 @@ async function loadSettings() {
       if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       settings.value = nextSettings;
       applySettingsForm(nextSettings);
+      preparePullRequestDefaults();
       settingsLoaded.value = true;
     } catch (err) {
       githubError.value = String(err);
@@ -547,6 +653,70 @@ async function loadIssues(force = false) {
     }
   })();
   await issuesLoadPromise;
+}
+
+async function loadPullRequests(force = false) {
+  const runId = ++pullLoadRunId;
+  const repoFullName = props.repoFullName;
+  if (isSystemGitBlocked.value) {
+    clearBlockedGitHubState();
+    return;
+  }
+  if (!repoFullName || remoteDeleted.value) return;
+  if (!force && pullsLoadedState.value === pullState.value) return;
+  if (!force && pullsLoadPromise && pullsLoadState === pullState.value) {
+    await pullsLoadPromise;
+    return;
+  }
+  githubError.value = null;
+  pullsLoading.value = true;
+  pullsLoadState = pullState.value;
+  pullsLoadPromise = (async () => {
+    try {
+      const nextPulls = await listGitHubPullRequests(repoFullName, pullState.value);
+      if (runId !== pullLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      pulls.value = nextPulls;
+      pullsLoadedState.value = pullState.value;
+      const current = focusedPullRequestNumber.value;
+      if (current && nextPulls.some((pull) => pull.number === current)) {
+        await loadPullRequestChecks(current, true);
+      } else {
+        focusedPullRequestNumber.value = nextPulls[0]?.number ?? null;
+        if (focusedPullRequestNumber.value) {
+          await loadPullRequestChecks(focusedPullRequestNumber.value, true);
+        }
+      }
+    } catch (err) {
+      githubError.value = String(err);
+    } finally {
+      pullsLoading.value = false;
+      pullsLoadPromise = null;
+      pullsLoadState = null;
+    }
+  })();
+  await pullsLoadPromise;
+}
+
+async function loadPullRequestChecks(pullNumber: number, force = false) {
+  const runId = ++pullChecksRunId;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
+  if (!force && pullChecks.value[pullNumber]) return;
+  pullChecksLoading.value = true;
+  try {
+    const checks = await listGitHubPullRequestChecks(repoFullName, pullNumber);
+    if (runId !== pullChecksRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    pullChecks.value = {
+      ...pullChecks.value,
+      [pullNumber]: checks,
+    };
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    if (runId === pullChecksRunId) {
+      pullChecksLoading.value = false;
+    }
+  }
 }
 
 async function loadActions(force = false) {
@@ -592,6 +762,10 @@ async function ensureSectionData(section: ProjectContentMode) {
   }
   if (section === "issues") {
     await loadIssues();
+    return;
+  }
+  if (section === "pulls") {
+    await loadPullRequests();
     return;
   }
   if (section === "actions") {
@@ -651,6 +825,20 @@ function resetGitHubSectionState() {
   settingsLoaded.value = false;
   issues.value = [];
   issuesLoadedState.value = null;
+  pulls.value = [];
+  pullChecks.value = {};
+  pullsLoadedState.value = null;
+  pullsLoading.value = false;
+  pullChecksLoading.value = false;
+  focusedPullRequestNumber.value = null;
+  creatingPullRequest.value = false;
+  updatingPullRequest.value = false;
+  pullRequestTitle.value = "";
+  pullRequestBody.value = "";
+  pullRequestBase.value = "";
+  pullRequestHead.value = "";
+  pullRequestDraft.value = false;
+  pullRequestMergeMethod.value = "merge";
   workflowRuns.value = [];
   actionsLoaded.value = false;
   githubError.value = null;
@@ -658,6 +846,8 @@ function resetGitHubSectionState() {
   settingsLoadPromise = null;
   issuesLoadPromise = null;
   issuesLoadState = null;
+  pullsLoadPromise = null;
+  pullsLoadState = null;
   actionsLoadPromise = null;
   cancelEditIssue();
   focusedIssueNumber.value = null;
@@ -841,6 +1031,85 @@ async function toggleIssue(issue: GitHubIssue) {
   }
 }
 
+function preparePullRequestDefaults() {
+  if (!pullRequestHead.value.trim()) {
+    pullRequestHead.value = currentBranchName.value;
+  }
+  if (!pullRequestBase.value.trim()) {
+    pullRequestBase.value = settings.value?.defaultBranch ?? "";
+  }
+}
+
+async function createPullRequest() {
+  if (!props.repoFullName || creatingPullRequest.value) return;
+  preparePullRequestDefaults();
+  const title = pullRequestTitle.value.trim();
+  const head = pullRequestHead.value.trim();
+  const base = pullRequestBase.value.trim();
+  if (!title || !head || !base) return;
+  creatingPullRequest.value = true;
+  githubError.value = null;
+  try {
+    const pull = await createGitHubPullRequest(props.repoFullName, {
+      title,
+      body: pullRequestBody.value,
+      head,
+      base,
+      draft: pullRequestDraft.value,
+    });
+    pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pull.number)];
+    focusedPullRequestNumber.value = pull.number;
+    pullRequestTitle.value = "";
+    pullRequestBody.value = "";
+    pullRequestDraft.value = false;
+    pullState.value = "open";
+    await loadPullRequestChecks(pull.number, true);
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    creatingPullRequest.value = false;
+  }
+}
+
+async function togglePullRequestState(pull: GitHubPullRequest) {
+  if (!props.repoFullName || updatingPullRequest.value) return;
+  updatingPullRequest.value = true;
+  githubError.value = null;
+  try {
+    const updated = await updateGitHubPullRequest(props.repoFullName, pull.number, {
+      state: pull.state === "open" ? "closed" : "open",
+    });
+    pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    updatingPullRequest.value = false;
+  }
+}
+
+async function mergePullRequest(pull: GitHubPullRequest) {
+  if (!props.repoFullName || updatingPullRequest.value) return;
+  updatingPullRequest.value = true;
+  githubError.value = null;
+  try {
+    const updated = await mergeGitHubPullRequest(props.repoFullName, pull.number, {
+      method: pullRequestMergeMethod.value,
+    });
+    pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
+    focusedPullRequestNumber.value = updated.number;
+    await loadPullRequestChecks(updated.number, true);
+  } catch (err) {
+    githubError.value = String(err);
+  } finally {
+    updatingPullRequest.value = false;
+  }
+}
+
+async function focusPullRequestRow(pull: GitHubPullRequest) {
+  focusedPullRequestNumber.value = pull.number;
+  await loadPullRequestChecks(pull.number);
+}
+
 async function openReadmeLink(target: ReadmeLinkTarget) {
   if (target.kind === "external") {
     void openUrl(target.href);
@@ -1014,6 +1283,115 @@ function selectReadme(path: string) {
               </form>
             </div>
             <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
+          </div>
+        </section>
+
+        <section v-else-if="activeSection === 'pulls'" class="project-section">
+          <div class="project-section__head">
+            <h3>Pull Requests</h3>
+            <select v-model="pullState">
+              <option value="open">Open</option>
+              <option value="closed">Closed</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <p v-if="githubError" class="error-line">{{ githubError }}</p>
+          <form class="project-issue-form" @submit.prevent="createPullRequest">
+            <input v-model="pullRequestTitle" type="text" placeholder="PR 标题" />
+            <textarea v-model="pullRequestBody" rows="3" placeholder="PR 描述"></textarea>
+            <div class="project-inline-form">
+              <input v-model="pullRequestHead" type="text" placeholder="head 分支" />
+              <input v-model="pullRequestBase" type="text" placeholder="base 分支" />
+              <label class="project-check">
+                <input v-model="pullRequestDraft" type="checkbox" />
+                <span>Draft</span>
+              </label>
+              <button
+                type="submit"
+                class="primary"
+                :disabled="creatingPullRequest || !pullRequestTitle.trim() || !pullRequestHead.trim() || !pullRequestBase.trim()"
+              >
+                新建 PR
+              </button>
+            </div>
+          </form>
+          <p v-if="pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
+          <div class="project-list">
+            <div
+              v-for="pull in pulls"
+              :key="pull.number"
+              class="project-row project-row--pull"
+              :class="{ 'is-target': isPullRequestRowFocused(pull.number) }"
+              :data-pull-number="pull.number"
+              @click="focusPullRequestRow(pull)"
+            >
+              <div>
+                <strong>#{{ pull.number }} {{ pull.title }}</strong>
+                <span>
+                  {{ pull.author }} · {{ pull.headBranch }} → {{ pull.baseBranch }} ·
+                  {{ pull.merged ? "merged" : pull.state }}
+                  <template v-if="pull.draft"> · draft</template>
+                  <template v-if="pull.mergeableState"> · {{ pull.mergeableState }}</template>
+                </span>
+                <div v-if="focusedPullRequest?.number === pull.number" class="project-pull-checks">
+                  <p class="muted">
+                    {{
+                      pullChecksLoading
+                        ? "正在读取 checks..."
+                        : focusedPullChecks.length
+                          ? `${focusedPullChecks.length} 个 checks`
+                          : "没有 checks"
+                    }}
+                  </p>
+                  <ul v-if="focusedPullChecks.length" class="project-pull-check-list">
+                    <li v-for="check in focusedPullChecks" :key="check.id">
+                      <span>{{ check.name }}</span>
+                      <em>{{ check.conclusion ?? check.status }}</em>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              <div class="project-inline-form">
+                <select v-model="pullRequestMergeMethod">
+                  <option value="merge">merge</option>
+                  <option value="squash">squash</option>
+                  <option value="rebase">rebase</option>
+                </select>
+                <button type="button" class="ghost" @click.stop="openUrl(pull.htmlUrl)">
+                  <ExternalLink :size="14" aria-hidden="true" />
+                  打开
+                </button>
+                <button
+                  v-if="pull.state === 'open' && !pull.merged"
+                  type="button"
+                  class="ghost"
+                  :disabled="updatingPullRequest"
+                  @click.stop="togglePullRequestState(pull)"
+                >
+                  关闭
+                </button>
+                <button
+                  v-if="pull.state === 'open' && !pull.merged"
+                  type="button"
+                  class="primary"
+                  :disabled="updatingPullRequest"
+                  @click.stop="mergePullRequest(pull)"
+                >
+                  <GitMerge :size="14" aria-hidden="true" />
+                  合并
+                </button>
+                <button
+                  v-else-if="pull.state === 'closed' && !pull.merged"
+                  type="button"
+                  class="ghost"
+                  :disabled="updatingPullRequest"
+                  @click.stop="togglePullRequestState(pull)"
+                >
+                  重开
+                </button>
+              </div>
+            </div>
+            <p v-if="!pulls.length && !pullsLoading" class="muted repo-empty">没有匹配的 Pull Request。</p>
           </div>
         </section>
 
@@ -1234,6 +1612,10 @@ function selectReadme(path: string) {
         embedded
         closable
         @close="emit('closeCommit')"
+        @cherry-pick-commit="emit('cherryPickCommit', $event)"
+        @revert-commit="emit('revertCommit', $event)"
+        @reset-commit="emit('resetCommit', $event.hash, $event.mode)"
+        @create-branch-from-commit="emit('createBranchFromCommit', $event)"
       />
 
       <aside v-if="showProjectSidebar" class="project-sidebar">
@@ -1544,6 +1926,18 @@ function selectReadme(path: string) {
   flex-wrap: wrap;
 }
 
+.project-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-check input {
+  width: auto;
+}
+
 .project-inline-form input {
   flex: 1 1 160px;
 }
@@ -1588,6 +1982,32 @@ function selectReadme(path: string) {
 .project-row--action {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+
+.project-row--pull {
+  align-items: flex-start;
+}
+
+.project-pull-checks {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.project-pull-check-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-pull-check-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .project-row.is-target {
