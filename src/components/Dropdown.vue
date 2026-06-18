@@ -1,6 +1,8 @@
 <script setup lang="ts" generic="T extends string | number">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { ChevronDown } from "@lucide/vue";
+import { SB_MENU_POP_TRANSITION_MS } from "../composables/menuMotion";
+import { useAnchoredMenuMotion } from "../composables/useAnchoredMenuMotion";
 
 interface Option {
   value: T;
@@ -25,14 +27,22 @@ const props = defineProps<{
 const emit = defineEmits<{ "update:modelValue": [value: T] }>();
 
 const open = ref(false);
-const root = ref<HTMLElement | null>(null);
+const placement = computed(() =>
+  props.placement === "bottom" ? "bottom" : "top",
+);
+const menuMotion = useAnchoredMenuMotion(placement);
+const root = menuMotion.rootEl;
+const origin = menuMotion.origin;
 
 const current = computed(() =>
   props.options.find((option) => option.value === props.modelValue),
 );
 
-function toggle() {
+const placementClass = computed(() => `dd__menu--${placement.value}`);
+
+function toggle(event: MouseEvent) {
   if (props.disabled) return;
+  menuMotion.captureAnchor(event);
   open.value = !open.value;
 }
 
@@ -56,7 +66,8 @@ function onKey(event: KeyboardEvent) {
 
 watch(open, async (value) => {
   if (value) {
-    await nextTick();
+    menuMotion.resolveInitialOrigin();
+    await menuMotion.updateOrigin();
     document.addEventListener("pointerdown", onDocPointer, true);
     document.addEventListener("keydown", onKey);
   } else {
@@ -74,6 +85,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="root" class="dd">
     <button
+      :ref="menuMotion.triggerEl"
       type="button"
       class="chat-chip"
       :class="[buttonClass, { 'is-open': open, 'is-disabled': disabled }]"
@@ -89,16 +101,21 @@ onBeforeUnmount(() => {
       <ChevronDown :size="12" aria-hidden="true" class="chat-chip__caret" />
     </button>
 
-    <div
-      v-if="open"
-      class="dd__menu-shell"
-      :class="placement === 'bottom' ? 'dd__menu-shell--bottom' : 'dd__menu-shell--top'"
-      :style="menuWidth ? { width: menuWidth } : undefined"
-    >
+    <Transition name="sb-menu-pop" :duration="SB_MENU_POP_TRANSITION_MS">
       <div
+        v-if="open"
+        :ref="menuMotion.menuEl"
         class="dd__menu"
+        :class="placementClass"
         role="listbox"
         :aria-label="menuLabel"
+        :style="[
+          {
+            '--sb-menu-origin-x': `${origin.x}px`,
+            '--sb-menu-origin-y': `${origin.y}px`,
+          },
+          menuWidth ? { width: menuWidth } : null,
+        ]"
       >
         <button
           v-for="option in options"
@@ -115,7 +132,7 @@ onBeforeUnmount(() => {
           <span v-if="option.hint" class="dd__item-hint">{{ option.hint }}</span>
         </button>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -157,21 +174,10 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-.dd__menu-shell {
+.dd__menu {
   position: absolute;
   left: 0;
   z-index: 20;
-}
-
-.dd__menu-shell--top {
-  bottom: calc(100% + 6px);
-}
-
-.dd__menu-shell--bottom {
-  top: calc(100% + 6px);
-}
-
-.dd__menu {
   min-width: 180px;
   max-width: 280px;
   background: var(--bg-elev);
@@ -184,6 +190,16 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
   max-height: 280px;
   overflow: auto;
+  transform-origin: var(--sb-menu-origin-x, 0px) var(--sb-menu-origin-y, 0px);
+  will-change: transform, opacity;
+}
+
+.dd__menu--top {
+  bottom: calc(100% + 6px);
+}
+
+.dd__menu--bottom {
+  top: calc(100% + 6px);
 }
 
 .dd__item {
@@ -207,7 +223,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.dd__item:hover,
+.dd__item:hover:not(:disabled),
 .dd__item.is-active {
   background: var(--bg-hover);
   filter: none;
