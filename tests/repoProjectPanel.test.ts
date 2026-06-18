@@ -4,9 +4,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { state } from "../src/composables/workspace/state";
-import { updateGitHubRepoSettings } from "../src/services/workspace/client";
+import {
+  getGitHubRepoManagement,
+  listGitHubIssues,
+  listGitHubWorkflowRuns,
+  listRepoReadmes,
+  updateGitHubRepoSettings,
+} from "../src/services/workspace/client";
 import type {
+  GitHubIssue,
   GitHubRepoManagement,
+  GitHubWorkflowRun,
   ProjectLaunchConfig,
   ProjectLaunchLog,
 } from "../src/services/workspace/types";
@@ -33,14 +41,47 @@ const githubSettings: GitHubRepoManagement = {
   htmlUrl: "https://github.com/sena-nana/remote-repo",
 };
 
+const githubIssues: GitHubIssue[] = [{
+  number: 12,
+  title: "修复懒加载",
+  state: "open",
+  body: null,
+  labels: ["bug"],
+  assignees: ["sena"],
+  htmlUrl: "https://github.com/sena-nana/remote-repo/issues/12",
+  updatedAt: "2026-06-18T08:00:00Z",
+  createdAt: "2026-06-18T08:00:00Z",
+}];
+
+const closedGitHubIssues: GitHubIssue[] = [{
+  ...githubIssues[0],
+  number: 34,
+  title: "已关闭问题",
+  state: "closed",
+  htmlUrl: "https://github.com/sena-nana/remote-repo/issues/34",
+}];
+
+const githubWorkflowRuns: GitHubWorkflowRun[] = [{
+  id: 1310,
+  name: "CI",
+  displayTitle: "release pipeline",
+  status: "completed",
+  conclusion: "success",
+  branch: "main",
+  event: "workflow_dispatch",
+  htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310",
+  createdAt: "2026-06-18T08:00:00Z",
+  updatedAt: "2026-06-18T08:00:00Z",
+}];
+
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubIssue: vi.fn(),
   deleteGitHubRepo: vi.fn(),
   getRepoCommitDetail: vi.fn(),
-  getGitHubRepoManagement: vi.fn(async () => githubSettings),
-  listGitHubIssues: vi.fn(async () => []),
+  getGitHubRepoManagement: vi.fn(),
+  listGitHubIssues: vi.fn(),
   listGitHubRepoReadmes: vi.fn(async () => []),
-  listGitHubWorkflowRuns: vi.fn(async () => []),
+  listGitHubWorkflowRuns: vi.fn(),
   listRepoReadmes: vi.fn(async () => []),
   openPath: vi.fn(),
   openUrl: vi.fn(),
@@ -112,6 +153,10 @@ describe("RepoProjectPanel", () => {
     closeContextMenu();
     installContextMenu();
     vi.clearAllMocks();
+    vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
+    vi.mocked(listGitHubIssues).mockResolvedValue([]);
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
+    vi.mocked(listRepoReadmes).mockResolvedValue([]);
     state.repos = [];
   });
 
@@ -175,6 +220,63 @@ describe("RepoProjectPanel", () => {
       expect(view.getByText("删除 GitHub 远端仓库")).toBeInTheDocument();
     });
     expect(view.queryByText("删除本地仓库")).toBeNull();
+  });
+
+  it("默认 readme 首屏不预取 GitHub settings、issues 和 workflow runs", async () => {
+    await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await waitFor(() => {
+      expect(listRepoReadmes).toHaveBeenCalledWith("local-repo");
+    });
+    expect(getGitHubRepoManagement).not.toHaveBeenCalled();
+    expect(listGitHubIssues).not.toHaveBeenCalled();
+    expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+  });
+
+  it("切换到对应分区时才按需请求 settings、issues 和 actions", async () => {
+    vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
+    vi.mocked(listGitHubIssues).mockResolvedValue(githubIssues);
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue(githubWorkflowRuns);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+    expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
+    expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
+    expect(listGitHubIssues).not.toHaveBeenCalled();
+    expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenCalledTimes(1);
+    expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+
+    await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
+    expect(await view.findByText("release pipeline")).toBeInTheDocument();
+    expect(listGitHubWorkflowRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("issues 过滤切换只触发一次刷新请求", async () => {
+    vi.mocked(listGitHubIssues)
+      .mockResolvedValueOnce(githubIssues)
+      .mockResolvedValueOnce(closedGitHubIssues);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenCalledTimes(1);
+
+    await fireEvent.update(view.getByRole("combobox"), "closed");
+    expect(await view.findByText("#34 已关闭问题")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenCalledTimes(2);
+    });
+    expect(listGitHubIssues).toHaveBeenLastCalledWith("sena-nana/remote-repo", "closed");
   });
 
   it("linked worktree 在设置区显示删除工作树文案", async () => {
