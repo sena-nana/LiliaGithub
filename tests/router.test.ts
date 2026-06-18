@@ -452,6 +452,81 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
   });
 
+  it("总览页先渲染框架和仓库列表，再在 idle 后限流拉取时间线请求", async () => {
+    const service = await import("../src/services/workspace");
+    const repos = Array.from({ length: 4 }, (_, index) =>
+      githubRepoSummary(`sena-nana/DeferredTimeline${index}`),
+    );
+    const issueResolvers = new Map<string, (issues: GitHubIssue[]) => void>();
+    const workflowResolvers = new Map<string, (runs: GitHubWorkflowRun[]) => void>();
+    const issueCalls: string[] = [];
+    const workflowCalls: string[] = [];
+    const idleCallbacks: Array<() => void> = [];
+    const windowWithIdle = window as typeof window & {
+      requestIdleCallback?: (callback: () => void) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    const originalRequestIdleCallback = windowWithIdle.requestIdleCallback;
+    const originalCancelIdleCallback = windowWithIdle.cancelIdleCallback;
+    service.setFallbackGitHubRepoPagesForTests([{ items: repos, nextPage: null }]);
+    const issueSpy = vi.spyOn(service, "listGitHubIssues").mockImplementation((repoFullName) => {
+      issueCalls.push(repoFullName);
+      return new Promise((resolve) => {
+        issueResolvers.set(repoFullName, resolve);
+      });
+    });
+    const workflowSpy = vi.spyOn(service, "listGitHubWorkflowRuns").mockImplementation((repoFullName) => {
+      workflowCalls.push(repoFullName);
+      return new Promise((resolve) => {
+        workflowResolvers.set(repoFullName, resolve);
+      });
+    });
+    windowWithIdle.requestIdleCallback = (callback) => {
+      idleCallbacks.push(callback);
+      return idleCallbacks.length;
+    };
+    windowWithIdle.cancelIdleCallback = vi.fn();
+
+    try {
+      await renderAt("/");
+
+      expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+      const repoStatusList = await screen.findByLabelText("仓库状态列表");
+      expect(await within(repoStatusList).findByText(repos[0].fullName)).toBeInTheDocument();
+      expect(issueSpy).not.toHaveBeenCalled();
+      expect(workflowSpy).not.toHaveBeenCalled();
+      expect(idleCallbacks).toHaveLength(1);
+
+      idleCallbacks[0]?.();
+
+      await waitFor(() => {
+        expect(issueCalls).toHaveLength(2);
+        expect(workflowCalls).toHaveLength(2);
+      });
+      expect(issueCalls).toEqual(repos.slice(0, 2).map((repo) => repo.fullName));
+      expect(workflowCalls).toEqual(repos.slice(0, 2).map((repo) => repo.fullName));
+
+      issueResolvers.get(repos[0].fullName)?.([githubIssue(repos[0].fullName, 1, "2026-06-13T10:00:00Z")]);
+      workflowResolvers.get(repos[0].fullName)?.([
+        githubWorkflowRun(repos[0].fullName, 3001, "2026-06-13T11:00:00Z"),
+      ]);
+
+      await waitFor(() => {
+        expect(issueCalls).toHaveLength(3);
+        expect(workflowCalls).toHaveLength(3);
+      });
+      expect(issueCalls[2]).toBe(repos[2].fullName);
+      expect(workflowCalls[2]).toBe(repos[2].fullName);
+    } finally {
+      issueSpy.mockRestore();
+      workflowSpy.mockRestore();
+      if (originalRequestIdleCallback) windowWithIdle.requestIdleCallback = originalRequestIdleCallback;
+      else delete windowWithIdle.requestIdleCallback;
+      if (originalCancelIdleCallback) windowWithIdle.cancelIdleCallback = originalCancelIdleCallback;
+      else delete windowWithIdle.cancelIdleCallback;
+    }
+  });
+
   it("总览页 GitHub 时间线按最近一周更新时间拉取 issue", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
@@ -715,7 +790,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
     expect(await screen.findByText("Issue #93")).toBeInTheDocument();
     expect(screen.getByLabelText("仓库状态列表")).toHaveTextContent(repo.fullName);
-    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(2);
+    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
     expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
       .toBe(93);
   });

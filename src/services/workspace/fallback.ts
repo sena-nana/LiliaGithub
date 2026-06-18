@@ -249,8 +249,8 @@ function createFallbackGitHubIssues(): Record<string, GitHubIssue[]> {
         labels: ["enhancement"],
         assignees: ["lilia-user"],
         htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
-        updatedAt: "2026-06-11T12:00:00Z",
-        createdAt: "2026-06-10T12:00:00Z",
+        updatedAt: "2026-06-17T12:00:00Z",
+        createdAt: "2026-06-16T12:00:00Z",
       },
     ],
   };
