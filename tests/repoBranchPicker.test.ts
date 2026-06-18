@@ -9,6 +9,9 @@ import { vContextMenu } from "../src/directives/contextMenu";
 const branches = [
   {
     name: "main",
+    canonicalName: "main",
+    displayName: "main",
+    sourceLabel: "",
     remote: false,
     current: true,
     upstream: "origin/main",
@@ -21,10 +24,13 @@ const branches = [
     relativeTime: "3 天前",
     checkedOutInWorktree: true,
     worktreePathsLabel: "C:\\Files\\workspace\\LiliaGithub",
-    searchText: "main origin/main",
+    searchText: "main main origin/main",
   },
   {
     name: "dev",
+    canonicalName: "dev",
+    displayName: "dev",
+    sourceLabel: "",
     remote: false,
     current: false,
     upstream: "origin/dev",
@@ -37,10 +43,13 @@ const branches = [
     relativeTime: "16 小时前",
     checkedOutInWorktree: false,
     worktreePathsLabel: "",
-    searchText: "dev origin/dev",
+    searchText: "dev dev origin/dev",
   },
   {
     name: "origin/feature/notice-update",
+    canonicalName: "origin/feature/notice-update",
+    displayName: "feature/notice-update",
+    sourceLabel: "origin",
     remote: true,
     current: false,
     upstream: null,
@@ -53,7 +62,7 @@ const branches = [
     relativeTime: "2 个月前",
     checkedOutInWorktree: false,
     worktreePathsLabel: "",
-    searchText: "origin/feature/notice-update",
+    searchText: "feature/notice-update origin/feature/notice-update origin",
   },
 ];
 
@@ -116,12 +125,20 @@ describe("RepoBranchPicker", () => {
     expect(screen.getByText("本地分支")).toBeInTheDocument();
     expect(screen.getByText("远程分支")).toBeInTheDocument();
     expect(screen.getByText("16 小时前")).toBeInTheDocument();
+    expect(screen.queryByText("local")).toBeNull();
+    expect(screen.getByText("origin")).toBeInTheDocument();
     expect(view.container.querySelectorAll(".branch-picker__row-worktree svg")).toHaveLength(1);
 
     await fireEvent.update(screen.getByLabelText("搜索分支"), "notice-update");
 
-    expect(screen.getByRole("button", { name: "origin/feature/notice-update" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "feature/notice-update (origin)" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "dev" })).toBeNull();
+
+    await fireEvent.update(screen.getByLabelText("搜索分支"), "origin/feature/notice-update");
+    expect(screen.getByRole("button", { name: "feature/notice-update (origin)" })).toBeInTheDocument();
+
+    await fireEvent.update(screen.getByLabelText("搜索分支"), "origin");
+    expect(screen.getByRole("button", { name: "feature/notice-update (origin)" })).toBeInTheDocument();
   });
 
   it("右键菜单按分支类型切换动作", async () => {
@@ -139,7 +156,7 @@ describe("RepoBranchPicker", () => {
     expect(screen.getByRole("menuitem", { name: "合并到当前分支" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
 
-    await fireEvent.contextMenu(within(listbox).getByRole("button", { name: "origin/feature/notice-update" }));
+    await fireEvent.contextMenu(within(listbox).getByRole("button", { name: "feature/notice-update (origin)" }));
     expect(await screen.findByRole("menuitem", { name: "检出" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "基于此创建本地分支…" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "合并到当前分支" })).toBeNull();
@@ -152,7 +169,7 @@ describe("RepoBranchPicker", () => {
     await fireEvent.click(screen.getByRole("button", { name: "main" }));
     const listbox = screen.getByRole("listbox", { name: "分支候选" });
 
-    await fireEvent.contextMenu(within(listbox).getByRole("button", { name: "origin/feature/notice-update" }));
+    await fireEvent.contextMenu(within(listbox).getByRole("button", { name: "feature/notice-update (origin)" }));
     await fireEvent.click(await screen.findByRole("menuitem", { name: "基于此创建本地分支…" }));
     const createDialog = await screen.findByRole("dialog", { name: "创建分支" });
     const createInputs = within(createDialog).getAllByRole("textbox");

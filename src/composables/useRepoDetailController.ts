@@ -30,6 +30,9 @@ type HistoryCommit = {
 };
 
 type RepoBranchPickerItem = BranchSummary & {
+  readonly canonicalName: string;
+  readonly displayName: string;
+  readonly sourceLabel: string;
   readonly section: "current" | "local" | "remote";
   readonly relativeTime: string;
   readonly checkedOutInWorktree: boolean;
@@ -240,14 +243,20 @@ export function useRepoDetailController() {
         const section: RepoBranchPickerItem["section"] =
           branch.current && !branch.remote ? "current" : branch.remote ? "remote" : "local";
         const checkedOutWorktreePaths = [...branch.checkedOutWorktreePaths];
+        const canonicalName = branch.name;
+        const displayName = branch.remote ? remoteBranchShortName(canonicalName) : canonicalName;
+        const sourceLabel = branch.remote ? remoteBranchSourceLabel(canonicalName) : "";
         return {
           ...branch,
+          canonicalName,
+          displayName,
+          sourceLabel,
           checkedOutWorktreePaths,
           section,
           relativeTime: formatRelativeRepoTime(branch.tipTimestamp),
           checkedOutInWorktree: !branch.remote && checkedOutWorktreePaths.length > 0,
           worktreePathsLabel: checkedOutWorktreePaths.join("\n"),
-          searchText: `${branch.name} ${branch.upstream ?? ""}`.toLowerCase(),
+          searchText: [displayName, canonicalName, branch.upstream ?? "", sourceLabel].join(" ").toLowerCase(),
         };
       })
       .sort((a, b) =>
@@ -325,6 +334,14 @@ export function useRepoDetailController() {
     if (section === "current") return 0;
     if (section === "local") return 1;
     return 2;
+  }
+
+  function remoteBranchShortName(branchName: string) {
+    return branchName.split("/").slice(1).join("/") || branchName;
+  }
+
+  function remoteBranchSourceLabel(branchName: string) {
+    return branchName.split("/")[0] || "remote";
   }
 
   async function load() {

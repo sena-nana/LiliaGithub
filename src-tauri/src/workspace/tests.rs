@@ -806,6 +806,39 @@ fn repo_branches_hides_remote_namespace_refs() {
 }
 
 #[test]
+fn repo_branches_marks_origin_short_refs_as_remote() {
+    let remote = temp_dir("branches-origin-short-remote");
+    init_git_repo(&remote);
+    fs::write(remote.join("file.txt"), "root").unwrap();
+    run_git(&remote, &["add", "file.txt"]);
+    run_git(&remote, &["commit", "-m", "root"]);
+    run_git(&remote, &["branch", "-M", "main"]);
+    run_git(&remote, &["checkout", "-b", "feature/notice-update"]);
+    fs::write(remote.join("feature.txt"), "feature").unwrap();
+    run_git(&remote, &["add", "feature.txt"]);
+    run_git(&remote, &["commit", "-m", "feature"]);
+    run_git(&remote, &["checkout", "main"]);
+
+    let path = temp_dir("branches-origin-short-clone");
+    run_git(
+        &std::env::temp_dir(),
+        &["clone", remote.to_string_lossy().as_ref(), path.to_string_lossy().as_ref()],
+    );
+    run_git(&path, &["config", "user.email", "test@example.com"]);
+    run_git(&path, &["config", "user.name", "Test User"]);
+
+    let branches = repo_branches(&path);
+
+    assert!(branches.iter().any(|branch| branch.remote && branch.name == "origin/main"));
+    assert!(branches
+        .iter()
+        .any(|branch| branch.remote && branch.name == "origin/feature/notice-update"));
+    assert!(!branches
+        .iter()
+        .any(|branch| !branch.remote && branch.name == "origin/feature/notice-update"));
+}
+
+#[test]
 fn repo_branches_reports_checked_out_worktrees() {
     let path = temp_dir("branches-worktrees");
     init_git_repo(&path);

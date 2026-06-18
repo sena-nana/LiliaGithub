@@ -2282,7 +2282,7 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
         &[
             "branch",
             "--all",
-            "--format=%(HEAD)\x1f%(refname:short)\x1f%(upstream:short)\x1f%(upstream:track)\x1f%(committerdate:unix)",
+            "--format=%(HEAD)\x1f%(refname)\x1f%(refname:short)\x1f%(upstream:short)\x1f%(upstream:track)\x1f%(committerdate:unix)",
         ],
     )
     .unwrap_or_default();
@@ -2297,28 +2297,30 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
                 line.split("%x1f").collect::<Vec<_>>()
             };
             let current = parts.first().copied().unwrap_or("").trim() == "*";
-            let raw_name = parts.get(1).copied().unwrap_or("").trim();
-            let remote = raw_name.starts_with("remotes/");
-            let name = raw_name
-                .strip_prefix("remotes/")
-                .unwrap_or(raw_name)
-                .to_string();
-            if raw_name.is_empty() || name == "origin" || name.ends_with("/HEAD") {
+            let full_ref = parts.get(1).copied().unwrap_or("").trim();
+            let raw_short_ref = parts.get(2).copied().unwrap_or("").trim();
+            let short_ref = raw_short_ref.strip_prefix("remotes/").unwrap_or(raw_short_ref);
+            if short_ref.is_empty() {
                 return None;
             }
+            let remote = full_ref.starts_with("refs/remotes/");
+            if short_ref.ends_with("/HEAD") || (remote && !short_ref.contains('/')) {
+                return None;
+            }
+            let name = short_ref.to_string();
             if !seen.insert(format!("{remote}:{name}")) {
                 return None;
             }
             let upstream = parts
-                .get(2)
+                .get(3)
                 .copied()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned);
-            let track = parts.get(3).copied().unwrap_or("");
+            let track = parts.get(4).copied().unwrap_or("");
             let (ahead, behind) = parse_track(track);
             let tip_timestamp = parts
-                .get(4)
+                .get(5)
                 .copied()
                 .and_then(|value| value.trim().parse::<i64>().ok())
                 .filter(|value| *value > 0);

@@ -14,6 +14,9 @@ import type { ContextMenuItem } from "../../composables/useContextMenu";
 
 type RepoBranchPickerItem = {
   name: string;
+  canonicalName: string;
+  displayName: string;
+  sourceLabel: string;
   remote: boolean;
   current: boolean;
   upstream: string | null;
@@ -80,8 +83,12 @@ const filteredGroups = computed(() => {
     .filter((section) => section.items.length > 0);
 });
 
-function localBranchShortName(remoteBranch: string) {
-  return remoteBranch.split("/").slice(1).join("/") || remoteBranch;
+function branchDisplayLabel(branch: RepoBranchPickerItem) {
+  return branch.remote ? `${branch.displayName} (${branch.sourceLabel})` : branch.displayName;
+}
+
+function branchAriaLabel(branch: RepoBranchPickerItem) {
+  return branchDisplayLabel(branch);
 }
 
 function toggle() {
@@ -126,13 +133,13 @@ onBeforeUnmount(() => {
 function pickBranch(branch: RepoBranchPickerItem) {
   if (props.disabled || props.actionRunning || branch.current) return;
   closePicker();
-  emit("checkout", branch.name);
+  emit("checkout", branch.canonicalName);
 }
 
 function openCreateDialog(branch: RepoBranchPickerItem) {
   closePicker();
   createSourceBranch.value = branch;
-  createBranchName.value = branch.remote ? localBranchShortName(branch.name) : "";
+  createBranchName.value = branch.remote ? branch.displayName : "";
   createCheckoutAfter.value = true;
   createDialogOpen.value = true;
 }
@@ -148,7 +155,7 @@ function submitCreateDialog() {
   if (!createSourceBranch.value || !createBranchName.value.trim()) return;
   emit("create-branch", {
     name: createBranchName.value.trim(),
-    fromRef: createSourceBranch.value.name,
+    fromRef: createSourceBranch.value.canonicalName,
     checkoutAfter: createCheckoutAfter.value,
   });
   closeCreateDialog();
@@ -157,7 +164,7 @@ function submitCreateDialog() {
 function openRenameDialog(branch: RepoBranchPickerItem) {
   closePicker();
   renameTargetBranch.value = branch;
-  renameBranchName.value = branch.name;
+  renameBranchName.value = branch.canonicalName;
   renameDialogOpen.value = true;
 }
 
@@ -170,7 +177,7 @@ function closeRenameDialog() {
 function submitRenameDialog() {
   if (!renameTargetBranch.value || !renameBranchName.value.trim()) return;
   emit("rename-branch", {
-    oldName: renameTargetBranch.value.name,
+    oldName: renameTargetBranch.value.canonicalName,
     newName: renameBranchName.value.trim(),
   });
   closeRenameDialog();
@@ -191,33 +198,34 @@ function branchMenu(branch: RepoBranchPickerItem) {
     if (props.disabled || props.actionRunning) return [];
     if (!branch.remote && branch.current) {
       return [
-        branchMenuItem(`update:${branch.name}`, "更新", GitMerge, () => emit("update-current")),
-        branchMenuItem(`create:${branch.name}`, "创建分支…", GitBranchPlus, () => openCreateDialog(branch)),
-        branchMenuItem(`rename:${branch.name}`, "重命名…", Pencil, () => openRenameDialog(branch)),
+        branchMenuItem(`update:${branch.canonicalName}`, "更新", GitMerge, () => emit("update-current")),
+        branchMenuItem(`create:${branch.canonicalName}`, "创建分支…", GitBranchPlus, () => openCreateDialog(branch)),
+        branchMenuItem(`rename:${branch.canonicalName}`, "重命名…", Pencil, () => openRenameDialog(branch)),
       ];
     }
     if (!branch.remote) {
       return [
-        branchMenuItem(`checkout:${branch.name}`, "检出", GitBranch, () => pickBranch(branch)),
-        branchMenuItem(`merge:${branch.name}`, "合并到当前分支", GitMerge, () => emit("merge-branch", branch.name)),
-        branchMenuItem(`create:${branch.name}`, "创建分支…", GitBranchPlus, () => openCreateDialog(branch)),
-        branchMenuItem(`rename:${branch.name}`, "重命名…", Pencil, () => openRenameDialog(branch)),
-        branchMenuItem(`delete:${branch.name}`, "删除", Trash2, () => emit("delete-branch", branch.name), {
+        branchMenuItem(`checkout:${branch.canonicalName}`, "检出", GitBranch, () => pickBranch(branch)),
+        branchMenuItem(`merge:${branch.canonicalName}`, "合并到当前分支", GitMerge, () => emit("merge-branch", branch.canonicalName)),
+        branchMenuItem(`create:${branch.canonicalName}`, "创建分支…", GitBranchPlus, () => openCreateDialog(branch)),
+        branchMenuItem(`rename:${branch.canonicalName}`, "重命名…", Pencil, () => openRenameDialog(branch)),
+        branchMenuItem(`delete:${branch.canonicalName}`, "删除", Trash2, () => emit("delete-branch", branch.canonicalName), {
           danger: true,
           confirmLabel: "确认删除？再点一次",
         }),
       ];
     }
     return [
-      branchMenuItem(`checkout:${branch.name}`, "检出", GitBranch, () => pickBranch(branch)),
-      branchMenuItem(`create:${branch.name}`, "基于此创建本地分支…", GitBranchPlus, () => openCreateDialog(branch)),
+      branchMenuItem(`checkout:${branch.canonicalName}`, "检出", GitBranch, () => pickBranch(branch)),
+      branchMenuItem(`create:${branch.canonicalName}`, "基于此创建本地分支…", GitBranchPlus, () => openCreateDialog(branch)),
     ];
   };
 }
 
 function branchTitle(branch: RepoBranchPickerItem) {
   return [
-    branch.name,
+    branchDisplayLabel(branch),
+    branch.remote ? `ref: ${branch.canonicalName}` : "",
     branch.upstream ? `upstream: ${branch.upstream}` : "",
     branch.worktreePathsLabel ? `worktree:\n${branch.worktreePathsLabel}` : "",
   ].filter(Boolean).join("\n");
@@ -266,7 +274,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
               'is-remote': branch.remote,
             }"
             :aria-selected="branch.current"
-            :aria-label="branch.name"
+            :aria-label="branchAriaLabel(branch)"
             :title="branchTitle(branch)"
             @click="pickBranch(branch)"
           >
@@ -274,7 +282,8 @@ function branchTitle(branch: RepoBranchPickerItem) {
               <Check v-if="branch.current" :size="14" aria-hidden="true" />
               <GitBranch v-else :size="14" aria-hidden="true" />
             </span>
-            <span class="branch-picker__row-name">{{ branch.name }}</span>
+            <span class="branch-picker__row-name">{{ branch.displayName }}</span>
+            <span v-if="branch.remote" class="branch-picker__row-source">{{ branch.sourceLabel }}</span>
             <span class="branch-picker__row-time">{{ branch.relativeTime }}</span>
             <span
               v-if="branch.checkedOutInWorktree && !branch.remote"
@@ -490,7 +499,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
 
 .branch-picker__row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto 16px;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto 16px;
   align-items: center;
   gap: 6px;
   height: auto;
@@ -527,6 +536,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
 }
 
 .branch-picker__row-name {
+  grid-column: 2;
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -536,15 +546,32 @@ function branchTitle(branch: RepoBranchPickerItem) {
   line-height: inherit;
 }
 
+.branch-picker__row-source {
+  grid-column: 3;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .branch-picker__row-time {
+  grid-column: 4;
   display: block;
   color: var(--text-muted);
   font-size: 11px;
   line-height: inherit;
   white-space: nowrap;
+  justify-self: end;
 }
 
 .branch-picker__row-worktree {
+  grid-column: 5;
   color: var(--warn);
 }
 
