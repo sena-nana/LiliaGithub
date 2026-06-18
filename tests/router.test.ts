@@ -926,7 +926,8 @@ describe("基础路由", () => {
     expect(screen.getByText("远程分支")).toBeInTheDocument();
     await fireEvent.contextMenu(within(branchList).getByRole("button", { name: "main" }));
     expect(await screen.findByRole("menuitem", { name: "更新" })).toBeInTheDocument();
-    await fireEvent.click(within(branchList).getByRole("button", { name: "origin/feature/notice-update" }));
+    expect(within(branchList).getAllByText("origin").length).toBeGreaterThan(0);
+    await fireEvent.click(within(branchList).getByRole("button", { name: "feature/notice-update (origin)" }));
     await waitFor(() =>
       expect(checkoutBranch).toHaveBeenCalledWith("LiliaGithub", "origin/feature/notice-update"),
     );
