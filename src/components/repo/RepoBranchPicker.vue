@@ -382,6 +382,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
   position: relative;
   display: inline-flex;
   min-width: 0;
+  --branch-picker-row-height: 26px;
 }
 
 .branch-picker__trigger {
@@ -440,22 +441,28 @@ function branchTitle(branch: RepoBranchPickerItem) {
 .branch-picker__search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 10px;
+  gap: 6px;
+  height: var(--branch-picker-row-height);
+  padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   color: var(--text-muted);
+  box-sizing: border-box;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .branch-picker__search input {
   flex: 1 1 auto;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   border: 0;
   padding: 0;
   background: transparent;
   color: var(--text);
+  font: inherit;
 }
 
 .branch-picker__search input:focus {
@@ -487,15 +494,14 @@ function branchTitle(branch: RepoBranchPickerItem) {
   align-items: center;
   gap: 6px;
   height: auto;
-  min-height: 26px;
-  padding: 3px 6px;
+  min-height: var(--branch-picker-row-height);
+  padding: 0 6px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  box-sizing: border-box;
   font-size: 12px;
   line-height: 1.45;
 }
