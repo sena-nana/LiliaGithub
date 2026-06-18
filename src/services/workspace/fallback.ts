@@ -29,6 +29,8 @@ import type {
   RepoConflictChoice,
   RepoConflictState,
   RepoDetail,
+  RepoFilePreview,
+  RepoFileTreeEntry,
   RepoMergePullResult,
   RepoRefreshSummaryOptions,
   RepoReadme,
@@ -408,6 +410,130 @@ function createFallbackGitHubRepoReadmes(): Record<string, RepoReadme[]> {
   );
 }
 
+function createFallbackRepoFiles(): Record<string, Record<string, RepoFileTreeEntry[]>> {
+  return {
+    LiliaGithub: {
+      "": [
+        { path: "public", name: "public", kind: "dir", hasChildren: true },
+        { path: "src", name: "src", kind: "dir", hasChildren: true },
+        { path: ".gitignore", name: ".gitignore", kind: "file", hasChildren: false },
+        { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+        { path: "package.json", name: "package.json", kind: "file", hasChildren: false },
+      ],
+      public: [
+        { path: "public/favicon.ico", name: "favicon.ico", kind: "file", hasChildren: false },
+      ],
+      src: [
+        { path: "src/App.vue", name: "App.vue", kind: "file", hasChildren: false },
+        { path: "src/pages", name: "pages", kind: "dir", hasChildren: true },
+        { path: "src/router.ts", name: "router.ts", kind: "file", hasChildren: false },
+      ],
+      "src/pages": [
+        { path: "src/pages/Home.vue", name: "Home.vue", kind: "file", hasChildren: false },
+        { path: "src/pages/RepoDetail.vue", name: "RepoDetail.vue", kind: "file", hasChildren: false },
+      ],
+    },
+    Lilia: {
+      "": [
+        { path: "src", name: "src", kind: "dir", hasChildren: false },
+        { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+      ],
+      src: [],
+    },
+  };
+}
+
+function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFilePreview>> {
+  return {
+    LiliaGithub: {
+      "README.md": {
+        path: "README.md",
+        name: "README.md",
+        previewKind: "markdown",
+        content: createFallbackRepoReadmes().LiliaGithub[0]?.content ?? "# LiliaGithub",
+        images: {},
+        size: 168,
+        mimeType: "text/markdown",
+        truncated: false,
+      },
+      ".gitignore": {
+        path: ".gitignore",
+        name: ".gitignore",
+        previewKind: "text",
+        content: "dist\nnode_modules\nsrc-tauri/target\n",
+        size: 34,
+        mimeType: "text/plain",
+        truncated: false,
+      },
+      "package.json": {
+        path: "package.json",
+        name: "package.json",
+        previewKind: "text",
+        content: JSON.stringify({ name: "lilia-github", private: true, version: "0.1.0-alpha.1" }, null, 2),
+        size: 76,
+        mimeType: "application/json",
+        truncated: false,
+      },
+      "src/App.vue": {
+        path: "src/App.vue",
+        name: "App.vue",
+        previewKind: "text",
+        content: "<template>\n  <RouterView />\n</template>\n",
+        size: 41,
+        mimeType: "text/plain",
+        truncated: false,
+      },
+      "src/router.ts": {
+        path: "src/router.ts",
+        name: "router.ts",
+        previewKind: "text",
+        content: "export const router = createLiliaGithubRouter();\n",
+        size: 49,
+        mimeType: "text/plain",
+        truncated: false,
+      },
+      "src/pages/Home.vue": {
+        path: "src/pages/Home.vue",
+        name: "Home.vue",
+        previewKind: "text",
+        content: "<template>\n  <section>Home</section>\n</template>\n",
+        size: 47,
+        mimeType: "text/plain",
+        truncated: false,
+      },
+      "src/pages/RepoDetail.vue": {
+        path: "src/pages/RepoDetail.vue",
+        name: "RepoDetail.vue",
+        previewKind: "text",
+        content: "<template>\n  <section class=\"repo-workbench\" />\n</template>\n",
+        size: 63,
+        mimeType: "text/plain",
+        truncated: false,
+      },
+      "public/favicon.ico": {
+        path: "public/favicon.ico",
+        name: "favicon.ico",
+        previewKind: "binary",
+        size: 1024,
+        mimeType: "image/x-icon",
+        truncated: false,
+      },
+    },
+    Lilia: {
+      "README.md": {
+        path: "README.md",
+        name: "README.md",
+        previewKind: "markdown",
+        content: createFallbackRepoReadmes().Lilia[0]?.content ?? "# Lilia",
+        images: {},
+        size: 32,
+        mimeType: "text/markdown",
+        truncated: false,
+      },
+    },
+  };
+}
+
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
@@ -416,6 +542,8 @@ let fallbackGitHubBranches = createFallbackGitHubBranches();
 let fallbackRepoBranches = createFallbackRepoBranches();
 let fallbackRepoReadmes = createFallbackRepoReadmes();
 let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
+let fallbackRepoFiles = createFallbackRepoFiles();
+let fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
 
 type FallbackGitHubIssueListCall = {
   repoFullName: string;
@@ -486,6 +614,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoBranches = createFallbackRepoBranches();
   fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
+  fallbackRepoFiles = createFallbackRepoFiles();
+  fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
   fallbackGitHubIssueListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
   fallbackOpenPathCalls = [];
@@ -622,10 +752,22 @@ export function setFallbackGitHubWorkflowRunsForTests(runsByRepo: Record<string,
   );
 }
 
+function cloneRepoFileTreeEntry(entry: RepoFileTreeEntry): RepoFileTreeEntry {
+  return { ...entry };
+}
+
 function cloneRepoReadme(readme: RepoReadme): RepoReadme {
   return {
     ...readme,
     images: { ...readme.images },
+  };
+}
+
+function cloneRepoFilePreview(preview: RepoFilePreview): RepoFilePreview {
+  return {
+    ...preview,
+    dataUrl: preview.dataUrl ?? null,
+    images: preview.images ? { ...preview.images } : {},
   };
 }
 
@@ -689,6 +831,31 @@ export function setFallbackGitHubRepoReadmesForTests(readmesByRepo: Record<strin
       const list = Array.isArray(readmes) ? readmes : readmes ? [readmes] : [];
       return [repoFullName, list.map(cloneRepoReadme)];
     }),
+  );
+}
+
+export function setFallbackRepoFilesForTests(filesByRepo: Record<string, Record<string, RepoFileTreeEntry[]>>) {
+  fallbackRepoFiles = Object.fromEntries(
+    Object.entries(filesByRepo).map(([repoId, directories]) => [
+      repoId,
+      Object.fromEntries(
+        Object.entries(directories).map(([parentPath, entries]) => [
+          parentPath,
+          entries.map(cloneRepoFileTreeEntry),
+        ]),
+      ),
+    ]),
+  );
+}
+
+export function setFallbackRepoFilePreviewsForTests(previewsByRepo: Record<string, Record<string, RepoFilePreview>>) {
+  fallbackRepoFilePreviews = Object.fromEntries(
+    Object.entries(previewsByRepo).map(([repoId, previews]) => [
+      repoId,
+      Object.fromEntries(
+        Object.entries(previews).map(([path, preview]) => [path, cloneRepoFilePreview(preview)]),
+      ),
+    ]),
   );
 }
 
@@ -1446,6 +1613,22 @@ export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[
   return call("github_list_repo_readmes", { repoFullName }, () =>
     (fallbackGitHubRepoReadmes[repoFullName] ?? []).map(cloneRepoReadme),
   );
+}
+
+export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {
+  return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () =>
+    (fallbackRepoFiles[repoId]?.[parentPath ?? ""] ?? []).map(cloneRepoFileTreeEntry),
+  );
+}
+
+export function getRepoFilePreview(repoId: string, path: string): Promise<RepoFilePreview> {
+  return call("repo_get_file_preview", { repoId, path }, () => {
+    const preview = fallbackRepoFilePreviews[repoId]?.[path];
+    if (!preview) {
+      throw new Error(`未找到文件预览：${repoId} ${path}`);
+    }
+    return cloneRepoFilePreview(preview);
+  });
 }
 
 function emptyConflictState(): RepoConflictState {

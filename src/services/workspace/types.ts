@@ -379,6 +379,27 @@ export interface RepoReadme {
   updatedAt: number | null;
 }
 
+export interface RepoFileTreeEntry {
+  path: string;
+  name: string;
+  kind: "dir" | "file";
+  hasChildren: boolean;
+}
+
+export type RepoFilePreviewKind = "text" | "markdown" | "image" | "binary" | "tooLarge";
+
+export interface RepoFilePreview {
+  path: string;
+  name: string;
+  previewKind: RepoFilePreviewKind;
+  content?: string;
+  dataUrl?: string | null;
+  images?: Record<string, string>;
+  size: number;
+  mimeType?: string | null;
+  truncated: boolean;
+}
+
 export type BulkOperation = "pull" | "push" | "sync";
 
 export interface BulkSyncRepo {

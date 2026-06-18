@@ -1672,6 +1672,92 @@ fn reads_repo_readme_image_data_urls() {
 }
 
 #[test]
+fn repo_file_entries_sort_dirs_first_and_skip_git() {
+    let repo = temp_dir("repo-file-tree");
+    fs::create_dir_all(repo.join(".git").join("objects")).unwrap();
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join(".env"), "A=1\n").unwrap();
+    fs::write(repo.join("README.md"), "# Title\n").unwrap();
+    fs::write(repo.join("src").join("main.ts"), "export {};\n").unwrap();
+
+    let entries = repo_file_entries(&repo, None).unwrap();
+    let paths = entries
+        .iter()
+        .map(|entry| (entry.path.as_str(), entry.kind.as_str(), entry.has_children))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec![
+            ("src", "dir", true),
+            (".env", "file", false),
+            ("README.md", "file", false),
+        ]
+    );
+}
+
+#[test]
+fn repo_file_browser_rejects_paths_outside_repo() {
+    let repo = temp_dir("repo-file-path-guard");
+    fs::write(repo.join("README.md"), "# Main\n").unwrap();
+
+    assert_eq!(
+        repo_file_entries(&repo, Some("../outside")).unwrap_err(),
+        "文件路径必须位于仓库内"
+    );
+    assert_eq!(
+        repo_file_preview(&repo, "../outside.txt").unwrap_err(),
+        "文件路径必须位于仓库内"
+    );
+}
+
+#[test]
+fn repo_file_preview_returns_text_markdown_image_binary_and_too_large() {
+    let repo = temp_dir("repo-file-preview-kinds");
+    fs::create_dir_all(repo.join("docs")).unwrap();
+    fs::create_dir_all(repo.join("assets")).unwrap();
+    fs::write(repo.join("plain.txt"), "hello\nworld\n").unwrap();
+    fs::write(repo.join("binary.bin"), [0_u8, 159, 146, 150]).unwrap();
+    fs::write(repo.join("assets").join("icon.png"), [1_u8, 2, 3]).unwrap();
+    fs::write(
+        repo.join("docs").join("guide.md"),
+        "![icon](../assets/icon.png)\n\n# Guide\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.join("large.log"),
+        vec![b'a'; (1024 * 1024) + 1],
+    )
+    .unwrap();
+
+    let text = repo_file_preview(&repo, "plain.txt").unwrap();
+    assert_eq!(text.preview_kind, "text");
+    assert_eq!(text.content.as_deref(), Some("hello\nworld\n"));
+    assert_eq!(text.mime_type.as_deref(), Some("text/plain"));
+
+    let markdown = repo_file_preview(&repo, "docs/guide.md").unwrap();
+    assert_eq!(markdown.preview_kind, "markdown");
+    assert_eq!(markdown.mime_type.as_deref(), Some("text/markdown"));
+    assert_eq!(
+        markdown.images.get("../assets/icon.png").map(String::as_str),
+        Some("data:image/png;base64,AQID")
+    );
+
+    let image = repo_file_preview(&repo, "assets/icon.png").unwrap();
+    assert_eq!(image.preview_kind, "image");
+    assert_eq!(image.mime_type.as_deref(), Some("image/png"));
+    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQID"));
+
+    let binary = repo_file_preview(&repo, "binary.bin").unwrap();
+    assert_eq!(binary.preview_kind, "binary");
+    assert!(binary.content.is_none());
+
+    let too_large = repo_file_preview(&repo, "large.log").unwrap();
+    assert_eq!(too_large.preview_kind, "tooLarge");
+    assert_eq!(too_large.size, (1024 * 1024) + 1);
+}
+
+#[test]
 fn managed_repo_ids_are_deduplicated_and_sorted() {
     let mut settings = WorkspaceSettings::default();
 

@@ -18,7 +18,7 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoProjectTab = "readme" | "issues" | "actions" | "settings";
-type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history">;
+type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history">;
 type HistoryCommit = {
   readonly hash: string;
   readonly shortHash: string;
@@ -214,11 +214,14 @@ export function useRepoDetailController() {
     return "完成合并";
   });
 
-  const toolbarTabs: Array<{ key: RepoToolbarTab; title: string }> = [
-    { key: "repo", title: "文件查看" },
-    { key: "changes", title: "变更" },
-    { key: "history", title: "历史" },
-  ];
+  const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
+    [
+      !remoteOnly.value ? { key: "files", title: "文件树" } : null,
+      { key: "repo", title: "项目" },
+      { key: "changes", title: "变更" },
+      { key: "history", title: "历史" },
+    ].filter((tab): tab is { key: RepoToolbarTab; title: string } => Boolean(tab)),
+  );
   const launchCommandOptions = computed(() => {
     const candidates = [...launchCandidates.value];
     const current = launchConfig.value?.command.trim()
@@ -343,6 +346,15 @@ export function useRepoDetailController() {
   watch(activeTab, (tab) => {
     if (tab !== "history") selectedCommitHash.value = null;
   });
+
+  watch(
+    [activeTab, remoteOnly, repoId],
+    ([tab, isRemoteOnly, nextRepoId]) => {
+      if (tab !== "files" || !isRemoteOnly || !nextRepoId) return;
+      void router.replace(repoRoute(nextRepoId));
+    },
+    { immediate: true },
+  );
 
   watch(statusCommits, () => {
     if (

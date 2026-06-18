@@ -251,6 +251,48 @@ describe("基础路由", () => {
     expect(await screen.findByText("当前远程仓库没有 README。")).toBeInTheDocument();
   });
 
+  it("本地仓库可通过一级文件树 tab 进入文件浏览页", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackRepoFilesForTests({
+      LiliaGithub: {
+        "": [
+          { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+        ],
+      },
+    });
+    service.setFallbackRepoFilePreviewsForTests({
+      LiliaGithub: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Files View\n",
+          dataUrl: null,
+          images: {},
+          size: 13,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+    const { router } = await renderAt("/repos/LiliaGithub/files");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Files View" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
+  });
+
+  it("远端仓库不显示文件树一级 tab，直接访问 /files 会回退到默认页", async () => {
+    const { router } = await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/files");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FEmptyRemote");
+    });
+    expect(screen.queryByRole("tab", { name: "文件树" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
+  });
+
   it("总览页隐藏禁用的 GitHub 项目", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([
@@ -1527,7 +1569,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "有冲突" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "推送" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "文件查看" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
     expect(screen.queryByRole("tab", { name: "冲突" })).toBeNull();
     expect(screen.queryByLabelText("冲突分段处理")).toBeNull();
     expect(screen.queryByRole("button", { name: "整文件采用 ours" })).toBeNull();

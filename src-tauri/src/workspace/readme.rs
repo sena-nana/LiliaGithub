@@ -275,11 +275,7 @@ pub(super) fn resolve_readme_image_path(
     source: &str,
 ) -> Option<PathBuf> {
     let relative = Path::new(clean_readme_image_source(source));
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-    {
+    if relative.is_absolute() {
         return None;
     }
 
@@ -297,6 +293,7 @@ pub(super) fn image_mime_for_path(path: &Path) -> Option<&'static str> {
         "gif" => Some("image/gif"),
         "jpg" | "jpeg" => Some("image/jpeg"),
         "png" => Some("image/png"),
+        "svg" => Some("image/svg+xml"),
         "webp" => Some("image/webp"),
         _ => None,
     }
