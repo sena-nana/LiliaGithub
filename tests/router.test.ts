@@ -805,6 +805,7 @@ describe("基础路由", () => {
     const addFilesToGitignore = vi.spyOn(service, "addFilesToGitignore");
     const stageFiles = vi.spyOn(service, "stageFiles");
     const unstageFiles = vi.spyOn(service, "unstageFiles");
+    const checkoutBranch = vi.spyOn(service, "checkoutBranch");
     await renderAt("/repos/LiliaGithub/changes");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
@@ -918,7 +919,17 @@ describe("基础路由", () => {
     expect(within(viewTabs).queryByRole("tab", { name: "分支" })).toBeNull();
     expect(screen.queryByRole("group", { name: "当前分支" })).toBeNull();
     await fireEvent.click(within(viewTabs).getByRole("button", { name: "main" }));
-    expect(await within(viewTabs).findByRole("listbox", { name: "分支候选" })).toBeInTheDocument();
+    const branchList = await within(viewTabs).findByRole("listbox", { name: "分支候选" });
+    expect(branchList).toBeInTheDocument();
+    expect(screen.getByText("当前分支")).toBeInTheDocument();
+    expect(screen.getByText("本地分支")).toBeInTheDocument();
+    expect(screen.getByText("远程分支")).toBeInTheDocument();
+    await fireEvent.contextMenu(within(branchList).getByRole("button", { name: "main" }));
+    expect(await screen.findByRole("menuitem", { name: "更新" })).toBeInTheDocument();
+    await fireEvent.click(within(branchList).getByRole("button", { name: "origin/feature/notice-update" }));
+    await waitFor(() =>
+      expect(checkoutBranch).toHaveBeenCalledWith("LiliaGithub", "origin/feature/notice-update"),
+    );
   });
 
   it("变更页文件列表支持多选后批量处理变更", async () => {

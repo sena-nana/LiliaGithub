@@ -586,6 +586,8 @@ pub(super) fn github_branch_from_response(branch: GitHubBranchResponse) -> Branc
         ahead: 0,
         behind: 0,
         protected: branch.protected,
+        tip_timestamp: None,
+        checked_out_worktree_paths: Vec::new(),
     }
 }
 

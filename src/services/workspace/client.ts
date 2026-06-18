@@ -443,6 +443,27 @@ export function checkoutBranch(repoId: string, branch: string): Promise<RepoSumm
   return call("repo_checkout_branch", { repoId, branch }, () => fallback.checkoutBranch(repoId, branch));
 }
 
+export function createBranch(
+  repoId: string,
+  name: string,
+  fromRef: string,
+  checkoutAfter: boolean,
+): Promise<RepoSummary> {
+  return call("repo_create_branch", { repoId, name, fromRef, checkoutAfter }, () =>
+    fallback.createBranch(repoId, name, fromRef, checkoutAfter),
+  );
+}
+
+export function renameBranch(
+  repoId: string,
+  oldName: string,
+  newName: string,
+): Promise<RepoSummary> {
+  return call("repo_rename_branch", { repoId, oldName, newName }, () =>
+    fallback.renameBranch(repoId, oldName, newName),
+  );
+}
+
 export function deleteBranch(repoId: string, branch: string): Promise<RepoSummary> {
   return call("repo_delete_branch", { repoId, branch }, () => fallback.deleteBranch(repoId, branch));
 }

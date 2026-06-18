@@ -3,6 +3,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
 import type {
+  BranchSummary,
   CommitSummary,
   ProjectLaunchCandidate,
   RepoChange,
@@ -11,7 +12,7 @@ import type {
   RepoConflictState,
   RepoSummary,
 } from "../services/workspace";
-import { formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
+import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
@@ -26,6 +27,14 @@ type HistoryCommit = {
   readonly subject: string;
   readonly parents: readonly string[];
   readonly refs: readonly string[];
+};
+
+type RepoBranchPickerItem = BranchSummary & {
+  readonly section: "current" | "local" | "remote";
+  readonly relativeTime: string;
+  readonly checkedOutInWorktree: boolean;
+  readonly worktreePathsLabel: string;
+  readonly searchText: string;
 };
 
 export function useRepoDetailController() {
@@ -225,17 +234,29 @@ export function useRepoDetailController() {
     launchOptionValue(launchConfig.value?.command ?? "", launchConfig.value?.cwd ?? null),
   );
   const launchCommandText = computed(() => launchConfig.value?.command?.trim() || "选择启动指令");
-  const branchOptions = computed(() =>
-    (detail.value?.branches ?? [])
-      .filter((branch) => !branch.remote)
-      .map((branch) => ({
-        value: branch.name,
-        label: branch.name,
-        hint: branch.current ? "当前" : "",
-      })),
+  const branchItems = computed<RepoBranchPickerItem[]>(() =>
+    [...(detail.value?.branches ?? [])]
+      .map((branch) => {
+        const section: RepoBranchPickerItem["section"] =
+          branch.current && !branch.remote ? "current" : branch.remote ? "remote" : "local";
+        const checkedOutWorktreePaths = [...branch.checkedOutWorktreePaths];
+        return {
+          ...branch,
+          checkedOutWorktreePaths,
+          section,
+          relativeTime: formatRelativeRepoTime(branch.tipTimestamp),
+          checkedOutInWorktree: !branch.remote && checkedOutWorktreePaths.length > 0,
+          worktreePathsLabel: checkedOutWorktreePaths.join("\n"),
+          searchText: `${branch.name} ${branch.upstream ?? ""}`.toLowerCase(),
+        };
+      })
+      .sort((a, b) =>
+        branchSectionOrder(a.section) - branchSectionOrder(b.section) ||
+        (b.tipTimestamp ?? 0) - (a.tipTimestamp ?? 0) ||
+        a.name.localeCompare(b.name),
+      ),
   );
   const activeBranchName = computed(() => summary.value?.currentBranch ?? "detached");
-  const activeBranchValue = computed(() => summary.value?.currentBranch ?? "");
   const aheadCount = computed(() => summary.value?.ahead ?? 0);
   const behindCount = computed(() => summary.value?.behind ?? 0);
   onMounted(() => {
@@ -298,6 +319,12 @@ export function useRepoDetailController() {
     const parsed = Number.parseInt(next, 10);
     if (!Number.isFinite(parsed) || parsed < 1) return null;
     return parsed;
+  }
+
+  function branchSectionOrder(section: RepoBranchPickerItem["section"]) {
+    if (section === "current") return 0;
+    if (section === "local") return 1;
+    return 2;
   }
 
   async function load() {
@@ -426,8 +453,10 @@ export function useRepoDetailController() {
     actionError.value = null;
     try {
       await action();
+      return true;
     } catch (err) {
       actionError.value = String(err);
+      return false;
     } finally {
       actionRunning.value = false;
     }
@@ -584,6 +613,20 @@ export function useRepoDetailController() {
     void runAction(() => workspace.checkout(repoId.value, branch));
   }
 
+  async function createBranchFromRef(name: string, fromRef: string, checkoutAfter: boolean) {
+    const branchName = name.trim();
+    const baseRef = fromRef.trim();
+    if (!branchName || !baseRef) return;
+    await runAction(() => workspace.createBranch(repoId.value, branchName, baseRef, checkoutAfter));
+  }
+
+  async function renameBranchTo(oldName: string, newName: string) {
+    const from = oldName.trim();
+    const to = newName.trim();
+    if (!from || !to) return;
+    await runAction(() => workspace.renameBranch(repoId.value, from, to));
+  }
+
   function mergeBranch(branch: string) {
     if (!branch || branch === summary.value?.currentBranch) return;
     void runAction(() => workspace.mergeBranch(repoId.value, branch));
@@ -596,12 +639,6 @@ export function useRepoDetailController() {
 
   function updateCurrentBranch() {
     mergePull();
-  }
-
-  function checkoutBranchByValue(value: string) {
-    if (!value || value === summary.value?.currentBranch) return;
-    if (!branchOptions.value.some((branch) => branch.value === value)) return;
-    checkout(value);
   }
 
   function openCommit(commit: HistoryCommit) {
@@ -692,9 +729,8 @@ export function useRepoDetailController() {
       launchCommandOptions,
       activeLaunchValue,
       launchCommandText,
-      branchOptions,
+      branchItems,
       activeBranchName,
-      activeBranchValue,
       aheadCount,
       behindCount,
       load,
@@ -719,10 +755,11 @@ export function useRepoDetailController() {
       selectLaunchCandidate,
       selectLaunchCandidateByValue,
       checkout,
+      createBranchFromRef,
+      renameBranchTo,
       mergeBranch,
       deleteBranch,
       updateCurrentBranch,
-      checkoutBranchByValue,
       openCommit,
       closeCommit,
       openFolder,

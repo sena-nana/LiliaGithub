@@ -366,6 +366,10 @@ pub struct BranchSummary {
     pub behind: i32,
     #[serde(default)]
     pub protected: bool,
+    #[serde(default)]
+    pub tip_timestamp: Option<i64>,
+    #[serde(default)]
+    pub checked_out_worktree_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

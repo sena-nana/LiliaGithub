@@ -166,6 +166,13 @@ function cloneRepoSummary(repo: RepoSummary): RepoSummary {
   };
 }
 
+function cloneBranchSummary(branch: BranchSummary): BranchSummary {
+  return {
+    ...branch,
+    checkedOutWorktreePaths: [...branch.checkedOutWorktreePaths],
+  };
+}
+
 function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
   return [
     { login: "lilia-user", kind: "user" },
@@ -270,35 +277,82 @@ function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]>
 function createFallbackGitHubBranches(): Record<string, BranchSummary[]> {
   return {
     "sena-nana/LiliaGithub": [
-      {
-        name: "main",
-        remote: true,
-        current: false,
-        upstream: null,
-        ahead: 0,
-        behind: 0,
-        protected: true,
-      },
-      {
-        name: "codex/project-view",
-        remote: true,
-        current: false,
-        upstream: null,
-        ahead: 0,
-        behind: 0,
-        protected: false,
-      },
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_785_000_000 }),
+      buildBranchSummary({ name: "codex/project-view", remote: true, tipTimestamp: 1_784_995_000 }),
     ],
     "sena-nana/Lilia": [
-      {
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_784_990_000 }),
+    ],
+  };
+}
+
+function buildBranchSummary(overrides: Partial<BranchSummary> & Pick<BranchSummary, "name">): BranchSummary {
+  return {
+    name: overrides.name,
+    remote: overrides.remote ?? false,
+    current: overrides.current ?? false,
+    upstream: overrides.upstream ?? null,
+    ahead: overrides.ahead ?? 0,
+    behind: overrides.behind ?? 0,
+    protected: overrides.protected ?? false,
+    tipTimestamp: overrides.tipTimestamp ?? null,
+    checkedOutWorktreePaths: [...(overrides.checkedOutWorktreePaths ?? [])],
+  };
+}
+
+function createFallbackRepoBranches(): Record<string, BranchSummary[]> {
+  return {
+    LiliaGithub: [
+      buildBranchSummary({
         name: "main",
-        remote: true,
-        current: false,
-        upstream: null,
-        ahead: 0,
+        current: true,
+        upstream: "origin/main",
+        ahead: 1,
         behind: 0,
-        protected: true,
-      },
+        tipTimestamp: 1_785_000_000,
+        checkedOutWorktreePaths: ["C:\\Files\\workspace\\LiliaGithub"],
+      }),
+      buildBranchSummary({
+        name: "dev",
+        upstream: "origin/dev",
+        tipTimestamp: 1_784_998_000,
+      }),
+      buildBranchSummary({
+        name: "inventory",
+        upstream: "origin/inventory",
+        tipTimestamp: 1_784_700_000,
+      }),
+      buildBranchSummary({
+        name: "origin/main",
+        remote: true,
+        tipTimestamp: 1_785_000_000,
+      }),
+      buildBranchSummary({
+        name: "origin/dev",
+        remote: true,
+        tipTimestamp: 1_784_998_000,
+      }),
+      buildBranchSummary({
+        name: "origin/feature/notice-update",
+        remote: true,
+        tipTimestamp: 1_784_200_000,
+      }),
+    ],
+    Lilia: [
+      buildBranchSummary({
+        name: "main",
+        current: true,
+        upstream: "origin/main",
+        ahead: 0,
+        behind: 2,
+        tipTimestamp: 1_784_990_000,
+        checkedOutWorktreePaths: ["C:\\Files\\workspace\\Lilia"],
+      }),
+      buildBranchSummary({
+        name: "origin/main",
+        remote: true,
+        tipTimestamp: 1_784_990_000,
+      }),
     ],
   };
 }
@@ -359,6 +413,7 @@ let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
 let fallbackGitHubBranches = createFallbackGitHubBranches();
+let fallbackRepoBranches = createFallbackRepoBranches();
 let fallbackRepoReadmes = createFallbackRepoReadmes();
 let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
 
@@ -428,6 +483,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackGitHubBranches = createFallbackGitHubBranches();
+  fallbackRepoBranches = createFallbackRepoBranches();
   fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
   fallbackGitHubIssueListCalls = [];
@@ -1096,15 +1152,7 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
     };
     fallbackGitHubIssues[fullName] = [];
     fallbackGitHubBranches[fullName] = repo.defaultBranch
-      ? [{
-        name: repo.defaultBranch,
-        remote: true,
-        current: false,
-        upstream: null,
-        ahead: 0,
-        behind: 0,
-        protected: false,
-      }]
+      ? [buildBranchSummary({ name: repo.defaultBranch, remote: true })]
       : [];
     return { ...repo };
   });
@@ -1154,16 +1202,10 @@ export function deleteGitHubRepo(repoFullName: string): Promise<void> {
 export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
   return call("github_list_branches", { repoFullName }, () => {
     const management = fallbackRepoManagement(repoFullName);
-    const branches = fallbackGitHubBranches[repoFullName] ?? [{
-      name: management.defaultBranch || "main",
-      remote: true,
-      current: false,
-      upstream: null,
-      ahead: 0,
-      behind: 0,
-      protected: false,
-    }];
-    return branches.map((branch) => ({ ...branch }));
+    const branches = fallbackGitHubBranches[repoFullName] ?? [
+      buildBranchSummary({ name: management.defaultBranch || "main", remote: true }),
+    ];
+    return branches.map(cloneBranchSummary);
   });
 }
 
@@ -1343,6 +1385,39 @@ function updateFallbackRepo(summary: RepoSummary) {
     [summary.id]: { ...summary },
   };
   return { ...summary };
+}
+
+function fallbackLocalBranchName(remoteBranchName: string) {
+  return remoteBranchName.split("/").slice(1).join("/") || remoteBranchName;
+}
+
+function syncFallbackRepoBranchState(repoId: string) {
+  const repo = fallbackRepo(repoId);
+  const currentBranch = repo.currentBranch?.trim() || null;
+  const branches = fallbackRepoBranches[repoId] ?? [];
+  const next = branches.map((branch) => {
+    if (branch.remote) return cloneBranchSummary(branch);
+    const isCurrent = branch.name === currentBranch;
+    return {
+      ...cloneBranchSummary(branch),
+      current: isCurrent,
+      ahead: isCurrent ? repo.ahead : branch.ahead,
+      behind: isCurrent ? repo.behind : branch.behind,
+      checkedOutWorktreePaths: isCurrent && repo.path ? [repo.path] : [],
+    };
+  });
+  if (currentBranch && !next.some((branch) => !branch.remote && branch.name === currentBranch)) {
+    next.unshift(buildBranchSummary({
+      name: currentBranch,
+      current: true,
+      ahead: repo.ahead,
+      behind: repo.behind,
+      tipTimestamp: repo.lastCommitAt,
+      checkedOutWorktreePaths: repo.path ? [repo.path] : [],
+    }));
+  }
+  fallbackRepoBranches[repoId] = next;
+  return next;
 }
 
 export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
@@ -1573,24 +1648,7 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
         },
       ],
       branches: [
-        {
-          name: "main",
-          remote: false,
-          current: true,
-          upstream: "origin/main",
-          ahead: summary.ahead,
-          behind: summary.behind,
-          protected: false,
-        },
-        {
-          name: "origin/main",
-          remote: true,
-          current: false,
-          upstream: null,
-          ahead: 0,
-          behind: 0,
-          protected: false,
-        },
+        ...syncFallbackRepoBranchState(repoId).map(cloneBranchSummary),
       ],
       conflicts,
     };
@@ -1858,7 +1916,71 @@ export function useDefaultTokenAuthForRepo(repoId: string): Promise<WorkspaceSet
 export function checkoutBranch(repoId: string, branch: string): Promise<RepoSummary> {
   return call("repo_checkout_branch", { repoId, branch }, () => {
     const repo = fallbackRepo(repoId);
-    return { ...repo, currentBranch: branch };
+    const target = branch.trim();
+    if (!target) throw new Error("分支名不能为空");
+    const branches = syncFallbackRepoBranchState(repoId);
+    const remoteBranch = branches.find((item) => item.remote && item.name === target);
+    const localTarget = remoteBranch ? fallbackLocalBranchName(target) : target;
+    if (remoteBranch && !branches.some((item) => !item.remote && item.name === localTarget)) {
+      branches.push(buildBranchSummary({
+        name: localTarget,
+        upstream: target,
+        tipTimestamp: remoteBranch.tipTimestamp,
+      }));
+      fallbackRepoBranches[repoId] = branches.map(cloneBranchSummary);
+    }
+    return updateFallbackRepo({ ...repo, currentBranch: localTarget });
+  });
+}
+
+export function createBranch(
+  repoId: string,
+  name: string,
+  fromRef: string,
+  checkoutAfter: boolean,
+): Promise<RepoSummary> {
+  return call("repo_create_branch", { repoId, name, fromRef, checkoutAfter }, () => {
+    const repo = fallbackRepo(repoId);
+    const branchName = name.trim();
+    const sourceRef = fromRef.trim();
+    if (!branchName) throw new Error("分支名不能为空");
+    if (!sourceRef) throw new Error("基准分支不能为空");
+    const branches = syncFallbackRepoBranchState(repoId);
+    if (branches.some((branch) => !branch.remote && branch.name === branchName)) {
+      throw new Error(`本地分支已存在：${branchName}`);
+    }
+    const source = branches.find((branch) => branch.name === sourceRef);
+    branches.push(buildBranchSummary({
+      name: branchName,
+      upstream: source?.remote ? source.name : null,
+      tipTimestamp: source?.tipTimestamp ?? repo.lastCommitAt,
+    }));
+    fallbackRepoBranches[repoId] = branches.map(cloneBranchSummary);
+    return updateFallbackRepo({
+      ...repo,
+      currentBranch: checkoutAfter ? branchName : repo.currentBranch,
+    });
+  });
+}
+
+export function renameBranch(repoId: string, oldName: string, newName: string): Promise<RepoSummary> {
+  return call("repo_rename_branch", { repoId, oldName, newName }, () => {
+    const repo = fallbackRepo(repoId);
+    const from = oldName.trim();
+    const to = newName.trim();
+    if (!from || !to) throw new Error("分支名不能为空");
+    const branches = syncFallbackRepoBranchState(repoId);
+    const target = branches.find((branch) => !branch.remote && branch.name === from);
+    if (!target) throw new Error(`未找到本地分支：${from}`);
+    if (branches.some((branch) => !branch.remote && branch.name === to)) {
+      throw new Error(`本地分支已存在：${to}`);
+    }
+    target.name = to;
+    fallbackRepoBranches[repoId] = branches.map(cloneBranchSummary);
+    return updateFallbackRepo({
+      ...repo,
+      currentBranch: repo.currentBranch === from ? to : repo.currentBranch,
+    });
   });
 }
 
@@ -1868,6 +1990,8 @@ export function deleteBranch(repoId: string, branch: string): Promise<RepoSummar
     const target = branch.trim();
     if (!target) throw new Error("分支名不能为空");
     if (target === repo.currentBranch) throw new Error("不能删除当前分支");
+    const branches = syncFallbackRepoBranchState(repoId);
+    fallbackRepoBranches[repoId] = branches.filter((item) => item.remote || item.name !== target).map(cloneBranchSummary);
     return { ...repo };
   });
 }

@@ -358,6 +358,8 @@ export interface BranchSummary {
   ahead: number;
   behind: number;
   protected: boolean;
+  tipTimestamp: number | null;
+  checkedOutWorktreePaths: string[];
 }
 
 export interface RepoDetail {
