@@ -325,8 +325,20 @@ function branchTitle(branch: RepoBranchPickerItem) {
                 <GitBranch v-else :size="14" aria-hidden="true" />
               </span>
               <span class="branch-picker__row-name">{{ branch.displayName }}</span>
-              <span v-if="branch.remote && branch.sourceLabel" class="branch-picker__row-source">{{ branch.sourceLabel }}</span>
-              <span v-if="branch.defaultBranch" class="branch-picker__row-source branch-picker__row-source--default">默认</span>
+              <span
+                v-if="(branch.remote && branch.sourceLabel) || branch.defaultBranch"
+                class="branch-picker__row-tags"
+              >
+                <span v-if="branch.remote && branch.sourceLabel" class="branch-picker__row-source">
+                  {{ branch.sourceLabel }}
+                </span>
+                <span
+                  v-if="branch.defaultBranch"
+                  class="branch-picker__row-source branch-picker__row-source--default"
+                >
+                  默认
+                </span>
+              </span>
               <span class="branch-picker__row-time">{{ branch.relativeTime }}</span>
               <span
                 v-if="branch.checkedOutInWorktree && !branch.remote"
@@ -600,8 +612,15 @@ function branchTitle(branch: RepoBranchPickerItem) {
   line-height: inherit;
 }
 
-.branch-picker__row-source {
+.branch-picker__row-tags {
   grid-column: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.branch-picker__row-source {
   display: inline-flex;
   align-items: center;
   min-width: 0;
