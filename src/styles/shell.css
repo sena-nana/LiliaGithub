@@ -104,6 +104,50 @@
     visibility 0s linear 0s;
 }
 
+.sb-tree__row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.sb-tree__row:hover {
+  background: var(--bg-hover);
+}
+
+.sb-tree__row.is-active {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.sb-tree__row--project {
+  color: var(--text-muted);
+}
+
+.sb-tree__row--project.is-active {
+  color: var(--accent);
+}
+
+.sb-tree__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .shell.is-sidebar-collapsed .secondary-panel {
   opacity: 0;
   visibility: hidden;

@@ -700,38 +700,11 @@ async function deleteGroup(group: { id: string }) {
   font-size: 12px;
 }
 
-.sb-tree__row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  color: var(--text);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
-  min-width: 0;
-}
-
-.sb-tree__row:hover {
-  background: var(--bg-hover);
-}
-
-.sb-tree__row.is-active {
-  background: var(--bg-active);
-  color: var(--accent);
-}
-
 .sb-tree__row:hover .sb-tree__hover-tools,
 .sb-tree__row:focus-within .sb-tree__hover-tools,
 .sb-tree__row.is-active .sb-tree__hover-tools {
   opacity: 1;
   pointer-events: auto;
-}
-
-.sb-tree__row--project {
-  color: var(--text-muted);
 }
 
 .sb-search {
@@ -838,10 +811,6 @@ async function deleteGroup(group: { id: string }) {
   white-space: nowrap;
 }
 
-.sb-tree__row--project.is-active {
-  color: var(--accent);
-}
-
 .sb-tree__row--remote {
   cursor: pointer;
 }
@@ -857,14 +826,6 @@ async function deleteGroup(group: { id: string }) {
 .sb-tree__row--remote.is-active .sb-tree__remote-remove {
   opacity: 1;
   pointer-events: auto;
-}
-
-.sb-tree__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .sb-badge {
