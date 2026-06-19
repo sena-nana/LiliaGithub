@@ -2001,13 +2001,13 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
             v-for="tab in projectSections"
             :key="tab.key"
             type="button"
-            class="project-sidebar__item"
+            class="sb-tree__row sb-tree__row--project"
             :class="{ 'is-active': isProjectSectionActive(tab.key) }"
             role="tab"
             :aria-selected="isProjectSectionActive(tab.key)"
             @click="activateProjectSection(tab.key)"
           >
-            <strong>{{ tab.label }}</strong>
+            <span class="sb-tree__name">{{ tab.label }}</span>
           </button>
         </div>
 
@@ -2381,54 +2381,14 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
 
 .project-sidebar__card {
   display: grid;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
   max-height: min(420px, 100%);
   overflow: auto;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
-}
-
-.project-sidebar__item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 7px 8px;
-  border-radius: var(--radius-sm);
-  text-align: left;
-  color: var(--text-muted);
-}
-
-.project-sidebar__item:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.project-sidebar__item.is-active {
-  background: var(--bg-active);
-  color: var(--text);
-}
-
-.project-sidebar__item strong,
-.project-sidebar__item span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-sidebar__item strong {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.project-sidebar__item span {
-  color: var(--text-muted);
-  font-size: 11px;
 }
 
 .project-section label {

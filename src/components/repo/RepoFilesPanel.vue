@@ -330,37 +330,36 @@ function formatFileSize(size: number) {
               v-for="{ entry, depth, badge } in visibleEntries"
               :key="entry.path"
               type="button"
-              class="files-tree__item"
+              class="files-tree__item sb-tree__row sb-tree__row--project"
               :class="{ 'is-active': isTreeItemActive(entry) }"
-              :style="{ '--depth': depth }"
+              :style="{ '--tree-indent': `${depth * 10}px` }"
               :aria-expanded="entry.kind === 'dir' ? isDirectoryExpanded(entry.path) : undefined"
               :aria-selected="isTreeItemActive(entry)"
               @click="entry.kind === 'dir' ? toggleDirectory(entry) : selectFile(entry.path)"
             >
-              <span class="files-tree__indent" aria-hidden="true" />
               <span class="files-tree__toggle" aria-hidden="true">
                 <ChevronDown
                   v-if="entry.kind === 'dir' && isDirectoryExpanded(entry.path)"
-                  :size="14"
+                  :size="12"
                 />
                 <ChevronRight
                   v-else-if="entry.kind === 'dir' && entry.hasChildren"
-                  :size="14"
+                  :size="12"
                 />
               </span>
               <FolderOpen
                 v-if="entry.kind === 'dir' && isDirectoryExpanded(entry.path)"
-                :size="14"
+                :size="12"
                 aria-hidden="true"
               />
-              <Folder v-else-if="entry.kind === 'dir'" :size="14" aria-hidden="true" />
+              <Folder v-else-if="entry.kind === 'dir'" :size="12" aria-hidden="true" />
               <FileImage
                 v-else-if="/\.(png|jpe?g|gif|webp|svg)$/i.test(entry.name)"
-                :size="14"
+                :size="12"
                 aria-hidden="true"
               />
-              <FileText v-else :size="14" aria-hidden="true" />
-              <strong>{{ entry.name }}</strong>
+              <FileText v-else :size="12" aria-hidden="true" />
+              <span class="sb-tree__name">{{ entry.name }}</span>
               <span v-if="badge" class="files-tree__badge" :class="badge.className" :title="badge.label" aria-hidden="true">{{ badge.letter }}</span>
               <span v-if="entry.kind === 'dir' && isDirectoryLoading(entry.path)" class="files-tree__meta">加载中</span>
             </button>
@@ -552,32 +551,13 @@ function formatFileSize(size: number) {
   align-content: start;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 6px;
 }
 
 .files-tree__item {
-  display: grid;
-  grid-template-columns: calc(var(--depth, 0) * 14px) 14px 14px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 5px 8px;
-  border-radius: var(--radius-sm);
-  text-align: left;
-  color: var(--text-muted);
+  padding-left: calc(10px + var(--tree-indent, 0px));
 }
 
-.files-tree__item:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-.files-tree__item.is-active {
-  background: var(--bg-active);
-  color: var(--text);
-}
-
-.files-tree__indent,
 .files-tree__toggle {
   display: inline-flex;
   align-items: center;
@@ -585,7 +565,15 @@ function formatFileSize(size: number) {
   min-width: 0;
 }
 
-.files-tree__item strong,
+.files-tree__toggle {
+  flex: 0 0 12px;
+  width: 12px;
+}
+
+.files-tree__item > svg {
+  flex: 0 0 12px;
+}
+
 .files-tree__meta,
 .files-tree__badge {
   min-width: 0;
@@ -594,22 +582,18 @@ function formatFileSize(size: number) {
   white-space: nowrap;
 }
 
-.files-tree__item strong {
-  font-size: 13px;
-  font-weight: 500;
-}
-
 .files-tree__meta {
+  flex: 0 0 auto;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .files-tree__badge {
-  justify-self: end;
-  min-width: 20px;
-  padding: 2px 6px;
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1.2;
   text-align: center;

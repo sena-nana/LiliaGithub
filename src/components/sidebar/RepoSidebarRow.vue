@@ -73,45 +73,6 @@ defineProps<{
 </template>
 
 <style scoped>
-.sb-tree__row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  color: var(--text);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
-  min-width: 0;
-}
-
-.sb-tree__row:hover {
-  background: var(--bg-hover);
-}
-
-.sb-tree__row.is-active {
-  background: var(--bg-active);
-  color: var(--accent);
-}
-
-.sb-tree__row--project {
-  color: var(--text-muted);
-}
-
-.sb-tree__row--project.is-active {
-  color: var(--accent);
-}
-
-.sb-tree__name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .sb-row-loader {
   margin-left: auto;
   display: inline-flex;
