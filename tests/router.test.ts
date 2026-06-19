@@ -1123,7 +1123,7 @@ describe("基础路由", () => {
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label"))
         .filter(Boolean),
-    ).toEqual(["刷新", "文件夹", "拉取", "推送"]);
+    ).toEqual(["文件夹", "拉取", "推送"]);
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
@@ -1231,6 +1231,35 @@ describe("基础路由", () => {
     await waitFor(() =>
       expect(checkoutBranch).toHaveBeenCalledWith("LiliaGithub", "origin/feature/notice-update"),
     );
+  });
+
+  it("仓库详情页打开目标按钮可下拉切换并立即打开目标", async () => {
+    const service = await import("../src/services/workspace");
+    await renderAt("/repos/LiliaGithub/changes");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    const actions = screen.getByLabelText("仓库操作");
+    const openMain = actions.querySelector(".repo-toolbar__open-main");
+    const openToggle = actions.querySelector(".repo-toolbar__open-target-toggle");
+    expect(openMain).toBeInstanceOf(HTMLButtonElement);
+    expect(openToggle).toBeInstanceOf(HTMLButtonElement);
+    expect(openMain).toHaveAttribute("aria-label", "文件夹");
+
+    await fireEvent.click(openToggle as HTMLButtonElement);
+    const menu = await screen.findByRole("listbox", { name: "打开目标" });
+    expect(within(menu).getByRole("option", { name: "文件夹" })).toBeInTheDocument();
+    expect(within(menu).getByRole("option", { name: "终端" })).toBeInTheDocument();
+    expect(within(menu).getByRole("option", { name: "VSCode" })).toBeInTheDocument();
+    expect(within(menu).getByRole("option", { name: "LiliaCode" })).toBeInTheDocument();
+
+    await fireEvent.click(within(menu).getByRole("option", { name: "VSCode" }));
+
+    await waitFor(() => {
+      expect(service.getFallbackOpenPathTargetCallsForTests()).toEqual([
+        { path: "C:\\Files\\workspace\\LiliaGithub", target: "vscode" },
+      ]);
+    });
+    expect(openMain).toHaveAttribute("aria-label", "VSCode");
   });
 
   it("本地仓库页的本地分支和远程分支右键菜单都提供删除入口", async () => {

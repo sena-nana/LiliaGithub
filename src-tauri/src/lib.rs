@@ -141,6 +141,7 @@ pub fn run() {
             workspace::bulk::bulk_sync_preview,
             workspace::bulk::bulk_sync_execute,
             workspace::system::system_open_path,
+            workspace::system::system_open_path_target,
             workspace::system::system_open_url
         ])
         .run(tauri::generate_context!())

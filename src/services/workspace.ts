@@ -5,6 +5,7 @@ export {
   getFallbackGitHubPullRequestListCallsForTests,
   getFallbackGitHubWorkflowRunListCallsForTests,
   getFallbackOpenPathCallsForTests,
+  getFallbackOpenPathTargetCallsForTests,
   resetWorkspaceFallbacksForTests,
   setFallbackBulkExecuteOverrideForTests,
   setFallbackConflictOverrideForTests,

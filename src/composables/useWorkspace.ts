@@ -88,6 +88,7 @@ import {
 } from "./workspace/bulk";
 import {
   openPath,
+  openPathTarget,
   openUrl,
   copyText,
 } from "./workspace/system";
@@ -170,6 +171,7 @@ export function useWorkspace() {
     repoById,
     repoUsesSystemGit,
     openPath,
+    openPathTarget,
     openUrl,
     copyText,
   };

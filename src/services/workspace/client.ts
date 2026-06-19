@@ -46,6 +46,7 @@ import type {
   RepoStashEntry,
   RepoStashDetail,
   RemoteRepoShortcut,
+  SystemOpenTarget,
   WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
@@ -668,6 +669,10 @@ export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Pr
 
 export function openPath(path: string): Promise<void> {
   return call("system_open_path", { path }, () => fallback.openPath(path));
+}
+
+export function openPathTarget(path: string, target: SystemOpenTarget): Promise<void> {
+  return call("system_open_path_target", { path, target }, () => fallback.openPathTarget(path, target));
 }
 
 export function openUrl(url: string): Promise<void> {

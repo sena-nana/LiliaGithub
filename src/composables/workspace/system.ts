@@ -1,4 +1,5 @@
 import { loadWorkspaceService } from "./serviceLoader";
+import type { SystemOpenTarget } from "../../services/workspace";
 
 export async function copyText(text: string) {
   if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -10,6 +11,11 @@ export async function copyText(text: string) {
 export async function openPath(path: string) {
   const service = await loadWorkspaceService();
   return service.openPath(path);
+}
+
+export async function openPathTarget(path: string, target: SystemOpenTarget) {
+  const service = await loadWorkspaceService();
+  return service.openPathTarget(path, target);
 }
 
 export async function openUrl(url: string) {

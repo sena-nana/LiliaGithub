@@ -12,6 +12,7 @@ import type {
   RepoConflictFile,
   RepoConflictState,
   RepoSummary,
+  SystemOpenTarget,
 } from "../services/workspace";
 import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
@@ -62,6 +63,7 @@ export function useRepoDetailController() {
   const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
   const launchTerminalVisible = ref(false);
   const pullStrategy = ref<RepoPullStrategy>("merge");
+  const openTarget = ref<SystemOpenTarget>("folder");
   const focusedChangePath = ref<string | null>(null);
   const focusedConflictPath = ref<string | null>(null);
   const selectedCommitHash = ref<string | null>(null);
@@ -260,6 +262,16 @@ export function useRepoDetailController() {
     { value: "rebase", label: "抓取后变基上游" },
   ] as const;
   const activePullStrategyValue = computed(() => pullStrategy.value);
+  const openTargetOptions = [
+    { value: "folder", label: "文件夹" },
+    { value: "terminal", label: "终端" },
+    { value: "vscode", label: "VSCode" },
+    { value: "liliacode", label: "LiliaCode" },
+  ] as const satisfies ReadonlyArray<{ value: SystemOpenTarget; label: string }>;
+  const activeOpenTargetValue = computed(() => openTarget.value);
+  const openTargetLabel = computed(() =>
+    openTargetOptions.find((option) => option.value === openTarget.value)?.label ?? "文件夹",
+  );
   const branchActionRunning = computed(() =>
     actionRunning.value || githubBranchLoading.value || deletingRemoteBranchName.value !== null,
   );
@@ -343,6 +355,7 @@ export function useRepoDetailController() {
     conflictChoices.value = {};
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
+    openTarget.value = "folder";
     githubBranches.value = [];
     githubDefaultBranch.value = null;
     githubBranchLoading.value = false;
@@ -658,6 +671,23 @@ function refreshAndFetchRepo() {
     }
   }
 
+  function isOpenTarget(value: string): value is SystemOpenTarget {
+    return value === "folder" || value === "terminal" || value === "vscode" || value === "liliacode";
+  }
+
+  function selectOpenTarget(value: string) {
+    if (!isOpenTarget(value)) return;
+    openTarget.value = value;
+    openSelectedTarget();
+  }
+
+  function openSelectedTarget() {
+    const path = summary.value?.path;
+    if (!path) return;
+    const target = openTarget.value;
+    void runAction(() => workspace.openPathTarget(path, target));
+  }
+
   function runSelectedPullStrategy() {
     void runAction(async () => {
       if (pullStrategy.value === "pull") {
@@ -865,11 +895,6 @@ function refreshAndFetchRepo() {
     selectedCommitHash.value = null;
   }
 
-  function openFolder() {
-    if (!summary.value?.path) return;
-    void workspace.openPath(summary.value.path);
-  }
-
   function openConflictFolder() {
     const file = focusedConflict.value;
     if (!file || !summary.value?.path) return;
@@ -946,6 +971,9 @@ function refreshAndFetchRepo() {
       launchCommandText,
       pullStrategyOptions,
       activePullStrategyValue,
+      openTargetOptions,
+      activeOpenTargetValue,
+      openTargetLabel,
       branchItems,
       branchActionRunning,
       activeBranchName,
@@ -963,6 +991,8 @@ function refreshAndFetchRepo() {
       refreshAndFetchRepo,
       fetchRepo,
       selectPullStrategy,
+      selectOpenTarget,
+      openSelectedTarget,
       runSelectedPullStrategy,
       push,
       pushCurrentBranchWithUpstream,
@@ -989,7 +1019,6 @@ function refreshAndFetchRepo() {
       revertCommit,
       resetCommit,
       createBranchFromCommit,
-      openFolder,
       openConflictFolder,
       commitMetaTitle,
     };

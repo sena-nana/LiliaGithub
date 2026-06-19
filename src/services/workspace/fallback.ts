@@ -47,6 +47,7 @@ import type {
   RepoStashEntry,
   RepoStashDetail,
   RemoteRepoShortcut,
+  SystemOpenTarget,
   WorkspaceTask,
   WorkspaceSettings,
 } from "./types";
@@ -716,6 +717,7 @@ let fallbackGitHubPullRequestListCalls: FallbackGitHubPullRequestListCall[] = []
 let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListCall[] = [];
 let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
 let fallbackOpenPathCalls: string[] = [];
+let fallbackOpenPathTargetCalls: Array<{ path: string; target: SystemOpenTarget }> = [];
 let fallbackCloneIndex = 1;
 let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackRepoOverrides: Record<string, RepoSummary> = {};
@@ -760,6 +762,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubPullRequestCheckListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
   fallbackOpenPathCalls = [];
+  fallbackOpenPathTargetCalls = [];
   fallbackCloneIndex = 1;
   fallbackClonedRepos = [];
   fallbackRepoOverrides = {};
@@ -881,6 +884,10 @@ export function getFallbackGitHubWorkflowRunListCallsForTests() {
 
 export function getFallbackOpenPathCallsForTests(): string[] {
   return [...fallbackOpenPathCalls];
+}
+
+export function getFallbackOpenPathTargetCallsForTests(): Array<{ path: string; target: SystemOpenTarget }> {
+  return fallbackOpenPathTargetCalls.map((call) => ({ ...call }));
 }
 
 export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, GitHubIssue[]>) {
@@ -2808,6 +2815,13 @@ export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Pr
 export function openPath(path: string): Promise<void> {
   return call("system_open_path", { path }, () => {
     fallbackOpenPathCalls.push(path);
+    return undefined;
+  });
+}
+
+export function openPathTarget(path: string, target: SystemOpenTarget): Promise<void> {
+  return call("system_open_path_target", { path, target }, () => {
+    fallbackOpenPathTargetCalls.push({ path, target });
     return undefined;
   });
 }
