@@ -155,7 +155,8 @@ describe("AppShell sidebar", () => {
     });
 
     expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
-    expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+    expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "折叠分组 未分组仓库" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "创建仓库分组" })).toBeInTheDocument();
     expect(view.container.querySelector(".sb-section--actions")).toBeNull();
     expect(view.container.querySelector(".shell-actions")).toBeNull();
@@ -174,7 +175,7 @@ describe("AppShell sidebar", () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
-      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     });
 
     await fireEvent.click(view.getByRole("button", { name: "创建仓库分组" }));
@@ -187,11 +188,18 @@ describe("AppShell sidebar", () => {
       expect(sidebarGroupForText(view.container, "前端", 0)).toBeInTheDocument();
     });
 
+    expect(view.getByRole("button", { name: "展开分组 未分组仓库" })).toBeInTheDocument();
+    await toggleSidebarRepoGroup(view, "未分组仓库");
+    expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+
     await createSidebarRepoGroup(view, "后端");
+    expect(view.getByRole("button", { name: "展开分组 未分组仓库" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "展开分组 前端" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "展开分组 后端" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "重命名分组 后端" })).toHaveClass("sb-section__hover-action");
+    expect(view.getByRole("button", { name: "删除分组 后端" })).toHaveClass("sb-section__hover-action");
 
-    await fireEvent.dblClick(view.getByRole("button", { name: "展开分组 后端" }));
+    await fireEvent.click(view.getByRole("button", { name: "重命名分组 后端" }));
     await fireEvent.update(await view.findByRole("textbox", { name: "重命名分组" }), "前端");
     await fireEvent.keyDown(view.getByRole("textbox", { name: "重命名分组" }), { key: "Enter" });
     expect(await view.findByText("已存在同名仓库分组")).toBeInTheDocument();
@@ -205,10 +213,11 @@ describe("AppShell sidebar", () => {
     });
 
     await createSidebarRepoGroup(view, "前端");
+    await toggleSidebarRepoGroup(view, "未分组仓库");
     await moveSidebarRepoToGroup(view, "LiliaGithub", "前端");
 
     await waitFor(() => {
-      expect(view.getByText("未分组仓库 1")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 1)).toBeInTheDocument();
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
 
@@ -216,7 +225,7 @@ describe("AppShell sidebar", () => {
     await moveSidebarRepoToGroup(view, "LiliaGithub", "移到未分组");
 
     await waitFor(() => {
-      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
       expect(sidebarGroupForText(view.container, "前端", 0)).toBeInTheDocument();
     });
   });
@@ -229,10 +238,11 @@ describe("AppShell sidebar", () => {
     });
 
     await createSidebarRepoGroup(view, "前端");
+    await toggleSidebarRepoGroup(view, "未分组仓库");
     await moveSidebarRepoToGroup(view, "LiliaGithub", "前端");
 
     await waitFor(() => {
-      expect(view.getByText("未分组仓库 1")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 1)).toBeInTheDocument();
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
 
@@ -240,7 +250,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(view.getByRole("button", { name: "确认删除分组 前端" }));
 
     await waitFor(() => {
-      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
       expect(() => sidebarGroupForText(view.container, "前端", 1)).toThrow("未找到侧边栏分组: 前端 1");
     });
   });
@@ -514,7 +524,7 @@ describe("AppShell sidebar", () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
-      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     });
 
     state.settings = {
@@ -540,7 +550,9 @@ describe("AppShell sidebar", () => {
       expect(view.getByText("搜索结果 1")).toBeInTheDocument();
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
       expect(() => sidebarGroupForText(view.container, "前端", 1)).toThrow("未找到侧边栏分组: 前端 1");
-      expect(view.queryByText("未分组仓库 1")).toBeNull();
+      expect(() => sidebarGroupForText(view.container, "未分组仓库", 1)).toThrow(
+        "未找到侧边栏分组: 未分组仓库 1",
+      );
     });
   });
 
