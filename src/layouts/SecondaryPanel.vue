@@ -7,6 +7,7 @@ import {
   FolderGit2,
   FolderInput,
   GitPullRequestArrow,
+  Pencil,
   Plus,
   Search,
   Trash2,
@@ -39,6 +40,7 @@ const editingGroupName = ref("");
 const editingGroupError = ref<string | null>(null);
 const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
+const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
 
 const props = defineProps<{
   searchOpen: boolean;
@@ -110,6 +112,19 @@ interface RepoItem {
   issue: RepoIssue | null;
 }
 
+interface RepoGroupRef {
+  readonly id: string;
+  readonly name: string;
+}
+
+interface RepoSection {
+  id: string;
+  name: string;
+  items: RepoItem[];
+  collapsed: boolean;
+  group: RepoGroupRef | null;
+}
+
 function repoIssue(repo: RepoSummary): RepoIssue | null {
   const syncError = bulkSyncErrorByRepoId.value.get(repo.id);
   if (syncError) return { label: "同步失败", title: syncError };
@@ -161,20 +176,29 @@ const ungroupedRepoItems = computed(() =>
   repoItems.value.filter(({ repo }) => !groupedRepoIds.value.has(repo.id)),
 );
 
-const groupedRepoSections = computed(() =>
-  repoGroups.value.map((group) => ({
-    group,
+const localRepoSections = computed<RepoSection[]>(() => [
+  {
+    id: UNGROUPED_REPO_GROUP_ID,
+    name: "未分组仓库",
+    items: ungroupedRepoItems.value,
+    collapsed: collapsedGroupIds.value.has(UNGROUPED_REPO_GROUP_ID),
+    group: null,
+  },
+  ...repoGroups.value.map((group) => ({
+    id: group.id,
+    name: group.name,
     items: group.repoIds
       .map((repoId) => repoItemById.value.get(repoId))
       .filter((item): item is RepoItem => Boolean(item)),
     collapsed: collapsedGroupIds.value.has(group.id),
+    group,
   })),
-);
+]);
 
 watch(
   repoGroups,
   (groups) => {
-    const groupIds = new Set(groups.map((group) => group.id));
+    const groupIds = new Set([UNGROUPED_REPO_GROUP_ID, ...groups.map((group) => group.id)]);
     collapsedGroupIds.value = new Set([...collapsedGroupIds.value].filter((id) => groupIds.has(id)));
     if (editingGroupId.value && !groupIds.has(editingGroupId.value)) {
       editingGroupId.value = null;
@@ -334,7 +358,7 @@ async function createGroup() {
     const settings = await workspace.createRepoGroup(nextUnnamedGroupName());
     const groups = settings.repoGroups;
     const createdGroup = groups.find((group) => !beforeGroupIds.has(group.id)) ?? groups[groups.length - 1];
-    collapsedGroupIds.value = new Set(groups.map((group) => group.id));
+    collapsedGroupIds.value = new Set([UNGROUPED_REPO_GROUP_ID, ...groups.map((group) => group.id)]);
     if (createdGroup) startRenameGroup(createdGroup);
   } catch (err) {
     editingGroupError.value = err instanceof Error ? err.message : String(err);
@@ -343,7 +367,7 @@ async function createGroup() {
   }
 }
 
-function toggleGroupCollapsed(groupId: string) {
+function toggleGroupCollapsed(groupId: string, event?: MouseEvent) {
   const next = new Set(collapsedGroupIds.value);
   if (next.has(groupId)) {
     next.delete(groupId);
@@ -351,6 +375,13 @@ function toggleGroupCollapsed(groupId: string) {
     next.add(groupId);
   }
   collapsedGroupIds.value = next;
+  if (event?.detail) {
+    (event.currentTarget as HTMLElement | null)?.blur();
+  }
+}
+
+function sectionToggleLabel(section: RepoSection) {
+  return `${section.collapsed ? "展开" : "折叠"}分组 ${section.name}`;
 }
 
 async function finishRenameGroup(group: { id: string; name: string }) {
@@ -417,22 +448,9 @@ async function deleteGroup(group: { id: string }) {
       </nav>
     </div>
 
-    <div class="sb-section">
+    <div v-if="searchOpen" class="sb-section">
       <div class="sb-section__header">
-        <span class="sb-section__title">
-          {{ searchOpen ? `搜索结果 ${filteredRepoItems.length}` : `未分组仓库 ${ungroupedRepoItems.length}` }}
-        </span>
-        <button
-          v-if="!searchOpen"
-          type="button"
-          class="sb-icon-btn sb-section__hover-action"
-          aria-label="创建仓库分组"
-          title="创建仓库分组"
-          :disabled="createGroupBusy"
-          @click="createGroup"
-        >
-          <Plus :size="13" aria-hidden="true" />
-        </button>
+        <span class="sb-section__title">搜索结果 {{ filteredRepoItems.length }}</span>
       </div>
       <div v-if="searchOpen" class="sb-search">
         <Search :size="13" aria-hidden="true" />
@@ -451,38 +469,36 @@ async function deleteGroup(group: { id: string }) {
       </div>
       <div class="sb-tree">
         <RepoSidebarRow
-          v-for="item in searchOpen ? filteredRepoItems : ungroupedRepoItems"
+          v-for="item in filteredRepoItems"
           :key="item.repo.id"
           v-bind="repoRowProps(item)"
         />
-        <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
-        <p v-else-if="searchOpen && !filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
+        <p v-if="!filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
       </div>
     </div>
 
     <template v-if="!searchOpen">
       <div
-        v-for="{ group, items, collapsed } in groupedRepoSections"
-        :key="group.id"
+        v-for="section in localRepoSections"
+        :key="section.id"
         class="sb-section sb-section--group"
       >
         <div class="sb-section__header">
           <button
-            v-if="editingGroupId !== group.id"
+            v-if="editingGroupId !== section.id"
             type="button"
             class="sb-group-toggle"
-            :aria-label="`${collapsed ? '展开' : '折叠'}分组 ${group.name}`"
-            :aria-expanded="!collapsed"
-            @click="toggleGroupCollapsed(group.id)"
-            @dblclick.stop="startRenameGroup(group)"
+            :aria-label="sectionToggleLabel(section)"
+            :aria-expanded="!section.collapsed"
+            @click="toggleGroupCollapsed(section.id, $event)"
           >
-            <span class="sb-section__title">{{ group.name }}</span>
-            <span class="sb-group-count">{{ items.length }}</span>
+            <span class="sb-section__title">{{ section.name }}</span>
+            <span class="sb-group-count">{{ section.items.length }}</span>
             <ChevronRight
               :size="13"
               aria-hidden="true"
               class="sb-group-toggle__chevron"
-              :class="{ 'is-open': !collapsed }"
+              :class="{ 'is-open': !section.collapsed }"
             />
           </button>
           <div v-else class="sb-group-edit">
@@ -490,32 +506,55 @@ async function deleteGroup(group: { id: string }) {
               v-model="editingGroupName"
               type="text"
               aria-label="重命名分组"
-              :data-repo-group-name-input="group.id"
+              :data-repo-group-name-input="section.id"
               :disabled="renameGroupBusy"
-              @blur="finishRenameGroup(group)"
-              @keydown.enter.prevent="finishRenameGroup(group)"
+              @blur="section.group ? finishRenameGroup(section.group) : cancelRenameGroup()"
+              @keydown.enter.prevent="section.group ? finishRenameGroup(section.group) : cancelRenameGroup()"
               @keydown.esc.prevent="cancelRenameGroup"
             />
             <p v-if="editingGroupError" class="sb-group-edit__error">{{ editingGroupError }}</p>
           </div>
+          <template v-if="section.group">
+            <button
+              type="button"
+              class="sb-icon-btn sb-section__hover-action"
+              :aria-label="`重命名分组 ${section.name}`"
+              title="重命名分组"
+              @click="startRenameGroup(section.group)"
+            >
+              <Pencil :size="13" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              class="sb-icon-btn sb-section__hover-action"
+              :class="{ 'is-danger': pendingDeleteGroupId === section.id }"
+              :aria-label="pendingDeleteGroupId === section.id ? `确认删除分组 ${section.name}` : `删除分组 ${section.name}`"
+              :title="pendingDeleteGroupId === section.id ? '确认删除分组' : '删除分组'"
+              @click="deleteGroup(section.group)"
+            >
+              <Trash2 :size="13" aria-hidden="true" />
+            </button>
+          </template>
           <button
+            v-else
             type="button"
-            class="sb-icon-btn"
-            :class="{ 'is-danger': pendingDeleteGroupId === group.id }"
-            :aria-label="pendingDeleteGroupId === group.id ? `确认删除分组 ${group.name}` : `删除分组 ${group.name}`"
-            :title="pendingDeleteGroupId === group.id ? '确认删除分组' : '删除分组'"
-            @click="deleteGroup(group)"
+            class="sb-icon-btn sb-section__hover-action"
+            aria-label="创建仓库分组"
+            title="创建仓库分组"
+            :disabled="createGroupBusy"
+            @click="createGroup"
           >
-            <Trash2 :size="13" aria-hidden="true" />
+            <Plus :size="13" aria-hidden="true" />
           </button>
         </div>
-        <div v-if="!collapsed" class="sb-tree">
+        <div v-if="!section.collapsed" class="sb-tree">
           <RepoSidebarRow
-            v-for="item in items"
+            v-for="item in section.items"
             :key="item.repo.id"
             v-bind="repoRowProps(item)"
           />
-          <p v-if="!items.length" class="sb-tree__empty">没有仓库。</p>
+          <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
+          <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
         </div>
       </div>
     </template>
@@ -734,6 +773,7 @@ async function deleteGroup(group: { id: string }) {
   color: inherit;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 4px;
   cursor: pointer;
   text-align: left;
@@ -741,6 +781,11 @@ async function deleteGroup(group: { id: string }) {
 
 .sb-group-toggle:hover {
   color: var(--text-muted);
+}
+
+.sb-group-toggle .sb-section__title {
+  flex: 0 1 auto;
+  text-align: left;
 }
 
 .sb-group-count {
