@@ -183,6 +183,13 @@ function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
   return { ...repo };
 }
 
+function cloneGitHubRepoManagement(repo: GitHubRepoManagement): GitHubRepoManagement {
+  return {
+    ...repo,
+    topics: [...repo.topics],
+  };
+}
+
 function cloneRepoSummary(repo: RepoSummary): RepoSummary {
   return {
     ...repo,
@@ -239,6 +246,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       name: "LiliaGithub",
       description: "Local GitHub workspace manager",
       homepage: "",
+      topics: ["tauri", "vue", "github"],
       private: false,
       defaultBranch: "main",
       hasIssues: true,
@@ -259,6 +267,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       name: "Lilia",
       description: "Desktop agent workbench",
       homepage: "",
+      topics: ["desktop", "agent"],
       private: true,
       defaultBranch: "main",
       hasIssues: true,
@@ -1546,7 +1555,7 @@ export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
 
 function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
   const existing = fallbackGitHubRepoManagement[repoFullName];
-  if (existing) return { ...existing };
+  if (existing) return cloneGitHubRepoManagement(existing);
   const repo = allFallbackGitHubRepos().find((item) => item.fullName === repoFullName);
   if (!repo) throw new Error(`未找到 GitHub 仓库：${repoFullName}`);
   const management: GitHubRepoManagement = {
@@ -1554,6 +1563,7 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
     name: repo.name,
     description: repo.description,
     homepage: "",
+    topics: [],
     private: repo.private,
     defaultBranch: repo.defaultBranch ?? "main",
     hasIssues: true,
@@ -1570,7 +1580,7 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
     htmlUrl: repo.htmlUrl,
   };
   fallbackGitHubRepoManagement[repoFullName] = management;
-  return { ...management };
+  return cloneGitHubRepoManagement(management);
 }
 
 function allFallbackGitHubRepos() {
@@ -1614,6 +1624,7 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       name,
       description: repo.description,
       homepage: "",
+      topics: [],
       private: repo.private,
       defaultBranch: repo.defaultBranch ?? "main",
       hasIssues: request.hasIssues,
@@ -1654,9 +1665,10 @@ export function updateGitHubRepoSettings(
       ...request,
       description: request.description ?? current.description,
       homepage: request.homepage ?? current.homepage,
+      topics: request.topics ? [...request.topics] : [...current.topics],
     };
     fallbackGitHubRepoManagement[repoFullName] = updated;
-    return { ...updated };
+    return cloneGitHubRepoManagement(updated);
   });
 }
 

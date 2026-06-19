@@ -24,6 +24,7 @@ import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
+import RepoTopicEditor from "./RepoTopicEditor.vue";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
@@ -198,6 +199,9 @@ const issues = ref<GitHubIssue[]>([]);
 const issuesLoadedState = ref<"open" | "closed" | "all" | null>(null);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
 const actionsLoaded = ref(false);
+const aboutEditing = ref(false);
+const aboutTopicDraft = ref("");
+const settingsTopicDraft = ref("");
 const issueState = ref<"open" | "closed" | "all">("open");
 const issueTitle = ref("");
 const issueBody = ref("");
@@ -229,6 +233,7 @@ let actionsLoadPromise: Promise<void> | null = null;
 const settingsForm = reactive({
   description: "",
   homepage: "",
+  topics: [] as string[],
   private: false,
   hasIssues: true,
   hasWiki: false,
@@ -289,6 +294,10 @@ const issuesAccessUnavailable = computed(() => githubAccessUnavailable("Issues",
 const pullsAccessUnavailable = computed(() => githubAccessUnavailable("Pull Requests", githubError.value));
 const actionsAccessUnavailable = computed(() => githubAccessUnavailable("Actions", actionsError.value));
 const settingsAccessUnavailable = computed(() => githubAccessUnavailable("Settings", githubError.value));
+const aboutDescription = computed(() => settings.value?.description?.trim() ?? "");
+const aboutHomepage = computed(() => settings.value?.homepage?.trim() ?? "");
+const aboutHomepageHref = computed(() => normalizedExternalUrl(aboutHomepage.value));
+const aboutTopics = computed(() => settings.value?.topics ?? []);
 const deleteConfirmMatches = computed(() =>
   Boolean(deleteExpectedInput.value) && deleteConfirmInput.value.trim() === deleteExpectedInput.value,
 );
@@ -589,6 +598,7 @@ async function applyProjectRouteState() {
 function applySettingsForm(next: GitHubRepoManagement) {
   settingsForm.description = next.description ?? "";
   settingsForm.homepage = next.homepage ?? "";
+  settingsForm.topics = [...next.topics];
   settingsForm.private = next.private;
   settingsForm.hasIssues = next.hasIssues;
   settingsForm.hasWiki = next.hasWiki;
@@ -601,6 +611,20 @@ function applySettingsForm(next: GitHubRepoManagement) {
   settingsForm.deleteBranchOnMerge = next.deleteBranchOnMerge;
   settingsForm.allowForking = next.allowForking;
   settingsForm.webCommitSignoffRequired = next.webCommitSignoffRequired;
+}
+
+async function startEditAbout() {
+  if (!settings.value) await loadSettings();
+  if (!settings.value) return;
+  applySettingsForm(settings.value);
+  aboutTopicDraft.value = "";
+  aboutEditing.value = true;
+}
+
+function cancelEditAbout() {
+  if (settings.value) applySettingsForm(settings.value);
+  aboutTopicDraft.value = "";
+  aboutEditing.value = false;
 }
 
 async function loadReadme() {
@@ -634,7 +658,6 @@ async function loadReadme() {
 }
 
 async function loadSettings() {
-  const runId = ++githubLoadRunId;
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
     clearBlockedGitHubState();
@@ -651,6 +674,7 @@ async function loadSettings() {
     return;
   }
   settingsLoadPromise = (async () => {
+    const runId = ++githubLoadRunId;
     githubLoading.value = true;
     githubError.value = null;
     try {
@@ -804,7 +828,7 @@ async function loadActions(force = false) {
 
 async function ensureSectionData(section: ProjectContentMode) {
   if (section === "readme") {
-    await loadReadme();
+    await Promise.all([loadReadme(), props.repoFullName ? loadSettings() : Promise.resolve()]);
     return;
   }
   if (section === "issues") {
@@ -835,6 +859,7 @@ function changedSettingsRequest(current: GitHubRepoManagement) {
   };
   maybeSet("description", settingsForm.description, current.description ?? "");
   maybeSet("homepage", settingsForm.homepage, current.homepage ?? "");
+  if (!sameStringList(settingsForm.topics, current.topics)) request.topics = [...settingsForm.topics];
   maybeSet("private", settingsForm.private, current.private);
   maybeSet("hasIssues", settingsForm.hasIssues, current.hasIssues);
   maybeSet("hasWiki", settingsForm.hasWiki, current.hasWiki);
@@ -896,26 +921,49 @@ function resetGitHubSectionState() {
   pullsLoadPromise = null;
   pullsLoadState = null;
   actionsLoadPromise = null;
+  aboutEditing.value = false;
+  aboutTopicDraft.value = "";
+  settingsTopicDraft.value = "";
   cancelEditIssue();
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
 }
 
-async function saveSettings() {
+async function saveSettings(closeAboutOnSuccess = false) {
   if (!props.repoFullName || !settings.value) return;
   const request = changedSettingsRequest(settings.value);
-  if (!Object.keys(request).length) return;
+  if (!Object.keys(request).length) {
+    if (closeAboutOnSuccess) aboutEditing.value = false;
+    return true;
+  }
   savingSettings.value = true;
   githubError.value = null;
   try {
     const next = await updateGitHubRepoSettings(props.repoFullName, request);
     settings.value = next;
     applySettingsForm(next);
+    aboutTopicDraft.value = "";
+    settingsTopicDraft.value = "";
+    if (closeAboutOnSuccess) aboutEditing.value = false;
+    clearHomeGitHubOverviewSnapshot();
+    return true;
   } catch (err) {
     githubError.value = String(err);
+    return false;
   } finally {
     savingSettings.value = false;
   }
+}
+
+function normalizedExternalUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function sameStringList(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function openDeleteDialog(target: DeleteTarget) {
@@ -1585,7 +1633,7 @@ function selectReadme(path: string) {
           </div>
         </section>
 
-        <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" @submit.prevent="saveSettings">
+        <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" @submit.prevent="saveSettings()">
           <div class="project-section__head project-section__head--compact">
             <div class="project-section__title">
               <h3>仓库设置</h3>
@@ -1628,6 +1676,10 @@ function selectReadme(path: string) {
                 <label class="project-settings-field">
                   <span>Homepage</span>
                   <input v-model="settingsForm.homepage" type="url" />
+                </label>
+                <label class="project-settings-field project-settings-field--topics">
+                  <span>Topics</span>
+                  <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="settingsTopicDraft" />
                 </label>
               </div>
             </section>
@@ -1785,6 +1837,50 @@ function selectReadme(path: string) {
       />
 
       <aside v-if="showProjectSidebar" class="project-sidebar">
+        <section v-if="repoFullName" class="project-about-card" aria-label="仓库描述">
+          <button
+            v-if="!aboutEditing"
+            type="button"
+            class="ghost project-icon-action project-about-edit"
+            :disabled="githubLoading || savingSettings"
+            aria-label="编辑仓库描述"
+            title="编辑"
+            @click="startEditAbout"
+          >
+            <LoaderCircle v-if="githubLoading && !settings" :size="14" aria-hidden="true" class="sb-spin" />
+            <Pencil v-else :size="14" aria-hidden="true" />
+          </button>
+          <form v-if="aboutEditing" class="project-about-form" @submit.prevent="saveSettings(true)">
+            <textarea v-model="settingsForm.description" rows="3" placeholder="Description"></textarea>
+            <input v-model="settingsForm.homepage" type="url" placeholder="Homepage" />
+            <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="aboutTopicDraft" />
+            <p v-if="githubError" class="error-line">{{ githubError }}</p>
+            <div class="project-about-form__actions">
+              <button type="button" class="ghost project-icon-action" :disabled="savingSettings" aria-label="取消" title="取消" @click="cancelEditAbout">
+                <X :size="14" aria-hidden="true" />
+              </button>
+              <button type="submit" class="primary project-icon-action project-icon-action--primary" :disabled="savingSettings" aria-label="保存" title="保存">
+                <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
+                <Save v-else :size="14" aria-hidden="true" />
+              </button>
+            </div>
+          </form>
+          <div v-else class="project-about-summary">
+            <p v-if="githubLoading && !settings" class="muted">正在读取仓库描述。</p>
+            <p v-else-if="githubError && !settings" class="error-line">{{ githubError }}</p>
+            <template v-else>
+              <p :class="{ 'is-empty': !aboutDescription }">{{ aboutDescription || "No description provided." }}</p>
+              <a v-if="aboutHomepage" :href="aboutHomepageHref" target="_blank" rel="noreferrer">
+                <ExternalLink :size="13" aria-hidden="true" />
+                <span>{{ aboutHomepage }}</span>
+              </a>
+              <div v-if="aboutTopics.length" class="project-topic-list" aria-label="Topics">
+                <span v-for="topic in aboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
+              </div>
+            </template>
+          </div>
+        </section>
+
         <div class="project-sidebar__card" role="tablist" aria-label="README 列表">
           <button
             v-for="item in readmes"
@@ -2041,6 +2137,101 @@ function selectReadme(path: string) {
   min-height: 0;
   align-content: start;
   align-self: start;
+}
+
+.project-about-card {
+  position: relative;
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+}
+
+.project-about-edit {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.project-about-card:hover .project-about-edit,
+.project-about-card:focus-within .project-about-edit {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-about-summary,
+.project-about-form {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-about-summary p {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.project-about-summary p.is-empty {
+  color: var(--text-muted);
+}
+
+.project-about-summary a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.project-about-summary a span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-about-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.project-about-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.project-topic-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-topic-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 20px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0 7px;
 }
 
 .project-layout--with-commit-detail .project-sidebar {
@@ -2395,6 +2586,11 @@ function selectReadme(path: string) {
 
 .project-settings-field input {
   width: 100%;
+}
+
+.project-settings-field--topics {
+  grid-column: 1 / -1;
+  align-items: start;
 }
 
 .project-settings-switches {

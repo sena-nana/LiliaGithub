@@ -162,6 +162,7 @@ export interface GitHubRepoManagement {
   name: string;
   description: string | null;
   homepage: string | null;
+  topics: string[];
   private: boolean;
   defaultBranch: string;
   hasIssues: boolean;

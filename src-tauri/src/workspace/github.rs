@@ -88,6 +88,12 @@ pub(super) struct GitHubRepoResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubRepoTopicsResponse {
+    #[serde(default)]
+    pub(super) names: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubContentListItem {
     pub(super) name: String,
     pub(super) path: String,
@@ -484,12 +490,14 @@ pub(super) fn forget_remote_repo_shortcut(
 
 pub(super) fn github_repo_management_from_response(
     repo: GitHubRepoResponse,
+    topics: Vec<String>,
 ) -> GitHubRepoManagement {
     GitHubRepoManagement {
         full_name: repo.full_name,
         name: repo.name,
         description: repo.description,
         homepage: repo.homepage,
+        topics,
         private: repo.private,
         default_branch: repo.default_branch.unwrap_or_default(),
         has_issues: repo.has_issues,
@@ -521,6 +529,22 @@ pub(super) fn github_repo_api_url(repo_full_name: &str) -> Result<String, String
     ))
 }
 
+pub(super) fn github_repo_topics_api_url(repo_full_name: &str) -> Result<String, String> {
+    Ok(format!("{}/topics", github_repo_api_url(repo_full_name)?))
+}
+
+pub(super) fn normalize_github_topics(topics: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for topic in topics {
+        let topic = topic.trim().trim_start_matches('#').to_ascii_lowercase();
+        if topic.is_empty() || normalized.iter().any(|item| item == &topic) {
+            continue;
+        }
+        normalized.push(topic);
+    }
+    normalized
+}
+
 pub(super) fn github_fetch_pull_request_response(
     app: &AppHandle,
     repo_full_name: &str,
@@ -544,19 +568,19 @@ pub(super) fn github_fetch_pull_request_response(
 }
 
 pub(super) fn github_update_repo_settings_payload(
-    request: GitHubUpdateRepoSettingsRequest,
+    request: &GitHubUpdateRepoSettingsRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut payload = serde_json::Map::new();
-    if let Some(value) = request.description {
+    if let Some(value) = request.description.clone() {
         payload.insert("description".to_string(), serde_json::Value::String(value));
     }
-    if let Some(value) = request.homepage {
+    if let Some(value) = request.homepage.clone() {
         payload.insert("homepage".to_string(), serde_json::Value::String(value));
     }
     if let Some(value) = request.private {
         payload.insert("private".to_string(), serde_json::Value::Bool(value));
     }
-    if let Some(value) = normalize_optional_string(request.default_branch) {
+    if let Some(value) = normalize_optional_string(request.default_branch.clone()) {
         payload.insert(
             "default_branch".to_string(),
             serde_json::Value::String(value),
@@ -1083,16 +1107,26 @@ pub async fn github_get_repo_management(
     run_blocking("读取 GitHub 仓库设置", move || {
         let (_binding, token) = github_require_token(&app)?;
         let client = build_client()?;
+        let repo_url = github_repo_api_url(&repo_full_name)?;
         let response = github_send(
             &app,
             "读取 GitHub 仓库设置失败",
+            github_headers(client.get(&repo_url), Some(&token)),
+        )?;
+        let repo = github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?;
+        let topics_response = github_send(
+            &app,
+            "读取 GitHub 仓库 topics 失败",
             github_headers(
-                client.get(github_repo_api_url(&repo_full_name)?),
+                client.get(github_repo_topics_api_url(&repo_full_name)?),
                 Some(&token),
             ),
         )?;
-        let repo = github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?;
-        Ok(github_repo_management_from_response(repo))
+        let topics = github_json::<GitHubRepoTopicsResponse>(
+            "读取 GitHub 仓库 topics 失败",
+            topics_response,
+        )?;
+        Ok(github_repo_management_from_response(repo, topics.names))
     })
     .await
 }
@@ -1105,20 +1139,48 @@ pub async fn github_update_repo_settings(
 ) -> Result<GitHubRepoManagement, String> {
     run_blocking("更新 GitHub 仓库设置", move || {
         let (_binding, token) = github_require_token(&app)?;
-        let payload = github_update_repo_settings_payload(request);
+        let payload = github_update_repo_settings_payload(&request);
         let client = build_client()?;
-        let response = github_send(
-            &app,
-            "更新 GitHub 仓库设置失败",
-            github_headers(
-                client
-                    .patch(github_repo_api_url(&repo_full_name)?)
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        let repo = github_json::<GitHubRepoResponse>("更新 GitHub 仓库设置失败", response)?;
-        Ok(github_repo_management_from_response(repo))
+        let repo_url = github_repo_api_url(&repo_full_name)?;
+        let repo = if payload.is_empty() {
+            let response = github_send(
+                &app,
+                "读取 GitHub 仓库设置失败",
+                github_headers(client.get(&repo_url), Some(&token)),
+            )?;
+            github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?
+        } else {
+            let response = github_send(
+                &app,
+                "更新 GitHub 仓库设置失败",
+                github_headers(client.patch(&repo_url).json(&payload), Some(&token)),
+            )?;
+            github_json::<GitHubRepoResponse>("更新 GitHub 仓库设置失败", response)?
+        };
+        let topics = if let Some(topics) = request.topics {
+            let response = github_send(
+                &app,
+                "更新 GitHub 仓库 topics 失败",
+                github_headers(
+                    client
+                        .put(github_repo_topics_api_url(&repo_full_name)?)
+                        .json(&serde_json::json!({ "names": normalize_github_topics(topics) })),
+                    Some(&token),
+                ),
+            )?;
+            github_json::<GitHubRepoTopicsResponse>("更新 GitHub 仓库 topics 失败", response)?.names
+        } else {
+            let response = github_send(
+                &app,
+                "读取 GitHub 仓库 topics 失败",
+                github_headers(
+                    client.get(github_repo_topics_api_url(&repo_full_name)?),
+                    Some(&token),
+                ),
+            )?;
+            github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", response)?.names
+        };
+        Ok(github_repo_management_from_response(repo, topics))
     })
     .await
 }

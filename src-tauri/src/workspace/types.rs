@@ -563,6 +563,8 @@ pub struct GitHubRepoManagement {
     pub description: Option<String>,
     #[serde(default)]
     pub homepage: Option<String>,
+    #[serde(default)]
+    pub topics: Vec<String>,
     pub private: bool,
     pub default_branch: String,
     pub has_issues: bool,
@@ -586,6 +588,8 @@ pub struct GitHubUpdateRepoSettingsRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub homepage: Option<String>,
+    #[serde(default)]
+    pub topics: Option<Vec<String>>,
     #[serde(default)]
     pub private: Option<bool>,
     #[serde(default)]

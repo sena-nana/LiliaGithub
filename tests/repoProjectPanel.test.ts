@@ -29,8 +29,9 @@ import { repoSummary } from "./fixtures/workspace";
 const githubSettings: GitHubRepoManagement = {
   fullName: "sena-nana/remote-repo",
   name: "remote-repo",
-  description: null,
-  homepage: null,
+  description: "Remote repository tools",
+  homepage: "https://example.com/remote",
+  topics: ["vue", "tauri"],
   private: false,
   defaultBranch: "main",
   hasIssues: true,
@@ -131,7 +132,13 @@ vi.mock("../src/services/workspace/client", () => ({
   openPath: vi.fn(),
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
-  updateGitHubRepoSettings: vi.fn(async () => githubSettings),
+  updateGitHubRepoSettings: vi.fn(async (_repoFullName: string, request: Partial<GitHubRepoManagement>) => ({
+    ...githubSettings,
+    ...request,
+    description: request.description ?? githubSettings.description,
+    homepage: request.homepage ?? githubSettings.homepage,
+    topics: request.topics ? [...request.topics] : [...githubSettings.topics],
+  })),
 }));
 
 vi.mock("../src/composables/workspace/auth", async (importOriginal) => {
@@ -207,7 +214,16 @@ describe("RepoProjectPanel", () => {
     closeContextMenu();
     installContextMenu();
     vi.clearAllMocks();
+    vi.mocked(getGitHubRepoManagement).mockReset();
+    vi.mocked(updateGitHubRepoSettings).mockReset();
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
+    vi.mocked(updateGitHubRepoSettings).mockImplementation(async (_repoFullName, request) => ({
+      ...githubSettings,
+      ...request,
+      description: request.description ?? githubSettings.description,
+      homepage: request.homepage ?? githubSettings.homepage,
+      topics: request.topics ? [...request.topics] : [...githubSettings.topics],
+    }));
     vi.mocked(listGitHubPullRequests).mockResolvedValue([]);
     vi.mocked(listGitHubPullRequestChecks).mockResolvedValue([]);
     vi.mocked(mergeGitHubPullRequest).mockImplementation(async () => ({ ...githubPullRequests[0], merged: true, state: "closed" }));
@@ -280,15 +296,19 @@ describe("RepoProjectPanel", () => {
     expect(view.queryByText("删除本地仓库")).toBeNull();
   });
 
-  it("默认 readme 首屏不预取 GitHub settings、issues 和 workflow runs", async () => {
-    await renderProjectPanel({
+  it("默认 readme 首屏加载仓库描述卡片，但不预取 issues 和 workflow runs", async () => {
+    const view = await renderProjectPanel({
       repoFullName: "sena-nana/remote-repo",
     });
 
     await waitFor(() => {
       expect(listRepoReadmes).toHaveBeenCalledWith("local-repo");
     });
-    expect(getGitHubRepoManagement).not.toHaveBeenCalled();
+    expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
+    expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
+    expect(view.getByText("vue")).toBeInTheDocument();
+    expect(view.getByText("tauri")).toBeInTheDocument();
+    expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
   });
@@ -341,7 +361,9 @@ describe("RepoProjectPanel", () => {
     },
     {
       tabName: "Settings",
-      fail: () => vi.mocked(getGitHubRepoManagement).mockRejectedValueOnce(new Error("HTTP 403 Resource not accessible by integration")),
+      fail: () => vi.mocked(getGitHubRepoManagement)
+        .mockRejectedValueOnce(new Error("HTTP 403 Resource not accessible by integration"))
+        .mockRejectedValueOnce(new Error("HTTP 403 Resource not accessible by integration")),
       title: "Settings 暂不可用",
       reason: "当前 GitHub 授权权限不足，无法访问该仓库的 Settings。请重新绑定 GitHub 并授予所需权限。",
       hiddenText: "基础设置",
@@ -446,5 +468,49 @@ describe("RepoProjectPanel", () => {
       );
     });
     expect(vi.mocked(updateGitHubRepoSettings).mock.calls[0][1]).not.toHaveProperty("defaultBranch");
+  });
+
+  it("描述卡片支持编辑描述、homepage 和 topics", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("button", { name: "编辑仓库描述" }));
+    await fireEvent.update(view.getByPlaceholderText("Description"), "Updated description");
+    await fireEvent.update(view.getByPlaceholderText("Homepage"), "https://example.com/new");
+    const topicInput = view.getByPlaceholderText("Add topics");
+    await fireEvent.update(topicInput, "Vue, codex");
+    await fireEvent.keyDown(topicInput, { key: "Enter" });
+    await fireEvent.click(view.getByRole("button", { name: "移除 tauri" }));
+    await fireEvent.click(view.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        description: "Updated description",
+        homepage: "https://example.com/new",
+        topics: ["vue", "codex"],
+      });
+    });
+  });
+
+  it("topics 编辑支持逗号拆分、退格删除和取消恢复", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await view.findByText("Remote repository tools");
+    await fireEvent.click(view.getByRole("button", { name: "编辑仓库描述" }));
+    const topicInput = view.getByPlaceholderText("Add topics");
+    await fireEvent.update(topicInput, "Docs, docs api");
+    await fireEvent.keyDown(topicInput, { key: "," });
+    expect(view.getByRole("button", { name: "移除 docs" })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "移除 api" })).toBeInTheDocument();
+    await fireEvent.keyDown(topicInput, { key: "Backspace" });
+    expect(view.queryByRole("button", { name: "移除 api" })).toBeNull();
+    await fireEvent.click(view.getByRole("button", { name: "取消" }));
+
+    expect(view.queryByRole("button", { name: "移除 docs" })).toBeNull();
+    expect(view.getByText("tauri")).toBeInTheDocument();
   });
 });
