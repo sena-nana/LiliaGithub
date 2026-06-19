@@ -126,6 +126,7 @@ const props = defineProps<{
   projectIssueNumber?: number | null;
   projectPullRequestNumber?: number | null;
   projectRunId?: number | null;
+  projectRefreshToken?: number;
 }>();
 
 const emit = defineEmits<{
@@ -395,9 +396,15 @@ watch(() => props.repoId, () => {
 });
 
 watch(() => props.repoFullName, () => {
+  const currentSection = activeSection.value;
   remoteDeleted.value = false;
   resetGitHubSectionState();
   closeDeleteDialog();
+  if (props.activeGitTab === "repo" && !routedProjectTab.value && isGitHubProjectSection(currentSection)) {
+    activeSection.value = currentSection;
+    void ensureSectionData(currentSection);
+    return;
+  }
   void applyProjectRouteState();
 });
 
@@ -418,7 +425,7 @@ watch(issueState, () => {
     return;
   }
   if (activeSection.value === "issues") {
-    void loadIssues(true);
+    void loadIssues();
   }
 });
 
@@ -428,7 +435,7 @@ watch(pullState, () => {
     return;
   }
   if (activeSection.value === "pulls") {
-    void loadPullRequests(true);
+    void loadPullRequests();
   }
 });
 
@@ -438,6 +445,10 @@ watch(
     void applyProjectRouteState();
   },
 );
+
+watch(() => props.projectRefreshToken, () => {
+  void refreshLoadedSectionData();
+});
 
 watch(() => props.activeGitTab, (tab) => {
   activeSection.value = routeTabToSection(tab);
@@ -463,6 +474,10 @@ function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
   if (tab === "repo") return normalizeProjectTab(props.projectTab) ?? "readme";
   if (tab === "run") return "launch";
   return tab;
+}
+
+function isGitHubProjectSection(section: ProjectContentMode) {
+  return section === "issues" || section === "pulls" || section === "actions" || section === "settings";
 }
 
 function hasIssue(issueNumber: number) {
@@ -520,6 +535,7 @@ async function focusIssue(issueNumber: number | null | undefined) {
   focusedRunId.value = null;
   if (!issueNumber) {
     clearProjectTargets();
+    await loadIssues();
     return;
   }
   if (issueState.value !== "all" && !hasIssue(issueNumber)) {
@@ -544,6 +560,7 @@ async function focusRun(runId: number | null | undefined) {
   focusedPullRequestNumber.value = null;
   if (!runId) {
     clearProjectTargets();
+    await loadActions();
     return;
   }
   if (!hasRun(runId)) {
@@ -658,10 +675,10 @@ function cancelEditAbout() {
   aboutEditing.value = false;
 }
 
-async function loadReadme() {
+async function loadReadme(force = false) {
   if (!props.repoId) return;
-  if (readmesLoaded.value) return;
-  if (readmeLoadPromise) {
+  if (!force && readmesLoaded.value) return;
+  if (!force && readmeLoadPromise) {
     await readmeLoadPromise;
     return;
   }
@@ -671,7 +688,9 @@ async function loadReadme() {
     const previousPath = activeReadmePath.value;
     try {
       const nextReadmes = props.remoteOnly && props.repoFullName
-        ? await listGitHubRepoReadmes(props.repoFullName)
+        ? force
+          ? await listGitHubRepoReadmes(props.repoFullName, { forceRefresh: true })
+          : await listGitHubRepoReadmes(props.repoFullName)
         : await listRepoReadmes(props.repoId);
       readmes.value = nextReadmes;
       activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
@@ -688,7 +707,7 @@ async function loadReadme() {
   await readmeLoadPromise;
 }
 
-async function loadSettings() {
+async function loadSettings(force = false) {
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
     clearBlockedGitHubState();
@@ -699,8 +718,8 @@ async function loadSettings() {
     githubError.value = null;
     return;
   }
-  if (settingsLoaded.value) return;
-  if (settingsLoadPromise) {
+  if (!force && settingsLoaded.value) return;
+  if (!force && settingsLoadPromise) {
     await settingsLoadPromise;
     return;
   }
@@ -709,7 +728,9 @@ async function loadSettings() {
     githubLoading.value = true;
     githubError.value = null;
     try {
-      const nextSettings = await getGitHubRepoManagement(repoFullName);
+      const nextSettings = force
+        ? await getGitHubRepoManagement(repoFullName, { forceRefresh: true })
+        : await getGitHubRepoManagement(repoFullName);
       if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       settings.value = nextSettings;
       applySettingsForm(nextSettings);
@@ -742,7 +763,9 @@ async function loadIssues(force = false) {
   issuesLoadState = issueState.value;
   issuesLoadPromise = (async () => {
     try {
-      const nextIssues = await listGitHubIssues(repoFullName, issueState.value);
+      const nextIssues = force
+        ? await listGitHubIssues(repoFullName, issueState.value, { forceRefresh: true })
+        : await listGitHubIssues(repoFullName, issueState.value);
       if (runId !== issueLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       issues.value = nextIssues;
       issuesLoadedState.value = issueState.value;
@@ -775,17 +798,19 @@ async function loadPullRequests(force = false) {
   pullsLoadState = pullState.value;
   pullsLoadPromise = (async () => {
     try {
-      const nextPulls = await listGitHubPullRequests(repoFullName, pullState.value);
+      const nextPulls = force
+        ? await listGitHubPullRequests(repoFullName, pullState.value, { forceRefresh: true })
+        : await listGitHubPullRequests(repoFullName, pullState.value);
       if (runId !== pullLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       pulls.value = nextPulls;
       pullsLoadedState.value = pullState.value;
       const current = focusedPullRequestNumber.value;
       if (current && nextPulls.some((pull) => pull.number === current)) {
-        await loadPullRequestChecks(current, true);
+        await loadPullRequestChecks(current, force);
       } else {
         focusedPullRequestNumber.value = nextPulls[0]?.number ?? null;
         if (focusedPullRequestNumber.value) {
-          await loadPullRequestChecks(focusedPullRequestNumber.value, true);
+          await loadPullRequestChecks(focusedPullRequestNumber.value, force);
         }
       }
     } catch (err) {
@@ -806,7 +831,9 @@ async function loadPullRequestChecks(pullNumber: number, force = false) {
   if (!force && pullChecks.value[pullNumber]) return;
   pullChecksLoading.value = true;
   try {
-    const checks = await listGitHubPullRequestChecks(repoFullName, pullNumber);
+    const checks = force
+      ? await listGitHubPullRequestChecks(repoFullName, pullNumber, { forceRefresh: true })
+      : await listGitHubPullRequestChecks(repoFullName, pullNumber);
     if (runId !== pullChecksRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
     pullChecks.value = {
       ...pullChecks.value,
@@ -843,7 +870,9 @@ async function loadActions(force = false) {
     actionsLoading.value = true;
     actionsError.value = null;
     try {
-      const nextRuns = await listGitHubWorkflowRuns(repoFullName, 20);
+      const nextRuns = force
+        ? await listGitHubWorkflowRuns(repoFullName, 20, { forceRefresh: true })
+        : await listGitHubWorkflowRuns(repoFullName, 20);
       if (runId !== actionsLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       workflowRuns.value = nextRuns;
       actionsLoaded.value = true;
@@ -876,6 +905,33 @@ async function ensureSectionData(section: ProjectContentMode) {
   }
   if (section === "settings") {
     await loadSettings();
+  }
+}
+
+async function refreshLoadedSectionData() {
+  if (activeSection.value === "readme") {
+    if (readmesLoaded.value || settingsLoaded.value) {
+      await Promise.all([
+        readmesLoaded.value ? loadReadme(true) : Promise.resolve(),
+        props.repoFullName && settingsLoaded.value ? loadSettings(true) : Promise.resolve(),
+      ]);
+    }
+    return;
+  }
+  if (activeSection.value === "issues" && issuesLoadedState.value) {
+    await loadIssues(true);
+    return;
+  }
+  if (activeSection.value === "pulls" && pullsLoadedState.value) {
+    await loadPullRequests(true);
+    return;
+  }
+  if (activeSection.value === "actions" && actionsLoaded.value) {
+    await loadActions(true);
+    return;
+  }
+  if (activeSection.value === "settings" && settingsLoaded.value) {
+    await loadSettings(true);
   }
 }
 

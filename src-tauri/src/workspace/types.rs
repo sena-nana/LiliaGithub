@@ -694,6 +694,30 @@ pub struct GitHubWorkflowRun {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubProjectCache {
+    #[serde(default)]
+    pub repos: HashMap<String, GitHubProjectRepoCache>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubProjectRepoCache {
+    #[serde(default)]
+    pub management: Option<GitHubRepoManagement>,
+    #[serde(default)]
+    pub readmes: Option<Vec<RepoReadme>>,
+    #[serde(default)]
+    pub issues: HashMap<String, Vec<GitHubIssue>>,
+    #[serde(default)]
+    pub pull_requests: HashMap<String, Vec<GitHubPullRequest>>,
+    #[serde(default)]
+    pub pull_request_checks: HashMap<String, Vec<GitHubPullRequestCheck>>,
+    #[serde(default)]
+    pub workflow_runs: HashMap<String, Vec<GitHubWorkflowRun>>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubCreateIssueRequest {

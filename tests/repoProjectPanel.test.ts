@@ -204,6 +204,7 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
       projectIssueNumber: null,
       projectPullRequestNumber: null,
       projectRunId: null,
+      projectRefreshToken: 0,
       ...props,
     },
     global: {
@@ -431,6 +432,29 @@ describe("RepoProjectPanel", () => {
       expect(listGitHubIssues).toHaveBeenCalledTimes(2);
     });
     expect(listGitHubIssues).toHaveBeenLastCalledWith("sena-nana/remote-repo", "closed");
+  });
+
+  it("项目刷新 token 变化后对当前已加载分区强制刷新", async () => {
+    vi.mocked(listGitHubIssues)
+      .mockResolvedValueOnce(githubIssues)
+      .mockResolvedValueOnce([{ ...githubIssues[0], title: "刷新后的 Issue" }]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectRefreshToken: 1,
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenCalledWith("sena-nana/remote-repo", "open");
+
+    await view.rerender({ projectRefreshToken: 2 });
+
+    expect(await view.findByText("#12 刷新后的 Issue")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenLastCalledWith(
+      "sena-nana/remote-repo",
+      "open",
+      { forceRefresh: true },
+    );
   });
 
   it("linked worktree 在设置区显示删除工作树文案", async () => {
