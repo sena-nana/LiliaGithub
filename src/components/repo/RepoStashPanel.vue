@@ -184,13 +184,13 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
     <div v-else class="repo-stash-panel__shell">
       <aside class="repo-stash-panel__list" aria-label="Stash 列表">
         <header class="repo-stash-panel__head">
-          <div>
+          <div class="repo-stash-panel__head-meta">
             <h2>Stash</h2>
-            <span class="muted">{{ loading ? "正在读取" : `${stashes.length} 条` }}</span>
+            <span class="repo-stash-panel__head-count muted">{{ loading ? "正在读取" : `${stashes.length} 条` }}</span>
           </div>
           <button
             type="button"
-            class="repo-stash-panel__icon-btn"
+            class="ghost button-compact"
             title="保存 stash"
             aria-label="保存 stash"
             :disabled="!canMutate"
@@ -222,8 +222,8 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
       </aside>
 
       <section class="repo-stash-panel__detail" aria-label="Stash 内容">
-        <p v-if="detailLoading" class="muted repo-empty repo-stash-panel__empty">正在读取 stash 内容。</p>
-        <p v-else-if="!selectedStash" class="muted repo-empty repo-stash-panel__empty">选择一个 stash 查看内容。</p>
+        <p v-if="detailLoading" class="muted repo-empty repo-stash-panel__empty repo-stash-panel__detail-empty">正在读取 stash 内容。</p>
+        <p v-else-if="!selectedStash" class="muted repo-empty repo-stash-panel__empty repo-stash-panel__detail-empty">选择一个 stash 查看内容。</p>
         <RepoDiffWorkspace
           v-else
           :files="workspaceFiles"
@@ -329,8 +329,18 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
 
 .repo-stash-panel__head {
   justify-content: space-between;
-  padding: 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.repo-stash-panel__head-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.repo-stash-panel__head-count {
+  font-size: 11px;
 }
 
 .repo-stash-panel__head h2,
@@ -339,16 +349,16 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
   font-size: 13px;
 }
 
-.repo-stash-panel__icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  background: var(--bg);
+.repo-stash-panel__detail {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+}
+
+.repo-stash-panel__detail-empty {
+  margin: 0;
+  justify-self: center;
+  align-self: center;
 }
 
 .repo-stash-panel__items {
