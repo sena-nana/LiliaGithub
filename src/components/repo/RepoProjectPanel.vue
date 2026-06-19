@@ -1226,6 +1226,10 @@ function selectReadme(path: string) {
           :commit-meta-title="commitMetaTitle"
           :selected-commit-hash="selectedCommitHash"
           @open-commit="emit('openCommit', $event)"
+          @cherry-pick-commit="emit('cherryPickCommit', $event)"
+          @revert-commit="emit('revertCommit', $event)"
+          @reset-commit="emit('resetCommit', $event.hash, $event.mode)"
+          @create-branch-from-commit="emit('createBranchFromCommit', $event)"
         />
 
         <section v-else-if="activeSection === 'launch'" class="project-section">
@@ -1670,10 +1674,6 @@ function selectReadme(path: string) {
         embedded
         closable
         @close="emit('closeCommit')"
-        @cherry-pick-commit="emit('cherryPickCommit', $event)"
-        @revert-commit="emit('revertCommit', $event)"
-        @reset-commit="emit('resetCommit', $event.hash, $event.mode)"
-        @create-branch-from-commit="emit('createBranchFromCommit', $event)"
       />
 
       <aside v-if="showProjectSidebar" class="project-sidebar">

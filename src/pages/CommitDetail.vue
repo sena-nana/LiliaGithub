@@ -15,27 +15,6 @@ const repoId = computed(() => String(route.params.repoId ?? ""));
 const hash = computed(() => String(route.params.hash ?? ""));
 const summary = computed(() => workspace.repoById(repoId.value));
 const repoTitle = computed(() => repoDisplayName(summary.value) || repoId.value);
-
-function cherryPickCommit(commitHash: string) {
-  void workspace.cherryPickCommit(repoId.value, commitHash);
-}
-
-function revertCommit(commitHash: string) {
-  void workspace.revertCommit(repoId.value, commitHash);
-}
-
-function resetCommit(payload: { hash: string; mode: "soft" | "mixed" | "hard" }) {
-  if (payload.mode === "hard" && !window.confirm("hard reset 会丢弃当前工作区改动，确认继续？")) {
-    return;
-  }
-  void workspace.resetToCommit(repoId.value, payload.hash, payload.mode);
-}
-
-function createBranchFromCommit(commitHash: string) {
-  const name = window.prompt("新分支名", "feature/from-commit")?.trim();
-  if (!name) return;
-  void workspace.createBranch(repoId.value, name, commitHash, true);
-}
 </script>
 
 <template>
@@ -55,10 +34,6 @@ function createBranchFromCommit(commitHash: string) {
       :repo-id="repoId"
       :repo-title="repoTitle"
       :hash="hash"
-      @cherry-pick-commit="cherryPickCommit"
-      @revert-commit="revertCommit"
-      @reset-commit="resetCommit"
-      @create-branch-from-commit="createBranchFromCommit"
     />
   </section>
 </template>

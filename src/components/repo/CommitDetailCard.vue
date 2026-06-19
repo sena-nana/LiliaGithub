@@ -24,10 +24,6 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   close: [];
-  cherryPickCommit: [hash: string];
-  revertCommit: [hash: string];
-  resetCommit: [payload: { hash: string; mode: "soft" | "mixed" | "hard" }];
-  createBranchFromCommit: [hash: string];
 }>();
 
 const loading = ref(false);
@@ -195,26 +191,6 @@ function startResize(
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
-
-function emitCherryPick() {
-  if (!detail.value) return;
-  emit("cherryPickCommit", detail.value.hash);
-}
-
-function emitRevert() {
-  if (!detail.value) return;
-  emit("revertCommit", detail.value.hash);
-}
-
-function emitReset(mode: "soft" | "mixed" | "hard") {
-  if (!detail.value) return;
-  emit("resetCommit", { hash: detail.value.hash, mode });
-}
-
-function emitCreateBranch() {
-  if (!detail.value) return;
-  emit("createBranchFromCommit", detail.value.hash);
-}
 </script>
 
 <template>
@@ -284,13 +260,6 @@ function emitCreateBranch() {
             <span v-if="fileStatusSummary">{{ fileStatusSummary }}</span>
             <strong class="commit-file-picker__stat--add">+{{ totalAdditions }}</strong>
             <strong class="commit-file-picker__stat--del">-{{ totalDeletions }}</strong>
-          </div>
-          <div class="commit-detail-actions">
-            <button type="button" class="ghost" @click="emitCherryPick">Cherry-pick</button>
-            <button type="button" class="ghost" @click="emitRevert">Revert</button>
-            <button type="button" class="ghost" @click="emitReset('mixed')">Reset</button>
-            <button type="button" class="ghost" @click="emitReset('hard')">Hard reset</button>
-            <button type="button" class="ghost" @click="emitCreateBranch">新建分支</button>
           </div>
         </section>
       </template>
@@ -488,12 +457,6 @@ function emitCreateBranch() {
   align-items: center;
   gap: 6px;
   min-width: 0;
-}
-
-.commit-detail-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .commit-meta-line__refs {

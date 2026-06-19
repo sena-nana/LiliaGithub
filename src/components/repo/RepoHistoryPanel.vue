@@ -10,8 +10,12 @@ const props = defineProps<{
   selectedCommitHash?: string | null;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   openCommit: [commit: CommitSummary];
+  cherryPickCommit: [hash: string];
+  revertCommit: [hash: string];
+  resetCommit: [payload: { hash: string; mode: "mixed" | "hard" }];
+  createBranchFromCommit: [hash: string];
 }>();
 
 const graphRows = computed(() => buildCommitGraph(props.commits));
@@ -62,6 +66,36 @@ function linePath(line: CommitGraphLine, targetLane: number) {
 function lineKey(line: CommitGraphLine, targetLane: number) {
   return `${line.id}:${targetLane}`;
 }
+
+function commitContextMenu(commit: CommitSummary) {
+  return [
+    {
+      id: `cherry-pick:${commit.hash}`,
+      label: "拣选提交",
+      onSelect: () => emit("cherryPickCommit", commit.hash),
+    },
+    {
+      id: `revert:${commit.hash}`,
+      label: "还原提交",
+      onSelect: () => emit("revertCommit", commit.hash),
+    },
+    {
+      id: `reset:${commit.hash}`,
+      label: "重置到此提交",
+      onSelect: () => emit("resetCommit", { hash: commit.hash, mode: "mixed" }),
+    },
+    {
+      id: `hard-reset:${commit.hash}`,
+      label: "硬重置到此提交",
+      onSelect: () => emit("resetCommit", { hash: commit.hash, mode: "hard" }),
+    },
+    {
+      id: `create-branch:${commit.hash}`,
+      label: "基于此新建分支",
+      onSelect: () => emit("createBranchFromCommit", commit.hash),
+    },
+  ];
+}
 </script>
 
 <template>
@@ -80,7 +114,8 @@ function lineKey(line: CommitGraphLine, targetLane: number) {
         class="history-row"
         :class="{ 'is-active': selectedCommitHash === row.commit.hash }"
         :title="commitMetaTitle(row.commit)"
-        @click="$emit('openCommit', row.commit)"
+        v-context-menu="commitContextMenu(row.commit)"
+        @click="emit('openCommit', row.commit)"
       >
         <span class="history-graph" aria-label="提交图谱">
           <svg
