@@ -1931,6 +1931,25 @@ fn repo_group_creation_trims_and_rejects_empty_or_duplicate_names() {
 }
 
 #[test]
+fn repo_group_rename_trims_and_rejects_empty_or_duplicate_names() {
+    let mut settings = WorkspaceSettings::default();
+    let frontend = create_repo_group(&mut settings, "前端").unwrap();
+    create_repo_group(&mut settings, "后端").unwrap();
+
+    rename_repo_group(&mut settings, &frontend.id, " 客户端 ").unwrap();
+
+    assert_eq!(settings.repo_groups[0].name, "客户端");
+    assert_eq!(
+        rename_repo_group(&mut settings, &frontend.id, "   ").unwrap_err(),
+        "分组名称不能为空"
+    );
+    assert_eq!(
+        rename_repo_group(&mut settings, &frontend.id, "后端").unwrap_err(),
+        "已存在同名仓库分组"
+    );
+}
+
+#[test]
 fn moving_repo_to_group_removes_it_from_previous_group() {
     let mut settings = WorkspaceSettings::default();
     let frontend = create_repo_group(&mut settings, "前端").unwrap();

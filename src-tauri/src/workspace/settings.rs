@@ -73,6 +73,42 @@ pub(super) fn create_repo_group(
     Ok(group)
 }
 
+pub(super) fn rename_repo_group(
+    settings: &mut WorkspaceSettings,
+    group_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    let normalized_group_id = group_id.trim();
+    let normalized_name = name.trim();
+    if normalized_group_id.is_empty() {
+        return Err("分组 ID 不能为空".to_string());
+    }
+    if normalized_name.is_empty() {
+        return Err("分组名称不能为空".to_string());
+    }
+    if !settings
+        .repo_groups
+        .iter()
+        .any(|group| group.id == normalized_group_id)
+    {
+        return Err("未找到仓库分组".to_string());
+    }
+    let name_key = repo_group_name_key(normalized_name);
+    if settings.repo_groups.iter().any(|group| {
+        group.id != normalized_group_id && repo_group_name_key(&group.name) == name_key
+    }) {
+        return Err("已存在同名仓库分组".to_string());
+    }
+    if let Some(group) = settings
+        .repo_groups
+        .iter_mut()
+        .find(|group| group.id == normalized_group_id)
+    {
+        group.name = normalized_name.to_string();
+    }
+    Ok(())
+}
+
 pub(super) fn delete_repo_group(
     settings: &mut WorkspaceSettings,
     group_id: &str,
@@ -269,6 +305,18 @@ pub fn workspace_create_repo_group(
 ) -> Result<WorkspaceSettings, String> {
     let mut settings = load_settings(&app);
     create_repo_group(&mut settings, &name)?;
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_rename_repo_group(
+    app: AppHandle,
+    group_id: String,
+    name: String,
+) -> Result<WorkspaceSettings, String> {
+    let mut settings = load_settings(&app);
+    rename_repo_group(&mut settings, &group_id, &name)?;
     save_settings(&app, &settings)?;
     Ok(settings)
 }

@@ -394,6 +394,12 @@ export async function createRepoGroup(name: string) {
   return state.settings;
 }
 
+export async function renameRepoGroup(groupId: string, name: string) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.renameRepoGroup(groupId, name);
+  return state.settings;
+}
+
 export async function deleteRepoGroup(groupId: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.deleteRepoGroup(groupId);

@@ -54,6 +54,7 @@ pub fn run() {
             workspace::repos::workspace_clone_repo,
             workspace::settings::workspace_hide_repo,
             workspace::settings::workspace_create_repo_group,
+            workspace::settings::workspace_rename_repo_group,
             workspace::settings::workspace_delete_repo_group,
             workspace::settings::workspace_move_repo_to_group,
             workspace::settings::workspace_delete_local_repo,
