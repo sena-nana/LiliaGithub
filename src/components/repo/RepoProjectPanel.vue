@@ -6,7 +6,9 @@ import {
   Check,
   CircleDot,
   CircleOff,
+  Eye,
   ExternalLink,
+  GitFork,
   GitMerge,
   GitPullRequest,
   ListFilter,
@@ -16,6 +18,7 @@ import {
   RotateCcw,
   Save,
   Settings2,
+  Star,
   Trash2,
   X,
 } from "@lucide/vue";
@@ -298,6 +301,28 @@ const aboutDescription = computed(() => settings.value?.description?.trim() ?? "
 const aboutHomepage = computed(() => settings.value?.homepage?.trim() ?? "");
 const aboutHomepageHref = computed(() => normalizedExternalUrl(aboutHomepage.value));
 const aboutTopics = computed(() => settings.value?.topics ?? []);
+const aboutStats = computed(() => {
+  const repo = settings.value;
+  if (!repo) return [];
+  return [
+    {
+      key: "stars",
+      label: repo.stargazersCount === 1 ? "star" : "stars",
+      value: repo.stargazersCount,
+      icon: Star,
+    },
+    { key: "watching", label: "watching", value: repo.watchersCount, icon: Eye },
+    {
+      key: "forks",
+      label: repo.forksCount === 1 ? "fork" : "forks",
+      value: repo.forksCount,
+      icon: GitFork,
+    },
+  ].map((stat) => {
+    const count = formatGitHubCount(stat.value);
+    return { ...stat, count, text: `${count} ${stat.label}` };
+  });
+});
 const deleteConfirmMatches = computed(() =>
   Boolean(deleteExpectedInput.value) && deleteConfirmInput.value.trim() === deleteExpectedInput.value,
 );
@@ -464,6 +489,12 @@ function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
   return logs
     .map((entry) => `<span class="launch-log launch-log--${entry.stream}">${ansiUp.ansi_to_html(entry.line)}</span>`)
     .join("\n");
+}
+
+const githubCountFormatter = new Intl.NumberFormat("en-US");
+
+function formatGitHubCount(value: number) {
+  return githubCountFormatter.format(Math.max(0, value));
 }
 
 function githubAccessUnavailable(section: GitHubAccessSection, error: string | null): GitHubAccessUnavailable | null {
@@ -1877,6 +1908,18 @@ function selectReadme(path: string) {
               <div v-if="aboutTopics.length" class="project-topic-list" aria-label="Topics">
                 <span v-for="topic in aboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
               </div>
+              <div v-if="aboutStats.length" class="project-about-stats" aria-label="GitHub 仓库指标">
+                <div
+                  v-for="stat in aboutStats"
+                  :key="stat.key"
+                  class="project-about-stat"
+                  :aria-label="stat.text"
+                  :title="stat.text"
+                >
+                  <component :is="stat.icon" :size="14" aria-hidden="true" />
+                  <span><strong>{{ stat.count }}</strong>{{ stat.label }}</span>
+                </div>
+              </div>
             </template>
           </div>
         </section>
@@ -2168,20 +2211,51 @@ function selectReadme(path: string) {
 .project-about-summary,
 .project-about-form {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
 .project-about-summary p {
   margin: 0;
-  color: var(--text);
+  color: var(--text-muted);
   font-size: 14px;
-  line-height: 1.45;
+  font-weight: 500;
+  line-height: 1.42;
   overflow-wrap: anywhere;
 }
 
 .project-about-summary p.is-empty {
   color: var(--text-muted);
+}
+
+.project-about-stats {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding-top: 5px;
+}
+
+.project-about-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.project-about-stat span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-about-stat strong {
+  margin-right: 3px;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .project-about-summary a {
@@ -2191,6 +2265,7 @@ function selectReadme(path: string) {
   min-width: 0;
   color: var(--accent);
   font-size: 12px;
+  line-height: 1.3;
   text-decoration: none;
 }
 
@@ -2218,6 +2293,7 @@ function selectReadme(path: string) {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  margin-top: 1px;
 }
 
 .project-topic-pill {

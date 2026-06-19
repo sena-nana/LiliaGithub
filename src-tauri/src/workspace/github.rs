@@ -85,6 +85,12 @@ pub(super) struct GitHubRepoResponse {
     pub(super) allow_forking: bool,
     #[serde(default)]
     pub(super) web_commit_signoff_required: bool,
+    #[serde(default)]
+    pub(super) stargazers_count: u64,
+    #[serde(default)]
+    pub(super) subscribers_count: u64,
+    #[serde(default)]
+    pub(super) forks_count: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -511,6 +517,9 @@ pub(super) fn github_repo_management_from_response(
         delete_branch_on_merge: repo.delete_branch_on_merge,
         allow_forking: repo.allow_forking,
         web_commit_signoff_required: repo.web_commit_signoff_required,
+        stargazers_count: repo.stargazers_count,
+        watchers_count: repo.subscribers_count,
+        forks_count: repo.forks_count,
         html_url: repo.html_url,
     }
 }

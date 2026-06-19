@@ -578,6 +578,9 @@ pub struct GitHubRepoManagement {
     pub delete_branch_on_merge: bool,
     pub allow_forking: bool,
     pub web_commit_signoff_required: bool,
+    pub stargazers_count: u64,
+    pub watchers_count: u64,
+    pub forks_count: u64,
     pub html_url: String,
 }
 

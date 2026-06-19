@@ -176,6 +176,9 @@ export interface GitHubRepoManagement {
   deleteBranchOnMerge: boolean;
   allowForking: boolean;
   webCommitSignoffRequired: boolean;
+  stargazersCount: number;
+  watchersCount: number;
+  forksCount: number;
   htmlUrl: string;
 }
 
