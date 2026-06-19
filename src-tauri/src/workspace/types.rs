@@ -716,6 +716,10 @@ pub struct GitHubProjectRepoCache {
     pub pull_request_checks: HashMap<String, Vec<GitHubPullRequestCheck>>,
     #[serde(default)]
     pub workflow_runs: HashMap<String, Vec<GitHubWorkflowRun>>,
+    #[serde(default)]
+    pub commits: HashMap<String, Vec<CommitSummary>>,
+    #[serde(default)]
+    pub commit_details: HashMap<String, CommitDetail>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

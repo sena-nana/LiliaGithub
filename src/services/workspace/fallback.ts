@@ -6,7 +6,9 @@ import type {
   BranchSummary,
   CommitDetail,
   CommitFileChange,
+  CommitSummary,
   GitHubBindingStatus,
+  GitHubCommitListOptions,
   GitHubContributionMeta,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
@@ -228,6 +230,23 @@ function cloneCommitFileChange(file: CommitFileChange): CommitFileChange {
   };
 }
 
+function cloneCommitSummary(commit: CommitSummary): CommitSummary {
+  return {
+    ...commit,
+    parents: [...commit.parents],
+    refs: [...commit.refs],
+  };
+}
+
+function cloneCommitDetail(detail: CommitDetail): CommitDetail {
+  return {
+    ...detail,
+    parents: [...detail.parents],
+    refs: [...detail.refs],
+    files: detail.files.map(cloneCommitFileChange),
+  };
+}
+
 function cloneRepoRemote(remote: RepoRemote): RepoRemote {
   return { ...remote };
 }
@@ -380,6 +399,93 @@ function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]>
         updatedAt: "2026-06-12T09:02:00Z",
       },
     ],
+  };
+}
+
+function createFallbackGitHubCommits(): Record<string, CommitSummary[]> {
+  return {
+    "sena-nana/LiliaGithub": [
+      {
+        hash: "1234567890abcdef",
+        shortHash: "1234567",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        timestamp: 1_785_000_000,
+        subject: "搭建 LiliaGithub MVP",
+        parents: ["abcdef1234567890"],
+        refs: ["main"],
+      },
+      {
+        hash: "abcdef1234567890",
+        shortHash: "abcdef1",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        timestamp: 1_784_990_000,
+        subject: "初始化工作区扫描",
+        parents: [],
+        refs: [],
+      },
+    ],
+  };
+}
+
+function createFallbackGitHubCommitDetails(): Record<string, Record<string, CommitDetail>> {
+  return {
+    "sena-nana/LiliaGithub": {
+      "1234567890abcdef": {
+        hash: "1234567890abcdef",
+        shortHash: "1234567",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        committer: "Sena",
+        committerEmail: "sena@example.com",
+        timestamp: 1_785_000_000,
+        subject: "搭建 LiliaGithub MVP",
+        body: "搭建远程仓库项目视图。",
+        parents: ["abcdef1234567890"],
+        refs: ["main"],
+        files: [
+          {
+            path: "src/pages/Home.vue",
+            oldPath: null,
+            status: "modified",
+            additions: 24,
+            deletions: 8,
+            patch: "diff --git a/src/pages/Home.vue b/src/pages/Home.vue\n@@ -1,3 +1,4 @@\n <template>\n-  <h1>Lilia</h1>\n+  <h1>LiliaGithub</h1>\n+  <p>远程仓库管理</p>\n </template>",
+            hunks: [
+              {
+                header: "@@ -1,3 +1,4 @@",
+                oldStart: 1,
+                oldLines: 3,
+                newStart: 1,
+                newLines: 4,
+                lines: [
+                  { kind: "context", content: "<template>", oldLine: 1, newLine: 1 },
+                  { kind: "deleted", content: "  <h1>Lilia</h1>", oldLine: 2, newLine: null },
+                  { kind: "added", content: "  <h1>LiliaGithub</h1>", oldLine: null, newLine: 2 },
+                  { kind: "added", content: "  <p>远程仓库管理</p>", oldLine: null, newLine: 3 },
+                  { kind: "context", content: "</template>", oldLine: 3, newLine: 4 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      "abcdef1234567890": {
+        hash: "abcdef1234567890",
+        shortHash: "abcdef1",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        committer: "Sena",
+        committerEmail: "sena@example.com",
+        timestamp: 1_784_990_000,
+        subject: "初始化工作区扫描",
+        body: "",
+        parents: [],
+        refs: [],
+        files: [],
+      },
+    },
   };
 }
 
@@ -676,6 +782,8 @@ let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
 let fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+let fallbackGitHubCommits = createFallbackGitHubCommits();
+let fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
 let fallbackGitHubBranches = createFallbackGitHubBranches();
 let fallbackRepoStashes = createFallbackRepoStashes();
 let fallbackRepoRemotes = createFallbackRepoRemotes();
@@ -733,6 +841,8 @@ let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackGitHubPullRequestListCalls: FallbackGitHubPullRequestListCall[] = [];
 let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListCall[] = [];
 let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
+let fallbackGitHubCommitListCalls: Array<{ repoFullName: string; perPage: number | null; sha: string | null }> = [];
+let fallbackGitHubCommitDetailCalls: Array<{ repoFullName: string; hash: string }> = [];
 let fallbackOpenPathCalls: string[] = [];
 let fallbackOpenPathTargetCalls: Array<{ path: string; target: SystemOpenTarget }> = [];
 let fallbackCloneIndex = 1;
@@ -766,6 +876,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
   fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+  fallbackGitHubCommits = createFallbackGitHubCommits();
+  fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
   fallbackGitHubBranches = createFallbackGitHubBranches();
   fallbackRepoStashes = createFallbackRepoStashes();
   fallbackRepoRemotes = createFallbackRepoRemotes();
@@ -778,6 +890,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubPullRequestListCalls = [];
   fallbackGitHubPullRequestCheckListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
+  fallbackGitHubCommitListCalls = [];
+  fallbackGitHubCommitDetailCalls = [];
   fallbackOpenPathCalls = [];
   fallbackOpenPathTargetCalls = [];
   fallbackCloneIndex = 1;
@@ -899,6 +1013,14 @@ export function getFallbackGitHubWorkflowRunListCallsForTests() {
   return fallbackGitHubWorkflowRunListCalls.map((call) => ({ ...call }));
 }
 
+export function getFallbackGitHubCommitListCallsForTests() {
+  return fallbackGitHubCommitListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubCommitDetailCallsForTests() {
+  return fallbackGitHubCommitDetailCalls.map((call) => ({ ...call }));
+}
+
 export function getFallbackOpenPathCallsForTests(): string[] {
   return [...fallbackOpenPathCalls];
 }
@@ -946,6 +1068,29 @@ export function setFallbackGitHubWorkflowRunsForTests(runsByRepo: Record<string,
     Object.entries(runsByRepo).map(([repoFullName, runs]) => [
       repoFullName,
       runs.map((run) => ({ ...run })),
+    ]),
+  );
+}
+
+export function setFallbackGitHubCommitsForTests(commitsByRepo: Record<string, CommitSummary[]>) {
+  fallbackGitHubCommits = Object.fromEntries(
+    Object.entries(commitsByRepo).map(([repoFullName, commits]) => [
+      repoFullName,
+      commits.map(cloneCommitSummary),
+    ]),
+  );
+}
+
+export function setFallbackGitHubCommitDetailsForTests(detailsByRepo: Record<string, Record<string, CommitDetail>>) {
+  fallbackGitHubCommitDetails = Object.fromEntries(
+    Object.entries(detailsByRepo).map(([repoFullName, details]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(details).map(([hash, detail]) => [
+          hash,
+          cloneCommitDetail(detail),
+        ]),
+      ),
     ]),
   );
 }
@@ -1955,6 +2100,46 @@ export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | 
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .slice(0, perPage ?? undefined)
       .map((run) => ({ ...run }));
+  });
+}
+
+export function listGitHubRepoCommits(
+  repoFullName: string,
+  options: GitHubCommitListOptions = {},
+): Promise<CommitSummary[]> {
+  fallbackGitHubCommitListCalls.push({
+    repoFullName,
+    perPage: options.perPage ?? null,
+    sha: options.sha ?? null,
+  });
+  return call("github_list_repo_commits", {
+    repoFullName,
+    perPage: options.perPage ?? null,
+    sha: options.sha ?? null,
+  }, () =>
+    (fallbackGitHubCommits[repoFullName] ?? [])
+      .map(cloneCommitSummary)
+      .slice(0, options.perPage ?? undefined),
+  );
+}
+
+export function getGitHubRepoCommitDetail(repoFullName: string, hash: string): Promise<CommitDetail> {
+  fallbackGitHubCommitDetailCalls.push({ repoFullName, hash });
+  return call("github_get_repo_commit_detail", { repoFullName, hash }, () => {
+    const details = fallbackGitHubCommitDetails[repoFullName] ?? {};
+    const detail = details[hash] ??
+      Object.values(details).find((item) => item.hash === hash || item.shortHash === hash);
+    if (detail) return cloneCommitDetail(detail);
+    const commit = (fallbackGitHubCommits[repoFullName] ?? [])
+      .find((item) => item.hash === hash || item.shortHash === hash);
+    if (!commit) throw new Error(`未找到远程提交：${hash}`);
+    return {
+      ...cloneCommitSummary(commit),
+      committer: commit.author,
+      committerEmail: commit.authorEmail ?? null,
+      body: "",
+      files: [],
+    };
   });
 }
 

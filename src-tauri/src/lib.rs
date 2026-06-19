@@ -88,6 +88,8 @@ pub fn run() {
             workspace::github::github_create_issue,
             workspace::github::github_update_issue,
             workspace::github::github_list_workflow_runs,
+            workspace::github::github_list_repo_commits,
+            workspace::github::github_get_repo_commit_detail,
             workspace::repos::repo_get_summary,
             workspace::repos::repo_refresh_summary,
             workspace::repos::repo_refresh_language_stats,

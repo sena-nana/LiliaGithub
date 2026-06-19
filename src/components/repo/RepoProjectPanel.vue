@@ -358,7 +358,7 @@ const mergeMethodOptions: readonly { value: "merge" | "squash" | "rebase"; label
 ];
 const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
 const showCommitDetail = computed(() =>
-  !props.remoteOnly && activeSection.value === "history" && Boolean(props.selectedCommitHash),
+  activeSection.value === "history" && Boolean(props.selectedCommitHash),
 );
 const showProjectSidebar = computed(() =>
   activeSection.value === "readme" ||
@@ -1373,10 +1373,11 @@ function selectReadme(path: string) {
         />
 
         <RepoHistoryPanel
-          v-else-if="!remoteOnly && activeSection === 'history'"
+          v-else-if="activeSection === 'history'"
           :commits="statusCommits"
           :commit-meta-title="commitMetaTitle"
           :selected-commit-hash="selectedCommitHash"
+          :read-only="remoteOnly"
           @open-commit="emit('openCommit', $event)"
           @cherry-pick-commit="emit('cherryPickCommit', $event)"
           @revert-commit="emit('revertCommit', $event)"
