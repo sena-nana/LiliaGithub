@@ -1561,6 +1561,27 @@ pub async fn repo_list_stashes(
 }
 
 #[tauri::command]
+pub async fn repo_get_stash_detail(
+    app: AppHandle,
+    repo_id: String,
+    stash_id: String,
+) -> Result<RepoStashDetail, String> {
+    run_blocking("读取 stash 详情", move || {
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let stash = normalize_stash_id(&stash_id)?;
+        let entry = repo_stashes(&path)?
+            .into_iter()
+            .find(|entry| entry.id == stash)
+            .ok_or_else(|| "stash 不存在".to_string())?;
+        Ok(RepoStashDetail {
+            entry,
+            files: repo_stash_file_changes(&path, &stash),
+        })
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn repo_stash_save(
     app: AppHandle,
     repo_id: String,
@@ -2326,18 +2347,46 @@ pub(super) fn repo_commit_file_changes(
     let status_args = commit_diff_args("--name-status", hash, first_parent);
     let status_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
     let status_output = git_command_lossy(path, &status_refs).unwrap_or_default();
-    let statuses = commit_file_statuses(&status_output);
     let numstat_args = commit_diff_args("--numstat", hash, first_parent);
     let numstat_refs = numstat_args.iter().map(String::as_str).collect::<Vec<_>>();
-    let output = git_command_lossy(path, &numstat_refs).unwrap_or_default();
-    let stats = commit_file_numstats(&output);
+    let numstat_output = git_command_lossy(path, &numstat_refs).unwrap_or_default();
+    let patch_args = commit_diff_args("--patch", hash, first_parent);
+    let patch_refs = patch_args.iter().map(String::as_str).collect::<Vec<_>>();
+    let patch_output = git_command_lossy(path, &patch_refs).unwrap_or_default();
+    commit_file_changes_from_outputs(&status_output, &numstat_output, &patch_output)
+}
+
+pub(super) fn repo_stash_file_changes(path: &Path, stash: &str) -> Vec<CommitFileChange> {
+    let status_output = git_command_lossy(
+        path,
+        &["stash", "show", "--name-status", "--find-renames", stash],
+    )
+    .unwrap_or_default();
+    let numstat_output = git_command_lossy(
+        path,
+        &["stash", "show", "--numstat", "--find-renames", stash],
+    )
+    .unwrap_or_default();
+    let patch_output = git_command_lossy(
+        path,
+        &["stash", "show", "--patch", "--find-renames", stash],
+    )
+    .unwrap_or_default();
+    commit_file_changes_from_outputs(&status_output, &numstat_output, &patch_output)
+}
+
+pub(super) fn commit_file_changes_from_outputs(
+    status_output: &str,
+    numstat_output: &str,
+    patch_output: &str,
+) -> Vec<CommitFileChange> {
+    let statuses = commit_file_statuses(status_output);
+    let stats = commit_file_numstats(numstat_output);
     let mut files = statuses
         .into_iter()
         .map(|status| commit_file_change_from_status(status, &stats))
         .collect::<Vec<_>>();
-    let patch_args = commit_diff_args("--patch", hash, first_parent);
-    let patch_refs = patch_args.iter().map(String::as_str).collect::<Vec<_>>();
-    let patches = commit_file_patches(&git_command_lossy(path, &patch_refs).unwrap_or_default());
+    let patches = commit_file_patches(patch_output);
     for file in &mut files {
         if let Some(parsed) = patches.get(&file.path) {
             file.patch = parsed.patch.clone();

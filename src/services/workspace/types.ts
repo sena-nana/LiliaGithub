@@ -423,6 +423,11 @@ export interface RepoStashEntry {
   message: string;
 }
 
+export interface RepoStashDetail {
+  entry: RepoStashEntry;
+  files: CommitFileChange[];
+}
+
 export interface RepoRemote {
   name: string;
   fetchUrl: string;

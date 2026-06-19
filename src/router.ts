@@ -23,6 +23,7 @@ export function createLiliaGithubRouter(history: RouterHistory = createWebHistor
           { path: "repos/:repoId(.*)/files", component: RepoPage, meta: { repoTab: "files" } },
           { path: "repos/:repoId(.*)/changes", component: RepoPage, meta: { repoTab: "changes" } },
           { path: "repos/:repoId(.*)/history", component: RepoPage, meta: { repoTab: "history" } },
+          { path: "repos/:repoId(.*)/stash", component: RepoPage, meta: { repoTab: "stash" } },
           { path: "repos/:repoId(.*)/branches", component: RepoPage, meta: { repoTab: "repo" } },
           { path: "repos/:repoId(.*)/run", component: RepoPage, meta: { repoTab: "run" } },
           { path: "repos/:repoId(.*)", component: RepoPage, meta: { repoTab: "repo" } },

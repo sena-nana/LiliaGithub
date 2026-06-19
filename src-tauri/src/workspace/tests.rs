@@ -1208,6 +1208,68 @@ rename to docs/new.md",
 }
 
 #[test]
+fn parses_stash_file_changes_from_diff_outputs() {
+    let status = "\
+M\tsrc/app.ts
+A\tsrc/new.ts
+D\tsrc/old.ts
+R100\tsrc/name.ts\tsrc/renamed.ts";
+    let numstat = "\
+2\t1\tsrc/app.ts
+3\t0\tsrc/new.ts
+0\t2\tsrc/old.ts
+1\t1\tsrc/{name => renamed}.ts";
+    let patch = "\
+diff --git a/src/app.ts b/src/app.ts
+index 1111111..2222222 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1 +1,2 @@
+-old()
++new()
++ready()
+diff --git a/src/new.ts b/src/new.ts
+new file mode 100644
+--- /dev/null
++++ b/src/new.ts
+@@ -0,0 +1 @@
++created()
+diff --git a/src/old.ts b/src/old.ts
+deleted file mode 100644
+--- a/src/old.ts
++++ /dev/null
+@@ -1 +0,0 @@
+-removed()
+diff --git a/src/name.ts b/src/renamed.ts
+similarity index 100%
+rename from src/name.ts
+rename to src/renamed.ts";
+
+    let files = commit_file_changes_from_outputs(status, numstat, patch);
+
+    assert_eq!(files.len(), 4);
+    assert_eq!(files[0].status, "modified");
+    assert_eq!((files[0].additions, files[0].deletions), (2, 1));
+    assert_eq!(files[0].hunks[0].lines[0].kind, "deleted");
+    assert_eq!(files[1].status, "added");
+    assert_eq!((files[1].additions, files[1].deletions), (3, 0));
+    assert_eq!(files[2].status, "deleted");
+    assert_eq!((files[2].additions, files[2].deletions), (0, 2));
+    assert_eq!(files[3].status, "renamed");
+    assert_eq!(files[3].old_path.as_deref(), Some("src/name.ts"));
+    assert_eq!(files[3].path, "src/renamed.ts");
+    assert!(files[3].patch.contains("rename to src/renamed.ts"));
+}
+
+#[test]
+fn rejects_empty_stash_id() {
+    assert_eq!(
+        normalize_stash_id(" \t ").expect_err("empty stash id should fail"),
+        "stash 标识不能为空",
+    );
+}
+
+#[test]
 fn bulk_preview_blocks_dirty_pull_and_allows_push() {
     let dirty_pull_repo = test_repo_summary(|summary| {
         summary.id = "app".to_string();

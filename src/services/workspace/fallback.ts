@@ -5,6 +5,7 @@ import type {
   BulkSyncResult,
   BranchSummary,
   CommitDetail,
+  CommitFileChange,
   GitHubBindingStatus,
   GitHubContributionMeta,
   GitHubContributionResult,
@@ -44,6 +45,7 @@ import type {
   RepoResetMode,
   RepoSummary,
   RepoStashEntry,
+  RepoStashDetail,
   RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
@@ -205,6 +207,16 @@ function clonePullRequestCheck(check: GitHubPullRequestCheck): GitHubPullRequest
 
 function cloneRepoStashEntry(entry: RepoStashEntry): RepoStashEntry {
   return { ...entry };
+}
+
+function cloneCommitFileChange(file: CommitFileChange): CommitFileChange {
+  return {
+    ...file,
+    hunks: file.hunks.map((hunk) => ({
+      ...hunk,
+      lines: hunk.lines.map((line) => ({ ...line })),
+    })),
+  };
 }
 
 function cloneRepoRemote(remote: RepoRemote): RepoRemote {
@@ -2483,6 +2495,17 @@ export function listRepoStashes(repoId: string): Promise<RepoStashEntry[]> {
   return call("repo_list_stashes", { repoId }, () => [...(fallbackRepoStashes[repoId] ?? [])].map(cloneRepoStashEntry));
 }
 
+export function getRepoStashDetail(repoId: string, stashId: string): Promise<RepoStashDetail> {
+  return call("repo_get_stash_detail", { repoId, stashId }, () => {
+    const entry = (fallbackRepoStashes[repoId] ?? []).find((item) => item.id === stashId);
+    if (!entry) throw new Error("stash 不存在");
+    return {
+      entry: cloneRepoStashEntry(entry),
+      files: fallbackRepoStashFiles(entry).map(cloneCommitFileChange),
+    };
+  });
+}
+
 export function saveRepoStash(repoId: string, message?: string | null): Promise<RepoSummary> {
   return call("repo_stash_save", { repoId, message: message ?? null }, () => {
     const repo = fallbackRepo(repoId);
@@ -2499,6 +2522,42 @@ export function saveRepoStash(repoId: string, message?: string | null): Promise<
     }, ...existing];
     return { ...repo, stagedCount: 0, unstagedCount: 0, untrackedCount: 0 };
   });
+}
+
+function fallbackRepoStashFiles(entry: RepoStashEntry): CommitFileChange[] {
+  const escapedMessage = entry.message.replace(/"/g, "\\\"");
+  const patch = `diff --git a/src/pages/RepoDetail.vue b/src/pages/RepoDetail.vue
+index 1111111..2222222 100644
+--- a/src/pages/RepoDetail.vue
++++ b/src/pages/RepoDetail.vue
+@@ -1,3 +1,4 @@
+ <script setup lang="ts">
+-import { History } from "@lucide/vue";
++import { History, Archive } from "@lucide/vue";
++const stashMessage = "${escapedMessage}";
+ </script>`;
+  return [{
+    path: "src/pages/RepoDetail.vue",
+    oldPath: null,
+    status: "modified",
+    additions: 2,
+    deletions: 1,
+    patch,
+    hunks: [{
+      header: "@@ -1,3 +1,4 @@",
+      oldStart: 1,
+      oldLines: 3,
+      newStart: 1,
+      newLines: 4,
+      lines: [
+        { kind: "context", content: "<script setup lang=\"ts\">", oldLine: 1, newLine: 1 },
+        { kind: "deleted", content: "import { History } from \"@lucide/vue\";", oldLine: 2, newLine: null },
+        { kind: "added", content: "import { History, Archive } from \"@lucide/vue\";", oldLine: null, newLine: 2 },
+        { kind: "added", content: `const stashMessage = "${escapedMessage}";`, oldLine: null, newLine: 3 },
+        { kind: "context", content: "</script>", oldLine: 3, newLine: 4 },
+      ],
+    }],
+  }];
 }
 
 export function applyRepoStash(repoId: string, stashId: string): Promise<RepoOperationResult> {

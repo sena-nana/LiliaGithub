@@ -124,6 +124,7 @@ pub fn run() {
             workspace::repos::repo_delete_branch,
             workspace::repos::repo_set_upstream,
             workspace::repos::repo_list_stashes,
+            workspace::repos::repo_get_stash_detail,
             workspace::repos::repo_stash_save,
             workspace::repos::repo_stash_apply,
             workspace::repos::repo_stash_pop,

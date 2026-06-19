@@ -1319,6 +1319,50 @@ describe("基础路由", () => {
     );
   });
 
+  it("仓库详情页提供本地 stash 管理页签并按选中 stash 执行操作", async () => {
+    const service = await import("../src/services/workspace");
+    await service.saveRepoStash("LiliaGithub", "On main: newer stash");
+    const applyStash = vi.spyOn(service, "applyRepoStash");
+
+    await renderAt("/repos/LiliaGithub/stash");
+
+    expect(await screen.findByRole("tab", { name: "Stash" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "文件树" })).toBeInTheDocument();
+    const secondaryActions = screen.getByRole("group", { name: "扩展仓库操作" });
+    expect(within(secondaryActions).queryByRole("button", { name: "Apply stash" })).toBeNull();
+    expect(within(secondaryActions).queryByRole("button", { name: "Pop stash" })).toBeNull();
+    expect(within(secondaryActions).queryByRole("button", { name: "Drop stash" })).toBeNull();
+
+    await fireEvent.click(await screen.findByRole("button", { name: /stash@\{1\}/ }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Stash 内容")).toHaveTextContent("On main: WIP toolbar");
+    });
+    expect(await screen.findByText("stash 变更")).toBeInTheDocument();
+    expect(screen.getByLabelText("改动文件列表")).toHaveTextContent("src/pages/RepoDetail.vue");
+    expect(screen.getByLabelText("stash diff")).toHaveTextContent("@@ -1,3 +1,4 @@");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Raw diff" }));
+    expect(screen.getByLabelText("stash diff")).toHaveTextContent("diff --git a/src/pages/RepoDetail.vue b/src/pages/RepoDetail.vue");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(applyStash).toHaveBeenCalledWith("LiliaGithub", "stash@{1}");
+    });
+    service.resetWorkspaceFallbacksForTests();
+  });
+
+  it("远程仓库直达 stash 页显示本地限制空状态", async () => {
+    const service = await import("../src/services/workspace");
+    service.setFallbackGitHubBranchesForTests({ "sena-nana/EmptyRemote": [] });
+
+    await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/stash");
+
+    expect(await screen.findByText("stash 仅支持本地仓库。")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Stash" })).toBeNull();
+  });
+
   it("仓库项目信息页显示 README、Issues、Actions 和 Settings", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackRepoReadmesForTests({
