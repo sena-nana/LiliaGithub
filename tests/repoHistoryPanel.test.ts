@@ -1,6 +1,9 @@
-import { fireEvent, render } from "@testing-library/vue";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/vue";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import RepoHistoryPanel from "../src/components/repo/RepoHistoryPanel.vue";
+import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
+import { vContextMenu } from "../src/directives/contextMenu";
 import type { CommitSummary } from "../src/services/workspace";
 
 function commit(hash: string, parents: string[] = [], refs: string[] = []): CommitSummary {
@@ -32,7 +35,54 @@ function expectValidGraphGeometry(container: HTMLElement) {
   }
 }
 
+function renderHistoryPanel(props: {
+  commits: CommitSummary[];
+  commitMetaTitle?: (commit: CommitSummary) => string;
+  selectedCommitHash?: string | null;
+}) {
+  const handlers = {
+    openCommit: vi.fn(),
+    cherryPickCommit: vi.fn(),
+    revertCommit: vi.fn(),
+    resetCommit: vi.fn(),
+    createBranchFromCommit: vi.fn(),
+  };
+  const resolvedProps = {
+    commitMetaTitle: (item: CommitSummary) => item.hash,
+    selectedCommitHash: null,
+    ...props,
+  };
+
+  render(ContextMenuHost);
+  const view = render(RepoHistoryPanel, {
+    props: {
+      ...resolvedProps,
+      onOpenCommit: handlers.openCommit,
+      onCherryPickCommit: handlers.cherryPickCommit,
+      onRevertCommit: handlers.revertCommit,
+      onResetCommit: handlers.resetCommit,
+      onCreateBranchFromCommit: handlers.createBranchFromCommit,
+    },
+    global: {
+      directives: {
+        contextMenu: vContextMenu,
+      },
+    },
+  });
+  return { ...view, handlers };
+}
+
 describe("RepoHistoryPanel", () => {
+  beforeEach(() => {
+    closeContextMenu();
+    installContextMenu();
+  });
+
+  afterEach(() => {
+    closeContextMenu();
+    vi.restoreAllMocks();
+  });
+
   it("renders multi-lane topology and keeps commit open behavior", async () => {
     const commits = [
       commit("merge", ["main", "feature"], ["HEAD -> main", "origin/main"]),
@@ -40,12 +90,7 @@ describe("RepoHistoryPanel", () => {
       commit("feature", ["root"], ["feature"]),
       commit("root"),
     ];
-    const view = render(RepoHistoryPanel, {
-      props: {
-        commits,
-        commitMetaTitle: (item: CommitSummary) => item.hash,
-      },
-    });
+    const view = renderHistoryPanel({ commits });
 
     const connector = Array.from(view.container.querySelectorAll(".history-graph__connector")).find(
       (element) => element.getAttribute("stroke") === "#22a06b",
@@ -68,7 +113,7 @@ describe("RepoHistoryPanel", () => {
 
     await fireEvent.click(view.getByRole("button", { name: /merge/ }));
 
-    expect(view.emitted("openCommit")?.[0]).toEqual([commits[0]]);
+    expect(view.handlers.openCommit).toHaveBeenCalledWith(commits[0]);
   });
 
   it("renders dangling and octopus graph geometry without invalid coordinates", () => {
@@ -78,12 +123,7 @@ describe("RepoHistoryPanel", () => {
       commit("feature-a", ["root"]),
       commit("root"),
     ];
-    const view = render(RepoHistoryPanel, {
-      props: {
-        commits,
-        commitMetaTitle: (item: CommitSummary) => item.hash,
-      },
-    });
+    const view = renderHistoryPanel({ commits });
 
     expect(view.container.querySelectorAll(".history-graph__connector").length).toBeGreaterThanOrEqual(2);
     expect(view.container.querySelectorAll(".history-graph__node")).toHaveLength(4);
@@ -92,15 +132,45 @@ describe("RepoHistoryPanel", () => {
 
   it("marks the selected commit without rendering detail content", async () => {
     const commits = [commit("1234567890abcdef")];
-    const view = render(RepoHistoryPanel, {
-      props: {
-        commits,
-        commitMetaTitle: (item: CommitSummary) => item.hash,
-        selectedCommitHash: commits[0].hash,
-      },
+    const view = renderHistoryPanel({
+      commits,
+      selectedCommitHash: commits[0].hash,
     });
 
     expect(view.getByRole("button", { name: /1234567890abcdef/ })).toHaveClass("is-active");
     expect(view.queryByLabelText("提交详情卡片")).toBeNull();
+  });
+
+  it("shows commit actions in the row context menu and emits the selected operation", async () => {
+    const commits = [commit("1234567890abcdef")];
+    const view = renderHistoryPanel({ commits });
+    const row = view.getByRole("button", { name: /1234567890abcdef/ });
+
+    await fireEvent.contextMenu(row);
+
+    expect(await screen.findByRole("menuitem", { name: "拣选提交" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "还原提交" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "重置到此提交" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "硬重置到此提交" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "基于此新建分支" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("menuitem", { name: "拣选提交" }));
+    expect(view.handlers.cherryPickCommit).toHaveBeenCalledWith(commits[0].hash);
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "还原提交" }));
+    expect(view.handlers.revertCommit).toHaveBeenCalledWith(commits[0].hash);
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "重置到此提交" }));
+    expect(view.handlers.resetCommit).toHaveBeenCalledWith({ hash: commits[0].hash, mode: "mixed" });
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "硬重置到此提交" }));
+    expect(view.handlers.resetCommit).toHaveBeenCalledWith({ hash: commits[0].hash, mode: "hard" });
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "基于此新建分支" }));
+    expect(view.handlers.createBranchFromCommit).toHaveBeenCalledWith(commits[0].hash);
   });
 });
