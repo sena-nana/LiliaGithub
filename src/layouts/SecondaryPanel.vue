@@ -501,7 +501,7 @@ async function deleteGroup(group: { id: string }) {
               :class="{ 'is-open': !section.collapsed }"
             />
           </button>
-          <div v-else class="sb-group-edit">
+          <div v-else class="sb-group-toggle sb-group-edit">
             <input
               v-model="editingGroupName"
               type="text"
@@ -804,26 +804,38 @@ async function deleteGroup(group: { id: string }) {
 }
 
 .sb-group-edit {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  position: relative;
+  cursor: text;
 }
 
 .sb-group-edit input {
-  width: 100%;
-  height: 28px;
-  padding: 0 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  margin-left: -3px;
+  padding: 0 4px;
   border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--bg-subtle);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  line-height: 20px;
 }
 
 .sb-group-edit__error {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  z-index: 2;
   margin: 0;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
   color: var(--err);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .sb-tree__row--project.is-active {

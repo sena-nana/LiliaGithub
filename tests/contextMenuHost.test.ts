@@ -146,6 +146,36 @@ describe("ContextMenuHost", () => {
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
+  it("一级菜单项悬浮时显示子菜单", async () => {
+    const action = vi.fn();
+    renderWithTemplate(
+      `<button data-testid="target" v-context-menu="items">目标</button>`,
+      () => ({
+        items: [
+          {
+            id: "move",
+            label: "移动到分组",
+            children: [
+              { id: "frontend", label: "前端", onSelect: action },
+            ],
+          },
+          { id: "hide", label: "隐藏仓库", onSelect: vi.fn() },
+        ],
+      }),
+    );
+
+    await fireEvent.contextMenu(screen.getByTestId("target"));
+    const parentItem = await screen.findByRole("menuitem", { name: "移动到分组" });
+
+    expect(screen.queryByRole("menuitem", { name: "前端" })).toBeNull();
+
+    await fireEvent.mouseEnter(parentItem);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "前端" }));
+
+    expect(action).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
   it("Esc 会关闭菜单", async () => {
     vi.useFakeTimers();
     renderWithTemplate(
