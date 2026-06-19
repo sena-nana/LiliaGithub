@@ -1,9 +1,17 @@
-import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun } from "../services/workspace";
+import type {
+  GitHubIssue,
+  GitHubPullRequest,
+  GitHubPullRequestCheck,
+  GitHubRepoSummary,
+  GitHubWorkflowRun,
+} from "../services/workspace";
 
 export type HomeGitHubOverviewSnapshot = {
   repos: GitHubRepoSummary[];
   nextPage: number | null;
   issuesByRepo: Record<string, GitHubIssue[] | undefined>;
+  pullRequestsByRepo: Record<string, GitHubPullRequest[] | undefined>;
+  pullRequestChecksByRepo: Record<string, Record<number, GitHubPullRequestCheck[] | undefined> | undefined>;
   workflowRunsByRepo: Record<string, GitHubWorkflowRun[] | undefined>;
 };
 
@@ -17,26 +25,38 @@ function cloneIssue(issue: GitHubIssue): GitHubIssue {
   };
 }
 
-function cloneIssuesByRepo(issuesByRepo: Record<string, GitHubIssue[] | undefined>) {
-  if (!issuesByRepo) return {};
+function cloneShallow<T extends object>(item: T): T {
+  return { ...item };
+}
+
+function cloneListByRepo<T>(
+  itemsByRepo: Record<string, T[] | undefined>,
+  cloneItem: (item: T) => T,
+) {
+  if (!itemsByRepo) return {};
   return Object.fromEntries(
-    Object.entries(issuesByRepo).map(([repoFullName, issues]) => [
+    Object.entries(itemsByRepo).map(([repoFullName, items]) => [
       repoFullName,
-      issues?.map(cloneIssue),
+      items?.map(cloneItem),
     ]),
   );
 }
 
-function cloneWorkflowRun(run: GitHubWorkflowRun): GitHubWorkflowRun {
-  return { ...run };
-}
-
-function cloneWorkflowRunsByRepo(workflowRunsByRepo: Record<string, GitHubWorkflowRun[] | undefined>) {
-  if (!workflowRunsByRepo) return {};
+function clonePullRequestChecksByRepo(
+  pullRequestChecksByRepo: Record<string, Record<number, GitHubPullRequestCheck[] | undefined> | undefined>,
+) {
+  if (!pullRequestChecksByRepo) return {};
   return Object.fromEntries(
-    Object.entries(workflowRunsByRepo).map(([repoFullName, runs]) => [
+    Object.entries(pullRequestChecksByRepo).map(([repoFullName, checksByPull]) => [
       repoFullName,
-      runs?.map(cloneWorkflowRun),
+      checksByPull
+        ? Object.fromEntries(
+            Object.entries(checksByPull).map(([pullNumber, checks]) => [
+              pullNumber,
+              checks?.map(cloneShallow),
+            ]),
+          )
+        : undefined,
     ]),
   );
 }
@@ -45,8 +65,10 @@ function cloneSnapshot(snapshot: HomeGitHubOverviewSnapshot): HomeGitHubOverview
   return {
     repos: snapshot.repos.map((repo) => ({ ...repo })),
     nextPage: snapshot.nextPage,
-    issuesByRepo: cloneIssuesByRepo(snapshot.issuesByRepo),
-    workflowRunsByRepo: cloneWorkflowRunsByRepo(snapshot.workflowRunsByRepo),
+    issuesByRepo: cloneListByRepo(snapshot.issuesByRepo, cloneIssue),
+    pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, cloneShallow),
+    pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
+    workflowRunsByRepo: cloneListByRepo(snapshot.workflowRunsByRepo, cloneShallow),
   };
 }
 
