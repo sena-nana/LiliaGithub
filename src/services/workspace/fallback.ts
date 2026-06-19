@@ -260,6 +260,9 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       deleteBranchOnMerge: true,
       allowForking: true,
       webCommitSignoffRequired: false,
+      stargazersCount: 128,
+      watchersCount: 9,
+      forksCount: 14,
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
     },
     "sena-nana/Lilia": {
@@ -281,6 +284,9 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       deleteBranchOnMerge: false,
       allowForking: false,
       webCommitSignoffRequired: false,
+      stargazersCount: 86,
+      watchersCount: 7,
+      forksCount: 6,
       htmlUrl: "https://github.com/sena-nana/Lilia",
     },
   };
@@ -1577,6 +1583,9 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
     deleteBranchOnMerge: true,
     allowForking: !repo.private,
     webCommitSignoffRequired: false,
+    stargazersCount: 0,
+    watchersCount: 0,
+    forksCount: 0,
     htmlUrl: repo.htmlUrl,
   };
   fallbackGitHubRepoManagement[repoFullName] = management;
@@ -1638,6 +1647,9 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       deleteBranchOnMerge: true,
       allowForking: !repo.private,
       webCommitSignoffRequired: false,
+      stargazersCount: 0,
+      watchersCount: 0,
+      forksCount: 0,
       htmlUrl: repo.htmlUrl,
     };
     fallbackGitHubIssues[fullName] = [];

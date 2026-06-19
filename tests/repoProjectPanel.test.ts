@@ -45,6 +45,9 @@ const githubSettings: GitHubRepoManagement = {
   deleteBranchOnMerge: false,
   allowForking: true,
   webCommitSignoffRequired: false,
+  stargazersCount: 128,
+  watchersCount: 9,
+  forksCount: 14,
   htmlUrl: "https://github.com/sena-nana/remote-repo",
 };
 
@@ -307,7 +310,13 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
     expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
     expect(view.getByText("vue")).toBeInTheDocument();
-    expect(view.getByText("tauri")).toBeInTheDocument();
+    const tauriTopic = view.getByText("tauri");
+    const starsStat = view.getByLabelText("128 stars");
+    expect(tauriTopic).toBeInTheDocument();
+    expect(starsStat).toBeInTheDocument();
+    expect(view.getByLabelText("9 watching")).toBeInTheDocument();
+    expect(view.getByLabelText("14 forks")).toBeInTheDocument();
+    expect(tauriTopic.compareDocumentPosition(starsStat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
