@@ -47,6 +47,14 @@ pub(super) struct GitHubRepoOwnerResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubRepoLicenseResponse {
+    pub(super) key: String,
+    pub(super) name: String,
+    pub(super) spdx_id: Option<String>,
+    pub(super) url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubRepoResponse {
     pub(super) id: u64,
     pub(super) name: String,
@@ -93,28 +101,14 @@ pub(super) struct GitHubRepoResponse {
     pub(super) subscribers_count: u64,
     #[serde(default)]
     pub(super) forks_count: u64,
+    #[serde(default)]
+    pub(super) license: Option<GitHubRepoLicenseResponse>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubRepoTopicsResponse {
     #[serde(default)]
     pub(super) names: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GitHubContentListItem {
-    pub(super) name: String,
-    pub(super) path: String,
-    #[serde(rename = "type")]
-    pub(super) kind: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct GitHubContentFileResponse {
-    pub(super) name: String,
-    pub(super) path: String,
-    pub(super) encoding: Option<String>,
-    pub(super) content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -636,6 +630,12 @@ pub(super) fn github_repo_management_from_response(
         watchers_count: repo.subscribers_count,
         forks_count: repo.forks_count,
         html_url: repo.html_url,
+        license: repo.license.map(|license| GitHubRepoLicense {
+            key: license.key,
+            name: license.name,
+            spdx_id: license.spdx_id,
+            url: license.url,
+        }),
     }
 }
 
@@ -1972,32 +1972,6 @@ pub async fn github_list_repo_contribution(
             days: github_contribution_days(&counts, end_day_index),
             meta: github_contribution_meta(1, 1, 0),
         })
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn github_list_repo_readmes(
-    app: AppHandle,
-    repo_full_name: String,
-    force_refresh: Option<bool>,
-) -> Result<Vec<RepoReadme>, String> {
-    run_blocking("读取 GitHub README", move || {
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.readmes.clone())
-            {
-                return Ok(cached);
-            }
-        }
-        let readmes = read_github_repo_readmes(&app, &repo_full_name)?;
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.readmes = Some(readmes.clone());
-        })?;
-        Ok(readmes)
     })
     .await
 }

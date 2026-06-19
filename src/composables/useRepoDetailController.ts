@@ -55,6 +55,8 @@ export function useRepoDetailController() {
   const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
   const activeProjectPullRequest = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.pr));
   const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
+  const activeFilePath = computed<string | null>(() => normalizeStringQuery(route.query.file));
+  const activeFileHash = computed<string | null>(() => normalizeStringQuery(route.query.hash));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
   const launchError = ref<string | null>(null);
@@ -408,6 +410,13 @@ export function useRepoDetailController() {
     const parsed = Number.parseInt(next, 10);
     if (!Number.isFinite(parsed) || parsed < 1) return null;
     return parsed;
+  }
+
+  function normalizeStringQuery(value: unknown): string | null {
+    const next = Array.isArray(value) ? value[0] : value;
+    if (typeof next !== "string") return null;
+    const trimmed = next.trim();
+    return trimmed || null;
   }
 
   function branchSectionOrder(section: RepoBranchPickerItem["section"]) {
@@ -967,6 +976,8 @@ function refreshAndFetchRepo() {
       activeProjectIssue,
       activeProjectPullRequest,
       activeProjectRun,
+      activeFilePath,
+      activeFileHash,
       projectRefreshToken,
       toolbarTabs,
       launchCommandOptions,

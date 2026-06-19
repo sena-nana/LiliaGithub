@@ -25,6 +25,8 @@ const props = defineProps<{
   repoId: string;
   repoPath?: string | null;
   changes?: readonly RepoChange[];
+  targetPath?: string | null;
+  targetHash?: string | null;
 }>();
 
 const ROOT_KEY = "";
@@ -82,6 +84,14 @@ watch(
   },
 );
 
+watch(
+  () => [props.targetPath, props.targetHash] as const,
+  ([path, hash]) => {
+    if (!path) return;
+    void selectFile(path, hash);
+  },
+);
+
 async function initializePanel() {
   directoryEntries.value = {};
   expandedDirectories.value = [];
@@ -95,9 +105,13 @@ async function initializePanel() {
 
   try {
     const rootEntries = await loadDirectory(null, { force: true });
-    const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md");
-    if (readme) {
-      await selectFile(readme.path);
+    if (props.targetPath) {
+      await selectFile(props.targetPath, props.targetHash);
+    } else {
+      const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md");
+      if (readme) {
+        await selectFile(readme.path);
+      }
     }
   } catch (err) {
     treeError.value = String(err);

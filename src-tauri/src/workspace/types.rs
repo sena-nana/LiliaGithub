@@ -441,18 +441,6 @@ pub struct RepoDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct RepoReadme {
-    pub repo_id: String,
-    pub path: String,
-    pub images: HashMap<String, String>,
-    pub content: String,
-    pub format: String,
-    #[serde(default)]
-    pub updated_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub struct RepoFileTreeEntry {
     pub path: String,
     pub name: String,
@@ -556,6 +544,17 @@ pub struct GitHubCreateRepoRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct GitHubRepoLicense {
+    pub key: String,
+    pub name: String,
+    #[serde(default)]
+    pub spdx_id: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubRepoManagement {
     pub full_name: String,
     pub name: String,
@@ -582,6 +581,8 @@ pub struct GitHubRepoManagement {
     pub watchers_count: u64,
     pub forks_count: u64,
     pub html_url: String,
+    #[serde(default)]
+    pub license: Option<GitHubRepoLicense>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -706,8 +707,6 @@ pub struct GitHubProjectCache {
 pub struct GitHubProjectRepoCache {
     #[serde(default)]
     pub management: Option<GitHubRepoManagement>,
-    #[serde(default)]
-    pub readmes: Option<Vec<RepoReadme>>,
     #[serde(default)]
     pub issues: HashMap<String, Vec<GitHubIssue>>,
     #[serde(default)]

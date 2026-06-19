@@ -17,6 +17,7 @@ import {
   Plus,
   RotateCcw,
   Save,
+  Scale,
   Settings2,
   Star,
   Trash2,
@@ -33,9 +34,9 @@ import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
   createGitHubPullRequest,
+  getRepoFilePreview,
   getGitHubRepoManagement,
-  listGitHubRepoReadmes,
-  listRepoReadmes,
+  listRepoFiles,
   listGitHubIssues,
   listGitHubPullRequestChecks,
   listGitHubPullRequests,
@@ -45,7 +46,6 @@ import {
   updateGitHubPullRequest,
   updateGitHubRepoSettings,
   deleteGitHubRepo,
-  openPath,
   openUrl,
   isGitHubBindingExpiredError,
 } from "../../services/workspace/client";
@@ -62,13 +62,13 @@ import type {
   RepoChange,
   RepoConflictFile,
   RepoConflictState,
-  RepoReadme,
+  RepoFilePreview,
 } from "../../services/workspace/types";
 import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import { isLinkedWorktree } from "../../utils/repoWorktree";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
-import type { RepoRouteTab } from "../../utils/repoRoutes";
+import { repoRoute, type RepoRouteTab } from "../../utils/repoRoutes";
 
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
@@ -85,6 +85,7 @@ type GitHubAccessUnavailable = {
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
+const README_PATH = "README.md";
 
 const props = defineProps<{
   repoId: string;
@@ -165,9 +166,8 @@ const activeSection = ref<ProjectContentMode>(routeTabToSection(props.activeGitT
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const terminalBody = ref<HTMLElement | null>(null);
 const projectMainRef = ref<HTMLElement | null>(null);
-const readmes = ref<RepoReadme[]>([]);
-const activeReadmePath = ref<string | null>(null);
-const readmesLoaded = ref(false);
+const readmePreview = ref<RepoFilePreview | null>(null);
+const readmeLoaded = ref(false);
 const readmeLoading = ref(false);
 const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
@@ -302,6 +302,13 @@ const aboutDescription = computed(() => settings.value?.description?.trim() ?? "
 const aboutHomepage = computed(() => settings.value?.homepage?.trim() ?? "");
 const aboutHomepageHref = computed(() => normalizedExternalUrl(aboutHomepage.value));
 const aboutTopics = computed(() => settings.value?.topics ?? []);
+const aboutLicenseText = computed(() => {
+  const license = settings.value?.license;
+  if (!license) return "";
+  const spdxId = license.spdxId?.trim();
+  if (spdxId && spdxId !== "NOASSERTION") return `${spdxId} license`;
+  return license.name.trim();
+});
 const aboutStats = computed(() => {
   const repo = settings.value;
   if (!repo) return [];
@@ -335,11 +342,7 @@ const deleteDialogTitle = computed(() =>
   deleteDialogTarget.value === "remote" ? "删除 GitHub 仓库" : localDeleteTitle.value,
 );
 const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.value);
-const activeReadme = computed(() =>
-  readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
-);
 const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
-const readmePaths = computed(() => readmes.value.map((item) => item.path));
 const projectSections: readonly ProjectSectionConfig[] = [
   { key: "issues", label: "Issues" },
   { key: "pulls", label: "Pull Requests" },
@@ -375,10 +378,7 @@ const focusedPullChecks = computed(() =>
   focusedPullRequestNumber.value ? (pullChecks.value[focusedPullRequestNumber.value] ?? []) : [],
 );
 
-function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
-  if (section === "readme") {
-    return activeSection.value === "readme" && activeReadmePath.value === options?.readmePath;
-  }
+function isProjectSectionActive(section: ProjectContentMode) {
   return activeSection.value === section;
 }
 const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
@@ -677,7 +677,7 @@ function cancelEditAbout() {
 
 async function loadReadme(force = false) {
   if (!props.repoId) return;
-  if (!force && readmesLoaded.value) return;
+  if (!force && readmeLoaded.value) return;
   if (!force && readmeLoadPromise) {
     await readmeLoadPromise;
     return;
@@ -685,18 +685,16 @@ async function loadReadme(force = false) {
   readmeLoadPromise = (async () => {
     readmeLoading.value = true;
     readmeError.value = null;
-    const previousPath = activeReadmePath.value;
     try {
-      const nextReadmes = props.remoteOnly && props.repoFullName
-        ? force
-          ? await listGitHubRepoReadmes(props.repoFullName, { forceRefresh: true })
-          : await listGitHubRepoReadmes(props.repoFullName)
-        : await listRepoReadmes(props.repoId);
-      readmes.value = nextReadmes;
-      activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
-        ? previousPath
-        : nextReadmes[0]?.path ?? null;
-      readmesLoaded.value = true;
+      if (props.remoteOnly) {
+        readmePreview.value = null;
+        readmeLoaded.value = true;
+        return;
+      }
+      const rootEntries = await listRepoFiles(props.repoId, null);
+      const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === README_PATH);
+      readmePreview.value = readme ? await getRepoFilePreview(props.repoId, README_PATH) : null;
+      readmeLoaded.value = true;
     } catch (err) {
       readmeError.value = String(err);
     } finally {
@@ -910,9 +908,9 @@ async function ensureSectionData(section: ProjectContentMode) {
 
 async function refreshLoadedSectionData() {
   if (activeSection.value === "readme") {
-    if (readmesLoaded.value || settingsLoaded.value) {
+    if (readmeLoaded.value || settingsLoaded.value) {
       await Promise.all([
-        readmesLoaded.value ? loadReadme(true) : Promise.resolve(),
+        readmeLoaded.value ? loadReadme(true) : Promise.resolve(),
         props.repoFullName && settingsLoaded.value ? loadSettings(true) : Promise.resolve(),
       ]);
     }
@@ -970,9 +968,8 @@ function clearBlockedGitHubState() {
 
 function resetProjectSectionState() {
   activeSection.value = routeTabToSection(props.activeGitTab);
-  readmes.value = [];
-  activeReadmePath.value = null;
-  readmesLoaded.value = false;
+  readmePreview.value = null;
+  readmeLoaded.value = false;
   readmeLoading.value = false;
   readmeError.value = null;
   readmeLoadPromise = null;
@@ -1298,8 +1295,13 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
     return;
   }
 
-  if (target.kind === "readme") {
-    selectReadme(target.path);
+  if (target.kind === "anchor") {
+    await nextTick();
+    markdownReadme.value?.scrollToAnchor(target.hash);
+    return;
+  }
+
+  if (target.kind === "readme" && target.path === README_PATH) {
     if (target.hash) {
       await nextTick();
       markdownReadme.value?.scrollToAnchor(target.hash);
@@ -1307,8 +1309,14 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
     return;
   }
 
-  if (target.kind === "file") {
-    void openPath(target.absolutePath);
+  if (target.kind === "readme" || target.kind === "file") {
+    await router.push({
+      path: repoRoute(props.repoId, "files"),
+      query: {
+        file: target.kind === "file" ? target.relativePath : target.path,
+        ...(target.hash ? { hash: target.hash } : {}),
+      },
+    });
   }
 }
 
@@ -1329,11 +1337,6 @@ function activateProjectTab(tab: ProjectTab) {
 
 function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   activateProjectTab(tab);
-}
-
-function selectReadme(path: string) {
-  activeReadmePath.value = path;
-  activateProjectTab("readme");
 }
 
 </script>
@@ -1391,17 +1394,17 @@ function selectReadme(path: string) {
         <section v-else-if="activeSection === 'readme'" class="project-readme-card">
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
-          <p v-else-if="!activeReadme" class="muted repo-empty project-empty">
-            {{ remoteOnly ? "当前远程仓库没有 README。" : "当前仓库没有本地 README。" }}
+          <p v-else-if="!readmePreview" class="muted repo-empty project-empty">
+            当前仓库没有 README.md。
           </p>
           <MarkdownReadme
             v-else
             ref="markdownReadme"
-            :content="activeReadme.content"
-            :images="activeReadme.images"
+            :content="readmePreview.content ?? ''"
+            :images="readmePreview.images ?? {}"
             :repo-root-path="repoPath"
-            :current-readme-path="activeReadme.path"
-            :readme-paths="readmePaths"
+            :current-readme-path="readmePreview.path"
+            :readme-paths="[README_PATH]"
             @open-link="openReadmeLink"
           />
         </section>
@@ -1964,7 +1967,20 @@ function selectReadme(path: string) {
               <div v-if="aboutTopics.length" class="project-topic-list" aria-label="Topics">
                 <span v-for="topic in aboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
               </div>
-              <div v-if="aboutStats.length" class="project-about-stats" aria-label="GitHub 仓库指标">
+              <div
+                v-if="aboutLicenseText || aboutStats.length"
+                class="project-about-stats"
+                aria-label="GitHub 仓库信息"
+              >
+                <div
+                  v-if="aboutLicenseText"
+                  class="project-about-stat"
+                  :title="aboutLicenseText"
+                  :aria-label="aboutLicenseText"
+                >
+                  <Scale :size="14" aria-hidden="true" />
+                  <span>{{ aboutLicenseText }}</span>
+                </div>
                 <div
                   v-for="stat in aboutStats"
                   :key="stat.key"
@@ -1979,23 +1995,6 @@ function selectReadme(path: string) {
             </template>
           </div>
         </section>
-
-        <div class="project-sidebar__card" role="tablist" aria-label="README 列表">
-          <button
-            v-for="item in readmes"
-            :key="item.path"
-            type="button"
-            class="project-sidebar__item"
-            :class="{ 'is-active': isProjectSectionActive('readme', { readmePath: item.path }) }"
-            role="tab"
-            :aria-selected="isProjectSectionActive('readme', { readmePath: item.path })"
-            @click="selectReadme(item.path)"
-          >
-            <strong>{{ item.path }}</strong>
-            <span aria-hidden="true">{{ item.format === "text" ? "text" : item.format }}</span>
-          </button>
-          <p v-if="!readmes.length && !readmeLoading" class="project-sidebar__empty">未找到 README</p>
-        </div>
 
         <div class="project-sidebar__card" role="tablist" aria-label="项目信息视图">
           <button
@@ -2294,11 +2293,21 @@ function selectReadme(path: string) {
 .project-about-stat {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
+  width: 100%;
+  height: auto;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 400;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.25;
+  text-align: left;
+  filter: none;
 }
 
 .project-about-stat span {
@@ -2420,13 +2429,6 @@ function selectReadme(path: string) {
 .project-sidebar__item span {
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.project-sidebar__empty {
-  margin: 0;
-  padding: 8px 4px;
-  color: var(--text-muted);
-  font-size: 12px;
 }
 
 .project-section label {

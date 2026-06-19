@@ -12,7 +12,6 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring_core::{Entry, Error as KeyringError};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, LINK, USER_AGENT};
-use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;

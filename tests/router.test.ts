@@ -260,16 +260,6 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    service.setFallbackGitHubRepoReadmesForTests({
-      "sena-nana/NewRepo": {
-        repoId: "github:sena-nana/NewRepo",
-        path: "README.md",
-        images: {},
-        format: "md",
-        updatedAt: null,
-        content: "# NewRepo\n\n云端 README。",
-      },
-    });
     const { router } = await renderAt("/");
 
     await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/NewRepo" }));
@@ -285,13 +275,13 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "文件夹" })).toBeNull();
     expect(screen.queryByRole("heading", { level: 2, name: "提交" })).toBeNull();
     expect(screen.queryByRole("heading", { level: 2, name: "快速启动" })).toBeNull();
-    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("云端 README");
+    expect(await screen.findByText("当前仓库没有 README.md。")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
   });
 
-  it("远程详情页没有云端 README 时显示远程空态", async () => {
+  it("远程详情页没有 README.md 时显示空态", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([
       {
@@ -299,15 +289,11 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    service.setFallbackGitHubRepoReadmesForTests({
-      "sena-nana/EmptyRemote": null,
-    });
-
     await renderAt("/repos/github%3Asena-nana%2FEmptyRemote");
 
     expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(document.body).toHaveTextContent("当前远程仓库没有 README。");
+      expect(document.body).toHaveTextContent("当前仓库没有 README.md。");
     });
   });
 
@@ -317,6 +303,11 @@ describe("基础路由", () => {
       LiliaGithub: {
         "": [
           { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+          { path: "README.txt", name: "README.txt", kind: "file", hasChildren: false },
+          { path: "docs", name: "docs", kind: "dir", hasChildren: true },
+        ],
+        docs: [
+          { path: "docs/guide.md", name: "guide.md", kind: "file", hasChildren: false },
         ],
       },
     });
@@ -1523,14 +1514,20 @@ describe("基础路由", () => {
 
   it("仓库项目信息页显示 README、Issues、Actions 和 Settings", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoReadmesForTests({
-      LiliaGithub: [
-        {
-          repoId: "LiliaGithub",
+    service.setFallbackRepoFilesForTests({
+      LiliaGithub: {
+        "": [
+          { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+        ],
+      },
+    });
+    service.setFallbackRepoFilePreviewsForTests({
+      LiliaGithub: {
+        "README.md": {
           path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
           images: {},
-          format: "md",
-          updatedAt: 1,
           content: [
             "# LiliaGithub",
             "",
@@ -1540,43 +1537,56 @@ describe("基础路由", () => {
             "",
             "- 工作区 Git 仓库扫描",
           ].join("\n"),
+          size: 96,
+          truncated: false,
         },
-        {
-          repoId: "LiliaGithub",
+        "README.txt": {
           path: "README.txt",
-          images: {},
-          format: "text",
-          updatedAt: 2,
+          name: "README.txt",
+          previewKind: "text",
           content: "# local-doc\n\nLiliaGithub 本地仓库管理工具。",
+          size: 36,
+          truncated: false,
         },
-      ],
+        "docs/guide.md": {
+          path: "docs/guide.md",
+          name: "guide.md",
+          previewKind: "markdown",
+          images: {},
+          content: "# 开发指南\n\n文件树预览。",
+          size: 24,
+          truncated: false,
+        },
+      },
     });
-    await renderAt("/repos/LiliaGithub");
+    const { router } = await renderAt("/repos/LiliaGithub");
 
-    await fireEvent.click(await screen.findByRole("tab", { name: "README.md" }));
     expect((await screen.findAllByRole("heading", { level: 1, name: "LiliaGithub" })).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("tablist", { name: "项目信息视图" })).toBeInTheDocument();
-    expect(await screen.findByRole("tab", { name: "README.md" })).toHaveClass("is-active");
-    expect(screen.getByRole("tab", { name: "README.txt" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "README.md" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "README.txt" })).toBeNull();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
     await fireEvent.click(screen.getByRole("link", { name: "中文" }));
     expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "打开" }));
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "README.txt" })).toHaveClass("is-active");
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files?file=README.txt&hash=local-doc");
     });
-    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("LiliaGithub 本地仓库管理工具");
+    expect(await screen.findByText(/LiliaGithub 本地仓库管理工具/)).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("tab", { name: "README.md" }));
+    await router.push("/repos/LiliaGithub");
+    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
     await fireEvent.click(screen.getByRole("link", { name: "开发指南" }));
     expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "打开" }));
     await waitFor(() => {
-      expect(service.getFallbackOpenPathCallsForTests()).toEqual(["C:\\Files\\workspace\\LiliaGithub\\docs\\guide.md"]);
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files?file=docs/guide.md");
     });
-    await fireEvent.click(screen.getByRole("tab", { name: "README.txt" }));
-    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("LiliaGithub 本地仓库管理工具");
+    expect(await screen.findByRole("heading", { level: 1, name: "开发指南" })).toBeInTheDocument();
+    expect(service.getFallbackOpenPathCallsForTests()).toEqual([]);
 
+    await router.push("/repos/LiliaGithub");
+    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
     await fireEvent.click(screen.getByRole("tab", { name: "Issues" }));
     expect(await screen.findByRole("heading", { level: 3, name: "Issues" })).toBeInTheDocument();
     expect(await screen.findByText(/#12 补齐仓库管理入口/)).toBeInTheDocument();
@@ -1701,16 +1711,6 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    service.setFallbackGitHubRepoReadmesForTests({
-      "sena-nana/DeleteRemoteRepo": {
-        repoId: "github:sena-nana/DeleteRemoteRepo",
-        path: "README.md",
-        images: {},
-        format: "md",
-        updatedAt: null,
-        content: "# DeleteRemoteRepo\n\n用于验证删除后移除侧边栏入口。",
-      },
-    });
     await service.rememberRemoteRepo({
       fullName: "sena-nana/DeleteRemoteRepo",
       name: "DeleteRemoteRepo",
@@ -1870,36 +1870,35 @@ describe("基础路由", () => {
 
   it("仓库项目信息页无 GitHub 远端时保留 README 并显示远端空态", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoReadmesForTests({
-      LiliaGithub: [
-        {
-          repoId: "LiliaGithub",
+    service.setFallbackRepoFilesForTests({
+      LiliaGithub: {
+        "": [
+          { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+        ],
+      },
+    });
+    service.setFallbackRepoFilePreviewsForTests({
+      LiliaGithub: {
+        "README.md": {
           path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
           images: {},
-          format: "md",
-          updatedAt: 1,
           content: "# LocalOnly\n\n本地 README。",
+          size: 24,
+          truncated: false,
         },
-        {
-          repoId: "LiliaGithub",
-          path: "README.txt",
-          images: {},
-          format: "text",
-          updatedAt: 2,
-          content: "本地纯文本 README。",
-        },
-      ],
+      },
     });
     service.setFallbackRepoOverridesForTests({
       LiliaGithub: repoSummary("LiliaGithub", { githubFullName: null, remoteUrl: null }),
     });
     await renderAt("/repos/LiliaGithub");
 
-    await fireEvent.click(await screen.findByRole("tab", { name: "README.md" }));
     expect(await screen.findByRole("heading", { level: 1, name: "LocalOnly" })).toBeInTheDocument();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("本地 README");
-    await fireEvent.click(await screen.findByRole("tab", { name: "README.txt" }));
-    expect(await screen.findByLabelText("README 内容")).toHaveTextContent("本地纯文本 README");
+    expect(screen.queryByRole("tab", { name: "README.md" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "README.txt" })).toBeNull();
 
     await fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
     expect(screen.getByText("当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。")).toBeInTheDocument();
