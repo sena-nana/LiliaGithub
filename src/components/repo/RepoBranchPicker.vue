@@ -2,15 +2,19 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import {
   Check,
+  CloudUpload,
   FolderGit2,
   GitBranch,
   GitBranchPlus,
   GitMerge,
+  Link2,
+  MoreHorizontal,
   Pencil,
+  RefreshCw,
   Search,
   Trash2,
 } from "@lucide/vue";
-import type { ContextMenuItem } from "../../composables/useContextMenu";
+import { openContextMenuAt, type ContextMenuItem } from "../../composables/useContextMenu";
 
 type RepoBranchPickerItem = {
   name: string;
@@ -42,6 +46,7 @@ const props = defineProps<{
   allowRemoteCheckout?: boolean;
   allowRemoteCreate?: boolean;
   allowRemoteDelete?: boolean;
+  showRepositoryActions?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -51,6 +56,9 @@ const emit = defineEmits<{
   "rename-branch": [payload: { oldName: string; newName: string }];
   "merge-branch": [branch: string];
   "delete-branch": [branch: string];
+  "refresh-branches": [];
+  "push-with-upstream": [];
+  "set-upstream": [];
 }>();
 
 const open = ref(false);
@@ -207,6 +215,25 @@ function branchMenuItem(
   return { id, label, icon, onSelect, ...extra };
 }
 
+function openRepositoryActions(event: MouseEvent) {
+  if (!props.showRepositoryActions || props.disabled || props.actionRunning) return;
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  openContextMenuAt(rect.right, rect.bottom + 4, [
+    branchMenuItem("refresh-branches", "刷新并抓取", RefreshCw, () => {
+      closePicker();
+      emit("refresh-branches");
+    }),
+    branchMenuItem("push-with-upstream", "推送并建立 upstream", CloudUpload, () => {
+      closePicker();
+      emit("push-with-upstream");
+    }),
+    branchMenuItem("set-upstream", "设置 upstream", Link2, () => {
+      closePicker();
+      emit("set-upstream");
+    }),
+  ]);
+}
+
 function branchMenu(branch: RepoBranchPickerItem) {
   return (): ContextMenuItem[] => {
     if (props.disabled || props.actionRunning) return [];
@@ -290,16 +317,29 @@ function branchTitle(branch: RepoBranchPickerItem) {
         role="dialog"
         aria-label="分支选择器"
       >
-        <label class="branch-picker__search">
-          <Search :size="14" aria-hidden="true" />
-          <input
-            ref="searchInput"
-            v-model="search"
-            type="text"
-            placeholder="搜索分支"
-            aria-label="搜索分支"
-          />
-        </label>
+        <div class="branch-picker__search-row">
+          <label class="branch-picker__search">
+            <Search :size="14" aria-hidden="true" />
+            <input
+              ref="searchInput"
+              v-model="search"
+              type="text"
+              placeholder="搜索分支"
+              aria-label="搜索分支"
+            />
+          </label>
+          <button
+            v-if="showRepositoryActions"
+            type="button"
+            class="branch-picker__actions-button"
+            title="更多分支操作"
+            aria-label="更多分支操作"
+            :disabled="disabled || actionRunning"
+            @click.stop="openRepositoryActions"
+          >
+            <MoreHorizontal :size="15" aria-hidden="true" />
+          </button>
+        </div>
 
         <div class="branch-picker__list" role="listbox" aria-label="分支候选">
           <template v-for="group in filteredGroups" :key="group.key">
@@ -509,10 +549,19 @@ function branchTitle(branch: RepoBranchPickerItem) {
   will-change: transform, opacity;
 }
 
+.branch-picker__search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .branch-picker__search {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
   height: var(--branch-picker-row-height);
   padding: 0 6px;
   border: 1px solid var(--border);
@@ -538,6 +587,30 @@ function branchTitle(branch: RepoBranchPickerItem) {
 
 .branch-picker__search input:focus {
   outline: none;
+}
+
+.branch-picker__actions-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--branch-picker-row-height);
+  width: var(--branch-picker-row-height);
+  height: var(--branch-picker-row-height);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+.branch-picker__actions-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.branch-picker__actions-button:disabled {
+  cursor: default;
+  color: var(--text-faint);
 }
 
 .branch-picker__list {

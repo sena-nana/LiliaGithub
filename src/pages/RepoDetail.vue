@@ -2,7 +2,6 @@
 import {
   CloudDownload,
   CloudUpload,
-  RefreshCw,
   Archive,
   FolderTree,
   FolderOpen,
@@ -52,7 +51,6 @@ const {
   canCommit,
   launchConfig,
   launchLogs,
-  languageStatsRefreshing,
   usingSystemGit,
   launchRunning,
   statusCommits,
@@ -160,12 +158,16 @@ const {
                 :allow-remote-checkout="!remoteOnly"
                 :allow-remote-create="!remoteOnly"
                 :allow-remote-delete="remoteOnly || Boolean(summary?.githubFullName)"
+                :show-repository-actions="!remoteOnly"
                 @checkout="checkout"
                 @update-current="updateCurrentBranch"
                 @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
                 @rename-branch="renameBranchTo($event.oldName, $event.newName)"
                 @merge-branch="mergeBranch"
                 @delete-branch="deleteBranch"
+                @refresh-branches="refreshAndFetchRepo"
+                @push-with-upstream="pushCurrentBranchWithUpstream"
+                @set-upstream="setCurrentBranchUpstream"
               />
             </nav>
 
@@ -227,16 +229,6 @@ const {
               >
                 <FolderOpen :size="17" aria-hidden="true" />
               </button>
-              <button
-                type="button"
-                class="repo-toolbar__btn"
-                title="刷新并抓取"
-                aria-label="刷新并抓取"
-                :disabled="actionRunning || hasConflicts || languageStatsRefreshing"
-                @click="refreshAndFetchRepo"
-              >
-                <RefreshCw :size="17" aria-hidden="true" />
-              </button>
               <div class="repo-toolbar__pull-group">
                 <button
                   type="button"
@@ -291,15 +283,6 @@ const {
           </div>
         </div>
       </header>
-
-      <div v-if="!remoteOnly" class="repo-secondary-actions" role="group" aria-label="扩展仓库操作">
-        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning" @click="pushCurrentBranchWithUpstream">
-          推送并建立 upstream
-        </button>
-        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning" @click="setCurrentBranchUpstream">
-          设置 upstream
-        </button>
-      </div>
 
     <div v-if="actionError || recentSyncError" class="repo-workbench__status">
       <p v-if="actionError" class="error-line">{{ actionError }}</p>
@@ -729,29 +712,6 @@ const {
   grid-template-rows: minmax(0, auto);
   gap: 14px;
   min-height: 0;
-}
-
-.repo-secondary-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.repo-secondary-actions__btn {
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elev);
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.repo-secondary-actions__btn:hover {
-  background: var(--bg-hover);
-  color: var(--text);
 }
 
 .repo-workbench__body {
