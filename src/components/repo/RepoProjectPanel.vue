@@ -3,12 +3,19 @@ import { AnsiUp } from "ansi_up";
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
+  Check,
   CircleDot,
   CircleOff,
   ExternalLink,
-  LoaderCircle,
   GitMerge,
+  GitPullRequest,
+  ListFilter,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  RotateCcw,
   Save,
+  Settings2,
   Trash2,
   X,
 } from "@lucide/vue";
@@ -303,6 +310,16 @@ const projectSections: readonly ProjectSectionConfig[] = [
   { key: "pulls", label: "Pull Requests" },
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
+];
+const githubStateFilters: readonly { value: "open" | "closed" | "all"; label: string }[] = [
+  { value: "open", label: "Open" },
+  { value: "closed", label: "Closed" },
+  { value: "all", label: "All" },
+];
+const mergeMethodOptions: readonly { value: "merge" | "squash" | "rebase"; label: string }[] = [
+  { value: "merge", label: "Merge" },
+  { value: "squash", label: "Squash" },
+  { value: "rebase", label: "Rebase" },
 ];
 const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
 const showCommitDetail = computed(() =>
@@ -1258,14 +1275,27 @@ function selectReadme(path: string) {
           <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
         </section>
 
-        <section v-else-if="activeSection === 'issues'" class="project-section">
-          <div class="project-section__head">
-            <h3>Issues</h3>
-            <select v-model="issueState">
-              <option value="open">Open</option>
-              <option value="closed">Closed</option>
-              <option value="all">All</option>
-            </select>
+        <section v-else-if="activeSection === 'issues'" class="project-section project-github-section">
+          <div class="project-section__head project-section__head--compact">
+            <div class="project-section__title">
+              <h3>Issues</h3>
+              <span>{{ issues.length }} items</span>
+            </div>
+            <div class="project-toolbar" aria-label="Issue filters">
+              <ListFilter :size="14" aria-hidden="true" />
+              <div class="ui-segmented project-segmented" role="group" aria-label="Issue 状态">
+                <button
+                  v-for="filter in githubStateFilters"
+                  :key="filter.value"
+                  type="button"
+                  :class="{ 'is-active': issueState === filter.value }"
+                  :aria-pressed="issueState === filter.value"
+                  @click="issueState = filter.value"
+                >
+                  {{ filter.label }}
+                </button>
+              </div>
+            </div>
           </div>
           <RepoGitHubUnavailableNotice
             v-if="issuesAccessUnavailable"
@@ -1275,16 +1305,25 @@ function selectReadme(path: string) {
             @rebind="rebindGitHub"
           />
           <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
-          <form v-if="!issuesAccessUnavailable" class="project-issue-form" @submit.prevent="createIssue">
-            <input v-model="issueTitle" type="text" placeholder="Issue 标题" />
-            <textarea v-model="issueBody" rows="3" placeholder="Issue 内容"></textarea>
-            <div class="project-inline-form">
-              <input v-model="issueLabels" type="text" placeholder="labels, comma separated" />
+          <form v-if="!issuesAccessUnavailable" class="project-compact-form" @submit.prevent="createIssue">
+            <div class="project-compact-form__line">
+              <input v-model="issueTitle" class="project-compact-form__title" type="text" placeholder="Issue 标题" />
+              <input v-model="issueLabels" type="text" placeholder="labels" />
               <input v-model="issueAssignees" type="text" placeholder="assignees" />
-              <button type="submit" class="primary" :disabled="creatingIssue || !issueTitle.trim()">新建 Issue</button>
+              <button
+                type="submit"
+                class="primary project-icon-action project-icon-action--primary"
+                :disabled="creatingIssue || !issueTitle.trim()"
+                aria-label="新建 Issue"
+                title="新建 Issue"
+              >
+                <LoaderCircle v-if="creatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
+                <Plus v-else :size="14" aria-hidden="true" />
+              </button>
             </div>
+            <textarea v-model="issueBody" rows="2" placeholder="Issue 内容"></textarea>
           </form>
-          <div v-if="!issuesAccessUnavailable" class="project-list">
+          <div v-if="!issuesAccessUnavailable" class="project-list project-dense-list">
             <div
               v-for="issue in issues"
               :key="issue.number"
@@ -1293,48 +1332,87 @@ function selectReadme(path: string) {
               :data-issue-number="issue.number"
             >
               <template v-if="!isEditingIssue(issue.number)">
-                <div>
+                <span class="project-row__status" :class="{ 'is-closed': issue.state !== 'open' }" :title="issue.state">
+                  <CircleDot v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
+                  <CircleOff v-else :size="14" aria-hidden="true" />
+                </span>
+                <div class="project-row__content">
                   <strong>#{{ issue.number }} {{ issue.title }}</strong>
                   <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
                 </div>
-                <div class="project-inline-form">
-                  <button type="button" class="ghost" @click="startEditIssue(issue)">
-                    编辑
+                <div class="project-row__actions">
+                  <button
+                    type="button"
+                    class="ghost project-icon-action"
+                    aria-label="编辑"
+                    title="编辑"
+                    @click="startEditIssue(issue)"
+                  >
+                    <Pencil :size="14" aria-hidden="true" />
                   </button>
-                  <button type="button" class="ghost" @click="toggleIssue(issue)">
+                  <button
+                    type="button"
+                    class="ghost project-icon-action"
+                    :aria-label="issue.state === 'open' ? '关闭' : '重开'"
+                    :title="issue.state === 'open' ? '关闭' : '重开'"
+                    @click="toggleIssue(issue)"
+                  >
                     <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-                    <CircleDot v-else :size="14" aria-hidden="true" />
-                    {{ issue.state === "open" ? "关闭" : "重开" }}
+                    <RotateCcw v-else :size="14" aria-hidden="true" />
                   </button>
                 </div>
               </template>
               <form
                 v-else
-                class="project-issue-edit-form"
+                class="project-issue-edit-form project-compact-form"
                 @submit.prevent="saveIssueEdit(issue)"
               >
-                <input v-model="editingIssueTitle" type="text" placeholder="Issue 标题" />
-                <textarea v-model="editingIssueBody" rows="3" placeholder="Issue 内容"></textarea>
-                <div class="project-inline-form">
+                <div class="project-compact-form__line">
+                  <input v-model="editingIssueTitle" class="project-compact-form__title" type="text" placeholder="Issue 标题" />
                   <input v-model="editingIssueLabels" type="text" placeholder="labels, comma separated" />
                   <input v-model="editingIssueAssignees" type="text" placeholder="assignees" />
-                  <button type="submit" class="primary" :disabled="updatingIssue || !editingIssueTitle.trim()">保存</button>
-                  <button type="button" class="ghost" @click="cancelEditIssue">取消</button>
+                  <button
+                    type="submit"
+                    class="primary project-icon-action project-icon-action--primary"
+                    :disabled="updatingIssue || !editingIssueTitle.trim()"
+                    aria-label="保存"
+                    title="保存"
+                  >
+                    <LoaderCircle v-if="updatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
+                    <Check v-else :size="14" aria-hidden="true" />
+                  </button>
+                  <button type="button" class="ghost project-icon-action" aria-label="取消" title="取消" @click="cancelEditIssue">
+                    <X :size="14" aria-hidden="true" />
+                  </button>
                 </div>
+                <textarea v-model="editingIssueBody" rows="2" placeholder="Issue 内容"></textarea>
               </form>
             </div>
             <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
           </div>
         </section>
 
-        <section v-else-if="activeSection === 'pulls'" class="project-section">
-          <div class="project-section__head">
-            <h3>Pull Requests</h3>
-            <select v-model="pullState">
-              <option value="open">Open</option>
-              <option value="closed">Closed</option>
-              <option value="all">All</option>
-            </select>
+        <section v-else-if="activeSection === 'pulls'" class="project-section project-github-section">
+          <div class="project-section__head project-section__head--compact">
+            <div class="project-section__title">
+              <h3>Pull Requests</h3>
+              <span>{{ pulls.length }} items</span>
+            </div>
+            <div class="project-toolbar" aria-label="Pull Request filters">
+              <ListFilter :size="14" aria-hidden="true" />
+              <div class="ui-segmented project-segmented" role="group" aria-label="Pull Request 状态">
+                <button
+                  v-for="filter in githubStateFilters"
+                  :key="filter.value"
+                  type="button"
+                  :class="{ 'is-active': pullState === filter.value }"
+                  :aria-pressed="pullState === filter.value"
+                  @click="pullState = filter.value"
+                >
+                  {{ filter.label }}
+                </button>
+              </div>
+            </div>
           </div>
           <RepoGitHubUnavailableNotice
             v-if="pullsAccessUnavailable"
@@ -1344,27 +1422,30 @@ function selectReadme(path: string) {
             @rebind="rebindGitHub"
           />
           <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
-          <form v-if="!pullsAccessUnavailable" class="project-issue-form" @submit.prevent="createPullRequest">
-            <input v-model="pullRequestTitle" type="text" placeholder="PR 标题" />
-            <textarea v-model="pullRequestBody" rows="3" placeholder="PR 描述"></textarea>
-            <div class="project-inline-form">
+          <form v-if="!pullsAccessUnavailable" class="project-compact-form" @submit.prevent="createPullRequest">
+            <div class="project-compact-form__line">
+              <input v-model="pullRequestTitle" class="project-compact-form__title" type="text" placeholder="PR 标题" />
               <input v-model="pullRequestHead" type="text" placeholder="head 分支" />
               <input v-model="pullRequestBase" type="text" placeholder="base 分支" />
-              <label class="project-check">
+              <label class="project-check project-check--inline">
                 <input v-model="pullRequestDraft" type="checkbox" />
                 <span>Draft</span>
               </label>
               <button
                 type="submit"
-                class="primary"
+                class="primary project-icon-action project-icon-action--primary"
                 :disabled="creatingPullRequest || !pullRequestTitle.trim() || !pullRequestHead.trim() || !pullRequestBase.trim()"
+                aria-label="新建 PR"
+                title="新建 PR"
               >
-                新建 PR
+                <LoaderCircle v-if="creatingPullRequest" :size="14" aria-hidden="true" class="sb-spin" />
+                <GitPullRequest v-else :size="14" aria-hidden="true" />
               </button>
             </div>
+            <textarea v-model="pullRequestBody" rows="2" placeholder="PR 描述"></textarea>
           </form>
           <p v-if="!pullsAccessUnavailable && pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
-          <div v-if="!pullsAccessUnavailable" class="project-list">
+          <div v-if="!pullsAccessUnavailable" class="project-list project-dense-list">
             <div
               v-for="pull in pulls"
               :key="pull.number"
@@ -1373,10 +1454,15 @@ function selectReadme(path: string) {
               :data-pull-number="pull.number"
               @click="focusPullRequestRow(pull)"
             >
-              <div>
+              <span class="project-row__status" :class="{ 'is-closed': pull.state !== 'open' || pull.merged }" :title="pull.merged ? 'merged' : pull.state">
+                <GitMerge v-if="pull.merged" :size="14" aria-hidden="true" />
+                <GitPullRequest v-else-if="pull.state === 'open'" :size="14" aria-hidden="true" />
+                <CircleOff v-else :size="14" aria-hidden="true" />
+              </span>
+              <div class="project-row__content">
                 <strong>#{{ pull.number }} {{ pull.title }}</strong>
                 <span>
-                  {{ pull.author }} · {{ pull.headBranch }} → {{ pull.baseBranch }} ·
+                  {{ pull.author }} · {{ pull.headBranch }} -> {{ pull.baseBranch }} ·
                   {{ pull.merged ? "merged" : pull.state }}
                   <template v-if="pull.draft"> · draft</template>
                   <template v-if="pull.mergeableState"> · {{ pull.mergeableState }}</template>
@@ -1399,43 +1485,54 @@ function selectReadme(path: string) {
                   </ul>
                 </div>
               </div>
-              <div class="project-inline-form">
-                <select v-model="pullRequestMergeMethod">
-                  <option value="merge">merge</option>
-                  <option value="squash">squash</option>
-                  <option value="rebase">rebase</option>
-                </select>
-                <button type="button" class="ghost" @click.stop="openUrl(pull.htmlUrl)">
+              <div class="project-row__actions project-row__actions--pull">
+                <div class="ui-segmented project-segmented project-segmented--merge" role="group" aria-label="合并方式">
+                  <button
+                    v-for="method in mergeMethodOptions"
+                    :key="method.value"
+                    type="button"
+                    :class="{ 'is-active': pullRequestMergeMethod === method.value }"
+                    :aria-pressed="pullRequestMergeMethod === method.value"
+                    @click.stop="pullRequestMergeMethod = method.value"
+                  >
+                    {{ method.label }}
+                  </button>
+                </div>
+                <button type="button" class="ghost project-icon-action" aria-label="打开" title="打开" @click.stop="openUrl(pull.htmlUrl)">
                   <ExternalLink :size="14" aria-hidden="true" />
-                  打开
                 </button>
                 <button
                   v-if="pull.state === 'open' && !pull.merged"
                   type="button"
-                  class="ghost"
+                  class="ghost project-icon-action"
                   :disabled="updatingPullRequest"
+                  aria-label="关闭"
+                  title="关闭"
                   @click.stop="togglePullRequestState(pull)"
                 >
-                  关闭
+                  <CircleOff :size="14" aria-hidden="true" />
                 </button>
                 <button
                   v-if="pull.state === 'open' && !pull.merged"
                   type="button"
-                  class="primary"
+                  class="primary project-icon-action project-icon-action--primary"
                   :disabled="updatingPullRequest"
+                  aria-label="合并"
+                  title="合并"
                   @click.stop="mergePullRequest(pull)"
                 >
                   <GitMerge :size="14" aria-hidden="true" />
-                  合并
                 </button>
                 <button
                   v-else-if="pull.state === 'closed' && !pull.merged"
                   type="button"
-                  class="ghost"
+                  class="ghost project-icon-action"
                   :disabled="updatingPullRequest"
+                  aria-label="重开"
+                  title="重开"
                   @click.stop="togglePullRequestState(pull)"
                 >
-                  重开
+                  <RotateCcw :size="14" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -1443,10 +1540,12 @@ function selectReadme(path: string) {
           </div>
         </section>
 
-        <section v-else-if="activeSection === 'actions'" class="project-section">
-          <div class="project-section__head">
-            <h3>Actions</h3>
-            <span class="muted">{{ workflowRuns.length }} 条运行记录</span>
+        <section v-else-if="activeSection === 'actions'" class="project-section project-github-section">
+          <div class="project-section__head project-section__head--compact">
+            <div class="project-section__title">
+              <h3>Actions</h3>
+              <span>{{ workflowRuns.length }} runs</span>
+            </div>
           </div>
           <RepoGitHubUnavailableNotice
             v-if="actionsAccessUnavailable"
@@ -1457,7 +1556,7 @@ function selectReadme(path: string) {
           />
           <p v-else-if="actionsError" class="error-line">{{ actionsError }}</p>
           <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
-          <div v-if="!actionsAccessUnavailable" class="project-list">
+          <div v-if="!actionsAccessUnavailable" class="project-list project-dense-list">
             <div
               v-for="run in workflowRuns"
               :key="run.id"
@@ -1474,32 +1573,38 @@ function selectReadme(path: string) {
                 <X v-if="isWorkflowRunFailure(run)" :size="14" aria-hidden="true" />
                 <CircleDot v-else :size="14" aria-hidden="true" />
               </span>
-              <div>
+              <div class="project-row__content">
                 <strong>{{ run.displayTitle }}</strong>
                 <span>{{ run.name }} · {{ run.branch }} · {{ run.event }}</span>
               </div>
-              <button type="button" class="ghost" @click="openUrl(run.htmlUrl)">
+              <button type="button" class="ghost project-icon-action" aria-label="打开" title="打开" @click="openUrl(run.htmlUrl)">
                 <ExternalLink :size="14" aria-hidden="true" />
-                打开
               </button>
             </div>
             <p v-if="!workflowRuns.length && !actionsLoading" class="muted repo-empty">没有 GitHub Actions 运行记录。</p>
           </div>
         </section>
 
-        <form v-else-if="activeSection === 'settings'" class="project-section project-settings" @submit.prevent="saveSettings">
-          <div class="project-section__head">
-            <h3>仓库设置</h3>
-            <button
-              v-if="settings"
-              type="submit"
-              class="primary"
-              :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-            >
-              <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
-              <Save v-else :size="14" aria-hidden="true" />
-              保存
-            </button>
+        <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" @submit.prevent="saveSettings">
+          <div class="project-section__head project-section__head--compact">
+            <div class="project-section__title">
+              <h3>仓库设置</h3>
+              <span>{{ settings ? settings.fullName : "GitHub Settings" }}</span>
+            </div>
+            <div class="project-toolbar">
+              <Settings2 :size="14" aria-hidden="true" />
+              <button
+                v-if="settings"
+                type="submit"
+                class="primary project-icon-action project-icon-action--primary"
+                :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                aria-label="保存"
+                title="保存"
+              >
+                <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
+                <Save v-else :size="14" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <p v-if="githubUnavailableMessage" class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
           <RepoGitHubUnavailableNotice
@@ -1514,95 +1619,98 @@ function selectReadme(path: string) {
             <section class="project-settings-group" aria-labelledby="project-settings-general-title">
               <div class="project-settings-group__head">
                 <h4 id="project-settings-general-title">基础设置</h4>
-                <p>编辑仓库的公开描述和项目主页。</p>
               </div>
-              <label class="project-settings-field">
-                <span>描述</span>
-                <input v-model="settingsForm.description" type="text" />
-              </label>
-              <label class="project-settings-field">
-                <span>Homepage</span>
-                <input v-model="settingsForm.homepage" type="url" />
-              </label>
+              <div class="project-settings-fields">
+                <label class="project-settings-field">
+                  <span>描述</span>
+                  <input v-model="settingsForm.description" type="text" />
+                </label>
+                <label class="project-settings-field">
+                  <span>Homepage</span>
+                  <input v-model="settingsForm.homepage" type="url" />
+                </label>
+              </div>
             </section>
             <section class="project-settings-group" aria-labelledby="project-settings-features-title">
               <div class="project-settings-group__head">
                 <h4 id="project-settings-features-title">功能开关</h4>
-                <p>控制仓库可见性和协作功能。</p>
               </div>
               <div class="project-settings-switches">
                 <label
                   v-for="switchItem in featureSettingSwitches"
                   :key="switchItem.key"
-                  class="project-settings-switch"
+                  class="project-settings-switch ui-switch"
                 >
-                  <input v-model="settingsForm[switchItem.key]" type="checkbox" />
-                  <span>
+                  <span class="project-settings-switch__content">
                     <strong>{{ switchItem.label }}</strong>
                     <em>{{ switchItem.hint }}</em>
                   </span>
+                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" />
+                  <span class="ui-switch__track" aria-hidden="true"></span>
                 </label>
               </div>
             </section>
             <section class="project-settings-group" aria-labelledby="project-settings-merge-title">
               <div class="project-settings-group__head">
                 <h4 id="project-settings-merge-title">Pull Request / Merge</h4>
-                <p>配置 Pull Request 合并方式。</p>
               </div>
               <div class="project-settings-switches">
                 <label
                   v-for="switchItem in mergeSettingSwitches"
                   :key="switchItem.key"
-                  class="project-settings-switch"
+                  class="project-settings-switch ui-switch"
                 >
-                  <input v-model="settingsForm[switchItem.key]" type="checkbox" />
-                  <span>
+                  <span class="project-settings-switch__content">
                     <strong>{{ switchItem.label }}</strong>
                     <em>{{ switchItem.hint }}</em>
                   </span>
+                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" />
+                  <span class="ui-switch__track" aria-hidden="true"></span>
                 </label>
               </div>
             </section>
           </template>
           <div v-if="(!remoteOnly && repoPath) || settings" class="project-settings-danger-list">
-          <section v-if="!remoteOnly && repoPath" class="project-danger-zone" aria-label="本地危险操作">
-            <div>
-              <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
-              <span>
-                {{
-                  linkedWorktree
-                    ? "从当前共享仓库移除该工作树，并从工作区仓库列表移除。"
-                    : "删除工作区内的本地目录，并从本地仓库列表移除。"
-                }}
-              </span>
-            </div>
-            <button
-              type="button"
-              class="ghost danger"
-              :disabled="deletingLocalRepo"
-              @click="openDeleteDialog('local')"
-            >
-              <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
-              <Trash2 v-else :size="14" aria-hidden="true" />
-              {{ linkedWorktree ? "删除工作树" : "删除本地" }}
-            </button>
-          </section>
-          <section v-if="settings" class="project-danger-zone" aria-label="远端危险操作">
-            <div>
-              <strong>删除 GitHub 远端仓库</strong>
-              <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
-            </div>
-            <button
-              type="button"
-              class="ghost danger"
-              :disabled="deletingRepo || githubLoading || !settings || !repoFullName"
-              @click="openDeleteDialog('remote')"
-            >
-              <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
-              <Trash2 v-else :size="14" aria-hidden="true" />
-              删除仓库
-            </button>
-          </section>
+            <section v-if="!remoteOnly && repoPath" class="project-danger-zone" aria-label="本地危险操作">
+              <div>
+                <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
+                <span>
+                  {{
+                    linkedWorktree
+                      ? "从当前共享仓库移除该工作树，并从工作区仓库列表移除。"
+                      : "删除工作区内的本地目录，并从本地仓库列表移除。"
+                  }}
+                </span>
+              </div>
+              <button
+                type="button"
+                class="ghost danger project-icon-action"
+                :disabled="deletingLocalRepo"
+                :aria-label="linkedWorktree ? '删除工作树' : '删除本地'"
+                :title="linkedWorktree ? '删除工作树' : '删除本地'"
+                @click="openDeleteDialog('local')"
+              >
+                <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
+                <Trash2 v-else :size="14" aria-hidden="true" />
+              </button>
+            </section>
+            <section v-if="settings" class="project-danger-zone" aria-label="远端危险操作">
+              <div>
+                <strong>删除 GitHub 远端仓库</strong>
+                <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
+              </div>
+              <button
+                type="button"
+                class="ghost danger project-icon-action"
+                :disabled="deletingRepo || githubLoading || !settings || !repoFullName"
+                aria-label="删除仓库"
+                title="删除仓库"
+                @click="openDeleteDialog('remote')"
+              >
+                <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+                <Trash2 v-else :size="14" aria-hidden="true" />
+              </button>
+            </section>
           </div>
           <Teleport to="body">
             <Transition name="modal">
@@ -1727,16 +1835,27 @@ function selectReadme(path: string) {
 }
 
 .project-section__head,
-.project-row,
-.project-inline-form {
+.project-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.project-section__head,
-.project-row {
+.project-section__head {
   justify-content: space-between;
+}
+
+.project-section__head--compact {
+  min-height: 34px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.project-section__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
 .project-section h3 {
@@ -1746,6 +1865,26 @@ function selectReadme(path: string) {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.project-section__title span,
+.project-toolbar {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-section__title h3,
+.project-section__title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-toolbar {
+  justify-content: flex-end;
+  min-width: 0;
+  flex-shrink: 0;
 }
 
 .project-layout {
@@ -1980,8 +2119,50 @@ function selectReadme(path: string) {
   width: 100%;
 }
 
-.project-inline-form {
-  flex-wrap: wrap;
+.project-github-section {
+  gap: 10px;
+}
+
+.project-segmented {
+  height: 30px;
+  padding: 2px;
+  background: var(--bg-subtle);
+}
+
+.project-segmented button {
+  height: 24px;
+  min-width: 42px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.project-segmented--merge button {
+  min-width: 52px;
+}
+
+.project-compact-form {
+  display: grid;
+  gap: 8px;
+  padding: 4px 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+}
+
+.project-compact-form__line {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(110px, 160px) minmax(110px, 160px) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-compact-form__title {
+  min-width: 0;
+}
+
+.project-compact-form textarea {
+  min-height: 54px;
+  resize: vertical;
 }
 
 .project-check {
@@ -1996,17 +2177,31 @@ function selectReadme(path: string) {
   width: auto;
 }
 
-.project-inline-form input {
-  flex: 1 1 160px;
+.project-check--inline {
+  justify-content: center;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
 }
 
 .project-list {
   gap: 0;
 }
 
+.project-dense-list {
+  overflow: visible;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+}
+
 .project-row {
-  min-height: 42px;
-  padding: 9px 0;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 0;
   border-top: 1px solid var(--border-soft);
 }
 
@@ -2014,40 +2209,109 @@ function selectReadme(path: string) {
   border-top: 0;
 }
 
-.project-row strong,
-.project-row span {
-  display: block;
-  min-width: 0;
-  overflow-wrap: anywhere;
+.project-row:hover {
+  background: var(--bg-hover);
 }
 
-.project-row span {
-  margin-top: 2px;
+.project-row__status,
+.project-action-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--ok);
+}
+
+.project-row__status.is-closed {
+  color: var(--text-muted);
+}
+
+.project-row__content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.project-row__content strong,
+.project-row__content span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row__content strong {
+  flex: 0 1 auto;
+  max-width: min(58%, 100%);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-row__content span {
+  flex: 1 1 120px;
   color: var(--text-muted);
   font-size: 12px;
 }
 
+.project-row__actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+
+.project-row__actions--pull {
+  gap: 6px;
+}
+
+.project-icon-action {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.project-icon-action:hover {
+  color: var(--text);
+}
+
+.project-icon-action--primary {
+  color: var(--accent);
+}
+
 .project-row--issue {
-  align-items: flex-start;
+  align-items: center;
 }
 
 .project-issue-edit-form {
   width: 100%;
   display: grid;
-  gap: 10px;
+  grid-column: 1 / -1;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .project-row--action {
-  display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
 }
 
 .project-row--pull {
-  align-items: flex-start;
+  align-items: start;
 }
 
 .project-pull-checks {
   display: grid;
+  flex: 0 0 100%;
   gap: 6px;
   margin-top: 8px;
 }
@@ -2069,17 +2333,8 @@ function selectReadme(path: string) {
 }
 
 .project-row.is-target {
-  border-left: 3px solid var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 38%, transparent);
-}
-
-.project-action-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  color: var(--text-muted);
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
 }
 
 .project-action-status--error {
@@ -2100,8 +2355,8 @@ function selectReadme(path: string) {
 
 .project-settings-group {
   display: grid;
-  gap: 10px;
-  padding: 12px 0;
+  gap: 8px;
+  padding: 10px 0;
   border-top: 1px solid var(--border-soft);
 }
 
@@ -2111,8 +2366,9 @@ function selectReadme(path: string) {
 }
 
 .project-settings-group__head {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
 }
 
 .project-settings-group__head h4 {
@@ -2122,15 +2378,17 @@ function selectReadme(path: string) {
   font-weight: 600;
 }
 
-.project-settings-group__head p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
+.project-settings-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  gap: 8px;
 }
 
 .project-settings-field {
   display: grid;
-  gap: 5px;
+  grid-template-columns: 74px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -2141,86 +2399,92 @@ function selectReadme(path: string) {
 
 .project-settings-switches {
   display: grid;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
-  overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 16px;
+  border-top: 1px solid var(--border-soft);
 }
 
 .project-settings-switch {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  align-items: start;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 5px 0;
   color: var(--text);
   border-bottom: 1px solid var(--border-soft);
 }
 
-.project-settings-switch:last-child {
-  border-bottom: 0;
-}
-
-.project-settings-switch input {
-  width: 14px;
-  height: 14px;
-  margin: 2px 0 0;
-  padding: 0;
-}
-
-.project-settings-switch span {
-  display: grid;
-  gap: 2px;
+.project-settings-switch__content {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
 }
 
 .project-settings-switch strong {
+  flex: 0 0 auto;
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
 }
 
 .project-settings-switch em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
   font-size: 12px;
   font-style: normal;
-  overflow-wrap: anywhere;
+}
+
+.project-settings-switch em::before {
+  content: "· ";
 }
 
 .project-settings-danger-list {
   display: grid;
-  gap: 10px;
-  padding-top: 4px;
+  gap: 6px;
+  padding-top: 2px;
   border-top: 1px solid var(--border-soft);
 }
 
 .project-danger-zone {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--err-soft);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--err-soft) 52%, var(--bg-subtle));
+  min-height: 44px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .project-danger-zone div {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
 }
 
 .project-danger-zone strong {
+  flex: 0 0 auto;
   color: var(--err);
   font-size: 13px;
 }
 
 .project-danger-zone span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
   font-size: 12px;
-  overflow-wrap: anywhere;
+}
+
+.project-danger-zone span::before {
+  content: "· ";
 }
 
 .project-danger-zone button,
@@ -2323,9 +2587,25 @@ function selectReadme(path: string) {
     order: -1;
   }
 
+  .project-section__head--compact,
+  .project-toolbar,
+  .project-row__actions {
+    flex-wrap: wrap;
+  }
+
+  .project-compact-form__line,
+  .project-settings-fields,
+  .project-row {
+    grid-template-columns: 1fr;
+  }
+
+  .project-row__status,
+  .project-action-status {
+    display: none;
+  }
+
   .project-danger-zone {
-    align-items: flex-start;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 }
 </style>
