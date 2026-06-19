@@ -33,6 +33,98 @@ pub(super) fn add_managed_repo_id(settings: &mut WorkspaceSettings, repo_id: Str
     }
 }
 
+fn repo_group_name_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+fn next_repo_group_id(settings: &WorkspaceSettings) -> String {
+    let mut seed = now_millis();
+    loop {
+        let id = format!("repo-group-{seed}");
+        if !settings.repo_groups.iter().any(|group| group.id == id) {
+            return id;
+        }
+        seed += 1;
+    }
+}
+
+pub(super) fn create_repo_group(
+    settings: &mut WorkspaceSettings,
+    name: &str,
+) -> Result<WorkspaceRepoGroup, String> {
+    let normalized = name.trim();
+    if normalized.is_empty() {
+        return Err("分组名称不能为空".to_string());
+    }
+    let name_key = repo_group_name_key(normalized);
+    if settings
+        .repo_groups
+        .iter()
+        .any(|group| repo_group_name_key(&group.name) == name_key)
+    {
+        return Err("已存在同名仓库分组".to_string());
+    }
+    let group = WorkspaceRepoGroup {
+        id: next_repo_group_id(settings),
+        name: normalized.to_string(),
+        repo_ids: Vec::new(),
+    };
+    settings.repo_groups.push(group.clone());
+    Ok(group)
+}
+
+pub(super) fn delete_repo_group(
+    settings: &mut WorkspaceSettings,
+    group_id: &str,
+) -> Result<(), String> {
+    let normalized = group_id.trim();
+    if normalized.is_empty() {
+        return Err("分组 ID 不能为空".to_string());
+    }
+    let before = settings.repo_groups.len();
+    settings.repo_groups.retain(|group| group.id != normalized);
+    if settings.repo_groups.len() == before {
+        return Err("未找到仓库分组".to_string());
+    }
+    Ok(())
+}
+
+pub(super) fn move_repo_to_group(
+    settings: &mut WorkspaceSettings,
+    repo_id: &str,
+    group_id: Option<&str>,
+) -> Result<(), String> {
+    let normalized_repo_id = repo_id.trim();
+    if normalized_repo_id.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    let normalized_group_id = group_id.and_then(|id| {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
+    if let Some(target_group_id) = normalized_group_id {
+        if !settings
+            .repo_groups
+            .iter()
+            .any(|group| group.id == target_group_id)
+        {
+            return Err("未找到仓库分组".to_string());
+        }
+    }
+    for group in &mut settings.repo_groups {
+        group.repo_ids.retain(|id| id != normalized_repo_id);
+        if normalized_group_id == Some(group.id.as_str()) {
+            group.repo_ids.push(normalized_repo_id.to_string());
+            sort_dedup(&mut group.repo_ids);
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn remove_system_git_repo_id(
     settings: &mut WorkspaceSettings,
     repo_id: &str,
@@ -106,6 +198,9 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
     settings.managed_repo_ids.retain(|id| id != repo_id);
     settings.hidden_repo_ids.retain(|id| id != repo_id);
     settings.system_git_repo_ids.retain(|id| id != repo_id);
+    for group in &mut settings.repo_groups {
+        group.repo_ids.retain(|id| id != repo_id);
+    }
     settings.project_launch_configs.remove(repo_id);
     remove_local_contribution_cache(settings, repo_id);
 }
@@ -163,6 +258,45 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
         settings.hidden_repo_ids.sort();
     }
     remove_local_contribution_cache(&mut settings, normalized);
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_create_repo_group(
+    app: AppHandle,
+    name: String,
+) -> Result<WorkspaceSettings, String> {
+    let mut settings = load_settings(&app);
+    create_repo_group(&mut settings, &name)?;
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_delete_repo_group(
+    app: AppHandle,
+    group_id: String,
+) -> Result<WorkspaceSettings, String> {
+    let mut settings = load_settings(&app);
+    delete_repo_group(&mut settings, &group_id)?;
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn workspace_move_repo_to_group(
+    app: AppHandle,
+    repo_id: String,
+    group_id: Option<String>,
+) -> Result<WorkspaceSettings, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    repo_path_by_id(&app, normalized)?;
+    let mut settings = load_settings(&app);
+    move_repo_to_group(&mut settings, normalized, group_id.as_deref())?;
     save_settings(&app, &settings)?;
     Ok(settings)
 }

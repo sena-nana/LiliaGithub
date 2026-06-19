@@ -7,8 +7,15 @@ export interface WorkspaceSettings {
   hiddenRepoIds: string[];
   managedRepoIds: string[];
   systemGitRepoIds: string[];
+  repoGroups: WorkspaceRepoGroup[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+}
+
+export interface WorkspaceRepoGroup {
+  id: string;
+  name: string;
+  repoIds: string[];
 }
 
 export interface LocalContributionDayCache {

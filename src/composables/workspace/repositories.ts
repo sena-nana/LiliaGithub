@@ -388,6 +388,24 @@ export async function hideRepo(repoId: string) {
   removeLocalRepoState(repoId);
 }
 
+export async function createRepoGroup(name: string) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.createRepoGroup(name);
+  return state.settings;
+}
+
+export async function deleteRepoGroup(groupId: string) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.deleteRepoGroup(groupId);
+  return state.settings;
+}
+
+export async function moveRepoToGroup(repoId: string, groupId: string | null) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.moveRepoToGroup(repoId, groupId);
+  return state.settings;
+}
+
 export async function deleteLocalRepo(repoId: string) {
   repositoryRuntimeGeneration += 1;
   const service = await loadWorkspaceService();
