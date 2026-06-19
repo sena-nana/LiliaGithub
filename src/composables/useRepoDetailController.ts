@@ -73,6 +73,7 @@ export function useRepoDetailController() {
   const githubBranchLoading = ref(false);
   const deletingRemoteBranchName = ref<string | null>(null);
   const deletedRemoteBranchNames = ref<string[]>([]);
+  const projectRefreshToken = ref(0);
   let launchPollTimer: number | null = null;
 
   const repoId = computed(() => String(route.params.repoId ?? ""));
@@ -662,6 +663,7 @@ function refreshAndFetchRepo() {
   void runAction(async () => {
     await workspace.fetch(targetRepoId);
     await load();
+    projectRefreshToken.value += 1;
   });
 }
 
@@ -965,6 +967,7 @@ function refreshAndFetchRepo() {
       activeProjectIssue,
       activeProjectPullRequest,
       activeProjectRun,
+      projectRefreshToken,
       toolbarTabs,
       launchCommandOptions,
       activeLaunchValue,

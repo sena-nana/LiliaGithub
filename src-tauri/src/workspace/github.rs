@@ -9,6 +9,8 @@ pub(super) const GITHUB_OAUTH_ACCEPT: &str = "application/json";
 pub(super) const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
 pub(super) const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 pub(super) const GITHUB_CONTRIBUTION_DAYS: usize = 371;
+pub(super) const GITHUB_PROJECT_CACHE_KEY: &str = "workspace.githubProjectCache";
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) struct DeviceCodeResponse {
@@ -382,6 +384,119 @@ pub(super) fn github_json<T: for<'de> Deserialize<'de>>(
     response
         .json::<T>()
         .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
+}
+
+pub(super) fn load_github_project_cache(app: &AppHandle) -> GitHubProjectCache {
+    app.store(STORE_FILE)
+        .ok()
+        .and_then(|store| store.get(GITHUB_PROJECT_CACHE_KEY))
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
+}
+
+pub(super) fn save_github_project_cache(
+    app: &AppHandle,
+    cache: &GitHubProjectCache,
+) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("打开 GitHub 项目缓存失败：{e}"))?;
+    store.set(
+        GITHUB_PROJECT_CACHE_KEY,
+        serde_json::to_value(cache).map_err(|e| e.to_string())?,
+    );
+    store
+        .save()
+        .map_err(|e| format!("保存 GitHub 项目缓存失败：{e}"))
+}
+
+pub(super) fn github_project_cache_repo_key(repo_full_name: &str) -> Result<String, String> {
+    Ok(normalize_github_repo_input(repo_full_name)?
+        .full_name
+        .to_ascii_lowercase())
+}
+
+pub(super) fn github_project_cache_enabled(force_refresh: Option<bool>) -> bool {
+    !force_refresh.unwrap_or(false)
+}
+
+pub(super) fn update_github_project_repo_cache(
+    app: &AppHandle,
+    repo_full_name: &str,
+    update: impl FnOnce(&mut GitHubProjectRepoCache),
+) -> Result<(), String> {
+    let key = github_project_cache_repo_key(repo_full_name)?;
+    let mut cache = load_github_project_cache(app);
+    let repo_cache = cache.repos.entry(key).or_default();
+    update(repo_cache);
+    save_github_project_cache(app, &cache)
+}
+
+pub(super) fn clear_github_project_repo_cache(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<(), String> {
+    let key = github_project_cache_repo_key(repo_full_name)?;
+    let mut cache = load_github_project_cache(app);
+    cache.repos.remove(&key);
+    save_github_project_cache(app, &cache)
+}
+
+pub(super) fn clear_github_project_issue_cache(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<(), String> {
+    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+        repo_cache.issues.clear();
+    })
+}
+
+pub(super) fn clear_github_project_pull_request_cache(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<(), String> {
+    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+        repo_cache.pull_requests.clear();
+        repo_cache.pull_request_checks.clear();
+    })
+}
+
+pub(super) fn github_issue_cache_key(
+    state: Option<&str>,
+    per_page: Option<u32>,
+    sort: Option<&str>,
+    direction: Option<&str>,
+    since: Option<&str>,
+) -> String {
+    let issue_state = state.unwrap_or("open");
+    let issue_per_page = per_page.unwrap_or(100).clamp(1, 100);
+    let issue_sort = match sort {
+        Some("updated") => "updated",
+        Some("comments") => "comments",
+        _ => "created",
+    };
+    let issue_direction = match direction {
+        Some("asc") => "asc",
+        _ => "desc",
+    };
+    let issue_since = since
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    format!("{issue_state}|{issue_per_page}|{issue_sort}|{issue_direction}|{issue_since}")
+}
+
+pub(super) fn github_pull_request_cache_key(state: Option<&str>) -> String {
+    match state {
+        Some("closed") => "closed",
+        Some("all") => "all",
+        _ => "open",
+    }
+    .to_string()
+}
+
+pub(super) fn github_workflow_runs_cache_key(per_page: Option<u32>) -> String {
+    per_page.unwrap_or(30).clamp(1, 100).to_string()
 }
 
 pub(super) fn github_require_token(
@@ -1108,34 +1223,56 @@ pub async fn github_create_repo(
     .await
 }
 
+fn fetch_github_repo_management(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<GitHubRepoManagement, String> {
+    let (_binding, token) = github_require_token(app)?;
+    let client = build_client()?;
+    let repo_url = github_repo_api_url(repo_full_name)?;
+    let response = github_send(
+        app,
+        "读取 GitHub 仓库设置失败",
+        github_headers(client.get(&repo_url), Some(&token)),
+    )?;
+    let repo = github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?;
+    let topics_response = github_send(
+        app,
+        "读取 GitHub 仓库 topics 失败",
+        github_headers(
+            client.get(github_repo_topics_api_url(repo_full_name)?),
+            Some(&token),
+        ),
+    )?;
+    let topics = github_json::<GitHubRepoTopicsResponse>(
+        "读取 GitHub 仓库 topics 失败",
+        topics_response,
+    )?;
+    Ok(github_repo_management_from_response(repo, topics.names))
+}
+
 #[tauri::command]
 pub async fn github_get_repo_management(
     app: AppHandle,
     repo_full_name: String,
+    force_refresh: Option<bool>,
 ) -> Result<GitHubRepoManagement, String> {
     run_blocking("读取 GitHub 仓库设置", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let repo_url = github_repo_api_url(&repo_full_name)?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 仓库设置失败",
-            github_headers(client.get(&repo_url), Some(&token)),
-        )?;
-        let repo = github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?;
-        let topics_response = github_send(
-            &app,
-            "读取 GitHub 仓库 topics 失败",
-            github_headers(
-                client.get(github_repo_topics_api_url(&repo_full_name)?),
-                Some(&token),
-            ),
-        )?;
-        let topics = github_json::<GitHubRepoTopicsResponse>(
-            "读取 GitHub 仓库 topics 失败",
-            topics_response,
-        )?;
-        Ok(github_repo_management_from_response(repo, topics.names))
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.management.clone())
+            {
+                return Ok(cached);
+            }
+        }
+        let next = fetch_github_repo_management(&app, &repo_full_name)?;
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.management = Some(next.clone());
+        })?;
+        Ok(next)
     })
     .await
 }
@@ -1189,7 +1326,11 @@ pub async fn github_update_repo_settings(
             )?;
             github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", response)?.names
         };
-        Ok(github_repo_management_from_response(repo, topics))
+        let management = github_repo_management_from_response(repo, topics);
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.management = Some(management.clone());
+        })?;
+        Ok(management)
     })
     .await
 }
@@ -1211,6 +1352,7 @@ pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Resul
         if !response.status().is_success() {
             return Err(github_http_error("删除 GitHub 仓库失败", response));
         }
+        clear_github_project_repo_cache(&app, &repo_full_name)?;
         Ok(())
     })
     .await
@@ -1282,8 +1424,20 @@ pub async fn github_list_pull_requests(
     app: AppHandle,
     repo_full_name: String,
     state: Option<String>,
+    force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubPullRequest>, String> {
     run_blocking("读取 GitHub Pull Requests", move || {
+        let pull_key = github_pull_request_cache_key(state.as_deref());
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.pull_requests.get(&pull_key).cloned())
+            {
+                return Ok(cached);
+            }
+        }
         let (_binding, token) = github_require_token(&app)?;
         let pull_state = match state.as_deref() {
             Some("closed") => "closed",
@@ -1305,10 +1459,14 @@ pub async fn github_list_pull_requests(
             "读取 GitHub Pull Requests 失败",
             response,
         )?;
-        Ok(pull_requests
+        let pulls = pull_requests
             .into_iter()
             .map(github_pull_request_from_response)
-            .collect())
+            .collect::<Vec<_>>();
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.pull_requests.insert(pull_key, pulls.clone());
+        })?;
+        Ok(pulls)
     })
     .await
 }
@@ -1373,7 +1531,9 @@ pub async fn github_create_pull_request(
             "创建 GitHub Pull Request 失败",
             response,
         )?;
-        Ok(github_pull_request_from_response(pull_request))
+        let pull = github_pull_request_from_response(pull_request);
+        clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+        Ok(pull)
     })
     .await
 }
@@ -1425,7 +1585,9 @@ pub async fn github_update_pull_request(
             "更新 GitHub Pull Request 失败",
             response,
         )?;
-        Ok(github_pull_request_from_response(pull_request))
+        let pull = github_pull_request_from_response(pull_request);
+        clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+        Ok(pull)
     })
     .await
 }
@@ -1479,7 +1641,9 @@ pub async fn github_merge_pull_request(
             &token,
             "读取合并后的 Pull Request 失败",
         )?;
-        Ok(github_pull_request_from_response(pull_request))
+        let pull = github_pull_request_from_response(pull_request);
+        clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+        Ok(pull)
     })
     .await
 }
@@ -1489,10 +1653,22 @@ pub async fn github_list_pull_request_checks(
     app: AppHandle,
     repo_full_name: String,
     pull_number: u64,
+    force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubPullRequestCheck>, String> {
     run_blocking("读取 GitHub Pull Request Checks", move || {
         if pull_number == 0 {
             return Err("Pull Request 编号不合法".to_string());
+        }
+        let checks_key = pull_number.to_string();
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.pull_request_checks.get(&checks_key).cloned())
+            {
+                return Ok(cached);
+            }
         }
         let (_binding, token) = github_require_token(&app)?;
         let pull_request = github_fetch_pull_request_response(
@@ -1526,11 +1702,17 @@ pub async fn github_list_pull_request_checks(
             "读取 GitHub Pull Request Checks 失败",
             response,
         )?;
-        Ok(checks
+        let checks = checks
             .check_runs
             .into_iter()
             .map(github_pull_request_check_from_response)
-            .collect())
+            .collect::<Vec<_>>();
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache
+                .pull_request_checks
+                .insert(checks_key, checks.clone());
+        })?;
+        Ok(checks)
     })
     .await
 }
@@ -1544,8 +1726,26 @@ pub async fn github_list_issues(
     sort: Option<String>,
     direction: Option<String>,
     since: Option<String>,
+    force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubIssue>, String> {
     run_blocking("读取 GitHub Issue", move || {
+        let issue_key = github_issue_cache_key(
+            state.as_deref(),
+            per_page,
+            sort.as_deref(),
+            direction.as_deref(),
+            since.as_deref(),
+        );
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.issues.get(&issue_key).cloned())
+            {
+                return Ok(cached);
+            }
+        }
         let (_binding, token) = github_require_token(&app)?;
         let issue_state = state.unwrap_or_else(|| "open".to_string());
         let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
@@ -1579,10 +1779,14 @@ pub async fn github_list_issues(
             ),
         )?;
         let issues = github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?;
-        Ok(issues
+        let issues = issues
             .into_iter()
             .filter_map(github_issue_from_response)
-            .collect())
+            .collect::<Vec<_>>();
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.issues.insert(issue_key, issues.clone());
+        })?;
+        Ok(issues)
     })
     .await
 }
@@ -1621,8 +1825,10 @@ pub async fn github_create_issue(
             ),
         )?;
         let issue = github_json::<GitHubIssueResponse>("创建 GitHub Issue 失败", response)?;
-        github_issue_from_response(issue)
-            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
+        let issue = github_issue_from_response(issue)
+            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
+        clear_github_project_issue_cache(&app, &repo_full_name)?;
+        Ok(issue)
     })
     .await
 }
@@ -1673,8 +1879,10 @@ pub async fn github_update_issue(
             ),
         )?;
         let issue = github_json::<GitHubIssueResponse>("更新 GitHub Issue 失败", response)?;
-        github_issue_from_response(issue)
-            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())
+        let issue = github_issue_from_response(issue)
+            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
+        clear_github_project_issue_cache(&app, &repo_full_name)?;
+        Ok(issue)
     })
     .await
 }
@@ -1684,8 +1892,20 @@ pub async fn github_list_workflow_runs(
     app: AppHandle,
     repo_full_name: String,
     per_page: Option<u32>,
+    force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubWorkflowRun>, String> {
     run_blocking("读取 GitHub Actions", move || {
+        let runs_key = github_workflow_runs_cache_key(per_page);
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.workflow_runs.get(&runs_key).cloned())
+            {
+                return Ok(cached);
+            }
+        }
         let (_binding, token) = github_require_token(&app)?;
         let runs_per_page = per_page.unwrap_or(30).clamp(1, 100).to_string();
         let client = build_client()?;
@@ -1703,11 +1923,15 @@ pub async fn github_list_workflow_runs(
             ),
         )?;
         let runs = github_json::<GitHubWorkflowRunsResponse>("读取 GitHub Actions 失败", response)?;
-        Ok(runs
+        let runs = runs
             .workflow_runs
             .into_iter()
             .map(github_workflow_run_from_response)
-            .collect())
+            .collect::<Vec<_>>();
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.workflow_runs.insert(runs_key, runs.clone());
+        })?;
+        Ok(runs)
     })
     .await
 }
@@ -1756,9 +1980,24 @@ pub async fn github_list_repo_contribution(
 pub async fn github_list_repo_readmes(
     app: AppHandle,
     repo_full_name: String,
+    force_refresh: Option<bool>,
 ) -> Result<Vec<RepoReadme>, String> {
     run_blocking("读取 GitHub README", move || {
-        read_github_repo_readmes(&app, &repo_full_name)
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.readmes.clone())
+            {
+                return Ok(cached);
+            }
+        }
+        let readmes = read_github_repo_readmes(&app, &repo_full_name)?;
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.readmes = Some(readmes.clone());
+        })?;
+        Ok(readmes)
     })
     .await
 }

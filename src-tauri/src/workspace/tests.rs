@@ -224,6 +224,105 @@ fn forget_remote_repo_shortcut_removes_matching_when_stored_as_remote_url() {
     assert_eq!(shortcuts[0].full_name, "sena-nana/Remove");
 }
 
+fn test_github_issue(number: u64, state: &str) -> GitHubIssue {
+    GitHubIssue {
+        number,
+        title: format!("Issue {number}"),
+        state: state.to_string(),
+        body: None,
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        html_url: format!("https://github.com/a/repo/issues/{number}"),
+        updated_at: "2026-06-18T08:00:00Z".to_string(),
+        created_at: "2026-06-18T08:00:00Z".to_string(),
+    }
+}
+
+fn test_github_pull_request(number: u64, state: &str) -> GitHubPullRequest {
+    GitHubPullRequest {
+        number,
+        title: format!("PR {number}"),
+        state: state.to_string(),
+        draft: false,
+        body: None,
+        html_url: format!("https://github.com/a/repo/pull/{number}"),
+        updated_at: "2026-06-18T08:00:00Z".to_string(),
+        created_at: "2026-06-18T08:00:00Z".to_string(),
+        author: "sena".to_string(),
+        base_branch: "main".to_string(),
+        head_branch: "feature/cache".to_string(),
+        merged: false,
+        mergeable: Some(true),
+        mergeable_state: Some("clean".to_string()),
+    }
+}
+
+#[test]
+fn github_project_cache_keys_are_normalized_and_parameterized() {
+    assert_eq!(
+        github_project_cache_repo_key("https://github.com/Sena-Nana/Remote.git").unwrap(),
+        "sena-nana/remote"
+    );
+    assert_eq!(
+        github_issue_cache_key(Some("closed"), Some(200), Some("updated"), Some("asc"), Some(" 2026-01-01T00:00:00Z ")),
+        "closed|100|updated|asc|2026-01-01T00:00:00Z"
+    );
+    assert_eq!(
+        github_issue_cache_key(None, None, Some("invalid"), None, None),
+        "open|100|created|desc|"
+    );
+    assert_eq!(github_pull_request_cache_key(Some("all")), "all");
+    assert_eq!(github_pull_request_cache_key(Some("invalid")), "open");
+    assert_eq!(github_workflow_runs_cache_key(Some(0)), "1");
+    assert_eq!(github_workflow_runs_cache_key(Some(200)), "100");
+}
+
+#[test]
+fn github_project_cache_serializes_distinct_query_buckets() {
+    let mut cache = GitHubProjectCache::default();
+    let repo_cache = cache
+        .repos
+        .entry("sena-nana/remote".to_string())
+        .or_default();
+    repo_cache.issues.insert(
+        github_issue_cache_key(Some("open"), None, None, None, None),
+        vec![test_github_issue(1, "open")],
+    );
+    repo_cache.issues.insert(
+        github_issue_cache_key(Some("closed"), None, None, None, None),
+        vec![test_github_issue(2, "closed")],
+    );
+    repo_cache.pull_requests.insert(
+        github_pull_request_cache_key(Some("open")),
+        vec![test_github_pull_request(3, "open")],
+    );
+    repo_cache.pull_requests.insert(
+        github_pull_request_cache_key(Some("all")),
+        vec![test_github_pull_request(4, "closed")],
+    );
+
+    let value = serde_json::to_value(&cache).unwrap();
+    let restored: GitHubProjectCache = serde_json::from_value(value).unwrap();
+    let restored_repo = restored.repos.get("sena-nana/remote").unwrap();
+
+    assert_eq!(
+        restored_repo.issues[&github_issue_cache_key(Some("open"), None, None, None, None)][0].number,
+        1
+    );
+    assert_eq!(
+        restored_repo.issues[&github_issue_cache_key(Some("closed"), None, None, None, None)][0].number,
+        2
+    );
+    assert_eq!(
+        restored_repo.pull_requests[&github_pull_request_cache_key(Some("open"))][0].number,
+        3
+    );
+    assert_eq!(
+        restored_repo.pull_requests[&github_pull_request_cache_key(Some("all"))][0].number,
+        4
+    );
+}
+
 #[test]
 fn readme_name_priority_supports_remote_readme_candidates() {
     let mut names = vec![

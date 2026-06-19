@@ -55,12 +55,26 @@ const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "
 const isDev = typeof import.meta !== "undefined" && import.meta.env?.DEV === true;
 const GITHUB_REPO_CACHE_TTL_MS = 5 * 60 * 1000;
 
+export type GitHubProjectFetchOptions = {
+  forceRefresh?: boolean;
+};
+
+type GitHubProjectRepoClientCache = {
+  management?: GitHubRepoManagement;
+  readmes?: RepoReadme[];
+  issues: Record<string, GitHubIssue[] | undefined>;
+  pullRequests: Record<string, GitHubPullRequest[] | undefined>;
+  pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
+  workflowRuns: Record<number, GitHubWorkflowRun[] | undefined>;
+};
+
 let githubRepoCache: {
   items: GitHubRepoPage["items"];
   nextPage: number | null;
   fetchedAt: number;
 } | null = null;
 let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
+const githubProjectCache = new Map<string, GitHubProjectRepoClientCache>();
 
 export function resolveWorkspaceRuntimeForTests(probe: {
   hasWindow: boolean;
@@ -111,6 +125,89 @@ function cloneRepoPage(page: GitHubRepoPage): GitHubRepoPage {
   };
 }
 
+function cloneProjectData<T>(value: T): T {
+  if (typeof globalThis.structuredClone === "function") {
+    return globalThis.structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneProjectList<T>(items: readonly T[]): T[] {
+  return items.map((item) => cloneProjectData(item));
+}
+
+function githubProjectRepoKey(repoFullName: string) {
+  return repoFullName.trim().toLowerCase();
+}
+
+function githubProjectRepoCache(repoFullName: string) {
+  const key = githubProjectRepoKey(repoFullName);
+  let cache = githubProjectCache.get(key);
+  if (!cache) {
+    cache = {
+      issues: {},
+      pullRequests: {},
+      pullRequestChecks: {},
+      workflowRuns: {},
+    };
+    githubProjectCache.set(key, cache);
+  }
+  return cache;
+}
+
+function clearGitHubProjectRepoCache(repoFullName: string) {
+  githubProjectCache.delete(githubProjectRepoKey(repoFullName));
+}
+
+function githubIssueCacheKey(options: GitHubIssueListOptions) {
+  const state = options.state ?? "open";
+  const perPage = Math.min(100, Math.max(1, options.perPage ?? 100));
+  const sort = options.sort === "updated" || options.sort === "comments" ? options.sort : "created";
+  const direction = options.direction === "asc" ? "asc" : "desc";
+  const since = options.since?.trim() ?? "";
+  return `${state}|${perPage}|${sort}|${direction}|${since}`;
+}
+
+function githubPullRequestCacheKey(state?: "open" | "closed" | "all" | null) {
+  return state === "closed" || state === "all" ? state : "open";
+}
+
+function githubWorkflowRunsCacheKey(perPage?: number | null) {
+  return Math.min(100, Math.max(1, perPage ?? 30));
+}
+
+function upsertGitHubIssue(repoFullName: string, issue: GitHubIssue) {
+  const cache = githubProjectRepoCache(repoFullName);
+  for (const [key, items] of Object.entries(cache.issues)) {
+    if (!items) continue;
+    const [state] = key.split("|");
+    const belongs = state === "all" || state === issue.state;
+    const withoutIssue = items.filter((item) => item.number !== issue.number);
+    cache.issues[key] = belongs
+      ? [cloneProjectData(issue), ...cloneProjectList(withoutIssue)]
+      : cloneProjectList(withoutIssue);
+  }
+}
+
+function upsertGitHubPullRequest(repoFullName: string, pull: GitHubPullRequest) {
+  const cache = githubProjectRepoCache(repoFullName);
+  for (const [key, items] of Object.entries(cache.pullRequests)) {
+    if (!items) continue;
+    const belongs = key === "all" || key === pull.state;
+    const withoutPull = items.filter((item) => item.number !== pull.number);
+    cache.pullRequests[key] = belongs
+      ? [cloneProjectData(pull), ...cloneProjectList(withoutPull)]
+      : cloneProjectList(withoutPull);
+  }
+}
+
+function clearGitHubProjectPullRequestChecks(repoFullName: string, pullNumber?: number) {
+  const cache = githubProjectCache.get(githubProjectRepoKey(repoFullName));
+  if (!cache) return;
+  if (pullNumber == null) cache.pullRequestChecks = {};
+  else delete cache.pullRequestChecks[pullNumber];
+}
+
 function writeGitHubRepoCache(page: GitHubRepoPage) {
   githubRepoCache = {
     items: page.items.map((repo) => ({ ...repo })),
@@ -127,6 +224,7 @@ export function readCachedGitHubRepos(): GitHubRepoPage | null {
 export function clearGitHubRepoCache() {
   githubRepoCache = null;
   githubRepoPreloadPromise = null;
+  githubProjectCache.clear();
 }
 
 export function isGitHubBindingExpiredError(err: unknown): boolean {
@@ -285,10 +383,22 @@ export async function createGitHubRepo(request: GitHubCreateRepoRequest): Promis
   return repo;
 }
 
-export function getGitHubRepoManagement(repoFullName: string): Promise<GitHubRepoManagement> {
-  return call("github_get_repo_management", { repoFullName }, () =>
-    fallback.getGitHubRepoManagement(repoFullName),
-  );
+export function getGitHubRepoManagement(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubRepoManagement> {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!options.forceRefresh && cache.management) {
+    return Promise.resolve(cloneProjectData(cache.management));
+  }
+  return call("github_get_repo_management", {
+    repoFullName,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.getGitHubRepoManagement(repoFullName))
+    .then((repo) => {
+      cache.management = cloneProjectData(repo);
+      return cloneProjectData(repo);
+    });
 }
 
 export function updateGitHubRepoSettings(
@@ -297,12 +407,16 @@ export function updateGitHubRepoSettings(
 ): Promise<GitHubRepoManagement> {
   return call("github_update_repo_settings", { repoFullName, request }, () =>
     fallback.updateGitHubRepoSettings(repoFullName, request),
-  );
+  ).then((repo) => {
+    githubProjectRepoCache(repoFullName).management = cloneProjectData(repo);
+    return cloneProjectData(repo);
+  });
 }
 
 export async function deleteGitHubRepo(repoFullName: string): Promise<void> {
   await call("github_delete_repo", { repoFullName }, () => fallback.deleteGitHubRepo(repoFullName));
   clearGitHubRepoCache();
+  clearGitHubProjectRepoCache(repoFullName);
 }
 
 export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
@@ -318,10 +432,21 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
 export function listGitHubPullRequests(
   repoFullName: string,
   state?: "open" | "closed" | "all" | null,
+  options: GitHubProjectFetchOptions = {},
 ): Promise<GitHubPullRequest[]> {
-  return call("github_list_pull_requests", { repoFullName, state: state ?? null }, () =>
-    fallback.listGitHubPullRequests(repoFullName, state),
-  );
+  const cache = githubProjectRepoCache(repoFullName);
+  const key = githubPullRequestCacheKey(state);
+  const cached = cache.pullRequests[key];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
+  return call("github_list_pull_requests", {
+    repoFullName,
+    state: state ?? null,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.listGitHubPullRequests(repoFullName, state))
+    .then((pulls) => {
+      cache.pullRequests[key] = cloneProjectList(pulls);
+      return cloneProjectList(pulls);
+    });
 }
 
 export function getGitHubPullRequest(repoFullName: string, pullNumber: number): Promise<GitHubPullRequest> {
@@ -336,7 +461,11 @@ export function createGitHubPullRequest(
 ): Promise<GitHubPullRequest> {
   return call("github_create_pull_request", { repoFullName, request }, () =>
     fallback.createGitHubPullRequest(repoFullName, request),
-  );
+  ).then((pull) => {
+    upsertGitHubPullRequest(repoFullName, pull);
+    clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
+    return cloneProjectData(pull);
+  });
 }
 
 export function updateGitHubPullRequest(
@@ -346,7 +475,11 @@ export function updateGitHubPullRequest(
 ): Promise<GitHubPullRequest> {
   return call("github_update_pull_request", { repoFullName, pullNumber, request }, () =>
     fallback.updateGitHubPullRequest(repoFullName, pullNumber, request),
-  );
+  ).then((pull) => {
+    upsertGitHubPullRequest(repoFullName, pull);
+    clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
+    return cloneProjectData(pull);
+  });
 }
 
 export function mergeGitHubPullRequest(
@@ -356,25 +489,44 @@ export function mergeGitHubPullRequest(
 ): Promise<GitHubPullRequest> {
   return call("github_merge_pull_request", { repoFullName, pullNumber, request }, () =>
     fallback.mergeGitHubPullRequest(repoFullName, pullNumber, request),
-  );
+  ).then((pull) => {
+    upsertGitHubPullRequest(repoFullName, pull);
+    clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
+    return cloneProjectData(pull);
+  });
 }
 
 export function listGitHubPullRequestChecks(
   repoFullName: string,
   pullNumber: number,
+  options: GitHubProjectFetchOptions = {},
 ): Promise<GitHubPullRequestCheck[]> {
-  return call("github_list_pull_request_checks", { repoFullName, pullNumber }, () =>
-    fallback.listGitHubPullRequestChecks(repoFullName, pullNumber),
-  );
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache.pullRequestChecks[pullNumber];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
+  return call("github_list_pull_request_checks", {
+    repoFullName,
+    pullNumber,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.listGitHubPullRequestChecks(repoFullName, pullNumber))
+    .then((checks) => {
+      cache.pullRequestChecks[pullNumber] = cloneProjectList(checks);
+      return cloneProjectList(checks);
+    });
 }
 
 export function listGitHubIssues(
   repoFullName: string,
   stateOrOptions?: string | null | GitHubIssueListOptions,
+  fetchOptions: GitHubProjectFetchOptions = {},
 ): Promise<GitHubIssue[]> {
   const options = typeof stateOrOptions === "object" && stateOrOptions != null
     ? stateOrOptions
     : { state: stateOrOptions ?? null };
+  const cache = githubProjectRepoCache(repoFullName);
+  const key = githubIssueCacheKey(options);
+  const cached = cache.issues[key];
+  if (!fetchOptions.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
   return call("github_list_issues", {
     repoFullName,
     state: options.state ?? null,
@@ -382,9 +534,12 @@ export function listGitHubIssues(
     sort: options.sort ?? null,
     direction: options.direction ?? null,
     since: options.since ?? null,
-  }, () =>
-    fallback.listGitHubIssues(repoFullName, options),
-  );
+    forceRefresh: fetchOptions.forceRefresh ?? null,
+  }, () => fallback.listGitHubIssues(repoFullName, options))
+    .then((issues) => {
+      cache.issues[key] = cloneProjectList(issues);
+      return cloneProjectList(issues);
+    });
 }
 
 export function createGitHubIssue(
@@ -393,7 +548,10 @@ export function createGitHubIssue(
 ): Promise<GitHubIssue> {
   return call("github_create_issue", { repoFullName, request }, () =>
     fallback.createGitHubIssue(repoFullName, request),
-  );
+  ).then((issue) => {
+    upsertGitHubIssue(repoFullName, issue);
+    return cloneProjectData(issue);
+  });
 }
 
 export function updateGitHubIssue(
@@ -403,13 +561,30 @@ export function updateGitHubIssue(
 ): Promise<GitHubIssue> {
   return call("github_update_issue", { repoFullName, issueNumber, request }, () =>
     fallback.updateGitHubIssue(repoFullName, issueNumber, request),
-  );
+  ).then((issue) => {
+    upsertGitHubIssue(repoFullName, issue);
+    return cloneProjectData(issue);
+  });
 }
 
-export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | null): Promise<GitHubWorkflowRun[]> {
-  return call("github_list_workflow_runs", { repoFullName, perPage: perPage ?? null }, () =>
-    fallback.listGitHubWorkflowRuns(repoFullName, perPage),
-  );
+export function listGitHubWorkflowRuns(
+  repoFullName: string,
+  perPage?: number | null,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubWorkflowRun[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const key = githubWorkflowRunsCacheKey(perPage);
+  const cached = cache.workflowRuns[key];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
+  return call("github_list_workflow_runs", {
+    repoFullName,
+    perPage: perPage ?? null,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.listGitHubWorkflowRuns(repoFullName, perPage))
+    .then((runs) => {
+      cache.workflowRuns[key] = cloneProjectList(runs);
+      return cloneProjectList(runs);
+    });
 }
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
@@ -424,8 +599,20 @@ export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
   return call("repo_list_readmes", { repoId }, () => fallback.listRepoReadmes(repoId));
 }
 
-export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[]> {
-  return call("github_list_repo_readmes", { repoFullName }, () => fallback.listGitHubRepoReadmes(repoFullName));
+export function listGitHubRepoReadmes(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<RepoReadme[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!options.forceRefresh && cache.readmes) return Promise.resolve(cloneProjectList(cache.readmes));
+  return call("github_list_repo_readmes", {
+    repoFullName,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.listGitHubRepoReadmes(repoFullName))
+    .then((readmes) => {
+      cache.readmes = cloneProjectList(readmes);
+      return cloneProjectList(readmes);
+    });
 }
 
 export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {

@@ -44,6 +44,12 @@ async function clickOverviewSync() {
   await fireEvent.click(within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" }));
 }
 
+async function waitForRepoTitle(name: string) {
+  await waitFor(() => {
+    expect(document.querySelector(".repo-header__sr-title")).toHaveTextContent(name);
+  });
+}
+
 async function mockLiliaGithubSyncFailure() {
   const service = await import("../src/services/workspace");
   service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
@@ -300,7 +306,9 @@ describe("基础路由", () => {
     await renderAt("/repos/github%3Asena-nana%2FEmptyRemote");
 
     expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
-    expect(await screen.findByText("当前远程仓库没有 README。")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.body).toHaveTextContent("当前远程仓库没有 README。");
+    });
   });
 
   it("本地仓库可通过一级文件树 tab 进入文件浏览页", async () => {
@@ -960,7 +968,9 @@ describe("基础路由", () => {
     await renderAt("/");
 
     expect(await screen.findByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
-    expect(screen.getByText("未分组仓库 2")).toBeInTheDocument();
+    const ungroupedSection = screen.getByRole("button", { name: "折叠分组 未分组仓库" });
+    expect(ungroupedSection).toHaveTextContent("未分组仓库");
+    expect(ungroupedSection).toHaveTextContent("2");
     expect(screen.getAllByText("LiliaGithub").length).toBeGreaterThan(0);
 
     service.setFallbackGitHubReposErrorForTests(null);
@@ -1478,10 +1488,8 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("tab", { name: "Stash" })).toHaveClass("is-active");
     expect(screen.getByRole("tab", { name: "文件树" })).toBeInTheDocument();
-    const secondaryActions = screen.getByRole("group", { name: "扩展仓库操作" });
-    expect(within(secondaryActions).queryByRole("button", { name: "Apply stash" })).toBeNull();
-    expect(within(secondaryActions).queryByRole("button", { name: "Pop stash" })).toBeNull();
-    expect(within(secondaryActions).queryByRole("button", { name: "Drop stash" })).toBeNull();
+    await waitForRepoTitle("LiliaGithub");
+    expect(screen.queryByRole("group", { name: "扩展仓库操作" })).toBeNull();
 
     await fireEvent.click(await screen.findByRole("button", { name: /stash@\{1\}/ }));
 
@@ -1597,6 +1605,7 @@ describe("基础路由", () => {
     const service = await import("../src/services/workspace");
     const { router } = await renderAt("/repos/LiliaGithub");
 
+    await waitForRepoTitle("LiliaGithub");
     await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();
 
@@ -1658,6 +1667,7 @@ describe("基础路由", () => {
     const service = await import("../src/services/workspace");
     const { router } = await renderAt("/repos/LiliaGithub");
 
+    await waitForRepoTitle("LiliaGithub");
     await fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     const deleteLocalButton = await screen.findByRole("button", { name: "删除本地" });
     await fireEvent.click(deleteLocalButton);
@@ -1840,6 +1850,7 @@ describe("基础路由", () => {
     });
 
     await renderAt("/repos/LiliaGithub");
+    await waitForRepoTitle("LiliaGithub");
     await fireEvent.click(await screen.findByRole("tab", { name: "Issues" }));
 
     expect(await screen.findByText(/待编辑 Issue/, {}, { timeout: 5000 })).toBeInTheDocument();
@@ -1897,7 +1908,7 @@ describe("基础路由", () => {
   it("冲突仓库不再暴露旧冲突解决入口", async () => {
     await renderAt("/repos/Lilia");
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
+    await waitForRepoTitle("Lilia");
     expect(screen.getByRole("button", { name: "有冲突" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "推送" })).toBeNull();
     expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
@@ -1973,7 +1984,7 @@ describe("基础路由", () => {
   it("仓库详情页可配置、运行并查看命令运行终端", async () => {
     const { router } = await renderAt("/repos/LiliaGithub");
 
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    await waitForRepoTitle("LiliaGithub");
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.queryByRole("button", { name: "刷新状态" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "命令运行" })).toBeNull();
