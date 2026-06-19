@@ -8,6 +8,7 @@ const props = defineProps<{
   commits: readonly CommitSummary[];
   commitMetaTitle: (commit: CommitSummary) => string;
   selectedCommitHash?: string | null;
+  readOnly?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -68,6 +69,7 @@ function lineKey(line: CommitGraphLine, targetLane: number) {
 }
 
 function commitContextMenu(commit: CommitSummary) {
+  if (props.readOnly) return [];
   return [
     {
       id: `cherry-pick:${commit.hash}`,

@@ -6,6 +6,8 @@ import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
 import type {
+  CommitDetail,
+  CommitSummary,
   GitHubIssue,
   GitHubPullRequest,
   GitHubPullRequestCheck,
@@ -175,6 +177,48 @@ function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChan
   };
 }
 
+function commitSummary(overrides: Partial<CommitSummary> = {}): CommitSummary {
+  return {
+    hash: "fedcba9876543210",
+    shortHash: "fedcba9",
+    author: "Sena",
+    authorEmail: "sena@example.com",
+    timestamp: 1_785_010_000,
+    subject: "远程历史提交",
+    parents: ["1234567890abcdef"],
+    refs: ["main"],
+    ...overrides,
+  };
+}
+
+function commitDetail(commit: CommitSummary): CommitDetail {
+  return {
+    ...commit,
+    committer: commit.author,
+    committerEmail: commit.authorEmail ?? null,
+    body: "远程提交详情。",
+    files: [{
+      path: "src/remote.ts",
+      oldPath: null,
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      patch: "diff --git a/src/remote.ts b/src/remote.ts\n@@ -1 +1,2 @@\n export const remote = true;\n+export const history = true;",
+      hunks: [{
+        header: "@@ -1 +1,2 @@",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        lines: [
+          { kind: "context", content: "export const remote = true;", oldLine: 1, newLine: 1 },
+          { kind: "added", content: "export const history = true;", oldLine: null, newLine: 2 },
+        ],
+      }],
+    }],
+  };
+}
+
 describe("基础路由", () => {
   afterEach(async () => {
     cleanup();
@@ -289,6 +333,38 @@ describe("基础路由", () => {
     expect(screen.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "变更" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "历史" })).toBeInTheDocument();
+  });
+
+  it("远程仓库屏蔽变更路由但保留远程历史和提交详情", async () => {
+    const service = await import("../src/services/workspace");
+    const repoFullName = "sena-nana/NewRepo";
+    const commit = commitSummary();
+    service.clearGitHubRepoCache();
+    service.setFallbackGitHubCommitsForTests({ [repoFullName]: [commit] });
+    service.setFallbackGitHubCommitDetailsForTests({ [repoFullName]: { [commit.hash]: commitDetail(commit) } });
+
+    const { router } = await renderAt("/repos/github%3Asena-nana%2FNewRepo/changes");
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo");
+    });
+    expect(screen.queryByRole("tab", { name: "变更" })).toBeNull();
+    expect(await screen.findByRole("tab", { name: "历史" })).toBeInTheDocument();
+    expect(service.getFallbackGitHubCommitListCallsForTests()).toEqual([
+      { repoFullName, perPage: 100, sha: null },
+    ]);
+
+    await router.push("/repos/github%3Asena-nana%2FNewRepo/history");
+    await fireEvent.click(await screen.findByRole("button", { name: /远程历史提交/ }));
+
+    expect(await screen.findByLabelText("提交详情卡片")).toBeInTheDocument();
+    expect(await screen.findByLabelText("提交元数据")).toHaveTextContent("远程历史提交");
+    expect(await screen.findByLabelText("改动文件列表")).toHaveTextContent("src/remote.ts");
+    expect(service.getFallbackGitHubCommitDetailCallsForTests()).toEqual([
+      { repoFullName, hash: commit.hash },
+    ]);
   });
 
   it("远程详情页没有云端 README 时显示远程空态", async () => {

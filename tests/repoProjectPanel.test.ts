@@ -5,6 +5,7 @@ import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
+import { vContextMenu } from "../src/directives/contextMenu";
 import {
   getGitHubRepoManagement,
   listGitHubPullRequestChecks,
@@ -15,7 +16,10 @@ import {
   mergeGitHubPullRequest,
   updateGitHubRepoSettings,
 } from "../src/services/workspace/client";
+import { setFallbackGitHubCommitDetailsForTests } from "../src/services/workspace/fallback";
 import type {
+  CommitDetail,
+  CommitSummary,
   GitHubIssue,
   GitHubPullRequest,
   GitHubPullRequestCheck,
@@ -111,6 +115,43 @@ const githubPullRequestChecks: GitHubPullRequestCheck[] = [{
   startedAt: "2026-06-18T08:00:00Z",
   completedAt: "2026-06-18T08:05:00Z",
 }];
+
+const remoteCommit: CommitSummary = {
+  hash: "fedcba9876543210",
+  shortHash: "fedcba9",
+  author: "Sena",
+  authorEmail: "sena@example.com",
+  timestamp: 1_785_010_000,
+  subject: "远程历史提交",
+  parents: ["1234567890abcdef"],
+  refs: ["main"],
+};
+
+const remoteCommitDetail: CommitDetail = {
+  ...remoteCommit,
+  committer: "Sena",
+  committerEmail: "sena@example.com",
+  body: "远程提交详情。",
+  files: [{
+    path: "src/remote.ts",
+    oldPath: null,
+    status: "modified",
+    additions: 1,
+    deletions: 0,
+    patch: "diff --git a/src/remote.ts b/src/remote.ts\n@@ -1 +1,2 @@\n export const remote = true;\n+export const history = true;",
+    hunks: [{
+      header: "@@ -1 +1,2 @@",
+      oldStart: 1,
+      oldLines: 1,
+      newStart: 1,
+      newLines: 2,
+      lines: [
+        { kind: "context", content: "export const remote = true;", oldLine: 1, newLine: 1 },
+        { kind: "added", content: "export const history = true;", oldLine: null, newLine: 2 },
+      ],
+    }],
+  }],
+};
 
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
@@ -209,6 +250,9 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
     },
     global: {
       plugins: [router],
+      directives: {
+        contextMenu: vContextMenu,
+      },
     },
   });
 }
@@ -234,6 +278,11 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
     vi.mocked(listRepoReadmes).mockResolvedValue([]);
+    setFallbackGitHubCommitDetailsForTests({
+      "sena-nana/remote-repo": {
+        [remoteCommit.hash]: remoteCommitDetail,
+      },
+    });
     vi.mocked(startAuthFlow).mockResolvedValue(undefined);
     state.repos = [];
   });
@@ -298,6 +347,24 @@ describe("RepoProjectPanel", () => {
       expect(view.getByText("删除 GitHub 远端仓库")).toBeInTheDocument();
     });
     expect(view.queryByText("删除本地仓库")).toBeNull();
+  });
+
+  it("远程仓库历史可打开只读提交详情", async () => {
+    const view = await renderProjectPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoFullName: "sena-nana/remote-repo",
+      repoPath: "",
+      remoteOnly: true,
+      activeGitTab: "history",
+      statusCommits: [remoteCommit],
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: /远程历史提交/ }));
+    await view.rerender({ selectedCommitHash: remoteCommit.hash });
+
+    expect(await view.findByLabelText("提交详情卡片")).toBeInTheDocument();
+    expect(await view.findByLabelText("提交元数据")).toHaveTextContent("远程历史提交");
+    expect(await view.findByLabelText("改动文件列表")).toHaveTextContent("src/remote.ts");
   });
 
   it("默认 readme 首屏加载仓库描述卡片，但不预取 issues 和 workflow runs", async () => {

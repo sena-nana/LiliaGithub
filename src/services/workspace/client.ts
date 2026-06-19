@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { parseRemoteRepoId } from "../../utils/remoteRepo";
 import * as fallback from "./fallback";
 import type {
   BulkOperation,
@@ -6,7 +7,9 @@ import type {
   BulkSyncResult,
   BranchSummary,
   CommitDetail,
+  CommitSummary,
   GitHubBindingStatus,
+  GitHubCommitListOptions,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreateRepoRequest,
@@ -62,6 +65,8 @@ export type GitHubProjectFetchOptions = {
 type GitHubProjectRepoClientCache = {
   management?: GitHubRepoManagement;
   readmes?: RepoReadme[];
+  commits: Record<string, CommitSummary[] | undefined>;
+  commitDetails: Record<string, CommitDetail | undefined>;
   issues: Record<string, GitHubIssue[] | undefined>;
   pullRequests: Record<string, GitHubPullRequest[] | undefined>;
   pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
@@ -145,6 +150,8 @@ function githubProjectRepoCache(repoFullName: string) {
   let cache = githubProjectCache.get(key);
   if (!cache) {
     cache = {
+      commits: {},
+      commitDetails: {},
       issues: {},
       pullRequests: {},
       pullRequestChecks: {},
@@ -174,6 +181,12 @@ function githubPullRequestCacheKey(state?: "open" | "closed" | "all" | null) {
 
 function githubWorkflowRunsCacheKey(perPage?: number | null) {
   return Math.min(100, Math.max(1, perPage ?? 30));
+}
+
+function githubCommitListCacheKey(options: GitHubCommitListOptions = {}) {
+  const perPage = Math.min(100, Math.max(1, options.perPage ?? 100));
+  const sha = options.sha?.trim() ?? "";
+  return `${perPage}|${sha}`;
 }
 
 function upsertGitHubIssue(repoFullName: string, issue: GitHubIssue) {
@@ -587,6 +600,50 @@ export function listGitHubWorkflowRuns(
     });
 }
 
+export function listGitHubRepoCommits(
+  repoFullName: string,
+  options: GitHubCommitListOptions = {},
+  fetchOptions: GitHubProjectFetchOptions = {},
+): Promise<CommitSummary[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const key = githubCommitListCacheKey(options);
+  const cached = cache.commits[key];
+  if (!fetchOptions.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
+  return call("github_list_repo_commits", {
+    repoFullName,
+    perPage: options.perPage ?? null,
+    sha: options.sha ?? null,
+    forceRefresh: fetchOptions.forceRefresh ?? null,
+  }, () => fallback.listGitHubRepoCommits(repoFullName, options))
+    .then((commits) => {
+      cache.commits[key] = cloneProjectList(commits);
+      return cloneProjectList(commits);
+    });
+}
+
+export function getGitHubRepoCommitDetail(
+  repoFullName: string,
+  hash: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<CommitDetail> {
+  const normalizedHash = hash.trim();
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache.commitDetails[normalizedHash];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
+  return call("github_get_repo_commit_detail", {
+    repoFullName,
+    hash: normalizedHash,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.getGitHubRepoCommitDetail(repoFullName, normalizedHash))
+    .then((detail) => {
+      cache.commitDetails[detail.hash] = cloneProjectData(detail);
+      if (normalizedHash && normalizedHash !== detail.hash) {
+        cache.commitDetails[normalizedHash] = cloneProjectData(detail);
+      }
+      return cloneProjectData(detail);
+    });
+}
+
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => fallback.getRepoDetail(repoId));
 }
@@ -628,6 +685,8 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
 }
 
 export function getRepoCommitDetail(repoId: string, hash: string): Promise<CommitDetail> {
+  const remoteFullName = parseRemoteRepoId(repoId);
+  if (remoteFullName) return getGitHubRepoCommitDetail(remoteFullName, hash);
   return call("repo_get_commit_detail", { repoId, hash }, () => fallback.getRepoCommitDetail(repoId, hash));
 }
 

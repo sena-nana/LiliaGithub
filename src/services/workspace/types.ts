@@ -128,6 +128,11 @@ export interface GitHubRepoPage {
   nextPage: number | null;
 }
 
+export interface GitHubCommitListOptions {
+  perPage?: number | null;
+  sha?: string | null;
+}
+
 export interface RemoteRepoShortcut {
   fullName: string;
   name: string;

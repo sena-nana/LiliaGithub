@@ -237,6 +237,54 @@ pub(super) struct GitHubWorkflowRunResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitUserResponse {
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) email: Option<String>,
+    #[serde(default)]
+    pub(super) date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitPayloadResponse {
+    #[serde(default)]
+    pub(super) author: Option<GitHubCommitUserResponse>,
+    #[serde(default)]
+    pub(super) committer: Option<GitHubCommitUserResponse>,
+    pub(super) message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitParentResponse {
+    pub(super) sha: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitFileResponse {
+    pub(super) filename: String,
+    pub(super) status: String,
+    #[serde(default)]
+    pub(super) previous_filename: Option<String>,
+    #[serde(default)]
+    pub(super) additions: i32,
+    #[serde(default)]
+    pub(super) deletions: i32,
+    #[serde(default)]
+    pub(super) patch: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitResponse {
+    pub(super) sha: String,
+    pub(super) commit: GitHubCommitPayloadResponse,
+    #[serde(default)]
+    pub(super) parents: Vec<GitHubCommitParentResponse>,
+    #[serde(default)]
+    pub(super) files: Vec<GitHubCommitFileResponse>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubBranchResponse {
     pub(super) name: String,
     #[serde(default)]
@@ -497,6 +545,12 @@ pub(super) fn github_pull_request_cache_key(state: Option<&str>) -> String {
 
 pub(super) fn github_workflow_runs_cache_key(per_page: Option<u32>) -> String {
     per_page.unwrap_or(30).clamp(1, 100).to_string()
+}
+
+pub(super) fn github_commit_list_cache_key(per_page: Option<u32>, sha: Option<&str>) -> String {
+    let commit_per_page = per_page.unwrap_or(100).clamp(1, 100);
+    let commit_sha = sha.map(str::trim).filter(|value| !value.is_empty()).unwrap_or("");
+    format!("{commit_per_page}|{commit_sha}")
 }
 
 pub(super) fn github_require_token(
@@ -845,6 +899,147 @@ pub(super) fn github_workflow_run_from_response(
         created_at: run.created_at,
         updated_at: run.updated_at,
     }
+}
+
+pub(super) fn github_commit_summary_from_response(commit: GitHubCommitResponse) -> CommitSummary {
+    let author = commit.commit.author.as_ref();
+    let subject = commit
+        .commit
+        .message
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    CommitSummary {
+        short_hash: short_github_hash(&commit.sha),
+        hash: commit.sha,
+        author: author
+            .and_then(|item| normalize_optional_string(item.name.clone()))
+            .unwrap_or_else(|| "unknown".to_string()),
+        author_email: author.and_then(|item| normalize_optional_string(item.email.clone())),
+        timestamp: author
+            .and_then(|item| item.date.as_deref())
+            .and_then(parse_github_datetime)
+            .unwrap_or_default(),
+        subject,
+        parents: commit.parents.into_iter().map(|parent| parent.sha).collect(),
+        refs: Vec::new(),
+    }
+}
+
+pub(super) fn github_commit_detail_from_response(commit: GitHubCommitResponse) -> CommitDetail {
+    let author = commit.commit.author.as_ref();
+    let committer = commit.commit.committer.as_ref();
+    let mut message_lines = commit.commit.message.lines();
+    let subject = message_lines.next().unwrap_or("").trim().to_string();
+    let body = message_lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    let timestamp = author
+        .and_then(|item| item.date.as_deref())
+        .and_then(parse_github_datetime)
+        .unwrap_or_default();
+    CommitDetail {
+        short_hash: short_github_hash(&commit.sha),
+        hash: commit.sha,
+        author: author
+            .and_then(|item| normalize_optional_string(item.name.clone()))
+            .unwrap_or_else(|| "unknown".to_string()),
+        author_email: author.and_then(|item| normalize_optional_string(item.email.clone())),
+        committer: committer
+            .and_then(|item| normalize_optional_string(item.name.clone()))
+            .unwrap_or_else(|| "unknown".to_string()),
+        committer_email: committer.and_then(|item| normalize_optional_string(item.email.clone())),
+        timestamp,
+        subject,
+        body,
+        parents: commit.parents.into_iter().map(|parent| parent.sha).collect(),
+        refs: Vec::new(),
+        files: github_commit_file_changes(commit.files),
+    }
+}
+
+pub(super) fn github_commit_file_changes(files: Vec<GitHubCommitFileResponse>) -> Vec<CommitFileChange> {
+    let patch_output = files
+        .iter()
+        .filter_map(github_commit_file_patch_block)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let patches = commit_file_patches(&patch_output);
+    files
+        .into_iter()
+        .map(|file| {
+            let path = file.filename;
+            let parsed = patches.get(&path);
+            CommitFileChange {
+                path,
+                old_path: file.previous_filename,
+                status: github_commit_file_status(&file.status).to_string(),
+                additions: file.additions,
+                deletions: file.deletions,
+                patch: parsed.map(|patch| patch.patch.clone()).unwrap_or_default(),
+                hunks: parsed.map(|patch| patch.hunks.clone()).unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+pub(super) fn github_commit_file_patch_block(file: &GitHubCommitFileResponse) -> Option<String> {
+    let patch = file.patch.as_ref()?.trim_end();
+    if patch.is_empty() {
+        return None;
+    }
+    let old_path = file.previous_filename.as_deref().unwrap_or(&file.filename);
+    Some(format!(
+        "diff --git a/{old_path} b/{new_path}\n--- a/{old_path}\n+++ b/{new_path}\n{patch}",
+        new_path = file.filename,
+    ))
+}
+
+pub(super) fn github_commit_file_status(status: &str) -> &str {
+    match status {
+        "added" => "added",
+        "removed" => "deleted",
+        "renamed" => "renamed",
+        "copied" => "copied",
+        _ => "modified",
+    }
+}
+
+pub(super) fn short_github_hash(hash: &str) -> String {
+    hash.chars().take(7).collect()
+}
+
+pub(super) fn parse_github_datetime(value: &str) -> Option<i64> {
+    let trimmed = value.trim().trim_end_matches('Z');
+    let (date, time) = trimmed.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i32>().ok()?;
+    let month = date_parts.next()?.parse::<i32>().ok()?;
+    let day = date_parts.next()?.parse::<i32>().ok()?;
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<i64>().ok()?;
+    let minute = time_parts.next()?.parse::<i64>().ok()?;
+    let second = time_parts
+        .next()?
+        .split('.')
+        .next()?
+        .parse::<i64>()
+        .ok()?;
+    let days = days_from_civil(year, month, day)?;
+    Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+pub(super) fn days_from_civil(year: i32, month: i32, day: i32) -> Option<i64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let y = year - i32::from(month <= 2);
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146_097 + doe - 719_468) as i64)
 }
 
 pub(super) fn github_branch_from_response(branch: GitHubBranchResponse) -> BranchSummary {
@@ -1932,6 +2127,121 @@ pub async fn github_list_workflow_runs(
             repo_cache.workflow_runs.insert(runs_key, runs.clone());
         })?;
         Ok(runs)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_repo_commits(
+    app: AppHandle,
+    repo_full_name: String,
+    per_page: Option<u32>,
+    sha: Option<String>,
+    force_refresh: Option<bool>,
+) -> Result<Vec<CommitSummary>, String> {
+    run_blocking("读取 GitHub 提交历史", move || {
+        let sha = sha.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+        let commits_key = github_commit_list_cache_key(per_page, sha.as_deref());
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.commits.get(&commits_key).cloned())
+            {
+                return Ok(cached);
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let commits_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+        let client = build_client()?;
+        let mut request = client
+            .get(format!("{}/commits", github_repo_api_url(&repo_full_name)?))
+            .query(&[("per_page", commits_per_page.as_str())]);
+        if let Some(sha) = sha.as_deref() {
+            request = request.query(&[("sha", sha)]);
+        }
+        let response = github_send(
+            &app,
+            "读取 GitHub 提交历史失败",
+            github_headers(request, Some(&token)),
+        )?;
+        let commits = github_json::<Vec<GitHubCommitResponse>>(
+            "读取 GitHub 提交历史失败",
+            response,
+        )?
+        .into_iter()
+        .map(github_commit_summary_from_response)
+        .collect::<Vec<_>>();
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.commits.insert(commits_key, commits.clone());
+        })?;
+        Ok(commits)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_repo_commit_detail(
+    app: AppHandle,
+    repo_full_name: String,
+    hash: String,
+    force_refresh: Option<bool>,
+) -> Result<CommitDetail, String> {
+    run_blocking("读取 GitHub 提交详情", move || {
+        let hash = hash.trim().to_string();
+        if hash.is_empty() {
+            return Err("提交 hash 不能为空".to_string());
+        }
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| {
+                    repo_cache
+                        .commit_details
+                        .get(&hash)
+                        .cloned()
+                        .or_else(|| {
+                            repo_cache
+                                .commit_details
+                                .values()
+                                .find(|detail| detail.hash == hash || detail.short_hash == hash)
+                                .cloned()
+                        })
+                })
+            {
+                return Ok(cached);
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 提交详情失败",
+            github_headers(
+                client.get(format!(
+                    "{}/commits/{}",
+                    github_repo_api_url(&repo_full_name)?,
+                    hash
+                )),
+                Some(&token),
+            ),
+        )?;
+        let detail = github_commit_detail_from_response(github_json::<GitHubCommitResponse>(
+            "读取 GitHub 提交详情失败",
+            response,
+        )?);
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache
+                .commit_details
+                .insert(detail.hash.clone(), detail.clone());
+            repo_cache
+                .commit_details
+                .insert(detail.short_hash.clone(), detail.clone());
+        })?;
+        Ok(detail)
     })
     .await
 }
