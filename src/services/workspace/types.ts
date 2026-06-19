@@ -1,3 +1,4 @@
+export type SystemOpenTarget = "folder" | "terminal" | "vscode" | "liliacode";
 
 export interface WorkspaceSettings {
   workspaceRoot: string | null;

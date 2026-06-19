@@ -3,6 +3,7 @@ import {
   CloudDownload,
   CloudUpload,
   Archive,
+  Code2,
   FolderTree,
   FolderOpen,
   GitCompare,
@@ -73,6 +74,9 @@ const {
   launchCommandText,
   pullStrategyOptions,
   activePullStrategyValue,
+  openTargetOptions,
+  activeOpenTargetValue,
+  openTargetLabel,
   branchItems,
   branchActionRunning,
   activeBranchName,
@@ -86,6 +90,7 @@ const {
   runChangeAction,
   commitSelected,
   refreshAndFetchRepo,
+  selectOpenTarget,
   selectPullStrategy,
   runSelectedPullStrategy,
   push,
@@ -112,7 +117,7 @@ const {
   revertCommit,
   resetCommit,
   createBranchFromCommit,
-  openFolder,
+  openSelectedTarget,
   openConflictFolder,
   commitMetaTitle,
 } = useRepoDetailController();
@@ -219,16 +224,30 @@ const {
               >
                 <RotateCcw :size="17" aria-hidden="true" />
               </button>
-              <button
-                type="button"
-                class="repo-toolbar__btn"
-                title="文件夹"
-                aria-label="文件夹"
-                :disabled="!summary?.path"
-                @click="openFolder"
-              >
-                <FolderOpen :size="17" aria-hidden="true" />
-              </button>
+              <div class="repo-toolbar__open-group">
+                <button
+                  type="button"
+                  class="repo-toolbar__btn repo-toolbar__open-main"
+                  :title="openTargetLabel"
+                  :aria-label="openTargetLabel"
+                  :disabled="actionRunning || !summary?.path"
+                  @click="openSelectedTarget"
+                >
+                  <FolderOpen v-if="activeOpenTargetValue === 'folder'" :size="17" aria-hidden="true" />
+                  <SquareTerminal v-else-if="activeOpenTargetValue === 'terminal'" :size="17" aria-hidden="true" />
+                  <Code2 v-else :size="17" aria-hidden="true" />
+                </button>
+                <Dropdown
+                  :model-value="activeOpenTargetValue"
+                  :options="openTargetOptions"
+                  placement="bottom"
+                  button-class="repo-toolbar__btn repo-toolbar__open-target-toggle"
+                  menu-width="132px"
+                  menu-label="打开目标"
+                  :disabled="actionRunning || !summary?.path"
+                  @update:model-value="selectOpenTarget"
+                />
+              </div>
               <div class="repo-toolbar__pull-group">
                 <button
                   type="button"
@@ -454,6 +473,7 @@ const {
   margin-left: auto;
 }
 
+.repo-toolbar__open-group,
 .repo-toolbar__pull-group {
   position: relative;
   display: inline-flex;
@@ -504,6 +524,7 @@ const {
   padding: 0 7px;
 }
 
+.repo-toolbar__open-main,
 .repo-toolbar__pull-main {
   width: 28px;
   min-width: 28px;
@@ -516,6 +537,7 @@ const {
   padding: 0 5px;
 }
 
+.repo-toolbar__open-target-toggle.chat-chip,
 .repo-toolbar__pull-strategy-toggle.chat-chip {
   width: 22px;
   min-width: 22px;
@@ -525,14 +547,17 @@ const {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
+.repo-toolbar__open-target-toggle .chat-chip__label,
 .repo-toolbar__pull-strategy-toggle .chat-chip__label {
   display: none;
 }
 
+.repo-toolbar__open-group > .dd,
 .repo-toolbar__pull-group > .dd {
   position: static;
 }
 
+.repo-toolbar__open-group .dd__menu,
 .repo-toolbar__pull-group .dd__menu {
   right: 0;
   left: auto;
@@ -541,10 +566,12 @@ const {
   translate: 0;
 }
 
+.repo-toolbar__open-group .dd__item,
 .repo-toolbar__pull-group .dd__item {
   padding: 3px 9px;
 }
 
+.repo-toolbar__open-group .dd__item-label,
 .repo-toolbar__pull-group .dd__item-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -597,6 +624,9 @@ const {
   cursor: default;
 }
 
+.repo-toolbar__open-group:hover,
+.repo-toolbar__open-group:focus-within,
+.repo-toolbar__open-group:has(.repo-toolbar__open-target-toggle.is-open),
 .repo-toolbar__pull-group:hover,
 .repo-toolbar__pull-group:focus-within,
 .repo-toolbar__pull-group:has(.repo-toolbar__pull-strategy-toggle.is-open) {
@@ -604,12 +634,18 @@ const {
   color: var(--text);
 }
 
+.repo-toolbar__open-group:hover .repo-toolbar__btn,
+.repo-toolbar__open-group:focus-within .repo-toolbar__btn,
+.repo-toolbar__open-group:has(.repo-toolbar__open-target-toggle.is-open) .repo-toolbar__btn,
 .repo-toolbar__pull-group:hover .repo-toolbar__btn,
 .repo-toolbar__pull-group:focus-within .repo-toolbar__btn,
 .repo-toolbar__pull-group:has(.repo-toolbar__pull-strategy-toggle.is-open) .repo-toolbar__btn {
   color: inherit;
 }
 
+.repo-toolbar__open-group .repo-toolbar__btn:hover,
+.repo-toolbar .repo-toolbar__open-group .chat-chip.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
+.repo-toolbar .repo-toolbar__open-group .chat-chip.repo-toolbar__btn.is-open,
 .repo-toolbar__pull-group .repo-toolbar__btn:hover,
 .repo-toolbar .repo-toolbar__pull-group .chat-chip.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
 .repo-toolbar .repo-toolbar__pull-group .chat-chip.repo-toolbar__btn.is-open {
