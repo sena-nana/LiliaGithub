@@ -394,7 +394,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
 
-    await fireEvent.update(view.getByRole("combobox"), "closed");
+    await fireEvent.click(within(view.getByRole("group", { name: "Issue 状态" })).getByRole("button", { name: "Closed" }));
     expect(await view.findByText("#34 已关闭问题")).toBeInTheDocument();
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenCalledTimes(2);
