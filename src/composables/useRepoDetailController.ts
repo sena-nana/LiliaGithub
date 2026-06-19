@@ -162,9 +162,6 @@ export function useRepoDetailController() {
   const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
   const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
   const launchLoading = computed(() => workspace.state.launchLoading);
-  const languageStatsRefreshing = computed(() =>
-    workspace.state.languageStatsLoadingRepoIds.includes(repoId.value),
-  );
   const usingSystemGit = computed(() => workspace.repoUsesSystemGit(repoId.value));
   const launchRunning = computed(() => launchStatus.value?.state === "running");
   const statusCommits = computed<CommitSummary[]>(() =>
@@ -927,7 +924,6 @@ function refreshAndFetchRepo() {
       launchStatus,
       launchLogs,
       launchLoading,
-      languageStatsRefreshing,
       usingSystemGit,
       launchRunning,
       statusCommits,

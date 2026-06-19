@@ -94,12 +94,16 @@ function renderPicker(handlers: Record<string, unknown> = {}, pickerProps: Recor
     onRenameBranch: vi.fn(),
     onMergeBranch: vi.fn(),
     onDeleteBranch: vi.fn(),
+    onRefreshBranches: vi.fn(),
+    onPushWithUpstream: vi.fn(),
+    onSetUpstream: vi.fn(),
     ...handlers,
   };
   const resolvedProps = {
     allowRemoteCheckout: true,
     allowRemoteCreate: true,
     allowRemoteDelete: false,
+    showRepositoryActions: false,
     ...pickerProps,
   };
   const Wrapper = defineComponent({
@@ -112,12 +116,16 @@ function renderPicker(handlers: Record<string, unknown> = {}, pickerProps: Recor
         :allow-remote-checkout="allowRemoteCheckout"
         :allow-remote-create="allowRemoteCreate"
         :allow-remote-delete="allowRemoteDelete"
+        :show-repository-actions="showRepositoryActions"
         @checkout="onCheckout"
         @update-current="onUpdateCurrent"
         @create-branch="onCreateBranch"
         @rename-branch="onRenameBranch"
         @merge-branch="onMergeBranch"
         @delete-branch="onDeleteBranch"
+        @refresh-branches="onRefreshBranches"
+        @push-with-upstream="onPushWithUpstream"
+        @set-upstream="onSetUpstream"
       />
       <ContextMenuHost />
     `,
@@ -212,6 +220,38 @@ describe("RepoBranchPicker", () => {
     const confirmDelete = screen.getByRole("menuitem", { name: "确认删除远程分支？再点一次" });
     await fireEvent.click(confirmDelete);
     expect(onDeleteBranch).toHaveBeenCalledWith("origin/feature/notice-update");
+  });
+
+  it("搜索框右侧仓库操作菜单发出对应事件", async () => {
+    const onRefreshBranches = vi.fn();
+    const onPushWithUpstream = vi.fn();
+    const onSetUpstream = vi.fn();
+    renderPicker(
+      { onRefreshBranches, onPushWithUpstream, onSetUpstream },
+      { showRepositoryActions: true },
+    );
+
+    async function pickRepositoryAction(name: string) {
+      await fireEvent.click(screen.getByRole("button", { name: "main" }));
+      await fireEvent.click(screen.getByRole("button", { name: "更多分支操作" }));
+      await fireEvent.click(await screen.findByRole("menuitem", { name }));
+    }
+
+    await pickRepositoryAction("刷新并抓取");
+    expect(onRefreshBranches).toHaveBeenCalledTimes(1);
+
+    await pickRepositoryAction("推送并建立 upstream");
+    expect(onPushWithUpstream).toHaveBeenCalledTimes(1);
+
+    await pickRepositoryAction("设置 upstream");
+    expect(onSetUpstream).toHaveBeenCalledTimes(1);
+  });
+
+  it("未启用仓库操作时不显示搜索框右侧按钮", async () => {
+    renderPicker({}, { showRepositoryActions: false });
+    await fireEvent.click(screen.getByRole("button", { name: "main" }));
+
+    expect(screen.queryByRole("button", { name: "更多分支操作" })).toBeNull();
   });
 
   it("创建和重命名弹窗发出对应事件", async () => {
