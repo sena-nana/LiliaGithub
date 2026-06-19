@@ -15,6 +15,7 @@ import {
 import CommitDetailCard from "./CommitDetailCard.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
+import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
@@ -35,6 +36,7 @@ import {
   deleteGitHubRepo,
   openPath,
   openUrl,
+  isGitHubBindingExpiredError,
 } from "../../services/workspace/client";
 import type {
   CommitSummary,
@@ -63,6 +65,11 @@ type ProjectContentMode = "launch" | ProjectTab | GitTab;
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
   label: string;
+};
+type GitHubAccessSection = "Issues" | "Pull Requests" | "Actions" | "Settings";
+type GitHubAccessUnavailable = {
+  title: string;
+  reason: string;
 };
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
@@ -263,6 +270,7 @@ const mergeSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hi
 ];
 
 const isSystemGitBlocked = computed(() => props.usingSystemGit === true && !props.remoteOnly);
+const githubAuthLoading = computed(() => workspace.state.authLoading);
 
 const githubUnavailableMessage = computed(() => {
   if (remoteDeleted.value) return "GitHub 远端仓库已删除，本地目录仍保留。";
@@ -270,6 +278,10 @@ const githubUnavailableMessage = computed(() => {
   if (!props.repoFullName) return "当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。";
   return null;
 });
+const issuesAccessUnavailable = computed(() => githubAccessUnavailable("Issues", githubError.value));
+const pullsAccessUnavailable = computed(() => githubAccessUnavailable("Pull Requests", githubError.value));
+const actionsAccessUnavailable = computed(() => githubAccessUnavailable("Actions", actionsError.value));
+const settingsAccessUnavailable = computed(() => githubAccessUnavailable("Settings", githubError.value));
 const deleteConfirmMatches = computed(() =>
   Boolean(deleteExpectedInput.value) && deleteConfirmInput.value.trim() === deleteExpectedInput.value,
 );
@@ -426,6 +438,24 @@ function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
   return logs
     .map((entry) => `<span class="launch-log launch-log--${entry.stream}">${ansiUp.ansi_to_html(entry.line)}</span>`)
     .join("\n");
+}
+
+function githubAccessUnavailable(section: GitHubAccessSection, error: string | null): GitHubAccessUnavailable | null {
+  if (!error || !isGitHubBindingExpiredError(error)) return null;
+  const lower = error.toLowerCase();
+  const permissionDenied = error.includes("HTTP 403") ||
+    lower.includes("forbidden") ||
+    lower.includes("resource not accessible");
+  return {
+    title: `${section} 暂不可用`,
+    reason: permissionDenied
+      ? `当前 GitHub 授权权限不足，无法访问该仓库的 ${section}。请重新绑定 GitHub 并授予所需权限。`
+      : "GitHub 绑定已失效或凭据不可用，请重新绑定 GitHub 后继续使用。",
+  };
+}
+
+function rebindGitHub() {
+  void workspace.startAuthFlow();
 }
 
 async function focusIssue(issueNumber: number | null | undefined) {
@@ -1233,8 +1263,15 @@ function selectReadme(path: string) {
               <option value="all">All</option>
             </select>
           </div>
-          <p v-if="githubError" class="error-line">{{ githubError }}</p>
-          <form class="project-issue-form" @submit.prevent="createIssue">
+          <RepoGitHubUnavailableNotice
+            v-if="issuesAccessUnavailable"
+            :title="issuesAccessUnavailable.title"
+            :reason="issuesAccessUnavailable.reason"
+            :loading="githubAuthLoading"
+            @rebind="rebindGitHub"
+          />
+          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
+          <form v-if="!issuesAccessUnavailable" class="project-issue-form" @submit.prevent="createIssue">
             <input v-model="issueTitle" type="text" placeholder="Issue 标题" />
             <textarea v-model="issueBody" rows="3" placeholder="Issue 内容"></textarea>
             <div class="project-inline-form">
@@ -1243,7 +1280,7 @@ function selectReadme(path: string) {
               <button type="submit" class="primary" :disabled="creatingIssue || !issueTitle.trim()">新建 Issue</button>
             </div>
           </form>
-          <div class="project-list">
+          <div v-if="!issuesAccessUnavailable" class="project-list">
             <div
               v-for="issue in issues"
               :key="issue.number"
@@ -1295,8 +1332,15 @@ function selectReadme(path: string) {
               <option value="all">All</option>
             </select>
           </div>
-          <p v-if="githubError" class="error-line">{{ githubError }}</p>
-          <form class="project-issue-form" @submit.prevent="createPullRequest">
+          <RepoGitHubUnavailableNotice
+            v-if="pullsAccessUnavailable"
+            :title="pullsAccessUnavailable.title"
+            :reason="pullsAccessUnavailable.reason"
+            :loading="githubAuthLoading"
+            @rebind="rebindGitHub"
+          />
+          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
+          <form v-if="!pullsAccessUnavailable" class="project-issue-form" @submit.prevent="createPullRequest">
             <input v-model="pullRequestTitle" type="text" placeholder="PR 标题" />
             <textarea v-model="pullRequestBody" rows="3" placeholder="PR 描述"></textarea>
             <div class="project-inline-form">
@@ -1315,8 +1359,8 @@ function selectReadme(path: string) {
               </button>
             </div>
           </form>
-          <p v-if="pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
-          <div class="project-list">
+          <p v-if="!pullsAccessUnavailable && pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
+          <div v-if="!pullsAccessUnavailable" class="project-list">
             <div
               v-for="pull in pulls"
               :key="pull.number"
@@ -1400,9 +1444,16 @@ function selectReadme(path: string) {
             <h3>Actions</h3>
             <span class="muted">{{ workflowRuns.length }} 条运行记录</span>
           </div>
-          <p v-if="actionsError" class="error-line">{{ actionsError }}</p>
+          <RepoGitHubUnavailableNotice
+            v-if="actionsAccessUnavailable"
+            :title="actionsAccessUnavailable.title"
+            :reason="actionsAccessUnavailable.reason"
+            :loading="githubAuthLoading"
+            @rebind="rebindGitHub"
+          />
+          <p v-else-if="actionsError" class="error-line">{{ actionsError }}</p>
           <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
-          <div class="project-list">
+          <div v-if="!actionsAccessUnavailable" class="project-list">
             <div
               v-for="run in workflowRuns"
               :key="run.id"
@@ -1447,7 +1498,14 @@ function selectReadme(path: string) {
             </button>
           </div>
           <p v-if="githubUnavailableMessage" class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
-          <p v-if="githubError" class="error-line">{{ githubError }}</p>
+          <RepoGitHubUnavailableNotice
+            v-if="settingsAccessUnavailable"
+            :title="settingsAccessUnavailable.title"
+            :reason="settingsAccessUnavailable.reason"
+            :loading="githubAuthLoading"
+            @rebind="rebindGitHub"
+          />
+          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
           <template v-if="settings">
             <section class="project-settings-group" aria-labelledby="project-settings-general-title">
               <div class="project-settings-group__head">
