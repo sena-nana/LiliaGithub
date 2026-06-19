@@ -939,7 +939,7 @@ describe("基础路由", () => {
     expect(await screen.findByText("Issue #91")).toBeInTheDocument();
     expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(0);
 
-    const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" });
+    const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" });
     await waitFor(() => {
       expect(refreshRepos).toBeEnabled();
     });
@@ -960,7 +960,7 @@ describe("基础路由", () => {
     await renderAt("/");
 
     expect(await screen.findByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
-    expect(screen.getByText("仓库 2")).toBeInTheDocument();
+    expect(screen.getByText("未分组仓库 2")).toBeInTheDocument();
     expect(screen.getAllByText("LiliaGithub").length).toBeGreaterThan(0);
 
     service.setFallbackGitHubReposErrorForTests(null);
@@ -1012,7 +1012,7 @@ describe("基础路由", () => {
     service.setFallbackRepoContributionOverrideForTests(() => {
       throw new Error("rate limited");
     });
-    const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" });
+    const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" });
     await waitFor(() => {
       expect(refreshRepos).toBeEnabled();
     });

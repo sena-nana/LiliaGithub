@@ -14,9 +14,20 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub system_git_repo_ids: Vec<String>,
     #[serde(default)]
+    pub repo_groups: Vec<WorkspaceRepoGroup>,
+    #[serde(default)]
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
     #[serde(default)]
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRepoGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub repo_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

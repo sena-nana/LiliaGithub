@@ -29,6 +29,10 @@ function isDanger(item: ContextMenuItem) {
   return item.danger || isContextMenuItemPending(item);
 }
 
+function hasChildren(item: ContextMenuItem) {
+  return Boolean(item.children?.length);
+}
+
 async function updateGeometry() {
   const initialPos = createAnchoredMenuPosition(
     state.x,
@@ -106,6 +110,7 @@ watch(
         >
           <component v-if="item.icon" :is="item.icon" :size="13" aria-hidden="true" />
           <span class="ctx-menu__label">{{ displayLabel(item) }}</span>
+          <span v-if="hasChildren(item)" class="ctx-menu__arrow" aria-hidden="true">&gt;</span>
         </button>
       </div>
     </Transition>
@@ -183,5 +188,11 @@ watch(
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.ctx-menu__arrow {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 12px;
 }
 </style>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
-import { AlertCircle, EyeOff, FolderGit2, GitBranch, GitPullRequestArrow, LoaderCircle, Search, X } from "@lucide/vue";
+import { EyeOff, FolderGit2, FolderInput, GitPullRequestArrow, Plus, Search, Trash2, X } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -10,13 +10,11 @@ import {
   syncErrorByRepoId,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
+import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import type { ContextMenuItem } from "../composables/useContextMenu";
-import {
-  type RepoSummary,
-} from "../services/workspace";
-import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
-import { isLinkedWorktree } from "../utils/repoWorktree";
+import type { RepoSummary } from "../services/workspace";
+import { repoDisplayName } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
 
@@ -24,6 +22,11 @@ const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
 const searchInput = ref<HTMLInputElement | null>(null);
+const createGroupOpen = ref(false);
+const createGroupName = ref("");
+const createGroupError = ref<string | null>(null);
+const createGroupBusy = ref(false);
+const pendingDeleteGroupId = ref<string | null>(null);
 
 const props = defineProps<{
   searchOpen: boolean;
@@ -89,6 +92,12 @@ interface RepoIssue {
   title: string;
 }
 
+interface RepoItem {
+  repo: RepoSummary;
+  dirtyCount: number;
+  issue: RepoIssue | null;
+}
+
 function repoIssue(repo: RepoSummary): RepoIssue | null {
   const syncError = bulkSyncErrorByRepoId.value.get(repo.id);
   if (syncError) return { label: "同步失败", title: syncError };
@@ -100,25 +109,54 @@ function repoIssue(repo: RepoSummary): RepoIssue | null {
   return null;
 }
 
+const repoItems = computed<RepoItem[]>(() =>
+  workspace.state.repos.map((repo) => ({
+    repo,
+    dirtyCount: repoDirtyCount(repo),
+    issue: repoIssue(repo),
+  })),
+);
+
+function repoMatchesQuery(repo: RepoSummary, query: string) {
+  if (!query) return true;
+  return [
+    repoDisplayName(repo),
+    repo.name,
+    repo.githubFullName,
+    repo.relativePath,
+    repo.path,
+  ].some((value) => value?.toLocaleLowerCase().includes(query));
+}
+
 const filteredRepoItems = computed(() => {
   const query = searchQueryModel.value.trim().toLocaleLowerCase();
-  return workspace.state.repos
-    .filter((repo) =>
-      !query ||
-      [
-        repoDisplayName(repo),
-        repo.name,
-        repo.githubFullName,
-        repo.relativePath,
-        repo.path,
-      ].some((value) => value?.toLocaleLowerCase().includes(query)),
-    )
-    .map((repo) => ({
-      repo,
-      dirtyCount: repoDirtyCount(repo),
-      issue: repoIssue(repo),
-    }));
+  return repoItems.value.filter(({ repo }) => repoMatchesQuery(repo, query));
 });
+
+const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
+
+const repoItemById = computed(() => new Map(repoItems.value.map((item) => [item.repo.id, item])));
+
+const groupedRepoIds = computed(() => {
+  const ids = new Set<string>();
+  for (const group of repoGroups.value) {
+    for (const repoId of group.repoIds) ids.add(repoId);
+  }
+  return ids;
+});
+
+const ungroupedRepoItems = computed(() =>
+  repoItems.value.filter(({ repo }) => !groupedRepoIds.value.has(repo.id)),
+);
+
+const groupedRepoSections = computed(() =>
+  repoGroups.value.map((group) => ({
+    group,
+    items: group.repoIds
+      .map((repoId) => repoItemById.value.get(repoId))
+      .filter((item): item is RepoItem => Boolean(item)),
+  })),
+);
 
 const localRepoFullNames = computed(() =>
   new Set(
@@ -167,8 +205,39 @@ async function removeRemoteRepo(fullName: string) {
   }
 }
 
+function repoCurrentGroupId(repoId: string): string | null {
+  return repoGroups.value.find((group) => group.repoIds.includes(repoId))?.id ?? null;
+}
+
 function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
+  const currentGroupId = repoCurrentGroupId(repo.id);
+  const moveChildren: ContextMenuItem[] = [
+    {
+      id: `move-repo-${repo.id}-ungrouped`,
+      label: "移到未分组",
+      icon: FolderGit2,
+      disabled: currentGroupId === null,
+      async onSelect() {
+        await workspace.moveRepoToGroup(repo.id, null);
+      },
+    },
+    ...repoGroups.value.map((group) => ({
+      id: `move-repo-${repo.id}-${group.id}`,
+      label: group.name,
+      icon: FolderInput,
+      disabled: currentGroupId === group.id,
+      async onSelect() {
+        await workspace.moveRepoToGroup(repo.id, group.id);
+      },
+    })),
+  ];
   return [
+    {
+      id: `move-repo-${repo.id}`,
+      label: "移动到分组",
+      icon: FolderInput,
+      children: moveChildren,
+    },
     {
       id: `hide-repo-${repo.id}`,
       label: "隐藏仓库",
@@ -188,6 +257,61 @@ function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
 function isRepoActive(repoId: string) {
   const base = repoRoute(repoId);
   return route.path === base || route.path.startsWith(`${base}/`);
+}
+
+function repoRowProps(item: RepoItem) {
+  return {
+    repo: item.repo,
+    to: repoRoute(item.repo.id),
+    active: isRepoActive(item.repo.id),
+    dirtyCount: item.dirtyCount,
+    issue: item.issue,
+    syncing: bulkSyncRunningRepoIds.value.has(item.repo.id),
+    refreshing: isRefreshingRepo(item.repo.id),
+    launchRunning: workspace.state.launchStatuses[item.repo.id]?.state === "running",
+    contextMenu: repoContextMenu(item.repo),
+  };
+}
+
+function openCreateGroup() {
+  createGroupOpen.value = true;
+  createGroupName.value = "";
+  createGroupError.value = null;
+}
+
+function closeCreateGroup() {
+  if (createGroupBusy.value) return;
+  createGroupOpen.value = false;
+  createGroupName.value = "";
+  createGroupError.value = null;
+}
+
+async function submitCreateGroup() {
+  const name = createGroupName.value.trim();
+  if (!name) {
+    createGroupError.value = "分组名称不能为空";
+    return;
+  }
+  createGroupBusy.value = true;
+  createGroupError.value = null;
+  try {
+    await workspace.createRepoGroup(name);
+    createGroupOpen.value = false;
+    createGroupName.value = "";
+  } catch (err) {
+    createGroupError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    createGroupBusy.value = false;
+  }
+}
+
+async function deleteGroup(group: { id: string }) {
+  if (pendingDeleteGroupId.value !== group.id) {
+    pendingDeleteGroupId.value = group.id;
+    return;
+  }
+  await workspace.deleteRepoGroup(group.id);
+  pendingDeleteGroupId.value = null;
 }
 </script>
 
@@ -215,7 +339,19 @@ function isRepoActive(repoId: string) {
 
     <div class="sb-section">
       <div class="sb-section__header">
-        <span class="sb-section__title">仓库 {{ workspace.state.repos.length }}</span>
+        <span class="sb-section__title">
+          {{ searchOpen ? `搜索结果 ${filteredRepoItems.length}` : `未分组仓库 ${ungroupedRepoItems.length}` }}
+        </span>
+        <button
+          v-if="!searchOpen"
+          type="button"
+          class="sb-icon-btn"
+          aria-label="创建仓库分组"
+          title="创建仓库分组"
+          @click="openCreateGroup"
+        >
+          <Plus :size="13" aria-hidden="true" />
+        </button>
       </div>
       <div v-if="searchOpen" class="sb-search">
         <Search :size="13" aria-hidden="true" />
@@ -232,58 +368,60 @@ function isRepoActive(repoId: string) {
           <X :size="13" aria-hidden="true" />
         </button>
       </div>
+      <form v-if="createGroupOpen && !searchOpen" class="sb-group-form" @submit.prevent="submitCreateGroup">
+        <input
+          v-model="createGroupName"
+          type="text"
+          aria-label="分组名称"
+          placeholder="分组名称"
+          :disabled="createGroupBusy"
+        />
+        <button type="submit" class="sb-group-form__submit" :disabled="createGroupBusy">创建</button>
+        <button type="button" class="sb-icon-btn" aria-label="取消创建分组" title="取消" @click="closeCreateGroup">
+          <X :size="13" aria-hidden="true" />
+        </button>
+        <p v-if="createGroupError" class="sb-group-form__error">{{ createGroupError }}</p>
+      </form>
       <div class="sb-tree">
-        <RouterLink
-          v-for="{ repo, dirtyCount, issue } in filteredRepoItems"
-          :key="repo.id"
-          :to="repoRoute(repo.id)"
-          class="sb-tree__row sb-tree__row--project"
-          :class="{ 'is-active': isRepoActive(repo.id) }"
-          active-class="is-active"
-          :title="repoDisplayTitle(repo)"
-          v-context-menu="repoContextMenu(repo)"
-        >
-          <component
-            :is="isLinkedWorktree(repo) ? GitBranch : FolderGit2"
-            :size="14"
-            aria-hidden="true"
-            class="sb-tree__repo-icon"
-            :class="{ 'is-worktree': isLinkedWorktree(repo) }"
-          />
-          <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
-          <span
-            v-if="bulkSyncRunningRepoIds.has(repo.id)"
-            class="sb-badge"
-            title="正在同步"
-            aria-label="正在同步"
-          >
-            <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
-          </span>
-          <span
-            v-else-if="issue"
-            class="sb-badge sb-badge--error"
-            :title="issue.title"
-            :aria-label="issue.label"
-          >
-            <AlertCircle :size="11" aria-hidden="true" />
-          </span>
-          <span v-if="workspace.state.launchStatuses[repo.id]?.state === 'running'" class="sb-badge sb-badge--ok">RUN</span>
-          <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
-          <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
-          <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
-          <span
-            v-if="isRefreshingRepo(repo.id)"
-            class="sb-row-loader"
-            title="正在刷新仓库"
-            aria-label="正在刷新仓库"
-          >
-            <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
-          </span>
-        </RouterLink>
+        <RepoSidebarRow
+          v-for="item in searchOpen ? filteredRepoItems : ungroupedRepoItems"
+          :key="item.repo.id"
+          v-bind="repoRowProps(item)"
+        />
         <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
         <p v-else-if="searchOpen && !filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
       </div>
     </div>
+
+    <template v-if="!searchOpen">
+      <div
+        v-for="{ group, items } in groupedRepoSections"
+        :key="group.id"
+        class="sb-section sb-section--group"
+      >
+        <div class="sb-section__header">
+          <span class="sb-section__title">{{ group.name }} {{ items.length }}</span>
+          <button
+            type="button"
+            class="sb-icon-btn"
+            :class="{ 'is-danger': pendingDeleteGroupId === group.id }"
+            :aria-label="pendingDeleteGroupId === group.id ? `确认删除分组 ${group.name}` : `删除分组 ${group.name}`"
+            :title="pendingDeleteGroupId === group.id ? '确认删除分组' : '删除分组'"
+            @click="deleteGroup(group)"
+          >
+            <Trash2 :size="13" aria-hidden="true" />
+          </button>
+        </div>
+        <div class="sb-tree">
+          <RepoSidebarRow
+            v-for="item in items"
+            :key="item.repo.id"
+            v-bind="repoRowProps(item)"
+          />
+          <p v-if="!items.length" class="sb-tree__empty">没有仓库。</p>
+        </div>
+      </div>
+    </template>
 
     <div v-if="remoteRepoItems.length" class="sb-section sb-section--remote">
       <div class="sb-section__header">
@@ -344,10 +482,15 @@ function isRepoActive(repoId: string) {
 }
 
 .sb-section__title {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.6px;
   text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sb-row-loader {
@@ -380,6 +523,11 @@ function isRepoActive(repoId: string) {
   background: var(--bg-hover);
   color: var(--text);
   filter: none;
+}
+
+.sb-icon-btn.is-danger {
+  color: var(--err);
+  background: var(--err-soft);
 }
 
 .sb-spin {
@@ -461,6 +609,50 @@ function isRepoActive(repoId: string) {
   height: 22px;
   padding: 0;
   color: var(--text-muted);
+}
+
+.sb-group-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 22px;
+  gap: 4px;
+  margin: 0 6px 4px;
+  align-items: center;
+}
+
+.sb-group-form input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.sb-group-form__submit {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sb-group-form__submit:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sb-group-form__submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.sb-group-form__error {
+  grid-column: 1 / -1;
+  margin: 0 2px;
+  color: var(--err);
+  font-size: 12px;
 }
 
 .sb-tree__row--project.is-active {

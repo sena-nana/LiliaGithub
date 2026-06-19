@@ -50,6 +50,7 @@ import type {
   SystemOpenTarget,
   WorkspaceTask,
   WorkspaceSettings,
+  WorkspaceRepoGroup,
 } from "./types";
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
@@ -696,6 +697,7 @@ function createFallbackSettings(): WorkspaceSettings {
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     systemGitRepoIds: [],
+    repoGroups: [],
     remoteRepoShortcuts: [],
     localContributionCache: {},
   };
@@ -956,6 +958,13 @@ function cloneRemoteRepoShortcut(shortcut: RemoteRepoShortcut): RemoteRepoShortc
   return { ...shortcut };
 }
 
+function cloneWorkspaceRepoGroup(group: WorkspaceRepoGroup): WorkspaceRepoGroup {
+  return {
+    ...group,
+    repoIds: [...group.repoIds],
+  };
+}
+
 function normalizeRemoteRepoId(fullName: string): string | null {
   const trimmed = fullName.trim().replace(/^\/+|\/+$/g, "");
   if (!trimmed) return null;
@@ -985,6 +994,7 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     hiddenRepoIds: [...settings.hiddenRepoIds],
     managedRepoIds: [...settings.managedRepoIds],
     systemGitRepoIds: [...settings.systemGitRepoIds],
+    repoGroups: settings.repoGroups.map(cloneWorkspaceRepoGroup),
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
     localContributionCache: Object.fromEntries(
       Object.entries(settings.localContributionCache).map(([repoId, days]) => [
@@ -1278,6 +1288,82 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   });
 }
 
+function normalizeRepoGroupNameKey(name: string): string {
+  return name.trim().toLocaleLowerCase();
+}
+
+function nextRepoGroupId(): string {
+  let seed = Date.now();
+  while (fallbackSettings.repoGroups.some((group) => group.id === `repo-group-${seed}`)) {
+    seed += 1;
+  }
+  return `repo-group-${seed}`;
+}
+
+export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
+  return call("workspace_create_repo_group", { name }, () => {
+    const normalized = name.trim();
+    if (!normalized) throw new Error("分组名称不能为空");
+    const nameKey = normalizeRepoGroupNameKey(normalized);
+    if (fallbackSettings.repoGroups.some((group) => normalizeRepoGroupNameKey(group.name) === nameKey)) {
+      throw new Error("已存在同名仓库分组");
+    }
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoGroups: [
+        ...fallbackSettings.repoGroups,
+        {
+          id: nextRepoGroupId(),
+          name: normalized,
+          repoIds: [],
+        },
+      ],
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
+  return call("workspace_delete_repo_group", { groupId }, () => {
+    const normalized = groupId.trim();
+    if (!normalized) throw new Error("分组 ID 不能为空");
+    const nextGroups = fallbackSettings.repoGroups.filter((group) => group.id !== normalized);
+    if (nextGroups.length === fallbackSettings.repoGroups.length) {
+      throw new Error("未找到仓库分组");
+    }
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoGroups: nextGroups,
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function moveRepoToGroup(repoId: string, groupId: string | null): Promise<WorkspaceSettings> {
+  return call("workspace_move_repo_to_group", { repoId, groupId }, () => {
+    const normalizedRepoId = repoId.trim();
+    if (!normalizedRepoId) throw new Error("仓库 ID 不能为空");
+    if (!allFallbackRepos().some((repo) => repo.id === normalizedRepoId)) {
+      throw new Error(`未找到 Git 仓库：${normalizedRepoId}`);
+    }
+    const normalizedGroupId = groupId?.trim() || null;
+    if (normalizedGroupId && !fallbackSettings.repoGroups.some((group) => group.id === normalizedGroupId)) {
+      throw new Error("未找到仓库分组");
+    }
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoGroups: fallbackSettings.repoGroups.map((group) => ({
+        ...group,
+        repoIds: [
+          ...group.repoIds.filter((id) => id !== normalizedRepoId),
+          ...(group.id === normalizedGroupId ? [normalizedRepoId] : []),
+        ].sort(),
+      })),
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
 export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_local_repo", { repoId }, () => {
     if (!allFallbackRepos().some((repo) => repo.id === repoId)) {
@@ -1293,6 +1379,10 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
       managedRepoIds: fallbackSettings.managedRepoIds.filter((id) => id !== repoId),
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
       systemGitRepoIds: fallbackSettings.systemGitRepoIds.filter((id) => id !== repoId),
+      repoGroups: fallbackSettings.repoGroups.map((group) => ({
+        ...group,
+        repoIds: group.repoIds.filter((id) => id !== repoId),
+      })),
       localContributionCache,
     };
     fallbackRepos = fallbackRepos.filter((item) => item.id !== repoId);

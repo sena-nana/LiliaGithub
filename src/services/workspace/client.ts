@@ -194,6 +194,18 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_hide_repo", { repoId }, () => fallback.hideRepo(repoId));
 }
 
+export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
+  return call("workspace_create_repo_group", { name }, () => fallback.createRepoGroup(name));
+}
+
+export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
+  return call("workspace_delete_repo_group", { groupId }, () => fallback.deleteRepoGroup(groupId));
+}
+
+export function moveRepoToGroup(repoId: string, groupId: string | null): Promise<WorkspaceSettings> {
+  return call("workspace_move_repo_to_group", { repoId, groupId }, () => fallback.moveRepoToGroup(repoId, groupId));
+}
+
 export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_local_repo", { repoId }, () => fallback.deleteLocalRepo(repoId));
 }

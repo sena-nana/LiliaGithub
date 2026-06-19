@@ -1912,6 +1912,54 @@ fn managed_repo_ids_are_deduplicated_and_sorted() {
 }
 
 #[test]
+fn repo_group_creation_trims_and_rejects_empty_or_duplicate_names() {
+    let mut settings = WorkspaceSettings::default();
+
+    let group = create_repo_group(&mut settings, " 前端 ").unwrap();
+
+    assert_eq!(group.name, "前端");
+    assert_eq!(settings.repo_groups.len(), 1);
+    assert_eq!(settings.repo_groups[0].name, "前端");
+    assert_eq!(
+        create_repo_group(&mut settings, "   ").unwrap_err(),
+        "分组名称不能为空"
+    );
+    assert_eq!(
+        create_repo_group(&mut settings, "前端").unwrap_err(),
+        "已存在同名仓库分组"
+    );
+}
+
+#[test]
+fn moving_repo_to_group_removes_it_from_previous_group() {
+    let mut settings = WorkspaceSettings::default();
+    let frontend = create_repo_group(&mut settings, "前端").unwrap();
+    let backend = create_repo_group(&mut settings, "后端").unwrap();
+
+    move_repo_to_group(&mut settings, "repo", Some(&frontend.id)).unwrap();
+    move_repo_to_group(&mut settings, "repo", Some(&backend.id)).unwrap();
+
+    assert!(settings.repo_groups[0].repo_ids.is_empty());
+    assert_eq!(settings.repo_groups[1].repo_ids, vec!["repo".to_string()]);
+    move_repo_to_group(&mut settings, "repo", None).unwrap();
+    assert!(settings
+        .repo_groups
+        .iter()
+        .all(|group| group.repo_ids.is_empty()));
+}
+
+#[test]
+fn deleting_repo_group_keeps_repo_members_as_ungrouped() {
+    let mut settings = WorkspaceSettings::default();
+    let frontend = create_repo_group(&mut settings, "前端").unwrap();
+    move_repo_to_group(&mut settings, "repo", Some(&frontend.id)).unwrap();
+
+    delete_repo_group(&mut settings, &frontend.id).unwrap();
+
+    assert!(settings.repo_groups.is_empty());
+}
+
+#[test]
 fn managed_repo_paths_only_returns_visible_git_repos() {
     let root = temp_dir("managed-repos");
     let visible = root.join("visible");
@@ -1977,6 +2025,11 @@ fn prune_deleted_repo_settings_clears_all_repo_scoped_state() {
         managed_repo_ids: vec!["repo".to_string(), "other".to_string()],
         hidden_repo_ids: vec!["repo".to_string()],
         system_git_repo_ids: vec!["repo".to_string()],
+        repo_groups: vec![WorkspaceRepoGroup {
+            id: "group".to_string(),
+            name: "分组".to_string(),
+            repo_ids: vec!["repo".to_string(), "other".to_string()],
+        }],
         project_launch_configs: HashMap::from([(
             "repo".to_string(),
             ProjectLaunchConfig {
@@ -2004,6 +2057,7 @@ fn prune_deleted_repo_settings_clears_all_repo_scoped_state() {
     assert_eq!(settings.managed_repo_ids, vec!["other"]);
     assert!(settings.hidden_repo_ids.is_empty());
     assert!(settings.system_git_repo_ids.is_empty());
+    assert_eq!(settings.repo_groups[0].repo_ids, vec!["other".to_string()]);
     assert!(settings.project_launch_configs.is_empty());
     assert!(settings.local_contribution_cache.is_empty());
 }

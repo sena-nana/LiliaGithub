@@ -94,6 +94,23 @@ function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
   return row;
 }
 
+type AppShellView = Awaited<ReturnType<typeof renderAppShell>>;
+
+async function createSidebarRepoGroup(view: AppShellView, name: string) {
+  await fireEvent.click(view.getByRole("button", { name: "创建仓库分组" }));
+  await fireEvent.update(view.getByLabelText("分组名称"), name);
+  await fireEvent.click(view.getByRole("button", { name: "创建" }));
+  await waitFor(() => {
+    expect(view.getByText(`${name.trim()} 0`)).toBeInTheDocument();
+  });
+}
+
+async function moveSidebarRepoToGroup(view: AppShellView, repoName: string, groupName: string) {
+  await fireEvent.contextMenu(sidebarRowForText(view.container, repoName));
+  await fireEvent.click(await view.findByRole("menuitem", { name: "移动到分组" }));
+  await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
+}
+
 beforeEach(() => {
   resetWorkspaceStateForTests();
   closeContextMenu();
@@ -116,17 +133,84 @@ describe("AppShell sidebar", () => {
     });
 
     expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
-    expect(view.getByText("仓库 2")).toBeInTheDocument();
+    expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "创建仓库分组" })).toBeInTheDocument();
     expect(view.container.querySelector(".sb-section--actions")).toBeNull();
     expect(view.container.querySelector(".shell-actions")).toBeNull();
     expect(view.getByLabelText("项目总览操作")).toBeInTheDocument();
-    expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新仓库" })).toBeInTheDocument();
+    expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" })).toBeInTheDocument();
     expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" })).toBeEnabled();
 
     await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("侧边栏可创建仓库分组并校验空名和重复名称", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "创建仓库分组" }));
+    await fireEvent.click(view.getByRole("button", { name: "创建" }));
+    expect(view.getByText("分组名称不能为空")).toBeInTheDocument();
+
+    await createSidebarRepoGroup(view, " 前端 ");
+
+    await fireEvent.click(view.getByRole("button", { name: "创建仓库分组" }));
+    await fireEvent.update(view.getByLabelText("分组名称"), "前端");
+    await fireEvent.click(view.getByRole("button", { name: "创建" }));
+    expect(await view.findByText("已存在同名仓库分组")).toBeInTheDocument();
+  });
+
+  it("仓库右键菜单可移动到分组并移回未分组", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await createSidebarRepoGroup(view, "前端");
+    await moveSidebarRepoToGroup(view, "LiliaGithub", "前端");
+
+    await waitFor(() => {
+      expect(view.getByText("未分组仓库 1")).toBeInTheDocument();
+      expect(view.getByText("前端 1")).toBeInTheDocument();
+    });
+
+    await moveSidebarRepoToGroup(view, "LiliaGithub", "移到未分组");
+
+    await waitFor(() => {
+      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+      expect(view.getByText("前端 0")).toBeInTheDocument();
+    });
+  });
+
+  it("删除非空分组后仓库回到未分组", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await createSidebarRepoGroup(view, "前端");
+    await moveSidebarRepoToGroup(view, "LiliaGithub", "前端");
+
+    await waitFor(() => {
+      expect(view.getByText("未分组仓库 1")).toBeInTheDocument();
+      expect(view.getByText("前端 1")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "删除分组 前端" }));
+    await fireEvent.click(view.getByRole("button", { name: "确认删除分组 前端" }));
+
+    await waitFor(() => {
+      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+      expect(view.queryByText("前端 1")).toBeNull();
     });
   });
 
@@ -392,6 +476,40 @@ describe("AppShell sidebar", () => {
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("侧边栏搜索时使用扁平仓库列表", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(view.getByText("未分组仓库 2")).toBeInTheDocument();
+    });
+
+    state.settings = {
+      ...state.settings!,
+      repoGroups: [
+        {
+          id: "frontend",
+          name: "前端",
+          repoIds: ["LiliaGithub"],
+        },
+      ],
+    };
+
+    await waitFor(() => {
+      expect(view.getByText("前端 1")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "搜索" }));
+    const search = view.getByRole("searchbox", { name: "搜索仓库" });
+    await fireEvent.update(search, "LiliaGithub");
+
+    await waitFor(() => {
+      expect(view.getByText("搜索结果 1")).toBeInTheDocument();
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+      expect(view.queryByText("前端 1")).toBeNull();
+      expect(view.queryByText("未分组仓库 1")).toBeNull();
     });
   });
 
