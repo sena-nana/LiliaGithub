@@ -373,7 +373,7 @@ function isRepoActive(repoId: string) {
   width: 22px;
   height: 22px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .sb-icon-btn:hover {
@@ -406,7 +406,7 @@ function isRepoActive(repoId: string) {
   gap: 6px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
@@ -443,7 +443,7 @@ function isRepoActive(repoId: string) {
   padding: 0 4px;
   height: 30px;
   border: 1px solid var(--border-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--text-faint);
   background: var(--bg-subtle);
 }

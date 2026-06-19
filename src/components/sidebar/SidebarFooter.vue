@@ -49,7 +49,7 @@ defineProps<{
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
