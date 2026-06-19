@@ -24,7 +24,14 @@ defineEmits<{
 
 const isMaximized = ref(false);
 const appWindow = safeCurrentWindow();
-let unlisten: (() => void) | null = null;
+const DRAG_THRESHOLD = 4;
+let unlistenResize: (() => void) | null = null;
+let pendingDrag: {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  target: HTMLElement | null;
+} | null = null;
 
 function safeCurrentWindow(): ReturnType<typeof getCurrentWindow> | null {
   try {
@@ -46,13 +53,14 @@ async function syncMaximized() {
 onMounted(async () => {
   await syncMaximized();
   if (!appWindow) return;
-  unlisten = await appWindow.onResized(() => {
+  unlistenResize = await appWindow.onResized(() => {
     void syncMaximized();
   });
 });
 
 onUnmounted(() => {
-  unlisten?.();
+  unlistenResize?.();
+  clearPendingDrag();
 });
 
 async function onMinimize() {
@@ -70,10 +78,66 @@ async function onClose() {
   if (!appWindow) return;
   await appWindow.close();
 }
+
+function isTitlebarControl(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(target.closest("button, a, input, textarea, select, [contenteditable='true']"))
+  );
+}
+
+async function startNativeDrag() {
+  if (!appWindow || typeof appWindow.startDragging !== "function") return;
+  try {
+    await appWindow.startDragging();
+  } catch {
+    return;
+  }
+}
+
+function clearPendingDrag() {
+  if (pendingDrag?.target?.hasPointerCapture?.(pendingDrag.pointerId)) {
+    pendingDrag.target.releasePointerCapture(pendingDrag.pointerId);
+  }
+  pendingDrag = null;
+}
+
+function trackDrag(event: PointerEvent) {
+  clearPendingDrag();
+  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  target?.setPointerCapture?.(event.pointerId);
+  pendingDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    target,
+  };
+}
+
+function onTitlebarPointerMove(event: PointerEvent) {
+  if (!pendingDrag || event.pointerId !== pendingDrag.pointerId) return;
+  const deltaX = event.clientX - pendingDrag.startX;
+  const deltaY = event.clientY - pendingDrag.startY;
+  if (Math.hypot(deltaX, deltaY) < DRAG_THRESHOLD) return;
+  clearPendingDrag();
+  void startNativeDrag();
+}
+
+function onTitlebarPointerDown(event: PointerEvent) {
+  if (event.button !== 0 || (event.pointerType && event.pointerType !== "mouse")) return;
+  if (isTitlebarControl(event.target)) return;
+  trackDrag(event);
+}
 </script>
 
 <template>
-  <header class="titlebar" data-tauri-drag-region>
+  <header
+    class="titlebar"
+    @pointerdown="onTitlebarPointerDown"
+    @pointermove="onTitlebarPointerMove"
+    @pointerup="clearPendingDrag"
+    @pointercancel="clearPendingDrag"
+  >
     <div class="titlebar__left-controls">
       <button
         type="button"
@@ -96,7 +160,7 @@ async function onClose() {
         />
       </button>
     </div>
-    <div class="titlebar__brand" data-tauri-drag-region>{{ title }}</div>
+    <div class="titlebar__brand">{{ title }}</div>
     <div class="titlebar__controls">
       <button
         type="button"
