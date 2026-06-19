@@ -198,6 +198,10 @@ export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
   return call("workspace_create_repo_group", { name }, () => fallback.createRepoGroup(name));
 }
 
+export function renameRepoGroup(groupId: string, name: string): Promise<WorkspaceSettings> {
+  return call("workspace_rename_repo_group", { groupId, name }, () => fallback.renameRepoGroup(groupId, name));
+}
+
 export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_repo_group", { groupId }, () => fallback.deleteRepoGroup(groupId));
 }

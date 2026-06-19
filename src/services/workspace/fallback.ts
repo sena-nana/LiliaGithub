@@ -1323,6 +1323,32 @@ export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
   });
 }
 
+export function renameRepoGroup(groupId: string, name: string): Promise<WorkspaceSettings> {
+  return call("workspace_rename_repo_group", { groupId, name }, () => {
+    const normalizedGroupId = groupId.trim();
+    const normalizedName = name.trim();
+    if (!normalizedGroupId) throw new Error("分组 ID 不能为空");
+    if (!normalizedName) throw new Error("分组名称不能为空");
+    const targetGroup = fallbackSettings.repoGroups.find((group) => group.id === normalizedGroupId);
+    if (!targetGroup) throw new Error("未找到仓库分组");
+    const nameKey = normalizeRepoGroupNameKey(normalizedName);
+    if (
+      fallbackSettings.repoGroups.some((group) =>
+        group.id !== normalizedGroupId && normalizeRepoGroupNameKey(group.name) === nameKey
+      )
+    ) {
+      throw new Error("已存在同名仓库分组");
+    }
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoGroups: fallbackSettings.repoGroups.map((group) =>
+        group.id === normalizedGroupId ? { ...group, name: normalizedName } : group
+      ),
+    };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
 export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_repo_group", { groupId }, () => {
     const normalized = groupId.trim();

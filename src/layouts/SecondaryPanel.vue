@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
-import { EyeOff, FolderGit2, FolderInput, GitPullRequestArrow, Plus, Search, Trash2, X } from "@lucide/vue";
+import {
+  ChevronRight,
+  EyeOff,
+  FolderGit2,
+  FolderInput,
+  GitPullRequestArrow,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -22,10 +32,12 @@ const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
 const searchInput = ref<HTMLInputElement | null>(null);
-const createGroupOpen = ref(false);
-const createGroupName = ref("");
-const createGroupError = ref<string | null>(null);
 const createGroupBusy = ref(false);
+const collapsedGroupIds = ref<Set<string>>(new Set());
+const editingGroupId = ref<string | null>(null);
+const editingGroupName = ref("");
+const editingGroupError = ref<string | null>(null);
+const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
 
 const props = defineProps<{
@@ -155,7 +167,22 @@ const groupedRepoSections = computed(() =>
     items: group.repoIds
       .map((repoId) => repoItemById.value.get(repoId))
       .filter((item): item is RepoItem => Boolean(item)),
+    collapsed: collapsedGroupIds.value.has(group.id),
   })),
+);
+
+watch(
+  repoGroups,
+  (groups) => {
+    const groupIds = new Set(groups.map((group) => group.id));
+    collapsedGroupIds.value = new Set([...collapsedGroupIds.value].filter((id) => groupIds.has(id)));
+    if (editingGroupId.value && !groupIds.has(editingGroupId.value)) {
+      editingGroupId.value = null;
+      editingGroupName.value = "";
+      editingGroupError.value = null;
+    }
+  },
+  { deep: true },
 );
 
 const localRepoFullNames = computed(() =>
@@ -273,36 +300,85 @@ function repoRowProps(item: RepoItem) {
   };
 }
 
-function openCreateGroup() {
-  createGroupOpen.value = true;
-  createGroupName.value = "";
-  createGroupError.value = null;
+function focusEditingGroupInput(groupId: string) {
+  void nextTick(() => {
+    const input = Array.from(document.querySelectorAll<HTMLInputElement>("[data-repo-group-name-input]"))
+      .find((element) => element.dataset.repoGroupNameInput === groupId);
+    input?.focus();
+    input?.select();
+  });
 }
 
-function closeCreateGroup() {
-  if (createGroupBusy.value) return;
-  createGroupOpen.value = false;
-  createGroupName.value = "";
-  createGroupError.value = null;
-}
-
-async function submitCreateGroup() {
-  const name = createGroupName.value.trim();
-  if (!name) {
-    createGroupError.value = "分组名称不能为空";
-    return;
+function nextUnnamedGroupName() {
+  const baseName = "未命名分组";
+  const usedNames = new Set(repoGroups.value.map((group) => group.name.trim().toLocaleLowerCase()));
+  if (!usedNames.has(baseName.toLocaleLowerCase())) return baseName;
+  for (let index = 2; ; index += 1) {
+    const candidate = `${baseName} ${index}`;
+    if (!usedNames.has(candidate.toLocaleLowerCase())) return candidate;
   }
+}
+
+function startRenameGroup(group: { id: string; name: string }) {
+  editingGroupId.value = group.id;
+  editingGroupName.value = group.name;
+  editingGroupError.value = null;
+  focusEditingGroupInput(group.id);
+}
+
+async function createGroup() {
+  if (createGroupBusy.value) return;
+  const beforeGroupIds = new Set(repoGroups.value.map((group) => group.id));
   createGroupBusy.value = true;
-  createGroupError.value = null;
   try {
-    await workspace.createRepoGroup(name);
-    createGroupOpen.value = false;
-    createGroupName.value = "";
+    const settings = await workspace.createRepoGroup(nextUnnamedGroupName());
+    const groups = settings.repoGroups;
+    const createdGroup = groups.find((group) => !beforeGroupIds.has(group.id)) ?? groups[groups.length - 1];
+    collapsedGroupIds.value = new Set(groups.map((group) => group.id));
+    if (createdGroup) startRenameGroup(createdGroup);
   } catch (err) {
-    createGroupError.value = err instanceof Error ? err.message : String(err);
+    editingGroupError.value = err instanceof Error ? err.message : String(err);
   } finally {
     createGroupBusy.value = false;
   }
+}
+
+function toggleGroupCollapsed(groupId: string) {
+  const next = new Set(collapsedGroupIds.value);
+  if (next.has(groupId)) {
+    next.delete(groupId);
+  } else {
+    next.add(groupId);
+  }
+  collapsedGroupIds.value = next;
+}
+
+async function finishRenameGroup(group: { id: string; name: string }) {
+  if (renameGroupBusy.value) return;
+  const name = editingGroupName.value.trim();
+  editingGroupError.value = null;
+  if (!name || name === group.name) {
+    editingGroupId.value = null;
+    editingGroupName.value = "";
+    return;
+  }
+  renameGroupBusy.value = true;
+  try {
+    await workspace.renameRepoGroup(group.id, name);
+    editingGroupId.value = null;
+    editingGroupName.value = "";
+  } catch (err) {
+    editingGroupError.value = err instanceof Error ? err.message : String(err);
+    focusEditingGroupInput(group.id);
+  } finally {
+    renameGroupBusy.value = false;
+  }
+}
+
+function cancelRenameGroup() {
+  editingGroupId.value = null;
+  editingGroupName.value = "";
+  editingGroupError.value = null;
 }
 
 async function deleteGroup(group: { id: string }) {
@@ -311,6 +387,10 @@ async function deleteGroup(group: { id: string }) {
     return;
   }
   await workspace.deleteRepoGroup(group.id);
+  if (editingGroupId.value === group.id) cancelRenameGroup();
+  const nextCollapsed = new Set(collapsedGroupIds.value);
+  nextCollapsed.delete(group.id);
+  collapsedGroupIds.value = nextCollapsed;
   pendingDeleteGroupId.value = null;
 }
 </script>
@@ -345,10 +425,11 @@ async function deleteGroup(group: { id: string }) {
         <button
           v-if="!searchOpen"
           type="button"
-          class="sb-icon-btn"
+          class="sb-icon-btn sb-section__hover-action"
           aria-label="创建仓库分组"
           title="创建仓库分组"
-          @click="openCreateGroup"
+          :disabled="createGroupBusy"
+          @click="createGroup"
         >
           <Plus :size="13" aria-hidden="true" />
         </button>
@@ -368,20 +449,6 @@ async function deleteGroup(group: { id: string }) {
           <X :size="13" aria-hidden="true" />
         </button>
       </div>
-      <form v-if="createGroupOpen && !searchOpen" class="sb-group-form" @submit.prevent="submitCreateGroup">
-        <input
-          v-model="createGroupName"
-          type="text"
-          aria-label="分组名称"
-          placeholder="分组名称"
-          :disabled="createGroupBusy"
-        />
-        <button type="submit" class="sb-group-form__submit" :disabled="createGroupBusy">创建</button>
-        <button type="button" class="sb-icon-btn" aria-label="取消创建分组" title="取消" @click="closeCreateGroup">
-          <X :size="13" aria-hidden="true" />
-        </button>
-        <p v-if="createGroupError" class="sb-group-form__error">{{ createGroupError }}</p>
-      </form>
       <div class="sb-tree">
         <RepoSidebarRow
           v-for="item in searchOpen ? filteredRepoItems : ungroupedRepoItems"
@@ -395,12 +462,42 @@ async function deleteGroup(group: { id: string }) {
 
     <template v-if="!searchOpen">
       <div
-        v-for="{ group, items } in groupedRepoSections"
+        v-for="{ group, items, collapsed } in groupedRepoSections"
         :key="group.id"
         class="sb-section sb-section--group"
       >
         <div class="sb-section__header">
-          <span class="sb-section__title">{{ group.name }} {{ items.length }}</span>
+          <button
+            v-if="editingGroupId !== group.id"
+            type="button"
+            class="sb-group-toggle"
+            :aria-label="`${collapsed ? '展开' : '折叠'}分组 ${group.name}`"
+            :aria-expanded="!collapsed"
+            @click="toggleGroupCollapsed(group.id)"
+            @dblclick.stop="startRenameGroup(group)"
+          >
+            <span class="sb-section__title">{{ group.name }}</span>
+            <span class="sb-group-count">{{ items.length }}</span>
+            <ChevronRight
+              :size="13"
+              aria-hidden="true"
+              class="sb-group-toggle__chevron"
+              :class="{ 'is-open': !collapsed }"
+            />
+          </button>
+          <div v-else class="sb-group-edit">
+            <input
+              v-model="editingGroupName"
+              type="text"
+              aria-label="重命名分组"
+              :data-repo-group-name-input="group.id"
+              :disabled="renameGroupBusy"
+              @blur="finishRenameGroup(group)"
+              @keydown.enter.prevent="finishRenameGroup(group)"
+              @keydown.esc.prevent="cancelRenameGroup"
+            />
+            <p v-if="editingGroupError" class="sb-group-edit__error">{{ editingGroupError }}</p>
+          </div>
           <button
             type="button"
             class="sb-icon-btn"
@@ -412,7 +509,7 @@ async function deleteGroup(group: { id: string }) {
             <Trash2 :size="13" aria-hidden="true" />
           </button>
         </div>
-        <div class="sb-tree">
+        <div v-if="!collapsed" class="sb-tree">
           <RepoSidebarRow
             v-for="item in items"
             :key="item.repo.id"
@@ -481,6 +578,17 @@ async function deleteGroup(group: { id: string }) {
   color: var(--text-faint);
 }
 
+.sb-section__hover-action {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sb-section__header:hover .sb-section__hover-action,
+.sb-section__header:focus-within .sb-section__hover-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .sb-section__title {
   flex: 1;
   min-width: 0;
@@ -523,6 +631,11 @@ async function deleteGroup(group: { id: string }) {
   background: var(--bg-hover);
   color: var(--text);
   filter: none;
+}
+
+.sb-icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .sb-icon-btn.is-danger {
@@ -611,46 +724,59 @@ async function deleteGroup(group: { id: string }) {
   color: var(--text-muted);
 }
 
-.sb-group-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 22px;
-  gap: 4px;
-  margin: 0 6px 4px;
-  align-items: center;
-}
-
-.sb-group-form input {
+.sb-group-toggle {
+  flex: 1;
   min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
-}
-
-.sb-group-form__submit {
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
-  color: var(--text-muted);
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   cursor: pointer;
+  text-align: left;
 }
 
-.sb-group-form__submit:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text);
+.sb-group-toggle:hover {
+  color: var(--text-muted);
 }
 
-.sb-group-form__submit:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+.sb-group-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
 }
 
-.sb-group-form__error {
-  grid-column: 1 / -1;
-  margin: 0 2px;
+.sb-group-toggle__chevron {
+  flex: 0 0 auto;
+  transition: transform 0.12s ease;
+}
+
+.sb-group-toggle__chevron.is-open {
+  transform: rotate(90deg);
+}
+
+.sb-group-edit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-group-edit input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.sb-group-edit__error {
+  margin: 0;
   color: var(--err);
   font-size: 12px;
 }
