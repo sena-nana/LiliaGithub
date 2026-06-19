@@ -129,7 +129,7 @@ async function toggleSidebarRepoGroup(view: AppShellView, name: string) {
 
 async function moveSidebarRepoToGroup(view: AppShellView, repoName: string, groupName: string) {
   await fireEvent.contextMenu(sidebarRowForText(view.container, repoName));
-  await fireEvent.click(await view.findByRole("menuitem", { name: "移动到分组" }));
+  await fireEvent.mouseEnter(await view.findByRole("menuitem", { name: "移动到分组" }));
   await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
 }
 
