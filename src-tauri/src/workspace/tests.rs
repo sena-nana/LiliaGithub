@@ -1626,9 +1626,14 @@ fn parses_github_next_page_from_link_header() {
 
 #[test]
 fn builds_github_repo_settings_patch_with_changed_fields_only() {
-    let payload = github_update_repo_settings_payload(GitHubUpdateRepoSettingsRequest {
+    let request = GitHubUpdateRepoSettingsRequest {
         description: Some("new desc".to_string()),
         homepage: None,
+        topics: Some(vec![
+            "Vue".to_string(),
+            "vue".to_string(),
+            "#Tauri".to_string(),
+        ]),
         private: Some(true),
         default_branch: Some(" main ".to_string()),
         has_issues: None,
@@ -1642,7 +1647,8 @@ fn builds_github_repo_settings_patch_with_changed_fields_only() {
         delete_branch_on_merge: Some(true),
         allow_forking: None,
         web_commit_signoff_required: None,
-    });
+    };
+    let payload = github_update_repo_settings_payload(&request);
 
     assert_eq!(payload.len(), 5);
     assert_eq!(payload.get("description").unwrap(), "new desc");
@@ -1651,6 +1657,11 @@ fn builds_github_repo_settings_patch_with_changed_fields_only() {
     assert_eq!(payload.get("has_wiki").unwrap(), false);
     assert_eq!(payload.get("delete_branch_on_merge").unwrap(), true);
     assert!(payload.get("homepage").is_none());
+    assert!(payload.get("topics").is_none());
+    assert_eq!(
+        normalize_github_topics(request.topics.unwrap()),
+        vec!["vue".to_string(), "tauri".to_string()]
+    );
 }
 
 #[test]
