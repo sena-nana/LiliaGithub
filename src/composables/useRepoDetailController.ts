@@ -18,7 +18,7 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
-type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history">;
+type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
 type HistoryCommit = {
   readonly hash: string;
@@ -228,6 +228,7 @@ export function useRepoDetailController() {
       { key: "repo", title: "项目" },
       { key: "changes", title: "变更" },
       { key: "history", title: "历史" },
+      !remoteOnly.value ? { key: "stash", title: "Stash" } : null,
     ].filter((tab): tab is { key: RepoToolbarTab; title: string } => Boolean(tab)),
   );
   const launchCommandOptions = computed(() => {
@@ -694,30 +695,6 @@ function refreshAndFetchRepo() {
     void runAction(() => workspace.setUpstream(repoId.value, branch, next));
   }
 
-  function stashChanges() {
-    const message = window.prompt("stash 说明（可选）", "") ?? "";
-    void runAction(() => workspace.saveStash(repoId.value, message));
-  }
-
-  async function withLatestStash(action: (stashId: string) => Promise<unknown>) {
-    const stashes = await workspace.listStashes(repoId.value);
-    const current = stashes[0];
-    if (!current) throw new Error("当前没有 stash");
-    await action(current.id);
-  }
-
-  function applyStash() {
-    void runAction(() => withLatestStash((stashId) => workspace.applyStash(repoId.value, stashId)));
-  }
-
-  function popStash() {
-    void runAction(() => withLatestStash((stashId) => workspace.popStash(repoId.value, stashId)));
-  }
-
-  function dropStash() {
-    void runAction(() => withLatestStash((stashId) => workspace.dropStash(repoId.value, stashId)));
-  }
-
   function useDefaultTokenAuth() {
     void runAction(() => workspace.useDefaultTokenAuthForRepo(repoId.value));
   }
@@ -994,10 +971,6 @@ function refreshAndFetchRepo() {
       push,
       pushCurrentBranchWithUpstream,
       setCurrentBranchUpstream,
-      stashChanges,
-      applyStash,
-      popStash,
-      dropStash,
       useDefaultTokenAuth,
       acceptConflict,
       resolveSelectedConflict,

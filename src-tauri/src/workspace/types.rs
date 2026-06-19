@@ -386,6 +386,13 @@ pub struct RepoStashEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RepoStashDetail {
+    pub entry: RepoStashEntry,
+    pub files: Vec<CommitFileChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RepoRemote {
     pub name: String,
     pub fetch_url: String,

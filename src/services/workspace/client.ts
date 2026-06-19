@@ -44,6 +44,7 @@ import type {
   RepoResetMode,
   RepoSummary,
   RepoStashEntry,
+  RepoStashDetail,
   RemoteRepoShortcut,
   WorkspaceTask,
   WorkspaceSettings,
@@ -575,6 +576,10 @@ export function setBranchUpstream(
 
 export function listRepoStashes(repoId: string): Promise<RepoStashEntry[]> {
   return call("repo_list_stashes", { repoId }, () => fallback.listRepoStashes(repoId));
+}
+
+export function getRepoStashDetail(repoId: string, stashId: string): Promise<RepoStashDetail> {
+  return call("repo_get_stash_detail", { repoId, stashId }, () => fallback.getRepoStashDetail(repoId, stashId));
 }
 
 export function saveRepoStash(repoId: string, message?: string | null): Promise<RepoSummary> {

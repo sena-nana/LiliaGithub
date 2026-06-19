@@ -3,6 +3,7 @@ import {
   CloudDownload,
   CloudUpload,
   RefreshCw,
+  Archive,
   FolderTree,
   FolderOpen,
   GitCompare,
@@ -25,6 +26,7 @@ import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
 const RepoFilesPanel = defineAsyncComponent(() => import("../components/repo/RepoFilesPanel.vue"));
+const RepoStashPanel = defineAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
 
 const {
   activeTab,
@@ -91,10 +93,6 @@ const {
   push,
   pushCurrentBranchWithUpstream,
   setCurrentBranchUpstream,
-  stashChanges,
-  applyStash,
-  popStash,
-  dropStash,
   useDefaultTokenAuth,
   acceptConflict,
   resolveSelectedConflict,
@@ -146,7 +144,8 @@ const {
                 <FolderTree v-if="tab.key === 'files'" :size="17" aria-hidden="true" />
                 <Monitor v-else-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
                 <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
-                <History v-else :size="17" aria-hidden="true" />
+                <History v-else-if="tab.key === 'history'" :size="17" aria-hidden="true" />
+                <Archive v-else :size="17" aria-hidden="true" />
                 <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge repo-toolbar__badge--warn">
                   {{ changes.length }}
                 </span>
@@ -300,18 +299,6 @@ const {
         <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning" @click="setCurrentBranchUpstream">
           设置 upstream
         </button>
-        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="stashChanges">
-          保存 stash
-        </button>
-        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="applyStash">
-          Apply stash
-        </button>
-        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="popStash">
-          Pop stash
-        </button>
-        <button type="button" class="repo-secondary-actions__btn" :disabled="actionRunning || hasConflicts" @click="dropStash">
-          Drop stash
-        </button>
       </div>
 
     <div v-if="actionError || recentSyncError" class="repo-workbench__status">
@@ -333,6 +320,12 @@ const {
           :repo-id="repoId"
           :repo-path="summary?.path ?? null"
           :changes="changes"
+        />
+        <RepoStashPanel
+          v-else-if="activeTab === 'stash'"
+          :repo-id="repoId"
+          :remote-only="remoteOnly"
+          :has-conflicts="hasConflicts"
         />
         <RepoProjectPanel
           v-else
