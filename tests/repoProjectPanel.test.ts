@@ -3,6 +3,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
+import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
 import {
   getGitHubRepoManagement,
@@ -118,6 +119,13 @@ vi.mock("../src/services/workspace/client", () => ({
   listGitHubIssues: vi.fn(),
   listGitHubRepoReadmes: vi.fn(async () => []),
   listGitHubWorkflowRuns: vi.fn(),
+  isGitHubBindingExpiredError: (err: unknown) => {
+    const message = String(err);
+    return message.includes("GitHub 绑定已失效") ||
+      message.includes("HTTP 401") ||
+      message.includes("HTTP 403") ||
+      message.toLowerCase().includes("bad credentials");
+  },
   mergeGitHubPullRequest: vi.fn(),
   listRepoReadmes: vi.fn(async () => []),
   openPath: vi.fn(),
@@ -125,6 +133,14 @@ vi.mock("../src/services/workspace/client", () => ({
   updateGitHubIssue: vi.fn(),
   updateGitHubRepoSettings: vi.fn(async () => githubSettings),
 }));
+
+vi.mock("../src/composables/workspace/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/composables/workspace/auth")>();
+  return {
+    ...actual,
+    startAuthFlow: vi.fn(),
+  };
+});
 
 const launchConfig: ProjectLaunchConfig = {
   command: "yarn dev",
@@ -198,6 +214,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
     vi.mocked(listRepoReadmes).mockResolvedValue([]);
+    vi.mocked(startAuthFlow).mockResolvedValue(undefined);
     state.repos = [];
   });
 
@@ -298,6 +315,51 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
     expect(await view.findByText("release pipeline")).toBeInTheDocument();
     expect(listGitHubWorkflowRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      tabName: "Issues",
+      fail: () => vi.mocked(listGitHubIssues).mockRejectedValueOnce(new Error("GitHub 绑定已失效，请重新绑定")),
+      title: "Issues 暂不可用",
+      reason: "GitHub 绑定已失效或凭据不可用，请重新绑定 GitHub 后继续使用。",
+      hiddenText: "新建 Issue",
+    },
+    {
+      tabName: "Pull Requests",
+      fail: () => vi.mocked(listGitHubPullRequests).mockRejectedValueOnce(new Error("Bad credentials")),
+      title: "Pull Requests 暂不可用",
+      reason: "GitHub 绑定已失效或凭据不可用，请重新绑定 GitHub 后继续使用。",
+      hiddenText: "新建 PR",
+    },
+    {
+      tabName: "Actions",
+      fail: () => vi.mocked(listGitHubWorkflowRuns).mockRejectedValueOnce(new Error("HTTP 403 Forbidden")),
+      title: "Actions 暂不可用",
+      reason: "当前 GitHub 授权权限不足，无法访问该仓库的 Actions。请重新绑定 GitHub 并授予所需权限。",
+      hiddenText: "没有 GitHub Actions 运行记录。",
+    },
+    {
+      tabName: "Settings",
+      fail: () => vi.mocked(getGitHubRepoManagement).mockRejectedValueOnce(new Error("HTTP 403 Resource not accessible by integration")),
+      title: "Settings 暂不可用",
+      reason: "当前 GitHub 授权权限不足，无法访问该仓库的 Settings。请重新绑定 GitHub 并授予所需权限。",
+      hiddenText: "基础设置",
+    },
+  ])("$tabName 因 GitHub 授权不可用时提供重新绑定入口", async ({ tabName, fail, title, reason, hiddenText }) => {
+    fail();
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: tabName }));
+
+    expect(await view.findByText(title)).toBeInTheDocument();
+    expect(view.getByText(reason)).toBeInTheDocument();
+    expect(view.queryByText(hiddenText)).toBeNull();
+
+    await fireEvent.click(view.getByRole("button", { name: "重新绑定 GitHub" }));
+    expect(startAuthFlow).toHaveBeenCalledTimes(1);
   });
 
   it("Pull Requests 分区按需加载列表、checks，并支持合并", async () => {
