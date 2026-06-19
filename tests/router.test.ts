@@ -5,7 +5,14 @@ import App from "../src/App.vue";
 import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import type { GitHubIssue, GitHubRepoSummary, GitHubWorkflowRun, RepoChange } from "../src/services/workspace";
+import type {
+  GitHubIssue,
+  GitHubPullRequest,
+  GitHubPullRequestCheck,
+  GitHubRepoSummary,
+  GitHubWorkflowRun,
+  RepoChange,
+} from "../src/services/workspace";
 import { repoDetail, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
@@ -105,6 +112,48 @@ function githubIssue(repoFullName: string, number: number, updatedAt: string, cr
   };
 }
 
+function githubPullRequest(
+  repoFullName: string,
+  number: number,
+  updatedAt: string,
+  overrides: Partial<GitHubPullRequest> = {},
+): GitHubPullRequest {
+  return {
+    number,
+    title: `${repoFullName} pull request ${number}`,
+    state: "open",
+    draft: false,
+    body: null,
+    htmlUrl: `https://github.com/${repoFullName}/pull/${number}`,
+    updatedAt,
+    createdAt: updatedAt,
+    author: "lilia-user",
+    baseBranch: "main",
+    headBranch: `codex/pr-${number}`,
+    merged: false,
+    mergeable: true,
+    mergeableState: "clean",
+    ...overrides,
+  };
+}
+
+function githubPullRequestCheck(
+  id: number,
+  overrides: Partial<GitHubPullRequestCheck> = {},
+): GitHubPullRequestCheck {
+  return {
+    id,
+    name: "verify",
+    status: "completed",
+    conclusion: "success",
+    detailsUrl: `https://github.com/sena-nana/LiliaGithub/actions/runs/${id}`,
+    htmlUrl: `https://github.com/sena-nana/LiliaGithub/actions/runs/${id}`,
+    startedAt: "2026-06-17T12:00:00Z",
+    completedAt: "2026-06-17T12:08:00Z",
+    ...overrides,
+  };
+}
+
 function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChange {
   return {
     path,
@@ -156,6 +205,8 @@ describe("基础路由", () => {
     const githubTimelineList = screen.getByLabelText("GitHub 时间线列表");
     expect(await within(githubTimelineList).findByText("Issue #12")).toBeInTheDocument();
     expect(githubTimelineList).toHaveTextContent("补齐仓库管理入口");
+    expect(await within(githubTimelineList).findByText("PR #7")).toBeInTheDocument();
+    expect(githubTimelineList).toHaveTextContent("Checks 通过：1 项");
     expect(githubTimelineList).toHaveTextContent("提交");
     expect(githubTimelineList).toHaveTextContent("搭建 LiliaGithub MVP");
     expect(githubTimelineList).toHaveTextContent("创建仓库");
@@ -458,8 +509,10 @@ describe("基础路由", () => {
       githubRepoSummary(`sena-nana/DeferredTimeline${index}`),
     );
     const issueResolvers = new Map<string, (issues: GitHubIssue[]) => void>();
+    const pullRequestResolvers = new Map<string, (pullRequests: GitHubPullRequest[]) => void>();
     const workflowResolvers = new Map<string, (runs: GitHubWorkflowRun[]) => void>();
     const issueCalls: string[] = [];
+    const pullRequestCalls: string[] = [];
     const workflowCalls: string[] = [];
     const idleCallbacks: Array<() => void> = [];
     const windowWithIdle = window as typeof window & {
@@ -473,6 +526,12 @@ describe("基础路由", () => {
       issueCalls.push(repoFullName);
       return new Promise((resolve) => {
         issueResolvers.set(repoFullName, resolve);
+      });
+    });
+    const pullRequestSpy = vi.spyOn(service, "listGitHubPullRequests").mockImplementation((repoFullName) => {
+      pullRequestCalls.push(repoFullName);
+      return new Promise((resolve) => {
+        pullRequestResolvers.set(repoFullName, resolve);
       });
     });
     const workflowSpy = vi.spyOn(service, "listGitHubWorkflowRuns").mockImplementation((repoFullName) => {
@@ -494,6 +553,7 @@ describe("基础路由", () => {
       const repoStatusList = await screen.findByLabelText("仓库状态列表");
       expect(await within(repoStatusList).findByText(repos[0].fullName)).toBeInTheDocument();
       expect(issueSpy).not.toHaveBeenCalled();
+      expect(pullRequestSpy).not.toHaveBeenCalled();
       expect(workflowSpy).not.toHaveBeenCalled();
       expect(idleCallbacks).toHaveLength(1);
 
@@ -501,24 +561,30 @@ describe("基础路由", () => {
 
       await waitFor(() => {
         expect(issueCalls).toHaveLength(2);
+        expect(pullRequestCalls).toHaveLength(2);
         expect(workflowCalls).toHaveLength(2);
       });
       expect(issueCalls).toEqual(repos.slice(0, 2).map((repo) => repo.fullName));
+      expect(pullRequestCalls).toEqual(repos.slice(0, 2).map((repo) => repo.fullName));
       expect(workflowCalls).toEqual(repos.slice(0, 2).map((repo) => repo.fullName));
 
       issueResolvers.get(repos[0].fullName)?.([githubIssue(repos[0].fullName, 1, "2026-06-13T10:00:00Z")]);
+      pullRequestResolvers.get(repos[0].fullName)?.([]);
       workflowResolvers.get(repos[0].fullName)?.([
         githubWorkflowRun(repos[0].fullName, 3001, "2026-06-13T11:00:00Z"),
       ]);
 
       await waitFor(() => {
         expect(issueCalls).toHaveLength(3);
+        expect(pullRequestCalls).toHaveLength(3);
         expect(workflowCalls).toHaveLength(3);
       });
       expect(issueCalls[2]).toBe(repos[2].fullName);
+      expect(pullRequestCalls[2]).toBe(repos[2].fullName);
       expect(workflowCalls[2]).toBe(repos[2].fullName);
     } finally {
       issueSpy.mockRestore();
+      pullRequestSpy.mockRestore();
       workflowSpy.mockRestore();
       if (originalRequestIdleCallback) windowWithIdle.requestIdleCallback = originalRequestIdleCallback;
       else delete windowWithIdle.requestIdleCallback;
@@ -679,6 +745,61 @@ describe("基础路由", () => {
     });
     await waitFor(() => {
       expect(document.querySelector('[data-issue-number="12"].project-row--issue.is-target')).toBeInTheDocument();
+    });
+  });
+
+  it("总览页 GitHub 时间线展示 PR checks 并点击进入本地 Pull Request 详情", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
+    const service = await import("../src/services/workspace");
+    const repo = githubRepoSummary("sena-nana/LiliaGithub");
+    service.setFallbackGitHubPullRequestsForTests({
+      [repo.fullName]: [
+        githubPullRequest(repo.fullName, 52, "2026-06-18T10:00:00Z", {
+          title: "总览接入 PR 时间线",
+        }),
+      ],
+    });
+    service.setFallbackGitHubPullRequestChecksForTests({
+      [repo.fullName]: {
+        52: [
+          githubPullRequestCheck(5201, {
+            name: "lint",
+            conclusion: "failure",
+          }),
+        ],
+      },
+    });
+    const { router } = await renderAt("/");
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    expect(await within(timeline).findByText("PR #52")).toBeInTheDocument();
+    expect(timeline).toHaveTextContent("总览接入 PR 时间线");
+    expect(timeline).toHaveTextContent("Checks 失败：lint");
+    await waitFor(() => {
+      expect(service.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual({
+        repoFullName: repo.fullName,
+        state: "all",
+      });
+      expect(service.getFallbackGitHubPullRequestCheckListCallsForTests()).toContainEqual({
+        repoFullName: repo.fullName,
+        pullNumber: 52,
+      });
+    });
+
+    await fireEvent.click(within(timeline).getByRole("link", { name: "PR #52" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
+    expect(router.currentRoute.value.query).toMatchObject({
+      projectTab: "pulls",
+      pr: "52",
+    });
+    await waitFor(() => {
+      expect(document.querySelector('[data-pull-number="52"].project-row--pull.is-target')).toBeInTheDocument();
     });
   });
 

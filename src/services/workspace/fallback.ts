@@ -677,6 +677,16 @@ type FallbackGitHubIssueListCall = {
   since: string | null;
 };
 
+type FallbackGitHubPullRequestListCall = {
+  repoFullName: string;
+  state: string | null;
+};
+
+type FallbackGitHubPullRequestCheckListCall = {
+  repoFullName: string;
+  pullNumber: number;
+};
+
 function createFallbackSettings(): WorkspaceSettings {
   return {
     workspaceRoot: "C:\\Files\\workspace",
@@ -702,6 +712,8 @@ let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
+let fallbackGitHubPullRequestListCalls: FallbackGitHubPullRequestListCall[] = [];
+let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListCall[] = [];
 let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
 let fallbackOpenPathCalls: string[] = [];
 let fallbackCloneIndex = 1;
@@ -744,6 +756,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoFiles = createFallbackRepoFiles();
   fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
   fallbackGitHubIssueListCalls = [];
+  fallbackGitHubPullRequestListCalls = [];
+  fallbackGitHubPullRequestCheckListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
   fallbackOpenPathCalls = [];
   fallbackCloneIndex = 1;
@@ -853,6 +867,14 @@ export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueLi
   return fallbackGitHubIssueListCalls.map((call) => ({ ...call }));
 }
 
+export function getFallbackGitHubPullRequestListCallsForTests(): FallbackGitHubPullRequestListCall[] {
+  return fallbackGitHubPullRequestListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubPullRequestCheckListCallsForTests(): FallbackGitHubPullRequestCheckListCall[] {
+  return fallbackGitHubPullRequestCheckListCalls.map((call) => ({ ...call }));
+}
+
 export function getFallbackGitHubWorkflowRunListCallsForTests() {
   return fallbackGitHubWorkflowRunListCalls.map((call) => ({ ...call }));
 }
@@ -866,6 +888,31 @@ export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, Git
     Object.entries(issuesByRepo).map(([repoFullName, issues]) => [
       repoFullName,
       issues.map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
+    ]),
+  );
+}
+
+export function setFallbackGitHubPullRequestsForTests(pullRequestsByRepo: Record<string, GitHubPullRequest[]>) {
+  fallbackGitHubPullRequests = Object.fromEntries(
+    Object.entries(pullRequestsByRepo).map(([repoFullName, pullRequests]) => [
+      repoFullName,
+      pullRequests.map(clonePullRequest),
+    ]),
+  );
+}
+
+export function setFallbackGitHubPullRequestChecksForTests(
+  checksByRepo: Record<string, Record<number, GitHubPullRequestCheck[]>>,
+) {
+  fallbackGitHubPullRequestChecks = Object.fromEntries(
+    Object.entries(checksByRepo).map(([repoFullName, checksByPull]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(checksByPull).map(([pullNumber, checks]) => [
+          pullNumber,
+          checks.map(clonePullRequestCheck),
+        ]),
+      ),
     ]),
   );
 }
@@ -1541,10 +1588,13 @@ export function listGitHubPullRequests(
   state: "open" | "closed" | "all" | null = "open",
 ): Promise<GitHubPullRequest[]> {
   return call("github_list_pull_requests", { repoFullName, state: state ?? null }, () =>
-    [...(fallbackGitHubPullRequests[repoFullName] ?? [])]
-      .filter((pullRequest) => !state || state === "all" || pullRequest.state === state)
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-      .map(clonePullRequest),
+    {
+      fallbackGitHubPullRequestListCalls.push({ repoFullName, state: state ?? null });
+      return [...(fallbackGitHubPullRequests[repoFullName] ?? [])]
+        .filter((pullRequest) => !state || state === "all" || pullRequest.state === state)
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+        .map(clonePullRequest);
+    },
   );
 }
 
@@ -1643,9 +1693,10 @@ export function listGitHubPullRequestChecks(
   repoFullName: string,
   pullNumber: number,
 ): Promise<GitHubPullRequestCheck[]> {
-  return call("github_list_pull_request_checks", { repoFullName, pullNumber }, () =>
-    [...(fallbackGitHubPullRequestChecks[repoFullName]?.[pullNumber] ?? [])].map(clonePullRequestCheck),
-  );
+  return call("github_list_pull_request_checks", { repoFullName, pullNumber }, () => {
+    fallbackGitHubPullRequestCheckListCalls.push({ repoFullName, pullNumber });
+    return [...(fallbackGitHubPullRequestChecks[repoFullName]?.[pullNumber] ?? [])].map(clonePullRequestCheck);
+  });
 }
 
 export function listGitHubIssues(
