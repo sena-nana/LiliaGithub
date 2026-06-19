@@ -41,7 +41,6 @@ import type {
   RepoOperationResult,
   RepoRemote,
   RepoRefreshSummaryOptions,
-  RepoReadme,
   RepoResetMode,
   RepoSummary,
   RepoStashEntry,
@@ -54,6 +53,18 @@ import type {
 } from "./types";
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
+const FALLBACK_LILIA_GITHUB_README = [
+  "# LiliaGithub",
+  "",
+  "一个面向本地多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。",
+  "",
+  "## 当前能力",
+  "",
+  "- 工作区 Git 仓库扫描",
+  "- GitHub 仓库管理",
+  "- 快速启动配置",
+].join("\n");
+const FALLBACK_LILIA_README = "# Lilia\n\nDesktop agent workbench.";
 
 let fallbackRepos: RepoSummary[] = [
   {
@@ -187,6 +198,7 @@ function cloneGitHubRepoManagement(repo: GitHubRepoManagement): GitHubRepoManage
   return {
     ...repo,
     topics: [...repo.topics],
+    license: repo.license ? { ...repo.license } : null,
   };
 }
 
@@ -264,6 +276,12 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 9,
       forksCount: 14,
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+      license: {
+        key: "bsd-3-clause",
+        name: "BSD 3-Clause License",
+        spdxId: "BSD-3-Clause",
+        url: "https://api.github.com/licenses/bsd-3-clause",
+      },
     },
     "sena-nana/Lilia": {
       fullName: "sena-nana/Lilia",
@@ -288,6 +306,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 7,
       forksCount: 6,
       htmlUrl: "https://github.com/sena-nana/Lilia",
+      license: null,
     },
   };
 }
@@ -495,57 +514,6 @@ function createFallbackRepoRemotes(): Record<string, RepoRemote[]> {
   };
 }
 
-function createFallbackRepoReadmes(): Record<string, RepoReadme[]> {
-  return {
-    LiliaGithub: [
-      {
-        repoId: "LiliaGithub",
-        path: "README.md",
-        images: {},
-        format: "md",
-        updatedAt: Date.now(),
-        content: [
-          "# LiliaGithub",
-          "",
-          "一个面向本地多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。",
-          "",
-          "## 当前能力",
-          "",
-          "- 工作区 Git 仓库扫描",
-          "- GitHub 仓库管理",
-          "- 快速启动配置",
-        ].join("\n"),
-      },
-    ],
-    Lilia: [
-      {
-        repoId: "Lilia",
-        path: "README.md",
-        images: {},
-        format: "md",
-        updatedAt: Date.now(),
-        content: "# Lilia\n\nDesktop agent workbench.",
-      },
-    ],
-  };
-}
-
-function createFallbackGitHubRepoReadmes(): Record<string, RepoReadme[]> {
-  return Object.fromEntries(
-    Object.entries(createFallbackRepoReadmes()).map(([repoId, readmes]) => {
-      const repo = fallbackRepos.find((item) => item.id === repoId);
-      return [
-        repo?.githubFullName ?? repoId,
-        readmes.map((readme) => ({
-          ...readme,
-          repoId: repo?.githubFullName ? `github:${repo.githubFullName}` : readme.repoId,
-          images: { ...readme.images },
-        })),
-      ];
-    }),
-  );
-}
-
 function createFallbackRepoFiles(): Record<string, Record<string, RepoFileTreeEntry[]>> {
   return {
     LiliaGithub: {
@@ -586,7 +554,7 @@ function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFil
         path: "README.md",
         name: "README.md",
         previewKind: "markdown",
-        content: createFallbackRepoReadmes().LiliaGithub[0]?.content ?? "# LiliaGithub",
+        content: FALLBACK_LILIA_GITHUB_README,
         images: {},
         size: 168,
         mimeType: "text/markdown",
@@ -660,7 +628,7 @@ function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFil
         path: "README.md",
         name: "README.md",
         previewKind: "markdown",
-        content: createFallbackRepoReadmes().Lilia[0]?.content ?? "# Lilia",
+        content: FALLBACK_LILIA_README,
         images: {},
         size: 32,
         mimeType: "text/markdown",
@@ -680,8 +648,6 @@ let fallbackGitHubBranches = createFallbackGitHubBranches();
 let fallbackRepoStashes = createFallbackRepoStashes();
 let fallbackRepoRemotes = createFallbackRepoRemotes();
 let fallbackRepoBranches = createFallbackRepoBranches();
-let fallbackRepoReadmes = createFallbackRepoReadmes();
-let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
 let fallbackRepoFiles = createFallbackRepoFiles();
 let fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
 
@@ -770,8 +736,6 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoStashes = createFallbackRepoStashes();
   fallbackRepoRemotes = createFallbackRepoRemotes();
   fallbackRepoBranches = createFallbackRepoBranches();
-  fallbackRepoReadmes = createFallbackRepoReadmes();
-  fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
   fallbackRepoFiles = createFallbackRepoFiles();
   fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
   fallbackGitHubIssueListCalls = [];
@@ -954,13 +918,6 @@ function cloneRepoFileTreeEntry(entry: RepoFileTreeEntry): RepoFileTreeEntry {
   return { ...entry };
 }
 
-function cloneRepoReadme(readme: RepoReadme): RepoReadme {
-  return {
-    ...readme,
-    images: { ...readme.images },
-  };
-}
-
 function cloneRepoFilePreview(preview: RepoFilePreview): RepoFilePreview {
   return {
     ...preview,
@@ -1020,24 +977,6 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
       ]),
     ),
   };
-}
-
-export function setFallbackRepoReadmesForTests(readmesByRepo: Record<string, RepoReadme | RepoReadme[] | null>) {
-  fallbackRepoReadmes = Object.fromEntries(
-    Object.entries(readmesByRepo).map(([repoId, readmes]) => {
-      const list = Array.isArray(readmes) ? readmes : readmes ? [readmes] : [];
-      return [repoId, list.map(cloneRepoReadme)];
-    }),
-  );
-}
-
-export function setFallbackGitHubRepoReadmesForTests(readmesByRepo: Record<string, RepoReadme | RepoReadme[] | null>) {
-  fallbackGitHubRepoReadmes = Object.fromEntries(
-    Object.entries(readmesByRepo).map(([repoFullName, readmes]) => {
-      const list = Array.isArray(readmes) ? readmes : readmes ? [readmes] : [];
-      return [repoFullName, list.map(cloneRepoReadme)];
-    }),
-  );
 }
 
 export function setFallbackRepoFilesForTests(filesByRepo: Record<string, Record<string, RepoFileTreeEntry[]>>) {
@@ -1428,7 +1367,6 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
     };
     fallbackRepos = fallbackRepos.filter((item) => item.id !== repoId);
     delete fallbackRepoOverrides[repoId];
-    delete fallbackRepoReadmes[repoId];
     delete fallbackLaunchStatuses[repoId];
     delete fallbackLaunchLogs[repoId];
     return cloneWorkspaceSettings(fallbackSettings);
@@ -1587,6 +1525,7 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
     watchersCount: 0,
     forksCount: 0,
     htmlUrl: repo.htmlUrl,
+    license: null,
   };
   fallbackGitHubRepoManagement[repoFullName] = management;
   return cloneGitHubRepoManagement(management);
@@ -1651,6 +1590,14 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       watchersCount: 0,
       forksCount: 0,
       htmlUrl: repo.htmlUrl,
+      license: request.licenseTemplate
+        ? {
+            key: request.licenseTemplate,
+            name: `${request.licenseTemplate} license`,
+            spdxId: request.licenseTemplate.toUpperCase(),
+            url: null,
+          }
+        : null,
     };
     fallbackGitHubIssues[fullName] = [];
     fallbackGitHubPullRequests[fullName] = [];
@@ -1702,7 +1649,6 @@ export function deleteGitHubRepo(repoFullName: string): Promise<void> {
     delete fallbackGitHubPullRequestChecks[normalized];
     delete fallbackGitHubWorkflowRuns[normalized];
     delete fallbackGitHubBranches[normalized];
-    delete fallbackGitHubRepoReadmes[normalized];
   });
 }
 
@@ -2041,25 +1987,6 @@ function syncFallbackRepoBranchState(repoId: string) {
   }
   fallbackRepoBranches[repoId] = next;
   return next;
-}
-
-export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
-  return call("repo_get_readme", { repoId }, () => {
-    const readme = fallbackRepoReadmes[repoId]?.[0] ?? null;
-    return readme ? cloneRepoReadme(readme) : null;
-  });
-}
-
-export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
-  return call("repo_list_readmes", { repoId }, () =>
-    (fallbackRepoReadmes[repoId] ?? []).map(cloneRepoReadme),
-  );
-}
-
-export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[]> {
-  return call("github_list_repo_readmes", { repoFullName }, () =>
-    (fallbackGitHubRepoReadmes[repoFullName] ?? []).map(cloneRepoReadme),
-  );
 }
 
 export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {

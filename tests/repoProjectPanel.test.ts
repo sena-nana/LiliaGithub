@@ -6,12 +6,13 @@ import { closeContextMenu, installContextMenu } from "../src/composables/useCont
 import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
 import {
+  getRepoFilePreview,
   getGitHubRepoManagement,
   listGitHubPullRequestChecks,
   listGitHubPullRequests,
   listGitHubIssues,
   listGitHubWorkflowRuns,
-  listRepoReadmes,
+  listRepoFiles,
   mergeGitHubPullRequest,
   updateGitHubRepoSettings,
 } from "../src/services/workspace/client";
@@ -23,6 +24,8 @@ import type {
   GitHubWorkflowRun,
   ProjectLaunchConfig,
   ProjectLaunchLog,
+  RepoFilePreview,
+  RepoFileTreeEntry,
 } from "../src/services/workspace/types";
 import { repoSummary } from "./fixtures/workspace";
 
@@ -49,6 +52,29 @@ const githubSettings: GitHubRepoManagement = {
   watchersCount: 9,
   forksCount: 14,
   htmlUrl: "https://github.com/sena-nana/remote-repo",
+  license: {
+    key: "bsd-3-clause",
+    name: "BSD 3-Clause License",
+    spdxId: "BSD-3-Clause",
+    url: "https://api.github.com/licenses/bsd-3-clause",
+  },
+};
+
+const localRootFiles: RepoFileTreeEntry[] = [{
+  path: "README.md",
+  name: "README.md",
+  kind: "file",
+  hasChildren: false,
+}];
+
+const localReadmePreview: RepoFilePreview = {
+  path: "README.md",
+  name: "README.md",
+  previewKind: "markdown",
+  content: "# Project README",
+  images: {},
+  size: 16,
+  truncated: false,
 };
 
 const githubIssues: GitHubIssue[] = [{
@@ -117,11 +143,11 @@ vi.mock("../src/services/workspace/client", () => ({
   createGitHubIssue: vi.fn(),
   deleteGitHubRepo: vi.fn(),
   getRepoCommitDetail: vi.fn(),
+  getRepoFilePreview: vi.fn(),
   getGitHubRepoManagement: vi.fn(),
   listGitHubPullRequestChecks: vi.fn(),
   listGitHubPullRequests: vi.fn(),
   listGitHubIssues: vi.fn(),
-  listGitHubRepoReadmes: vi.fn(async () => []),
   listGitHubWorkflowRuns: vi.fn(),
   isGitHubBindingExpiredError: (err: unknown) => {
     const message = String(err);
@@ -131,7 +157,7 @@ vi.mock("../src/services/workspace/client", () => ({
       message.toLowerCase().includes("bad credentials");
   },
   mergeGitHubPullRequest: vi.fn(),
-  listRepoReadmes: vi.fn(async () => []),
+  listRepoFiles: vi.fn(async () => []),
   openPath: vi.fn(),
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
@@ -233,7 +259,8 @@ describe("RepoProjectPanel", () => {
     vi.mocked(mergeGitHubPullRequest).mockImplementation(async () => ({ ...githubPullRequests[0], merged: true, state: "closed" }));
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
-    vi.mocked(listRepoReadmes).mockResolvedValue([]);
+    vi.mocked(listRepoFiles).mockResolvedValue(localRootFiles);
+    vi.mocked(getRepoFilePreview).mockResolvedValue(localReadmePreview);
     vi.mocked(startAuthFlow).mockResolvedValue(undefined);
     state.repos = [];
   });
@@ -306,20 +333,27 @@ describe("RepoProjectPanel", () => {
     });
 
     await waitFor(() => {
-      expect(listRepoReadmes).toHaveBeenCalledWith("local-repo");
+      expect(listRepoFiles).toHaveBeenCalledWith("local-repo", null);
     });
+    expect(getRepoFilePreview).toHaveBeenCalledWith("local-repo", "README.md");
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
+    expect(await view.findByText("Project README")).toBeInTheDocument();
     expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
     expect(view.getByText("vue")).toBeInTheDocument();
     const tauriTopic = view.getByText("tauri");
+    const licenseRow = view.getByLabelText("BSD-3-Clause license");
     const starsStat = view.getByLabelText("128 stars");
     expect(tauriTopic).toBeInTheDocument();
+    expect(licenseRow).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "Readme" })).toBeNull();
+    expect(view.queryByRole("tab", { name: /README\.md/ })).toBeNull();
     expect(starsStat).toBeInTheDocument();
     expect(view.getByLabelText("9 watching")).toBeInTheDocument();
     expect(view.getByLabelText("14 forks")).toBeInTheDocument();
     expect(tauriTopic.compareDocumentPosition(starsStat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
+    expect(licenseRow.compareDocumentPosition(starsStat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(listGitHubIssues).not.toHaveBeenCalled();
+    expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
   });
 

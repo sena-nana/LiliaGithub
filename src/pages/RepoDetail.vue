@@ -68,6 +68,8 @@ const {
   activeProjectIssue,
   activeProjectPullRequest,
   activeProjectRun,
+  activeFilePath,
+  activeFileHash,
   projectRefreshToken,
   toolbarTabs,
   launchCommandOptions,
@@ -323,6 +325,8 @@ const {
           :repo-id="repoId"
           :repo-path="summary?.path ?? null"
           :changes="changes"
+          :target-path="activeFilePath"
+          :target-hash="activeFileHash"
         />
         <RepoStashPanel
           v-else-if="activeTab === 'stash'"

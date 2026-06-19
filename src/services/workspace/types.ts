@@ -157,6 +157,13 @@ export interface GitHubCreateRepoRequest {
   hasWiki: boolean;
 }
 
+export interface GitHubRepoLicense {
+  key: string;
+  name: string;
+  spdxId: string | null;
+  url?: string | null;
+}
+
 export interface GitHubRepoManagement {
   fullName: string;
   name: string;
@@ -180,9 +187,10 @@ export interface GitHubRepoManagement {
   watchersCount: number;
   forksCount: number;
   htmlUrl: string;
+  license: GitHubRepoLicense | null;
 }
 
-export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "name" | "htmlUrl">>;
+export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "name" | "htmlUrl" | "license">>;
 
 export interface GitHubIssue {
   number: number;
@@ -465,15 +473,6 @@ export interface RepoDetail {
   commits: CommitSummary[];
   branches: BranchSummary[];
   conflicts: RepoConflictState;
-}
-
-export interface RepoReadme {
-  repoId: string;
-  path: string;
-  images: Record<string, string>;
-  content: string;
-  format: string;
-  updatedAt: number | null;
 }
 
 export interface RepoFileTreeEntry {

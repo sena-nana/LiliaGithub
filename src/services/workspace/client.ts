@@ -40,7 +40,6 @@ import type {
   RepoOperationResult,
   RepoRemote,
   RepoRefreshSummaryOptions,
-  RepoReadme,
   RepoResetMode,
   RepoSummary,
   RepoStashEntry,
@@ -61,7 +60,6 @@ export type GitHubProjectFetchOptions = {
 
 type GitHubProjectRepoClientCache = {
   management?: GitHubRepoManagement;
-  readmes?: RepoReadme[];
   issues: Record<string, GitHubIssue[] | undefined>;
   pullRequests: Record<string, GitHubPullRequest[] | undefined>;
   pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
@@ -589,30 +587,6 @@ export function listGitHubWorkflowRuns(
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => fallback.getRepoDetail(repoId));
-}
-
-export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
-  return call("repo_get_readme", { repoId }, () => fallback.getRepoReadme(repoId));
-}
-
-export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
-  return call("repo_list_readmes", { repoId }, () => fallback.listRepoReadmes(repoId));
-}
-
-export function listGitHubRepoReadmes(
-  repoFullName: string,
-  options: GitHubProjectFetchOptions = {},
-): Promise<RepoReadme[]> {
-  const cache = githubProjectRepoCache(repoFullName);
-  if (!options.forceRefresh && cache.readmes) return Promise.resolve(cloneProjectList(cache.readmes));
-  return call("github_list_repo_readmes", {
-    repoFullName,
-    forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.listGitHubRepoReadmes(repoFullName))
-    .then((readmes) => {
-      cache.readmes = cloneProjectList(readmes);
-      return cloneProjectList(readmes);
-    });
 }
 
 export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {

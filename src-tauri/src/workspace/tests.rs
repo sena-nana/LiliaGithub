@@ -224,6 +224,51 @@ fn forget_remote_repo_shortcut_removes_matching_when_stored_as_remote_url() {
     assert_eq!(shortcuts[0].full_name, "sena-nana/Remove");
 }
 
+#[test]
+fn github_repo_management_maps_license() {
+    let management = github_repo_management_from_response(
+        GitHubRepoResponse {
+            id: 1,
+            name: "repo".to_string(),
+            full_name: "a/repo".to_string(),
+            private: false,
+            disabled: false,
+            archived: false,
+            description: Some("Repository".to_string()),
+            default_branch: Some("main".to_string()),
+            created_at: "2026-06-18T08:00:00Z".to_string(),
+            updated_at: "2026-06-18T08:00:00Z".to_string(),
+            clone_url: "https://github.com/a/repo.git".to_string(),
+            html_url: "https://github.com/a/repo".to_string(),
+            owner: GitHubRepoOwnerResponse { login: "a".to_string() },
+            homepage: None,
+            has_issues: true,
+            has_wiki: false,
+            has_projects: true,
+            has_discussions: false,
+            allow_merge_commit: true,
+            allow_squash_merge: true,
+            allow_rebase_merge: true,
+            allow_auto_merge: false,
+            delete_branch_on_merge: false,
+            allow_forking: true,
+            web_commit_signoff_required: false,
+            stargazers_count: 78,
+            subscribers_count: 2,
+            forks_count: 16,
+            license: Some(GitHubRepoLicenseResponse {
+                key: "bsd-3-clause".to_string(),
+                name: "BSD 3-Clause \"New\" or \"Revised\" License".to_string(),
+                spdx_id: Some("BSD-3-Clause".to_string()),
+                url: Some("https://api.github.com/licenses/bsd-3-clause".to_string()),
+            }),
+        },
+        vec!["tauri".to_string()],
+    );
+
+    assert_eq!(management.license.unwrap().spdx_id.as_deref(), Some("BSD-3-Clause"));
+}
+
 fn test_github_issue(number: u64, state: &str) -> GitHubIssue {
     GitHubIssue {
         number,
@@ -320,35 +365,6 @@ fn github_project_cache_serializes_distinct_query_buckets() {
     assert_eq!(
         restored_repo.pull_requests[&github_pull_request_cache_key(Some("all"))][0].number,
         4
-    );
-}
-
-#[test]
-fn readme_name_priority_supports_remote_readme_candidates() {
-    let mut names = vec![
-        "README.txt",
-        "README.zh-CN.md",
-        "README",
-        "readme.markdown",
-        "README.md",
-        "docs.md",
-    ];
-    names.sort_by(|a, b| {
-        let a_priority = readme_name_priority(a).unwrap_or(usize::MAX);
-        let b_priority = readme_name_priority(b).unwrap_or(usize::MAX);
-        a_priority.cmp(&b_priority).then_with(|| a.cmp(b))
-    });
-
-    assert_eq!(
-        names,
-        vec![
-            "README.md",
-            "readme.markdown",
-            "README",
-            "README.txt",
-            "README.zh-CN.md",
-            "docs.md"
-        ],
     );
 }
 
@@ -1852,53 +1868,6 @@ fn maps_github_branches_with_default_and_protection() {
 }
 
 #[test]
-fn reads_first_supported_repo_readme() {
-    let repo = temp_dir("repo-readme");
-    fs::write(repo.join("README.md"), "# Main\n").unwrap();
-    fs::write(repo.join("README"), "# Plain\n").unwrap();
-
-    let readme = read_repo_readme("repo", &repo).unwrap().unwrap();
-
-    assert_eq!(readme.repo_id, "repo");
-    assert_eq!(readme.path, "README.md");
-    assert_eq!(readme.format, "md");
-    assert_eq!(readme.content, "# Main\n");
-}
-
-#[test]
-fn lists_supported_root_readmes_in_priority_order() {
-    let repo = temp_dir("repo-readme-list");
-    fs::create_dir_all(repo.join("docs")).unwrap();
-    fs::write(repo.join("README.txt"), "Text\n").unwrap();
-    fs::write(repo.join("README.unknown"), "Unknown\n").unwrap();
-    fs::write(repo.join("readme.markdown"), "# Markdown\n").unwrap();
-    fs::write(repo.join("README"), "Plain\n").unwrap();
-    fs::write(repo.join("README.md"), "# Main\n").unwrap();
-    fs::write(repo.join("README.zh-CN.md"), "# Chinese\n").unwrap();
-    fs::write(repo.join("docs").join("README.md"), "# Nested\n").unwrap();
-
-    let readmes = read_repo_readmes("repo", &repo).unwrap();
-    let paths = readmes
-        .iter()
-        .map(|readme| readme.path.as_str())
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        paths,
-        vec![
-            "README.md",
-            "readme.markdown",
-            "README",
-            "README.txt",
-            "README.zh-CN.md"
-        ],
-    );
-    assert_eq!(readmes[0].content, "# Main\n");
-    assert_eq!(readmes[1].format, "markdown");
-    assert_eq!(readmes[2].format, "text");
-}
-
-#[test]
 fn reads_repo_readme_image_data_urls() {
     let repo = temp_dir("repo-readme-images");
     fs::create_dir_all(repo.join(".github").join("assets")).unwrap();
@@ -1907,17 +1876,12 @@ fn reads_repo_readme_image_data_urls() {
         [1_u8, 2, 3],
     )
     .unwrap();
-    fs::write(
-            repo.join("README.md"),
-            "![window](./.github/assets/main-window.png)\n<img src='./.github/assets/main-window.png'>\n",
-        )
-        .unwrap();
-
-    let readme = read_repo_readme("repo", &repo).unwrap().unwrap();
+    let content =
+        "![window](./.github/assets/main-window.png)\n<img src='./.github/assets/main-window.png'>\n";
+    let images = readme_image_data_urls(content, &repo, &repo);
 
     assert_eq!(
-        readme
-            .images
+        images
             .get("./.github/assets/main-window.png")
             .map(String::as_str),
         Some("data:image/png;base64,AQID"),
