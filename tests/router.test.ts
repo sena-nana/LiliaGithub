@@ -14,6 +14,7 @@ import type {
   GitHubRepoSummary,
   GitHubWorkflowRun,
   RepoChange,
+  RepoOperationResult,
 } from "../src/services/workspace";
 import { repoDetail, repoSummary } from "./fixtures/workspace";
 
@@ -35,6 +36,16 @@ async function renderAt(path: string) {
   });
 
   return { router };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
 }
 
 async function clickOverviewSync() {
@@ -1584,6 +1595,43 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(applyStash).toHaveBeenCalledWith("LiliaGithub", "stash@{1}");
     });
+    service.resetWorkspaceFallbacksForTests();
+  });
+
+  it("stash 操作完成时不会把旧仓库状态写回新路由", async () => {
+    const service = await import("../src/services/workspace");
+    await service.saveRepoStash("LiliaGithub", "On main: delayed stash");
+    const applyResult = deferred<RepoOperationResult>();
+    const applyStash = vi.spyOn(service, "applyRepoStash").mockReturnValue(applyResult.promise);
+    service.setFallbackGitHubBranchesForTests({ "sena-nana/EmptyRemote": [] });
+
+    const { router } = await renderAt("/repos/LiliaGithub/stash");
+    await fireEvent.click(await screen.findByRole("button", { name: /stash@\{1\}/ }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Stash 内容")).toHaveTextContent("On main: WIP toolbar");
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(applyStash).toHaveBeenCalledWith("LiliaGithub", "stash@{1}");
+
+    await router.push("/repos/github%3Asena-nana%2FEmptyRemote/stash");
+    await waitFor(() => {
+      expect(screen.getByText("stash 仅支持本地仓库。")).toBeInTheDocument();
+    });
+
+    applyResult.resolve({
+      status: "success",
+      message: "applied",
+      summary: repoSummary("LiliaGithub"),
+      conflicts: { operation: "none", files: [], allResolved: true },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("stash 仅支持本地仓库。")).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText("Stash 列表")).toBeNull();
+
+    applyStash.mockRestore();
     service.resetWorkspaceFallbacksForTests();
   });
 

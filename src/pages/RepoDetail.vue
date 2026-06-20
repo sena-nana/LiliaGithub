@@ -196,7 +196,7 @@ const {
                 class="repo-toolbar__btn"
                 :aria-label="launchRunning ? '停止' : '运行'"
                 :title="launchRunning ? '停止' : '运行'"
-                :disabled="actionRunning || (!launchRunning && !launchConfig?.command?.trim())"
+                :disabled="!launchRunning && (actionRunning || !launchConfig?.command?.trim())"
                 @click="launchRunning ? stopLaunch() : startLaunch()"
               >
                 <Square v-if="launchRunning" :size="17" aria-hidden="true" />

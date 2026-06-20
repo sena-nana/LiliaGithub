@@ -7,6 +7,8 @@ import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
 import { vContextMenu } from "../src/directives/contextMenu";
 import {
+  createGitHubIssue,
+  deleteGitHubRepo,
   getGitHubRepoManagement,
   listGitHubPullRequestChecks,
   listGitHubPullRequests,
@@ -257,11 +259,23 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
+}
+
 describe("RepoProjectPanel", () => {
   beforeEach(() => {
     closeContextMenu();
     installContextMenu();
     vi.clearAllMocks();
+    vi.mocked(createGitHubIssue).mockReset();
+    vi.mocked(deleteGitHubRepo).mockReset();
     vi.mocked(getGitHubRepoManagement).mockReset();
     vi.mocked(updateGitHubRepoSettings).mockReset();
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
@@ -524,6 +538,52 @@ describe("RepoProjectPanel", () => {
     );
   });
 
+  it("创建 Issue 请求返回后不会插入已切换仓库的 Issues 列表", async () => {
+    const createResult = deferred<GitHubIssue>();
+    const nextRepoIssues: GitHubIssue[] = [{
+      ...githubIssues[0],
+      number: 77,
+      title: "next repo issue",
+      htmlUrl: "https://github.com/sena-nana/next-repo/issues/77",
+    }];
+    vi.mocked(listGitHubIssues).mockImplementation(async (repoFullName) => (
+      repoFullName === "sena-nana/next-repo" ? nextRepoIssues : githubIssues
+    ));
+    vi.mocked(createGitHubIssue).mockReturnValue(createResult.promise);
+
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "issues",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+
+    await fireEvent.update(view.getByPlaceholderText("Issue 标题"), "old repo created issue");
+    await fireEvent.click(view.getByRole("button", { name: "新建 Issue" }));
+    expect(createGitHubIssue).toHaveBeenCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({ title: "old repo created issue" }),
+    );
+
+    await view.rerender({
+      repoFullName: "sena-nana/next-repo",
+      projectTab: "issues",
+    });
+    expect(await view.findByText("#77 next repo issue")).toBeInTheDocument();
+
+    createResult.resolve({
+      ...githubIssues[0],
+      number: 88,
+      title: "old repo created issue",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/88",
+    });
+
+    await waitFor(() => {
+      expect(view.getByText("#77 next repo issue")).toBeInTheDocument();
+    });
+    expect(view.queryByText("#88 old repo created issue")).toBeNull();
+  });
+
   it("linked worktree 在设置区显示删除工作树文案", async () => {
     state.repos = [
       repoSummary("local-repo", {
@@ -568,6 +628,93 @@ describe("RepoProjectPanel", () => {
       );
     });
     expect(vi.mocked(updateGitHubRepoSettings).mock.calls[0][1]).not.toHaveProperty("defaultBranch");
+  });
+
+  it("保存设置请求返回后不会覆盖已切换仓库的设置状态", async () => {
+    const saveResult = deferred<GitHubRepoManagement>();
+    const nextSettings = {
+      ...githubSettings,
+      fullName: "sena-nana/next-repo",
+      name: "next-repo",
+      description: "Next repository tools",
+      htmlUrl: "https://github.com/sena-nana/next-repo",
+    };
+    vi.mocked(getGitHubRepoManagement).mockImplementation(async (repoFullName) => (
+      repoFullName === "sena-nana/next-repo" ? nextSettings : githubSettings
+    ));
+    vi.mocked(updateGitHubRepoSettings).mockReturnValue(saveResult.promise);
+
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+    expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
+
+    await fireEvent.click(view.getByRole("checkbox", { name: /Wiki/ }));
+    await fireEvent.click(view.getByRole("button", { name: "保存" }));
+    expect(updateGitHubRepoSettings).toHaveBeenCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({ hasWiki: true }),
+    );
+
+    await view.rerender({
+      repoFullName: "sena-nana/next-repo",
+      projectTab: "settings",
+    });
+    expect(await view.findByText("Next repository tools")).toBeInTheDocument();
+
+    saveResult.resolve({
+      ...githubSettings,
+      description: "Old saved description",
+      hasWiki: true,
+    });
+
+    await waitFor(() => {
+      expect(view.getByText("Next repository tools")).toBeInTheDocument();
+    });
+    expect(view.queryByText("Old saved description")).toBeNull();
+  });
+
+  it("删除远端仓库请求返回后不会标记已切换仓库为删除状态", async () => {
+    const deleteResult = deferred<void>();
+    const nextSettings = {
+      ...githubSettings,
+      fullName: "sena-nana/next-repo",
+      name: "next-repo",
+      description: "Next repository tools",
+      htmlUrl: "https://github.com/sena-nana/next-repo",
+    };
+    vi.mocked(getGitHubRepoManagement).mockImplementation(async (repoFullName) => (
+      repoFullName === "sena-nana/next-repo" ? nextSettings : githubSettings
+    ));
+    vi.mocked(deleteGitHubRepo).mockReturnValue(deleteResult.promise);
+
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+    expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
+
+    await fireEvent.click(view.getByRole("button", { name: "删除仓库" }));
+    const dialog = await view.findByRole("dialog", { name: "删除 GitHub 仓库" });
+    await fireEvent.update(within(dialog).getByPlaceholderText("sena-nana/remote-repo"), "sena-nana/remote-repo");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    expect(deleteGitHubRepo).toHaveBeenCalledWith("sena-nana/remote-repo");
+
+    await view.rerender({
+      repoFullName: "sena-nana/next-repo",
+      projectTab: "settings",
+    });
+    expect(await view.findByText("Next repository tools")).toBeInTheDocument();
+
+    deleteResult.resolve();
+
+    await waitFor(() => {
+      expect(view.getByText("Next repository tools")).toBeInTheDocument();
+    });
+    expect(view.queryByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeNull();
   });
 
   it("描述卡片支持编辑描述、homepage 和 topics", async () => {

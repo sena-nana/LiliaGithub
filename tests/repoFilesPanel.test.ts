@@ -48,6 +48,16 @@ function preview(overrides: Partial<RepoFilePreview> & Pick<RepoFilePreview, "pa
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
+    resolve = next;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 function change(overrides: Partial<RepoChange> & Pick<RepoChange, "path">): RepoChange {
   return {
     path: overrides.path,
@@ -154,6 +164,66 @@ describe("RepoFilesPanel", () => {
     await waitFor(() => {
       expect(document.querySelector(".files-main__code")?.textContent).toBe("line 1\nline 2");
     });
+  });
+
+  it("快速切换文件时只显示最后选中的预览", async () => {
+    const firstPreview = deferred<RepoFilePreview>();
+    const secondPreview = deferred<RepoFilePreview>();
+    listRepoFiles.mockResolvedValueOnce([file("first.txt"), file("second.txt")]);
+    getRepoFilePreview
+      .mockReturnValueOnce(firstPreview.promise)
+      .mockReturnValueOnce(secondPreview.promise);
+
+    await renderFilesPanel();
+
+    await fireEvent.click(await screen.findByRole("button", { name: /first\.txt/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /second\.txt/ }));
+    secondPreview.resolve(preview({
+      path: "second.txt",
+      name: "second.txt",
+      previewKind: "text",
+      content: "second file",
+      size: 11,
+    }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".files-main__code")?.textContent).toBe("second file");
+    });
+
+    firstPreview.resolve(preview({
+      path: "first.txt",
+      name: "first.txt",
+      previewKind: "text",
+      content: "first file",
+      size: 10,
+    }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".files-main__code")?.textContent).toBe("second file");
+    });
+    expect(screen.queryByText("first file")).toBeNull();
+  });
+
+  it("切换仓库时忽略旧仓库延迟返回的文件树", async () => {
+    const firstRoot = deferred<RepoFileTreeEntry[]>();
+    const secondRoot = deferred<RepoFileTreeEntry[]>();
+    listRepoFiles
+      .mockReturnValueOnce(firstRoot.promise)
+      .mockReturnValueOnce(secondRoot.promise);
+
+    const view = await renderFilesPanel({ repoId: "old-repo" });
+    await view.rerender({ repoId: "new-repo" });
+    secondRoot.resolve([file("new.txt")]);
+
+    expect(await screen.findByRole("button", { name: /new\.txt/ })).toBeInTheDocument();
+
+    firstRoot.resolve([file("old.txt")]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /old\.txt/ })).toBeNull();
+    });
+    expect(listRepoFiles).toHaveBeenNthCalledWith(1, "old-repo", null);
+    expect(listRepoFiles).toHaveBeenNthCalledWith(2, "new-repo", null);
   });
 
   it("代码文本预览复用 diff token 高亮", async () => {

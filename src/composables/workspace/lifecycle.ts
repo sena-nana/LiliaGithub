@@ -6,9 +6,11 @@ import { loadWorkspaceService } from "./serviceLoader";
 export const FOCUS_REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
 
 let lastFocusEventAt = Date.now();
+let lifecycleGeneration = 0;
 
 export async function initialize() {
   if (state.loading) return;
+  const generation = ++lifecycleGeneration;
   state.loading = true;
   state.error = null;
   try {
@@ -17,19 +19,25 @@ export async function initialize() {
       service.getWorkspaceSettings(),
       service.getGitHubBindingStatus(),
     ]);
+    if (generation !== lifecycleGeneration) return;
     state.settings = settings;
     state.bindingStatus = bindingStatus;
     if (settings.workspaceRoot) {
       await refreshRepos();
     }
   } catch (err) {
+    if (generation !== lifecycleGeneration) return;
     state.error = String(err);
   } finally {
-    state.loading = false;
+    if (generation === lifecycleGeneration) {
+      state.loading = false;
+    }
   }
 }
 
 export async function chooseWorkspaceRoot() {
+  lifecycleGeneration += 1;
+  state.loading = false;
   state.error = null;
   const service = await loadWorkspaceService();
   const picked = await service.pickWorkspaceRoot();

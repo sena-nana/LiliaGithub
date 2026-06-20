@@ -22,6 +22,8 @@ import {
   X,
 } from "@lucide/vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
+import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue";
+import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoActionErrorDetailForRepo, syncErrorDetailsByRepoId } from "../composables/workspace/state";
@@ -145,6 +147,7 @@ const GITHUB_TIMELINE_ISSUE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const GITHUB_TIMELINE_ISSUES_PER_REPO = 100;
 const GITHUB_TIMELINE_PULL_REQUESTS_PER_REPO = 5;
 const GITHUB_TIMELINE_WORKFLOW_RUNS_PER_REPO = 5;
+const GITHUB_TIMELINE_FETCH_CONCURRENCY = 2;
 
 type GitHubTimelineIssueCacheEntry = {
   repoFullName: string;
@@ -209,8 +212,11 @@ const cloneRepoLoadingMore = ref(false);
 const cloneRepoLoadError = ref<string | null>(null);
 const cloneNextRepoPage = ref<number | null>(null);
 const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
+const githubRepoStatusLoader = createLatestAsyncLoader();
+const githubRepoMoreLoader = createLatestAsyncLoader();
+const cloneBindingLoader = createLatestAsyncLoader();
+const cloneRepoPageLoader = createLatestAsyncLoader();
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
-const GITHUB_TIMELINE_FETCH_CONCURRENCY = 2;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -308,22 +314,44 @@ const githubIssuesPendingCount = ref(0);
 const githubPullRequestsPendingCount = ref(0);
 const githubWorkflowRunsPendingCount = ref(0);
 let githubTimelineGeneration = 0;
-let githubTimelineIssueQueue: GitHubTimelineIssueTask[] = [];
-let githubTimelinePullRequestQueue: GitHubTimelinePullRequestTask[] = [];
-let githubTimelineWorkflowQueue: GitHubTimelineWorkflowTask[] = [];
-let githubTimelineIssuePendingRepos = new Set<string>();
-let githubTimelinePullRequestPendingRepos = new Set<string>();
-let githubTimelineWorkflowPendingRepos = new Set<string>();
-let githubTimelineIssueInFlightCount = 0;
-let githubTimelinePullRequestInFlightCount = 0;
-let githubTimelineWorkflowInFlightCount = 0;
 let githubTimelineActivationQueued = false;
 let githubTimelineObserver: IntersectionObserver | null = null;
 let githubTimelineIdleHandle: number | null = null;
 let githubTimelineIdleFallbackTimer: number | null = null;
+const githubTimelineIssueTasks = createConcurrentTaskQueue<GitHubTimelineIssueTask>({
+  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
+  key: (task) => task.repo.fullName,
+  loading: githubIssuesLoading,
+  pendingCount: githubIssuesPendingCount,
+  canRun: () => githubTimelineActivated.value,
+  isCurrent: (task) => task.generation === githubTimelineGeneration,
+  worker: processGitHubTimelineIssueTask,
+});
+const githubTimelinePullRequestTasks = createConcurrentTaskQueue<GitHubTimelinePullRequestTask>({
+  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
+  key: (task) => task.repo.fullName,
+  loading: githubPullRequestsLoading,
+  pendingCount: githubPullRequestsPendingCount,
+  canRun: () => githubTimelineActivated.value,
+  isCurrent: (task) => task.generation === githubTimelineGeneration,
+  worker: processGitHubTimelinePullRequestTask,
+});
+const githubTimelineWorkflowTasks = createConcurrentTaskQueue<GitHubTimelineWorkflowTask>({
+  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
+  key: (task) => task.repo.fullName,
+  loading: githubWorkflowRunsLoading,
+  pendingCount: githubWorkflowRunsPendingCount,
+  canRun: () => githubTimelineActivated.value,
+  isCurrent: (task) => task.generation === githubTimelineGeneration,
+  worker: processGitHubTimelineWorkflowTask,
+});
 
 onUnmounted(() => {
   githubTimelineGeneration += 1;
+  githubRepoStatusLoader.invalidate();
+  githubRepoMoreLoader.invalidate();
+  cloneBindingLoader.invalidate();
+  cloneRepoPageLoader.invalidate();
   clearGitHubTimelineActivationHooks();
   resetGitHubTimelineQueues();
 });
@@ -708,9 +736,7 @@ function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   loadGitHubTimelinePullRequests(repos, refresh);
   loadGitHubTimelineWorkflowRuns(repos, refresh);
   if (githubTimelineActivated.value) {
-    drainGitHubTimelineIssueQueue();
-    drainGitHubTimelinePullRequestQueue();
-    drainGitHubTimelineWorkflowQueue();
+    drainGitHubTimelineQueues();
     return;
   }
   scheduleGitHubTimelineActivation();
@@ -721,158 +747,71 @@ function enqueueGitHubTimelineIssueRepos(
   since: string,
   cache: GitHubTimelineIssueCache,
 ) {
-  let queuedCount = 0;
-  for (const repo of repos) {
-    if (githubTimelineIssuePendingRepos.has(repo.fullName)) continue;
-    githubTimelineIssuePendingRepos.add(repo.fullName);
-    githubTimelineIssueQueue.push({
-      repo,
-      generation: githubTimelineGeneration,
-      since,
-      cache,
-    });
-    queuedCount += 1;
-  }
-  if (!queuedCount) return;
-  githubIssuesPendingCount.value += queuedCount;
-  githubIssuesLoading.value = githubIssuesPendingCount.value > 0;
+  githubTimelineIssueTasks.enqueue(repos.map((repo) => ({
+    repo,
+    generation: githubTimelineGeneration,
+    since,
+    cache,
+  })));
 }
 
 function enqueueGitHubTimelinePullRequestRepos(
   repos: GitHubRepoSummary[],
   since: string,
 ) {
-  let queuedCount = 0;
-  for (const repo of repos) {
-    if (githubTimelinePullRequestPendingRepos.has(repo.fullName)) continue;
-    githubTimelinePullRequestPendingRepos.add(repo.fullName);
-    githubTimelinePullRequestQueue.push({
-      repo,
-      generation: githubTimelineGeneration,
-      since,
-    });
-    queuedCount += 1;
-  }
-  if (!queuedCount) return;
-  githubPullRequestsPendingCount.value += queuedCount;
-  githubPullRequestsLoading.value = githubPullRequestsPendingCount.value > 0;
+  githubTimelinePullRequestTasks.enqueue(repos.map((repo) => ({
+    repo,
+    generation: githubTimelineGeneration,
+    since,
+  })));
 }
 
 function enqueueGitHubTimelineWorkflowRepos(repos: GitHubRepoSummary[]) {
-  let queuedCount = 0;
-  for (const repo of repos) {
-    if (githubTimelineWorkflowPendingRepos.has(repo.fullName)) continue;
-    githubTimelineWorkflowPendingRepos.add(repo.fullName);
-    githubTimelineWorkflowQueue.push({
-      repo,
-      generation: githubTimelineGeneration,
-    });
-    queuedCount += 1;
-  }
-  if (!queuedCount) return;
-  githubWorkflowRunsPendingCount.value += queuedCount;
-  githubWorkflowRunsLoading.value = githubWorkflowRunsPendingCount.value > 0;
+  githubTimelineWorkflowTasks.enqueue(repos.map((repo) => ({
+    repo,
+    generation: githubTimelineGeneration,
+  })));
 }
 
-function drainGitHubTimelinePullRequestQueue() {
-  while (
-    githubTimelineActivated.value &&
-    githubTimelinePullRequestInFlightCount < GITHUB_TIMELINE_FETCH_CONCURRENCY &&
-    githubTimelinePullRequestQueue.length
-  ) {
-    const task = githubTimelinePullRequestQueue.shift();
-    if (!task) return;
-    githubTimelinePullRequestPendingRepos.delete(task.repo.fullName);
-    githubTimelinePullRequestInFlightCount += 1;
-    void (async () => {
-      try {
-        const [repoFullName, pullRequests, checksByPull] = await fetchGitHubTimelinePullRequests(task.repo, task.since);
-        if (task.generation !== githubTimelineGeneration) return;
-        githubPullRequestsByRepo.value = {
-          ...githubPullRequestsByRepo.value,
-          [repoFullName]: pullRequests,
-        };
-        githubPullRequestChecksByRepo.value = {
-          ...githubPullRequestChecksByRepo.value,
-          [repoFullName]: checksByPull,
-        };
-        writeGitHubOverviewSnapshot();
-      } catch {
-        // Per-repo fetch helpers already normalize expected failures; keep other repos moving.
-      } finally {
-        if (task.generation !== githubTimelineGeneration) return;
-        githubTimelinePullRequestInFlightCount = Math.max(0, githubTimelinePullRequestInFlightCount - 1);
-        githubPullRequestsPendingCount.value = Math.max(0, githubPullRequestsPendingCount.value - 1);
-        githubPullRequestsLoading.value = githubPullRequestsPendingCount.value > 0;
-        drainGitHubTimelinePullRequestQueue();
-      }
-    })();
-  }
+async function processGitHubTimelinePullRequestTask(task: GitHubTimelinePullRequestTask) {
+  const [repoFullName, pullRequests, checksByPull] = await fetchGitHubTimelinePullRequests(task.repo, task.since);
+  if (task.generation !== githubTimelineGeneration) return;
+  githubPullRequestsByRepo.value = {
+    ...githubPullRequestsByRepo.value,
+    [repoFullName]: pullRequests,
+  };
+  githubPullRequestChecksByRepo.value = {
+    ...githubPullRequestChecksByRepo.value,
+    [repoFullName]: checksByPull,
+  };
+  writeGitHubOverviewSnapshot();
 }
 
-function drainGitHubTimelineIssueQueue() {
-  while (
-    githubTimelineActivated.value &&
-    githubTimelineIssueInFlightCount < GITHUB_TIMELINE_FETCH_CONCURRENCY &&
-    githubTimelineIssueQueue.length
-  ) {
-    const task = githubTimelineIssueQueue.shift();
-    if (!task) return;
-    githubTimelineIssuePendingRepos.delete(task.repo.fullName);
-    githubTimelineIssueInFlightCount += 1;
-    void (async () => {
-      try {
-        const [repoFullName, issues] = await fetchGitHubTimelineIssues(task.repo, task.since);
-        if (task.generation !== githubTimelineGeneration) return;
-        githubIssuesByRepo.value = {
-          ...githubIssuesByRepo.value,
-          [repoFullName]: issues,
-        };
-        writeGitHubOverviewSnapshot();
-        writeGitHubTimelineIssueCache(task.cache, [[repoFullName, issues]], task.since);
-      } catch {
-        // Per-repo fetch helpers already normalize expected failures; keep other repos moving.
-      } finally {
-        if (task.generation !== githubTimelineGeneration) return;
-        githubTimelineIssueInFlightCount = Math.max(0, githubTimelineIssueInFlightCount - 1);
-        githubIssuesPendingCount.value = Math.max(0, githubIssuesPendingCount.value - 1);
-        githubIssuesLoading.value = githubIssuesPendingCount.value > 0;
-        drainGitHubTimelineIssueQueue();
-      }
-    })();
-  }
+async function processGitHubTimelineIssueTask(task: GitHubTimelineIssueTask) {
+  const [repoFullName, issues] = await fetchGitHubTimelineIssues(task.repo, task.since);
+  if (task.generation !== githubTimelineGeneration) return;
+  githubIssuesByRepo.value = {
+    ...githubIssuesByRepo.value,
+    [repoFullName]: issues,
+  };
+  writeGitHubOverviewSnapshot();
+  writeGitHubTimelineIssueCache(task.cache, [[repoFullName, issues]], task.since);
 }
 
-function drainGitHubTimelineWorkflowQueue() {
-  while (
-    githubTimelineActivated.value &&
-    githubTimelineWorkflowInFlightCount < GITHUB_TIMELINE_FETCH_CONCURRENCY &&
-    githubTimelineWorkflowQueue.length
-  ) {
-    const task = githubTimelineWorkflowQueue.shift();
-    if (!task) return;
-    githubTimelineWorkflowPendingRepos.delete(task.repo.fullName);
-    githubTimelineWorkflowInFlightCount += 1;
-    void (async () => {
-      try {
-        const [repoFullName, runs] = await fetchGitHubTimelineWorkflowRuns(task.repo);
-        if (task.generation !== githubTimelineGeneration) return;
-        githubWorkflowRunsByRepo.value = {
-          ...githubWorkflowRunsByRepo.value,
-          [repoFullName]: runs,
-        };
-        writeGitHubOverviewSnapshot();
-      } catch {
-        // Per-repo fetch helpers already normalize expected failures; keep other repos moving.
-      } finally {
-        if (task.generation !== githubTimelineGeneration) return;
-        githubTimelineWorkflowInFlightCount = Math.max(0, githubTimelineWorkflowInFlightCount - 1);
-        githubWorkflowRunsPendingCount.value = Math.max(0, githubWorkflowRunsPendingCount.value - 1);
-        githubWorkflowRunsLoading.value = githubWorkflowRunsPendingCount.value > 0;
-        drainGitHubTimelineWorkflowQueue();
-      }
-    })();
-  }
+async function processGitHubTimelineWorkflowTask(task: GitHubTimelineWorkflowTask) {
+  const [repoFullName, runs] = await fetchGitHubTimelineWorkflowRuns(task.repo);
+  if (task.generation !== githubTimelineGeneration) return;
+  githubWorkflowRunsByRepo.value = {
+    ...githubWorkflowRunsByRepo.value,
+    [repoFullName]: runs,
+  };
+  writeGitHubOverviewSnapshot();
+}
+
+function drainGitHubTimelineQueues() {
+  githubTimelineIssueTasks.drain();
+  githubTimelinePullRequestTasks.drain();
+  githubTimelineWorkflowTasks.drain();
 }
 
 function scheduleGitHubTimelineActivation() {
@@ -924,9 +863,7 @@ function scheduleGitHubTimelineActivation() {
 function activateGitHubTimeline() {
   clearGitHubTimelineActivationHooks();
   githubTimelineActivated.value = true;
-  drainGitHubTimelineIssueQueue();
-  drainGitHubTimelinePullRequestQueue();
-  drainGitHubTimelineWorkflowQueue();
+  drainGitHubTimelineQueues();
 }
 
 function clearGitHubTimelineActivationHooks() {
@@ -944,49 +881,54 @@ function clearGitHubTimelineActivationHooks() {
 }
 
 function resetGitHubTimelineQueues() {
-  githubTimelineIssueQueue = [];
-  githubTimelinePullRequestQueue = [];
-  githubTimelineWorkflowQueue = [];
-  githubTimelineIssuePendingRepos = new Set<string>();
-  githubTimelinePullRequestPendingRepos = new Set<string>();
-  githubTimelineWorkflowPendingRepos = new Set<string>();
-  githubTimelineIssueInFlightCount = 0;
-  githubTimelinePullRequestInFlightCount = 0;
-  githubTimelineWorkflowInFlightCount = 0;
-  githubIssuesPendingCount.value = 0;
-  githubPullRequestsPendingCount.value = 0;
-  githubWorkflowRunsPendingCount.value = 0;
-  githubIssuesLoading.value = false;
-  githubPullRequestsLoading.value = false;
-  githubWorkflowRunsLoading.value = false;
+  githubTimelineIssueTasks.reset();
+  githubTimelinePullRequestTasks.reset();
+  githubTimelineWorkflowTasks.reset();
 }
 
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
   if (!workspace.isReady.value || githubReposLoading.value) return;
-  githubReposLoading.value = true;
-  githubReposError.value = null;
-  try {
-    applyGitHubRepoPage(await preloadGitHubRepos({ force: options.force }), false, options.force);
-  } catch (err) {
-    githubRepos.value = [];
-    githubReposNextPage.value = null;
-    githubReposError.value = githubRepoLoadErrorMessage(err);
-  } finally {
-    githubReposLoading.value = false;
-  }
+  githubRepoMoreLoader.invalidate();
+  githubReposLoadingMore.value = false;
+  await githubRepoStatusLoader.run(options.force ? "overview-repos:force" : "overview-repos", async (runId) => {
+    githubReposLoading.value = true;
+    githubReposError.value = null;
+    try {
+      const page = await preloadGitHubRepos({ force: options.force });
+      if (!githubRepoStatusLoader.isCurrent(runId) || !workspace.isReady.value) return;
+      applyGitHubRepoPage(page, false, options.force);
+    } catch (err) {
+      if (!githubRepoStatusLoader.isCurrent(runId) || !workspace.isReady.value) return;
+      githubRepos.value = [];
+      githubReposNextPage.value = null;
+      githubReposError.value = githubRepoLoadErrorMessage(err);
+    } finally {
+      if (githubRepoStatusLoader.isCurrent(runId)) {
+        githubReposLoading.value = false;
+      }
+    }
+  });
 }
 
 async function loadMoreGitHubRepos() {
-  if (!githubReposNextPage.value || githubReposLoadingMore.value) return;
-  githubReposLoadingMore.value = true;
-  githubReposError.value = null;
-  try {
-    applyGitHubRepoPage(await listGitHubRepos(githubReposNextPage.value), true);
-  } catch (err) {
-    githubReposError.value = githubRepoLoadErrorMessage(err);
-  } finally {
-    githubReposLoadingMore.value = false;
-  }
+  const pageNumber = githubReposNextPage.value;
+  if (!pageNumber || githubReposLoading.value || githubReposLoadingMore.value) return;
+  await githubRepoMoreLoader.run(`overview-repos-more:${pageNumber}`, async (runId) => {
+    githubReposLoadingMore.value = true;
+    githubReposError.value = null;
+    try {
+      const page = await listGitHubRepos(pageNumber);
+      if (!githubRepoMoreLoader.isCurrent(runId) || githubReposNextPage.value !== pageNumber) return;
+      applyGitHubRepoPage(page, true);
+    } catch (err) {
+      if (!githubRepoMoreLoader.isCurrent(runId)) return;
+      githubReposError.value = githubRepoLoadErrorMessage(err);
+    } finally {
+      if (githubRepoMoreLoader.isCurrent(runId)) {
+        githubReposLoadingMore.value = false;
+      }
+    }
+  });
 }
 
 function mergeLanguageTotals(totals: LanguageTotal[]) {
@@ -1399,25 +1341,31 @@ async function loadCloneRepoPage(
   options: { force?: boolean; showLoading?: boolean } = {},
 ) {
   if (!cloneGitHubBound.value) return;
-  const showLoading = options.showLoading ?? !append;
-  if (append) {
-    cloneRepoLoadingMore.value = true;
-  } else if (showLoading) {
-    cloneRepoLoading.value = true;
-  }
-  try {
-    const result = page === 1
-      ? await preloadGitHubRepos({ force: options.force })
-      : await listGitHubRepos(page);
-    applyCloneRepoPage(result, append);
-  } catch (err) {
-    showCloneRepoLoadError(err);
-  } finally {
-    if (showLoading) {
-      cloneRepoLoading.value = false;
+  const key = `${append ? "append" : "replace"}:${page}:${options.force ? "force" : "cache"}`;
+  await cloneRepoPageLoader.run(key, async (runId) => {
+    const showLoading = options.showLoading ?? !append;
+    if (append) {
+      cloneRepoLoadingMore.value = true;
+    } else if (showLoading) {
+      cloneRepoLoading.value = true;
     }
-    cloneRepoLoadingMore.value = false;
-  }
+    try {
+      const result = page === 1
+        ? await preloadGitHubRepos({ force: options.force })
+        : await listGitHubRepos(page);
+      if (!cloneRepoPageLoader.isCurrent(runId) || !cloneOpen.value || !cloneGitHubBound.value) return;
+      applyCloneRepoPage(result, append);
+    } catch (err) {
+      if (!cloneRepoPageLoader.isCurrent(runId) || !cloneOpen.value) return;
+      showCloneRepoLoadError(err);
+    } finally {
+      if (!cloneRepoPageLoader.isCurrent(runId)) return;
+      if (showLoading) {
+        cloneRepoLoading.value = false;
+      }
+      cloneRepoLoadingMore.value = false;
+    }
+  });
 }
 
 function startCloneReposLoad() {
@@ -1432,6 +1380,8 @@ async function maybeLoadMoreCloneRepos() {
 }
 
 async function openCloneDialog() {
+  cloneBindingLoader.invalidate();
+  cloneRepoPageLoader.invalidate();
   cloneOpen.value = true;
   cloneRemoteUrl.value = "";
   cloneDirectoryName.value = "";
@@ -1445,27 +1395,36 @@ async function openCloneDialog() {
   cloneRepoLoadError.value = null;
   cloneNextRepoPage.value = null;
   cloneSelectedRepo.value = null;
-  try {
-    cloneBindingStatus.value = await getGitHubBindingStatus();
-    if (cloneGitHubBound.value) {
-      const cached = readCachedGitHubRepos();
-      if (cached) {
-        applyCloneRepoPage(cached);
+  await cloneBindingLoader.run("clone-binding", async (runId) => {
+    try {
+      const status = await getGitHubBindingStatus();
+      if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
+      cloneBindingStatus.value = status;
+      if (cloneGitHubBound.value) {
+        const cached = readCachedGitHubRepos();
+        if (cached) {
+          applyCloneRepoPage(cached);
+        }
+        void loadCloneRepoPage(1, false, {
+          force: Boolean(cached),
+          showLoading: !cached,
+        }).catch(() => undefined);
       }
-      void loadCloneRepoPage(1, false, {
-        force: Boolean(cached),
-        showLoading: !cached,
-      }).catch(() => undefined);
+    } catch (err) {
+      if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
+      cloneError.value = String(err);
     }
-  } catch (err) {
-    cloneError.value = String(err);
-  }
+  });
 }
 
 function closeCloneDialog() {
   if (cloneBusy.value) return;
+  cloneBindingLoader.invalidate();
+  cloneRepoPageLoader.invalidate();
   cloneOpen.value = false;
   cloneError.value = null;
+  cloneRepoLoading.value = false;
+  cloneRepoLoadingMore.value = false;
 }
 
 function inferCloneDirectoryName(remoteUrl: string) {
@@ -1488,6 +1447,8 @@ async function submitClone() {
       remote,
       cloneDirectoryName.value.trim() || selected?.name || null,
     );
+    cloneBindingLoader.invalidate();
+    cloneRepoPageLoader.invalidate();
     cloneOpen.value = false;
     await router.push(repoRoute(summary.id));
   } catch (err) {
@@ -1536,7 +1497,11 @@ function handleCloneRepoInput() {
 }
 
 async function openGitHubBindingSettings() {
+  cloneBindingLoader.invalidate();
+  cloneRepoPageLoader.invalidate();
   cloneOpen.value = false;
+  cloneRepoLoading.value = false;
+  cloneRepoLoadingMore.value = false;
   await router.push({ path: "/settings", query: { tab: "repositories" } });
 }
 
