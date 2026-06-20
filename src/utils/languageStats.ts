@@ -9,7 +9,6 @@ export type LanguageSlice = {
   percent: number;
   color: string;
   offset: number;
-  visualOffsetY: number;
   repoIds: string[];
   title: string;
 };
@@ -28,9 +27,6 @@ type LanguageTotal = {
 };
 
 const DEFAULT_LANGUAGE_SLICE_LIMIT = 6;
-const MAX_WARM_VISUAL_OFFSET_Y = 0.28;
-const WARM_HUE_CENTER = 35;
-const WARM_HUE_RANGE = 60;
 
 export const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
 
@@ -134,42 +130,7 @@ function buildLanguageSlice(
     percent,
     color,
     offset,
-    visualOffsetY: languageVisualOffsetY(color),
     repoIds,
     title,
   };
-}
-
-function languageVisualOffsetY(color: string) {
-  const hue = parseHexColorHue(color);
-  if (hue === null) return 0;
-
-  const distance = Math.min(Math.abs(hue - WARM_HUE_CENTER), 360 - Math.abs(hue - WARM_HUE_CENTER));
-  const warmWeight = Math.max(0, 1 - distance / WARM_HUE_RANGE);
-  return roundOffset(MAX_WARM_VISUAL_OFFSET_Y * warmWeight);
-}
-
-function parseHexColorHue(color: string) {
-  const match = color.match(/^#?([0-9a-f]{6})$/i);
-  if (!match) return null;
-
-  const value = match[1];
-  const red = Number.parseInt(value.slice(0, 2), 16) / 255;
-  const green = Number.parseInt(value.slice(2, 4), 16) / 255;
-  const blue = Number.parseInt(value.slice(4, 6), 16) / 255;
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  const delta = max - min;
-  if (delta === 0) return null;
-  if (max === red) return normalizeHue(60 * (((green - blue) / delta) % 6));
-  if (max === green) return normalizeHue(60 * ((blue - red) / delta + 2));
-  return normalizeHue(60 * ((red - green) / delta + 4));
-}
-
-function normalizeHue(hue: number) {
-  return (hue + 360) % 360;
-}
-
-function roundOffset(value: number) {
-  return Math.round(value * 100) / 100;
 }
