@@ -346,8 +346,8 @@ describe("RepoProjectPanel", () => {
     const barSegments = card.querySelectorAll(".repo-language-card__bar-segment");
     expect(barSegments).toHaveLength(5);
     expect((barSegments[0] as HTMLElement).style.flex).toBe("60 1 0%");
-    expect((barSegments[0] as HTMLElement).style.backgroundColor).toBe("rgb(49, 120, 198)");
-    expect((barSegments[1] as HTMLElement).style.backgroundColor).toBe("rgb(65, 184, 131)");
+    expect((barSegments[0] as HTMLElement).style.backgroundColor).toBe("rgb(97, 168, 250)");
+    expect((barSegments[1] as HTMLElement).style.backgroundColor).toBe("rgb(72, 190, 136)");
     expect((barSegments[2] as HTMLElement).style.flex).toBe("10 1 0%");
     expect((barSegments[0] as HTMLElement).style.transform).toBe("");
   });
