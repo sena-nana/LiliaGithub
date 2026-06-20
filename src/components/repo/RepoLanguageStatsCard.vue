@@ -14,8 +14,9 @@ const props = defineProps<{
   loading: boolean;
 }>();
 
+const REPO_LANGUAGE_SLICE_LIMIT = 4;
 const stats = computed(() => props.repo?.languageStats ?? []);
-const overview = computed(() => buildLanguageOverviewFromStats(stats.value));
+const overview = computed(() => buildLanguageOverviewFromStats(stats.value, REPO_LANGUAGE_SLICE_LIMIT));
 const hasLanguageStats = computed(() => overview.value.slices.length > 0);
 </script>
 
@@ -32,7 +33,12 @@ const hasLanguageStats = computed(() => overview.value.slices.length > 0);
         <span
           v-for="slice in overview.slices"
           :key="slice.language"
-          :style="{ background: slice.color, width: `${slice.percent}%` }"
+          class="repo-language-card__bar-segment"
+          :style="{
+            background: slice.color,
+            transform: `translateY(${slice.visualOffsetY}px)`,
+            width: `${slice.percent}%`,
+          }"
           :title="`${slice.language} ${formatPercent(slice.percent)}`"
           :aria-label="`${slice.language} ${formatPercent(slice.percent)}`"
         />
@@ -92,7 +98,7 @@ const hasLanguageStats = computed(() => overview.value.slices.length > 0);
   background: var(--bg-subtle);
 }
 
-.repo-language-card__bar span {
+.repo-language-card__bar-segment {
   min-width: 3px;
   height: 100%;
 }

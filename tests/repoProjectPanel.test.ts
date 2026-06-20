@@ -322,6 +322,8 @@ describe("RepoProjectPanel", () => {
         { language: "TypeScript", bytes: 3000, lines: 120 },
         { language: "Vue", bytes: 1000, lines: 80 },
         { language: "Rust", bytes: 500, lines: 20 },
+        { language: "CSS", bytes: 300, lines: 12 },
+        { language: "Markdown", bytes: 200, lines: 8 },
       ],
     });
     const view = await renderProjectPanel({
@@ -332,12 +334,19 @@ describe("RepoProjectPanel", () => {
     const card = await view.findByRole("region", { name: "代码统计" });
     expect(within(card).getByText("TypeScript")).toBeInTheDocument();
     expect(within(card).getByText("120 ·")).toBeInTheDocument();
-    expect(within(card).getByText("67%")).toBeInTheDocument();
+    expect(within(card).getByText("60%")).toBeInTheDocument();
     expect(within(card).getByText("Vue")).toBeInTheDocument();
     expect(within(card).getByText("80 ·")).toBeInTheDocument();
-    expect(within(card).getByText("22%")).toBeInTheDocument();
+    expect(within(card).getByText("20%")).toBeInTheDocument();
+    expect(within(card).getByText("CSS")).toBeInTheDocument();
+    expect(within(card).getByText("Other")).toBeInTheDocument();
+    expect(within(card).queryByText("Markdown")).toBeNull();
     expect(within(card).getByText("总代码行数")).toBeInTheDocument();
-    expect(within(card).getByText("220")).toBeInTheDocument();
+    expect(within(card).getByText("240")).toBeInTheDocument();
+    const barSegments = card.querySelectorAll(".repo-language-card__bar-segment");
+    expect(barSegments).toHaveLength(5);
+    expect(barSegments[0] as HTMLElement).toHaveStyle({ transform: "translateY(0px)" });
+    expect((barSegments[2] as HTMLElement).style.transform).toMatch(/^translateY\(0\.[1-9]\d?px\)$/);
   });
 
   it("远程仓库侧边栏语言统计不显示本地行数", async () => {
