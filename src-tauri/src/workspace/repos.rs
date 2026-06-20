@@ -29,6 +29,12 @@ pub(super) struct ResolvedRepoWorktree {
     pub(super) main_worktree_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct LanguageStatAccumulator {
+    bytes: u64,
+    lines: u64,
+}
+
 pub(super) fn git_command(
     repo_path: &Path,
     args: &[&str],
@@ -71,6 +77,67 @@ pub(super) fn git_command_lossy(repo_path: &Path, args: &[&str]) -> Option<Strin
     git_command(repo_path, args, None)
         .ok()
         .map(|s| s.trim().to_string())
+}
+
+fn git_blob_line_counts(repo_path: &Path, object_ids: &[String]) -> Result<Vec<u64>, String> {
+    if object_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut child = Command::new("git")
+        .args(["cat-file", "--batch"])
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("无法启动 git（请确认 git 在 PATH 中）：{e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write as _;
+        for object_id in object_ids {
+            writeln!(stdin, "{object_id}").map_err(|e| format!("写入 git cat-file 失败：{e}"))?;
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("读取 git cat-file 失败：{e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!(
+                "git cat-file --batch 失败：exit {}",
+                output.status.code().unwrap_or(-1)
+            )
+        } else {
+            stderr
+        });
+    }
+
+    let mut counts = Vec::with_capacity(object_ids.len());
+    let mut cursor = 0;
+    while cursor < output.stdout.len() && counts.len() < object_ids.len() {
+        let Some(header_end) = output.stdout[cursor..].iter().position(|byte| *byte == b'\n')
+        else {
+            break;
+        };
+        let header_end = cursor + header_end;
+        let header = String::from_utf8_lossy(&output.stdout[cursor..header_end]);
+        let size = header
+            .split_whitespace()
+            .last()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let content_start = header_end + 1;
+        let content_end = content_start.saturating_add(size).min(output.stdout.len());
+        counts.push(count_lines(&output.stdout[content_start..content_end]));
+        cursor = content_end;
+        if output.stdout.get(cursor) == Some(&b'\n') {
+            cursor += 1;
+        }
+    }
+    Ok(counts)
 }
 
 pub(super) fn should_skip_dir(path: &Path) -> bool {
@@ -369,11 +436,14 @@ pub(super) fn github_full_name_from_remote(remote: &str) -> Option<String> {
 pub(super) fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
     let output =
         git_command(path, &["ls-tree", "-r", "-z", "-l", "HEAD"], None).unwrap_or_default();
-    let mut stats: HashMap<String, u64> = HashMap::new();
+    let mut blobs: Vec<(String, u64)> = Vec::new();
+    let mut object_ids = Vec::new();
     for entry in output.split('\0').filter(|value| !value.is_empty()) {
         let Some((metadata, raw_path)) = entry.split_once('\t') else {
             continue;
         };
+        let mut metadata_parts = metadata.split_whitespace();
+        let object_id = metadata_parts.nth(2).unwrap_or("").to_string();
         let Some(bytes) = metadata
             .split_whitespace()
             .last()
@@ -382,6 +452,9 @@ pub(super) fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
         else {
             continue;
         };
+        if object_id.is_empty() {
+            continue;
+        }
         let relative = Path::new(raw_path);
         if should_skip_language_path(relative) {
             continue;
@@ -389,7 +462,18 @@ pub(super) fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
         let Some(language) = language_for_path(relative) else {
             continue;
         };
-        *stats.entry(language.to_string()).or_default() += bytes;
+        object_ids.push(object_id.clone());
+        blobs.push((language.to_string(), bytes));
+    }
+    let line_counts = git_blob_line_counts(path, &object_ids).unwrap_or_default();
+    let mut stats: HashMap<String, LanguageStatAccumulator> = HashMap::new();
+    for (index, (language, bytes)) in blobs.into_iter().enumerate() {
+        record_language_stats(
+            &mut stats,
+            &language,
+            bytes,
+            line_counts.get(index).copied().unwrap_or(0),
+        );
     }
     language_stats_from_map(stats)
 }
@@ -408,7 +492,7 @@ pub(super) fn repo_working_tree_language_stats(path: &Path) -> Vec<LanguageStat>
         None,
     )
     .unwrap_or_default();
-    let mut stats: HashMap<String, u64> = HashMap::new();
+    let mut stats: HashMap<String, LanguageStatAccumulator> = HashMap::new();
     let mut seen = HashSet::new();
     for raw_path in output.split('\0').filter(|value| !value.is_empty()) {
         if !seen.insert(raw_path.to_string()) {
@@ -428,15 +512,31 @@ pub(super) fn repo_working_tree_language_stats(path: &Path) -> Vec<LanguageStat>
         else {
             continue;
         };
-        *stats.entry(language.to_string()).or_default() += bytes;
+        let file_bytes = fs::read(path.join(relative)).unwrap_or_default();
+        record_language_stats(&mut stats, language, bytes, count_lines(&file_bytes));
     }
     language_stats_from_map(stats)
 }
 
-pub(super) fn language_stats_from_map(stats: HashMap<String, u64>) -> Vec<LanguageStat> {
+fn record_language_stats(
+    stats: &mut HashMap<String, LanguageStatAccumulator>,
+    language: &str,
+    bytes: u64,
+    lines: u64,
+) {
+    let stat = stats.entry(language.to_string()).or_default();
+    stat.bytes += bytes;
+    stat.lines += lines;
+}
+
+fn language_stats_from_map(stats: HashMap<String, LanguageStatAccumulator>) -> Vec<LanguageStat> {
     let mut items = stats
         .into_iter()
-        .map(|(language, bytes)| LanguageStat { language, bytes })
+        .map(|(language, stat)| LanguageStat {
+            language,
+            bytes: stat.bytes,
+            lines: stat.lines,
+        })
         .collect::<Vec<_>>();
     items.sort_by(|a, b| {
         b.bytes
@@ -444,6 +544,18 @@ pub(super) fn language_stats_from_map(stats: HashMap<String, u64>) -> Vec<Langua
             .then_with(|| a.language.cmp(&b.language))
     });
     items
+}
+
+fn count_lines(bytes: &[u8]) -> u64 {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let newline_count = bytes.iter().filter(|byte| **byte == b'\n').count() as u64;
+    if bytes.last() == Some(&b'\n') {
+        newline_count
+    } else {
+        newline_count + 1
+    }
 }
 
 pub(super) fn should_skip_language_path(path: &Path) -> bool {

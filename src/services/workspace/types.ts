@@ -295,6 +295,7 @@ export interface GitHubUpdateIssueRequest {
 export interface LanguageStat {
   language: string;
   bytes: number;
+  lines: number;
 }
 
 export type RepoWorktreeRole = "standalone" | "main" | "linked";

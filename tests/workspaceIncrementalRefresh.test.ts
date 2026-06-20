@@ -128,8 +128,8 @@ beforeEach(() => {
   service.listManagedRepos.mockResolvedValue([]);
   service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
   service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
-    languageStats: [{ language: "TypeScript", bytes: 1 }],
-    workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+    languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+    workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
     languageStatsUpdatedAt: 1,
   }));
 });
@@ -155,8 +155,8 @@ describe("workspace incremental refresh", () => {
     }));
     service.refreshRepoLanguageStats.mockResolvedValue({
       ...refreshed,
-      languageStats: [{ language: "TypeScript", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     });
 
@@ -317,8 +317,8 @@ describe("workspace incremental refresh", () => {
     const oldStats = deferred<ReturnType<typeof repoSummary>>();
     const newStats = deferred<ReturnType<typeof repoSummary>>();
     state.repos = [repoSummary("Repo1", {
-      languageStats: [{ language: "Vue", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "Vue", bytes: 1 }],
+      languageStats: [{ language: "Vue", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "Vue", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     })];
     service.listManagedRepos.mockResolvedValue([repoSummary("Repo1", { githubFullName: null })]);
@@ -335,23 +335,23 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(2));
 
     oldStats.resolve(repoSummary("Repo1", {
-      languageStats: [{ language: "Old", bytes: 10 }],
-      workingTreeLanguageStats: [{ language: "Old", bytes: 10 }],
+      languageStats: [{ language: "Old", bytes: 10, lines: 10 }],
+      workingTreeLanguageStats: [{ language: "Old", bytes: 10, lines: 10 }],
       languageStatsUpdatedAt: 2,
     }));
     await oldRefresh;
     expect(state.languageStatsLoadingRepoIds).toEqual(["Repo1"]);
-    expect(state.repos[0].languageStats).toEqual([{ language: "Vue", bytes: 1 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "Vue", bytes: 1, lines: 1 }]);
 
     newStats.resolve(repoSummary("Repo1", {
-      languageStats: [{ language: "TypeScript", bytes: 20 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 20 }],
+      languageStats: [{ language: "TypeScript", bytes: 20, lines: 20 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 20, lines: 20 }],
       languageStatsUpdatedAt: 3,
     }));
     await newRefresh;
 
     expect(state.languageStatsLoadingRepoIds).toEqual([]);
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 20 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 20, lines: 20 }]);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(3);
   });
 
@@ -368,8 +368,8 @@ describe("workspace incremental refresh", () => {
     }));
     service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
       githubFullName: repoId === "LocalOnly" ? null : repoId === "LiliaDuplicate" ? "sena-nana/Lilia" : `sena-nana/${repoId}`,
-      languageStats: [{ language: "TypeScript", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     }));
     service.listRepoContribution.mockImplementation(async (repoScope: string) => ({
@@ -641,8 +641,8 @@ describe("workspace incremental refresh", () => {
     });
     service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => ({
       ...(refreshedSummaries.get(repoId) ?? repoSummary(repoId)),
-      languageStats: [{ language: "TypeScript", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     }));
 
@@ -664,8 +664,8 @@ describe("workspace incremental refresh", () => {
 
   it("轻量列表刷新不会覆盖已刷新的语言统计", async () => {
     const withLanguages = repoSummary("LiliaGithub", {
-      languageStats: [{ language: "TypeScript", bytes: 10 }],
-      workingTreeLanguageStats: [{ language: "Vue", bytes: 5 }],
+      languageStats: [{ language: "TypeScript", bytes: 10, lines: 10 }],
+      workingTreeLanguageStats: [{ language: "Vue", bytes: 5, lines: 5 }],
       languageStatsUpdatedAt: 123,
     });
     state.repos = [withLanguages];
@@ -690,8 +690,8 @@ describe("workspace incremental refresh", () => {
     await refreshRepos();
 
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 10 }]);
-    expect(state.repos[0].workingTreeLanguageStats).toEqual([{ language: "Vue", bytes: 5 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 10, lines: 10 }]);
+    expect(state.repos[0].workingTreeLanguageStats).toEqual([{ language: "Vue", bytes: 5, lines: 5 }]);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(123);
   });
 
@@ -1219,8 +1219,8 @@ describe("workspace incremental refresh", () => {
     expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(2, initial.id);
     expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(3, initial.id);
     expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(4, initial.id);
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
-    expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
+    expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
   });
 
   it("单仓库创建和重命名分支后刷新当前仓库语言统计", async () => {
@@ -1267,7 +1267,7 @@ describe("workspace incremental refresh", () => {
       ahead: 0,
       stagedCount: 0,
     });
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
   });
 
   it("冲突处理操作只刷新当前仓库详情，不触发全量扫描", async () => {

@@ -215,6 +215,7 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
       repoId: "local-repo",
       repoFullName: null,
       repoPath: "C:\\Files\\workspace\\local-repo",
+      repoSummary: null,
       launchConfig,
       launchLogs: [],
       launchTerminalVisible: false,
@@ -313,6 +314,51 @@ describe("RepoProjectPanel", () => {
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "yarn dev" })).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "隐藏" })).toBeNull();
     expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "运行" })).toBeNull();
+  });
+
+  it("侧边栏显示本地仓库语言占比和代码行数", async () => {
+    const summary = repoSummary("local-repo", {
+      languageStats: [
+        { language: "TypeScript", bytes: 3000, lines: 120 },
+        { language: "Vue", bytes: 1000, lines: 80 },
+        { language: "Rust", bytes: 500, lines: 20 },
+      ],
+    });
+    const view = await renderProjectPanel({
+      repoSummary: summary,
+      repoFullName: "sena-nana/local-repo",
+    });
+
+    const card = await view.findByRole("region", { name: "代码统计" });
+    expect(within(card).getByText("TypeScript")).toBeInTheDocument();
+    expect(within(card).getByText("120 ·")).toBeInTheDocument();
+    expect(within(card).getByText("67%")).toBeInTheDocument();
+    expect(within(card).getByText("Vue")).toBeInTheDocument();
+    expect(within(card).getByText("80 ·")).toBeInTheDocument();
+    expect(within(card).getByText("22%")).toBeInTheDocument();
+    expect(within(card).getByText("总代码行数")).toBeInTheDocument();
+    expect(within(card).getByText("220")).toBeInTheDocument();
+  });
+
+  it("远程仓库侧边栏语言统计不显示本地行数", async () => {
+    const summary = repoSummary("github:sena-nana/remote-repo", {
+      path: "",
+      githubFullName: "sena-nana/remote-repo",
+      languageStats: [{ language: "TypeScript", bytes: 1000, lines: 40 }],
+    });
+    const view = await renderProjectPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoSummary: summary,
+      repoFullName: "sena-nana/remote-repo",
+      repoPath: "",
+      remoteOnly: true,
+    });
+
+    const card = await view.findByRole("region", { name: "代码统计" });
+    expect(within(card).getByText("TypeScript")).toBeInTheDocument();
+    expect(within(card).getByText("100%")).toBeInTheDocument();
+    expect(within(card).queryByText("40 ·")).toBeNull();
+    expect(within(card).queryByText("总代码行数")).toBeNull();
   });
 
   it("启动终端按终端输出渲染 ANSI 颜色和多行日志", async () => {

@@ -208,6 +208,7 @@ pub struct GitHubRepoPage {
 pub struct LanguageStat {
     pub language: String,
     pub bytes: u64,
+    pub lines: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -76,16 +76,16 @@ let fallbackRepos: RepoSummary[] = [
     lastCommitAt: 1_785_000_000,
     lastCommitMessage: "搭建 LiliaGithub MVP",
     languageStats: [
-      { language: "TypeScript", bytes: 66_000 },
-      { language: "Vue", bytes: 42_000 },
-      { language: "Rust", bytes: 32_000 },
-      { language: "CSS", bytes: 10_000 },
+      { language: "TypeScript", bytes: 66_000, lines: 1800 },
+      { language: "Vue", bytes: 42_000, lines: 920 },
+      { language: "Rust", bytes: 32_000, lines: 760 },
+      { language: "CSS", bytes: 10_000, lines: 360 },
     ],
     workingTreeLanguageStats: [
-      { language: "TypeScript", bytes: 68_000 },
-      { language: "Vue", bytes: 42_000 },
-      { language: "Rust", bytes: 35_000 },
-      { language: "CSS", bytes: 10_000 },
+      { language: "TypeScript", bytes: 68_000, lines: 1850 },
+      { language: "Vue", bytes: 42_000, lines: 920 },
+      { language: "Rust", bytes: 35_000, lines: 820 },
+      { language: "CSS", bytes: 10_000, lines: 360 },
     ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
@@ -111,14 +111,14 @@ let fallbackRepos: RepoSummary[] = [
     lastCommitAt: 1_784_990_000,
     lastCommitMessage: "完善 GitHub 授权",
     languageStats: [
-      { language: "TypeScript", bytes: 52_000 },
-      { language: "Vue", bytes: 28_000 },
-      { language: "CSS", bytes: 8_000 },
+      { language: "TypeScript", bytes: 52_000, lines: 1420 },
+      { language: "Vue", bytes: 28_000, lines: 610 },
+      { language: "CSS", bytes: 8_000, lines: 250 },
     ],
     workingTreeLanguageStats: [
-      { language: "TypeScript", bytes: 52_000 },
-      { language: "Vue", bytes: 28_000 },
-      { language: "CSS", bytes: 8_000 },
+      { language: "TypeScript", bytes: 52_000, lines: 1420 },
+      { language: "Vue", bytes: 28_000, lines: 610 },
+      { language: "CSS", bytes: 8_000, lines: 250 },
     ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
@@ -2512,10 +2512,10 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
     recordFallbackTask("languageStats", "low", repo.id, "success", "语言统计已更新");
     return updateFallbackRepo({
       ...repo,
-      languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000 }],
+      languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000, lines: 40 }],
       workingTreeLanguageStats: repo.workingTreeLanguageStats.length
         ? repo.workingTreeLanguageStats
-        : [{ language: "TypeScript", bytes: 1200 }],
+        : [{ language: "TypeScript", bytes: 1200, lines: 48 }],
       languageStatsUpdatedAt: Date.now(),
     });
   });

@@ -426,10 +426,12 @@ fn aggregates_language_stats_from_head_tree() {
             LanguageStat {
                 language: "TypeScript".to_string(),
                 bytes: 27,
+                lines: 1,
             },
             LanguageStat {
                 language: "Vue".to_string(),
                 bytes: 25,
+                lines: 1,
             },
         ]
     );
@@ -468,10 +470,12 @@ fn aggregates_language_stats_from_working_tree() {
             LanguageStat {
                 language: "TypeScript".to_string(),
                 bytes: 27,
+                lines: 1,
             },
             LanguageStat {
                 language: "Vue".to_string(),
                 bytes: 25,
+                lines: 1,
             },
         ]
     );
@@ -481,10 +485,12 @@ fn aggregates_language_stats_from_working_tree() {
             LanguageStat {
                 language: "Rust".to_string(),
                 bytes: 13,
+                lines: 1,
             },
             LanguageStat {
                 language: "TypeScript".to_string(),
                 bytes: 8,
+                lines: 1,
             },
         ]
     );
@@ -536,7 +542,7 @@ fn local_contribution_cache_reads_writes_and_removes_repo_days() {
 
 #[test]
 fn converts_civil_dates_for_github_contributions() {
-    let day = days_from_civil(2026, 6, 11);
+    let day = shared::days_from_civil(2026, 6, 11);
     assert_eq!(format_day_index(day), "2026-06-11");
 }
 
