@@ -26,6 +26,8 @@ let contributionRefreshGeneration = 0;
 let contributionRefreshPendingCount = 0;
 let contributionRefreshSeenFullNames = new Set<string>();
 let contributionRefreshSampledCount = 0;
+let workspaceTaskRefreshGeneration = 0;
+let languageStatsLoadingGenerations = new Map<string, number>();
 
 async function applyRepoMutation(
   repoId: string,
@@ -125,6 +127,7 @@ async function refreshManagedRepoSummaries(
       } catch {
         // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
       } finally {
+        if (generation !== repositoryRuntimeGeneration) return;
         state.refreshingRepoIds = state.refreshingRepoIds.filter((id) => id !== repoId);
         void refreshWorkspaceTasks();
       }
@@ -288,8 +291,11 @@ function updateContributionMeta(update: Partial<GitHubContributionMeta> & {
 }
 
 export async function refreshWorkspaceTasks() {
+  const generation = ++workspaceTaskRefreshGeneration;
   const service = await loadWorkspaceService();
-  state.tasks = await service.listWorkspaceTasks();
+  const tasks = await service.listWorkspaceTasks();
+  if (generation !== workspaceTaskRefreshGeneration) return;
+  state.tasks = tasks;
 }
 
 export async function cancelWorkspaceTask(taskId: string) {
@@ -339,8 +345,11 @@ export async function refreshRepoLanguageStats(
   options: { silent?: boolean } = {},
 ) {
   const generation = repositoryRuntimeGeneration;
-  if (state.languageStatsLoadingRepoIds.includes(repoId)) return null;
-  state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
+  if (languageStatsLoadingGenerations.get(repoId) === generation) return null;
+  languageStatsLoadingGenerations.set(repoId, generation);
+  if (!state.languageStatsLoadingRepoIds.includes(repoId)) {
+    state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
+  }
   try {
     const service = await loadWorkspaceService();
     const summary = await service.refreshRepoLanguageStats(repoId);
@@ -360,14 +369,18 @@ export async function refreshRepoLanguageStats(
     if (options.silent) return null;
     throw err;
   } finally {
-    state.languageStatsLoadingRepoIds = state.languageStatsLoadingRepoIds.filter((id) => id !== repoId);
-    void refreshWorkspaceTasks();
+    if (languageStatsLoadingGenerations.get(repoId) === generation) {
+      languageStatsLoadingGenerations.delete(repoId);
+      state.languageStatsLoadingRepoIds = state.languageStatsLoadingRepoIds.filter((id) => id !== repoId);
+      void refreshWorkspaceTasks();
+    }
   }
 }
 
 export function resetRepositoryRuntimeForTests() {
   repositoryRuntimeGeneration += 1;
   contributionRefreshGeneration += 1;
+  languageStatsLoadingGenerations = new Map();
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;

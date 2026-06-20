@@ -8,7 +8,8 @@ import {
   Folder,
   FolderOpen,
 } from "@lucide/vue";
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import {
   getRepoFilePreview,
   listRepoFiles,
@@ -38,6 +39,9 @@ const selectedPath = ref<string | null>(null);
 const preview = ref<RepoFilePreview | null>(null);
 const previewLoading = ref(false);
 const previewError = ref<string | null>(null);
+const panelLoader = createLatestAsyncLoader();
+const previewLoader = createLatestAsyncLoader();
+let directoryLoadPromises = new Map<string, Promise<RepoFileTreeEntry[]>>();
 
 const knownMarkdownPaths = computed(() =>
   Array.from(
@@ -75,6 +79,12 @@ onMounted(() => {
   void initializePanel();
 });
 
+onUnmounted(() => {
+  panelLoader.invalidate();
+  previewLoader.invalidate();
+  directoryLoadPromises.clear();
+});
+
 watch(
   () => props.repoId,
   () => {
@@ -83,27 +93,36 @@ watch(
 );
 
 async function initializePanel() {
-  directoryEntries.value = {};
-  expandedDirectories.value = [];
-  directoryLoading.value = [];
-  treeLoading.value = true;
-  treeError.value = null;
-  selectedPath.value = null;
-  preview.value = null;
-  previewLoading.value = false;
-  previewError.value = null;
+  const repoId = props.repoId;
+  await panelLoader.run(repoId, async (runId) => {
+    previewLoader.invalidate();
+    directoryLoadPromises.clear();
+    directoryEntries.value = {};
+    expandedDirectories.value = [];
+    directoryLoading.value = [];
+    treeLoading.value = true;
+    treeError.value = null;
+    selectedPath.value = null;
+    preview.value = null;
+    previewLoading.value = false;
+    previewError.value = null;
 
-  try {
-    const rootEntries = await loadDirectory(null, { force: true });
-    const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md");
-    if (readme) {
-      await selectFile(readme.path);
+    try {
+      const rootEntries = await loadDirectory(null, { force: true, repoId });
+      if (!panelLoader.isCurrent(runId) || repoId !== props.repoId) return;
+      const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md");
+      if (readme) {
+        await selectFile(readme.path);
+      }
+    } catch (err) {
+      if (!panelLoader.isCurrent(runId)) return;
+      treeError.value = String(err);
+    } finally {
+      if (panelLoader.isCurrent(runId)) {
+        treeLoading.value = false;
+      }
     }
-  } catch (err) {
-    treeError.value = String(err);
-  } finally {
-    treeLoading.value = false;
-  }
+  });
 }
 
 function flattenEntries(
@@ -121,25 +140,37 @@ function flattenEntries(
   return flattened;
 }
 
-async function loadDirectory(parentPath: string | null, options: { force?: boolean } = {}) {
+async function loadDirectory(parentPath: string | null, options: { force?: boolean; repoId?: string } = {}) {
   const key = parentPath ?? ROOT_KEY;
+  const repoId = options.repoId ?? props.repoId;
   if (!options.force && key in directoryEntries.value) {
     return directoryEntries.value[key] ?? [];
   }
-  if (directoryLoading.value.includes(key)) {
-    return directoryEntries.value[key] ?? [];
+  const pending = directoryLoadPromises.get(key);
+  if (!options.force && pending) {
+    return pending;
   }
   directoryLoading.value = [...directoryLoading.value, key];
-  try {
-    const entries = await listRepoFiles(props.repoId, parentPath);
-    directoryEntries.value = {
-      ...directoryEntries.value,
-      [key]: entries,
-    };
-    return entries;
-  } finally {
-    directoryLoading.value = directoryLoading.value.filter((item) => item !== key);
-  }
+  let loadPromise!: Promise<RepoFileTreeEntry[]>;
+  loadPromise = (async () => {
+    try {
+      const entries = await listRepoFiles(repoId, parentPath);
+      if (repoId === props.repoId) {
+        directoryEntries.value = {
+          ...directoryEntries.value,
+          [key]: entries,
+        };
+      }
+      return entries;
+    } finally {
+      if (directoryLoadPromises.get(key) === loadPromise) {
+        directoryLoadPromises.delete(key);
+        directoryLoading.value = directoryLoading.value.filter((item) => item !== key);
+      }
+    }
+  })();
+  directoryLoadPromises.set(key, loadPromise);
+  return loadPromise;
 }
 
 async function toggleDirectory(entry: RepoFileTreeEntry) {
@@ -152,35 +183,48 @@ async function toggleDirectory(entry: RepoFileTreeEntry) {
   await loadDirectory(entry.path);
 }
 
-async function expandAncestors(filePath: string) {
+async function expandAncestors(filePath: string, repoId: string) {
   const segments = filePath.split("/").slice(0, -1);
   let current = "";
   for (const segment of segments) {
+    if (repoId !== props.repoId) return false;
     current = current ? `${current}/${segment}` : segment;
     if (!expandedDirectories.value.includes(current)) {
       expandedDirectories.value = [...expandedDirectories.value, current];
     }
-    await loadDirectory(current);
+    await loadDirectory(current, { repoId });
   }
+  return repoId === props.repoId;
 }
 
 async function selectFile(path: string, hash?: string | null) {
+  const repoId = props.repoId;
   selectedPath.value = path;
-  previewLoading.value = true;
-  previewError.value = null;
-  try {
-    await expandAncestors(path);
-    preview.value = await getRepoFilePreview(props.repoId, path);
-    if (hash && preview.value.previewKind === "markdown") {
-      await nextTick();
-      markdownReadme.value?.scrollToAnchor(hash);
+  await previewLoader.run(`${repoId}:${path}`, async (runId) => {
+    previewLoading.value = true;
+    previewError.value = null;
+    try {
+      const ancestorsReady = await expandAncestors(path, repoId);
+      if (!ancestorsReady || !previewLoader.isCurrent(runId)) return;
+      const nextPreview = await getRepoFilePreview(repoId, path);
+      if (!previewLoader.isCurrent(runId) || repoId !== props.repoId || selectedPath.value !== path) return;
+      preview.value = nextPreview;
+      if (hash && nextPreview.previewKind === "markdown") {
+        await nextTick();
+        if (previewLoader.isCurrent(runId)) {
+          markdownReadme.value?.scrollToAnchor(hash);
+        }
+      }
+    } catch (err) {
+      if (!previewLoader.isCurrent(runId)) return;
+      preview.value = null;
+      previewError.value = String(err);
+    } finally {
+      if (previewLoader.isCurrent(runId)) {
+        previewLoading.value = false;
+      }
     }
-  } catch (err) {
-    preview.value = null;
-    previewError.value = String(err);
-  } finally {
-    previewLoading.value = false;
-  }
+  });
 }
 
 async function openPreviewLink(target: ReadmeLinkTarget) {

@@ -1,7 +1,18 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepositoriesSection from "../src/pages/settings/RepositoriesSection.vue";
+import { createGitHubRepo, listGitHubRepoOwners, type GitHubRepoSummary } from "../src/services/workspace";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
 
 const workspace = vi.hoisted(() => ({
   state: {
@@ -91,6 +102,8 @@ describe("RepositoriesSection", () => {
     workspace.githubBinding.value = null;
     workspace.deviceFlow.value = null;
     workspace.listHiddenRepos.mockResolvedValue([]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
+    vi.mocked(createGitHubRepo).mockReset();
   });
 
   it("展示已切到系统 git 凭证的仓库并提供恢复默认 token 入口", async () => {
@@ -198,5 +211,50 @@ describe("RepositoriesSection", () => {
     expect(screen.getByText("没有隐藏仓库。")).toBeInTheDocument();
     expect(screen.queryByText("Error: 取消失败：任务已结束", { selector: ".repo-settings__error" })).toBeNull();
     expect(within(taskPanel).getByRole("button", { name: "取消" })).toBeEnabled();
+  });
+
+  it("创建仓库请求返回前关闭弹窗时忽略旧结果", async () => {
+    const createRequest = deferred<GitHubRepoSummary>();
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(createGitHubRepo).mockReturnValue(createRequest.promise);
+
+    render(RepositoriesSection);
+
+    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
+    await screen.findByRole("option", { name: "sena-nana · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "new-repo");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    expect(vi.mocked(createGitHubRepo)).toHaveBeenCalledWith(expect.objectContaining({
+      owner: "sena-nana",
+      name: "new-repo",
+    }));
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
+
+    createRequest.resolve({
+      id: 1,
+      name: "new-repo",
+      fullName: "sena-nana/new-repo",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: null,
+      defaultBranch: "main",
+      createdAt: "2026-06-20T00:00:00Z",
+      updatedAt: "2026-06-20T00:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/new-repo.git",
+      htmlUrl: "https://github.com/sena-nana/new-repo",
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText("sena-nana/new-repo")).not.toBeInTheDocument();
+    expect(workspace.cloneRepo).not.toHaveBeenCalled();
+    expect(workspace.refreshRepos).not.toHaveBeenCalled();
   });
 });

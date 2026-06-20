@@ -37,7 +37,7 @@ const hasLaunchCommand = computed(() => Boolean(props.launchConfig?.command.trim
       class="primary launch-run-button"
       :aria-label="launchRunning ? '停止' : '运行'"
       :title="launchRunning ? '停止' : '运行'"
-      :disabled="actionRunning || (!launchRunning && !hasLaunchCommand)"
+      :disabled="!launchRunning && (actionRunning || !hasLaunchCommand)"
       @click="launchRunning ? emit('stop') : emit('start')"
     >
       <Square v-if="launchRunning" :size="15" aria-hidden="true" />

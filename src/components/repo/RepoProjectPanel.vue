@@ -28,6 +28,8 @@ import RepoChangesPanel from "./RepoChangesPanel.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
 import RepoTopicEditor from "./RepoTopicEditor.vue";
+import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
+import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
@@ -77,6 +79,8 @@ type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
   label: string;
 };
+type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
+type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
 type GitHubAccessSection = "Issues" | "Pull Requests" | "Actions" | "Settings";
 type GitHubAccessUnavailable = {
   title: string;
@@ -179,8 +183,6 @@ const pullsLoading = ref(false);
 const pullChecksLoading = ref(false);
 const pullsLoadedState = ref<"open" | "closed" | "all" | null>(null);
 const focusedPullRequestNumber = ref<number | null>(null);
-const creatingPullRequest = ref(false);
-const updatingPullRequest = ref(false);
 const pullRequestTitle = ref("");
 const pullRequestBody = ref("");
 const pullRequestBase = ref("");
@@ -189,10 +191,6 @@ const pullRequestDraft = ref(false);
 const pullRequestMergeMethod = ref<"merge" | "squash" | "rebase">("merge");
 const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
-const savingSettings = ref(false);
-const deletingRepo = ref(false);
-const deletingLocalRepo = ref(false);
-const creatingIssue = ref(false);
 const remoteDeleted = ref(false);
 const deleteDialogTarget = ref<DeleteTarget | null>(null);
 const deleteConfirmInput = ref("");
@@ -216,23 +214,32 @@ const editingIssueTitle = ref("");
 const editingIssueBody = ref("");
 const editingIssueLabels = ref("");
 const editingIssueAssignees = ref("");
-const updatingIssue = ref(false);
 const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
-let githubLoadRunId = 0;
-let issueLoadRunId = 0;
-let pullLoadRunId = 0;
-let pullChecksRunId = 0;
-let actionsLoadRunId = 0;
 let suppressIssueStateReload = false;
 let suppressPullStateReload = false;
-let readmeLoadPromise: Promise<void> | null = null;
-let settingsLoadPromise: Promise<void> | null = null;
-let issuesLoadPromise: Promise<void> | null = null;
-let issuesLoadState: "open" | "closed" | "all" | null = null;
-let pullsLoadPromise: Promise<void> | null = null;
-let pullsLoadState: "open" | "closed" | "all" | null = null;
-let actionsLoadPromise: Promise<void> | null = null;
+const readmeLoader = createLatestAsyncLoader();
+const settingsLoader = createLatestAsyncLoader();
+const issuesLoader = createLatestAsyncLoader();
+const pullsLoader = createLatestAsyncLoader();
+const pullChecksLoader = createLatestAsyncLoader();
+const actionsLoader = createLatestAsyncLoader();
+const settingsSaveTracker = createPendingTaskTracker();
+const issueCreateTracker = createPendingTaskTracker();
+const issueUpdateTracker = createPendingTaskTracker();
+const pullCreateTracker = createPendingTaskTracker();
+const pullUpdateTracker = createPendingTaskTracker();
+const remoteDeleteTracker = createPendingTaskTracker();
+const localDeleteTracker = createPendingTaskTracker();
+const savingSettings = settingsSaveTracker.running;
+const creatingIssue = issueCreateTracker.running;
+const updatingIssue = issueUpdateTracker.running;
+const creatingPullRequest = pullCreateTracker.running;
+const updatingPullRequest = pullUpdateTracker.running;
+const deletingRepo = remoteDeleteTracker.running;
+const deletingLocalRepo = localDeleteTracker.running;
+let repoMutationGeneration = 0;
+let githubMutationGeneration = 0;
 
 const settingsForm = reactive({
   description: "",
@@ -678,20 +685,25 @@ function cancelEditAbout() {
 async function loadReadme(force = false) {
   if (!props.repoId) return;
   if (!force && readmesLoaded.value) return;
-  if (!force && readmeLoadPromise) {
-    await readmeLoadPromise;
-    return;
-  }
-  readmeLoadPromise = (async () => {
+  const repoId = props.repoId;
+  const repoFullName = props.repoFullName;
+  const remoteOnly = props.remoteOnly;
+  await readmeLoader.run(null, async (runId) => {
     readmeLoading.value = true;
     readmeError.value = null;
     const previousPath = activeReadmePath.value;
     try {
-      const nextReadmes = props.remoteOnly && props.repoFullName
+      const nextReadmes = remoteOnly && repoFullName
         ? force
-          ? await listGitHubRepoReadmes(props.repoFullName, { forceRefresh: true })
-          : await listGitHubRepoReadmes(props.repoFullName)
-        : await listRepoReadmes(props.repoId);
+          ? await listGitHubRepoReadmes(repoFullName, { forceRefresh: true })
+          : await listGitHubRepoReadmes(repoFullName)
+        : await listRepoReadmes(repoId);
+      if (
+        !readmeLoader.isCurrent(runId) ||
+        repoId !== props.repoId ||
+        repoFullName !== props.repoFullName ||
+        remoteOnly !== props.remoteOnly
+      ) return;
       readmes.value = nextReadmes;
       activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
         ? previousPath
@@ -700,11 +712,11 @@ async function loadReadme(force = false) {
     } catch (err) {
       readmeError.value = String(err);
     } finally {
-      readmeLoading.value = false;
-      readmeLoadPromise = null;
+      if (readmeLoader.isCurrent(runId)) {
+        readmeLoading.value = false;
+      }
     }
-  })();
-  await readmeLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadSettings(force = false) {
@@ -719,19 +731,14 @@ async function loadSettings(force = false) {
     return;
   }
   if (!force && settingsLoaded.value) return;
-  if (!force && settingsLoadPromise) {
-    await settingsLoadPromise;
-    return;
-  }
-  settingsLoadPromise = (async () => {
-    const runId = ++githubLoadRunId;
+  await settingsLoader.run(null, async (runId) => {
     githubLoading.value = true;
     githubError.value = null;
     try {
       const nextSettings = force
         ? await getGitHubRepoManagement(repoFullName, { forceRefresh: true })
         : await getGitHubRepoManagement(repoFullName);
-      if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      if (!settingsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       settings.value = nextSettings;
       applySettingsForm(nextSettings);
       preparePullRequestDefaults();
@@ -739,15 +746,14 @@ async function loadSettings(force = false) {
     } catch (err) {
       githubError.value = String(err);
     } finally {
-      githubLoading.value = false;
-      settingsLoadPromise = null;
+      if (settingsLoader.isCurrent(runId)) {
+        githubLoading.value = false;
+      }
     }
-  })();
-  await settingsLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadIssues(force = false) {
-  const runId = ++issueLoadRunId;
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
     clearBlockedGitHubState();
@@ -755,33 +761,24 @@ async function loadIssues(force = false) {
   }
   if (!repoFullName || remoteDeleted.value) return;
   if (!force && issuesLoadedState.value === issueState.value) return;
-  if (!force && issuesLoadPromise && issuesLoadState === issueState.value) {
-    await issuesLoadPromise;
-    return;
-  }
+  const stateKey = issueState.value;
   githubError.value = null;
-  issuesLoadState = issueState.value;
-  issuesLoadPromise = (async () => {
+  await issuesLoader.run(stateKey, async (runId) => {
     try {
       const nextIssues = force
-        ? await listGitHubIssues(repoFullName, issueState.value, { forceRefresh: true })
-        : await listGitHubIssues(repoFullName, issueState.value);
-      if (runId !== issueLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+        ? await listGitHubIssues(repoFullName, stateKey, { forceRefresh: true })
+        : await listGitHubIssues(repoFullName, stateKey);
+      if (!issuesLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       issues.value = nextIssues;
-      issuesLoadedState.value = issueState.value;
+      issuesLoadedState.value = stateKey;
       syncEditingIssue();
     } catch (err) {
       githubError.value = String(err);
-    } finally {
-      issuesLoadPromise = null;
-      issuesLoadState = null;
     }
-  })();
-  await issuesLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadPullRequests(force = false) {
-  const runId = ++pullLoadRunId;
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
     clearBlockedGitHubState();
@@ -789,21 +786,17 @@ async function loadPullRequests(force = false) {
   }
   if (!repoFullName || remoteDeleted.value) return;
   if (!force && pullsLoadedState.value === pullState.value) return;
-  if (!force && pullsLoadPromise && pullsLoadState === pullState.value) {
-    await pullsLoadPromise;
-    return;
-  }
+  const stateKey = pullState.value;
   githubError.value = null;
   pullsLoading.value = true;
-  pullsLoadState = pullState.value;
-  pullsLoadPromise = (async () => {
+  await pullsLoader.run(stateKey, async (runId) => {
     try {
       const nextPulls = force
-        ? await listGitHubPullRequests(repoFullName, pullState.value, { forceRefresh: true })
-        : await listGitHubPullRequests(repoFullName, pullState.value);
-      if (runId !== pullLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+        ? await listGitHubPullRequests(repoFullName, stateKey, { forceRefresh: true })
+        : await listGitHubPullRequests(repoFullName, stateKey);
+      if (!pullsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       pulls.value = nextPulls;
-      pullsLoadedState.value = pullState.value;
+      pullsLoadedState.value = stateKey;
       const current = focusedPullRequestNumber.value;
       if (current && nextPulls.some((pull) => pull.number === current)) {
         await loadPullRequestChecks(current, force);
@@ -816,40 +809,39 @@ async function loadPullRequests(force = false) {
     } catch (err) {
       githubError.value = String(err);
     } finally {
-      pullsLoading.value = false;
-      pullsLoadPromise = null;
-      pullsLoadState = null;
+      if (pullsLoader.isCurrent(runId)) {
+        pullsLoading.value = false;
+      }
     }
-  })();
-  await pullsLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadPullRequestChecks(pullNumber: number, force = false) {
-  const runId = ++pullChecksRunId;
   const repoFullName = props.repoFullName;
   if (!repoFullName || remoteDeleted.value) return;
   if (!force && pullChecks.value[pullNumber]) return;
   pullChecksLoading.value = true;
-  try {
-    const checks = force
-      ? await listGitHubPullRequestChecks(repoFullName, pullNumber, { forceRefresh: true })
-      : await listGitHubPullRequestChecks(repoFullName, pullNumber);
-    if (runId !== pullChecksRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-    pullChecks.value = {
-      ...pullChecks.value,
-      [pullNumber]: checks,
-    };
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    if (runId === pullChecksRunId) {
-      pullChecksLoading.value = false;
+  await pullChecksLoader.run(pullNumber, async (runId) => {
+    try {
+      const checks = force
+        ? await listGitHubPullRequestChecks(repoFullName, pullNumber, { forceRefresh: true })
+        : await listGitHubPullRequestChecks(repoFullName, pullNumber);
+      if (!pullChecksLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      pullChecks.value = {
+        ...pullChecks.value,
+        [pullNumber]: checks,
+      };
+    } catch (err) {
+      githubError.value = String(err);
+    } finally {
+      if (pullChecksLoader.isCurrent(runId)) {
+        pullChecksLoading.value = false;
+      }
     }
-  }
+  });
 }
 
 async function loadActions(force = false) {
-  const runId = ++actionsLoadRunId;
   const repoFullName = props.repoFullName;
   if (isSystemGitBlocked.value) {
     clearBlockedGitHubState();
@@ -862,28 +854,24 @@ async function loadActions(force = false) {
     return;
   }
   if (!force && actionsLoaded.value) return;
-  if (!force && actionsLoadPromise) {
-    await actionsLoadPromise;
-    return;
-  }
-  actionsLoadPromise = (async () => {
+  await actionsLoader.run(null, async (runId) => {
     actionsLoading.value = true;
     actionsError.value = null;
     try {
       const nextRuns = force
         ? await listGitHubWorkflowRuns(repoFullName, 20, { forceRefresh: true })
         : await listGitHubWorkflowRuns(repoFullName, 20);
-      if (runId !== actionsLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      if (!actionsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       workflowRuns.value = nextRuns;
       actionsLoaded.value = true;
     } catch (err) {
       actionsError.value = String(err);
     } finally {
-      actionsLoading.value = false;
-      actionsLoadPromise = null;
+      if (actionsLoader.isCurrent(runId)) {
+        actionsLoading.value = false;
+      }
     }
-  })();
-  await actionsLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function ensureSectionData(section: ProjectContentMode) {
@@ -970,16 +958,23 @@ function clearBlockedGitHubState() {
 
 function resetProjectSectionState() {
   activeSection.value = routeTabToSection(props.activeGitTab);
+  readmeLoader.invalidate();
+  invalidateRepoMutations();
   readmes.value = [];
   activeReadmePath.value = null;
   readmesLoaded.value = false;
   readmeLoading.value = false;
   readmeError.value = null;
-  readmeLoadPromise = null;
   resetGitHubSectionState();
 }
 
 function resetGitHubSectionState() {
+  settingsLoader.invalidate();
+  issuesLoader.invalidate();
+  pullsLoader.invalidate();
+  pullChecksLoader.invalidate();
+  actionsLoader.invalidate();
+  invalidateGitHubMutations();
   settings.value = null;
   settingsLoaded.value = false;
   issues.value = [];
@@ -990,8 +985,6 @@ function resetGitHubSectionState() {
   pullsLoading.value = false;
   pullChecksLoading.value = false;
   focusedPullRequestNumber.value = null;
-  creatingPullRequest.value = false;
-  updatingPullRequest.value = false;
   pullRequestTitle.value = "";
   pullRequestBody.value = "";
   pullRequestBase.value = "";
@@ -1002,12 +995,6 @@ function resetGitHubSectionState() {
   actionsLoaded.value = false;
   githubError.value = null;
   actionsError.value = null;
-  settingsLoadPromise = null;
-  issuesLoadPromise = null;
-  issuesLoadState = null;
-  pullsLoadPromise = null;
-  pullsLoadState = null;
-  actionsLoadPromise = null;
   aboutEditing.value = false;
   aboutTopicDraft.value = "";
   settingsTopicDraft.value = "";
@@ -1016,30 +1003,68 @@ function resetGitHubSectionState() {
   focusedRunId.value = null;
 }
 
+function invalidateGitHubMutations() {
+  githubMutationGeneration += 1;
+  settingsSaveTracker.reset();
+  issueCreateTracker.reset();
+  issueUpdateTracker.reset();
+  pullCreateTracker.reset();
+  pullUpdateTracker.reset();
+  remoteDeleteTracker.reset();
+}
+
+function invalidateRepoMutations() {
+  repoMutationGeneration += 1;
+  localDeleteTracker.reset();
+}
+
+function isGitHubMutationCurrent(generation: number, repoFullName: string) {
+  return generation === githubMutationGeneration && props.repoFullName === repoFullName && !remoteDeleted.value;
+}
+
+function isRepoMutationCurrent(generation: number, repoId: string) {
+  return generation === repoMutationGeneration && props.repoId === repoId;
+}
+
+async function runGitHubMutation<T>(
+  repoFullName: string,
+  tracker: PendingTaskTracker,
+  task: () => Promise<T>,
+): Promise<GitHubMutationResult<T>> {
+  const generation = githubMutationGeneration;
+  githubError.value = null;
+  try {
+    const value = await tracker.run(task);
+    if (!isGitHubMutationCurrent(generation, repoFullName)) return { ok: false };
+    return { ok: true, value };
+  } catch (err) {
+    if (isGitHubMutationCurrent(generation, repoFullName)) {
+      githubError.value = String(err);
+    }
+    return { ok: false };
+  }
+}
+
 async function saveSettings(closeAboutOnSuccess = false) {
-  if (!props.repoFullName || !settings.value) return;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || !settings.value) return;
   const request = changedSettingsRequest(settings.value);
   if (!Object.keys(request).length) {
     if (closeAboutOnSuccess) aboutEditing.value = false;
     return true;
   }
-  savingSettings.value = true;
-  githubError.value = null;
-  try {
-    const next = await updateGitHubRepoSettings(props.repoFullName, request);
-    settings.value = next;
-    applySettingsForm(next);
-    aboutTopicDraft.value = "";
-    settingsTopicDraft.value = "";
-    if (closeAboutOnSuccess) aboutEditing.value = false;
-    clearHomeGitHubOverviewSnapshot();
-    return true;
-  } catch (err) {
-    githubError.value = String(err);
-    return false;
-  } finally {
-    savingSettings.value = false;
-  }
+  const result = await runGitHubMutation(repoFullName, settingsSaveTracker, () =>
+    updateGitHubRepoSettings(repoFullName, request)
+  );
+  if (!result.ok) return false;
+  const next = result.value;
+  settings.value = next;
+  applySettingsForm(next);
+  aboutTopicDraft.value = "";
+  settingsTopicDraft.value = "";
+  if (closeAboutOnSuccess) aboutEditing.value = false;
+  clearHomeGitHubOverviewSnapshot();
+  return true;
 }
 
 function normalizedExternalUrl(value: string) {
@@ -1077,30 +1102,36 @@ async function confirmDeleteDialog() {
 }
 
 async function confirmDeleteLocalRepo() {
-  if (props.remoteOnly || !deleteConfirmMatches.value || deletingLocalRepo.value) return;
-  deletingLocalRepo.value = true;
+  const repoId = props.repoId;
+  if (!repoId || props.remoteOnly || !deleteConfirmMatches.value || deletingLocalRepo.value) return;
+  const generation = repoMutationGeneration;
   deleteError.value = null;
   try {
-    await workspace.deleteLocalRepo(props.repoId);
+    await localDeleteTracker.run(() => workspace.deleteLocalRepo(repoId));
+    if (!isRepoMutationCurrent(generation, repoId)) return;
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
     workspace.refreshRepoStatusList();
     await router.push("/");
   } catch (err) {
-    deleteError.value = String(err);
-  } finally {
-    deletingLocalRepo.value = false;
+    if (isRepoMutationCurrent(generation, repoId)) {
+      deleteError.value = String(err);
+    }
   }
 }
 
 async function confirmDeleteRepo() {
-  if (!props.repoFullName || !deleteConfirmMatches.value || deletingRepo.value) return;
-  deletingRepo.value = true;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || !deleteConfirmMatches.value || deletingRepo.value) return;
+  const generation = githubMutationGeneration;
   deleteError.value = null;
   githubError.value = null;
   try {
-    await deleteGitHubRepo(props.repoFullName);
-    await workspace.forgetRemoteRepo(props.repoFullName);
+    await remoteDeleteTracker.run(async () => {
+      await deleteGitHubRepo(repoFullName);
+      await workspace.forgetRemoteRepo(repoFullName);
+    });
+    if (!isGitHubMutationCurrent(generation, repoFullName)) return;
     clearHomeGitHubOverviewSnapshot();
     workspace.refreshRepoStatusList();
     remoteDeleted.value = true;
@@ -1109,19 +1140,19 @@ async function confirmDeleteRepo() {
     workflowRuns.value = [];
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
-    const targetRoute = remoteRepoRoute(props.repoFullName);
+    const targetRoute = remoteRepoRoute(repoFullName);
     const currentRemoteFullName = parseRemoteRepoId(String(route.params.repoId ?? ""));
     if (
       props.remoteOnly &&
-      currentRemoteFullName && props.repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
+      currentRemoteFullName && repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
       && route.fullPath.startsWith(targetRoute)
     ) {
       await router.push("/");
     }
   } catch (err) {
-    deleteError.value = String(err);
-  } finally {
-    deletingRepo.value = false;
+    if (isGitHubMutationCurrent(generation, repoFullName)) {
+      deleteError.value = String(err);
+    }
   }
 }
 
@@ -1156,61 +1187,57 @@ function cancelEditIssue() {
 }
 
 async function saveIssueEdit(issue: GitHubIssue) {
-  if (!props.repoFullName || updatingIssue.value) return;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || updatingIssue.value) return;
   const nextTitle = editingIssueTitle.value.trim();
   if (!nextTitle) return;
-  updatingIssue.value = true;
-  githubError.value = null;
-  try {
-    const updated = await updateGitHubIssue(props.repoFullName, issue.number, {
-      title: nextTitle,
-      body: editingIssueBody.value,
-      labels: splitList(editingIssueLabels.value),
-      assignees: splitList(editingIssueAssignees.value),
-    });
-    issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
-    cancelEditIssue();
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    updatingIssue.value = false;
-  }
+  const request = {
+    title: nextTitle,
+    body: editingIssueBody.value,
+    labels: splitList(editingIssueLabels.value),
+    assignees: splitList(editingIssueAssignees.value),
+  };
+  const result = await runGitHubMutation(repoFullName, issueUpdateTracker, () =>
+    updateGitHubIssue(repoFullName, issue.number, request)
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
+  cancelEditIssue();
 }
 
 async function createIssue() {
-  if (!props.repoFullName) return;
-  creatingIssue.value = true;
-  githubError.value = null;
-  try {
-    const issue = await createGitHubIssue(props.repoFullName, {
-      title: issueTitle.value,
-      body: issueBody.value,
-      labels: splitList(issueLabels.value),
-      assignees: splitList(issueAssignees.value),
-    });
-    issues.value = [issue, ...issues.value];
-    issueTitle.value = "";
-    issueBody.value = "";
-    issueLabels.value = "";
-    issueAssignees.value = "";
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    creatingIssue.value = false;
-  }
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || creatingIssue.value) return;
+  const request = {
+    title: issueTitle.value,
+    body: issueBody.value,
+    labels: splitList(issueLabels.value),
+    assignees: splitList(issueAssignees.value),
+  };
+  const result = await runGitHubMutation(repoFullName, issueCreateTracker, () =>
+    createGitHubIssue(repoFullName, request)
+  );
+  if (!result.ok) return;
+  const issue = result.value;
+  issues.value = [issue, ...issues.value];
+  issueTitle.value = "";
+  issueBody.value = "";
+  issueLabels.value = "";
+  issueAssignees.value = "";
 }
 
 async function toggleIssue(issue: GitHubIssue) {
-  if (!props.repoFullName) return;
-  githubError.value = null;
-  try {
-    const updated = await updateGitHubIssue(props.repoFullName, issue.number, {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName) return;
+  const result = await runGitHubMutation(repoFullName, issueUpdateTracker, () =>
+    updateGitHubIssue(repoFullName, issue.number, {
       state: issue.state === "open" ? "closed" : "open",
-    });
-    issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
-  } catch (err) {
-    githubError.value = String(err);
-  }
+    })
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
 }
 
 function preparePullRequestDefaults() {
@@ -1223,68 +1250,61 @@ function preparePullRequestDefaults() {
 }
 
 async function createPullRequest() {
-  if (!props.repoFullName || creatingPullRequest.value) return;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || creatingPullRequest.value) return;
   preparePullRequestDefaults();
   const title = pullRequestTitle.value.trim();
   const head = pullRequestHead.value.trim();
   const base = pullRequestBase.value.trim();
   if (!title || !head || !base) return;
-  creatingPullRequest.value = true;
-  githubError.value = null;
-  try {
-    const pull = await createGitHubPullRequest(props.repoFullName, {
-      title,
-      body: pullRequestBody.value,
-      head,
-      base,
-      draft: pullRequestDraft.value,
-    });
-    pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pull.number)];
-    focusedPullRequestNumber.value = pull.number;
-    pullRequestTitle.value = "";
-    pullRequestBody.value = "";
-    pullRequestDraft.value = false;
-    pullState.value = "open";
-    await loadPullRequestChecks(pull.number, true);
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    creatingPullRequest.value = false;
-  }
+  const request = {
+    title,
+    body: pullRequestBody.value,
+    head,
+    base,
+    draft: pullRequestDraft.value,
+  };
+  const result = await runGitHubMutation(repoFullName, pullCreateTracker, () =>
+    createGitHubPullRequest(repoFullName, request)
+  );
+  if (!result.ok) return;
+  const pull = result.value;
+  pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pull.number)];
+  focusedPullRequestNumber.value = pull.number;
+  pullRequestTitle.value = "";
+  pullRequestBody.value = "";
+  pullRequestDraft.value = false;
+  pullState.value = "open";
+  await loadPullRequestChecks(pull.number, true);
 }
 
 async function togglePullRequestState(pull: GitHubPullRequest) {
-  if (!props.repoFullName || updatingPullRequest.value) return;
-  updatingPullRequest.value = true;
-  githubError.value = null;
-  try {
-    const updated = await updateGitHubPullRequest(props.repoFullName, pull.number, {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || updatingPullRequest.value) return;
+  const result = await runGitHubMutation(repoFullName, pullUpdateTracker, () =>
+    updateGitHubPullRequest(repoFullName, pull.number, {
       state: pull.state === "open" ? "closed" : "open",
-    });
-    pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    updatingPullRequest.value = false;
-  }
+    })
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
 }
 
 async function mergePullRequest(pull: GitHubPullRequest) {
-  if (!props.repoFullName || updatingPullRequest.value) return;
-  updatingPullRequest.value = true;
-  githubError.value = null;
-  try {
-    const updated = await mergeGitHubPullRequest(props.repoFullName, pull.number, {
-      method: pullRequestMergeMethod.value,
-    });
-    pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
-    focusedPullRequestNumber.value = updated.number;
-    await loadPullRequestChecks(updated.number, true);
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    updatingPullRequest.value = false;
-  }
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || updatingPullRequest.value) return;
+  const method = pullRequestMergeMethod.value;
+  const result = await runGitHubMutation(repoFullName, pullUpdateTracker, () =>
+    mergeGitHubPullRequest(repoFullName, pull.number, {
+      method,
+    })
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
+  focusedPullRequestNumber.value = updated.number;
+  await loadPullRequestChecks(updated.number, true);
 }
 
 async function focusPullRequestRow(pull: GitHubPullRequest) {

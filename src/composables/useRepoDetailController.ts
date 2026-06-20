@@ -1,6 +1,8 @@
 ﻿import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches, listGitHubRepoCommits } from "../services/workspace";
+import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
+import { createPendingTaskTracker } from "./usePendingTaskTracker";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
 import type {
@@ -58,7 +60,6 @@ export function useRepoDetailController() {
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
   const launchError = ref<string | null>(null);
-  const actionRunning = ref(false);
   const conflictAbortConfirm = ref(false);
   const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
   const launchTerminalVisible = ref(false);
@@ -75,7 +76,14 @@ export function useRepoDetailController() {
   const deletingRemoteBranchName = ref<string | null>(null);
   const deletedRemoteBranchNames = ref<string[]>([]);
   const projectRefreshToken = ref(0);
+  const repoDetailLoader = createLatestAsyncLoader();
+  const githubBranchesLoader = createLatestAsyncLoader();
+  const githubCommitsLoader = createLatestAsyncLoader();
+  const launchRefreshLoader = createLatestAsyncLoader();
+  const actionTracker = createPendingTaskTracker();
+  const actionRunning = actionTracker.running;
   let launchPollTimer: number | null = null;
+  let actionGeneration = 0;
 
   const repoId = computed(() => String(route.params.repoId ?? ""));
   const remoteFullName = computed(() => parseRemoteRepoId(repoId.value));
@@ -343,6 +351,11 @@ export function useRepoDetailController() {
   });
 
   onUnmounted(() => {
+    repoDetailLoader.invalidate();
+    githubBranchesLoader.invalidate();
+    githubCommitsLoader.invalidate();
+    launchRefreshLoader.invalidate();
+    invalidateActions();
     if (launchPollTimer !== null) {
       window.clearInterval(launchPollTimer);
     }
@@ -358,6 +371,11 @@ export function useRepoDetailController() {
     conflictAbortConfirm.value = false;
     conflictAcceptConfirm.value = null;
     openTarget.value = "folder";
+    repoDetailLoader.invalidate();
+    githubBranchesLoader.invalidate();
+    githubCommitsLoader.invalidate();
+    launchRefreshLoader.invalidate();
+    invalidateActions();
     githubBranches.value = [];
     githubCommits.value = [];
     githubDefaultBranch.value = null;
@@ -427,34 +445,44 @@ export function useRepoDetailController() {
   }
 
   async function load() {
-    if (!repoId.value) return;
-    actionError.value = null;
-    launchError.value = null;
-    if (remoteOnly.value) {
-      await loadRemoteGitHubData(remoteFullName.value);
-      return;
-    }
-    try {
-      await workspace.loadRepoDetail(repoId.value);
-      syncFocusedChange();
-      syncFocusedConflict();
-    } catch (err) {
-      actionError.value = String(err);
-    }
-    if (usingSystemGit.value) {
-      resetGitHubRemoteState();
-    } else {
-      await loadGitHubBranches(summary.value?.githubFullName ?? null);
-    }
-    try {
-      await workspace.loadLaunch(repoId.value);
-    } catch (err) {
-      const message = String(err);
-      if (activeTab.value === "run") launchError.value = message;
-      else actionError.value ??= message;
-    }
-    await workspace.refreshRepoLanguageStats(repoId.value).catch((err) => {
-      actionError.value = String(err);
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return;
+    await repoDetailLoader.run(targetRepoId, async (runId) => {
+      actionError.value = null;
+      launchError.value = null;
+      if (remoteOnly.value) {
+        await loadRemoteGitHubData(remoteFullName.value);
+        return;
+      }
+      try {
+        await workspace.loadRepoDetail(targetRepoId);
+        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+        syncFocusedChange();
+        syncFocusedConflict();
+      } catch (err) {
+        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+        actionError.value = String(err);
+      }
+      if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+      if (usingSystemGit.value) {
+        resetGitHubRemoteState();
+      } else {
+        await loadGitHubBranches(summary.value?.githubFullName ?? null);
+      }
+      if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+      try {
+        await workspace.loadLaunch(targetRepoId);
+      } catch (err) {
+        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+        const message = String(err);
+        if (activeTab.value === "run") launchError.value = message;
+        else actionError.value ??= message;
+      }
+      if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+      await workspace.refreshRepoLanguageStats(targetRepoId).catch((err) => {
+        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+        actionError.value = String(err);
+      });
     });
   }
 
@@ -471,52 +499,66 @@ export function useRepoDetailController() {
       resetGitHubRemoteState();
       return;
     }
-    githubBranchLoading.value = true;
-    githubBranches.value = [];
-    githubDefaultBranch.value = null;
-    try {
-      const [management, branches] = await Promise.all([
-        getGitHubRepoManagement(repoFullName),
-        listGitHubBranches(repoFullName),
-      ]);
-      if (repoFullName !== githubRepoFullName.value) return;
-      githubDefaultBranch.value = management.defaultBranch || null;
-      githubBranches.value = branches;
-    } catch (err) {
-      actionError.value = String(err);
-    } finally {
-      if (repoFullName === githubRepoFullName.value) githubBranchLoading.value = false;
-    }
+    await githubBranchesLoader.run(repoFullName, async (runId) => {
+      githubBranchLoading.value = true;
+      githubBranches.value = [];
+      githubDefaultBranch.value = null;
+      try {
+        const [management, branches] = await Promise.all([
+          getGitHubRepoManagement(repoFullName),
+          listGitHubBranches(repoFullName),
+        ]);
+        if (!githubBranchesLoader.isCurrent(runId) || repoFullName !== githubRepoFullName.value) return;
+        githubDefaultBranch.value = management.defaultBranch || null;
+        githubBranches.value = branches;
+      } catch (err) {
+        if (!githubBranchesLoader.isCurrent(runId)) return;
+        actionError.value = String(err);
+      } finally {
+        if (githubBranchesLoader.isCurrent(runId)) {
+          githubBranchLoading.value = false;
+        }
+      }
+    });
   }
 
   async function loadGitHubCommits(repoFullName: string | null) {
     if (!repoFullName) return;
-    githubCommits.value = [];
-    try {
-      const commits = await listGitHubRepoCommits(repoFullName, { perPage: 100 });
-      if (repoFullName !== githubRepoFullName.value) return;
-      githubCommits.value = commits;
-    } catch (err) {
-      actionError.value = String(err);
-    }
+    await githubCommitsLoader.run(repoFullName, async (runId) => {
+      githubCommits.value = [];
+      try {
+        const commits = await listGitHubRepoCommits(repoFullName, { perPage: 100 });
+        if (!githubCommitsLoader.isCurrent(runId) || repoFullName !== githubRepoFullName.value) return;
+        githubCommits.value = commits;
+      } catch (err) {
+        if (!githubCommitsLoader.isCurrent(runId)) return;
+        actionError.value = String(err);
+      }
+    });
   }
 
   function resetGitHubRemoteState() {
+    githubBranchesLoader.invalidate();
+    githubCommitsLoader.invalidate();
     githubBranches.value = [];
     githubDefaultBranch.value = null;
     githubCommits.value = [];
   }
 
   async function refreshLaunch() {
-    if (!repoId.value || remoteOnly.value) return;
-    try {
-      const status = await workspace.refreshLaunchStatus(repoId.value);
-      if (status.state === "running" || launchTerminalVisible.value) {
-        await workspace.refreshLaunchLogs(repoId.value);
+    const targetRepoId = repoId.value;
+    if (!targetRepoId || remoteOnly.value) return;
+    await launchRefreshLoader.run(targetRepoId, async (runId) => {
+      try {
+        const status = await workspace.refreshLaunchStatus(targetRepoId);
+        if (!launchRefreshLoader.isCurrent(runId) || repoId.value !== targetRepoId || remoteOnly.value) return;
+        if (status.state === "running" || launchTerminalVisible.value) {
+          await workspace.refreshLaunchLogs(targetRepoId);
+        }
+      } catch {
+        // The explicit action path surfaces errors; polling should stay quiet.
       }
-    } catch {
-      // The explicit action path surfaces errors; polling should stay quiet.
-    }
+    }, { reusePending: true });
   }
 
   function syncFocusedConflict() {
@@ -580,7 +622,7 @@ export function useRepoDetailController() {
     return message.includes("当前 GitHub 绑定无权限") || message.includes("无法认证 GitHub 仓库");
   }
 
-  async function retryPushWithSystemGitIfConfirmed(error: unknown) {
+  async function retryPushWithSystemGitIfConfirmed(error: unknown, targetRepoId: string) {
     if (!shouldOfferSystemGitPush(error)) {
       throw error;
     }
@@ -588,46 +630,58 @@ export function useRepoDetailController() {
       "GitHub token 推送失败。是否改用系统 git 推送？\n\n如果系统 git 推送成功，此仓库后续将默认使用系统 git 凭证。",
     );
     if (!confirmed) {
-      await workspace.loadRepoDetail(repoId.value).catch(() => undefined);
+      await workspace.loadRepoDetail(targetRepoId).catch(() => undefined);
       throw error;
     }
-    await workspace.pushWithSystemGit(repoId.value);
+    await workspace.pushWithSystemGit(targetRepoId);
   }
 
-  async function runPushWithFallback(pushAction: () => Promise<unknown>) {
+  async function runPushWithFallback(targetRepoId: string, pushAction: () => Promise<unknown>) {
     try {
       await pushAction();
     } catch (err) {
-      await retryPushWithSystemGitIfConfirmed(err);
+      await retryPushWithSystemGitIfConfirmed(err, targetRepoId);
     }
   }
 
+  function invalidateActions() {
+    actionGeneration += 1;
+    actionTracker.reset();
+  }
+
+  function isActionCurrent(generation: number, targetRepoId: string) {
+    return generation === actionGeneration && repoId.value === targetRepoId;
+  }
+
   async function runAction(action: () => Promise<unknown>) {
-    actionRunning.value = true;
+    const generation = actionGeneration;
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return false;
     actionError.value = null;
     try {
-      await action();
+      await actionTracker.run(action);
       return true;
     } catch (err) {
-      actionError.value = String(err);
+      if (isActionCurrent(generation, targetRepoId)) {
+        actionError.value = String(err);
+      }
       return false;
-    } finally {
-      actionRunning.value = false;
     }
   }
 
   async function runLaunchAction(action: () => Promise<unknown>) {
-    actionRunning.value = true;
+    const generation = actionGeneration;
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return;
     launchError.value = null;
     actionError.value = null;
     try {
-      await action();
+      await actionTracker.run(action);
     } catch (err) {
+      if (!isActionCurrent(generation, targetRepoId)) return;
       const message = String(err);
       if (activeTab.value === "run") launchError.value = message;
       else actionError.value = message;
-    } finally {
-      actionRunning.value = false;
     }
   }
 
@@ -659,11 +713,16 @@ export function useRepoDetailController() {
   }
 
   function commitSelected(pushAfter: boolean) {
+    const targetRepoId = repoId.value;
+    const targetPaths = stagedChangePaths.value;
+    const message = commitMessage.value.trim();
+    if (!targetRepoId || !targetPaths.length || !message) return;
     void runAction(async () => {
       const commitAction = () =>
-        workspace.commit(repoId.value, stagedChangePaths.value, commitMessage.value.trim(), pushAfter);
-      if (pushAfter) await runPushWithFallback(commitAction);
+        workspace.commit(targetRepoId, targetPaths, message, pushAfter);
+      if (pushAfter) await runPushWithFallback(targetRepoId, commitAction);
       else await commitAction();
+      if (repoId.value !== targetRepoId) return;
       commitMessage.value = "";
     });
   }
@@ -732,13 +791,18 @@ export function useRepoDetailController() {
   }
 
   function push() {
-    void runAction(() => runPushWithFallback(() => workspace.push(repoId.value)));
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return;
+    void runAction(() => runPushWithFallback(targetRepoId, () => workspace.push(targetRepoId)));
   }
 
   function pushCurrentBranchWithUpstream() {
+    const targetRepoId = repoId.value;
+    const branch = summary.value?.currentBranch ?? null;
+    if (!targetRepoId || !branch) return;
     void runAction(() =>
-      runPushWithFallback(() =>
-        workspace.pushNewBranch(repoId.value, "origin", summary.value?.currentBranch ?? null)
+      runPushWithFallback(targetRepoId, () =>
+        workspace.pushNewBranch(targetRepoId, "origin", branch)
       )
     );
   }
@@ -809,23 +873,31 @@ export function useRepoDetailController() {
   }
 
   function startLaunch() {
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return;
     void runLaunchAction(async () => {
-      await workspace.loadLaunch(repoId.value);
-      await workspace.startLaunch(repoId.value);
+      await workspace.loadLaunch(targetRepoId);
+      await workspace.startLaunch(targetRepoId);
+      if (repoId.value !== targetRepoId) return;
       launchTerminalVisible.value = true;
     });
   }
 
   function stopLaunch() {
-    void runLaunchAction(() => workspace.stopLaunch(repoId.value));
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return;
+    void runLaunchAction(() => workspace.stopLaunch(targetRepoId));
   }
 
   function selectLaunchCandidate(candidate: ProjectLaunchCandidate) {
     if (launchRunning.value) return;
     const current = launchConfig.value;
     if (current?.command === candidate.command && current.cwd === candidate.cwd) return;
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return;
     void runLaunchAction(async () => {
-      await workspace.saveLaunchConfig(repoId.value, candidate.command, candidate.cwd);
+      await workspace.saveLaunchConfig(targetRepoId, candidate.command, candidate.cwd);
+      if (repoId.value !== targetRepoId) return;
       launchTerminalVisible.value = true;
     });
   }
@@ -868,19 +940,26 @@ export function useRepoDetailController() {
       if (!repoFullName || target.defaultBranch || target.protected || deletingRemoteBranchName.value) return;
       const branchName = remoteOnly.value ? target.name : remoteBranchShortName(target.canonicalName);
       if (!branchName) return;
+      const generation = actionGeneration;
+      const targetRepoId = repoId.value;
       deletingRemoteBranchName.value = branchName;
       actionError.value = null;
       void (async () => {
         try {
           await deleteGitHubBranch(repoFullName, branchName);
+          if (!isActionCurrent(generation, targetRepoId)) return;
           githubBranches.value = githubBranches.value.filter((item) => item.name !== branchName);
           if (!deletedRemoteBranchNames.value.includes(branchName)) {
             deletedRemoteBranchNames.value = [...deletedRemoteBranchNames.value, branchName];
           }
         } catch (err) {
-          actionError.value = String(err);
+          if (isActionCurrent(generation, targetRepoId)) {
+            actionError.value = String(err);
+          }
         } finally {
-          deletingRemoteBranchName.value = null;
+          if (isActionCurrent(generation, targetRepoId)) {
+            deletingRemoteBranchName.value = null;
+          }
         }
       })();
       return;

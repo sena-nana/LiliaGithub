@@ -3,47 +3,71 @@ import { bulkSyncRepoIds, rememberRecentSync, state, upsertRepo } from "./state"
 import { loadWorkspaceService } from "./serviceLoader";
 import { refreshLanguageStatsForRepos } from "./repositories";
 
+let bulkPreviewGeneration = 0;
+let bulkExecutionGeneration = 0;
+
 export async function previewBulk(operation: BulkOperation) {
+  if (state.bulkRunning) return;
+  const generation = ++bulkPreviewGeneration;
   const service = await loadWorkspaceService();
-  applyBulkPreview(await service.bulkSyncPreview(operation, state.repos));
+  const preview = await service.bulkSyncPreview(operation, state.repos);
+  if (generation !== bulkPreviewGeneration) return;
+  applyBulkPreview(preview);
 }
 
-function bulkExecutionRepoIds() {
-  if (!state.bulkPreview) return;
-  if (state.bulkPreview.operation === "push" || state.bulkPreview.operation === "sync") {
-    return Array.from(bulkSyncRepoIds(state.bulkPreview));
+function bulkExecutionRepoIds(preview = state.bulkPreview) {
+  if (!preview) return;
+  if (preview.operation === "push" || preview.operation === "sync") {
+    return Array.from(bulkSyncRepoIds(preview));
   }
-  return state.bulkPreview.eligible.map((item) => item.repo.id);
+  return preview.eligible.map((item) => item.repo.id);
 }
 
-export async function executeBulk(repoIds = bulkExecutionRepoIds()) {
-  if (!state.bulkPreview || !repoIds) return;
+export async function executeBulk(repoIds?: string[]) {
+  const preview = state.bulkPreview;
+  const targetRepoIds = repoIds ?? bulkExecutionRepoIds(preview);
+  if (!preview || !targetRepoIds || state.bulkRunning) return;
+  bulkPreviewGeneration += 1;
+  const generation = ++bulkExecutionGeneration;
   state.bulkRunning = true;
   try {
     const service = await loadWorkspaceService();
-    applyBulkResults(await service.bulkSyncExecute(state.bulkPreview.operation, repoIds));
-    if (state.bulkPreview.operation === "push" || state.bulkPreview.operation === "sync") {
+    const results = await service.bulkSyncExecute(preview.operation, targetRepoIds);
+    if (generation !== bulkExecutionGeneration) return;
+    applyBulkResults(preview, results);
+    if (preview.operation === "push" || preview.operation === "sync") {
       state.settings = await service.getWorkspaceSettings();
     }
   } finally {
-    state.bulkRunning = false;
+    if (generation === bulkExecutionGeneration) {
+      state.bulkRunning = false;
+    }
   }
 }
 
 export async function syncAll() {
   if (state.bulkRunning) return;
+  bulkPreviewGeneration += 1;
+  const generation = ++bulkExecutionGeneration;
   state.bulkRunning = true;
   try {
     const service = await loadWorkspaceService();
-    applyBulkPreview(await service.bulkSyncPreview("sync", state.repos));
-    applyBulkResults(await service.bulkSyncExecute("sync", bulkExecutionRepoIds() ?? []));
+    const preview = await service.bulkSyncPreview("sync", state.repos);
+    if (generation !== bulkExecutionGeneration) return;
+    applyBulkPreview(preview);
+    const results = await service.bulkSyncExecute("sync", bulkExecutionRepoIds(preview) ?? []);
+    if (generation !== bulkExecutionGeneration) return;
+    applyBulkResults(preview, results);
     state.settings = await service.getWorkspaceSettings();
   } finally {
-    state.bulkRunning = false;
+    if (generation === bulkExecutionGeneration) {
+      state.bulkRunning = false;
+    }
   }
 }
 
 export function closeBulkPreview() {
+  bulkPreviewGeneration += 1;
   state.bulkPreview = null;
 }
 
@@ -53,7 +77,7 @@ function applyBulkPreview(preview: NonNullable<typeof state.bulkPreview>) {
   rememberRecentSync(preview, []);
 }
 
-function applyBulkResults(results: typeof state.bulkResults) {
+function applyBulkResults(preview: NonNullable<typeof state.bulkPreview>, results: typeof state.bulkResults) {
   state.bulkResults = results;
   const refreshedRepoIds: string[] = [];
   for (const result of results) {
@@ -63,7 +87,5 @@ function applyBulkResults(results: typeof state.bulkResults) {
     }
   }
   if (refreshedRepoIds.length) void refreshLanguageStatsForRepos(refreshedRepoIds);
-  if (state.bulkPreview) {
-    rememberRecentSync(state.bulkPreview, results);
-  }
+  rememberRecentSync(preview, results);
 }
