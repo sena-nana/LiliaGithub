@@ -1,4 +1,5 @@
 import type { LanguageStat, RepoSummary } from "../services/workspace";
+import { githubLanguageColor } from "./githubLanguageColors";
 
 export type LanguageScope = "head" | "workingTree";
 
@@ -27,8 +28,6 @@ type LanguageTotal = {
 };
 
 const DEFAULT_LANGUAGE_SLICE_LIMIT = 6;
-
-export const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
 
 export function buildLanguageOverviewFromRepos(
   repos: readonly RepoSummary[],
@@ -89,9 +88,9 @@ function buildLanguageOverviewFromTotals(totals: LanguageTotal[], sliceLimit: nu
   const totalBytes = items.reduce((total, item) => total + item.bytes, 0);
   const totalLines = items.reduce((total, item) => total + item.lines, 0);
   let offset = 0;
-  const slices = items.map((item, index) => {
+  const slices = items.map((item) => {
     const percent = totalBytes > 0 ? (item.bytes / totalBytes) * 100 : 0;
-    const slice = buildLanguageSlice(item, percent, LANGUAGE_COLORS[index % LANGUAGE_COLORS.length], offset);
+    const slice = buildLanguageSlice(item, percent, offset);
     offset += percent;
     return slice;
   });
@@ -116,7 +115,6 @@ function mergeLanguageTotals(totals: LanguageTotal[]) {
 function buildLanguageSlice(
   total: LanguageTotal,
   percent: number,
-  color: string,
   offset: number,
 ): LanguageSlice {
   const repoIds = [...total.repoBytes.entries()]
@@ -128,7 +126,7 @@ function buildLanguageSlice(
     bytes: total.bytes,
     lines: total.lines,
     percent,
-    color,
+    color: githubLanguageColor(total.language),
     offset,
     repoIds,
     title,
