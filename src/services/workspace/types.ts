@@ -4,12 +4,17 @@ export interface WorkspaceSettings {
   workspaceRoot: string | null;
   githubBinding: GitHubBindingMetadata | null;
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
+  repoSyncPreferences: Record<string, RepoSyncPreference>;
   hiddenRepoIds: string[];
   managedRepoIds: string[];
   systemGitRepoIds: string[];
   repoGroups: WorkspaceRepoGroup[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+}
+
+export interface RepoSyncPreference {
+  autoSync: boolean;
 }
 
 export interface WorkspaceRepoGroup {

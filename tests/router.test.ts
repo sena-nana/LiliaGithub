@@ -1215,12 +1215,13 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByRole("button", { name: "推送" })).toBeInTheDocument();
+    await within(screen.getByLabelText("仓库操作")).findByRole("button", { name: "设置" });
     expect(
       within(screen.getByLabelText("仓库操作"))
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label"))
         .filter(Boolean),
-    ).toEqual(["文件夹", "拉取", "推送"]);
+    ).toEqual(["设置", "文件夹", "拉取", "推送"]);
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();

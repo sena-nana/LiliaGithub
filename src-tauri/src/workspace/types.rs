@@ -8,6 +8,8 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub project_launch_configs: HashMap<String, ProjectLaunchConfig>,
     #[serde(default)]
+    pub repo_sync_preferences: HashMap<String, RepoSyncPreference>,
+    #[serde(default)]
     pub hidden_repo_ids: Vec<String>,
     #[serde(default)]
     pub managed_repo_ids: Vec<String>,
@@ -35,6 +37,13 @@ pub struct WorkspaceRepoGroup {
 pub struct LocalContributionDayCache {
     pub count: usize,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSyncPreference {
+    #[serde(default)]
+    pub auto_sync: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
