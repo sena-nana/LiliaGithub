@@ -5,6 +5,7 @@ import {
   formatLines,
   formatPercent,
 } from "../src/utils/languageStats";
+import { githubLanguageColor } from "../src/utils/githubLanguageColors";
 
 describe("languageStats", () => {
   it("builds top language slices and merges the remainder", () => {
@@ -22,12 +23,12 @@ describe("languageStats", () => {
       bytes: 600,
       lines: 60,
       percent: 600 / 950 * 100,
-      color: "#3178c6",
+      color: "#61a8fa",
     });
-    expect(overview.slices[2]).toMatchObject({ bytes: 150, lines: 30, color: "#6e7781" });
+    expect(overview.slices[2]).toMatchObject({ bytes: 150, lines: 30, color: "#9ca6b0" });
   });
 
-  it("uses GitHub Linguist colors by language name", () => {
+  it("uses normalized GitHub Linguist colors by language name", () => {
     const overview = buildLanguageOverviewFromStats([
       { language: "Vue", bytes: 700, lines: 70 },
       { language: "TypeScript", bytes: 600, lines: 60 },
@@ -37,12 +38,26 @@ describe("languageStats", () => {
     ], 5);
 
     expect(overview.slices.map((slice) => slice.color)).toEqual([
-      "#41b883",
-      "#3178c6",
-      "#dea584",
-      "#663399",
-      "#6e7781",
+      "#48be88",
+      "#61a8fa",
+      "#ce9676",
+      "#ba89f6",
+      "#9ca6b0",
     ]);
+  });
+
+  it("unifies language colors to the same OKLCH lightness", () => {
+    expect(githubLanguageColor("JavaScript")).toBe("#b8a700");
+    expect(githubLanguageColor("Rust")).toBe("#ce9676");
+    expect(githubLanguageColor("Shell")).toBe("#69be27");
+    expect(githubLanguageColor("TypeScript")).toBe("#61a8fa");
+    expect(githubLanguageColor("PowerShell")).toBe("#7ea6e3");
+  });
+
+  it("normalizes neutral and unknown language colors at the target lightness", () => {
+    expect(githubLanguageColor("C")).toBe("#a4a4a4");
+    expect(githubLanguageColor("JSON")).toBe("#a4a4a4");
+    expect(githubLanguageColor("UnknownLang")).toBe("#9ca6b0");
   });
 
   it("keeps the same language color when rank changes", () => {
@@ -55,8 +70,8 @@ describe("languageStats", () => {
       { language: "TypeScript", bytes: 50, lines: 5 },
     ]);
 
-    expect(first.slices.find((slice) => slice.language === "TypeScript")?.color).toBe("#3178c6");
-    expect(second.slices.find((slice) => slice.language === "TypeScript")?.color).toBe("#3178c6");
+    expect(first.slices.find((slice) => slice.language === "TypeScript")?.color).toBe("#61a8fa");
+    expect(second.slices.find((slice) => slice.language === "TypeScript")?.color).toBe("#61a8fa");
   });
 
   it("formats code totals consistently", () => {
