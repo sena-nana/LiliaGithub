@@ -22,12 +22,12 @@ describe("languageStats", () => {
       bytes: 600,
       lines: 60,
       percent: 600 / 950 * 100,
-      visualOffsetY: expect.any(Number),
+      color: "#2f81f7",
     });
     expect(overview.slices[2]).toMatchObject({ bytes: 150, lines: 30 });
   });
 
-  it("adds small hue-based visual offsets for language color slices", () => {
+  it("assigns language colors in order", () => {
     const overview = buildLanguageOverviewFromStats([
       { language: "Blue", bytes: 700, lines: 70 },
       { language: "Green", bytes: 600, lines: 60 },
@@ -37,15 +37,16 @@ describe("languageStats", () => {
       { language: "Orange", bytes: 200, lines: 20 },
       { language: "Gray", bytes: 100, lines: 10 },
     ], 7);
-    const offsetsByColor = new Map(overview.slices.map((slice) => [slice.color, slice.visualOffsetY]));
 
-    expect(offsetsByColor.get("#d29922")).toBeGreaterThan(0);
-    expect(offsetsByColor.get("#d29922")).toBeLessThanOrEqual(0.28);
-    expect(offsetsByColor.get("#db6d28")).toBeGreaterThan(0);
-    expect(offsetsByColor.get("#db6d28")).toBeLessThanOrEqual(0.28);
-    expect(offsetsByColor.get("#2f81f7")).toBe(0);
-    expect(offsetsByColor.get("#3fb950")).toBe(0);
-    expect(offsetsByColor.get("#6e7681")).toBe(0);
+    expect(overview.slices.map((slice) => slice.color)).toEqual([
+      "#2f81f7",
+      "#3fb950",
+      "#d29922",
+      "#f85149",
+      "#a371f7",
+      "#db6d28",
+      "#6e7681",
+    ]);
   });
 
   it("formats code totals consistently", () => {

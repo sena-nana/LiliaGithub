@@ -36,8 +36,7 @@ const hasLanguageStats = computed(() => overview.value.slices.length > 0);
           class="repo-language-card__bar-segment"
           :style="{
             background: slice.color,
-            transform: `translateY(${slice.visualOffsetY}px)`,
-            width: `${slice.percent}%`,
+            flex: `${slice.percent} 1 0%`,
           }"
           :title="`${slice.language} ${formatPercent(slice.percent)}`"
           :aria-label="`${slice.language} ${formatPercent(slice.percent)}`"
@@ -101,6 +100,10 @@ const hasLanguageStats = computed(() => overview.value.slices.length > 0);
 .repo-language-card__bar-segment {
   min-width: 3px;
   height: 100%;
+}
+
+.repo-language-card__bar-segment + .repo-language-card__bar-segment {
+  box-shadow: inset 1px 0 0 var(--bg-subtle);
 }
 
 .repo-language-card__list {

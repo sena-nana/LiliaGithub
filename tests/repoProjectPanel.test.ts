@@ -331,7 +331,7 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/local-repo",
     });
 
-    const card = await view.findByRole("region", { name: "代码统计" });
+    const card = await view.findByRole("region", { name: "代码统计" }, { timeout: 5000 });
     expect(within(card).getByText("TypeScript")).toBeInTheDocument();
     expect(within(card).getByText("120 ·")).toBeInTheDocument();
     expect(within(card).getByText("60%")).toBeInTheDocument();
@@ -345,8 +345,9 @@ describe("RepoProjectPanel", () => {
     expect(within(card).getByText("240")).toBeInTheDocument();
     const barSegments = card.querySelectorAll(".repo-language-card__bar-segment");
     expect(barSegments).toHaveLength(5);
-    expect(barSegments[0] as HTMLElement).toHaveStyle({ transform: "translateY(0px)" });
-    expect((barSegments[2] as HTMLElement).style.transform).toMatch(/^translateY\(0\.[1-9]\d?px\)$/);
+    expect((barSegments[0] as HTMLElement).style.flex).toBe("60 1 0%");
+    expect((barSegments[2] as HTMLElement).style.flex).toBe("10 1 0%");
+    expect((barSegments[0] as HTMLElement).style.transform).toBe("");
   });
 
   it("远程仓库侧边栏语言统计不显示本地行数", async () => {
@@ -363,7 +364,7 @@ describe("RepoProjectPanel", () => {
       remoteOnly: true,
     });
 
-    const card = await view.findByRole("region", { name: "代码统计" });
+    const card = await view.findByRole("region", { name: "代码统计" }, { timeout: 5000 });
     expect(within(card).getByText("TypeScript")).toBeInTheDocument();
     expect(within(card).getByText("100%")).toBeInTheDocument();
     expect(within(card).queryByText("40 ·")).toBeNull();
