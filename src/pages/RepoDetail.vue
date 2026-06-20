@@ -27,6 +27,7 @@ import "../styles/page.css";
 
 const RepoFilesPanel = defineAsyncComponent(() => import("../components/repo/RepoFilesPanel.vue"));
 const RepoStashPanel = defineAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
+const RepoToolbarSettingsMenu = defineAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
 
 const {
   activeTab,
@@ -83,6 +84,8 @@ const {
   activeBranchName,
   aheadCount,
   behindCount,
+  autoSyncEnabled,
+  repoActionError,
   focusChange,
   focusConflict,
   pickConflictHunk,
@@ -93,6 +96,7 @@ const {
   refreshAndFetchRepo,
   selectOpenTarget,
   selectPullStrategy,
+  setAutoSync,
   runSelectedPullStrategy,
   push,
   pushCurrentBranchWithUpstream,
@@ -214,6 +218,11 @@ const {
             </div>
 
             <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
+              <RepoToolbarSettingsMenu
+                :auto-sync="autoSyncEnabled"
+                :disabled="actionRunning"
+                @update:auto-sync="setAutoSync"
+              />
               <button
                 v-if="usingSystemGit"
                 type="button"
@@ -304,8 +313,9 @@ const {
         </div>
       </header>
 
-    <div v-if="actionError || recentSyncError" class="repo-workbench__status">
+    <div v-if="actionError || repoActionError || recentSyncError" class="repo-workbench__status">
       <p v-if="actionError" class="error-line">{{ actionError }}</p>
+      <p v-else-if="repoActionError" class="error-line">{{ repoActionError }}</p>
       <RepoPushError
         v-if="recentSyncError"
           :message="recentSyncError.message"

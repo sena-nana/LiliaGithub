@@ -54,6 +54,7 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     workspaceRoot: "C:\\Files\\workspace",
     githubBinding: null,
     projectLaunchConfigs: {},
+    repoSyncPreferences: {},
     hiddenRepoIds,
     managedRepoIds: [],
     systemGitRepoIds: [],

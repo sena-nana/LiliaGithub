@@ -51,6 +51,7 @@ function deferred<T>() {
 
 const service = {
   getWorkspaceSettings: vi.fn(),
+  setRepoAutoSync: vi.fn(),
   getGitHubBindingStatus: vi.fn(),
   listManagedRepos: vi.fn(),
   refreshRepos: vi.fn(),
@@ -108,6 +109,10 @@ beforeEach(() => {
   });
   service.listWorkspaceTasks.mockResolvedValue([]);
   service.getWorkspaceSettings.mockResolvedValue(workspaceSettings());
+  service.setRepoAutoSync.mockImplementation(async (repoId: string, autoSync: boolean) => ({
+    ...workspaceSettings(),
+    repoSyncPreferences: { [repoId]: { autoSync } },
+  }));
   service.getGitHubBindingStatus.mockResolvedValue({
     state: "bound",
     clientIdConfigured: true,
@@ -166,6 +171,51 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
     resolveSummary?.(refreshed);
     await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 2, stagedCount: 1 }));
+  });
+
+  it("自动刷新发现开启自动同步的仓库有待同步提交时执行同步", async () => {
+    const stale = repoSummary("Repo1", { ahead: 1, behind: 1 });
+    const synced = repoSummary("Repo1", { ahead: 0, behind: 0 });
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(stale);
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: "Repo1", status: "success", message: "完成", summary: synced },
+    ]);
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]);
+    expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 0, behind: 0 });
+    expect(repoActionErrorForRepo("Repo1")).toBeNull();
+  });
+
+  it("自动刷新不会同步未开启自动同步的仓库", async () => {
+    state.settings = workspaceSettings();
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("Repo1", { ahead: 1 }));
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
+    expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
+  });
+
+  it("自动刷新遇到未提交变更时跳过自动同步并记录仓库错误", async () => {
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("Repo1", { ahead: 1, unstagedCount: 1 }));
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
+    expect(repoActionErrorForRepo("Repo1")).toBe("存在未提交变更，已跳过自动同步");
   });
 
   it("仓库状态刷新按固定并发上限启动，单个仓库未完成时不阻塞同批其他仓库", async () => {

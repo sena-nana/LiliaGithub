@@ -1,4 +1,5 @@
 import packageJson from "../../../package.json";
+import { withRepoAutoSyncPreference } from "../../config/repoSettingsManifest";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -817,6 +818,7 @@ function createFallbackSettings(): WorkspaceSettings {
     workspaceRoot: "C:\\Files\\workspace",
     githubBinding: defaultFallbackBinding.binding,
     projectLaunchConfigs: {},
+    repoSyncPreferences: {},
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     systemGitRepoIds: [],
@@ -1151,6 +1153,12 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
   return {
     ...settings,
     projectLaunchConfigs: { ...settings.projectLaunchConfigs },
+    repoSyncPreferences: Object.fromEntries(
+      Object.entries(settings.repoSyncPreferences ?? {}).map(([repoId, preference]) => [
+        repoId,
+        { ...preference },
+      ]),
+    ),
     hiddenRepoIds: [...settings.hiddenRepoIds],
     managedRepoIds: [...settings.managedRepoIds],
     systemGitRepoIds: [...settings.systemGitRepoIds],
@@ -1255,6 +1263,22 @@ export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function setRepoAutoSync(repoId: string, autoSync: boolean): Promise<WorkspaceSettings> {
+  return call("repo_set_auto_sync", { repoId, autoSync }, () => {
+    const normalized = repoId.trim();
+    if (!normalized) throw new Error("仓库 ID 不能为空");
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoSyncPreferences: withRepoAutoSyncPreference(
+        fallbackSettings.repoSyncPreferences,
+        normalized,
+        autoSync,
+      ),
+    };
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }
@@ -1559,9 +1583,12 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
     delete localContributionCache[repoId];
     const projectLaunchConfigs = { ...fallbackSettings.projectLaunchConfigs };
     delete projectLaunchConfigs[repoId];
+    const repoSyncPreferences = { ...fallbackSettings.repoSyncPreferences };
+    delete repoSyncPreferences[repoId];
     fallbackSettings = {
       ...fallbackSettings,
       projectLaunchConfigs,
+      repoSyncPreferences,
       managedRepoIds: fallbackSettings.managedRepoIds.filter((id) => id !== repoId),
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
       systemGitRepoIds: fallbackSettings.systemGitRepoIds.filter((id) => id !== repoId),

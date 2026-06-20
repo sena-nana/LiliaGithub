@@ -44,6 +44,7 @@ pub fn run() {
             ping,
             workspace::settings::workspace_get_settings,
             workspace::settings::workspace_set_root,
+            workspace::settings::repo_set_auto_sync,
             workspace::settings::workspace_pick_root,
             workspace::settings::workspace_pick_repo,
             workspace::repos::workspace_refresh_repos,

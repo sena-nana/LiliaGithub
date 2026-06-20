@@ -238,6 +238,7 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
         group.repo_ids.retain(|id| id != repo_id);
     }
     settings.project_launch_configs.remove(repo_id);
+    settings.repo_sync_preferences.remove(repo_id);
     remove_local_contribution_cache(settings, repo_id);
 }
 
@@ -257,6 +258,29 @@ pub fn workspace_set_root(
     }
     let mut settings = load_settings(&app);
     settings.workspace_root = Some(root.to_string_lossy().to_string());
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn repo_set_auto_sync(
+    app: AppHandle,
+    repo_id: String,
+    auto_sync: bool,
+) -> Result<WorkspaceSettings, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    let mut settings = load_settings(&app);
+    if auto_sync {
+        settings.repo_sync_preferences.insert(
+            normalized.to_string(),
+            RepoSyncPreference { auto_sync },
+        );
+    } else {
+        settings.repo_sync_preferences.remove(normalized);
+    }
     save_settings(&app, &settings)?;
     Ok(settings)
 }

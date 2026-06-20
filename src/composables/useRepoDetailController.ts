@@ -1,5 +1,6 @@
-﻿import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { repoAutoSyncEnabled } from "../config/repoSettingsManifest";
 import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches, listGitHubRepoCommits } from "../services/workspace";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
@@ -341,6 +342,8 @@ export function useRepoDetailController() {
   });
   const aheadCount = computed(() => summary.value?.ahead ?? 0);
   const behindCount = computed(() => summary.value?.behind ?? 0);
+  const autoSyncEnabled = computed(() => repoAutoSyncEnabled(workspace.state.settings, repoId.value));
+  const repoActionError = computed(() => workspace.state.repoActionErrors[repoId.value]?.message ?? null);
   onMounted(() => {
     void load();
     launchPollTimer = window.setInterval(() => {
@@ -749,6 +752,7 @@ export function useRepoDetailController() {
       }
       await workspace.fetch(targetRepoId);
       await load();
+      await workspace.autoSyncRepoIfNeeded(targetRepoId, { refreshDetail: true, throwOnError: true });
       projectRefreshToken.value += 1;
     });
   }
@@ -757,6 +761,10 @@ export function useRepoDetailController() {
     if (value === "pull" || value === "merge" || value === "rebase") {
       pullStrategy.value = value;
     }
+  }
+
+  function setAutoSync(value: boolean) {
+    void runAction(() => workspace.setRepoAutoSync(repoId.value, value));
   }
 
   function isOpenTarget(value: string): value is SystemOpenTarget {
@@ -1088,6 +1096,8 @@ export function useRepoDetailController() {
       activeBranchName,
       aheadCount,
       behindCount,
+      autoSyncEnabled,
+      repoActionError,
       load,
       refreshLaunch,
       focusChange,
@@ -1100,6 +1110,7 @@ export function useRepoDetailController() {
       refreshAndFetchRepo,
       fetchRepo,
       selectPullStrategy,
+      setAutoSync,
       selectOpenTarget,
       openSelectedTarget,
       runSelectedPullStrategy,

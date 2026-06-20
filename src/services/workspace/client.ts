@@ -119,6 +119,10 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
   return call("workspace_set_root", { workspaceRoot }, () => fallback.setWorkspaceRoot(workspaceRoot));
 }
 
+export function setRepoAutoSync(repoId: string, autoSync: boolean): Promise<WorkspaceSettings> {
+  return call("repo_set_auto_sync", { repoId, autoSync }, () => fallback.setRepoAutoSync(repoId, autoSync));
+}
+
 export function pickWorkspaceRoot(): Promise<string | null> {
   return call("workspace_pick_root", undefined, fallback.pickWorkspaceRoot);
 }
