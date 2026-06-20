@@ -5,7 +5,7 @@ import {
   initialize,
   installWorkspaceFocusRefresh,
 } from "../src/composables/workspace/lifecycle";
-import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
+import { recentSyncErrorForRepo, resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
@@ -20,6 +20,7 @@ const service = vi.hoisted(() => ({
   listRepoContribution: vi.fn(),
   listWorkspaceTasks: vi.fn(),
   refreshRepoLanguageStats: vi.fn(),
+  bulkSyncExecute: vi.fn(),
 }));
 
 vi.mock("../src/composables/workspace/serviceLoader", () => ({
@@ -88,6 +89,7 @@ describe("workspace focus refresh", () => {
       },
     });
     service.listWorkspaceTasks.mockResolvedValue([]);
+    service.bulkSyncExecute.mockResolvedValue([]);
     service.refreshRepoLanguageStats.mockResolvedValue(repoSummary("LiliaGithub", {
       languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
@@ -131,6 +133,32 @@ describe("workspace focus refresh", () => {
     expect(state.repos[0].languageStats).toEqual(initial.languageStats);
     expect(state.repos[0].workingTreeLanguageStats).toEqual(initial.workingTreeLanguageStats);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(1);
+  });
+
+  it("回焦点刷新触发自动同步失败时保存最近同步失败", async () => {
+    const initial = repoSummary("LiliaGithub", { behind: 0 });
+    const refreshed = repoSummary("LiliaGithub", { behind: 2 });
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { LiliaGithub: { autoSync: true } },
+    };
+    state.repos = [initial];
+    service.listManagedRepos.mockResolvedValue([initial]);
+    service.refreshRepoSummary.mockResolvedValue(refreshed);
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: "LiliaGithub", status: "error", message: "认证失败", summary: null },
+    ]);
+    cleanup = await installWorkspaceFocusRefresh();
+
+    blurWindow();
+    vi.advanceTimersByTime(FOCUS_REFRESH_THRESHOLD_MS);
+    focusWindow();
+    await flushPromises();
+    await flushPromises();
+    await flushPromises();
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["LiliaGithub"]);
+    expect(recentSyncErrorForRepo("LiliaGithub")).toEqual({ message: "认证失败", retrying: false });
   });
 
   it("选择工作区会阻止旧初始化结果覆盖当前设置", async () => {

@@ -14,6 +14,7 @@ import {
   pull,
   push,
   renameBranch,
+  autoSyncRepoIfNeeded,
   useDefaultTokenAuthForRepo,
   refreshRepos,
   refreshRepoLanguageStats,
@@ -29,6 +30,7 @@ import { initialize } from "../src/composables/workspace/lifecycle";
 import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/composables/workspace/bulk";
 import {
   bulkSyncRepoIds,
+  bulkSyncRunningRepoIds,
   repoActionErrorForRepo,
   repoActionErrorDetailForRepo,
   syncErrorByRepoId,
@@ -216,6 +218,64 @@ describe("workspace incremental refresh", () => {
 
     expect(service.bulkSyncExecute).not.toHaveBeenCalled();
     expect(repoActionErrorForRepo("Repo1")).toBe("存在未提交变更，已跳过自动同步");
+    expect(state.recentSync).toBeNull();
+  });
+
+  it("自动刷新执行自动同步时暴露同步中状态并保存最近失败", async () => {
+    const stale = repoSummary("Repo1", { ahead: 1 });
+    const execution = deferred<typeof state.bulkResults>();
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(stale);
+    service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
+
+    const refreshing = refreshRepoSummaries();
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]));
+
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
+
+    execution.resolve([
+      { repoId: "Repo1", status: "error", message: "认证失败", summary: null },
+    ]);
+    await refreshing;
+
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(false);
+    expect(repoActionErrorForRepo("Repo1")).toBe("认证失败");
+    expect(state.recentSync?.preview.operation).toBe("sync");
+    expect(state.recentSync?.preview.eligible).toEqual([{ repo: stale, reason: "有本地提交待推送" }]);
+    expect(recentSyncErrorForRepo("Repo1")).toEqual({ message: "认证失败", retrying: false });
+  });
+
+  it("自动同步重复触发时沿用运行中状态且不覆盖错误提示", async () => {
+    const stale = repoSummary("Repo1", { behind: 1 });
+    const synced = repoSummary("Repo1", { behind: 0 });
+    const execution = deferred<typeof state.bulkResults>();
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    state.repos = [stale];
+    service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
+
+    const running = autoSyncRepoIfNeeded("Repo1");
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]));
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
+
+    await autoSyncRepoIfNeeded("Repo1");
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledTimes(1);
+    expect(repoActionErrorForRepo("Repo1")).toBeNull();
+
+    execution.resolve([
+      { repoId: "Repo1", status: "success", message: "完成", summary: synced },
+    ]);
+    await running;
+
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(false);
+    expect(state.repos[0].behind).toBe(0);
   });
 
   it("仓库状态刷新按固定并发上限启动，单个仓库未完成时不阻塞同批其他仓库", async () => {

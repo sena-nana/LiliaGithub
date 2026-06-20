@@ -428,6 +428,22 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("侧边栏显示自动同步运行中的仓库行状态", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.syncingRepoIds = ["LiliaGithub"];
+
+    await waitFor(() => {
+      const row = sidebarRowForText(view.container, "LiliaGithub");
+      expect(within(row).getByLabelText("正在同步")).toBeInTheDocument();
+      expect(within(row).queryByLabelText("同步失败")).not.toBeInTheDocument();
+    });
+  });
+
   it("侧边栏显示最近一次同步失败结果", async () => {
     const view = await renderAppShell("/repos/LiliaGithub");
 
