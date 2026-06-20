@@ -43,6 +43,7 @@ export interface WorkspaceState {
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
   refreshingRepoIds: string[];
+  syncingRepoIds: string[];
 }
 
 export interface RecentBulkSyncState {
@@ -96,6 +97,7 @@ export const state = reactive<WorkspaceState>({
   tasks: [],
   languageStatsLoadingRepoIds: [],
   refreshingRepoIds: [],
+  syncingRepoIds: [],
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -232,8 +234,10 @@ export function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPrev
 }
 
 export function bulkSyncRunningRepoIds() {
-  if (!state.bulkRunning) return new Set<string>();
-  return bulkSyncRepoIds();
+  const ids = new Set(state.syncingRepoIds);
+  if (!state.bulkRunning) return ids;
+  for (const repoId of bulkSyncRepoIds()) ids.add(repoId);
+  return ids;
 }
 
 export function syncErrorByRepoId() {
@@ -287,6 +291,16 @@ export function clearRepoActionError(repoId: string) {
   const next = { ...state.repoActionErrors };
   delete next[repoId];
   state.repoActionErrors = next;
+}
+
+export function beginRepoSync(repoId: string) {
+  if (state.syncingRepoIds.includes(repoId)) return;
+  state.syncingRepoIds = [...state.syncingRepoIds, repoId];
+}
+
+export function finishRepoSync(repoId: string) {
+  if (!state.syncingRepoIds.includes(repoId)) return;
+  state.syncingRepoIds = state.syncingRepoIds.filter((id) => id !== repoId);
 }
 
 export function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncResult[]) {
@@ -377,5 +391,6 @@ export function resetWorkspaceStateForTests() {
   state.tasks = [];
   state.languageStatsLoadingRepoIds = [];
   state.refreshingRepoIds = [];
+  state.syncingRepoIds = [];
   deviceFlow.value = null;
 }

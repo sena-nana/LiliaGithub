@@ -1,7 +1,10 @@
 import {
   beginRecentSyncRetry,
+  beginRepoSync,
   clearRepoActionError,
   finishRecentSyncRetry,
+  finishRepoSync,
+  rememberRecentSync,
   state,
   replaceRepos,
   setRepoDetail,
@@ -16,6 +19,7 @@ import type {
   RemoteRepoShortcut,
   RepoConflictChoice,
   RepoSummary,
+  BulkSyncPreview,
   BulkSyncResult,
 } from "../../services/workspace";
 import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
@@ -70,12 +74,30 @@ function repoDirtyCount(summary: RepoSummary) {
 }
 
 function autoSyncBlockReason(summary: RepoSummary) {
-  if (autoSyncRunningRepoIds.has(summary.id)) return "自动同步正在执行";
   if (!summary.remoteUrl) return "没有 origin remote，已跳过自动同步";
   if (!summary.currentBranch) return "当前不是命名分支，已跳过自动同步";
   if (summary.conflictCount > 0) return "已有冲突需要先处理，已跳过自动同步";
   if (repoDirtyCount(summary) > 0) return "存在未提交变更，已跳过自动同步";
   return null;
+}
+
+function autoSyncReason(summary: RepoSummary) {
+  if (summary.ahead > 0 && summary.behind > 0) return "需先拉取合并后推送";
+  if (summary.behind > 0) return "可拉取远端更新";
+  return "有本地提交待推送";
+}
+
+function autoSyncPreview(summary: RepoSummary): BulkSyncPreview {
+  return {
+    operation: "sync",
+    eligible: [{ repo: { ...summary }, reason: autoSyncReason(summary) }],
+    blocked: [],
+    warnings: [],
+  };
+}
+
+function rememberAutoSyncFailure(summary: RepoSummary, result: BulkSyncResult) {
+  rememberRecentSync(autoSyncPreview(summary), [result]);
 }
 
 function applyAutoSyncResult(result: BulkSyncResult) {
@@ -101,6 +123,7 @@ export async function autoSyncRepoIfNeeded(
     clearRepoActionError(summary.id);
     return null;
   }
+  if (autoSyncRunningRepoIds.has(summary.id)) return null;
 
   const blockReason = autoSyncBlockReason(summary);
   if (blockReason) {
@@ -109,12 +132,28 @@ export async function autoSyncRepoIfNeeded(
   }
 
   autoSyncRunningRepoIds.add(summary.id);
+  beginRepoSync(summary.id);
   try {
-    const service = await loadWorkspaceService();
-    const [result] = await service.bulkSyncExecute("sync", [summary.id]);
+    let result: BulkSyncResult | undefined;
+    try {
+      const service = await loadWorkspaceService();
+      [result] = await service.bulkSyncExecute("sync", [summary.id]);
+    } catch (err) {
+      const failedResult: BulkSyncResult = {
+        repoId: summary.id,
+        status: "error",
+        message: String(err),
+        summary: null,
+      };
+      rememberAutoSyncFailure(summary, failedResult);
+      setRepoActionError(summary.id, failedResult.message);
+      if (options.throwOnError) throw err;
+      return null;
+    }
     if (!result) return null;
     applyAutoSyncResult(result);
     if (result.status !== "success") {
+      rememberAutoSyncFailure(summary, result);
       if (options.throwOnError) throw new Error(result.message);
       return result;
     }
@@ -124,12 +163,9 @@ export async function autoSyncRepoIfNeeded(
     }
     void refreshRepoLanguageStats(syncedRepoId, { silent: true });
     return result;
-  } catch (err) {
-    setRepoActionError(summary.id, String(err));
-    if (options.throwOnError) throw err;
-    return null;
   } finally {
     autoSyncRunningRepoIds.delete(summary.id);
+    finishRepoSync(summary.id);
   }
 }
 

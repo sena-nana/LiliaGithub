@@ -314,8 +314,6 @@ const {
       </header>
 
     <div v-if="actionError || repoActionError || recentSyncError" class="repo-workbench__status">
-      <p v-if="actionError" class="error-line">{{ actionError }}</p>
-      <p v-else-if="repoActionError" class="error-line">{{ repoActionError }}</p>
       <RepoPushError
         v-if="recentSyncError"
           :message="recentSyncError.message"
@@ -323,6 +321,8 @@ const {
           :action-running="actionRunning"
           @retry="push"
         />
+      <p v-else-if="actionError" class="error-line">{{ actionError }}</p>
+      <p v-else-if="repoActionError" class="error-line">{{ repoActionError }}</p>
       </div>
     </div>
 

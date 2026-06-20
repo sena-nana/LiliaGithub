@@ -2235,6 +2235,31 @@ describe("基础路由", () => {
     });
   });
 
+  it("仓库详情页最近同步失败优先于仓库操作错误展示", async () => {
+    const { setRepoActionError, state } = await import("../src/composables/workspace/state");
+    await renderAt("/repos/LiliaGithub");
+    await waitForRepoTitle("LiliaGithub");
+
+    const repo = state.repos.find((item) => item.id === "LiliaGithub") ?? repoSummary("LiliaGithub", { ahead: 1 });
+    state.recentSync = {
+      preview: {
+        operation: "sync",
+        eligible: [{ repo, reason: "有本地提交待推送" }],
+        blocked: [],
+        warnings: [],
+      },
+      results: [{ repoId: repo.id, status: "error", message: "认证失败", summary: null }],
+      retryingRepoIds: [],
+      updatedAt: 2,
+    };
+    setRepoActionError(repo.id, "自动同步正在执行");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    });
+    expect(screen.queryByText("自动同步正在执行")).toBeNull();
+  });
+
   it("仓库详情页状态区出现或消失时保留项目主内容区", async () => {
     const service = await mockLiliaGithubSyncFailure();
     await renderAt("/");
