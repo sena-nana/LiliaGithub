@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AnsiUp } from "ansi_up";
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   Check,
@@ -65,6 +65,7 @@ import type {
   RepoConflictFile,
   RepoConflictState,
   RepoReadme,
+  RepoSummary,
 } from "../../services/workspace/types";
 import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import { isLinkedWorktree } from "../../utils/repoWorktree";
@@ -90,11 +91,14 @@ type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
+const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
+
 const props = defineProps<{
   repoId: string;
   repoTitle?: string;
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
+  repoSummary?: RepoSummary | null;
   launchConfig: ProjectLaunchConfig | null;
   launchLogs: readonly ProjectLaunchLog[];
   launchError?: string | null;
@@ -345,6 +349,7 @@ const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.
 const activeReadme = computed(() =>
   readmes.value.find((item) => item.path === activeReadmePath.value) ?? readmes.value[0] ?? null,
 );
+const languageStatsLoading = computed(() => workspace.state.languageStatsLoadingRepoIds.includes(props.repoId));
 const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
 const readmePaths = computed(() => readmes.value.map((item) => item.path));
 const projectSections: readonly ProjectSectionConfig[] = [
@@ -2032,6 +2037,12 @@ function selectReadme(path: string) {
             <strong>{{ tab.label }}</strong>
           </button>
         </div>
+
+        <RepoLanguageStatsCard
+          :repo="repoSummary ?? null"
+          :remote-only="remoteOnly"
+          :loading="languageStatsLoading"
+        />
 
       </aside>
     </div>

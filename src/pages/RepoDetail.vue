@@ -346,6 +346,7 @@ const {
           :repo-title="repoTitle"
           :repo-full-name="summary?.githubFullName"
           :repo-path="summary?.path"
+          :repo-summary="summary"
           :active-git-tab="activeTab"
           :changes="changes"
           :preview-change="previewChange"

@@ -57,6 +57,14 @@ import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type Work
 import { representativeReposByGitHubFullName, representativeReposBySharedGroup } from "../utils/repoWorktree";
 import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
 import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
+import {
+  buildLanguageOverviewFromRepos,
+  formatBytes,
+  formatPercent,
+  type LanguageOverview,
+  type LanguageScope,
+  type LanguageSlice,
+} from "../utils/languageStats";
 import "../styles/page.css";
 
 const workspace = useWorkspace();
@@ -113,33 +121,16 @@ type ContributionMonthLabel = {
   label: string;
 };
 
-type LanguageSlice = {
-  language: string;
-  bytes: number;
-  percent: number;
-  color: string;
-  offset: number;
+type HomeLanguageSlice = LanguageSlice & {
   to: string;
-  title: string;
   linkTitle: string;
 };
 
-type LanguageOverview = {
-  totalBytes: number;
-  slices: LanguageSlice[];
-};
-
-type LanguageTotal = {
-  language: string;
-  bytes: number;
-  repoBytes: Map<string, number>;
+type HomeLanguageOverview = Omit<LanguageOverview, "slices"> & {
+  slices: HomeLanguageSlice[];
 };
 
 type ProjectTabRef = "issues" | "pulls" | "actions";
-
-type LanguageScope = "head" | "workingTree";
-
-const LANGUAGE_COLORS = ["#2f81f7", "#3fb950", "#d29922", "#f85149", "#a371f7", "#db6d28", "#6e7681"];
 const GITHUB_TIMELINE_EVENT_LIMIT = 12;
 const GITHUB_TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 const GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -245,33 +236,23 @@ const filteredCloneRepos = computed(() => {
   );
 });
 
-const languageOverview = computed<LanguageOverview>(() => {
-  const totals = new Map<string, Omit<LanguageTotal, "language">>();
-  for (const repo of representativeReposBySharedGroup(workspace.state.repos)) {
-    const stats = languageScope.value === "workingTree" ? repo.workingTreeLanguageStats : repo.languageStats;
-    for (const stat of stats) {
-      const total = totals.get(stat.language) ?? { bytes: 0, repoBytes: new Map<string, number>() };
-      total.bytes += stat.bytes;
-      total.repoBytes.set(repo.id, (total.repoBytes.get(repo.id) ?? 0) + stat.bytes);
-      totals.set(stat.language, total);
-    }
-  }
-  const sorted = [...totals.entries()]
-    .map(([language, value]) => ({ language, ...value }))
-    .filter((item) => item.bytes > 0)
-    .sort((a, b) => b.bytes - a.bytes || a.language.localeCompare(b.language));
-  const top = sorted.slice(0, 6);
-  const other = mergeLanguageTotals(sorted.slice(6));
-  const items = other ? [...top, other] : top;
-  const totalBytes = items.reduce((total, item) => total + item.bytes, 0);
-  let offset = 0;
-  const slices = items.map((item, index) => {
-    const percent = totalBytes > 0 ? (item.bytes / totalBytes) * 100 : 0;
-    const slice = buildLanguageSlice(item, percent, LANGUAGE_COLORS[index % LANGUAGE_COLORS.length], offset);
-    offset += percent;
-    return slice;
+const languageOverview = computed<HomeLanguageOverview>(() => {
+  const overview = buildLanguageOverviewFromRepos(
+    representativeReposBySharedGroup(workspace.state.repos),
+    languageScope.value,
+  );
+  const slices = overview.slices.map((slice) => {
+    const primaryRepoId = slice.repoIds[0] ?? null;
+    const target = workspace.repoById(primaryRepoId ?? "")?.name ?? primaryRepoId;
+    return {
+      ...slice,
+      to: primaryRepoId ? repoRoute(primaryRepoId) : "/",
+      linkTitle: target
+        ? `${slice.title}，点击进入 ${target}${slice.repoIds.length > 1 ? ` 等 ${slice.repoIds.length} 个仓库` : ""}`
+        : slice.title,
+    };
   });
-  return { totalBytes, slices };
+  return { ...overview, slices };
 });
 
 const localRepoByGitHubFullName = computed(() => representativeReposByGitHubFullName(workspace.state.repos));
@@ -931,45 +912,6 @@ async function loadMoreGitHubRepos() {
   });
 }
 
-function mergeLanguageTotals(totals: LanguageTotal[]) {
-  if (!totals.length) return null;
-  const repoBytes = new Map<string, number>();
-  let bytes = 0;
-  for (const total of totals) {
-    bytes += total.bytes;
-    for (const [repoId, repoSliceBytes] of total.repoBytes) {
-      repoBytes.set(repoId, (repoBytes.get(repoId) ?? 0) + repoSliceBytes);
-    }
-  }
-  return { language: "Other", bytes, repoBytes };
-}
-
-function buildLanguageSlice(
-  total: LanguageTotal,
-  percent: number,
-  color: string,
-  offset: number,
-): LanguageSlice {
-  const repoIds = [...total.repoBytes.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([repoId]) => repoId);
-  const primaryRepoId = repoIds[0] ?? null;
-  const target = workspace.repoById(primaryRepoId ?? "")?.name ?? primaryRepoId;
-  const baseTitle = `${total.language}：${formatPercent(percent)}，${formatBytes(total.bytes)}`;
-  return {
-    language: total.language,
-    bytes: total.bytes,
-    percent,
-    color,
-    offset,
-    to: primaryRepoId ? repoRoute(primaryRepoId) : "/",
-    title: baseTitle,
-    linkTitle: target
-      ? `${baseTitle}，点击进入 ${target}${repoIds.length > 1 ? ` 等 ${repoIds.length} 个仓库` : ""}`
-      : baseTitle,
-  };
-}
-
 function repoAction(repo: RepoSummary): RepoAction | null {
   const syncError = syncErrorDetails.value.get(repo.id)?.message ?? null;
   if (syncError) {
@@ -1267,16 +1209,6 @@ function contributionLevel(count: number, maxCount: number) {
 
 function contributionTitle(day: GitHubContributionDay) {
   return `${day.date}：${day.count} 次提交`;
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function formatPercent(percent: number) {
-  return `${Math.round(percent)}%`;
 }
 
 function parseGitHubTime(value: string | null | undefined) {

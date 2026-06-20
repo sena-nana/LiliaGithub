@@ -89,8 +89,8 @@ describe("workspace focus refresh", () => {
     });
     service.listWorkspaceTasks.mockResolvedValue([]);
     service.refreshRepoLanguageStats.mockResolvedValue(repoSummary("LiliaGithub", {
-      languageStats: [{ language: "TypeScript", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: Date.now(),
     }));
   });
@@ -104,8 +104,8 @@ describe("workspace focus refresh", () => {
   it("失焦超过 5 分钟后回焦点只同步仓库摘要和远端状态", async () => {
     const initial = repoSummary("LiliaGithub", {
       behind: 0,
-      languageStats: [{ language: "Vue", bytes: 10 }],
-      workingTreeLanguageStats: [{ language: "Vue", bytes: 10 }],
+      languageStats: [{ language: "Vue", bytes: 10, lines: 10 }],
+      workingTreeLanguageStats: [{ language: "Vue", bytes: 10, lines: 10 }],
       languageStatsUpdatedAt: 1,
     });
     const refreshed = repoSummary("LiliaGithub", { behind: 2 });
