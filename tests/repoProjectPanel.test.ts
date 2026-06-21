@@ -668,7 +668,7 @@ describe("RepoProjectPanel", () => {
     expect(topicList).toHaveClass("is-collapsed");
   });
 
-  it("切换到对应分区时才按需请求 settings、issues 和 actions", async () => {
+  it("首次进入远端项目页会预热 GitHub 项目元数据，列表仍按分区请求", async () => {
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
     vi.mocked(listGitHubIssues).mockResolvedValue(githubIssues);
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue(githubWorkflowRuns);
@@ -676,17 +676,27 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/remote-repo",
     });
 
+    await waitFor(() => {
+      expect(getGitHubIssueFilterMetadata).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
+      expect(listGitHubIssueLabels).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
+      expect(listGitHubIssueAssignees).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
+    });
+    expect(listGitHubRepoFiles).toHaveBeenCalledWith("sena-nana/remote-repo", ".github/ISSUE_TEMPLATE");
+    expect(listGitHubRepoFiles).toHaveBeenCalledWith("sena-nana/remote-repo", null);
+    expect(listGitHubIssues).not.toHaveBeenCalled();
+    expect(listGitHubPullRequests).not.toHaveBeenCalled();
+    expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
     expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
-    expect(getGitHubIssueFilterMetadata).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
-    expect(getGitHubIssueFilterMetadata).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
+    expect(getGitHubIssueFilterMetadata).toHaveBeenCalledTimes(1);
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
