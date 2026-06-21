@@ -26,7 +26,12 @@ import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
-import { repoActionErrorDetailForRepo, syncErrorDetailsByRepoId } from "../composables/workspace/state";
+import {
+  repoActionErrorDetailForRepo,
+  repoSyncIssueForRepo,
+  syncErrorDetailsByRepoId,
+  type RepoSyncIssueDisplay,
+} from "../composables/workspace/state";
 import {
   getGitHubBindingStatus,
   isGitHubBindingExpiredError,
@@ -89,6 +94,7 @@ type RepoStatusRow = {
   githubRepo: GitHubRepoSummary;
   localRepo: RepoSummary | null;
   action: RepoAction | null;
+  syncIssue: RepoSyncIssueDisplay | null;
   workflowRun: WorkflowRunOverview | null;
 };
 
@@ -264,6 +270,7 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
       githubRepo,
       localRepo,
       action: localRepo ? repoAction(localRepo) : null,
+      syncIssue: localRepo ? repoSyncIssueForRepo(localRepo.id) : null,
       workflowRun: focusedWorkflowRun(githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []),
     };
   }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived)),
@@ -913,15 +920,6 @@ async function loadMoreGitHubRepos() {
 }
 
 function repoAction(repo: RepoSummary): RepoAction | null {
-  const syncError = syncErrorDetails.value.get(repo.id)?.message ?? null;
-  if (syncError) {
-    return {
-      kind: "link",
-      label: "处理失败",
-      title: syncError,
-      to: repoDetailPath(repo),
-    };
-  }
   if (repo.conflictCount > 0) {
     return {
       kind: "link",
@@ -1492,6 +1490,18 @@ async function syncRepo(repo: RepoSummary) {
   }
 }
 
+async function retryRepoPush(repo: RepoSummary) {
+  if (syncingRepoId.value) return;
+  syncingRepoId.value = repo.id;
+  try {
+    await workspace.push(repo.id);
+  } catch {
+    /* retry state is surfaced by recent sync status */
+  } finally {
+    syncingRepoId.value = null;
+  }
+}
+
 function previewBulkOperation(operation: BulkOperation) {
   void workspace.previewBulk(operation);
 }
@@ -1891,7 +1901,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             <div class="repo-status-list" aria-label="仓库状态列表">
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
-                v-for="{ githubRepo, localRepo, action, workflowRun } in repoStatusRows"
+                v-for="{ githubRepo, localRepo, action, syncIssue, workflowRun } in repoStatusRows"
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
@@ -1919,10 +1929,36 @@ function bulkOperationDescription(operation: BulkOperation) {
                   </span>
                   <span v-if="githubRepo.archived" class="repo-status-row__badge repo-status-row__badge--archived">Archive</span>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
+                  <span
+                    v-if="syncIssue"
+                    class="repo-status-row__issue"
+                    :class="`repo-status-row__issue--${syncIssue.retryable ? 'error' : 'warn'}`"
+                    :title="syncIssue.message"
+                    :aria-label="syncIssue.label"
+                  >
+                    <AlertCircle :size="13" aria-hidden="true" />
+                    <span>{{ syncIssue.label }}：{{ syncIssue.message }}</span>
+                  </span>
                 </span>
                 <span class="repo-status-row__action">
                   <template v-if="localRepo">
-                    <template v-if="action">
+                    <button
+                      v-if="syncIssue?.retryable"
+                      type="button"
+                      class="repo-action-link repo-action-link--warn"
+                      :disabled="workspace.state.bulkRunning || syncingRepoId === localRepo.id || syncIssue.retrying"
+                      :title="syncIssue.message"
+                      @click.stop="retryRepoPush(localRepo)"
+                    >
+                      <LoaderCircle
+                        v-if="syncingRepoId === localRepo.id || syncIssue.retrying"
+                        :size="11"
+                        aria-hidden="true"
+                        class="sb-spin"
+                      />
+                      重试
+                    </button>
+                    <template v-else-if="!syncIssue && action">
                       <RouterLink
                         v-if="action.kind !== 'sync'"
                         class="repo-action-link repo-action-link--warn"
@@ -1949,7 +1985,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                         {{ action.label }}
                       </button>
                     </template>
-                    <span v-else class="repo-action-status repo-action-status--muted">已 clone</span>
+                    <span v-else-if="!syncIssue" class="repo-action-status repo-action-status--muted">已 clone</span>
                   </template>
                   <button
                     v-else
@@ -2669,6 +2705,32 @@ function bulkOperationDescription(operation: BulkOperation) {
 .repo-status-row__badge--archived {
   background: var(--bg-subtle);
   color: var(--text-muted);
+}
+
+.repo-status-row__issue {
+  flex: 1 1 130px;
+  min-width: 80px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.repo-status-row__issue > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-status-row__issue--error {
+  color: var(--err);
+}
+
+.repo-status-row__issue--warn {
+  color: var(--warn);
 }
 
 .repo-status-row__action {

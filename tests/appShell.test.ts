@@ -94,6 +94,17 @@ function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
   return row;
 }
 
+function repoStatusRowForText(container: HTMLElement, text: string): HTMLElement {
+  const label = Array.from(container.querySelectorAll(".repo-status-row__name")).find(
+    (node) => node.textContent === text,
+  );
+  const row = label?.closest(".repo-status-row");
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`未找到首页仓库状态行: ${text}`);
+  }
+  return row;
+}
+
 function sidebarGroupForText(container: HTMLElement, name: string, count: number): HTMLElement {
   const text = `${name}${count}`;
   const group = Array.from(container.querySelectorAll(".sb-group-toggle")).find(
@@ -428,6 +439,48 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("首页仓库行显示最近同步失败并提供就地重试", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.recentSync = {
+      preview: {
+        operation: "sync",
+        eligible: [{ repo: state.repos[0], reason: "有本地提交待推送" }],
+        blocked: [],
+        warnings: [],
+      },
+      results: [
+        {
+          repoId: "LiliaGithub",
+          status: "error",
+          message: "认证失败",
+          summary: null,
+        },
+      ],
+      retryingRepoIds: [],
+      updatedAt: 2,
+    };
+
+    await waitFor(() => {
+      const row = repoStatusRowForText(view.container, "sena-nana/LiliaGithub");
+      expect(within(row).getByLabelText("最近同步失败")).toHaveAttribute("title", "认证失败");
+      expect(within(row).getByText("最近同步失败：认证失败")).toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: "重试" })).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(repoStatusRowForText(view.container, "sena-nana/LiliaGithub")).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      const row = repoStatusRowForText(view.container, "sena-nana/LiliaGithub");
+      expect(within(row).queryByLabelText("最近同步失败")).toBeNull();
+      expect(within(row).queryByRole("button", { name: "重试" })).toBeNull();
+    });
+  });
+
   it("侧边栏显示自动同步运行中的仓库行状态", async () => {
     const view = await renderAppShell("/");
 
@@ -471,9 +524,30 @@ describe("AppShell sidebar", () => {
     };
 
     await waitFor(() => {
-      expect(
-        within(sidebarRowForText(view.container, "LiliaGithub")).getByLabelText("同步失败"),
-      ).toHaveAttribute("title", "认证失败");
+      const row = sidebarRowForText(view.container, "LiliaGithub");
+      expect(within(row).getByLabelText("最近同步失败")).toHaveAttribute("title", "认证失败");
+      expect(within(row).getByText("认证失败")).toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: "重试最近同步失败" })).toBeInTheDocument();
+    });
+  });
+
+  it("侧边栏直接显示自动同步跳过原因且不提供重试", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    setRepoActionError("LiliaGithub", "存在未提交变更，已跳过自动同步");
+
+    await waitFor(() => {
+      const row = sidebarRowForText(view.container, "LiliaGithub");
+      expect(within(row).getByLabelText("自动同步已跳过")).toHaveAttribute(
+        "title",
+        "存在未提交变更，已跳过自动同步",
+      );
+      expect(within(row).getByText("存在未提交变更，已跳过自动同步")).toBeInTheDocument();
+      expect(within(row).queryByRole("button", { name: "重试最近同步失败" })).toBeNull();
     });
   });
 
