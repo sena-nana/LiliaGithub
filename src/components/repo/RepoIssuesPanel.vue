@@ -144,12 +144,14 @@ function formatIssueDate(value: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function issueProjectText(issue: GitHubIssue) {
-  return issue.projectItems?.map((project) => project.title).join(", ") || "-";
-}
-
-function issueMilestoneText(issue: GitHubIssue) {
-  return issue.milestone?.title || "-";
+function issueMetaText(issue: GitHubIssue) {
+  return [
+    issue.author || "未知作者",
+    `${issue.labels.join(", ") || "无标签"} · ${issue.assignees.join(", ") || "未分配"}`,
+    issue.projectItems?.map((project) => project.title).join(", ") || "-",
+    issue.milestone?.title || "-",
+    formatIssueDate(issue.updatedAt),
+  ].join(" · ");
 }
 </script>
 
@@ -301,13 +303,7 @@ function issueMilestoneText(issue: GitHubIssue) {
             <strong class="issues-list__title">
               #{{ issue.number }} {{ issue.title }}
             </strong>
-            <span class="issues-list__meta">{{ issue.author || "未知作者" }}</span>
-            <span class="issues-list__summary">
-              {{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}
-            </span>
-            <span class="issues-list__meta">{{ issueProjectText(issue) }}</span>
-            <span class="issues-list__meta">{{ issueMilestoneText(issue) }}</span>
-            <span class="issues-list__meta">{{ formatIssueDate(issue.updatedAt) }}</span>
+            <span class="issues-list__meta">{{ issueMetaText(issue) }}</span>
           </div>
           <div class="issues-list__actions">
             <button type="button" class="ghost project-icon-action" aria-label="编辑" title="编辑" @click="emit('edit', issue)">
@@ -555,17 +551,14 @@ function issueMilestoneText(issue: GitHubIssue) {
 }
 
 .issues-list__content {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
 }
 
-.issues-list__title,
-.issues-list__summary,
-.issues-list__meta {
+.issues-list__title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -573,28 +566,18 @@ function issueMilestoneText(issue: GitHubIssue) {
 }
 
 .issues-list__title {
-  flex: 0 1 auto;
   color: var(--text);
   font-size: 13px;
   font-weight: 700;
 }
 
-.issues-list__summary {
-  flex: 1 2 auto;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
 .issues-list__meta {
-  flex: 0 2 auto;
+  justify-self: end;
+  min-width: max-content;
   color: var(--text-muted);
   font-size: 12px;
-}
-
-.issues-list__meta::before {
-  content: "/";
-  margin-right: 8px;
-  color: var(--text-subtle);
+  text-align: right;
+  white-space: nowrap;
 }
 
 .issues-list__status {
@@ -668,22 +651,6 @@ function issueMilestoneText(issue: GitHubIssue) {
   text-align: center;
 }
 
-@media (max-width: 1120px) {
-  .issues-list__meta:nth-of-type(n + 3) {
-    display: none;
-  }
-
-  .issues-list__summary {
-    flex-basis: 160px;
-  }
-}
-
-@media (max-width: 940px) {
-  .issues-list__meta {
-    display: none;
-  }
-}
-
 @media (max-width: 820px) {
   .issues-panel__toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -700,10 +667,6 @@ function issueMilestoneText(issue: GitHubIssue) {
 
   .issues-list__item {
     grid-template-columns: 20px minmax(0, 1fr) auto;
-  }
-
-  .issues-list__summary {
-    display: none;
   }
 }
 </style>
