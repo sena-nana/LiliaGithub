@@ -663,6 +663,7 @@ const routedPullRequestFilterState = computed(() => JSON.stringify({
 
 onMounted(() => {
   void applyProjectRouteState();
+  prefetchGitHubProjectMetadata();
   measureAboutTopicOverflow();
   window.addEventListener("resize", measureAboutTopicOverflow);
 });
@@ -699,6 +700,7 @@ watch(() => props.repoFullName, () => {
   remoteDeleted.value = false;
   resetGitHubSectionState();
   closeDeleteDialog();
+  prefetchGitHubProjectMetadata();
   if (props.activeGitTab === "repo" && !routedProjectTab.value && isGitHubProjectSection(currentSection)) {
     activeSection.value = currentSection;
     void ensureSectionData(currentSection);
@@ -1260,6 +1262,19 @@ async function applyProjectRouteState() {
     return;
   }
   await ensureSectionData(targetTab);
+}
+
+function prefetchGitHubProjectMetadata() {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
+  const canUseIssues = resolvedRepoContext.value.capabilities.issues.available;
+  const canUsePulls = resolvedRepoContext.value.capabilities.pulls.available;
+  if (!canUseIssues && !canUsePulls) return;
+  void Promise.allSettled([
+    loadIssueFilterMetadata(false, false),
+    ...(canUseIssues ? [loadIssueMetadata(), loadIssueTemplates()] : []),
+    ...(canUsePulls ? [loadPullRequestTemplates()] : []),
+  ]);
 }
 
 function applySettingsForm(next: GitHubRepoManagement) {
@@ -1915,7 +1930,7 @@ async function loadIssueMetadata(force = false) {
   }
 }
 
-async function loadIssueFilterMetadata(force = false) {
+async function loadIssueFilterMetadata(force = false, reportError = true) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || issueFilterMetadataLoading.value) return;
   if (!force && issueFilterMetadataLoadedRepo.value === repoFullName) return;
@@ -1926,7 +1941,7 @@ async function loadIssueFilterMetadata(force = false) {
     issueFilterMetadata.value = metadata;
     issueFilterMetadataLoadedRepo.value = repoFullName;
   } catch (err) {
-    if (repoFullName === props.repoFullName) githubError.value = String(err);
+    if (reportError && repoFullName === props.repoFullName) githubError.value = String(err);
   } finally {
     if (repoFullName === props.repoFullName) issueFilterMetadataLoading.value = false;
   }
