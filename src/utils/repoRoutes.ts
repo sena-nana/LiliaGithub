@@ -12,11 +12,15 @@ export function repoProjectRoute(
   repoId: string,
   projectTab: Exclude<RepoProjectTab, "readme">,
   focusId?: number | null,
+  jobId?: number | null,
 ) {
   const query = new URLSearchParams({ projectTab });
   if (projectTab === "issues" && focusId) query.set("issue", String(focusId));
   if (projectTab === "pulls" && focusId) query.set("pr", String(focusId));
-  if (projectTab === "actions" && focusId) query.set("run", String(focusId));
+  if (projectTab === "actions" && focusId) {
+    query.set("run", String(focusId));
+    if (jobId) query.set("job", String(jobId));
+  }
   return `${repoRoute(repoId)}?${query.toString()}`;
 }
 

@@ -28,7 +28,10 @@ import type {
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
+  GitHubWorkflowArtifactEntry,
+  GitHubWorkflowJobLog,
   GitHubWorkflowRun,
+  GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
   GitHubUpdateIssueRequest,
@@ -1099,6 +1102,139 @@ function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]>
   };
 }
 
+function createFallbackGitHubWorkflowRunDetails(
+  runsByRepo = fallbackGitHubWorkflowRuns,
+): Record<string, Record<number, GitHubWorkflowRunDetail>> {
+  return Object.fromEntries(
+    Object.entries(runsByRepo).map(([repoFullName, runs]) => [
+      repoFullName,
+      Object.fromEntries(runs.map((run) => [run.id, fallbackWorkflowRunDetail(run)])),
+    ]),
+  );
+}
+
+function fallbackWorkflowRunDetail(run: GitHubWorkflowRun): GitHubWorkflowRunDetail {
+  const completed = run.status === "completed";
+  const success = completed && run.conclusion === "success";
+  return {
+    run: { ...run },
+    jobs: [
+      {
+        id: run.id * 10 + 1,
+        name: run.name,
+        status: run.status,
+        conclusion: run.conclusion,
+        startedAt: run.createdAt,
+        completedAt: completed ? run.updatedAt : null,
+        htmlUrl: run.htmlUrl,
+        runnerName: "GitHub Actions",
+        steps: [
+          {
+            name: "Set up job",
+            status: "completed",
+            conclusion: "success",
+            number: 1,
+            startedAt: run.createdAt,
+            completedAt: run.createdAt,
+          },
+          {
+            name: run.displayTitle,
+            status: run.status,
+            conclusion: run.conclusion,
+            number: 2,
+            startedAt: run.createdAt,
+            completedAt: completed ? run.updatedAt : null,
+          },
+          {
+            name: "Complete job",
+            status: completed ? "completed" : "queued",
+            conclusion: success ? "success" : run.conclusion,
+            number: 3,
+            startedAt: completed ? run.updatedAt : null,
+            completedAt: completed ? run.updatedAt : null,
+          },
+        ],
+      },
+    ],
+    artifacts: success
+      ? [{
+        id: run.id * 100 + 1,
+        name: "dist",
+        sizeInBytes: 1840,
+        expired: false,
+        createdAt: run.updatedAt,
+        expiresAt: "2026-07-12T10:08:00Z",
+      }]
+      : [],
+  };
+}
+
+function createFallbackGitHubWorkflowJobLogs(
+  detailsByRepo = fallbackGitHubWorkflowRunDetails,
+): Record<string, Record<number, GitHubWorkflowJobLog>> {
+  const logs: Record<string, Record<number, GitHubWorkflowJobLog>> = {};
+  for (const [repoFullName, detailsByRun] of Object.entries(detailsByRepo)) {
+    logs[repoFullName] = {};
+    for (const detail of Object.values(detailsByRun)) {
+      for (const job of detail.jobs) {
+        logs[repoFullName][job.id] = {
+          jobId: job.id,
+          content: job.steps.map((step) => [
+            `##[group]${step.name}`,
+            `${step.name} log line`,
+            "##[endgroup]",
+          ].join("\n")).join("\n"),
+        };
+      }
+    }
+  }
+  return logs;
+}
+
+function createFallbackGitHubWorkflowArtifactEntries(
+  detailsByRepo = fallbackGitHubWorkflowRunDetails,
+): Record<string, Record<number, GitHubWorkflowArtifactEntry[]>> {
+  const entries: Record<string, Record<number, GitHubWorkflowArtifactEntry[]>> = {};
+  for (const [repoFullName, detailsByRun] of Object.entries(detailsByRepo)) {
+    entries[repoFullName] = {};
+    for (const detail of Object.values(detailsByRun)) {
+      for (const artifact of detail.artifacts) {
+        entries[repoFullName][artifact.id] = [
+          { path: "README.md", name: "README.md", kind: "file", size: 58 },
+          { path: "logs/build.log", name: "build.log", kind: "file", size: 36 },
+        ];
+      }
+    }
+  }
+  return entries;
+}
+
+function createFallbackGitHubWorkflowArtifactPreviews(
+  entriesByRepo = fallbackGitHubWorkflowArtifactEntries,
+): Record<string, Record<number, Record<string, RepoFilePreview>>> {
+  const previews: Record<string, Record<number, Record<string, RepoFilePreview>>> = {};
+  for (const [repoFullName, entriesByArtifact] of Object.entries(entriesByRepo)) {
+    previews[repoFullName] = {};
+    for (const [artifactId, entries] of Object.entries(entriesByArtifact)) {
+      previews[repoFullName][Number(artifactId)] = Object.fromEntries(entries.map((entry) => [
+        entry.path,
+        {
+          path: entry.path,
+          name: entry.name,
+          previewKind: entry.path.endsWith(".md") ? "markdown" : "text",
+          content: entry.path.endsWith(".md") ? "# Artifact\n\nFallback artifact preview." : "Fallback artifact log preview.",
+          dataUrl: null,
+          images: {},
+          size: entry.size,
+          mimeType: entry.path.endsWith(".md") ? "text/markdown" : "text/plain",
+          truncated: false,
+        } satisfies RepoFilePreview,
+      ]));
+    }
+  }
+  return previews;
+}
+
 function createFallbackGitHubCommits(): Record<string, CommitSummary[]> {
   if (useDefaultFallback) {
     return {
@@ -1719,6 +1855,10 @@ let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
 let fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+let fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
+let fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs();
+let fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries();
+let fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews();
 let fallbackGitHubCommits = createFallbackGitHubCommits();
 let fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
 let fallbackGitHubBranches = createFallbackGitHubBranches();
@@ -1843,6 +1983,10 @@ let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackGitHubPullRequestListCalls: FallbackGitHubPullRequestListCall[] = [];
 let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListCall[] = [];
 let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
+let fallbackGitHubWorkflowRunDetailCalls: Array<{ repoFullName: string; runId: number }> = [];
+let fallbackGitHubWorkflowJobLogCalls: Array<{ repoFullName: string; jobId: number }> = [];
+let fallbackGitHubWorkflowArtifactListCalls: Array<{ repoFullName: string; artifactId: number }> = [];
+let fallbackGitHubWorkflowArtifactPreviewCalls: Array<{ repoFullName: string; artifactId: number; path: string }> = [];
 let fallbackGitHubCommitListCalls: Array<{ repoFullName: string; perPage: number | null; sha: string | null }> = [];
 let fallbackGitHubCommitDetailCalls: Array<{ repoFullName: string; hash: string }> = [];
 let fallbackGitHubRepoFileListCalls: FallbackGitHubRepoFileListCall[] = [];
@@ -1881,6 +2025,10 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
   fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+  fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
+  fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs();
+  fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries();
+  fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews();
   fallbackGitHubCommits = createFallbackGitHubCommits();
   fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
   fallbackGitHubBranches = createFallbackGitHubBranches();
@@ -1897,6 +2045,10 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubPullRequestListCalls = [];
   fallbackGitHubPullRequestCheckListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
+  fallbackGitHubWorkflowRunDetailCalls = [];
+  fallbackGitHubWorkflowJobLogCalls = [];
+  fallbackGitHubWorkflowArtifactListCalls = [];
+  fallbackGitHubWorkflowArtifactPreviewCalls = [];
   fallbackGitHubCommitListCalls = [];
   fallbackGitHubCommitDetailCalls = [];
   fallbackGitHubRepoFileListCalls = [];
@@ -2095,6 +2247,71 @@ export function setFallbackGitHubWorkflowRunsForTests(runsByRepo: Record<string,
       runs.map((run) => ({ ...run })),
     ]),
   );
+  fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails(fallbackGitHubWorkflowRuns);
+  fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews(fallbackGitHubWorkflowArtifactEntries);
+}
+
+export function setFallbackGitHubWorkflowRunDetailsForTests(
+  detailsByRepo: Record<string, Record<number, GitHubWorkflowRunDetail>>,
+) {
+  fallbackGitHubWorkflowRunDetails = Object.fromEntries(
+    Object.entries(detailsByRepo).map(([repoFullName, details]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(details).map(([runId, detail]) => [Number(runId), cloneWorkflowRunDetail(detail)]),
+      ),
+    ]),
+  );
+  fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews(fallbackGitHubWorkflowArtifactEntries);
+}
+
+export function setFallbackGitHubWorkflowJobLogsForTests(
+  logsByRepo: Record<string, Record<number, GitHubWorkflowJobLog>>,
+) {
+  fallbackGitHubWorkflowJobLogs = Object.fromEntries(
+    Object.entries(logsByRepo).map(([repoFullName, logs]) => [
+      repoFullName,
+      Object.fromEntries(Object.entries(logs).map(([jobId, log]) => [Number(jobId), { ...log }])),
+    ]),
+  );
+}
+
+export function setFallbackGitHubWorkflowArtifactEntriesForTests(
+  entriesByRepo: Record<string, Record<number, GitHubWorkflowArtifactEntry[]>>,
+) {
+  fallbackGitHubWorkflowArtifactEntries = Object.fromEntries(
+    Object.entries(entriesByRepo).map(([repoFullName, entries]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(entries).map(([artifactId, artifactEntries]) => [
+          Number(artifactId),
+          artifactEntries.map((entry) => ({ ...entry })),
+        ]),
+      ),
+    ]),
+  );
+}
+
+export function setFallbackGitHubWorkflowArtifactPreviewsForTests(
+  previewsByRepo: Record<string, Record<number, Record<string, RepoFilePreview>>>,
+) {
+  fallbackGitHubWorkflowArtifactPreviews = Object.fromEntries(
+    Object.entries(previewsByRepo).map(([repoFullName, previewsByArtifact]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(previewsByArtifact).map(([artifactId, previews]) => [
+          Number(artifactId),
+          Object.fromEntries(
+            Object.entries(previews).map(([path, preview]) => [path, cloneRepoFilePreview(preview)]),
+          ),
+        ]),
+      ),
+    ]),
+  );
 }
 
 export function setFallbackGitHubCommitsForTests(commitsByRepo: Record<string, CommitSummary[]>) {
@@ -2136,6 +2353,17 @@ function cloneRepoFilePreview(preview: RepoFilePreview): RepoFilePreview {
     ...preview,
     dataUrl: preview.dataUrl ?? null,
     images: preview.images ? { ...preview.images } : {},
+  };
+}
+
+function cloneWorkflowRunDetail(detail: GitHubWorkflowRunDetail): GitHubWorkflowRunDetail {
+  return {
+    run: { ...detail.run },
+    jobs: detail.jobs.map((job) => ({
+      ...job,
+      steps: job.steps.map((step) => ({ ...step })),
+    })),
+    artifacts: detail.artifacts.map((artifact) => ({ ...artifact })),
   };
 }
 
@@ -3527,6 +3755,49 @@ export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | 
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .slice(0, perPage ?? undefined)
       .map((run) => ({ ...run }));
+  });
+}
+
+export function getGitHubWorkflowRunDetail(repoFullName: string, runId: number): Promise<GitHubWorkflowRunDetail> {
+  fallbackGitHubWorkflowRunDetailCalls.push({ repoFullName, runId });
+  return call("github_get_workflow_run_detail", { repoFullName, runId }, async () => {
+    const detail = fallbackGitHubWorkflowRunDetails[repoFullName]?.[runId];
+    if (detail) return cloneWorkflowRunDetail(detail);
+    const run = fallbackGitHubWorkflowRuns[repoFullName]?.find((item) => item.id === runId);
+    if (!run) throw new Error("GitHub Actions run 不存在");
+    return fallbackWorkflowRunDetail(run);
+  });
+}
+
+export function getGitHubWorkflowJobLog(repoFullName: string, jobId: number): Promise<GitHubWorkflowJobLog> {
+  fallbackGitHubWorkflowJobLogCalls.push({ repoFullName, jobId });
+  return call("github_get_workflow_job_log", { repoFullName, jobId }, async () => {
+    const log = fallbackGitHubWorkflowJobLogs[repoFullName]?.[jobId];
+    if (!log) throw new Error("GitHub Actions job 日志不存在");
+    return { ...log };
+  });
+}
+
+export function listGitHubWorkflowArtifactFiles(
+  repoFullName: string,
+  artifactId: number,
+): Promise<GitHubWorkflowArtifactEntry[]> {
+  fallbackGitHubWorkflowArtifactListCalls.push({ repoFullName, artifactId });
+  return call("github_list_workflow_artifact_files", { repoFullName, artifactId }, async () => (
+    fallbackGitHubWorkflowArtifactEntries[repoFullName]?.[artifactId] ?? []
+  ).map((entry) => ({ ...entry })));
+}
+
+export function getGitHubWorkflowArtifactFilePreview(
+  repoFullName: string,
+  artifactId: number,
+  path: string,
+): Promise<RepoFilePreview> {
+  fallbackGitHubWorkflowArtifactPreviewCalls.push({ repoFullName, artifactId, path });
+  return call("github_get_workflow_artifact_file_preview", { repoFullName, artifactId, path }, async () => {
+    const preview = fallbackGitHubWorkflowArtifactPreviews[repoFullName]?.[artifactId]?.[path];
+    if (!preview) throw new Error("artifact 文件不存在");
+    return cloneRepoFilePreview(preview);
   });
 }
 

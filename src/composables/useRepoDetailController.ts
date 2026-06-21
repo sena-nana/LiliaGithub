@@ -59,6 +59,7 @@ export function useRepoDetailController() {
   const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
   const activeProjectPullRequest = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.pr));
   const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
+  const activeProjectJob = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.job));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
   const launchError = ref<string | null>(null);
@@ -1146,6 +1147,7 @@ export function useRepoDetailController() {
       activeProjectIssue,
       activeProjectPullRequest,
       activeProjectRun,
+      activeProjectJob,
       projectRefreshToken,
       toolbarTabs,
       launchCommandOptions,

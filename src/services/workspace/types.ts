@@ -318,6 +318,60 @@ export interface GitHubWorkflowRun {
   htmlUrl: string;
   createdAt: string;
   updatedAt: string;
+  actor?: string | null;
+  headSha?: string | null;
+  runNumber?: number | null;
+  runAttempt?: number | null;
+  workflowId?: number | null;
+  runStartedAt?: string | null;
+}
+
+export interface GitHubWorkflowJobStep {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  number: number;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface GitHubWorkflowJob {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  htmlUrl: string | null;
+  runnerName: string | null;
+  steps: GitHubWorkflowJobStep[];
+}
+
+export interface GitHubWorkflowArtifact {
+  id: number;
+  name: string;
+  sizeInBytes: number;
+  expired: boolean;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
+export interface GitHubWorkflowRunDetail {
+  run: GitHubWorkflowRun;
+  jobs: GitHubWorkflowJob[];
+  artifacts: GitHubWorkflowArtifact[];
+}
+
+export interface GitHubWorkflowJobLog {
+  jobId: number;
+  content: string;
+}
+
+export interface GitHubWorkflowArtifactEntry {
+  path: string;
+  name: string;
+  kind: "dir" | "file" | string;
+  size: number;
 }
 
 export interface GitHubIssueListOptions {

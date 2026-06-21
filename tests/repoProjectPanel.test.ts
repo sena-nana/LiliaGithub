@@ -13,6 +13,10 @@ import {
   getGitHubIssueFilterMetadata,
   getGitHubRepoFilePreview,
   getGitHubRepoManagement,
+  getGitHubWorkflowArtifactFilePreview,
+  getGitHubWorkflowJobLog,
+  getGitHubWorkflowRunDetail,
+  listGitHubWorkflowArtifactFiles,
   listGitHubPullRequestChecks,
   listGitHubPullRequests,
   listGitHubIssues,
@@ -32,6 +36,7 @@ import type {
   GitHubPullRequestCheck,
   GitHubRepoManagement,
   GitHubWorkflowRun,
+  GitHubWorkflowRunDetail,
   ProjectLaunchConfig,
   ProjectLaunchLog,
   RepoFilePreview,
@@ -101,6 +106,52 @@ const githubWorkflowRuns: GitHubWorkflowRun[] = [{
   createdAt: "2026-06-18T08:00:00Z",
   updatedAt: "2026-06-18T08:00:00Z",
 }];
+
+const githubWorkflowRunDetail: GitHubWorkflowRunDetail = {
+  run: {
+    ...githubWorkflowRuns[0],
+    actor: "sena",
+    runNumber: 23,
+    runAttempt: 1,
+    runStartedAt: "2026-06-18T08:00:00Z",
+  },
+  jobs: [{
+    id: 13101,
+    name: "build",
+    status: "completed",
+    conclusion: "success",
+    startedAt: "2026-06-18T08:00:00Z",
+    completedAt: "2026-06-18T08:02:00Z",
+    htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310/job/13101",
+    runnerName: "GitHub Actions",
+    steps: [
+      {
+        name: "Set up job",
+        status: "completed",
+        conclusion: "success",
+        number: 1,
+        startedAt: "2026-06-18T08:00:00Z",
+        completedAt: "2026-06-18T08:00:10Z",
+      },
+      {
+        name: "Run tests",
+        status: "completed",
+        conclusion: "success",
+        number: 2,
+        startedAt: "2026-06-18T08:00:10Z",
+        completedAt: "2026-06-18T08:02:00Z",
+      },
+    ],
+  }],
+  artifacts: [{
+    id: 131001,
+    name: "dist",
+    sizeInBytes: 1280,
+    expired: false,
+    createdAt: "2026-06-18T08:02:00Z",
+    expiresAt: "2026-07-18T08:02:00Z",
+  }],
+};
 
 const githubPullRequests: GitHubPullRequest[] = [{
   number: 52,
@@ -211,6 +262,10 @@ vi.mock("../src/services/workspace/client", () => ({
   listGitHubRepoFiles: vi.fn(),
   listGitHubRepoReadmes: vi.fn(async () => []),
   listGitHubWorkflowRuns: vi.fn(),
+  getGitHubWorkflowRunDetail: vi.fn(),
+  getGitHubWorkflowJobLog: vi.fn(),
+  listGitHubWorkflowArtifactFiles: vi.fn(),
+  getGitHubWorkflowArtifactFilePreview: vi.fn(),
   isGitHubBindingExpiredError: (err: unknown) => {
     const message = String(err);
     return message.includes("GitHub 绑定已失效") ||
@@ -306,6 +361,7 @@ async function renderProjectPanel(
     projectIssueNumber: null,
     projectPullRequestNumber: null,
     projectRunId: null,
+    projectJobId: null,
     projectRefreshToken: 0,
     ...props,
   } satisfies RenderProjectPanelProps;
@@ -419,6 +475,15 @@ describe("RepoProjectPanel", () => {
     vi.mocked(mergeGitHubPullRequest).mockImplementation(async () => ({ ...githubPullRequests[0], merged: true, state: "closed" }));
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(githubWorkflowRunDetail);
+    vi.mocked(getGitHubWorkflowJobLog).mockResolvedValue({
+      jobId: 13101,
+      content: "##[group]Run tests\nyarn test\npassed\n##[endgroup]",
+    });
+    vi.mocked(listGitHubWorkflowArtifactFiles).mockResolvedValue([
+      { path: "README.md", name: "README.md", kind: "file", size: 42 },
+    ]);
+    vi.mocked(getGitHubWorkflowArtifactFilePreview).mockResolvedValue(filePreview("README.md", "# Artifact\n\nPreview."));
     vi.mocked(listRepoReadmes).mockResolvedValue([]);
     const workspaceFallback = await workspaceFallbackForTests();
     workspaceFallback.setFallbackGitHubCommitDetailsForTests({
@@ -700,8 +765,34 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
-    expect(await view.findByText("release pipeline")).toBeInTheDocument();
+    expect(await view.findByRole("button", { name: /release pipeline/ }, { timeout: 5000 })).toBeInTheDocument();
     expect(listGitHubWorkflowRuns).toHaveBeenCalledTimes(1);
+    expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
+  });
+
+  it("Actions 详情先显示流程，点击 job 后显示步骤并预览 artifact", async () => {
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue(githubWorkflowRuns);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(githubWorkflowRunDetail);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+      projectRunId: 1310,
+    });
+
+    expect(await view.findByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
+    expect(await view.findByRole("button", { name: /build/ })).toBeInTheDocument();
+    expect(view.queryByText("Run tests")).toBeNull();
+    expect(getGitHubWorkflowRunDetail).toHaveBeenCalledWith("sena-nana/remote-repo", 1310, { forceRefresh: false });
+
+    await fireEvent.click(view.getByRole("button", { name: /build/ }));
+    expect(await view.findByText("Run tests")).toBeInTheDocument();
+    expect(getGitHubWorkflowJobLog).not.toHaveBeenCalled();
+
+    await fireEvent.click(view.getByText("dist"));
+    const artifactFile = await view.findByRole("button", { name: /README\.md/ });
+    await fireEvent.click(artifactFile);
+    expect(await view.findByText("Artifact")).toBeInTheDocument();
+    expect(getGitHubWorkflowArtifactFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", 131001, "README.md");
   });
 
   it.each([

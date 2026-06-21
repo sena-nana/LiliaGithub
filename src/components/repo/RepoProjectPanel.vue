@@ -5,7 +5,6 @@ import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 import {
   AlertCircle,
   ArrowLeft,
-  CircleDot,
   Eye,
   ExternalLink,
   GitFork,
@@ -78,7 +77,6 @@ import type {
   RepoReadme,
   RepoSummary,
 } from "../../services/workspace/types";
-import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
 import {
   hasRepoTag,
   type RepoCapability,
@@ -205,6 +203,7 @@ const blankIssuePanelFilters = (): IssuePanelFilters => ({
 
 const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
+const RepoActionsPanel = defineAsyncComponent(() => import("./RepoActionsPanel.vue"));
 const RepoPullRequestsPanel = defineAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
 
 const props = defineProps<{
@@ -250,6 +249,7 @@ const props = defineProps<{
   projectIssueNumber?: number | null;
   projectPullRequestNumber?: number | null;
   projectRunId?: number | null;
+  projectJobId?: number | null;
   projectRefreshToken?: number;
 }>();
 
@@ -362,6 +362,7 @@ const editingIssueLabels = ref("");
 const editingIssueAssignees = ref("");
 const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
+const focusedJobId = ref<number | null>(null);
 let suppressIssueStateReload = false;
 let suppressPullStateReload = false;
 const readmeLoader = createLatestAsyncLoader();
@@ -745,7 +746,7 @@ watch([routedIssueFilterState, routedPullRequestFilterState], () => {
 });
 
 watch(
-  [routedProjectTab, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId],
+  [routedProjectTab, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId, () => props.projectJobId],
   () => {
     void applyProjectRouteState();
   },
@@ -945,6 +946,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   delete query.issue;
   delete query.pr;
   delete query.run;
+  delete query.job;
   clearRouteFilters(query, issueRouteKeys);
   clearRouteFilters(query, pullRequestRouteKeys);
 
@@ -965,6 +967,9 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
       pullRequestPanelFilters.value,
       blankPullRequestPanelFilters(),
     );
+  } else if (tab === "actions") {
+    if (focusedRunId.value) query.run = String(focusedRunId.value);
+    if (focusedJobId.value) query.job = String(focusedJobId.value);
   }
   return query;
 }
@@ -1045,6 +1050,7 @@ function clearProjectTargets() {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
   cancelEditIssue();
   closeIssueCreateView(false);
   closePullRequestCreateView(false);
@@ -1149,6 +1155,7 @@ function rebindGitHub() {
 async function focusIssue(issueNumber: number | null | undefined) {
   focusedPullRequestNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
   if (!issueNumber) {
     clearProjectTargets();
     await loadIssues();
@@ -1174,6 +1181,7 @@ async function focusIssue(issueNumber: number | null | undefined) {
 async function focusRun(runId: number | null | undefined) {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
+  focusedJobId.value = props.projectJobId ?? null;
   if (!runId) {
     clearProjectTargets();
     await loadActions();
@@ -1189,7 +1197,7 @@ async function focusRun(runId: number | null | undefined) {
   focusedRunId.value = runId;
   await nextTick();
   const row = projectMainRef.value?.querySelector<HTMLElement>(
-    `.project-row--action[data-run-id="${runId}"]`,
+    `.actions-run[data-run-id="${runId}"]`,
   );
   row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
 }
@@ -1197,6 +1205,7 @@ async function focusRun(runId: number | null | undefined) {
 async function focusPullRequest(pullNumber: number | null | undefined) {
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
   if (!pullNumber) {
     await loadPullRequests();
     focusedPullRequestNumber.value = pulls.value[0]?.number ?? null;
@@ -1229,10 +1238,6 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
 
 function isIssueRowFocused(issueNumber: number) {
   return focusedIssueNumber.value === issueNumber && activeSection.value === "issues";
-}
-
-function isRunRowFocused(runId: number) {
-  return focusedRunId.value === runId && activeSection.value === "actions";
 }
 
 function isPullRequestRowFocused(pullNumber: number) {
@@ -1665,6 +1670,7 @@ function resetGitHubSectionState() {
   issueMetadataLoadedRepo.value = null;
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
 }
 
 function invalidateGitHubMutations() {
@@ -2220,6 +2226,17 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   void activateProjectTab(tab);
 }
 
+function focusActionRun(runId: number | null) {
+  focusedRunId.value = runId;
+  focusedJobId.value = null;
+  if (activeSection.value === "actions") void pushProjectTabRoute("actions");
+}
+
+function focusActionJob(jobId: number | null) {
+  focusedJobId.value = jobId;
+  if (activeSection.value === "actions") void pushProjectTabRoute("actions");
+}
+
 function selectReadme(path: string) {
   activeReadmePath.value = path;
   void activateProjectTab("readme");
@@ -2557,12 +2574,6 @@ function selectReadme(path: string) {
         </section>
 
         <section v-else-if="activeSection === 'actions'" class="project-section project-github-section">
-          <div class="project-section__head project-section__head--compact">
-            <div class="project-section__title">
-              <h3>Actions</h3>
-              <span>{{ workflowRuns.length }} runs</span>
-            </div>
-          </div>
           <RepoGitHubUnavailableNotice
             v-if="actionsAccessUnavailable"
             :title="actionsAccessUnavailable.title"
@@ -2570,34 +2581,17 @@ function selectReadme(path: string) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
-          <div v-if="!actionsAccessUnavailable" class="project-list project-dense-list">
-            <div
-              v-for="run in workflowRuns"
-              :key="run.id"
-              class="project-row project-row--action"
-              :class="{ 'is-target': isRunRowFocused(run.id) }"
-              :data-run-id="run.id"
-            >
-              <span
-                class="project-action-status"
-                :class="`project-action-status--${workflowRunStatusTone(run)}`"
-                :title="workflowRunStatusText(run)"
-                :aria-label="workflowRunStatusText(run)"
-              >
-                <X v-if="isWorkflowRunFailure(run)" :size="14" aria-hidden="true" />
-                <CircleDot v-else :size="14" aria-hidden="true" />
-              </span>
-              <div class="project-row__content">
-                <strong>{{ run.displayTitle }}</strong>
-                <span>{{ run.name }} · {{ run.branch }} · {{ run.event }}</span>
-              </div>
-              <button type="button" class="ghost project-icon-action" aria-label="打开" title="打开" @click="openUrl(run.htmlUrl)">
-                <ExternalLink :size="14" aria-hidden="true" />
-              </button>
-            </div>
-            <p v-if="!workflowRuns.length && !actionsLoading" class="muted repo-empty">没有 GitHub Actions 运行记录。</p>
-          </div>
+          <RepoActionsPanel
+            v-else-if="repoFullName"
+            :repo-full-name="repoFullName"
+            :runs="workflowRuns"
+            :loading="actionsLoading"
+            :focused-run-id="focusedRunId"
+            :focused-job-id="focusedJobId"
+            @focus-run="focusActionRun"
+            @focus-job="focusActionJob"
+            @refresh="loadActions(true)"
+          />
         </section>
 
         <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" @submit.prevent="saveSettings()">
@@ -3764,8 +3758,7 @@ function selectReadme(path: string) {
   background: var(--bg-hover);
 }
 
-.project-row__status,
-.project-action-status {
+.project-row__status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3848,29 +3841,9 @@ function selectReadme(path: string) {
   background: transparent;
 }
 
-.project-row--action {
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-}
-
 .project-row.is-target {
   box-shadow: inset 3px 0 0 var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
-}
-
-.project-action-status--error {
-  color: var(--err);
-}
-
-.project-action-status--warn {
-  color: var(--warn);
-}
-
-.project-action-status--ok {
-  color: var(--ok);
-}
-
-.project-action-status--muted {
-  color: var(--text-muted);
 }
 
 .project-settings-group {
@@ -4126,8 +4099,7 @@ function selectReadme(path: string) {
     grid-template-columns: 1fr;
   }
 
-  .project-row__status,
-  .project-action-status {
+  .project-row__status {
     display: none;
   }
 

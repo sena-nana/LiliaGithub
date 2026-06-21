@@ -25,7 +25,10 @@ import type {
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
+  GitHubWorkflowArtifactEntry,
+  GitHubWorkflowJobLog,
   GitHubWorkflowRun,
+  GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
   GitHubUpdateIssueRequest,
@@ -80,6 +83,10 @@ type GitHubProjectRepoClientCache = {
   pullRequests: Record<string, GitHubPullRequest[] | undefined>;
   pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
   workflowRuns: Record<number, GitHubWorkflowRun[] | undefined>;
+  workflowRunDetails: Record<number, GitHubWorkflowRunDetail | undefined>;
+  workflowJobLogs: Record<number, GitHubWorkflowJobLog | undefined>;
+  workflowArtifactEntries: Record<number, GitHubWorkflowArtifactEntry[] | undefined>;
+  workflowArtifactPreviews: Record<string, RepoFilePreview | undefined>;
 };
 
 let githubRepoCache: {
@@ -221,6 +228,10 @@ function githubProjectRepoCache(repoFullName: string) {
       pullRequests: {},
       pullRequestChecks: {},
       workflowRuns: {},
+      workflowRunDetails: {},
+      workflowJobLogs: {},
+      workflowArtifactEntries: {},
+      workflowArtifactPreviews: {},
     };
     githubProjectCache.set(key, cache);
   }
@@ -784,6 +795,83 @@ export function listGitHubWorkflowRuns(
     .then((runs) => {
       cache.workflowRuns[key] = cloneProjectList(runs);
       return cloneProjectList(runs);
+    });
+}
+
+export function getGitHubWorkflowRunDetail(
+  repoFullName: string,
+  runId: number,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubWorkflowRunDetail> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache.workflowRunDetails[runId];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
+  return call("github_get_workflow_run_detail", {
+    repoFullName,
+    runId,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => workspaceFallback().getGitHubWorkflowRunDetail(repoFullName, runId))
+    .then((detail) => {
+      cache.workflowRunDetails[runId] = cloneProjectData(detail);
+      return cloneProjectData(detail);
+    });
+}
+
+export function getGitHubWorkflowJobLog(
+  repoFullName: string,
+  jobId: number,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubWorkflowJobLog> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache.workflowJobLogs[jobId];
+  if (!options.forceRefresh && cached) return Promise.resolve({ ...cached });
+  return call("github_get_workflow_job_log", {
+    repoFullName,
+    jobId,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => workspaceFallback().getGitHubWorkflowJobLog(repoFullName, jobId))
+    .then((log) => {
+      cache.workflowJobLogs[jobId] = { ...log };
+      return { ...log };
+    });
+}
+
+export function listGitHubWorkflowArtifactFiles(
+  repoFullName: string,
+  artifactId: number,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubWorkflowArtifactEntry[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache.workflowArtifactEntries[artifactId];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
+  return call("github_list_workflow_artifact_files", {
+    repoFullName,
+    artifactId,
+  }, () => workspaceFallback().listGitHubWorkflowArtifactFiles(repoFullName, artifactId))
+    .then((entries) => {
+      cache.workflowArtifactEntries[artifactId] = cloneProjectList(entries);
+      return cloneProjectList(entries);
+    });
+}
+
+export function getGitHubWorkflowArtifactFilePreview(
+  repoFullName: string,
+  artifactId: number,
+  path: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<RepoFilePreview> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const key = `${artifactId}:${path}`;
+  const cached = cache.workflowArtifactPreviews[key];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
+  return call("github_get_workflow_artifact_file_preview", {
+    repoFullName,
+    artifactId,
+    path,
+  }, () => workspaceFallback().getGitHubWorkflowArtifactFilePreview(repoFullName, artifactId, path))
+    .then((preview) => {
+      cache.workflowArtifactPreviews[key] = cloneProjectData(preview);
+      return cloneProjectData(preview);
     });
 }
 
