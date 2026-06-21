@@ -73,19 +73,18 @@ function repoStatusRow(repoFullName: string) {
   return row;
 }
 
-function repoWorkbenchStatus() {
-  const status = document.querySelector(".repo-workbench__status");
-  if (!(status instanceof HTMLElement)) throw new Error("未找到仓库状态区");
+function repoSidebarErrorCard() {
+  const status = screen.getByRole("region", { name: "仓库错误" });
+  if (!(status instanceof HTMLElement)) throw new Error("未找到仓库错误区");
   return status;
 }
 
-function queryRepoWorkbenchStatus() {
-  const status = document.querySelector(".repo-workbench__status");
-  return status instanceof HTMLElement ? status : null;
+function queryRepoSidebarErrorCard() {
+  return screen.queryByRole("region", { name: "仓库错误" });
 }
 
 function repoDetailRecentSyncFailure() {
-  return within(repoWorkbenchStatus()).getByLabelText("最近同步失败");
+  return within(repoSidebarErrorCard()).getByText("最近同步失败").closest(".project-sidebar-error-card__item") as HTMLElement;
 }
 
 async function mockLiliaGithubSyncFailure() {
@@ -2428,7 +2427,7 @@ describe("基础路由", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
-      expect(queryRepoWorkbenchStatus()).toBeNull();
+      expect(queryRepoSidebarErrorCard()).toBeNull();
       expect(within(repoStatusRow("sena-nana/LiliaGithub")).getByLabelText("最近同步失败"))
         .toHaveAttribute("title", "认证失败");
     });
@@ -2441,11 +2440,11 @@ describe("基础路由", () => {
     await fireEvent.click(within(repoDetailRecentSyncFailure()).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
-      expect(queryRepoWorkbenchStatus()).toBeNull();
+      expect(queryRepoSidebarErrorCard()).toBeNull();
     });
   });
 
-  it("仓库详情页最近同步失败优先于仓库操作错误展示", async () => {
+  it("仓库详情页把最近同步失败和仓库操作错误都显示到右侧", async () => {
     const { setRepoActionError, state } = await import("../src/composables/workspace/state");
     await renderAt("/repos/LiliaGithub");
     await waitForRepoTitle("LiliaGithub");
@@ -2467,10 +2466,10 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
     });
-    expect(screen.queryByText("自动同步正在执行")).toBeNull();
+    expect(repoSidebarErrorCard()).toHaveTextContent("自动同步正在执行");
   });
 
-  it("仓库详情页状态区出现或消失时保留项目主内容区", async () => {
+  it("仓库详情页右侧错误区出现或消失时保留项目主内容区", async () => {
     const service = await mockLiliaGithubSyncFailure();
     await renderAt("/");
 
@@ -2492,7 +2491,7 @@ describe("基础路由", () => {
     await fireEvent.click(within(repoDetailRecentSyncFailure()).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
-      expect(queryRepoWorkbenchStatus()).toBeNull();
+      expect(queryRepoSidebarErrorCard()).toBeNull();
     });
     expect(document.querySelector(".repo-workbench__status")).toBeNull();
     expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();

@@ -584,6 +584,50 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
   });
 
+  it("仓库设置读取失败时只显示右侧错误卡并隐藏描述卡片", async () => {
+    const message = "读取 GitHub 仓库设置失败：HTTP 404 Not Found";
+    vi.mocked(getGitHubRepoManagement).mockRejectedValue(message);
+
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    const errorCard = await view.findByRole("region", { name: "仓库错误" });
+    expect(errorCard).toHaveTextContent("GitHub 请求失败");
+    expect(errorCard).toHaveTextContent(message);
+    expect(view.queryByRole("region", { name: "仓库描述" })).toBeNull();
+    expect(view.container.querySelector(".project-main .error-line")).toBeNull();
+  });
+
+  it("README 读取失败时只在右侧错误区显示", async () => {
+    const message = "读取 README 失败：HTTP 404 Not Found";
+    vi.mocked(listRepoReadmes).mockRejectedValue(message);
+
+    const view = await renderProjectPanel();
+
+    const errorCard = await view.findByRole("region", { name: "仓库错误" });
+    expect(errorCard).toHaveTextContent("README 读取失败");
+    expect(errorCard).toHaveTextContent(message);
+    expect(view.container.querySelector(".project-main .error-line")).toBeNull();
+  });
+
+  it("仓库操作错误和同步错误固定显示在右侧错误区", async () => {
+    const view = await renderProjectPanel({
+      activeGitTab: "changes",
+      actionError: "操作失败：无法提交",
+      repoActionError: "仓库错误：自动同步失败",
+      recentSyncError: { message: "认证失败", retrying: false },
+    });
+
+    const errorCard = view.getByRole("region", { name: "仓库错误" });
+    expect(errorCard).toHaveTextContent("最近同步失败");
+    expect(errorCard).toHaveTextContent("认证失败");
+    expect(errorCard).toHaveTextContent("操作失败");
+    expect(errorCard).toHaveTextContent("操作失败：无法提交");
+    expect(errorCard).toHaveTextContent("仓库错误：自动同步失败");
+    expect(within(errorCard).getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+
   it("仓库描述标签超过两行时显示展开和收起按钮", async () => {
     vi.mocked(getGitHubRepoManagement).mockResolvedValue({
       ...githubSettings,

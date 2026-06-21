@@ -20,7 +20,6 @@ import { defineAsyncComponent } from "vue";
 import Dropdown from "../components/Dropdown.vue";
 import RepoBranchPicker from "../components/repo/RepoBranchPicker.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
-import RepoPushError from "../components/repo/RepoPushError.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
@@ -314,18 +313,6 @@ const {
           </div>
         </div>
       </header>
-
-    <div v-if="actionError || repoActionError || recentSyncError" class="repo-workbench__status">
-      <RepoPushError
-        v-if="recentSyncError"
-          :message="recentSyncError.message"
-          :retrying="recentSyncError.retrying"
-          :action-running="actionRunning"
-          @retry="push"
-        />
-      <p v-else-if="actionError" class="error-line">{{ actionError }}</p>
-      <p v-else-if="repoActionError" class="error-line">{{ repoActionError }}</p>
-      </div>
     </div>
 
     <div class="repo-workbench__body">
@@ -379,9 +366,13 @@ const {
           :launch-config="launchConfig"
           :launch-logs="launchLogs"
           :launch-error="launchError"
+          :action-error="actionError"
+          :repo-action-error="repoActionError"
+          :recent-sync-error="recentSyncError"
           :launch-terminal-visible="launchTerminalVisible"
           :action-running="actionRunning"
           :launch-running="launchRunning"
+          @retry-sync="push"
           @hide-terminal="launchTerminalVisible = false"
           :repo-context="repoContext"
           :project-tab="activeProjectTab"
@@ -724,48 +715,6 @@ const {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.repo-push-error {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--err-soft);
-  border-radius: 8px;
-  background: var(--err-soft);
-  color: var(--err);
-}
-
-.repo-push-error div {
-  min-width: 0;
-}
-
-.repo-push-error strong,
-.repo-push-error p {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.repo-push-error strong {
-  font-size: 13px;
-}
-
-.repo-push-error p {
-  margin: 2px 0 0;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.repo-workbench__status {
-  display: grid;
-  grid-template-rows: minmax(0, auto);
-  gap: 14px;
-  min-height: 0;
 }
 
 .repo-workbench__body {
@@ -1247,11 +1196,6 @@ const {
   overflow-wrap: anywhere;
 }
 
-.error-line {
-  margin: 0;
-  color: var(--err);
-}
-
 @media (max-width: 1180px) {
   .conflict-workspace {
     grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
@@ -1267,7 +1211,6 @@ const {
   }
 
   .repo-header,
-  .repo-push-error,
   .conflict-workspace {
     grid-template-columns: 1fr;
   }
