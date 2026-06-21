@@ -99,7 +99,7 @@ export function resolveWorkspaceRuntimeForTests(probe: {
 }
 
 async function loadWorkspaceFallback() {
-  if (import.meta.env.DEV || import.meta.env.MODE === "test") {
+  if (isDev || isTest) {
     workspaceFallbackPromise ??= import("./fallback").then((module) => {
       workspaceFallbackModule = module;
       return module;
@@ -114,6 +114,21 @@ function workspaceFallback() {
     throw new Error("Workspace mock data has not been loaded.");
   }
   return workspaceFallbackModule;
+}
+
+export async function workspaceFallbackForTests(): Promise<WorkspaceFallback> {
+  if (!isTest) {
+    throw new Error("Workspace fallback test helpers are only available in test mode.");
+  }
+  return loadWorkspaceFallback();
+}
+
+export async function resetWorkspaceFallbacksForTests(): Promise<void> {
+  if (!isTest) {
+    throw new Error("Workspace fallback test helpers are only available in test mode.");
+  }
+  const fallback = workspaceFallbackModule ?? (workspaceFallbackPromise ? await workspaceFallbackPromise : null);
+  fallback?.resetWorkspaceFallbacksForTests();
 }
 
 async function call<T>(command: string, args: Record<string, unknown> | undefined, fallbackCall: () => Promise<T>): Promise<T> {

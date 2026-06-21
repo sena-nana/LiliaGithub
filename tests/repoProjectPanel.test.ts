@@ -18,7 +18,6 @@ import {
   mergeGitHubPullRequest,
   updateGitHubRepoSettings,
 } from "../src/services/workspace/client";
-import { setFallbackGitHubCommitDetailsForTests } from "../src/services/workspace/fallback";
 import type {
   CommitDetail,
   CommitSummary,
@@ -202,6 +201,14 @@ const launchConfig: ProjectLaunchConfig = {
   source: "inferred",
   updatedAt: null,
 };
+
+async function workspaceFallbackForTests() {
+  const client = await vi.importActual<typeof import("../src/services/workspace/client")>(
+    "../src/services/workspace/client",
+  );
+  return client.workspaceFallbackForTests();
+}
+
 type RepoProjectPanelProps = InstanceType<typeof RepoProjectPanel>["$props"];
 type RenderProjectPanelProps = Omit<RepoProjectPanelProps, "repoContext"> & {
   repoContext?: RepoProjectPanelProps["repoContext"];
@@ -289,7 +296,7 @@ function deferred<T>() {
 }
 
 describe("RepoProjectPanel", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     closeContextMenu();
     installContextMenu();
     vi.clearAllMocks();
@@ -311,7 +318,8 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
     vi.mocked(listRepoReadmes).mockResolvedValue([]);
-    setFallbackGitHubCommitDetailsForTests({
+    const workspaceFallback = await workspaceFallbackForTests();
+    workspaceFallback.setFallbackGitHubCommitDetailsForTests({
       "sena-nana/remote-repo": {
         [remoteCommit.hash]: remoteCommitDetail,
       },

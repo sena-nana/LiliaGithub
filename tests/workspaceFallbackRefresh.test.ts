@@ -1,13 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   deleteGitHubRepo,
   listGitHubRepos,
   listWorkspaceTasks,
   refreshRepos,
+  workspaceFallbackForTests,
 } from "../src/services/workspace";
-import { setFallbackRepoRemoteSyncOverrideForTests } from "../src/services/workspace/fallback";
+
+type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+let workspaceFallback: WorkspaceFallbackForTests;
 
 describe("workspace fallback refresh", () => {
+  beforeEach(async () => {
+    workspaceFallback = await workspaceFallbackForTests();
+  });
+
   it("刷新仓库时使用远端状态同步语义记录成功任务", async () => {
     const repos = await refreshRepos();
     const tasks = await listWorkspaceTasks();
@@ -23,7 +30,7 @@ describe("workspace fallback refresh", () => {
   });
 
   it("远端同步部分失败时保留仓库刷新结果并记录 error 任务", async () => {
-    setFallbackRepoRemoteSyncOverrideForTests((repo) => (
+    workspaceFallback.setFallbackRepoRemoteSyncOverrideForTests((repo) => (
       repo.id === "LiliaGithub" ? "认证失败" : null
     ));
 
