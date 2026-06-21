@@ -6,10 +6,11 @@ import {
   listRepoFiles,
   listGitHubRepoCommits,
   listGitHubIssues,
+  listGitHubPullRequests,
   updateGitHubIssue,
   workspaceFallbackForTests,
 } from "../src/services/workspace/client";
-import type { CommitDetail, CommitSummary, GitHubIssue } from "../src/services/workspace/types";
+import type { CommitDetail, CommitSummary, GitHubIssue, GitHubPullRequest } from "../src/services/workspace/types";
 
 const repoFullName = "sena-nana/remote-repo";
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
@@ -26,6 +27,31 @@ function issue(overrides: Partial<GitHubIssue> = {}): GitHubIssue {
     htmlUrl: "https://github.com/sena-nana/remote-repo/issues/12",
     updatedAt: "2026-06-18T08:00:00Z",
     createdAt: "2026-06-18T08:00:00Z",
+    ...overrides,
+  };
+}
+
+function pullRequest(overrides: Partial<GitHubPullRequest> = {}): GitHubPullRequest {
+  return {
+    number: 52,
+    title: "缓存前 PR",
+    state: "open",
+    draft: false,
+    body: null,
+    labels: ["bug"],
+    assignees: ["sena"],
+    milestone: { number: 1, title: "v1" },
+    comments: 2,
+    projectItems: [{ id: "PVT_roadmap", title: "Roadmap" }],
+    htmlUrl: "https://github.com/sena-nana/remote-repo/pull/52",
+    updatedAt: "2026-06-18T08:00:00Z",
+    createdAt: "2026-06-18T08:00:00Z",
+    author: "sena",
+    baseBranch: "main",
+    headBranch: "feature/cache",
+    merged: false,
+    mergeable: true,
+    mergeableState: "clean",
     ...overrides,
   };
 }
@@ -135,6 +161,74 @@ describe("workspace GitHub project cache", () => {
     expect(docsIssues.map((item) => item.title)).toEqual(["Docs issue"]);
     expect(cachedBugIssues.map((item) => item.title)).toEqual(["Bug issue"]);
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(2);
+  });
+
+  it("Pull Request 缓存按筛选、Review 和排序参数分桶", async () => {
+    workspaceFallback.setFallbackGitHubPullRequestsForTests({
+      [repoFullName]: [
+        pullRequest({
+          title: "Bug PR",
+          labels: ["bug"],
+          author: "sena",
+          assignees: ["sena"],
+          milestone: { number: 1, title: "v1" },
+          projectItems: [{ id: "PVT_roadmap", title: "Roadmap" }],
+          mergeableState: "clean",
+        }),
+        pullRequest({
+          number: 54,
+          title: "Docs PR",
+          labels: ["documentation"],
+          author: "mika",
+          assignees: [],
+          milestone: { number: 2, title: "v2" },
+          projectItems: [{ id: "PVT_docs", title: "Docs" }],
+          mergeableState: "blocked",
+        }),
+      ],
+    });
+
+    const bugPulls = await listGitHubPullRequests(repoFullName, {
+      state: "open",
+      labels: ["bug"],
+      creator: "sena",
+      assignee: "sena",
+      milestone: "1",
+      project: "PVT_roadmap",
+      review: "approved",
+      sort: "comments",
+      direction: "desc",
+      query: "Bug",
+    });
+    const docsPulls = await listGitHubPullRequests(repoFullName, {
+      state: "open",
+      labels: ["documentation"],
+      creator: "mika",
+      assignee: "none",
+      milestone: "2",
+      project: "PVT_docs",
+      review: "changes_requested",
+      sort: "updated",
+      direction: "asc",
+      query: "Docs",
+    });
+    const cachedBugPulls = await listGitHubPullRequests(repoFullName, {
+      state: "open",
+      labels: ["bug"],
+      creator: "sena",
+      assignee: "sena",
+      milestone: "1",
+      project: "PVT_roadmap",
+      review: "approved",
+      sort: "comments",
+      direction: "desc",
+      query: "Bug",
+    });
+
+    expect(bugPulls.map((item) => item.title)).toEqual(["Bug PR"]);
+    expect(docsPulls.map((item) => item.title)).toEqual(["Docs PR"]);
+    expect(cachedBugPulls.map((item) => item.title)).toEqual(["Bug PR"]);
+    expect(workspaceFallback.getFallbackGitHubPullRequestListCallsForTests()).toHaveLength(2);
   });
 
   it("更新 Issue 后同步已缓存列表", async () => {

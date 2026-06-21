@@ -258,6 +258,11 @@ export interface GitHubPullRequest {
   state: "open" | "closed" | string;
   draft: boolean;
   body: string | null;
+  labels: string[];
+  assignees: string[];
+  milestone?: GitHubIssueMilestone | null;
+  comments?: number;
+  projectItems?: GitHubIssueProjectItem[];
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
@@ -327,6 +332,11 @@ export interface GitHubIssueListOptions {
   milestone?: string | number | null;
   project?: string | null;
   query?: string | null;
+}
+
+export interface GitHubPullRequestListOptions extends GitHubIssueListOptions {
+  state?: "open" | "closed" | "merged" | "all" | string | null;
+  review?: "none" | "required" | "approved" | "changes_requested" | string | null;
 }
 
 export interface GitHubCreateIssueRequest {

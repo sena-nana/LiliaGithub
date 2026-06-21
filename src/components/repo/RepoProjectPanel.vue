@@ -5,17 +5,13 @@ import { useRoute, useRouter } from "vue-router";
 import {
   ArrowLeft,
   CircleDot,
-  CircleOff,
   Eye,
   ExternalLink,
   GitFork,
-  GitMerge,
   GitPullRequest,
-  ListFilter,
   LoaderCircle,
   Pencil,
   Plus,
-  RotateCcw,
   Save,
   Settings2,
   Star,
@@ -30,6 +26,11 @@ import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
 import RepoIssuesPanel from "./RepoIssuesPanel.vue";
 import RepoTopicEditor from "./RepoTopicEditor.vue";
+import {
+  blankPullRequestPanelFilters,
+  type PullRequestPanelFilters,
+  type PullRequestState,
+} from "./pullRequestPanelTypes";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
@@ -63,6 +64,7 @@ import type {
   GitHubIssueListOptions,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
@@ -148,6 +150,7 @@ const blankIssuePanelFilters = (): IssuePanelFilters => ({
 
 const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
+const RepoPullRequestsPanel = defineAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
 
 const props = defineProps<{
   repoId: string;
@@ -237,11 +240,11 @@ const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
 const githubError = ref<string | null>(null);
 const pulls = ref<GitHubPullRequest[]>([]);
-const pullState = ref<"open" | "closed" | "all">("open");
+const pullState = ref<PullRequestState>("open");
 const pullChecks = ref<Record<number, GitHubPullRequestCheck[]>>({});
 const pullsLoading = ref(false);
 const pullChecksLoading = ref(false);
-const pullsLoadedState = ref<"open" | "closed" | "all" | null>(null);
+const pullsLoadedKey = ref<string | null>(null);
 const focusedPullRequestNumber = ref<number | null>(null);
 const pullRequestTitle = ref("");
 const pullRequestBody = ref("");
@@ -292,6 +295,7 @@ const issueFilterMetadata = ref<GitHubIssueFilterMetadata>(emptyIssueFilterMetad
 const issueFilterMetadataLoading = ref(false);
 const issueFilterMetadataLoadedRepo = ref<string | null>(null);
 const issuePanelFilters = ref<IssuePanelFilters>(blankIssuePanelFilters());
+const pullRequestPanelFilters = ref<PullRequestPanelFilters>(blankPullRequestPanelFilters());
 const editingIssueNumber = ref<number | null>(null);
 const editingIssueTitle = ref("");
 const editingIssueBody = ref("");
@@ -453,16 +457,6 @@ const projectSections: readonly ProjectSectionConfig[] = [
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
-const githubStateFilters: readonly { value: "open" | "closed" | "all"; label: string }[] = [
-  { value: "open", label: "Open" },
-  { value: "closed", label: "Closed" },
-  { value: "all", label: "All" },
-];
-const mergeMethodOptions: readonly { value: "merge" | "squash" | "rebase"; label: string }[] = [
-  { value: "merge", label: "Merge" },
-  { value: "squash", label: "Squash" },
-  { value: "rebase", label: "Rebase" },
-];
 const canUseLaunchWorkflow = computed(() => resolvedRepoContext.value.capabilities.launch.available);
 const canShowChanges = computed(() => resolvedRepoContext.value.capabilities.changes.available);
 const historyReadOnly = computed(() => !resolvedRepoContext.value.capabilities.commit.available);
@@ -483,12 +477,6 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "settings",
 );
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
-const focusedPullRequest = computed(() =>
-  pulls.value.find((pull) => pull.number === focusedPullRequestNumber.value) ?? null,
-);
-const focusedPullChecks = computed(() =>
-  focusedPullRequestNumber.value ? (pullChecks.value[focusedPullRequestNumber.value] ?? []) : [],
-);
 const displayedIssueTemplates = computed(() => [blankIssueTemplate(), ...issueTemplates.value]);
 const issueTemplateOptions = computed(() =>
   displayedIssueTemplates.value.map((template) => ({
@@ -536,6 +524,20 @@ const issueListOptions = computed<GitHubIssueListOptions>(() => ({
   query: issuePanelFilters.value.query,
 }));
 const issueListKey = computed(() => JSON.stringify(issueListOptions.value));
+const pullListOptions = computed<GitHubPullRequestListOptions>(() => ({
+  state: pullState.value,
+  perPage: 100,
+  sort: pullRequestPanelFilters.value.sort,
+  direction: pullRequestPanelFilters.value.direction,
+  creator: pullRequestPanelFilters.value.creator,
+  assignee: pullRequestPanelFilters.value.assignee,
+  labels: pullRequestPanelFilters.value.labels,
+  milestone: pullRequestPanelFilters.value.milestone,
+  project: pullRequestPanelFilters.value.project,
+  review: pullRequestPanelFilters.value.review,
+  query: pullRequestPanelFilters.value.query,
+}));
+const pullListKey = computed(() => JSON.stringify(pullListOptions.value));
 const canSubmitIssueCreate = computed(() =>
   Boolean(props.repoFullName) &&
   !creatingIssue.value &&
@@ -705,6 +707,20 @@ function setIssuePanelFilters(filters: IssuePanelFilters) {
   };
   if (activeSection.value === "issues") {
     void loadIssues();
+  }
+}
+
+function setPullRequestState(value: PullRequestState) {
+  pullState.value = value;
+}
+
+function setPullRequestPanelFilters(filters: PullRequestPanelFilters) {
+  pullRequestPanelFilters.value = {
+    ...filters,
+    labels: [...filters.labels],
+  };
+  if (activeSection.value === "pulls") {
+    void loadPullRequests();
   }
 }
 
@@ -880,11 +896,15 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
     }
     return;
   }
-  if (pullState.value !== "all" && !hasPullRequest(pullNumber)) {
-    suppressPullStateReload = true;
-    pullState.value = "all";
-  }
   await loadPullRequests();
+  if (!hasPullRequest(pullNumber)) {
+    for (const state of ["closed", "merged"] as const) {
+      suppressPullStateReload = true;
+      pullState.value = state;
+      await loadPullRequests();
+      if (hasPullRequest(pullNumber)) break;
+    }
+  }
   if (!hasPullRequest(pullNumber)) {
     focusedPullRequestNumber.value = null;
     return;
@@ -1071,18 +1091,19 @@ async function loadPullRequests(force = false) {
     return;
   }
   if (!repoFullName || remoteDeleted.value) return;
-  if (!force && pullsLoadedState.value === pullState.value) return;
-  const stateKey = pullState.value;
+  const loadKey = pullListKey.value;
+  if (!force && pullsLoadedKey.value === loadKey) return;
+  const options = { ...pullListOptions.value, labels: [...(pullListOptions.value.labels ?? [])] };
   githubError.value = null;
   pullsLoading.value = true;
-  await pullsLoader.run(stateKey, async (runId) => {
+  await pullsLoader.run(loadKey, async (runId) => {
     try {
       const nextPulls = force
-        ? await listGitHubPullRequests(repoFullName, stateKey, { forceRefresh: true })
-        : await listGitHubPullRequests(repoFullName, stateKey);
+        ? await listGitHubPullRequests(repoFullName, options, { forceRefresh: true })
+        : await listGitHubPullRequests(repoFullName, options);
       if (!pullsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       pulls.value = nextPulls;
-      pullsLoadedState.value = stateKey;
+      pullsLoadedKey.value = loadKey;
       const current = focusedPullRequestNumber.value;
       if (current && nextPulls.some((pull) => pull.number === current)) {
         await loadPullRequestChecks(current, force);
@@ -1176,7 +1197,10 @@ async function ensureSectionData(section: ProjectContentMode) {
     return;
   }
   if (section === "pulls") {
-    await loadPullRequests();
+    await Promise.all([
+      loadPullRequests(),
+      loadIssueFilterMetadata(),
+    ]);
     return;
   }
   if (section === "actions") {
@@ -1207,8 +1231,11 @@ async function refreshLoadedSectionData() {
     ]);
     return;
   }
-  if (activeSection.value === "pulls" && pullsLoadedState.value) {
-    await loadPullRequests(true);
+  if (activeSection.value === "pulls" && pullsLoadedKey.value) {
+    await Promise.all([
+      loadPullRequests(true),
+      issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
+    ]);
     return;
   }
   if (activeSection.value === "actions" && actionsLoaded.value) {
@@ -1282,7 +1309,9 @@ function resetGitHubSectionState() {
   issueFilterMetadataLoadedRepo.value = null;
   pulls.value = [];
   pullChecks.value = {};
-  pullsLoadedState.value = null;
+  pullsLoadedKey.value = null;
+  pullState.value = "open";
+  pullRequestPanelFilters.value = blankPullRequestPanelFilters();
   pullsLoading.value = false;
   pullChecksLoading.value = false;
   focusedPullRequestNumber.value = null;
@@ -2107,36 +2136,6 @@ function selectReadme(path: string) {
         </section>
 
         <section v-else-if="activeSection === 'pulls'" class="project-section project-github-section">
-          <div v-if="!pullCreateView" class="project-section__head project-section__head--compact">
-            <div class="project-section__title">
-              <h3>Pull Requests</h3>
-              <span>{{ pulls.length }} items</span>
-            </div>
-            <div class="project-toolbar" aria-label="Pull Request actions">
-              <button
-                v-if="!pullCreateView && !pullsAccessUnavailable"
-                type="button"
-                class="primary project-create-button"
-                @click="openPullRequestCreateView"
-              >
-                <GitPullRequest :size="14" aria-hidden="true" />
-                新建 PR
-              </button>
-              <ListFilter v-if="!pullCreateView" :size="14" aria-hidden="true" />
-              <div v-if="!pullCreateView" class="ui-segmented project-segmented" role="group" aria-label="Pull Request 状态">
-                <button
-                  v-for="filter in githubStateFilters"
-                  :key="filter.value"
-                  type="button"
-                  :class="{ 'is-active': pullState === filter.value }"
-                  :aria-pressed="pullState === filter.value"
-                  @click="pullState = filter.value"
-                >
-                  {{ filter.label }}
-                </button>
-              </div>
-            </div>
-          </div>
           <RepoGitHubUnavailableNotice
             v-if="pullsAccessUnavailable"
             :title="pullsAccessUnavailable.title"
@@ -2211,100 +2210,28 @@ function selectReadme(path: string) {
               <textarea v-model="pullRequestBody" rows="7" placeholder="描述本次变更"></textarea>
             </label>
           </form>
-          <p v-if="!pullsAccessUnavailable && !pullCreateView && pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
-          <div v-if="!pullsAccessUnavailable && !pullCreateView" class="project-list project-dense-list">
-            <div
-              v-for="pull in pulls"
-              :key="pull.number"
-              class="project-row project-row--pull"
-              :class="{ 'is-target': isPullRequestRowFocused(pull.number) }"
-              :data-pull-number="pull.number"
-              @click="focusPullRequestRow(pull)"
-            >
-              <span class="project-row__status" :class="{ 'is-closed': pull.state !== 'open' || pull.merged }" :title="pull.merged ? 'merged' : pull.state">
-                <GitMerge v-if="pull.merged" :size="14" aria-hidden="true" />
-                <GitPullRequest v-else-if="pull.state === 'open'" :size="14" aria-hidden="true" />
-                <CircleOff v-else :size="14" aria-hidden="true" />
-              </span>
-              <div class="project-row__content">
-                <strong>#{{ pull.number }} {{ pull.title }}</strong>
-                <span>
-                  {{ pull.author }} · {{ pull.headBranch }} -> {{ pull.baseBranch }} ·
-                  {{ pull.merged ? "merged" : pull.state }}
-                  <template v-if="pull.draft"> · draft</template>
-                  <template v-if="pull.mergeableState"> · {{ pull.mergeableState }}</template>
-                </span>
-                <div v-if="focusedPullRequest?.number === pull.number" class="project-pull-checks">
-                  <p class="muted">
-                    {{
-                      pullChecksLoading
-                        ? "正在读取 checks..."
-                        : focusedPullChecks.length
-                          ? `${focusedPullChecks.length} 个 checks`
-                          : "没有 checks"
-                    }}
-                  </p>
-                  <ul v-if="focusedPullChecks.length" class="project-pull-check-list">
-                    <li v-for="check in focusedPullChecks" :key="check.id">
-                      <span>{{ check.name }}</span>
-                      <em>{{ check.conclusion ?? check.status }}</em>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-              <div class="project-row__actions project-row__actions--pull">
-                <div class="ui-segmented project-segmented project-segmented--merge" role="group" aria-label="合并方式">
-                  <button
-                    v-for="method in mergeMethodOptions"
-                    :key="method.value"
-                    type="button"
-                    :class="{ 'is-active': pullRequestMergeMethod === method.value }"
-                    :aria-pressed="pullRequestMergeMethod === method.value"
-                    @click.stop="pullRequestMergeMethod = method.value"
-                  >
-                    {{ method.label }}
-                  </button>
-                </div>
-                <button type="button" class="ghost project-icon-action" aria-label="打开" title="打开" @click.stop="openUrl(pull.htmlUrl)">
-                  <ExternalLink :size="14" aria-hidden="true" />
-                </button>
-                <button
-                  v-if="pull.state === 'open' && !pull.merged"
-                  type="button"
-                  class="ghost project-icon-action"
-                  :disabled="updatingPullRequest"
-                  aria-label="关闭"
-                  title="关闭"
-                  @click.stop="togglePullRequestState(pull)"
-                >
-                  <CircleOff :size="14" aria-hidden="true" />
-                </button>
-                <button
-                  v-if="pull.state === 'open' && !pull.merged"
-                  type="button"
-                  class="primary project-icon-action project-icon-action--primary"
-                  :disabled="updatingPullRequest"
-                  aria-label="合并"
-                  title="合并"
-                  @click.stop="mergePullRequest(pull)"
-                >
-                  <GitMerge :size="14" aria-hidden="true" />
-                </button>
-                <button
-                  v-else-if="pull.state === 'closed' && !pull.merged"
-                  type="button"
-                  class="ghost project-icon-action"
-                  :disabled="updatingPullRequest"
-                  aria-label="重开"
-                  title="重开"
-                  @click.stop="togglePullRequestState(pull)"
-                >
-                  <RotateCcw :size="14" aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-            <p v-if="!pulls.length && !pullsLoading" class="muted repo-empty">没有匹配的 Pull Request。</p>
-          </div>
+          <RepoPullRequestsPanel
+            v-if="!pullsAccessUnavailable && !pullCreateView"
+            :pulls="pulls"
+            :state="pullState"
+            :filters="pullRequestPanelFilters"
+            :metadata="issueFilterMetadata"
+            :metadata-loading="issueFilterMetadataLoading"
+            :loading="pullsLoading"
+            :checks-loading="pullChecksLoading"
+            :updating="updatingPullRequest"
+            :focused-pull-request-number="focusedPullRequestNumber"
+            :pull-checks="pullChecks"
+            v-model:merge-method="pullRequestMergeMethod"
+            :is-focused="isPullRequestRowFocused"
+            @update:state="setPullRequestState"
+            @update:filters="setPullRequestPanelFilters"
+            @create="openPullRequestCreateView"
+            @focus="focusPullRequestRow"
+            @open="(pull) => openUrl(pull.htmlUrl)"
+            @toggle="togglePullRequestState"
+            @merge="mergePullRequest"
+          />
         </section>
 
         <section v-else-if="activeSection === 'actions'" class="project-section project-github-section">
@@ -3160,10 +3087,6 @@ function selectReadme(path: string) {
   font-size: 12px;
 }
 
-.project-segmented--merge button {
-  min-width: 52px;
-}
-
 .project-compact-form {
   display: grid;
   gap: 8px;
@@ -3487,10 +3410,6 @@ function selectReadme(path: string) {
   min-width: 0;
 }
 
-.project-row__actions--pull {
-  gap: 6px;
-}
-
 .project-icon-action {
   width: 28px;
   min-width: 28px;
@@ -3525,33 +3444,6 @@ function selectReadme(path: string) {
 
 .project-row--action {
   grid-template-columns: 22px minmax(0, 1fr) auto;
-}
-
-.project-row--pull {
-  align-items: start;
-}
-
-.project-pull-checks {
-  display: grid;
-  flex: 0 0 100%;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.project-pull-check-list {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.project-pull-check-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 12px;
 }
 
 .project-row.is-target {

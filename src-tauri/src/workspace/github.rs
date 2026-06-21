@@ -192,9 +192,11 @@ pub(super) struct GitHubIssueProjectsGraphQlData {
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubIssueProjectsRepository {
     pub(super) issues: GitHubIssueProjectsConnection,
+    #[serde(rename = "pullRequests", default)]
+    pub(super) pull_requests: GitHubIssueProjectsConnection,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub(super) struct GitHubIssueProjectsConnection {
     #[serde(default)]
     pub(super) nodes: Vec<Option<GitHubIssueProjectsNode>>,
@@ -675,12 +677,79 @@ pub(super) fn github_issue_cache_key(
     .to_string()
 }
 
-pub(super) fn github_pull_request_cache_key(state: Option<&str>) -> String {
-    match state {
+pub(super) fn github_pull_request_cache_key(
+    state: Option<&str>,
+    per_page: Option<u32>,
+    sort: Option<&str>,
+    direction: Option<&str>,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+    project: Option<&str>,
+    review: Option<&str>,
+    query: Option<&str>,
+) -> String {
+    let pull_state = match state {
         Some("closed") => "closed",
+        Some("merged") => "merged",
         Some("all") => "all",
         _ => "open",
-    }
+    };
+    let pull_per_page = per_page.unwrap_or(100).clamp(1, 100);
+    let pull_sort = match sort {
+        Some("created") => "created",
+        Some("comments") => "comments",
+        _ => "updated",
+    };
+    let pull_direction = match direction {
+        Some("asc") => "asc",
+        _ => "desc",
+    };
+    let pull_creator = creator
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_assignee = assignee
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let mut pull_labels = labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    pull_labels.sort();
+    let pull_milestone = milestone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_project = project
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_review = review
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_query = query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    serde_json::json!({
+        "state": pull_state,
+        "perPage": pull_per_page,
+        "sort": pull_sort,
+        "direction": pull_direction,
+        "creator": pull_creator,
+        "assignee": pull_assignee,
+        "labels": pull_labels,
+        "milestone": pull_milestone,
+        "project": pull_project,
+        "review": pull_review,
+        "query": pull_query,
+    })
     .to_string()
 }
 
@@ -1166,7 +1235,18 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
     if issue.pull_request.is_some() {
         return None;
     }
-    Some(GitHubIssue {
+    Some(github_issue_like_from_response(issue))
+}
+
+fn github_pull_request_issue_from_response(issue: GitHubIssueResponse) -> Option<GitHubIssue> {
+    if issue.pull_request.is_none() {
+        return None;
+    }
+    Some(github_issue_like_from_response(issue))
+}
+
+fn github_issue_like_from_response(issue: GitHubIssueResponse) -> GitHubIssue {
+    GitHubIssue {
         number: issue.number,
         title: issue.title,
         state: issue.state,
@@ -1188,7 +1268,7 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
         html_url: issue.html_url,
         updated_at: issue.updated_at,
         created_at: issue.created_at,
-    })
+    }
 }
 
 pub(super) fn github_pull_request_from_response(
@@ -1200,6 +1280,11 @@ pub(super) fn github_pull_request_from_response(
         state: pull_request.state,
         draft: pull_request.draft,
         body: pull_request.body,
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        milestone: None,
+        comments: 0,
+        project_items: Vec::new(),
         html_url: pull_request.html_url,
         updated_at: pull_request.updated_at,
         created_at: pull_request.created_at,
@@ -1213,6 +1298,18 @@ pub(super) fn github_pull_request_from_response(
         mergeable: pull_request.mergeable,
         mergeable_state: normalize_optional_string(pull_request.mergeable_state),
     }
+}
+
+fn github_pull_request_with_issue_metadata(
+    mut pull_request: GitHubPullRequest,
+    issue: GitHubIssue,
+) -> GitHubPullRequest {
+    pull_request.labels = issue.labels;
+    pull_request.assignees = issue.assignees;
+    pull_request.milestone = issue.milestone;
+    pull_request.comments = issue.comments;
+    pull_request.project_items = issue.project_items;
+    pull_request
 }
 
 pub(super) fn github_pull_request_check_from_response(
@@ -1315,6 +1412,64 @@ fn github_issue_search_query(
     parts.join(" ")
 }
 
+pub(super) fn github_pull_request_search_query(
+    repo_full_name: &str,
+    state: &str,
+    text: &str,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+    review: Option<&str>,
+) -> String {
+    let mut parts = vec![
+        github_search_qualifier("repo", repo_full_name),
+        "is:pr".to_string(),
+    ];
+    let text = text.trim();
+    if !text.is_empty() {
+        parts.push(text.to_string());
+    }
+    match state {
+        "merged" => parts.push("is:merged".to_string()),
+        "closed" => {
+            parts.push(github_search_qualifier("state", "closed"));
+            parts.push("-is:merged".to_string());
+        }
+        "all" => {}
+        _ => parts.push(github_search_qualifier("state", "open")),
+    }
+    if let Some(value) = creator.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(github_search_qualifier("author", value));
+    }
+    if let Some(value) = assignee.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:assignee".to_string());
+        } else {
+            parts.push(github_search_qualifier("assignee", value));
+        }
+    }
+    for label in labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|label| label.trim())
+        .filter(|label| !label.is_empty())
+    {
+        parts.push(github_search_qualifier("label", label));
+    }
+    if let Some(value) = milestone.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:milestone".to_string());
+        } else {
+            parts.push(github_search_qualifier("milestone", value));
+        }
+    }
+    if let Some(value) = review.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(github_search_qualifier("review", value));
+    }
+    parts.join(" ")
+}
+
 pub(super) fn github_issue_project_items_from_graphql(
     data: GitHubIssueProjectsGraphQlData,
 ) -> std::collections::HashMap<u64, Vec<GitHubIssueProjectItem>> {
@@ -1322,7 +1477,13 @@ pub(super) fn github_issue_project_items_from_graphql(
     let Some(repository) = data.repository else {
         return map;
     };
-    for issue in repository.issues.nodes.into_iter().flatten() {
+    for issue in repository
+        .issues
+        .nodes
+        .into_iter()
+        .chain(repository.pull_requests.nodes.into_iter())
+        .flatten()
+    {
         let projects = issue
             .project_items
             .nodes
@@ -1352,6 +1513,20 @@ pub(super) fn fetch_github_issue_project_items(
       query RepoIssueProjects($owner: String!, $name: String!) {
         repository(owner: $owner, name: $name) {
           issues(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes {
+              number
+              projectItems(first: 20) {
+                nodes {
+                  id
+                  project {
+                    id
+                    title
+                  }
+                }
+              }
+            }
+          }
+          pullRequests(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
             nodes {
               number
               projectItems(first: 20) {
@@ -2228,10 +2403,34 @@ pub async fn github_list_pull_requests(
     app: AppHandle,
     repo_full_name: String,
     state: Option<String>,
+    per_page: Option<u32>,
+    sort: Option<String>,
+    direction: Option<String>,
+    creator: Option<String>,
+    assignee: Option<String>,
+    labels: Option<Vec<String>>,
+    milestone: Option<serde_json::Value>,
+    project: Option<String>,
+    review: Option<String>,
+    query: Option<String>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubPullRequest>, String> {
     run_blocking("读取 GitHub Pull Requests", move || {
-        let pull_key = github_pull_request_cache_key(state.as_deref());
+        let milestone_key = github_issue_milestone_param(milestone.clone());
+        let search_query = normalize_optional_string(query.clone());
+        let pull_key = github_pull_request_cache_key(
+            state.as_deref(),
+            per_page,
+            sort.as_deref(),
+            direction.as_deref(),
+            creator.as_deref(),
+            assignee.as_deref(),
+            labels.as_deref(),
+            milestone_key.as_deref(),
+            project.as_deref(),
+            review.as_deref(),
+            search_query.as_deref(),
+        );
         let cache_key = github_project_cache_repo_key(&repo_full_name)?;
         if github_project_cache_enabled(force_refresh) {
             if let Some(cached) = load_github_project_cache(&app)
@@ -2245,33 +2444,79 @@ pub async fn github_list_pull_requests(
         let (_binding, token) = github_require_token(&app)?;
         let pull_state = match state.as_deref() {
             Some("closed") => "closed",
+            Some("merged") => "merged",
             Some("all") => "all",
             _ => "open",
         };
+        let pull_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+        let pull_sort = match sort.as_deref() {
+            Some("created") => "created",
+            Some("comments") => "comments",
+            _ => "updated",
+        };
+        let pull_direction = match direction.as_deref() {
+            Some("asc") => "asc",
+            _ => "desc",
+        };
+        let pull_creator = normalize_optional_string(creator);
+        let pull_assignee = normalize_optional_string(assignee);
+        let pull_review = normalize_optional_string(review);
         let client = build_client()?;
+        let search_q = github_pull_request_search_query(
+            &repo_full_name,
+            pull_state,
+            search_query.as_deref().unwrap_or(""),
+            pull_creator.as_deref(),
+            pull_assignee.as_deref(),
+            labels.as_deref(),
+            milestone_key.as_deref(),
+            pull_review.as_deref(),
+        );
+        let search_params = vec![
+            ("q", search_q),
+            ("per_page", pull_per_page),
+            ("sort", pull_sort.to_string()),
+            ("order", pull_direction.to_string()),
+        ];
         let response = github_send(
             &app,
             "读取 GitHub Pull Requests 失败",
             github_headers(
                 client
-                    .get(format!("{}/pulls", github_repo_api_url(&repo_full_name)?))
-                    .query(&[
-                        ("state", pull_state),
-                        ("per_page", "50"),
-                        ("sort", "updated"),
-                        ("direction", "desc"),
-                    ]),
+                    .get("https://api.github.com/search/issues")
+                    .query(&search_params),
                 Some(&token),
             ),
         )?;
-        let pull_requests = github_json::<Vec<GitHubPullRequestResponse>>(
-            "读取 GitHub Pull Requests 失败",
-            response,
-        )?;
-        let pulls = pull_requests
-            .into_iter()
-            .map(github_pull_request_from_response)
-            .collect::<Vec<_>>();
+        let mut issues =
+            github_json::<GitHubIssueSearchResponse>("读取 GitHub Pull Requests 失败", response)?
+                .items
+                .into_iter()
+                .filter_map(github_pull_request_issue_from_response)
+                .collect::<Vec<_>>();
+        enrich_github_issues_with_projects(&app, &repo_full_name, &token, &mut issues)?;
+        if let Some(project_filter) = normalize_optional_string(project) {
+            issues.retain(|issue| {
+                issue
+                    .project_items
+                    .iter()
+                    .any(|item| item.id == project_filter || item.title == project_filter)
+            });
+        }
+        let mut pulls = Vec::with_capacity(issues.len());
+        for issue in issues {
+            let pull_request = github_fetch_pull_request_response(
+                &app,
+                &repo_full_name,
+                issue.number,
+                &token,
+                "读取 GitHub Pull Request 失败",
+            )?;
+            pulls.push(github_pull_request_with_issue_metadata(
+                github_pull_request_from_response(pull_request),
+                issue,
+            ));
+        }
         update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
             repo_cache.pull_requests.insert(pull_key, pulls.clone());
         })?;

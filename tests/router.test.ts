@@ -168,6 +168,11 @@ function githubPullRequest(
     state: "open",
     draft: false,
     body: null,
+    labels: [],
+    assignees: [],
+    milestone: null,
+    comments: 0,
+    projectItems: [],
     htmlUrl: `https://github.com/${repoFullName}/pull/${number}`,
     updatedAt,
     createdAt: updatedAt,
@@ -1066,14 +1071,29 @@ describe("基础路由", () => {
       expect(workspaceFallback.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual({
         repoFullName: repo.fullName,
         state: "all",
+        perPage: null,
+        sort: "updated",
+        direction: "desc",
+        creator: null,
+        assignee: null,
+        labels: null,
+        milestone: null,
+        project: null,
+        review: null,
+        query: null,
       });
       expect(workspaceFallback.getFallbackGitHubPullRequestCheckListCallsForTests()).toContainEqual({
         repoFullName: repo.fullName,
         pullNumber: 52,
       });
     });
-
-    await fireEvent.click(within(timeline).getByRole("link", { name: "PR #52" }));
+    const pullRequestLink = within(timeline).getByRole("link", { name: "PR #52" });
+    expect(pullRequestLink).toHaveAttribute("href", "/repos/LiliaGithub?projectTab=pulls&pr=52");
+    vi.useRealTimers();
+    await fireEvent.click(pullRequestLink);
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub?projectTab=pulls&pr=52");
+    });
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     await waitFor(() => {
