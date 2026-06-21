@@ -135,6 +135,14 @@ pub(super) struct GitHubAssigneeResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueMilestoneResponse {
+    pub(super) number: u64,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubIssueResponse {
     pub(super) number: u64,
     pub(super) title: String,
@@ -144,11 +152,76 @@ pub(super) struct GitHubIssueResponse {
     pub(super) updated_at: String,
     pub(super) created_at: String,
     #[serde(default)]
+    pub(super) user: Option<GitHubAssigneeResponse>,
+    #[serde(default)]
+    pub(super) milestone: Option<GitHubIssueMilestoneResponse>,
+    #[serde(default)]
+    pub(super) comments: u64,
+    #[serde(default)]
     pub(super) labels: Vec<GitHubLabelResponse>,
     #[serde(default)]
     pub(super) assignees: Vec<GitHubAssigneeResponse>,
     #[serde(default)]
     pub(super) pull_request: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueSearchResponse {
+    #[serde(default)]
+    pub(super) items: Vec<GitHubIssueResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubGraphQlResponse<T> {
+    pub(super) data: Option<T>,
+    #[serde(default)]
+    pub(super) errors: Vec<GitHubGraphQlError>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubGraphQlError {
+    pub(super) message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct GitHubIssueProjectsGraphQlData {
+    pub(super) repository: Option<GitHubIssueProjectsRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueProjectsRepository {
+    pub(super) issues: GitHubIssueProjectsConnection,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueProjectsConnection {
+    #[serde(default)]
+    pub(super) nodes: Vec<Option<GitHubIssueProjectsNode>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueProjectsNode {
+    pub(super) number: u64,
+    #[serde(rename = "projectItems")]
+    pub(super) project_items: GitHubProjectItemsConnection,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubProjectItemsConnection {
+    #[serde(default)]
+    pub(super) nodes: Vec<Option<GitHubProjectItemNode>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubProjectItemNode {
+    pub(super) project: Option<GitHubProjectItemProject>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubProjectItemProject {
+    pub(super) id: String,
+    pub(super) title: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -436,6 +509,25 @@ pub(super) fn github_json<T: for<'de> Deserialize<'de>>(
         .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
 }
 
+pub(super) fn github_graphql_json<T: for<'de> Deserialize<'de>>(
+    prefix: &str,
+    response: Response,
+) -> Result<T, String> {
+    let result = github_json::<GitHubGraphQlResponse<T>>(prefix, response)?;
+    if !result.errors.is_empty() {
+        let detail = result
+            .errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("{prefix}：{detail}"));
+    }
+    result
+        .data
+        .ok_or_else(|| format!("{prefix}：GraphQL 响应缺少 data"))
+}
+
 pub(super) fn load_github_project_cache(app: &AppHandle) -> GitHubProjectCache {
     app.store(STORE_FILE)
         .ok()
@@ -498,6 +590,7 @@ pub(super) fn clear_github_project_issue_cache(
 ) -> Result<(), String> {
     update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
         repo_cache.issues.clear();
+        repo_cache.issue_filter_metadata = None;
     })
 }
 
@@ -517,6 +610,12 @@ pub(super) fn github_issue_cache_key(
     sort: Option<&str>,
     direction: Option<&str>,
     since: Option<&str>,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+    project: Option<&str>,
+    query: Option<&str>,
 ) -> String {
     let issue_state = state.unwrap_or("open");
     let issue_per_page = per_page.unwrap_or(100).clamp(1, 100);
@@ -533,7 +632,47 @@ pub(super) fn github_issue_cache_key(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("");
-    format!("{issue_state}|{issue_per_page}|{issue_sort}|{issue_direction}|{issue_since}")
+    let issue_creator = creator
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let issue_assignee = assignee
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let mut issue_labels = labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    issue_labels.sort();
+    let issue_milestone = milestone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let issue_project = project
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let issue_query = query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    serde_json::json!({
+        "state": issue_state,
+        "perPage": issue_per_page,
+        "sort": issue_sort,
+        "direction": issue_direction,
+        "since": issue_since,
+        "creator": issue_creator,
+        "assignee": issue_assignee,
+        "labels": issue_labels,
+        "milestone": issue_milestone,
+        "project": issue_project,
+        "query": issue_query,
+    })
+    .to_string()
 }
 
 pub(super) fn github_pull_request_cache_key(state: Option<&str>) -> String {
@@ -551,7 +690,10 @@ pub(super) fn github_workflow_runs_cache_key(per_page: Option<u32>) -> String {
 
 pub(super) fn github_commit_list_cache_key(per_page: Option<u32>, sha: Option<&str>) -> String {
     let commit_per_page = per_page.unwrap_or(100).clamp(1, 100);
-    let commit_sha = sha.map(str::trim).filter(|value| !value.is_empty()).unwrap_or("");
+    let commit_sha = sha
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
     format!("{commit_per_page}|{commit_sha}")
 }
 
@@ -587,9 +729,9 @@ pub(super) fn github_send(
     prefix: &str,
     builder: RequestBuilder,
 ) -> Result<Response, String> {
-    let response = builder.send().map_err(|e| {
-        format!("{prefix}：GitHub API 连接失败，请检查网络、代理或系统证书：{e}")
-    })?;
+    let response = builder
+        .send()
+        .map_err(|e| format!("{prefix}：GitHub API 连接失败，请检查网络、代理或系统证书：{e}"))?;
     if github_binding_expired_status(response.status()) {
         let mut settings = load_settings(app);
         settings.github_binding = None;
@@ -758,7 +900,11 @@ pub(super) fn sort_repo_file_tree_entries(entries: &mut [RepoFileTreeEntry]) {
         let right_kind = right.kind == "dir";
         right_kind
             .cmp(&left_kind)
-            .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
+            .then_with(|| {
+                left.name
+                    .to_ascii_lowercase()
+                    .cmp(&right.name.to_ascii_lowercase())
+            })
             .then_with(|| left.name.cmp(&right.name))
     });
 }
@@ -862,7 +1008,10 @@ pub(super) fn github_file_preview_from_content(
             name,
             preview_kind: "image".to_string(),
             content: None,
-            data_url: Some(format!("data:{image_mime};base64,{}", STANDARD.encode(bytes))),
+            data_url: Some(format!(
+                "data:{image_mime};base64,{}",
+                STANDARD.encode(bytes)
+            )),
             images: HashMap::new(),
             size,
             mime_type: Some(image_mime.to_string()),
@@ -1028,6 +1177,14 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
             .into_iter()
             .map(|assignee| assignee.login)
             .collect(),
+        author: issue.user.map(|user| user.login),
+        milestone: issue.milestone.map(|milestone| GitHubIssueMilestone {
+            number: milestone.number,
+            title: milestone.title,
+            state: normalize_optional_string(milestone.state),
+        }),
+        comments: issue.comments,
+        project_items: Vec::new(),
         html_url: issue.html_url,
         updated_at: issue.updated_at,
         created_at: issue.created_at,
@@ -1073,6 +1230,249 @@ pub(super) fn github_pull_request_check_from_response(
     }
 }
 
+pub(super) fn github_issue_labels_param(labels: Option<Vec<String>>) -> Option<String> {
+    let labels = labels?
+        .into_iter()
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty())
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        None
+    } else {
+        Some(labels.join(","))
+    }
+}
+
+pub(super) fn github_issue_milestone_param(value: Option<serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::Number(number) => number.as_u64().map(|value| value.to_string()),
+        serde_json::Value::String(value) => normalize_optional_string(Some(value)),
+        _ => None,
+    }
+}
+
+fn github_search_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn github_search_qualifier(name: &str, value: &str) -> String {
+    if value.chars().any(char::is_whitespace) {
+        format!("{name}:\"{}\"", github_search_escape(value))
+    } else {
+        format!("{name}:{value}")
+    }
+}
+
+fn github_issue_search_query(
+    repo_full_name: &str,
+    state: &str,
+    text: &str,
+    since: Option<&str>,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+) -> String {
+    let mut parts = vec![
+        github_search_qualifier("repo", repo_full_name),
+        "is:issue".to_string(),
+    ];
+    let text = text.trim();
+    if !text.is_empty() {
+        parts.push(text.to_string());
+    }
+    if state == "open" || state == "closed" {
+        parts.push(github_search_qualifier("state", state));
+    }
+    if let Some(value) = since.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(format!("updated:>={value}"));
+    }
+    if let Some(value) = creator.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(github_search_qualifier("author", value));
+    }
+    if let Some(value) = assignee.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:assignee".to_string());
+        } else {
+            parts.push(github_search_qualifier("assignee", value));
+        }
+    }
+    for label in labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|label| label.trim())
+        .filter(|label| !label.is_empty())
+    {
+        parts.push(github_search_qualifier("label", label));
+    }
+    if let Some(value) = milestone.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:milestone".to_string());
+        } else {
+            parts.push(github_search_qualifier("milestone", value));
+        }
+    }
+    parts.join(" ")
+}
+
+pub(super) fn github_issue_project_items_from_graphql(
+    data: GitHubIssueProjectsGraphQlData,
+) -> std::collections::HashMap<u64, Vec<GitHubIssueProjectItem>> {
+    let mut map = std::collections::HashMap::new();
+    let Some(repository) = data.repository else {
+        return map;
+    };
+    for issue in repository.issues.nodes.into_iter().flatten() {
+        let projects = issue
+            .project_items
+            .nodes
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let project = item.project?;
+                Some(GitHubIssueProjectItem {
+                    id: project.id,
+                    title: project.title,
+                })
+            })
+            .collect::<Vec<_>>();
+        map.insert(issue.number, projects);
+    }
+    map
+}
+
+pub(super) fn fetch_github_issue_project_items(
+    app: &AppHandle,
+    repo_full_name: &str,
+    token: &str,
+) -> Result<std::collections::HashMap<u64, Vec<GitHubIssueProjectItem>>, String> {
+    let repo = normalize_github_repo_input(repo_full_name)?;
+    let client = build_client()?;
+    let query = r#"
+      query RepoIssueProjects($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) {
+          issues(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes {
+              number
+              projectItems(first: 20) {
+                nodes {
+                  id
+                  project {
+                    id
+                    title
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    "#;
+    let response = github_send(
+        app,
+        "读取 GitHub Issue Projects 失败",
+        github_headers(
+            client
+                .post("https://api.github.com/graphql")
+                .json(&serde_json::json!({
+                    "query": query,
+                    "variables": {
+                        "owner": repo.owner,
+                        "name": repo.name,
+                    },
+                })),
+            Some(token),
+        ),
+    )?;
+    let data = github_graphql_json::<GitHubIssueProjectsGraphQlData>(
+        "读取 GitHub Issue Projects 失败",
+        response,
+    )?;
+    Ok(github_issue_project_items_from_graphql(data))
+}
+
+pub(super) fn enrich_github_issues_with_projects(
+    app: &AppHandle,
+    repo_full_name: &str,
+    token: &str,
+    issues: &mut [GitHubIssue],
+) -> Result<(), String> {
+    if issues.is_empty() {
+        return Ok(());
+    }
+    let project_items = fetch_github_issue_project_items(app, repo_full_name, token)?;
+    for issue in issues {
+        issue.project_items = project_items
+            .get(&issue.number)
+            .cloned()
+            .unwrap_or_default();
+    }
+    Ok(())
+}
+
+pub(super) fn github_issue_filter_metadata_from_issues(
+    issues: &[GitHubIssue],
+) -> GitHubIssueFilterMetadata {
+    let mut authors = issues
+        .iter()
+        .filter_map(|issue| issue.author.clone())
+        .filter(|author| !author.trim().is_empty())
+        .collect::<Vec<_>>();
+    authors.sort();
+    authors.dedup();
+
+    let mut labels = issues
+        .iter()
+        .flat_map(|issue| issue.labels.clone())
+        .filter(|label| !label.trim().is_empty())
+        .collect::<Vec<_>>();
+    labels.sort();
+    labels.dedup();
+
+    let mut assignees = issues
+        .iter()
+        .flat_map(|issue| issue.assignees.clone())
+        .filter(|assignee| !assignee.trim().is_empty())
+        .collect::<Vec<_>>();
+    assignees.sort();
+    assignees.dedup();
+
+    let mut milestone_map = std::collections::HashMap::<u64, GitHubIssueMilestone>::new();
+    let mut project_map = std::collections::HashMap::<String, GitHubIssueProjectItem>::new();
+    for issue in issues {
+        if let Some(milestone) = &issue.milestone {
+            milestone_map.insert(milestone.number, milestone.clone());
+        }
+        for project in &issue.project_items {
+            project_map.insert(project.id.clone(), project.clone());
+        }
+    }
+    let mut milestones = milestone_map.into_values().collect::<Vec<_>>();
+    milestones.sort_by(|left, right| left.title.cmp(&right.title));
+    let mut projects = project_map.into_values().collect::<Vec<_>>();
+    projects.sort_by(|left, right| left.title.cmp(&right.title));
+
+    GitHubIssueFilterMetadata {
+        authors,
+        labels,
+        assignees,
+        milestones,
+        projects,
+    }
+}
+
+fn merge_unique_sorted_strings(left: Vec<String>, right: Vec<String>) -> Vec<String> {
+    let mut values = left
+        .into_iter()
+        .chain(right)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
+}
+
 pub(super) fn github_workflow_run_from_response(
     run: GitHubWorkflowRunResponse,
 ) -> GitHubWorkflowRun {
@@ -1115,7 +1515,11 @@ pub(super) fn github_commit_summary_from_response(commit: GitHubCommitResponse) 
             .and_then(parse_github_datetime)
             .unwrap_or_default(),
         subject,
-        parents: commit.parents.into_iter().map(|parent| parent.sha).collect(),
+        parents: commit
+            .parents
+            .into_iter()
+            .map(|parent| parent.sha)
+            .collect(),
         refs: Vec::new(),
     }
 }
@@ -1125,7 +1529,11 @@ pub(super) fn github_commit_detail_from_response(commit: GitHubCommitResponse) -
     let committer = commit.commit.committer.as_ref();
     let mut message_lines = commit.commit.message.lines();
     let subject = message_lines.next().unwrap_or("").trim().to_string();
-    let body = message_lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    let body = message_lines
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
     let timestamp = author
         .and_then(|item| item.date.as_deref())
         .and_then(parse_github_datetime)
@@ -1144,13 +1552,19 @@ pub(super) fn github_commit_detail_from_response(commit: GitHubCommitResponse) -
         timestamp,
         subject,
         body,
-        parents: commit.parents.into_iter().map(|parent| parent.sha).collect(),
+        parents: commit
+            .parents
+            .into_iter()
+            .map(|parent| parent.sha)
+            .collect(),
         refs: Vec::new(),
         files: github_commit_file_changes(commit.files),
     }
 }
 
-pub(super) fn github_commit_file_changes(files: Vec<GitHubCommitFileResponse>) -> Vec<CommitFileChange> {
+pub(super) fn github_commit_file_changes(
+    files: Vec<GitHubCommitFileResponse>,
+) -> Vec<CommitFileChange> {
     let patch_output = files
         .iter()
         .filter_map(github_commit_file_patch_block)
@@ -1221,12 +1635,7 @@ pub(super) fn parse_github_datetime(value: &str) -> Option<i64> {
     let mut time_parts = time.split(':');
     let hour = time_parts.next()?.parse::<i64>().ok()?;
     let minute = time_parts.next()?.parse::<i64>().ok()?;
-    let second = time_parts
-        .next()?
-        .split('.')
-        .next()?
-        .parse::<i64>()
-        .ok()?;
+    let second = time_parts.next()?.split('.').next()?.parse::<i64>().ok()?;
     let days = days_from_civil(year, month, day)?;
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
@@ -1641,10 +2050,8 @@ fn fetch_github_repo_management(
             Some(&token),
         ),
     )?;
-    let topics = github_json::<GitHubRepoTopicsResponse>(
-        "读取 GitHub 仓库 topics 失败",
-        topics_response,
-    )?;
+    let topics =
+        github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", topics_response)?;
     Ok(github_repo_management_from_response(repo, topics.names))
 }
 
@@ -1848,7 +2255,12 @@ pub async fn github_list_pull_requests(
             github_headers(
                 client
                     .get(format!("{}/pulls", github_repo_api_url(&repo_full_name)?))
-                    .query(&[("state", pull_state), ("per_page", "50"), ("sort", "updated"), ("direction", "desc")]),
+                    .query(&[
+                        ("state", pull_state),
+                        ("per_page", "50"),
+                        ("sort", "updated"),
+                        ("direction", "desc"),
+                    ]),
                 Some(&token),
             ),
         )?;
@@ -1924,10 +2336,8 @@ pub async fn github_create_pull_request(
                 Some(&token),
             ),
         )?;
-        let pull_request = github_json::<GitHubPullRequestResponse>(
-            "创建 GitHub Pull Request 失败",
-            response,
-        )?;
+        let pull_request =
+            github_json::<GitHubPullRequestResponse>("创建 GitHub Pull Request 失败", response)?;
         let pull = github_pull_request_from_response(pull_request);
         clear_github_project_pull_request_cache(&app, &repo_full_name)?;
         Ok(pull)
@@ -1978,10 +2388,8 @@ pub async fn github_update_pull_request(
                 Some(&token),
             ),
         )?;
-        let pull_request = github_json::<GitHubPullRequestResponse>(
-            "更新 GitHub Pull Request 失败",
-            response,
-        )?;
+        let pull_request =
+            github_json::<GitHubPullRequestResponse>("更新 GitHub Pull Request 失败", response)?;
         let pull = github_pull_request_from_response(pull_request);
         clear_github_project_pull_request_cache(&app, &repo_full_name)?;
         Ok(pull)
@@ -2009,7 +2417,10 @@ pub async fn github_merge_pull_request(
             payload.insert("commit_title".to_string(), serde_json::Value::String(value));
         }
         if let Some(value) = normalize_optional_string(request.commit_message) {
-            payload.insert("commit_message".to_string(), serde_json::Value::String(value));
+            payload.insert(
+                "commit_message".to_string(),
+                serde_json::Value::String(value),
+            );
         }
         if let Some(value) = normalize_optional_string(request.sha) {
             payload.insert("sha".to_string(), serde_json::Value::String(value));
@@ -2123,15 +2534,29 @@ pub async fn github_list_issues(
     sort: Option<String>,
     direction: Option<String>,
     since: Option<String>,
+    creator: Option<String>,
+    assignee: Option<String>,
+    labels: Option<Vec<String>>,
+    milestone: Option<serde_json::Value>,
+    project: Option<String>,
+    query: Option<String>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubIssue>, String> {
     run_blocking("读取 GitHub Issue", move || {
+        let milestone_key = github_issue_milestone_param(milestone.clone());
+        let search_query = normalize_optional_string(query.clone());
         let issue_key = github_issue_cache_key(
             state.as_deref(),
             per_page,
             sort.as_deref(),
             direction.as_deref(),
             since.as_deref(),
+            creator.as_deref(),
+            assignee.as_deref(),
+            labels.as_deref(),
+            milestone_key.as_deref(),
+            project.as_deref(),
+            search_query.as_deref(),
         );
         let cache_key = github_project_cache_repo_key(&repo_full_name)?;
         if github_project_cache_enabled(force_refresh) {
@@ -2155,19 +2580,129 @@ pub async fn github_list_issues(
             Some("asc") => "asc",
             _ => "desc",
         };
-        let mut query = vec![
-            ("state", issue_state),
-            ("per_page", issue_per_page),
+        let issue_since = normalize_optional_string(since);
+        let issue_creator = normalize_optional_string(creator);
+        let issue_assignee = normalize_optional_string(assignee);
+        let issue_labels = github_issue_labels_param(labels.clone());
+        let issue_milestone = milestone_key.clone();
+        let mut rest_query = vec![
+            ("state", issue_state.clone()),
+            ("per_page", issue_per_page.clone()),
             ("sort", issue_sort.to_string()),
             ("direction", issue_direction.to_string()),
         ];
-        if let Some(issue_since) = normalize_optional_string(since) {
-            query.push(("since", issue_since));
+        if let Some(issue_since) = issue_since.clone() {
+            rest_query.push(("since", issue_since));
+        }
+        if let Some(issue_creator) = issue_creator.clone() {
+            rest_query.push(("creator", issue_creator));
+        }
+        if let Some(issue_assignee) = issue_assignee.clone() {
+            rest_query.push(("assignee", issue_assignee));
+        }
+        if let Some(issue_labels) = issue_labels.clone() {
+            rest_query.push(("labels", issue_labels));
+        }
+        if let Some(issue_milestone) = issue_milestone.clone() {
+            rest_query.push(("milestone", issue_milestone));
         }
         let client = build_client()?;
+        let issues = if let Some(search_text) = search_query {
+            let search_sort = match issue_sort {
+                "updated" => "updated",
+                "comments" => "comments",
+                _ => "created",
+            };
+            let search_q = github_issue_search_query(
+                &repo_full_name,
+                &issue_state,
+                &search_text,
+                issue_since.as_deref(),
+                issue_creator.as_deref(),
+                issue_assignee.as_deref(),
+                labels.as_deref(),
+                milestone_key.as_deref(),
+            );
+            let search_params = vec![
+                ("q", search_q),
+                ("per_page", issue_per_page),
+                ("sort", search_sort.to_string()),
+                ("order", issue_direction.to_string()),
+            ];
+            let response = github_send(
+                &app,
+                "搜索 GitHub Issue 失败",
+                github_headers(
+                    client
+                        .get("https://api.github.com/search/issues")
+                        .query(&search_params),
+                    Some(&token),
+                ),
+            )?;
+            github_json::<GitHubIssueSearchResponse>("搜索 GitHub Issue 失败", response)?.items
+        } else {
+            let response = github_send(
+                &app,
+                "读取 GitHub Issue 失败",
+                github_headers(
+                    client
+                        .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
+                        .query(&rest_query),
+                    Some(&token),
+                ),
+            )?;
+            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?
+        };
+        let mut issues = issues
+            .into_iter()
+            .filter_map(github_issue_from_response)
+            .collect::<Vec<_>>();
+        enrich_github_issues_with_projects(&app, &repo_full_name, &token, &mut issues)?;
+        if let Some(project_filter) = normalize_optional_string(project) {
+            issues.retain(|issue| {
+                issue
+                    .project_items
+                    .iter()
+                    .any(|item| item.id == project_filter || item.title == project_filter)
+            });
+        }
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.issues.insert(issue_key, issues.clone());
+        })?;
+        Ok(issues)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_issue_filter_metadata(
+    app: AppHandle,
+    repo_full_name: String,
+    force_refresh: Option<bool>,
+) -> Result<GitHubIssueFilterMetadata, String> {
+    run_blocking("读取 GitHub Issue 筛选项", move || {
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            let cache = load_github_project_cache(&app);
+            if let Some(repo_cache) = cache.repos.get(&cache_key) {
+                if let Some(cached) = repo_cache.issue_filter_metadata.clone() {
+                    if !cached.labels.is_empty() || repo_cache.issue_labels.is_some() {
+                        return Ok(cached);
+                    }
+                }
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let query = vec![
+            ("state", "all".to_string()),
+            ("per_page", "100".to_string()),
+            ("sort", "updated".to_string()),
+            ("direction", "desc".to_string()),
+        ];
         let response = github_send(
             &app,
-            "读取 GitHub Issue 失败",
+            "读取 GitHub Issue 筛选项失败",
             github_headers(
                 client
                     .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
@@ -2175,15 +2710,20 @@ pub async fn github_list_issues(
                 Some(&token),
             ),
         )?;
-        let issues = github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?;
-        let issues = issues
+        let issues =
+            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 筛选项失败", response)?;
+        let mut issues = issues
             .into_iter()
             .filter_map(github_issue_from_response)
             .collect::<Vec<_>>();
+        enrich_github_issues_with_projects(&app, &repo_full_name, &token, &mut issues)?;
+        let mut metadata = github_issue_filter_metadata_from_issues(&issues);
+        let repo_labels = list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)?;
+        metadata.labels = merge_unique_sorted_strings(metadata.labels, repo_labels);
         update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.issues.insert(issue_key, issues.clone());
+            repo_cache.issue_filter_metadata = Some(metadata.clone());
         })?;
-        Ok(issues)
+        Ok(metadata)
     })
     .await
 }
@@ -2215,7 +2755,11 @@ fn list_github_issue_values(
         error_label,
         github_headers(
             client
-                .get(format!("{}/{}", github_repo_api_url(repo_full_name)?, endpoint))
+                .get(format!(
+                    "{}/{}",
+                    github_repo_api_url(repo_full_name)?,
+                    endpoint
+                ))
                 .query(&[("per_page", "100")]),
             Some(&token),
         ),
@@ -2227,6 +2771,57 @@ fn list_github_issue_values(
     Ok(values)
 }
 
+fn list_github_issue_labels_inner(
+    app: &AppHandle,
+    repo_full_name: &str,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    list_github_issue_values(
+        app,
+        repo_full_name,
+        force_refresh,
+        |repo_cache| repo_cache.issue_labels.clone(),
+        |repo_cache, labels| repo_cache.issue_labels = Some(labels),
+        "labels",
+        "读取 GitHub Issue Labels 失败",
+        |response| {
+            Ok(
+                github_json::<Vec<GitHubLabelResponse>>("读取 GitHub Issue Labels 失败", response)?
+                    .into_iter()
+                    .map(|label| label.name)
+                    .filter(|label| !label.trim().is_empty())
+                    .collect(),
+            )
+        },
+    )
+}
+
+fn list_github_issue_assignees_inner(
+    app: &AppHandle,
+    repo_full_name: &str,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    list_github_issue_values(
+        app,
+        repo_full_name,
+        force_refresh,
+        |repo_cache| repo_cache.issue_assignees.clone(),
+        |repo_cache, assignees| repo_cache.issue_assignees = Some(assignees),
+        "assignees",
+        "读取 GitHub Issue Assignees 失败",
+        |response| {
+            Ok(github_json::<Vec<GitHubAssigneeResponse>>(
+                "读取 GitHub Issue Assignees 失败",
+                response,
+            )?
+            .into_iter()
+            .map(|assignee| assignee.login)
+            .filter(|assignee| !assignee.trim().is_empty())
+            .collect())
+        },
+    )
+}
+
 #[tauri::command]
 pub async fn github_list_issue_labels(
     app: AppHandle,
@@ -2234,20 +2829,7 @@ pub async fn github_list_issue_labels(
     force_refresh: Option<bool>,
 ) -> Result<Vec<String>, String> {
     run_blocking("读取 GitHub Issue Labels", move || {
-        list_github_issue_values(
-            &app,
-            &repo_full_name,
-            force_refresh,
-            |repo_cache| repo_cache.issue_labels.clone(),
-            |repo_cache, labels| repo_cache.issue_labels = Some(labels),
-            "labels",
-            "读取 GitHub Issue Labels 失败",
-            |response| Ok(github_json::<Vec<GitHubLabelResponse>>("读取 GitHub Issue Labels 失败", response)?
-                .into_iter()
-                .map(|label| label.name)
-                .filter(|label| !label.trim().is_empty())
-                .collect()),
-        )
+        list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)
     })
     .await
 }
@@ -2259,23 +2841,7 @@ pub async fn github_list_issue_assignees(
     force_refresh: Option<bool>,
 ) -> Result<Vec<String>, String> {
     run_blocking("读取 GitHub Issue Assignees", move || {
-        list_github_issue_values(
-            &app,
-            &repo_full_name,
-            force_refresh,
-            |repo_cache| repo_cache.issue_assignees.clone(),
-            |repo_cache, assignees| repo_cache.issue_assignees = Some(assignees),
-            "assignees",
-            "读取 GitHub Issue Assignees 失败",
-            |response| Ok(github_json::<Vec<GitHubAssigneeResponse>>(
-                "读取 GitHub Issue Assignees 失败",
-                response,
-            )?
-            .into_iter()
-            .map(|assignee| assignee.login)
-            .filter(|assignee| !assignee.trim().is_empty())
-            .collect()),
-        )
+        list_github_issue_assignees_inner(&app, &repo_full_name, force_refresh)
     })
     .await
 }
@@ -2434,7 +3000,9 @@ pub async fn github_list_repo_commits(
     force_refresh: Option<bool>,
 ) -> Result<Vec<CommitSummary>, String> {
     run_blocking("读取 GitHub 提交历史", move || {
-        let sha = sha.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+        let sha = sha
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let commits_key = github_commit_list_cache_key(per_page, sha.as_deref());
         let cache_key = github_project_cache_repo_key(&repo_full_name)?;
         if github_project_cache_enabled(force_refresh) {
@@ -2460,13 +3028,11 @@ pub async fn github_list_repo_commits(
             "读取 GitHub 提交历史失败",
             github_headers(request, Some(&token)),
         )?;
-        let commits = github_json::<Vec<GitHubCommitResponse>>(
-            "读取 GitHub 提交历史失败",
-            response,
-        )?
-        .into_iter()
-        .map(github_commit_summary_from_response)
-        .collect::<Vec<_>>();
+        let commits =
+            github_json::<Vec<GitHubCommitResponse>>("读取 GitHub 提交历史失败", response)?
+                .into_iter()
+                .map(github_commit_summary_from_response)
+                .collect::<Vec<_>>();
         update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
             repo_cache.commits.insert(commits_key, commits.clone());
         })?;
@@ -2493,17 +3059,13 @@ pub async fn github_get_repo_commit_detail(
                 .repos
                 .get(&cache_key)
                 .and_then(|repo_cache| {
-                    repo_cache
-                        .commit_details
-                        .get(&hash)
-                        .cloned()
-                        .or_else(|| {
-                            repo_cache
-                                .commit_details
-                                .values()
-                                .find(|detail| detail.hash == hash || detail.short_hash == hash)
-                                .cloned()
-                        })
+                    repo_cache.commit_details.get(&hash).cloned().or_else(|| {
+                        repo_cache
+                            .commit_details
+                            .values()
+                            .find(|detail| detail.hash == hash || detail.short_hash == hash)
+                            .cloned()
+                    })
                 })
             {
                 return Ok(cached);

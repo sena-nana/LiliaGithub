@@ -679,9 +679,48 @@ pub struct GitHubIssue {
     pub labels: Vec<String>,
     #[serde(default)]
     pub assignees: Vec<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub milestone: Option<GitHubIssueMilestone>,
+    #[serde(default)]
+    pub comments: u64,
+    #[serde(default)]
+    pub project_items: Vec<GitHubIssueProjectItem>,
     pub html_url: String,
     pub updated_at: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIssueMilestone {
+    pub number: u64,
+    pub title: String,
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIssueProjectItem {
+    pub id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIssueFilterMetadata {
+    #[serde(default)]
+    pub authors: Vec<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
+    #[serde(default)]
+    pub milestones: Vec<GitHubIssueMilestone>,
+    #[serde(default)]
+    pub projects: Vec<GitHubIssueProjectItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -770,6 +809,8 @@ pub struct GitHubProjectRepoCache {
     pub issue_labels: Option<Vec<String>>,
     #[serde(default)]
     pub issue_assignees: Option<Vec<String>>,
+    #[serde(default)]
+    pub issue_filter_metadata: Option<GitHubIssueFilterMetadata>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

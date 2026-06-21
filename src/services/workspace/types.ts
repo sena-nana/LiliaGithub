@@ -224,9 +224,32 @@ export interface GitHubIssue {
   body: string | null;
   labels: string[];
   assignees: string[];
+  author?: string | null;
+  milestone?: GitHubIssueMilestone | null;
+  comments?: number;
+  projectItems?: GitHubIssueProjectItem[];
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
+}
+
+export interface GitHubIssueMilestone {
+  number: number;
+  title: string;
+  state?: string | null;
+}
+
+export interface GitHubIssueProjectItem {
+  id: string;
+  title: string;
+}
+
+export interface GitHubIssueFilterMetadata {
+  authors: string[];
+  labels: string[];
+  assignees: string[];
+  milestones: GitHubIssueMilestone[];
+  projects: GitHubIssueProjectItem[];
 }
 
 export interface GitHubPullRequest {
@@ -298,6 +321,12 @@ export interface GitHubIssueListOptions {
   sort?: "created" | "updated" | "comments" | string | null;
   direction?: "asc" | "desc" | string | null;
   since?: string | null;
+  creator?: string | null;
+  assignee?: string | null;
+  labels?: string[] | null;
+  milestone?: string | number | null;
+  project?: string | null;
+  query?: string | null;
 }
 
 export interface GitHubCreateIssueRequest {

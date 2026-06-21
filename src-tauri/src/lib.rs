@@ -91,6 +91,7 @@ pub fn run() {
             workspace::github::github_list_repo_files,
             workspace::github::github_get_repo_file_preview,
             workspace::github::github_list_issues,
+            workspace::github::github_get_issue_filter_metadata,
             workspace::github::github_list_issue_labels,
             workspace::github::github_list_issue_assignees,
             workspace::github::github_create_issue,

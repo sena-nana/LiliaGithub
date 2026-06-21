@@ -17,6 +17,8 @@ import type {
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssue,
+  GitHubIssueFilterMetadata,
+  GitHubIssueMilestone,
   GitHubIssueListOptions,
   GitHubMergePullRequestRequest,
   GitHubPullRequest,
@@ -496,6 +498,16 @@ function cloneBranchSummary(branch: BranchSummary): BranchSummary {
 
 function clonePullRequest(pullRequest: GitHubPullRequest): GitHubPullRequest {
   return { ...pullRequest };
+}
+
+function cloneIssue(issue: GitHubIssue): GitHubIssue {
+  return {
+    ...issue,
+    labels: [...issue.labels],
+    assignees: [...issue.assignees],
+    milestone: issue.milestone ? { ...issue.milestone } : null,
+    projectItems: issue.projectItems?.map((project) => ({ ...project })) ?? [],
+  };
 }
 
 function clonePullRequestCheck(check: GitHubPullRequestCheck): GitHubPullRequestCheck {
@@ -1700,6 +1712,12 @@ type FallbackGitHubIssueListCall = {
   sort: string | null;
   direction: string | null;
   since: string | null;
+  creator: string | null;
+  assignee: string | null;
+  labels: string[] | null;
+  milestone: string | number | null;
+  project: string | null;
+  query: string | null;
 };
 
 type FallbackGitHubPullRequestListCall = {
@@ -2000,7 +2018,7 @@ export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, Git
   fallbackGitHubIssues = Object.fromEntries(
     Object.entries(issuesByRepo).map(([repoFullName, issues]) => [
       repoFullName,
-      issues.map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
+      issues.map(cloneIssue),
     ]),
   );
 }
@@ -3099,8 +3117,27 @@ export function listGitHubIssues(
   const sort = options.sort ?? null;
   const direction = options.direction ?? null;
   const since = options.since ?? null;
+  const creator = options.creator ?? null;
+  const assignee = options.assignee ?? null;
+  const labels = options.labels ?? null;
+  const milestone = options.milestone ?? null;
+  const project = options.project ?? null;
+  const query = options.query?.trim() || null;
   const perPage = Number.isFinite(options.perPage) ? Math.max(1, Math.trunc(options.perPage ?? 0)) : null;
-  fallbackGitHubIssueListCalls.push({ repoFullName, state, perPage, sort, direction, since });
+  fallbackGitHubIssueListCalls.push({
+    repoFullName,
+    state,
+    perPage,
+    sort,
+    direction,
+    since,
+    creator,
+    assignee,
+    labels: labels ? [...labels] : null,
+    milestone,
+    project,
+    query,
+  });
   return call("github_list_issues", {
     repoFullName,
     state,
@@ -3108,14 +3145,26 @@ export function listGitHubIssues(
     sort,
     direction,
     since,
+    creator,
+    assignee,
+    labels,
+    milestone,
+    project,
+    query,
   }, () => {
     const sorted = [...(fallbackGitHubIssues[repoFullName] ?? [])]
       .filter((issue) => !state || state === "all" || issue.state === state)
+      .filter((issue) => isFallbackGitHubIssueQuery(issue, query))
       .filter((issue) => isFallbackGitHubIssueSince(issue, since))
+      .filter((issue) => isFallbackGitHubIssueCreator(issue, creator))
+      .filter((issue) => isFallbackGitHubIssueAssignee(issue, assignee))
+      .filter((issue) => isFallbackGitHubIssueLabels(issue, labels))
+      .filter((issue) => isFallbackGitHubIssueMilestone(issue, milestone))
+      .filter((issue) => isFallbackGitHubIssueProject(issue, project))
       .sort((a, b) => compareFallbackGitHubIssues(a, b, sort, direction));
     return sorted
       .slice(0, perPage ?? sorted.length)
-      .map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] }));
+      .map(cloneIssue);
   });
 }
 
@@ -3125,6 +3174,30 @@ function fallbackIssueValues(repoFullName: string, key: "labels" | "assignees") 
     .map((value) => value.trim())
     .filter(Boolean))]
     .sort((left, right) => left.localeCompare(right));
+}
+
+function uniqueSorted(values: readonly string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function uniqueMilestones(issues: readonly GitHubIssue[]): GitHubIssueMilestone[] {
+  const byNumber = new Map<number, GitHubIssueMilestone>();
+  for (const issue of issues) {
+    if (!issue.milestone) continue;
+    byNumber.set(issue.milestone.number, { ...issue.milestone });
+  }
+  return [...byNumber.values()].sort((left, right) => left.title.localeCompare(right.title));
+}
+
+function uniqueIssueProjects(issues: readonly GitHubIssue[]) {
+  const byId = new Map<string, { id: string; title: string }>();
+  for (const issue of issues) {
+    for (const project of issue.projectItems ?? []) {
+      byId.set(project.id, { ...project });
+    }
+  }
+  return [...byId.values()].sort((left, right) => left.title.localeCompare(right.title));
 }
 
 export function listGitHubIssueLabels(repoFullName: string): Promise<string[]> {
@@ -3139,6 +3212,18 @@ export function listGitHubIssueAssignees(repoFullName: string): Promise<string[]
   );
 }
 
+export function getGitHubIssueFilterMetadata(repoFullName: string): Promise<GitHubIssueFilterMetadata> {
+  return call("github_get_issue_filter_metadata", { repoFullName }, () => {
+    const issues = fallbackGitHubIssues[repoFullName] ?? [];
+    const authors = uniqueSorted(issues.map((issue) => issue.author ?? "").filter(Boolean));
+    const labels = fallbackIssueValues(repoFullName, "labels");
+    const assignees = fallbackIssueValues(repoFullName, "assignees");
+    const milestones = uniqueMilestones(issues);
+    const projects = uniqueIssueProjects(issues);
+    return Promise.resolve({ authors, labels, assignees, milestones, projects });
+  });
+}
+
 function isFallbackGitHubIssueSince(issue: GitHubIssue, since: string | null) {
   if (!since) return true;
   const issueUpdatedAt = Date.parse(issue.updatedAt);
@@ -3147,12 +3232,60 @@ function isFallbackGitHubIssueSince(issue: GitHubIssue, since: string | null) {
   return issueUpdatedAt >= sinceTimestamp;
 }
 
+function isFallbackGitHubIssueCreator(issue: GitHubIssue, creator: string | null) {
+  if (!creator) return true;
+  return (issue.author ?? "").toLowerCase() === creator.toLowerCase();
+}
+
+function isFallbackGitHubIssueAssignee(issue: GitHubIssue, assignee: string | null) {
+  if (!assignee) return true;
+  if (assignee === "none") return issue.assignees.length === 0;
+  return issue.assignees.some((value) => value.toLowerCase() === assignee.toLowerCase());
+}
+
+function isFallbackGitHubIssueLabels(issue: GitHubIssue, labels: readonly string[] | null) {
+  const normalized = (labels ?? []).map((label) => label.toLowerCase()).filter(Boolean);
+  if (!normalized.length) return true;
+  const issueLabels = issue.labels.map((label) => label.toLowerCase());
+  return normalized.every((label) => issueLabels.includes(label));
+}
+
+function isFallbackGitHubIssueMilestone(issue: GitHubIssue, milestone: string | number | null) {
+  if (milestone == null || milestone === "") return true;
+  if (milestone === "none") return !issue.milestone;
+  return String(issue.milestone?.number ?? "") === String(milestone);
+}
+
+function isFallbackGitHubIssueProject(issue: GitHubIssue, project: string | null) {
+  if (!project) return true;
+  return (issue.projectItems ?? []).some((item) => item.id === project || item.title === project);
+}
+
+function isFallbackGitHubIssueQuery(issue: GitHubIssue, query: string | null) {
+  const normalized = query?.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    issue.number,
+    issue.title,
+    issue.body ?? "",
+    issue.author ?? "",
+    issue.labels.join(" "),
+    issue.assignees.join(" "),
+    issue.milestone?.title ?? "",
+    issue.projectItems?.map((project) => project.title).join(" ") ?? "",
+  ].join(" ").toLowerCase().includes(normalized);
+}
+
 function compareFallbackGitHubIssues(
   a: GitHubIssue,
   b: GitHubIssue,
   sort: string | null,
   direction: string | null,
 ) {
+  if (sort === "comments") {
+    const comparedComments = (a.comments ?? 0) - (b.comments ?? 0);
+    return direction === "asc" ? comparedComments : -comparedComments;
+  }
   const sortKey = sort === "created" ? "createdAt" : "updatedAt";
   const left = Date.parse(a[sortKey]);
   const right = Date.parse(b[sortKey]);
@@ -3175,12 +3308,16 @@ export function createGitHubIssue(
       body: request.body?.trim() || null,
       labels: [...request.labels],
       assignees: [...request.assignees],
+      author: fallbackBinding.binding?.login ?? "lilia-user",
+      milestone: null,
+      comments: 0,
+      projectItems: [],
       htmlUrl: `https://github.com/${repoFullName}/issues/${issues.length + 1}`,
       updatedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     };
     fallbackGitHubIssues[repoFullName] = [issue, ...issues];
-    return { ...issue, labels: [...issue.labels], assignees: [...issue.assignees] };
+    return cloneIssue(issue);
   });
 }
 
@@ -3203,7 +3340,7 @@ export function updateGitHubIssue(
       updatedAt: new Date().toISOString(),
     };
     fallbackGitHubIssues[repoFullName] = issues.map((issue) => issue.number === issueNumber ? updated : issue);
-    return { ...updated, labels: [...updated.labels], assignees: [...updated.assignees] };
+    return cloneIssue(updated);
   });
 }
 
