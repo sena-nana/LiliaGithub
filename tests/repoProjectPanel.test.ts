@@ -105,6 +105,8 @@ const githubWorkflowRuns: GitHubWorkflowRun[] = [{
   htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310",
   createdAt: "2026-06-18T08:00:00Z",
   updatedAt: "2026-06-18T08:00:00Z",
+  headSha: "abc123",
+  workflowId: 99,
 }];
 
 const githubWorkflowRunDetail: GitHubWorkflowRunDetail = {
@@ -115,34 +117,90 @@ const githubWorkflowRunDetail: GitHubWorkflowRunDetail = {
     runAttempt: 1,
     runStartedAt: "2026-06-18T08:00:00Z",
   },
-  jobs: [{
-    id: 13101,
-    name: "build",
-    status: "completed",
-    conclusion: "success",
-    startedAt: "2026-06-18T08:00:00Z",
-    completedAt: "2026-06-18T08:02:00Z",
-    htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310/job/13101",
-    runnerName: "GitHub Actions",
-    steps: [
-      {
-        name: "Set up job",
+  jobs: [
+    {
+      id: 13101,
+      name: "lint",
+      status: "completed",
+      conclusion: "success",
+      startedAt: "2026-06-18T08:00:00Z",
+      completedAt: "2026-06-18T08:01:00Z",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310/job/13101",
+      runnerName: "GitHub Actions",
+      steps: [{
+        name: "Run lint",
         status: "completed",
         conclusion: "success",
         number: 1,
         startedAt: "2026-06-18T08:00:00Z",
-        completedAt: "2026-06-18T08:00:10Z",
-      },
-      {
-        name: "Run tests",
+        completedAt: "2026-06-18T08:01:00Z",
+      }],
+    },
+    {
+      id: 13102,
+      name: "build",
+      status: "completed",
+      conclusion: "success",
+      startedAt: "2026-06-18T08:00:00Z",
+      completedAt: "2026-06-18T08:02:00Z",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310/job/13102",
+      runnerName: "GitHub Actions",
+      steps: [{
+        name: "Build app",
         status: "completed",
         conclusion: "success",
-        number: 2,
-        startedAt: "2026-06-18T08:00:10Z",
+        number: 1,
+        startedAt: "2026-06-18T08:00:00Z",
         completedAt: "2026-06-18T08:02:00Z",
-      },
-    ],
-  }],
+      }],
+    },
+    {
+      id: 13103,
+      name: "test",
+      status: "completed",
+      conclusion: "success",
+      startedAt: "2026-06-18T08:02:00Z",
+      completedAt: "2026-06-18T08:04:00Z",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310/job/13103",
+      runnerName: "GitHub Actions",
+      steps: [
+        {
+          name: "Set up job",
+          status: "completed",
+          conclusion: "success",
+          number: 1,
+          startedAt: "2026-06-18T08:02:00Z",
+          completedAt: "2026-06-18T08:02:10Z",
+        },
+        {
+          name: "Run tests",
+          status: "completed",
+          conclusion: "success",
+          number: 2,
+          startedAt: "2026-06-18T08:02:10Z",
+          completedAt: "2026-06-18T08:04:00Z",
+        },
+      ],
+    },
+    {
+      id: 13104,
+      name: "package",
+      status: "completed",
+      conclusion: "success",
+      startedAt: "2026-06-18T08:04:00Z",
+      completedAt: "2026-06-18T08:05:00Z",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310/job/13104",
+      runnerName: "GitHub Actions",
+      steps: [{
+        name: "Package dist",
+        status: "completed",
+        conclusion: "success",
+        number: 1,
+        startedAt: "2026-06-18T08:04:00Z",
+        completedAt: "2026-06-18T08:05:00Z",
+      }],
+    },
+  ],
   artifacts: [{
     id: 131001,
     name: "dist",
@@ -151,6 +209,29 @@ const githubWorkflowRunDetail: GitHubWorkflowRunDetail = {
     createdAt: "2026-06-18T08:02:00Z",
     expiresAt: "2026-07-18T08:02:00Z",
   }],
+  workflow: {
+    id: 99,
+    path: ".github/workflows/ci.yml",
+    refName: "abc123",
+    content: [
+      "name: CI",
+      "jobs:",
+      "  lint:",
+      "    name: lint",
+      "    runs-on: ubuntu-latest",
+      "  build:",
+      "    name: build",
+      "    runs-on: ubuntu-latest",
+      "  test:",
+      "    name: test",
+      "    needs: [lint, build]",
+      "    runs-on: ubuntu-latest",
+      "  package:",
+      "    name: package",
+      "    needs: test",
+      "    runs-on: ubuntu-latest",
+    ].join("\n"),
+  },
 };
 
 const githubPullRequests: GitHubPullRequest[] = [{
@@ -781,10 +862,13 @@ describe("RepoProjectPanel", () => {
 
     expect(await view.findByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
     expect(await view.findByRole("button", { name: /build/ })).toBeInTheDocument();
+    expect(view.container.querySelectorAll(".actions-job-node")).toHaveLength(4);
+    expect(view.container.querySelectorAll(".actions-job-graph__edge")).toHaveLength(3);
+    expect(view.container.querySelector(".actions-job-node--ok")).toBeInstanceOf(HTMLElement);
     expect(view.queryByText("Run tests")).toBeNull();
     expect(getGitHubWorkflowRunDetail).toHaveBeenCalledWith("sena-nana/remote-repo", 1310, { forceRefresh: false });
 
-    await fireEvent.click(view.getByRole("button", { name: /build/ }));
+    await fireEvent.click(view.getByRole("button", { name: /test/ }));
     expect(await view.findByText("Run tests")).toBeInTheDocument();
     expect(getGitHubWorkflowJobLog).not.toHaveBeenCalled();
 

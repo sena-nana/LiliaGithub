@@ -297,6 +297,13 @@ pub(super) struct GitHubWorkflowRunsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubWorkflowActorResponse {
     pub(super) login: String,
 }
@@ -1114,6 +1121,14 @@ pub(super) fn decode_github_preview_bytes(
         .map_err(|e| format!("{prefix}：文件解码失败：{e}"))
 }
 
+pub(super) fn github_text_content_from_file(
+    prefix: &str,
+    file: GitHubContentFileResponse,
+) -> Result<String, String> {
+    let bytes = decode_github_preview_bytes(prefix, &file)?;
+    String::from_utf8(bytes).map_err(|e| format!("{prefix}：文件不是 UTF-8 文本：{e}"))
+}
+
 pub(super) fn github_file_preview_from_content(
     prefix: &str,
     file: GitHubContentFileResponse,
@@ -1798,6 +1813,69 @@ pub(super) fn github_workflow_artifact_from_response(
         created_at: artifact.created_at,
         expires_at: normalize_optional_string(artifact.expires_at),
     }
+}
+
+pub(super) fn github_workflow_definition_from_file(
+    workflow: GitHubWorkflowResponse,
+    ref_name: String,
+    file: GitHubContentFileResponse,
+) -> Result<Option<GitHubWorkflowDefinition>, String> {
+    let Some(path) = normalize_optional_string(workflow.path) else {
+        return Ok(None);
+    };
+    let content = github_text_content_from_file("读取 GitHub Actions workflow 文件失败", file)?;
+    Ok(Some(GitHubWorkflowDefinition {
+        id: workflow.id,
+        path,
+        ref_name,
+        content,
+    }))
+}
+
+pub(super) fn github_workflow_definition_for_run(
+    app: &AppHandle,
+    client: &reqwest::blocking::Client,
+    repo_api_url: &str,
+    repo_full_name: &str,
+    token: &str,
+    run: &GitHubWorkflowRun,
+) -> Result<Option<GitHubWorkflowDefinition>, String> {
+    let Some(workflow_id) = run.workflow_id else {
+        return Ok(None);
+    };
+    let Some(ref_name) = normalize_github_ref_name(run.head_sha.as_deref()) else {
+        return Ok(None);
+    };
+    let workflow_response = github_send(
+        app,
+        "读取 GitHub Actions workflow 失败",
+        github_headers(
+            client.get(format!("{repo_api_url}/actions/workflows/{workflow_id}")),
+            Some(token),
+        ),
+    )?;
+    let workflow = github_json::<GitHubWorkflowResponse>(
+        "读取 GitHub Actions workflow 失败",
+        workflow_response,
+    )?;
+    let Some(path) = normalize_optional_string(workflow.path.clone()) else {
+        return Ok(None);
+    };
+    let file_response = github_send(
+        app,
+        "读取 GitHub Actions workflow 文件失败",
+        github_headers(
+            client
+                .get(github_repo_contents_api_url(repo_full_name, Some(&path))?)
+                .query(&[("ref", ref_name.as_str())]),
+            Some(token),
+        ),
+    )?;
+    let file = github_json::<GitHubContentFileResponse>(
+        "读取 GitHub Actions workflow 文件失败",
+        file_response,
+    )?;
+    github_workflow_definition_from_file(workflow, ref_name, file)
 }
 
 pub(super) fn github_artifact_cache_path(repo_full_name: &str, artifact_id: u64) -> PathBuf {
@@ -3565,10 +3643,21 @@ pub async fn github_get_workflow_run_detail(
         .into_iter()
         .map(github_workflow_artifact_from_response)
         .collect::<Vec<_>>();
+        let workflow = github_workflow_definition_for_run(
+            &app,
+            &client,
+            &repo_api_url,
+            &repo_full_name,
+            &token,
+            &run,
+        )
+        .ok()
+        .flatten();
         Ok(GitHubWorkflowRunDetail {
             run,
             jobs,
             artifacts,
+            workflow,
         })
     })
     .await

@@ -2,7 +2,6 @@
 import {
   ArrowLeft,
   CheckCircle2,
-  ChevronRight,
   CircleDot,
   ExternalLink,
   FileArchive,
@@ -33,6 +32,7 @@ import {
   workflowRunStatusTone,
   type WorkflowRunTone,
 } from "../../utils/repoDisplay";
+import { buildWorkflowGraph } from "../../utils/workflowGraph";
 import MarkdownReadme from "./MarkdownReadme.vue";
 
 const props = defineProps<{
@@ -78,6 +78,7 @@ const selectedArtifactEntries = computed(() =>
 const totalDuration = computed(() => durationText(detailRun.value?.runStartedAt ?? detailRun.value?.createdAt, detailRun.value?.updatedAt));
 const totalArtifacts = computed(() => detail.value?.artifacts.length ?? 0);
 const activeJob = computed(() => detail.value?.jobs.find((job) => job.id === expandedJobId.value) ?? null);
+const workflowGraph = computed(() => buildWorkflowGraph(detail.value));
 watch(() => props.focusedRunId, (runId) => {
   if (runId == null) {
     clearRunDetail();
@@ -395,25 +396,45 @@ function formatBytes(value: number) {
               <span>{{ detail.jobs.length }} 个任务</span>
             </div>
             <div class="actions-job-flow">
-              <div class="actions-job-flow__nodes">
+              <div
+                class="actions-job-graph"
+                :style="{ '--actions-graph-width': `${workflowGraph.width}px`, '--actions-graph-height': `${workflowGraph.height}px` }"
+              >
+                <svg
+                  class="actions-job-graph__svg"
+                  :width="workflowGraph.width"
+                  :height="workflowGraph.height"
+                  :viewBox="`0 0 ${workflowGraph.width} ${workflowGraph.height}`"
+                  aria-hidden="true"
+                >
+                  <path
+                    v-for="edge in workflowGraph.edges"
+                    :key="edge.id"
+                    class="actions-job-graph__edge"
+                    :d="edge.path"
+                    :stroke="edge.color"
+                  />
+                </svg>
                 <button
-                  v-for="job in detail.jobs"
-                  :key="job.id"
+                  v-for="node in workflowGraph.nodes"
+                  :key="node.id"
                   type="button"
                   class="actions-job-node"
-                  :data-job-id="job.id"
-                  @click="selectJob(job)"
+                  :class="[{ 'is-active': expandedJobId === node.job.id }, `actions-job-node--${node.tone}`]"
+                  :data-job-id="node.job.id"
+                  :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${workflowGraph.nodeWidth}px`, minHeight: `${workflowGraph.nodeHeight}px` }"
+                  :title="`${node.job.name} · ${statusLabel(node.job)} · ${durationText(node.job.startedAt, node.job.completedAt)}`"
+                  @click="selectJob(node.job)"
                 >
-                  <span class="actions-status" :class="`actions-status--${jobTone(job)}`">
-                    <XCircle v-if="statusIconKind(job) === 'error'" :size="17" aria-hidden="true" />
-                    <CheckCircle2 v-else-if="statusIconKind(job) === 'ok'" :size="17" aria-hidden="true" />
+                  <span class="actions-status" :class="`actions-status--${node.tone}`">
+                    <XCircle v-if="statusIconKind(node.job) === 'error'" :size="17" aria-hidden="true" />
+                    <CheckCircle2 v-else-if="statusIconKind(node.job) === 'ok'" :size="17" aria-hidden="true" />
                     <CircleDot v-else :size="17" aria-hidden="true" />
                   </span>
                   <span>
-                    <strong>{{ job.name }}</strong>
-                    <small>{{ statusLabel(job) }} · {{ durationText(job.startedAt, job.completedAt) }}</small>
+                    <strong>{{ node.job.name }}</strong>
+                    <small>{{ statusLabel(node.job) }} · {{ durationText(node.job.startedAt, node.job.completedAt) }}</small>
                   </span>
-                  <ChevronRight :size="15" aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -782,31 +803,62 @@ function formatBytes(value: number) {
 }
 
 .actions-job-flow {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  padding: 4px 0 0;
-  border-left: 1px solid var(--border-soft);
+  min-width: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg);
 }
 
-.actions-job-flow__nodes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 280px));
-  gap: 12px;
-  align-items: start;
-  padding-left: 12px;
+.actions-job-graph {
+  position: relative;
+  width: var(--actions-graph-width);
+  min-width: 100%;
+  height: var(--actions-graph-height);
+}
+
+.actions-job-graph__svg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.actions-job-graph__edge {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  opacity: 0.86;
 }
 
 .actions-job-node {
-  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  position: absolute;
+  z-index: 1;
+  grid-template-columns: 20px minmax(0, 1fr);
   min-height: 58px;
   padding: 10px;
   border-color: var(--border);
   background: var(--bg-elev);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 70%, transparent);
 }
 
-.actions-job-node svg:last-child {
-  color: var(--text-muted);
+.actions-job-node--ok {
+  border-color: color-mix(in srgb, var(--ok) 34%, var(--border));
+}
+
+.actions-job-node--error {
+  border-color: color-mix(in srgb, var(--err) 34%, var(--border));
+}
+
+.actions-job-node--warn {
+  border-color: color-mix(in srgb, var(--warn) 36%, var(--border));
+}
+
+.actions-job-node--muted {
+  border-color: var(--border);
 }
 
 .actions-flow-back {

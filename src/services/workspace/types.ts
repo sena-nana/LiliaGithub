@@ -356,10 +356,18 @@ export interface GitHubWorkflowArtifact {
   expiresAt: string | null;
 }
 
+export interface GitHubWorkflowDefinition {
+  id: number;
+  path: string;
+  refName: string;
+  content: string;
+}
+
 export interface GitHubWorkflowRunDetail {
   run: GitHubWorkflowRun;
   jobs: GitHubWorkflowJob[];
   artifacts: GitHubWorkflowArtifact[];
+  workflow: GitHubWorkflowDefinition | null;
 }
 
 export interface GitHubWorkflowJobLog {
