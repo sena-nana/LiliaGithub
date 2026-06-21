@@ -6,10 +6,7 @@ import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { resetWorkspaceStateForTests, setRepoActionError, state } from "../src/composables/workspace/state";
-import {
-  setFallbackGitHubBindingStatusForTests,
-  setFallbackGitHubReposErrorForTests,
-} from "../src/services/workspace/fallback";
+import { workspaceFallbackForTests } from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
@@ -117,6 +114,8 @@ function sidebarGroupForText(container: HTMLElement, name: string, count: number
 }
 
 type AppShellView = Awaited<ReturnType<typeof renderAppShell>>;
+type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+let workspaceFallback: WorkspaceFallbackForTests;
 
 async function createSidebarRepoGroup(view: AppShellView, name: string) {
   await fireEvent.click(view.getByRole("button", { name: "创建仓库分组" }));
@@ -144,7 +143,8 @@ async function moveSidebarRepoToGroup(view: AppShellView, repoName: string, grou
   await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  workspaceFallback = await workspaceFallbackForTests();
   resetWorkspaceStateForTests();
   closeContextMenu();
   installContextMenu();
@@ -726,7 +726,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("GitHub 仓库列表绑定失效时提供重新绑定入口", async () => {
-    setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
+    workspaceFallback.setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -749,7 +749,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("未绑定 GitHub 时首页保持初始化页且不显示总览操作卡片", async () => {
-    setFallbackGitHubBindingStatusForTests({
+    workspaceFallback.setFallbackGitHubBindingStatusForTests({
       state: "unbound",
       clientIdConfigured: true,
       clientIdSource: "bundled",
@@ -763,7 +763,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("首页初始绑定会自动复制授权码并提示已复制", async () => {
-    setFallbackGitHubBindingStatusForTests({
+    workspaceFallback.setFallbackGitHubBindingStatusForTests({
       state: "unbound",
       clientIdConfigured: true,
       clientIdSource: "bundled",

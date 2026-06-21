@@ -1,11 +1,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
-import * as workspaceFallback from "../src/services/workspace/fallback";
+import { workspaceFallbackForTests } from "../src/services/workspace";
 import type {
   CommitDetail,
   CommitSummary,
@@ -20,6 +20,8 @@ import type {
 import { repoDetail, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
+type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+let workspaceFallback: WorkspaceFallbackForTests;
 
 async function renderAt(path: string) {
   installContextMenu();
@@ -254,6 +256,10 @@ function commitDetail(commit: CommitSummary): CommitDetail {
 }
 
 describe("基础路由", () => {
+  beforeEach(async () => {
+    workspaceFallback = await workspaceFallbackForTests();
+  });
+
   afterEach(async () => {
     cleanup();
     vi.useRealTimers();
