@@ -3545,6 +3545,7 @@ __metadata:
     vue: "npm:^3.5.38"
     vue-router: "npm:^5.1.0"
     vue-tsc: "npm:^3.3.5"
+    yaml: "npm:^2.9.0"
   languageName: unknown
   linkType: soft
 

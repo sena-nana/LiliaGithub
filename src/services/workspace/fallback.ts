@@ -3119,6 +3119,26 @@ export function listGitHubIssues(
   });
 }
 
+function fallbackIssueValues(repoFullName: string, key: "labels" | "assignees") {
+  return [...new Set((fallbackGitHubIssues[repoFullName] ?? [])
+    .flatMap((issue) => issue[key])
+    .map((value) => value.trim())
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export function listGitHubIssueLabels(repoFullName: string): Promise<string[]> {
+  return call("github_list_issue_labels", { repoFullName }, () =>
+    fallbackIssueValues(repoFullName, "labels"),
+  );
+}
+
+export function listGitHubIssueAssignees(repoFullName: string): Promise<string[]> {
+  return call("github_list_issue_assignees", { repoFullName }, () =>
+    fallbackIssueValues(repoFullName, "assignees"),
+  );
+}
+
 function isFallbackGitHubIssueSince(issue: GitHubIssue, since: string | null) {
   if (!since) return true;
   const issueUpdatedAt = Date.parse(issue.updatedAt);

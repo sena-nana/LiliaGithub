@@ -71,6 +71,8 @@ type GitHubProjectRepoClientCache = {
   filePreviews: Record<string, RepoFilePreview | undefined>;
   commits: Record<string, CommitSummary[] | undefined>;
   commitDetails: Record<string, CommitDetail | undefined>;
+  issueLabels?: string[];
+  issueAssignees?: string[];
   issues: Record<string, GitHubIssue[] | undefined>;
   pullRequests: Record<string, GitHubPullRequest[] | undefined>;
   pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
@@ -621,6 +623,44 @@ export function listGitHubIssues(
       cache.issues[key] = cloneProjectList(issues);
       return cloneProjectList(issues);
     });
+}
+
+function listGitHubIssueValues(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions,
+  cacheKey: "issueLabels" | "issueAssignees",
+  command: "github_list_issue_labels" | "github_list_issue_assignees",
+  fallbackCall: () => Promise<string[]>,
+): Promise<string[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache[cacheKey];
+  if (!options.forceRefresh && cached) return Promise.resolve([...cached]);
+  return call(command, {
+    repoFullName,
+    forceRefresh: options.forceRefresh ?? null,
+  }, fallbackCall)
+    .then((values) => {
+      cache[cacheKey] = [...values];
+      return [...values];
+    });
+}
+
+export function listGitHubIssueLabels(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<string[]> {
+  return listGitHubIssueValues(repoFullName, options, "issueLabels", "github_list_issue_labels", () =>
+    workspaceFallback().listGitHubIssueLabels(repoFullName)
+  );
+}
+
+export function listGitHubIssueAssignees(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<string[]> {
+  return listGitHubIssueValues(repoFullName, options, "issueAssignees", "github_list_issue_assignees", () =>
+    workspaceFallback().listGitHubIssueAssignees(repoFullName)
+  );
 }
 
 export function createGitHubIssue(

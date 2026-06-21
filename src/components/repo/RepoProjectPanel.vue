@@ -3,6 +3,7 @@ import { AnsiUp } from "ansi_up";
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
+  ArrowLeft,
   Check,
   CircleDot,
   CircleOff,
@@ -23,6 +24,7 @@ import {
   X,
 } from "@lucide/vue";
 import CommitDetailCard from "./CommitDetailCard.vue";
+import Dropdown from "../Dropdown.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
@@ -42,6 +44,8 @@ import {
   listGitHubPullRequestChecks,
   listGitHubPullRequests,
   listGitHubWorkflowRuns,
+  listGitHubIssueAssignees,
+  listGitHubIssueLabels,
   mergeGitHubPullRequest,
   updateGitHubIssue,
   updateGitHubPullRequest,
@@ -76,6 +80,21 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import type { RepoRouteTab } from "../../utils/repoRoutes";
+import {
+  blankIssueTemplate,
+  blankPullRequestTemplate,
+  buildIssueTemplateBody,
+  createIssueTemplateAnswers,
+  issueTemplateRequiredFieldsSatisfied,
+  loadGitHubIssueTemplates,
+  loadGitHubPullRequestTemplates,
+} from "../../utils/githubTemplates";
+import type {
+  GitHubIssueTemplate,
+  GitHubIssueTemplateAnswers,
+  GitHubIssueTemplateField,
+  GitHubPullRequestTemplate,
+} from "../../utils/githubTemplates";
 
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
@@ -197,6 +216,11 @@ const pullRequestBody = ref("");
 const pullRequestBase = ref("");
 const pullRequestHead = ref("");
 const pullRequestDraft = ref(false);
+const pullCreateView = ref(false);
+const pullRequestTemplates = ref<GitHubPullRequestTemplate[]>([]);
+const pullRequestTemplateKey = ref(blankPullRequestTemplate().key);
+const pullRequestTemplatesLoading = ref(false);
+const pullRequestTemplatesLoadedRepo = ref<string | null>(null);
 const pullRequestMergeMethod = ref<"merge" | "squash" | "rebase">("merge");
 const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
@@ -220,8 +244,18 @@ const settingsTopicDraft = ref("");
 const issueState = ref<"open" | "closed" | "all">("open");
 const issueTitle = ref("");
 const issueBody = ref("");
-const issueLabels = ref("");
-const issueAssignees = ref("");
+const issueLabels = ref<string[]>([]);
+const issueAssignees = ref<string[]>([]);
+const issueCreateView = ref(false);
+const issueTemplates = ref<GitHubIssueTemplate[]>([]);
+const issueTemplateKey = ref(blankIssueTemplate().key);
+const issueTemplateAnswers = ref<GitHubIssueTemplateAnswers>({});
+const issueTemplatesLoading = ref(false);
+const issueTemplatesLoadedRepo = ref<string | null>(null);
+const remoteIssueLabels = ref<string[]>([]);
+const remoteIssueAssignees = ref<string[]>([]);
+const issueMetadataLoading = ref(false);
+const issueMetadataLoadedRepo = ref<string | null>(null);
 const editingIssueNumber = ref<number | null>(null);
 const editingIssueTitle = ref("");
 const editingIssueBody = ref("");
@@ -419,6 +453,65 @@ const focusedPullRequest = computed(() =>
 const focusedPullChecks = computed(() =>
   focusedPullRequestNumber.value ? (pullChecks.value[focusedPullRequestNumber.value] ?? []) : [],
 );
+const displayedIssueTemplates = computed(() => [blankIssueTemplate(), ...issueTemplates.value]);
+const issueTemplateOptions = computed(() =>
+  displayedIssueTemplates.value.map((template) => ({
+    value: template.key,
+    label: template.name,
+    hint: template.kind === "blank" ? undefined : template.description,
+  }))
+);
+const selectedIssueTemplate = computed(() =>
+  displayedIssueTemplates.value.find((template) => template.key === issueTemplateKey.value) ??
+  displayedIssueTemplates.value[0]
+);
+const issueTemplateFields = computed(() =>
+  selectedIssueTemplate.value.fields.filter((field) => field.type !== "markdown")
+);
+const issueTemplateMarkdownFields = computed(() =>
+  selectedIssueTemplate.value.fields.filter((field) => field.type === "markdown")
+);
+const issueLabelOptions = computed(() =>
+  uniqueSorted([
+    ...remoteIssueLabels.value,
+    ...issueLabels.value,
+  ])
+);
+const issueAssigneeOptions = computed(() =>
+  uniqueSorted([
+    ...remoteIssueAssignees.value,
+    ...issueAssignees.value,
+  ])
+);
+const issueLabelSummary = computed(() => multiSelectSummary(issueLabels.value, "No labels"));
+const issueAssigneeSummary = computed(() => multiSelectSummary(issueAssignees.value, "No assignees"));
+const issueLabelDropdownOptions = computed(() => stringOptions(issueLabelOptions.value));
+const issueAssigneeDropdownOptions = computed(() => stringOptions(issueAssigneeOptions.value));
+const canSubmitIssueCreate = computed(() =>
+  Boolean(props.repoFullName) &&
+  !creatingIssue.value &&
+  issueTitle.value.trim().length > 0 &&
+  issueTemplateRequiredFieldsSatisfied(selectedIssueTemplate.value, issueTemplateAnswers.value)
+);
+const displayedPullRequestTemplates = computed(() => [blankPullRequestTemplate(), ...pullRequestTemplates.value]);
+const pullRequestTemplateOptions = computed(() =>
+  displayedPullRequestTemplates.value.map((template) => ({
+    value: template.key,
+    label: template.name,
+    hint: template.kind === "blank" ? undefined : template.description,
+  }))
+);
+const selectedPullRequestTemplate = computed(() =>
+  displayedPullRequestTemplates.value.find((template) => template.key === pullRequestTemplateKey.value) ??
+  displayedPullRequestTemplates.value[0]
+);
+const canSubmitPullRequestCreate = computed(() =>
+  Boolean(props.repoFullName) &&
+  !creatingPullRequest.value &&
+  pullRequestTitle.value.trim().length > 0 &&
+  pullRequestHead.value.trim().length > 0 &&
+  pullRequestBase.value.trim().length > 0
+);
 
 function isProjectSectionActive(section: ProjectContentMode, options?: { readmePath?: string }) {
   if (section === "readme") {
@@ -565,6 +658,8 @@ function clearProjectTargets() {
   focusedPullRequestNumber.value = null;
   focusedRunId.value = null;
   cancelEditIssue();
+  closeIssueCreateView(false);
+  closePullRequestCreateView(false);
 }
 
 function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
@@ -1122,6 +1217,11 @@ function resetGitHubSectionState() {
   pullRequestBase.value = "";
   pullRequestHead.value = "";
   pullRequestDraft.value = false;
+  pullCreateView.value = false;
+  pullRequestTemplates.value = [];
+  pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+  pullRequestTemplatesLoading.value = false;
+  pullRequestTemplatesLoadedRepo.value = null;
   pullRequestMergeMethod.value = "merge";
   workflowRuns.value = [];
   actionsLoaded.value = false;
@@ -1131,6 +1231,11 @@ function resetGitHubSectionState() {
   aboutTopicDraft.value = "";
   settingsTopicDraft.value = "";
   cancelEditIssue();
+  closeIssueCreateView(false);
+  remoteIssueLabels.value = [];
+  remoteIssueAssignees.value = [];
+  issueMetadataLoading.value = false;
+  issueMetadataLoadedRepo.value = null;
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
 }
@@ -1292,6 +1397,189 @@ function splitList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function uniqueSorted(values: readonly string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function stringOptions(values: readonly string[]) {
+  return values.map((value) => ({ value, label: value }));
+}
+
+function multiSelectSummary(values: readonly string[], emptyText: string) {
+  if (!values.length) return emptyText;
+  if (values.length <= 2) return values.join(", ");
+  return `${values.slice(0, 2).join(", ")} +${values.length - 2}`;
+}
+
+function targetValue(event: Event) {
+  const target = event.target;
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+    ? target.value
+    : "";
+}
+
+function targetChecked(event: Event) {
+  const target = event.target;
+  return target instanceof HTMLInputElement ? target.checked : false;
+}
+
+function dropdownOptions(options: readonly string[]) {
+  return [
+    { value: "", label: "Select an option" },
+    ...options.map((option) => ({ value: option, label: option })),
+  ];
+}
+
+async function openIssueCreateView() {
+  issueCreateView.value = true;
+  cancelEditIssue();
+  applyIssueTemplate(selectedIssueTemplate.value);
+  await Promise.all([
+    loadIssueTemplates(),
+    loadIssueMetadata(),
+  ]);
+}
+
+function closeIssueCreateView(resetDraft = true) {
+  issueCreateView.value = false;
+  if (!resetDraft) return;
+  issueTitle.value = "";
+  issueBody.value = "";
+  issueLabels.value = [];
+  issueAssignees.value = [];
+  issueTemplateKey.value = blankIssueTemplate().key;
+  issueTemplateAnswers.value = {};
+}
+
+async function loadIssueTemplates(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || issueTemplatesLoading.value) return;
+  if (!force && issueTemplatesLoadedRepo.value === repoFullName) return;
+  issueTemplatesLoading.value = true;
+  try {
+    const nextTemplates = await loadGitHubIssueTemplates(repoFullName);
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    issueTemplates.value = nextTemplates;
+    issueTemplatesLoadedRepo.value = repoFullName;
+    if (!displayedIssueTemplates.value.some((template) => template.key === issueTemplateKey.value)) {
+      issueTemplateKey.value = blankIssueTemplate().key;
+      applyIssueTemplate(selectedIssueTemplate.value);
+    }
+  } finally {
+    if (repoFullName === props.repoFullName) issueTemplatesLoading.value = false;
+  }
+}
+
+function selectIssueTemplate(key: string) {
+  issueTemplateKey.value = key;
+  applyIssueTemplate(selectedIssueTemplate.value);
+}
+
+function applyIssueTemplate(template: GitHubIssueTemplate) {
+  issueTitle.value = template.titlePrefix;
+  issueBody.value = template.body;
+  issueLabels.value = [...template.labels];
+  issueAssignees.value = [...template.assignees];
+  issueTemplateAnswers.value = createIssueTemplateAnswers(template);
+}
+
+async function loadIssueMetadata(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || issueMetadataLoading.value) return;
+  if (!force && issueMetadataLoadedRepo.value === repoFullName) return;
+  issueMetadataLoading.value = true;
+  try {
+    const [labelsResult, assigneesResult] = await Promise.allSettled([
+      listGitHubIssueLabels(repoFullName, { forceRefresh: force }),
+      listGitHubIssueAssignees(repoFullName, { forceRefresh: force }),
+    ]);
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    remoteIssueLabels.value = labelsResult.status === "fulfilled" ? labelsResult.value : [];
+    remoteIssueAssignees.value = assigneesResult.status === "fulfilled" ? assigneesResult.value : [];
+    issueMetadataLoadedRepo.value = repoFullName;
+  } finally {
+    if (repoFullName === props.repoFullName) issueMetadataLoading.value = false;
+  }
+}
+
+function issueFieldValue(field: GitHubIssueTemplateField) {
+  const value = issueTemplateAnswers.value[field.id];
+  return Array.isArray(value) ? value.join(", ") : value ?? "";
+}
+
+function setIssueFieldValue(fieldId: string, value: string) {
+  issueTemplateAnswers.value = {
+    ...issueTemplateAnswers.value,
+    [fieldId]: value,
+  };
+}
+
+function issueCheckboxChecked(fieldId: string, optionLabel: string) {
+  const value = issueTemplateAnswers.value[fieldId];
+  return Array.isArray(value) && value.includes(optionLabel);
+}
+
+function toggleIssueCheckbox(fieldId: string, optionLabel: string, checked: boolean) {
+  const current = issueTemplateAnswers.value[fieldId];
+  const values = Array.isArray(current) ? current : [];
+  issueTemplateAnswers.value = {
+    ...issueTemplateAnswers.value,
+    [fieldId]: checked
+      ? [...new Set([...values, optionLabel])]
+      : values.filter((item) => item !== optionLabel),
+  };
+}
+
+async function openPullRequestCreateView() {
+  pullCreateView.value = true;
+  preparePullRequestDefaults();
+  await Promise.all([
+    settingsLoaded.value ? Promise.resolve() : loadSettings(),
+    loadPullRequestTemplates(),
+  ]);
+  preparePullRequestDefaults();
+}
+
+function closePullRequestCreateView(resetDraft = true) {
+  pullCreateView.value = false;
+  if (!resetDraft) return;
+  pullRequestTitle.value = "";
+  pullRequestBody.value = "";
+  pullRequestBase.value = "";
+  pullRequestHead.value = "";
+  pullRequestDraft.value = false;
+  pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+}
+
+async function loadPullRequestTemplates(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || pullRequestTemplatesLoading.value) return;
+  if (!force && pullRequestTemplatesLoadedRepo.value === repoFullName) return;
+  pullRequestTemplatesLoading.value = true;
+  try {
+    const nextTemplates = await loadGitHubPullRequestTemplates(repoFullName);
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    pullRequestTemplates.value = nextTemplates;
+    pullRequestTemplatesLoadedRepo.value = repoFullName;
+    if (!displayedPullRequestTemplates.value.some((template) => template.key === pullRequestTemplateKey.value)) {
+      pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+      applyPullRequestTemplate(selectedPullRequestTemplate.value);
+    }
+  } finally {
+    if (repoFullName === props.repoFullName) pullRequestTemplatesLoading.value = false;
+  }
+}
+
+function selectPullRequestTemplate(key: string) {
+  pullRequestTemplateKey.value = key;
+  applyPullRequestTemplate(selectedPullRequestTemplate.value);
+}
+
+function applyPullRequestTemplate(template: GitHubPullRequestTemplate) {
+  pullRequestBody.value = template.body;
+}
+
 function isEditingIssue(issueNumber: number) {
   return editingIssueNumber.value === issueNumber;
 }
@@ -1341,11 +1629,14 @@ async function saveIssueEdit(issue: GitHubIssue) {
 async function createIssue() {
   const repoFullName = props.repoFullName;
   if (!repoFullName || creatingIssue.value) return;
+  const title = issueTitle.value.trim();
+  if (!title || !issueTemplateRequiredFieldsSatisfied(selectedIssueTemplate.value, issueTemplateAnswers.value)) return;
+  const body = buildIssueTemplateBody(selectedIssueTemplate.value, issueTemplateAnswers.value, issueBody.value);
   const request = {
-    title: issueTitle.value,
-    body: issueBody.value,
-    labels: splitList(issueLabels.value),
-    assignees: splitList(issueAssignees.value),
+    title,
+    body,
+    labels: [...issueLabels.value],
+    assignees: [...issueAssignees.value],
   };
   const result = await runGitHubMutation(repoFullName, issueCreateTracker, () =>
     createGitHubIssue(repoFullName, request)
@@ -1355,8 +1646,11 @@ async function createIssue() {
   issues.value = [issue, ...issues.value];
   issueTitle.value = "";
   issueBody.value = "";
-  issueLabels.value = "";
-  issueAssignees.value = "";
+  issueLabels.value = [];
+  issueAssignees.value = [];
+  issueTemplateAnswers.value = {};
+  issueTemplateKey.value = blankIssueTemplate().key;
+  issueCreateView.value = false;
 }
 
 async function toggleIssue(issue: GitHubIssue) {
@@ -1406,6 +1700,8 @@ async function createPullRequest() {
   pullRequestTitle.value = "";
   pullRequestBody.value = "";
   pullRequestDraft.value = false;
+  pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+  pullCreateView.value = false;
   pullState.value = "open";
   await loadPullRequestChecks(pull.number, true);
 }
@@ -1569,9 +1865,18 @@ function selectReadme(path: string) {
               <h3>Issues</h3>
               <span>{{ issues.length }} items</span>
             </div>
-            <div class="project-toolbar" aria-label="Issue filters">
-              <ListFilter :size="14" aria-hidden="true" />
-              <div class="ui-segmented project-segmented" role="group" aria-label="Issue 状态">
+            <div class="project-toolbar" aria-label="Issue actions">
+              <button
+                v-if="!issueCreateView && !issuesAccessUnavailable"
+                type="button"
+                class="primary project-create-button"
+                @click="openIssueCreateView"
+              >
+                <Plus :size="14" aria-hidden="true" />
+                New issue
+              </button>
+              <ListFilter v-if="!issueCreateView" :size="14" aria-hidden="true" />
+              <div v-if="!issueCreateView" class="ui-segmented project-segmented" role="group" aria-label="Issue 状态">
                 <button
                   v-for="filter in githubStateFilters"
                   :key="filter.value"
@@ -1593,25 +1898,133 @@ function selectReadme(path: string) {
             @rebind="rebindGitHub"
           />
           <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
-          <form v-if="!issuesAccessUnavailable" class="project-compact-form" @submit.prevent="createIssue">
-            <div class="project-compact-form__line">
-              <input v-model="issueTitle" class="project-compact-form__title" type="text" placeholder="Issue 标题" />
-              <input v-model="issueLabels" type="text" placeholder="labels" />
-              <input v-model="issueAssignees" type="text" placeholder="assignees" />
-              <button
-                type="submit"
-                class="primary project-icon-action project-icon-action--primary"
-                :disabled="creatingIssue || !issueTitle.trim()"
-                aria-label="新建 Issue"
-                title="新建 Issue"
-              >
-                <LoaderCircle v-if="creatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
-                <Plus v-else :size="14" aria-hidden="true" />
+          <form
+            v-if="!issuesAccessUnavailable && issueCreateView"
+            class="project-create-form"
+            aria-label="Create issue"
+            @submit.prevent="createIssue"
+          >
+            <div class="project-create-form__head">
+              <button type="button" class="ghost project-create-back" @click="() => closeIssueCreateView()">
+                <ArrowLeft :size="14" aria-hidden="true" />
+                Issues
               </button>
+              <div class="project-create-form__actions">
+                <button type="button" class="ghost" :disabled="creatingIssue" @click="() => closeIssueCreateView()">Cancel</button>
+                <button type="submit" class="primary" :disabled="!canSubmitIssueCreate">
+                  <LoaderCircle v-if="creatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
+                  <Plus v-else :size="14" aria-hidden="true" />
+                  Create issue
+                </button>
+              </div>
             </div>
-            <textarea v-model="issueBody" rows="2" placeholder="Issue 内容"></textarea>
+            <div class="project-template-picker">
+              <div class="project-template-picker__control">
+                <span>Template</span>
+                <Dropdown
+                  :model-value="issueTemplateKey"
+                  :options="issueTemplateOptions"
+                  :disabled="issueTemplatesLoading"
+                  button-class="project-template-dropdown"
+                  menu-width="260px"
+                  menu-label="Issue templates"
+                  placement="bottom"
+                  @update:model-value="selectIssueTemplate"
+                />
+              </div>
+              <p class="muted">
+                {{ issueTemplatesLoading ? "Loading templates..." : selectedIssueTemplate.description }}
+              </p>
+            </div>
+            <div class="project-create-grid">
+              <label class="project-create-field project-create-field--wide">
+                <span>Title</span>
+                <input v-model="issueTitle" type="text" placeholder="Issue title" />
+              </label>
+              <div class="project-create-field">
+                <span>Labels</span>
+                <Dropdown
+                  v-model="issueLabels"
+                  multiple
+                  :options="issueLabelDropdownOptions"
+                  :display-label="issueLabelSummary"
+                  :placeholder="issueMetadataLoading ? 'Loading labels...' : 'No labels'"
+                  button-class="project-template-dropdown"
+                  menu-width="220px"
+                  menu-label="Labels"
+                  placement="bottom"
+                  :disabled="issueMetadataLoading && !issueLabelOptions.length"
+                />
+              </div>
+              <div class="project-create-field">
+                <span>Assignees</span>
+                <Dropdown
+                  v-model="issueAssignees"
+                  multiple
+                  :options="issueAssigneeDropdownOptions"
+                  :display-label="issueAssigneeSummary"
+                  :placeholder="issueMetadataLoading ? 'Loading assignees...' : 'No assignees'"
+                  button-class="project-template-dropdown"
+                  menu-width="220px"
+                  menu-label="Assignees"
+                  placement="bottom"
+                  :disabled="issueMetadataLoading && !issueAssigneeOptions.length"
+                />
+              </div>
+            </div>
+            <div v-if="selectedIssueTemplate.kind === 'form'" class="project-template-fields">
+              <p v-for="field in issueTemplateMarkdownFields" :key="field.id" class="project-template-note">
+                {{ field.value }}
+              </p>
+              <label
+                v-for="field in issueTemplateFields"
+                :key="field.id"
+                class="project-create-field project-create-field--wide"
+              >
+                <span>{{ field.label }}<em v-if="'required' in field && field.required">*</em></span>
+                <small v-if="'description' in field && field.description">{{ field.description }}</small>
+                <textarea
+                  v-if="field.type === 'textarea'"
+                  :value="issueFieldValue(field)"
+                  rows="5"
+                  :placeholder="field.placeholder"
+                  @input="setIssueFieldValue(field.id, targetValue($event))"
+                ></textarea>
+                <Dropdown
+                  v-else-if="field.type === 'dropdown'"
+                  :model-value="issueFieldValue(field)"
+                  :options="dropdownOptions(field.options)"
+                  button-class="project-template-dropdown"
+                  menu-width="220px"
+                  :menu-label="field.label"
+                  placement="bottom"
+                  @update:model-value="(value) => setIssueFieldValue(field.id, value)"
+                />
+                <div v-else-if="field.type === 'checkboxes'" class="project-checkbox-list">
+                  <label v-for="option in field.options" :key="option.label" class="project-check">
+                    <input
+                      type="checkbox"
+                      :checked="issueCheckboxChecked(field.id, option.label)"
+                      @change="toggleIssueCheckbox(field.id, option.label, targetChecked($event))"
+                    />
+                    <span>{{ option.label }}<em v-if="option.required">*</em></span>
+                  </label>
+                </div>
+                <input
+                  v-else
+                  type="text"
+                  :value="issueFieldValue(field)"
+                  :placeholder="field.placeholder"
+                  @input="setIssueFieldValue(field.id, targetValue($event))"
+                />
+              </label>
+            </div>
+            <label v-else class="project-create-field project-create-field--wide">
+              <span>Body</span>
+              <textarea v-model="issueBody" rows="7" placeholder="Leave a comment"></textarea>
+            </label>
           </form>
-          <div v-if="!issuesAccessUnavailable" class="project-list project-dense-list">
+          <div v-if="!issuesAccessUnavailable && !issueCreateView" class="project-list project-dense-list">
             <div
               v-for="issue in issues"
               :key="issue.number"
@@ -1686,9 +2099,18 @@ function selectReadme(path: string) {
               <h3>Pull Requests</h3>
               <span>{{ pulls.length }} items</span>
             </div>
-            <div class="project-toolbar" aria-label="Pull Request filters">
-              <ListFilter :size="14" aria-hidden="true" />
-              <div class="ui-segmented project-segmented" role="group" aria-label="Pull Request 状态">
+            <div class="project-toolbar" aria-label="Pull Request actions">
+              <button
+                v-if="!pullCreateView && !pullsAccessUnavailable"
+                type="button"
+                class="primary project-create-button"
+                @click="openPullRequestCreateView"
+              >
+                <GitPullRequest :size="14" aria-hidden="true" />
+                New pull request
+              </button>
+              <ListFilter v-if="!pullCreateView" :size="14" aria-hidden="true" />
+              <div v-if="!pullCreateView" class="ui-segmented project-segmented" role="group" aria-label="Pull Request 状态">
                 <button
                   v-for="filter in githubStateFilters"
                   :key="filter.value"
@@ -1710,30 +2132,74 @@ function selectReadme(path: string) {
             @rebind="rebindGitHub"
           />
           <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
-          <form v-if="!pullsAccessUnavailable" class="project-compact-form" @submit.prevent="createPullRequest">
-            <div class="project-compact-form__line">
-              <input v-model="pullRequestTitle" class="project-compact-form__title" type="text" placeholder="PR 标题" />
-              <input v-model="pullRequestHead" type="text" placeholder="head 分支" />
-              <input v-model="pullRequestBase" type="text" placeholder="base 分支" />
-              <label class="project-check project-check--inline">
-                <input v-model="pullRequestDraft" type="checkbox" />
-                <span>Draft</span>
-              </label>
-              <button
-                type="submit"
-                class="primary project-icon-action project-icon-action--primary"
-                :disabled="creatingPullRequest || !pullRequestTitle.trim() || !pullRequestHead.trim() || !pullRequestBase.trim()"
-                aria-label="新建 PR"
-                title="新建 PR"
-              >
-                <LoaderCircle v-if="creatingPullRequest" :size="14" aria-hidden="true" class="sb-spin" />
-                <GitPullRequest v-else :size="14" aria-hidden="true" />
+          <form
+            v-if="!pullsAccessUnavailable && pullCreateView"
+            class="project-create-form"
+            aria-label="Create pull request"
+            @submit.prevent="createPullRequest"
+          >
+            <div class="project-create-form__head">
+              <button type="button" class="ghost project-create-back" @click="() => closePullRequestCreateView()">
+                <ArrowLeft :size="14" aria-hidden="true" />
+                Pull Requests
               </button>
+              <div class="project-create-form__actions">
+                <button type="button" class="ghost" :disabled="creatingPullRequest" @click="() => closePullRequestCreateView()">
+                  Cancel
+                </button>
+                <button type="submit" class="primary" :disabled="!canSubmitPullRequestCreate">
+                  <LoaderCircle v-if="creatingPullRequest" :size="14" aria-hidden="true" class="sb-spin" />
+                  <GitPullRequest v-else :size="14" aria-hidden="true" />
+                  Create pull request
+                </button>
+              </div>
             </div>
-            <textarea v-model="pullRequestBody" rows="2" placeholder="PR 描述"></textarea>
+            <div class="project-template-picker">
+              <div class="project-template-picker__control">
+                <span>Template</span>
+                <Dropdown
+                  :model-value="pullRequestTemplateKey"
+                  :options="pullRequestTemplateOptions"
+                  :disabled="pullRequestTemplatesLoading"
+                  button-class="project-template-dropdown"
+                  menu-width="260px"
+                  menu-label="Pull request templates"
+                  placement="bottom"
+                  @update:model-value="selectPullRequestTemplate"
+                />
+              </div>
+              <p class="muted">
+                {{ pullRequestTemplatesLoading ? "Loading templates..." : selectedPullRequestTemplate.description }}
+              </p>
+            </div>
+            <div class="project-create-grid">
+              <label class="project-create-field project-create-field--wide">
+                <span>Title</span>
+                <input v-model="pullRequestTitle" type="text" placeholder="Pull request title" />
+              </label>
+              <label class="project-create-field">
+                <span>Head branch</span>
+                <input v-model="pullRequestHead" type="text" placeholder="feature/my-change" />
+              </label>
+              <label class="project-create-field">
+                <span>Base branch</span>
+                <input v-model="pullRequestBase" type="text" placeholder="main" />
+              </label>
+              <label class="project-create-switch ui-switch">
+                <span class="project-create-switch__content">
+                  <strong>Draft</strong>
+                </span>
+                <input v-model="pullRequestDraft" class="ui-switch__input" type="checkbox" />
+                <span class="ui-switch__track" aria-hidden="true"></span>
+              </label>
+            </div>
+            <label class="project-create-field project-create-field--wide">
+              <span>Description</span>
+              <textarea v-model="pullRequestBody" rows="7" placeholder="Describe the change"></textarea>
+            </label>
           </form>
-          <p v-if="!pullsAccessUnavailable && pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
-          <div v-if="!pullsAccessUnavailable" class="project-list project-dense-list">
+          <p v-if="!pullsAccessUnavailable && !pullCreateView && pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
+          <div v-if="!pullsAccessUnavailable && !pullCreateView" class="project-list project-dense-list">
             <div
               v-for="pull in pulls"
               :key="pull.number"
@@ -2710,6 +3176,204 @@ function selectReadme(path: string) {
   resize: vertical;
 }
 
+.project-create-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.project-create-form {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 0 10px;
+}
+
+.project-create-form__head,
+.project-create-form__actions,
+.project-create-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-create-form__head {
+  justify-content: space-between;
+}
+
+.project-create-form__actions button,
+.project-create-back {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.project-create-form__actions .primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-template-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.project-template-picker__control {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.project-template-picker__control > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-template-picker p {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.project-template-picker :deep(.dd),
+.project-create-field :deep(.dd) {
+  width: 100%;
+}
+
+.project-template-picker :deep(.project-template-dropdown),
+.project-create-field :deep(.project-template-dropdown) {
+  width: 100%;
+  height: 30px;
+  justify-content: space-between;
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.project-template-picker :deep(.project-template-dropdown .chat-chip__label),
+.project-create-field :deep(.project-template-dropdown .chat-chip__label) {
+  max-width: none;
+}
+
+.project-create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 180px) minmax(140px, 180px);
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-create-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.project-create-field--wide {
+  grid-column: 1 / -1;
+}
+
+.project-create-field span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-create-field em {
+  color: var(--err);
+  font-style: normal;
+}
+
+.project-create-field small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.project-create-field textarea {
+  min-height: 112px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  resize: vertical;
+}
+
+.project-create-field textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  background: var(--bg);
+}
+
+.project-create-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  align-self: end;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.project-create-switch__content {
+  min-width: 0;
+}
+
+.project-create-switch__content strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-template-fields {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-template-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.project-checkbox-list {
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
 .project-check {
   display: inline-flex;
   align-items: center;
@@ -3144,6 +3808,8 @@ function selectReadme(path: string) {
   }
 
   .project-compact-form__line,
+  .project-template-picker,
+  .project-create-grid,
   .project-settings-fields,
   .project-row {
     grid-template-columns: 1fr;
