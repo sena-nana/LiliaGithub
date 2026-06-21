@@ -79,6 +79,22 @@ pub(super) fn git_command_lossy(repo_path: &Path, args: &[&str]) -> Option<Strin
         .map(|s| s.trim().to_string())
 }
 
+pub(super) fn git_diff_command_lossy(repo_path: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = command.output().ok()?;
+    if output.status.success() || output.status.code() == Some(1) {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
 fn git_blob_line_counts(repo_path: &Path, object_ids: &[String]) -> Result<Vec<u64>, String> {
     if object_ids.is_empty() {
         return Ok(Vec::new());
@@ -2330,7 +2346,11 @@ pub(super) fn repo_changes(path: &Path) -> Vec<RepoChange> {
                     let staged = !untracked && index != " ";
                     let unstaged = !untracked && worktree != " ";
                     let diff = if untracked {
-                        String::new()
+                        git_diff_command_lossy(
+                            path,
+                            &["diff", "--no-index", "--", "/dev/null", &file_path],
+                        )
+                        .unwrap_or_default()
                     } else if staged {
                         git_command_lossy(path, &["diff", "--cached", "--", &file_path])
                             .unwrap_or_default()
@@ -2680,6 +2700,11 @@ pub(super) fn parse_commit_patch_block(block: &str) -> Option<ParsedCommitPatch>
 pub(super) fn patch_target_path(block: &str) -> Option<String> {
     for line in block.lines() {
         if let Some(path) = line.strip_prefix("+++ b/") {
+            return Some(path.to_string());
+        }
+    }
+    for line in block.lines() {
+        if let Some(path) = line.strip_prefix("--- a/") {
             return Some(path.to_string());
         }
     }

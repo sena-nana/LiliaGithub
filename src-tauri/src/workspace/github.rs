@@ -989,8 +989,18 @@ pub(super) fn github_commit_file_patch_block(file: &GitHubCommitFileResponse) ->
         return None;
     }
     let old_path = file.previous_filename.as_deref().unwrap_or(&file.filename);
+    let old_header = if file.status == "added" {
+        "/dev/null".to_string()
+    } else {
+        format!("a/{old_path}")
+    };
+    let new_header = if file.status == "removed" {
+        "/dev/null".to_string()
+    } else {
+        format!("b/{new_path}", new_path = file.filename)
+    };
     Some(format!(
-        "diff --git a/{old_path} b/{new_path}\n--- a/{old_path}\n+++ b/{new_path}\n{patch}",
+        "diff --git a/{old_path} b/{new_path}\n--- {old_header}\n+++ {new_header}\n{patch}",
         new_path = file.filename,
     ))
 }

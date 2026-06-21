@@ -1,4 +1,5 @@
 use super::bulk::*;
+use super::github::*;
 use super::launch::*;
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -92,6 +93,29 @@ fn repo_adds_untracked_files_to_gitignore_once() {
         fs::read_to_string(path.join(".gitignore")).unwrap(),
         "logs/output.log\n"
     );
+}
+
+#[test]
+fn repo_changes_include_untracked_file_diff() {
+    let path = temp_dir("untracked-diff");
+    init_git_repo(&path);
+    fs::write(path.join("tracked.ts"), "tracked\n").unwrap();
+    run_git(&path, &["add", "tracked.ts"]);
+    run_git(&path, &["commit", "-m", "initial"]);
+    fs::create_dir_all(path.join("src")).unwrap();
+    fs::write(path.join("src").join("new.ts"), "export const added = true;\n").unwrap();
+
+    let changes = repo_changes(&path);
+    let change = changes
+        .iter()
+        .find(|change| change.path == "src/new.ts")
+        .expect("untracked file should be listed");
+
+    assert!(change.untracked);
+    assert!(change.diff.contains("diff --git a/src/new.ts b/src/new.ts"));
+    assert!(change.diff.contains("--- /dev/null"));
+    assert!(change.diff.contains("+++ b/src/new.ts"));
+    assert!(change.diff.contains("+export const added = true;"));
 }
 
 fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
@@ -1358,12 +1382,53 @@ rename to src/renamed.ts";
     assert_eq!(files[0].hunks[0].lines[0].kind, "deleted");
     assert_eq!(files[1].status, "added");
     assert_eq!((files[1].additions, files[1].deletions), (3, 0));
+    assert!(files[1].patch.contains("--- /dev/null"));
+    assert_eq!(files[1].hunks[0].lines[0].kind, "added");
+    assert_eq!(files[1].hunks[0].lines[0].content, "created()");
     assert_eq!(files[2].status, "deleted");
     assert_eq!((files[2].additions, files[2].deletions), (0, 2));
+    assert!(files[2].patch.contains("+++ /dev/null"));
+    assert_eq!(files[2].hunks[0].lines[0].kind, "deleted");
+    assert_eq!(files[2].hunks[0].lines[0].content, "removed()");
     assert_eq!(files[3].status, "renamed");
     assert_eq!(files[3].old_path.as_deref(), Some("src/name.ts"));
     assert_eq!(files[3].path, "src/renamed.ts");
     assert!(files[3].patch.contains("rename to src/renamed.ts"));
+}
+
+#[test]
+fn github_commit_file_changes_wrap_added_and_removed_patch_headers() {
+    let files = vec![
+        GitHubCommitFileResponse {
+            filename: "src/new.ts".to_string(),
+            status: "added".to_string(),
+            previous_filename: None,
+            additions: 1,
+            deletions: 0,
+            patch: Some("@@ -0,0 +1 @@\n+created()".to_string()),
+        },
+        GitHubCommitFileResponse {
+            filename: "src/old.ts".to_string(),
+            status: "removed".to_string(),
+            previous_filename: None,
+            additions: 0,
+            deletions: 1,
+            patch: Some("@@ -1 +0,0 @@\n-removed()".to_string()),
+        },
+    ];
+
+    let changes = github_commit_file_changes(files);
+
+    assert_eq!(changes[0].status, "added");
+    assert!(changes[0].patch.contains("--- /dev/null"));
+    assert!(changes[0].patch.contains("+++ b/src/new.ts"));
+    assert_eq!(changes[0].hunks[0].lines[0].kind, "added");
+    assert_eq!(changes[0].hunks[0].lines[0].content, "created()");
+    assert_eq!(changes[1].status, "deleted");
+    assert!(changes[1].patch.contains("--- a/src/old.ts"));
+    assert!(changes[1].patch.contains("+++ /dev/null"));
+    assert_eq!(changes[1].hunks[0].lines[0].kind, "deleted");
+    assert_eq!(changes[1].hunks[0].lines[0].content, "removed()");
 }
 
 #[test]
