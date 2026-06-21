@@ -3,6 +3,7 @@ import { AnsiUp } from "ansi_up";
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
+  AlertCircle,
   ArrowLeft,
   CircleDot,
   Eye,
@@ -12,6 +13,7 @@ import {
   LoaderCircle,
   Pencil,
   Plus,
+  RotateCw,
   Save,
   Settings2,
   Star,
@@ -115,6 +117,13 @@ type GitHubAccessUnavailable = {
   title: string;
   reason: string;
 };
+type ProjectSidebarError = {
+  key: string;
+  title: string;
+  message: string;
+  retry?: "sync";
+  retrying?: boolean;
+};
 type IssuePanelFilters = {
   creator: string | null;
   assignee: string | null;
@@ -162,6 +171,9 @@ const props = defineProps<{
   launchConfig: ProjectLaunchConfig | null;
   launchLogs: readonly ProjectLaunchLog[];
   launchError?: string | null;
+  actionError?: string | null;
+  repoActionError?: string | null;
+  recentSyncError?: { message: string; retrying: boolean } | null;
   launchTerminalVisible: boolean;
   actionRunning: boolean;
   launchRunning: boolean;
@@ -221,6 +233,7 @@ const emit = defineEmits<{
   acceptConflict: [side: "ours" | "theirs"];
   markConflictResolved: [];
   openConflictFolder: [];
+  retrySync: [];
 }>();
 const workspace = useWorkspace();
 const route = useRoute();
@@ -469,7 +482,27 @@ const canDeleteRemote = computed(() => resolvedRepoContext.value.capabilities.de
 const showCommitDetail = computed(() =>
   activeSection.value === "history" && Boolean(props.selectedCommitHash),
 );
+const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
+  const errors: ProjectSidebarError[] = [];
+  if (props.recentSyncError) {
+    errors.push({
+      key: "recent-sync",
+      title: "最近同步失败",
+      message: props.recentSyncError.message,
+      retry: "sync",
+      retrying: props.recentSyncError.retrying,
+    });
+  }
+  if (props.actionError) errors.push({ key: "action", title: "操作失败", message: props.actionError });
+  if (props.repoActionError) errors.push({ key: "repo-action", title: "仓库错误", message: props.repoActionError });
+  if (readmeError.value) errors.push({ key: "readme", title: "README 读取失败", message: readmeError.value });
+  if (githubError.value) errors.push({ key: "github", title: "GitHub 请求失败", message: githubError.value });
+  if (actionsError.value) errors.push({ key: "actions", title: "Actions 读取失败", message: actionsError.value });
+  return errors;
+});
+const hasProjectSidebarErrors = computed(() => projectSidebarErrors.value.length > 0);
 const showProjectSidebar = computed(() =>
+  hasProjectSidebarErrors.value ||
   activeSection.value === "readme" ||
   activeSection.value === "issues" ||
   activeSection.value === "pulls" ||
@@ -1954,8 +1987,7 @@ function selectReadme(path: string) {
         </section>
 
         <section v-else-if="activeSection === 'readme'" class="project-readme-card">
-          <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
-          <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
+          <p v-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
           <p v-else-if="!activeReadme" class="muted repo-empty project-empty">
             {{ readmeEmptyText }}
           </p>
@@ -1983,7 +2015,6 @@ function selectReadme(path: string) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
           <form
             v-if="!issuesAccessUnavailable && issueCreateView"
             class="project-create-form"
@@ -2143,7 +2174,6 @@ function selectReadme(path: string) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
           <form
             v-if="!pullsAccessUnavailable && pullCreateView"
             class="project-create-form"
@@ -2248,8 +2278,7 @@ function selectReadme(path: string) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="actionsError" class="error-line">{{ actionsError }}</p>
-          <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
+          <p v-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
           <div v-if="!actionsAccessUnavailable" class="project-list project-dense-list">
             <div
               v-for="run in workflowRuns"
@@ -2308,7 +2337,6 @@ function selectReadme(path: string) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
           <template v-if="settings">
             <section class="project-settings-group" aria-labelledby="project-settings-general-title">
               <div class="project-settings-group__head">
@@ -2483,7 +2511,37 @@ function selectReadme(path: string) {
       />
 
       <aside v-if="showProjectSidebar" class="project-sidebar">
-        <section v-if="repoFullName" class="project-about-card" aria-label="仓库描述">
+        <section
+          v-if="hasProjectSidebarErrors"
+          class="project-sidebar-error-card"
+          aria-label="仓库错误"
+        >
+          <div
+            v-for="error in projectSidebarErrors"
+            :key="error.key"
+            class="project-sidebar-error-card__item"
+          >
+            <AlertCircle :size="15" aria-hidden="true" />
+            <div>
+              <strong>{{ error.title }}</strong>
+              <p>{{ error.message }}</p>
+            </div>
+            <button
+              v-if="error.retry === 'sync'"
+              type="button"
+              class="ghost project-icon-action project-sidebar-error-card__retry"
+              :disabled="error.retrying || actionRunning"
+              aria-label="重试"
+              title="重试"
+              @click="emit('retrySync')"
+            >
+              <LoaderCircle v-if="error.retrying" :size="14" aria-hidden="true" class="sb-spin" />
+              <RotateCw v-else :size="14" aria-hidden="true" />
+            </button>
+          </div>
+        </section>
+
+        <section v-if="repoFullName && !hasProjectSidebarErrors" class="project-about-card" aria-label="仓库描述">
           <button
             v-if="!aboutEditing"
             type="button"
@@ -2500,7 +2558,6 @@ function selectReadme(path: string) {
             <textarea v-model="settingsForm.description" rows="3" placeholder="Description"></textarea>
             <input v-model="settingsForm.homepage" type="url" placeholder="Homepage" />
             <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="aboutTopicDraft" />
-            <p v-if="githubError" class="error-line">{{ githubError }}</p>
             <div class="project-about-form__actions">
               <button type="button" class="ghost project-icon-action" :disabled="savingSettings" aria-label="取消" title="取消" @click="cancelEditAbout">
                 <X :size="14" aria-hidden="true" />
@@ -2513,7 +2570,6 @@ function selectReadme(path: string) {
           </form>
           <div v-else class="project-about-summary">
             <p v-if="githubLoading && !settings" class="muted">正在读取仓库描述。</p>
-            <p v-else-if="githubError && !settings" class="error-line">{{ githubError }}</p>
             <template v-else>
               <p :class="{ 'is-empty': !aboutDescription }">{{ aboutDescription || "No description provided." }}</p>
               <a v-if="aboutHomepage" :href="aboutHomepageHref" target="_blank" rel="noreferrer">
@@ -2708,6 +2764,10 @@ function selectReadme(path: string) {
   background: var(--bg-elev);
 }
 
+.project-main :deep(.error-line) {
+  display: none;
+}
+
 .project-commit-detail-card {
   grid-column: 1;
   grid-row: 2;
@@ -2824,6 +2884,60 @@ function selectReadme(path: string) {
   min-height: 0;
   align-content: start;
   align-self: start;
+}
+
+.project-sidebar-error-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--err-soft);
+  border-radius: var(--radius-md);
+  background: var(--err-soft);
+}
+
+.project-sidebar-error-card__item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  color: var(--err);
+}
+
+.project-sidebar-error-card__item > div {
+  min-width: 0;
+}
+
+.project-sidebar-error-card__item strong,
+.project-sidebar-error-card__item p {
+  display: block;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-sidebar-error-card__item strong {
+  color: var(--err);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.project-sidebar-error-card__item p {
+  margin-top: 3px;
+  color: var(--err);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.project-sidebar-error-card__retry {
+  color: var(--err);
+}
+
+.project-sidebar-error-card__retry:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 16%, transparent);
 }
 
 .project-about-card {
