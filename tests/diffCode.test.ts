@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/vue";
+import RepoDiffWorkspace from "../src/components/repo/RepoDiffWorkspace.vue";
 import { parseRepoDiffHunks } from "../src/components/repo/repoDiffWorkspace";
 import { inferDiffCodeLanguage, tokenizeDiffCodeLine } from "../src/utils/diffCode";
 
@@ -99,5 +101,65 @@ describe("diff code rendering helpers", () => {
       { kind: "added", content: "  <p>本地仓库管理</p>", oldLine: null, newLine: 3 },
       { kind: "context", content: "</template>", oldLine: 3, newLine: 4 },
     ]);
+  });
+
+  it("parses added and deleted file patches with dev null headers", () => {
+    const added = parseRepoDiffHunks([
+      "diff --git a/src/new.ts b/src/new.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/src/new.ts",
+      "@@ -0,0 +1 @@",
+      "+created()",
+    ].join("\n"));
+    const deleted = parseRepoDiffHunks([
+      "diff --git a/src/old.ts b/src/old.ts",
+      "deleted file mode 100644",
+      "--- a/src/old.ts",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-removed()",
+    ].join("\n"));
+
+    expect(added[0].lines).toEqual([
+      { kind: "added", content: "created()", oldLine: null, newLine: 1 },
+    ]);
+    expect(deleted[0].lines).toEqual([
+      { kind: "deleted", content: "removed()", oldLine: 1, newLine: null },
+    ]);
+  });
+
+  it("renders raw diff when a file has patch text without hunks", () => {
+    const file = {
+      key: "docs/renamed.md",
+      path: "docs/renamed.md",
+      oldPath: "docs/old.md",
+      statusLabel: "重命名",
+      statusLetter: "R",
+      patch: [
+        "diff --git a/docs/old.md b/docs/renamed.md",
+        "similarity index 100%",
+        "rename from docs/old.md",
+        "rename to docs/renamed.md",
+      ].join("\n"),
+      hunks: [],
+    };
+
+    render(RepoDiffWorkspace, {
+      props: {
+        files: [file],
+        activeFile: file,
+        fileCountLabel: "1 个文件",
+        emptyFileText: "没有文件",
+        emptyDiffText: "没有 diff",
+        mode: "hunks",
+      },
+    });
+
+    const diffPanel = screen.getByLabelText("改动文件 diff");
+    expect(diffPanel).toHaveTextContent("diff --git a/docs/old.md b/docs/renamed.md");
+    expect(diffPanel).toHaveTextContent("rename to docs/renamed.md");
+    expect(diffPanel).not.toHaveTextContent("没有 diff");
+    expect(diffPanel.querySelector(".diff-code__raw-line")).toBeInTheDocument();
   });
 });

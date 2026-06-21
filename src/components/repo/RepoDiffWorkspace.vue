@@ -169,7 +169,7 @@ function clamp(value: number, min: number, max: number) {
           mode="hunks"
         />
         <DiffCodeRenderer
-          v-else-if="mode === 'raw' && activeFile.patch"
+          v-else-if="activeFile.patch"
           :file-path="activeFile.path"
           :hunks="activeFile.hunks ?? []"
           :patch="activeFile.patch"
