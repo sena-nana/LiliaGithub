@@ -36,6 +36,7 @@ describe("repoContext", () => {
     expect(context.tags).toEqual(expect.arrayContaining(["local", "managed", "github", "github-authorized"]));
     expect(context.localRepoId).toBe("LiliaGithub");
     expect(context.githubFullName).toBe("sena-nana/LiliaGithub");
+    expect(context.capabilities.files).toMatchObject({ available: true, provider: "local-first" });
     expect(context.capabilities.history).toMatchObject({ available: true, provider: "local-first" });
     expect(context.capabilities.branchBrowse).toMatchObject({ available: true, provider: "local-first" });
     expect(context.capabilities.issues).toMatchObject({ available: true, provider: "github" });
@@ -71,6 +72,7 @@ describe("repoContext", () => {
     expect(context.preferredProvider).toBe("github");
     expect(context.capabilities.changes).toMatchObject({ available: false, provider: "unavailable" });
     expect(context.capabilities.launch).toMatchObject({ available: false, provider: "unavailable" });
+    expect(context.capabilities.files).toMatchObject({ available: true, provider: "github" });
     expect(context.capabilities.readme).toMatchObject({ available: true, provider: "github" });
     expect(context.capabilities.pulls).toMatchObject({ available: true, provider: "github" });
   });

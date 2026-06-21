@@ -20,6 +20,7 @@ export interface RepoCapability {
 }
 
 export type RepoCapabilityKey =
+  | "files"
   | "readme"
   | "history"
   | "branchBrowse"
@@ -103,6 +104,7 @@ export function resolveRepoContext(input: ResolveRepoContextInput): RepoContext 
     localPath: hasLocal ? input.localPath ?? summary?.path : undefined,
     preferredProvider: hasLocal ? "local" : hasGithub ? "github" : "none",
     capabilities: {
+      files: localFirst(),
       readme: localFirst(),
       history: localFirst(),
       branchBrowse: localFirst(),
