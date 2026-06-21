@@ -851,6 +851,32 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
   });
 
+  it("Actions 列表同一行显示标题与右侧信息，并省略同名来源", async () => {
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([
+      githubWorkflowRuns[0],
+      {
+        ...githubWorkflowRuns[0],
+        id: 1311,
+        name: "same action",
+        displayTitle: "same action",
+        branch: "feature/same",
+      },
+    ]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+    });
+
+    await view.findByRole("button", { name: /release pipeline/ }, { timeout: 5000 });
+    const runButtons = Array.from(view.container.querySelectorAll(".actions-run"));
+    expect(runButtons).toHaveLength(2);
+
+    const [workflowRun, sameNameRun] = runButtons;
+    expect(workflowRun.querySelector(".actions-run__meta")).toHaveTextContent(/^CI · main · /);
+    expect(sameNameRun.querySelector(".actions-run__meta")).toHaveTextContent(/^feature\/same · /);
+    expect(sameNameRun.querySelector(".actions-run__meta")).not.toHaveTextContent("same action");
+  });
+
   it("Actions 详情先显示流程，点击 job 后显示步骤并预览 artifact", async () => {
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue(githubWorkflowRuns);
     vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(githubWorkflowRunDetail);

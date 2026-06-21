@@ -205,6 +205,12 @@ function runToneClass(run: GitHubWorkflowRun) {
   return `actions-status--${workflowRunStatusTone(run)}`;
 }
 
+function runMetaText(run: GitHubWorkflowRun) {
+  return [run.name !== run.displayTitle ? run.name : "", run.branch, relativeTime(run.updatedAt)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function jobTone(job: GitHubWorkflowJob): WorkflowRunTone {
   return workflowRunStatusTone(job);
 }
@@ -327,7 +333,7 @@ function formatBytes(value: number) {
         </span>
         <span class="actions-run__body">
           <strong>{{ run.displayTitle }}</strong>
-          <span>{{ run.name }} · {{ run.branch }} · {{ relativeTime(run.updatedAt) }}</span>
+          <span class="actions-run__meta">{{ runMetaText(run) }}</span>
         </span>
       </button>
       <p v-if="!runs.length && !loading" class="muted actions-empty">没有 GitHub Actions 运行记录。</p>
@@ -618,8 +624,8 @@ function formatBytes(value: number) {
 
 .actions-run {
   grid-template-columns: 18px minmax(0, 1fr);
-  min-height: 48px;
-  padding: 8px;
+  min-height: 36px;
+  padding: 7px 8px;
 }
 
 .actions-run:hover,
@@ -647,11 +653,22 @@ function formatBytes(value: number) {
   min-width: 0;
 }
 
+.actions-run__body {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.actions-run__meta {
+  justify-self: end;
+  min-width: max-content;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .actions-run strong,
 .actions-job strong,
 .actions-job-node strong,
 .actions-artifact strong,
-.actions-run span,
 .actions-job small,
 .actions-job-node small,
 .actions-artifact small {
@@ -669,7 +686,7 @@ function formatBytes(value: number) {
   font-weight: 600;
 }
 
-.actions-run span,
+.actions-run__meta,
 .actions-job small,
 .actions-job-node small,
 .actions-artifact small {
