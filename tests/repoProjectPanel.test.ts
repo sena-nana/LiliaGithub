@@ -30,6 +30,7 @@ import type {
   ProjectLaunchConfig,
   ProjectLaunchLog,
 } from "../src/services/workspace/types";
+import { resolveRepoContext } from "../src/utils/repoContext";
 import { repoSummary } from "./fixtures/workspace";
 
 const githubSettings: GitHubRepoManagement = {
@@ -201,8 +202,12 @@ const launchConfig: ProjectLaunchConfig = {
   source: "inferred",
   updatedAt: null,
 };
+type RepoProjectPanelProps = InstanceType<typeof RepoProjectPanel>["$props"];
+type RenderProjectPanelProps = Omit<RepoProjectPanelProps, "repoContext"> & {
+  repoContext?: RepoProjectPanelProps["repoContext"];
+};
 
-async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProjectPanel>["$props"]> = {}) {
+async function renderProjectPanel(props: Partial<RepoProjectPanelProps> = {}) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: "/repos/:repoId(.*)", component: { template: "<div />" } }],
@@ -210,46 +215,59 @@ async function renderProjectPanel(props: Partial<InstanceType<typeof RepoProject
   await router.push("/repos/local-repo");
   await router.isReady();
 
+  const panelProps = {
+    repoId: "local-repo",
+    repoFullName: null,
+    repoPath: "C:\\Files\\workspace\\local-repo",
+    repoSummary: null,
+    launchConfig,
+    launchLogs: [],
+    launchTerminalVisible: false,
+    actionRunning: false,
+    launchRunning: false,
+    activeGitTab: "repo",
+    changes: [],
+    previewChange: null,
+    commitMessage: "",
+    hasConflicts: false,
+    canCommit: false,
+    statusCommits: [],
+    conflictOperationText: "",
+    conflictSummaryText: "",
+    conflictContinueText: "",
+    conflictAbortText: "",
+    conflictFiles: [],
+    conflictOperationActive: false,
+    conflicts: { operation: "none", files: [], allResolved: false },
+    focusedConflict: null,
+    conflictChoices: {},
+    conflictSelectedCount: 0,
+    conflictAcceptConfirm: null,
+    canContinueConflictOperation: false,
+    canResolveSelectedConflict: false,
+    supportedConflictOperation: true,
+    commitMetaTitle: () => "",
+    projectTab: "readme",
+    projectIssueNumber: null,
+    projectPullRequestNumber: null,
+    projectRunId: null,
+    projectRefreshToken: 0,
+    ...props,
+  } satisfies RenderProjectPanelProps;
+  const repoSummary = panelProps.repoSummary ?? state.repos.find((repo) => repo.id === panelProps.repoId) ?? null;
+  const repoContext = panelProps.repoContext ?? resolveRepoContext({
+    repoId: panelProps.repoId,
+    repoSummary,
+    githubFullName: panelProps.repoFullName ?? null,
+    localPath: panelProps.repoPath ?? null,
+    settings: state.settings,
+    githubAuthorized: true,
+  });
+
   return render(RepoProjectPanel, {
     props: {
-      repoId: "local-repo",
-      repoFullName: null,
-      repoPath: "C:\\Files\\workspace\\local-repo",
-      repoSummary: null,
-      launchConfig,
-      launchLogs: [],
-      launchTerminalVisible: false,
-      actionRunning: false,
-      launchRunning: false,
-      remoteOnly: false,
-      activeGitTab: "repo",
-      changes: [],
-      previewChange: null,
-      commitMessage: "",
-      hasConflicts: false,
-      canCommit: false,
-      statusCommits: [],
-      conflictOperationText: "",
-      conflictSummaryText: "",
-      conflictContinueText: "",
-      conflictAbortText: "",
-      conflictFiles: [],
-      conflictOperationActive: false,
-      conflicts: { operation: "none", files: [], allResolved: false },
-      focusedConflict: null,
-      conflictChoices: {},
-      conflictSelectedCount: 0,
-      conflictAcceptConfirm: null,
-      canContinueConflictOperation: false,
-      canResolveSelectedConflict: false,
-      supportedConflictOperation: true,
-      commitMetaTitle: () => "",
-      projectTab: "readme",
-      projectIssueNumber: null,
-      projectPullRequestNumber: null,
-      projectRunId: null,
-      projectRefreshToken: 0,
-      ...props,
+      ...panelProps,
+      repoContext,
     },
     global: {
       plugins: [router],
@@ -363,7 +381,6 @@ describe("RepoProjectPanel", () => {
       repoSummary: summary,
       repoFullName: "sena-nana/remote-repo",
       repoPath: "",
-      remoteOnly: true,
     });
 
     const card = await view.findByRole("region", { name: "代码统计" }, { timeout: 5000 });
@@ -402,7 +419,6 @@ describe("RepoProjectPanel", () => {
       repoId: "github:sena-nana/remote-repo",
       repoFullName: "sena-nana/remote-repo",
       repoPath: "",
-      remoteOnly: true,
       launchTerminalVisible: true,
       projectTab: "settings",
     });
@@ -426,7 +442,6 @@ describe("RepoProjectPanel", () => {
       repoId: "github:sena-nana/remote-repo",
       repoFullName: "sena-nana/remote-repo",
       repoPath: "",
-      remoteOnly: true,
       activeGitTab: "history",
       statusCommits: [remoteCommit],
     });

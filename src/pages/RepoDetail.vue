@@ -40,7 +40,7 @@ const {
   conflictChoices,
   selectedCommitHash,
   repoId,
-  remoteOnly,
+  repoContext,
   summary,
   repoTitle,
   changes,
@@ -53,7 +53,6 @@ const {
   canCommit,
   launchConfig,
   launchLogs,
-  usingSystemGit,
   launchRunning,
   statusCommits,
   activeFileRepoRef,
@@ -167,9 +166,9 @@ const {
                 :disabled="branchActionRunning || !branchItems.length"
                 :action-running="branchActionRunning"
                 :allow-remote-checkout="true"
-                :allow-remote-create="!remoteOnly"
-                :allow-remote-delete="remoteOnly || Boolean(summary?.githubFullName)"
-                :show-repository-actions="!remoteOnly"
+                :allow-remote-create="repoContext.capabilities.branch.available"
+                :allow-remote-delete="repoContext.capabilities.deleteRemote.available"
+                :show-repository-actions="repoContext.capabilities.branch.available"
                 @checkout="checkout"
                 @update-current="updateCurrentBranch"
                 @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
@@ -182,7 +181,7 @@ const {
               />
             </nav>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__launch" role="group" aria-label="命令执行">
+            <div v-if="repoContext.capabilities.launch.available" class="repo-toolbar__group repo-toolbar__launch" role="group" aria-label="命令执行">
               <Dropdown
                 :model-value="activeLaunchValue"
                 :options="launchCommandOptions"
@@ -218,14 +217,14 @@ const {
               </RouterLink>
             </div>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
+            <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
               <RepoToolbarSettingsMenu
                 :auto-sync="autoSyncEnabled"
                 :disabled="actionRunning"
                 @update:auto-sync="setAutoSync"
               />
               <button
-                v-if="usingSystemGit"
+                v-if="repoContext.tags.includes('system-git')"
                 type="button"
                 class="repo-toolbar__btn"
                 title="恢复默认 token 推送"
@@ -339,7 +338,7 @@ const {
         <RepoStashPanel
           v-else-if="activeTab === 'stash'"
           :repo-id="repoId"
-          :remote-only="remoteOnly"
+          :repo-context="repoContext"
           :has-conflicts="hasConflicts"
         />
         <RepoProjectPanel
@@ -379,8 +378,7 @@ const {
           :action-running="actionRunning"
           :launch-running="launchRunning"
           @hide-terminal="launchTerminalVisible = false"
-          :remote-only="remoteOnly"
-          :using-system-git="usingSystemGit"
+          :repo-context="repoContext"
           :project-tab="activeProjectTab"
           :project-issue-number="activeProjectIssue"
           :project-pull-request-number="activeProjectPullRequest"
