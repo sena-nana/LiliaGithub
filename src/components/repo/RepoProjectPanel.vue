@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AnsiUp } from "ansi_up";
-import { computed, defineAsyncComponent, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   Check,
@@ -91,6 +91,7 @@ type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
 
+const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
 
 const props = defineProps<{
@@ -207,6 +208,10 @@ const workflowRuns = ref<GitHubWorkflowRun[]>([]);
 const actionsLoaded = ref(false);
 const aboutEditing = ref(false);
 const aboutTopicDraft = ref("");
+const aboutTopicList = ref<HTMLElement | null>(null);
+const aboutTopicMeasureList = ref<HTMLElement | null>(null);
+const aboutTopicsExpanded = ref(false);
+const collapsedAboutTopicCount = ref(0);
 const settingsTopicDraft = ref("");
 const issueState = ref<"open" | "closed" | "all">("open");
 const issueTitle = ref("");
@@ -244,6 +249,7 @@ const deletingRepo = remoteDeleteTracker.running;
 const deletingLocalRepo = localDeleteTracker.running;
 let repoMutationGeneration = 0;
 let githubMutationGeneration = 0;
+let aboutTopicResizeObserver: ResizeObserver | null = null;
 
 const settingsForm = reactive({
   description: "",
@@ -313,6 +319,13 @@ const aboutDescription = computed(() => settings.value?.description?.trim() ?? "
 const aboutHomepage = computed(() => settings.value?.homepage?.trim() ?? "");
 const aboutHomepageHref = computed(() => normalizedExternalUrl(aboutHomepage.value));
 const aboutTopics = computed(() => settings.value?.topics ?? []);
+const aboutTopicsOverflowing = computed(() =>
+  collapsedAboutTopicCount.value > 0 && collapsedAboutTopicCount.value < aboutTopics.value.length
+);
+const displayedAboutTopics = computed(() => {
+  if (!aboutTopicsOverflowing.value || aboutTopicsExpanded.value) return aboutTopics.value;
+  return aboutTopics.value.slice(0, collapsedAboutTopicCount.value || aboutTopics.value.length);
+});
 const aboutStats = computed(() => {
   const repo = settings.value;
   if (!repo) return [];
@@ -399,7 +412,30 @@ const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.qu
 
 onMounted(() => {
   void applyProjectRouteState();
+  measureAboutTopicOverflow();
+  window.addEventListener("resize", measureAboutTopicOverflow);
 });
+
+onBeforeUnmount(() => {
+  aboutTopicResizeObserver?.disconnect();
+  aboutTopicResizeObserver = null;
+  window.removeEventListener("resize", measureAboutTopicOverflow);
+});
+
+watch(aboutTopicMeasureList, (measureList) => {
+  aboutTopicResizeObserver?.disconnect();
+  aboutTopicResizeObserver = null;
+  if (measureList && typeof ResizeObserver !== "undefined") {
+    aboutTopicResizeObserver = new ResizeObserver(measureAboutTopicOverflow);
+    aboutTopicResizeObserver.observe(measureList);
+  }
+  measureAboutTopicOverflow();
+}, { flush: "post" });
+
+watch([aboutTopics, () => props.repoFullName], () => {
+  aboutTopicsExpanded.value = false;
+  measureAboutTopicOverflow();
+}, { flush: "post" });
 
 watch(() => props.repoId, () => {
   resetProjectSectionState();
@@ -522,6 +558,61 @@ const githubCountFormatter = new Intl.NumberFormat("en-US");
 
 function formatGitHubCount(value: number) {
   return githubCountFormatter.format(Math.max(0, value));
+}
+
+function measureAboutTopicOverflow() {
+  void nextTick(() => {
+    const list = aboutTopicMeasureList.value;
+    if (!list || !aboutTopics.value.length) {
+      aboutTopicsExpanded.value = false;
+      collapsedAboutTopicCount.value = 0;
+      return;
+    }
+
+    const pills = Array.from(list.querySelectorAll<HTMLElement>(".project-topic-pill"));
+    const lineTops = collectLineTops(pills);
+    if (lineTops.length <= ABOUT_TOPIC_COLLAPSED_LINE_LIMIT) {
+      aboutTopicsExpanded.value = false;
+      collapsedAboutTopicCount.value = aboutTopics.value.length;
+      return;
+    }
+
+    const lastVisibleTop = lineTops[ABOUT_TOPIC_COLLAPSED_LINE_LIMIT - 1];
+    collapsedAboutTopicCount.value = Math.max(
+      1,
+      pills.filter((pill) => Math.round(pill.offsetTop) <= lastVisibleTop + 1).length,
+    );
+    alignAboutTopicToggle();
+  });
+}
+
+function collectLineTops(elements: readonly HTMLElement[]) {
+  return elements.reduce<number[]>((tops, element) => {
+    const top = Math.round(element.offsetTop);
+    if (!tops.some((existing) => Math.abs(existing - top) <= 1)) tops.push(top);
+    return tops;
+  }, []).sort((a, b) => a - b);
+}
+
+function alignAboutTopicToggle() {
+  void nextTick(() => {
+    if (!aboutTopicsOverflowing.value || aboutTopicsExpanded.value || collapsedAboutTopicCount.value <= 1) return;
+    const list = aboutTopicList.value;
+    const toggle = list?.querySelector<HTMLElement>(".project-topic-toggle");
+    if (!list || !toggle) return;
+    const elements = Array.from(list.querySelectorAll<HTMLElement>(".project-topic-pill, .project-topic-toggle"));
+    const lineTops = collectLineTops(elements);
+    const toggleTop = Math.round(toggle.offsetTop);
+    const toggleLineIndex = lineTops.findIndex((top) => Math.abs(top - toggleTop) <= 1);
+    if (toggleLineIndex >= ABOUT_TOPIC_COLLAPSED_LINE_LIMIT) {
+      collapsedAboutTopicCount.value -= 1;
+      alignAboutTopicToggle();
+    }
+  });
+}
+
+function toggleAboutTopicsExpanded() {
+  aboutTopicsExpanded.value = !aboutTopicsExpanded.value;
 }
 
 function githubAccessUnavailable(section: GitHubAccessSection, error: string | null): GitHubAccessUnavailable | null {
@@ -1987,8 +2078,31 @@ function selectReadme(path: string) {
                 <ExternalLink :size="13" aria-hidden="true" />
                 <span>{{ aboutHomepage }}</span>
               </a>
-              <div v-if="aboutTopics.length" class="project-topic-list" aria-label="Topics">
-                <span v-for="topic in aboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
+              <div v-if="aboutTopics.length" class="project-topic-block">
+                <div
+                  ref="aboutTopicList"
+                  class="project-topic-list"
+                  :class="{ 'is-collapsed': aboutTopicsOverflowing && !aboutTopicsExpanded }"
+                  aria-label="Topics"
+                >
+                  <span v-for="topic in displayedAboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
+                  <button
+                    v-if="aboutTopicsOverflowing"
+                    type="button"
+                    class="project-topic-toggle"
+                    :aria-expanded="aboutTopicsExpanded"
+                    @click="toggleAboutTopicsExpanded"
+                  >
+                    {{ aboutTopicsExpanded ? "收起" : "展开" }}
+                  </button>
+                </div>
+                <div
+                  ref="aboutTopicMeasureList"
+                  class="project-topic-list project-topic-list--measure"
+                  aria-hidden="true"
+                >
+                  <span v-for="topic in aboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
+                </div>
               </div>
               <div v-if="aboutStats.length" class="project-about-stats" aria-label="GitHub 仓库指标">
                 <div
@@ -2375,6 +2489,13 @@ function selectReadme(path: string) {
   gap: 6px;
 }
 
+.project-topic-block {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .project-topic-list {
   display: flex;
   flex-wrap: wrap;
@@ -2382,6 +2503,19 @@ function selectReadme(path: string) {
   gap: 6px;
   min-width: 0;
   margin-top: 1px;
+}
+
+.project-topic-list.is-collapsed {
+  max-height: 46px;
+  overflow: hidden;
+}
+
+.project-topic-list--measure {
+  position: absolute;
+  inset: 0 0 auto;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
 }
 
 .project-topic-pill {
@@ -2396,6 +2530,26 @@ function selectReadme(path: string) {
   font-weight: 600;
   line-height: 1;
   padding: 0 7px;
+}
+
+.project-topic-toggle {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.project-topic-toggle:hover,
+.project-topic-toggle:focus-visible {
+  background: var(--accent-soft);
 }
 
 .project-layout--with-commit-detail .project-sidebar {

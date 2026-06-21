@@ -449,8 +449,9 @@ describe("RepoProjectPanel", () => {
     });
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
     expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
-    expect(view.getByText("vue")).toBeInTheDocument();
-    const tauriTopic = view.getByText("tauri");
+    const topics = view.getByLabelText("Topics");
+    expect(within(topics).getByText("vue")).toBeInTheDocument();
+    const tauriTopic = within(topics).getByText("tauri");
     const starsStat = view.getByLabelText("128 stars");
     expect(tauriTopic).toBeInTheDocument();
     expect(starsStat).toBeInTheDocument();
@@ -460,6 +461,42 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+  });
+
+  it("仓库描述标签超过两行时显示展开和收起按钮", async () => {
+    vi.mocked(getGitHubRepoManagement).mockResolvedValue({
+      ...githubSettings,
+      topics: ["vue", "tauri", "codex", "openai-compatible", "project-management"],
+    });
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await view.findByText("Remote repository tools");
+    const topicList = view.container.querySelector(".project-topic-list:not(.project-topic-list--measure)");
+    const measureList = view.container.querySelector(".project-topic-list--measure");
+    expect(topicList).toBeInstanceOf(HTMLElement);
+    expect(measureList).toBeInstanceOf(HTMLElement);
+    const topics = Array.from(measureList?.querySelectorAll(".project-topic-pill") ?? []);
+    [0, 0, 26, 26, 52].forEach((top, index) => {
+      Object.defineProperty(topics[index], "offsetTop", { configurable: true, value: top });
+    });
+    await fireEvent(window, new Event("resize"));
+
+    const expandButton = await view.findByRole("button", { name: "展开" });
+    expect(topicList).toHaveClass("is-collapsed");
+    expect(topicList).toContainElement(expandButton);
+    expect(within(topicList as HTMLElement).queryByText("project-management")).toBeNull();
+    expect(expandButton).toHaveAttribute("aria-expanded", "false");
+
+    await fireEvent.click(expandButton);
+    expect(topicList).not.toHaveClass("is-collapsed");
+    expect(within(topicList as HTMLElement).getByText("project-management")).toBeInTheDocument();
+    const collapseButton = view.getByRole("button", { name: "收起" });
+    expect(collapseButton).toHaveAttribute("aria-expanded", "true");
+
+    await fireEvent.click(collapseButton);
+    expect(topicList).toHaveClass("is-collapsed");
   });
 
   it("切换到对应分区时才按需请求 settings、issues 和 actions", async () => {
@@ -816,6 +853,6 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("button", { name: "取消" }));
 
     expect(view.queryByRole("button", { name: "移除 docs" })).toBeNull();
-    expect(view.getByText("tauri")).toBeInTheDocument();
+    expect(within(view.getByLabelText("Topics")).getByText("tauri")).toBeInTheDocument();
   });
 });
