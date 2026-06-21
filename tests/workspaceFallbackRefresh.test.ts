@@ -4,8 +4,8 @@ import {
   listGitHubRepos,
   listWorkspaceTasks,
   refreshRepos,
-  setFallbackRepoRemoteSyncOverrideForTests,
 } from "../src/services/workspace";
+import { setFallbackRepoRemoteSyncOverrideForTests } from "../src/services/workspace/fallback";
 
 describe("workspace fallback refresh", () => {
   it("刷新仓库时使用远端状态同步语义记录成功任务", async () => {
@@ -46,7 +46,9 @@ describe("workspace fallback refresh", () => {
     const githubRepos = await listGitHubRepos();
     const localRepos = await refreshRepos();
 
-    expect(githubRepos.items.map((repo) => repo.fullName)).toEqual(["sena-nana/Lilia"]);
+    expect(githubRepos.items.map((repo) => repo.fullName)).toEqual([
+      "sena-nana/Lilia",
+    ]);
     expect(localRepos.map((repo) => repo.id)).toEqual(["LiliaGithub", "Lilia"]);
   });
 });

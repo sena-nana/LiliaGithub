@@ -59,35 +59,39 @@ import type {
 } from "./types";
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
+const useReadmeShowcaseFallback = typeof import.meta !== "undefined"
+  && import.meta.env?.DEV === true
+  && import.meta.env?.VITE_README_SHOWCASE === "1";
+const useDefaultFallback = !useReadmeShowcaseFallback;
 
 let fallbackRepos: RepoSummary[] = [
   {
     id: "LiliaGithub",
     name: "LiliaGithub",
-    path: "C:\\Files\\workspace\\LiliaGithub",
+    path: "D:\\PROJECT\\workspace\\LiliaGithub",
     relativePath: "LiliaGithub",
-    currentBranch: "main",
+    currentBranch: "codex/readme-gallery",
     remoteUrl: "https://github.com/sena-nana/LiliaGithub.git",
     githubFullName: "sena-nana/LiliaGithub",
-    ahead: 1,
-    behind: 0,
-    stagedCount: 1,
-    unstagedCount: 2,
+    ahead: 2,
+    behind: 1,
+    stagedCount: 2,
+    unstagedCount: 3,
     untrackedCount: 1,
     conflictCount: 0,
-    lastCommitAt: 1_785_000_000,
-    lastCommitMessage: "搭建 LiliaGithub MVP",
+    lastCommitAt: 1_781_990_000,
+    lastCommitMessage: "更新 README 展示截图",
     languageStats: [
-      { language: "TypeScript", bytes: 66_000, lines: 1800 },
-      { language: "Vue", bytes: 42_000, lines: 920 },
-      { language: "Rust", bytes: 32_000, lines: 760 },
-      { language: "CSS", bytes: 10_000, lines: 360 },
+      { language: "TypeScript", bytes: 118_000, lines: 3120 },
+      { language: "Vue", bytes: 86_000, lines: 1910 },
+      { language: "Rust", bytes: 54_000, lines: 1280 },
+      { language: "CSS", bytes: 18_000, lines: 640 },
     ],
     workingTreeLanguageStats: [
-      { language: "TypeScript", bytes: 68_000, lines: 1850 },
-      { language: "Vue", bytes: 42_000, lines: 920 },
-      { language: "Rust", bytes: 35_000, lines: 820 },
-      { language: "CSS", bytes: 10_000, lines: 360 },
+      { language: "TypeScript", bytes: 120_000, lines: 3180 },
+      { language: "Vue", bytes: 88_000, lines: 1960 },
+      { language: "Rust", bytes: 54_000, lines: 1280 },
+      { language: "CSS", bytes: 19_000, lines: 670 },
     ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
@@ -98,29 +102,31 @@ let fallbackRepos: RepoSummary[] = [
   },
   {
     id: "Lilia",
-    name: "Lilia",
-    path: "C:\\Files\\workspace\\Lilia",
+    name: "LiliaCode",
+    path: "D:\\PROJECT\\workspace\\Lilia",
     relativePath: "Lilia",
     currentBranch: "main",
-    remoteUrl: "https://github.com/sena-nana/Lilia.git",
-    githubFullName: "sena-nana/Lilia",
+    remoteUrl: "https://github.com/sena-nana/LiliaCode.git",
+    githubFullName: "sena-nana/LiliaCode",
     ahead: 0,
     behind: 2,
     stagedCount: 0,
     unstagedCount: 0,
     untrackedCount: 0,
-    conflictCount: 1,
-    lastCommitAt: 1_784_990_000,
-    lastCommitMessage: "完善 GitHub 授权",
+    conflictCount: 0,
+    lastCommitAt: 1_781_930_000,
+    lastCommitMessage: "整理 Codex 运行时边界",
     languageStats: [
-      { language: "TypeScript", bytes: 52_000, lines: 1420 },
-      { language: "Vue", bytes: 28_000, lines: 610 },
-      { language: "CSS", bytes: 8_000, lines: 250 },
+      { language: "TypeScript", bytes: 184_000, lines: 5200 },
+      { language: "Vue", bytes: 132_000, lines: 2900 },
+      { language: "Rust", bytes: 88_000, lines: 2140 },
+      { language: "CSS", bytes: 32_000, lines: 980 },
     ],
     workingTreeLanguageStats: [
-      { language: "TypeScript", bytes: 52_000, lines: 1420 },
-      { language: "Vue", bytes: 28_000, lines: 610 },
-      { language: "CSS", bytes: 8_000, lines: 250 },
+      { language: "TypeScript", bytes: 184_000, lines: 5200 },
+      { language: "Vue", bytes: 132_000, lines: 2900 },
+      { language: "Rust", bytes: 88_000, lines: 2140 },
+      { language: "CSS", bytes: 32_000, lines: 980 },
     ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
@@ -129,8 +135,183 @@ let fallbackRepos: RepoSummary[] = [
       mainRepoId: null,
     },
   },
+  {
+    id: "LiliaDocs",
+    name: "LiliaDocs",
+    path: "D:\\PROJECT\\workspace\\LiliaDocs",
+    relativePath: "LiliaDocs",
+    currentBranch: "main",
+    remoteUrl: "https://github.com/sena-nana/LiliaDocs.git",
+    githubFullName: "sena-nana/LiliaDocs",
+    ahead: 0,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 4,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: 1_781_820_000,
+    lastCommitMessage: "补充发布说明",
+    languageStats: [
+      { language: "Markdown", bytes: 72_000, lines: 1650 },
+      { language: "Vue", bytes: 22_000, lines: 480 },
+      { language: "CSS", bytes: 8_000, lines: 210 },
+    ],
+    workingTreeLanguageStats: [
+      { language: "Markdown", bytes: 78_000, lines: 1780 },
+      { language: "Vue", bytes: 22_000, lines: 480 },
+      { language: "CSS", bytes: 8_000, lines: 210 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:LiliaDocs",
+      mainRepoId: null,
+    },
+  },
+  {
+    id: "Mutsuki",
+    name: "Mutsuki",
+    path: "D:\\PROJECT\\workspace\\Mutsuki",
+    relativePath: "Mutsuki",
+    currentBranch: "runtime-compat",
+    remoteUrl: "https://github.com/sena-nana/Mutsuki.git",
+    githubFullName: "sena-nana/Mutsuki",
+    ahead: 4,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 1,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: 1_781_700_000,
+    lastCommitMessage: "恢复兼容 API",
+    languageStats: [
+      { language: "Rust", bytes: 148_000, lines: 4100 },
+      { language: "TypeScript", bytes: 24_000, lines: 620 },
+      { language: "TOML", bytes: 4_000, lines: 120 },
+    ],
+    workingTreeLanguageStats: [
+      { language: "Rust", bytes: 150_000, lines: 4160 },
+      { language: "TypeScript", bytes: 24_000, lines: 620 },
+      { language: "TOML", bytes: 4_000, lines: 120 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:Mutsuki",
+      mainRepoId: null,
+    },
+  },
+  {
+    id: "LiliaTodo",
+    name: "LiliaTodo",
+    path: "D:\\PROJECT\\workspace\\LiliaTodo",
+    relativePath: "LiliaTodo",
+    currentBranch: "main",
+    remoteUrl: "https://github.com/sena-nana/LiliaTodo.git",
+    githubFullName: "sena-nana/LiliaTodo",
+    ahead: 0,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: 1_781_560_000,
+    lastCommitMessage: "拆分日历和 WebDAV 清理提交",
+    languageStats: [
+      { language: "TypeScript", bytes: 98_000, lines: 2600 },
+      { language: "Vue", bytes: 54_000, lines: 1180 },
+      { language: "CSS", bytes: 12_000, lines: 340 },
+    ],
+    workingTreeLanguageStats: [
+      { language: "TypeScript", bytes: 98_000, lines: 2600 },
+      { language: "Vue", bytes: 54_000, lines: 1180 },
+      { language: "CSS", bytes: 12_000, lines: 340 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:LiliaTodo",
+      mainRepoId: null,
+    },
+  },
 ];
+if (useDefaultFallback) {
+  fallbackRepos = createDefaultFallbackRepos();
+}
 const baseFallbackRepos = fallbackRepos.map(cloneRepoSummary);
+
+function createDefaultFallbackRepos(): RepoSummary[] {
+  return [
+    {
+      id: "LiliaGithub",
+      name: "LiliaGithub",
+      path: "C:\\Files\\workspace\\LiliaGithub",
+      relativePath: "LiliaGithub",
+      currentBranch: "main",
+      remoteUrl: "https://github.com/sena-nana/LiliaGithub.git",
+      githubFullName: "sena-nana/LiliaGithub",
+      ahead: 1,
+      behind: 0,
+      stagedCount: 1,
+      unstagedCount: 2,
+      untrackedCount: 1,
+      conflictCount: 0,
+      lastCommitAt: 1_785_000_000,
+      lastCommitMessage: "搭建 LiliaGithub MVP",
+      languageStats: [
+        { language: "TypeScript", bytes: 66_000, lines: 1800 },
+        { language: "Vue", bytes: 42_000, lines: 920 },
+        { language: "Rust", bytes: 32_000, lines: 760 },
+        { language: "CSS", bytes: 10_000, lines: 360 },
+      ],
+      workingTreeLanguageStats: [
+        { language: "TypeScript", bytes: 68_000, lines: 1850 },
+        { language: "Vue", bytes: 42_000, lines: 920 },
+        { language: "Rust", bytes: 35_000, lines: 820 },
+        { language: "CSS", bytes: 10_000, lines: 360 },
+      ],
+      languageStatsUpdatedAt: Date.now(),
+      worktree: {
+        role: "standalone",
+        sharedRepoKey: "repo:LiliaGithub",
+        mainRepoId: null,
+      },
+    },
+    {
+      id: "Lilia",
+      name: "Lilia",
+      path: "C:\\Files\\workspace\\Lilia",
+      relativePath: "Lilia",
+      currentBranch: "main",
+      remoteUrl: "https://github.com/sena-nana/Lilia.git",
+      githubFullName: "sena-nana/Lilia",
+      ahead: 0,
+      behind: 2,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      conflictCount: 1,
+      lastCommitAt: 1_784_990_000,
+      lastCommitMessage: "完善 GitHub 授权",
+      languageStats: [
+        { language: "TypeScript", bytes: 52_000, lines: 1420 },
+        { language: "Vue", bytes: 28_000, lines: 610 },
+        { language: "CSS", bytes: 8_000, lines: 250 },
+      ],
+      workingTreeLanguageStats: [
+        { language: "TypeScript", bytes: 52_000, lines: 1420 },
+        { language: "Vue", bytes: 28_000, lines: 610 },
+        { language: "CSS", bytes: 8_000, lines: 250 },
+      ],
+      languageStatsUpdatedAt: Date.now(),
+      worktree: {
+        role: "standalone",
+        sharedRepoKey: "repo:Lilia",
+        mainRepoId: null,
+      },
+    },
+  ];
+}
 
 const defaultFallbackBinding: GitHubBindingStatus = {
   state: "bound",
@@ -148,6 +329,40 @@ const defaultFallbackBinding: GitHubBindingStatus = {
 const CONTRIBUTION_DAYS = 371;
 const CONTRIBUTION_REPO_LIMIT = 30;
 function createFallbackGitHubRepos(): GitHubRepoSummary[] {
+  if (useDefaultFallback) {
+    return [
+      {
+        id: 1,
+        name: "LiliaGithub",
+        fullName: "sena-nana/LiliaGithub",
+        ownerLogin: "sena-nana",
+        private: false,
+        disabled: false,
+        archived: false,
+        description: "Local GitHub workspace manager",
+        defaultBranch: "main",
+        createdAt: "2026-06-08T09:00:00Z",
+        updatedAt: "2026-06-11T00:00:00Z",
+        cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+      },
+      {
+        id: 2,
+        name: "Lilia",
+        fullName: "sena-nana/Lilia",
+        ownerLogin: "sena-nana",
+        private: true,
+        disabled: false,
+        archived: false,
+        description: "Desktop agent workbench",
+        defaultBranch: "main",
+        createdAt: "2026-06-07T09:00:00Z",
+        updatedAt: "2026-06-10T00:00:00Z",
+        cloneUrl: "https://github.com/sena-nana/Lilia.git",
+        htmlUrl: "https://github.com/sena-nana/Lilia",
+      },
+    ];
+  }
   return [
     {
       id: 1,
@@ -157,27 +372,72 @@ function createFallbackGitHubRepos(): GitHubRepoSummary[] {
       private: false,
       disabled: false,
       archived: false,
-      description: "Local GitHub workspace manager",
+      description: "Local GitHub workspace and repository manager",
       defaultBranch: "main",
       createdAt: "2026-06-08T09:00:00Z",
-      updatedAt: "2026-06-11T00:00:00Z",
+      updatedAt: "2026-06-21T09:20:00Z",
       cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
     },
     {
       id: 2,
-      name: "Lilia",
-      fullName: "sena-nana/Lilia",
+      name: "LiliaCode",
+      fullName: "sena-nana/LiliaCode",
       ownerLogin: "sena-nana",
       private: true,
       disabled: false,
       archived: false,
       description: "Desktop agent workbench",
       defaultBranch: "main",
-      createdAt: "2026-06-07T09:00:00Z",
-      updatedAt: "2026-06-10T00:00:00Z",
-      cloneUrl: "https://github.com/sena-nana/Lilia.git",
-      htmlUrl: "https://github.com/sena-nana/Lilia",
+      createdAt: "2026-05-12T09:00:00Z",
+      updatedAt: "2026-06-21T08:40:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaCode.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaCode",
+    },
+    {
+      id: 3,
+      name: "LiliaDocs",
+      fullName: "sena-nana/LiliaDocs",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: "Documentation and release notes for the Lilia family",
+      defaultBranch: "main",
+      createdAt: "2026-06-01T09:00:00Z",
+      updatedAt: "2026-06-20T15:30:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaDocs.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaDocs",
+    },
+    {
+      id: 4,
+      name: "Mutsuki",
+      fullName: "sena-nana/Mutsuki",
+      ownerLogin: "sena-nana",
+      private: true,
+      disabled: false,
+      archived: false,
+      description: "Runtime compatibility layer for Lilia desktop apps",
+      defaultBranch: "main",
+      createdAt: "2026-04-18T09:00:00Z",
+      updatedAt: "2026-06-20T11:10:00Z",
+      cloneUrl: "https://github.com/sena-nana/Mutsuki.git",
+      htmlUrl: "https://github.com/sena-nana/Mutsuki",
+    },
+    {
+      id: 5,
+      name: "LiliaTodo",
+      fullName: "sena-nana/LiliaTodo",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: "Focused todo and calendar workspace",
+      defaultBranch: "main",
+      createdAt: "2026-03-04T09:00:00Z",
+      updatedAt: "2026-06-19T18:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaTodo.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaTodo",
     },
   ];
 }
@@ -285,13 +545,65 @@ function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
 }
 
 function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManagement> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": {
+        fullName: "sena-nana/LiliaGithub",
+        name: "LiliaGithub",
+        description: "Local GitHub workspace manager",
+        homepage: "",
+        topics: ["tauri", "vue", "github"],
+        private: false,
+        defaultBranch: "main",
+        hasIssues: true,
+        hasWiki: false,
+        hasProjects: true,
+        hasDiscussions: false,
+        allowMergeCommit: true,
+        allowSquashMerge: true,
+        allowRebaseMerge: true,
+        allowAutoMerge: false,
+        deleteBranchOnMerge: true,
+        allowForking: true,
+        webCommitSignoffRequired: false,
+        stargazersCount: 128,
+        watchersCount: 9,
+        forksCount: 14,
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+      },
+      "sena-nana/Lilia": {
+        fullName: "sena-nana/Lilia",
+        name: "Lilia",
+        description: "Desktop agent workbench",
+        homepage: "",
+        topics: ["desktop", "agent"],
+        private: true,
+        defaultBranch: "main",
+        hasIssues: true,
+        hasWiki: true,
+        hasProjects: false,
+        hasDiscussions: false,
+        allowMergeCommit: true,
+        allowSquashMerge: true,
+        allowRebaseMerge: false,
+        allowAutoMerge: false,
+        deleteBranchOnMerge: false,
+        allowForking: false,
+        webCommitSignoffRequired: false,
+        stargazersCount: 86,
+        watchersCount: 7,
+        forksCount: 6,
+        htmlUrl: "https://github.com/sena-nana/Lilia",
+      },
+    };
+  }
   return {
     "sena-nana/LiliaGithub": {
       fullName: "sena-nana/LiliaGithub",
       name: "LiliaGithub",
-      description: "Local GitHub workspace manager",
-      homepage: "",
-      topics: ["tauri", "vue", "github"],
+      description: "Local GitHub workspace and repository manager",
+      homepage: "https://sena-nana.github.io/LiliaGithub/",
+      topics: ["tauri", "vue", "github", "desktop", "workspace"],
       private: false,
       defaultBranch: "main",
       hasIssues: true,
@@ -310,12 +622,12 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       forksCount: 14,
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
     },
-    "sena-nana/Lilia": {
-      fullName: "sena-nana/Lilia",
-      name: "Lilia",
+    "sena-nana/LiliaCode": {
+      fullName: "sena-nana/LiliaCode",
+      name: "LiliaCode",
       description: "Desktop agent workbench",
-      homepage: "",
-      topics: ["desktop", "agent"],
+      homepage: "https://sena-nana.github.io/LiliaCode/",
+      topics: ["desktop", "agent", "codex", "claude"],
       private: true,
       defaultBranch: "main",
       hasIssues: true,
@@ -332,65 +644,313 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       stargazersCount: 86,
       watchersCount: 7,
       forksCount: 6,
-      htmlUrl: "https://github.com/sena-nana/Lilia",
+      htmlUrl: "https://github.com/sena-nana/LiliaCode",
+    },
+    "sena-nana/LiliaDocs": {
+      fullName: "sena-nana/LiliaDocs",
+      name: "LiliaDocs",
+      description: "Documentation and release notes for the Lilia family",
+      homepage: "https://sena-nana.github.io/LiliaDocs/",
+      topics: ["docs", "vitepress", "release-notes"],
+      private: false,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: false,
+      hasProjects: true,
+      hasDiscussions: true,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: true,
+      allowAutoMerge: true,
+      deleteBranchOnMerge: true,
+      allowForking: true,
+      webCommitSignoffRequired: false,
+      stargazersCount: 42,
+      watchersCount: 5,
+      forksCount: 8,
+      htmlUrl: "https://github.com/sena-nana/LiliaDocs",
+    },
+    "sena-nana/Mutsuki": {
+      fullName: "sena-nana/Mutsuki",
+      name: "Mutsuki",
+      description: "Runtime compatibility layer for Lilia desktop apps",
+      homepage: "",
+      topics: ["runtime", "rust", "mcp"],
+      private: true,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: false,
+      hasProjects: false,
+      hasDiscussions: false,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: false,
+      allowAutoMerge: false,
+      deleteBranchOnMerge: false,
+      allowForking: false,
+      webCommitSignoffRequired: true,
+      stargazersCount: 31,
+      watchersCount: 4,
+      forksCount: 3,
+      htmlUrl: "https://github.com/sena-nana/Mutsuki",
+    },
+    "sena-nana/LiliaTodo": {
+      fullName: "sena-nana/LiliaTodo",
+      name: "LiliaTodo",
+      description: "Focused todo and calendar workspace",
+      homepage: "",
+      topics: ["todo", "calendar", "webdav"],
+      private: false,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: false,
+      hasProjects: true,
+      hasDiscussions: false,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: true,
+      allowAutoMerge: false,
+      deleteBranchOnMerge: true,
+      allowForking: true,
+      webCommitSignoffRequired: false,
+      stargazersCount: 54,
+      watchersCount: 6,
+      forksCount: 10,
+      htmlUrl: "https://github.com/sena-nana/LiliaTodo",
     },
   };
 }
 
 function createFallbackGitHubIssues(): Record<string, GitHubIssue[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          number: 12,
+          title: "补齐仓库管理入口",
+          state: "open",
+          body: "需要在桌面端管理仓库设置和 issue。",
+          labels: ["enhancement"],
+          assignees: ["lilia-user"],
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
+          updatedAt: "2026-06-17T12:00:00Z",
+          createdAt: "2026-06-16T12:00:00Z",
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
       {
-        number: 12,
-        title: "补齐仓库管理入口",
+        number: 28,
+        title: "README 展示图需要覆盖首页和项目详情",
         state: "open",
-        body: "需要在桌面端管理仓库设置和 issue。",
-        labels: ["enhancement"],
+        body: "为公开 README 准备稳定的演示数据和截图资产。",
+        labels: ["docs", "design"],
         assignees: ["lilia-user"],
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
-        updatedAt: "2026-06-17T12:00:00Z",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/28",
+        updatedAt: "2026-06-21T09:12:00Z",
+        createdAt: "2026-06-21T08:40:00Z",
+      },
+      {
+        number: 21,
+        title: "批量同步预检需要展示阻塞原因",
+        state: "open",
+        body: "pull / push 队列应在执行前解释 eligible、blocked 和 warnings。",
+        labels: ["workflow"],
+        assignees: ["sena-nana"],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/21",
+        updatedAt: "2026-06-20T13:30:00Z",
+        createdAt: "2026-06-18T11:00:00Z",
+      },
+      {
+        number: 16,
+        title: "仓库详情页补充 Actions 入口",
+        state: "closed",
+        body: "在 project tab 中展示 workflow runs。",
+        labels: ["github"],
+        assignees: [],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/16",
+        updatedAt: "2026-06-19T18:00:00Z",
         createdAt: "2026-06-16T12:00:00Z",
+      },
+    ],
+    "sena-nana/LiliaCode": [
+      {
+        number: 84,
+        title: "统一 runtime command 和 workflow intent 边界",
+        state: "open",
+        body: "保持用户可见工作流与后端运行时命令分离。",
+        labels: ["architecture"],
+        assignees: ["lilia-user"],
+        htmlUrl: "https://github.com/sena-nana/LiliaCode/issues/84",
+        updatedAt: "2026-06-21T08:05:00Z",
+        createdAt: "2026-06-19T09:15:00Z",
+      },
+    ],
+    "sena-nana/LiliaDocs": [
+      {
+        number: 9,
+        title: "整理 first alpha 发布说明",
+        state: "open",
+        body: "文档站需要记录安装包、验证方式和已知限制。",
+        labels: ["release"],
+        assignees: ["sena-nana"],
+        htmlUrl: "https://github.com/sena-nana/LiliaDocs/issues/9",
+        updatedAt: "2026-06-20T15:30:00Z",
+        createdAt: "2026-06-20T09:30:00Z",
+      },
+    ],
+    "sena-nana/Mutsuki": [
+      {
+        number: 17,
+        title: "恢复 OperationBackend 兼容 API",
+        state: "closed",
+        body: "主应用仍依赖旧调用面，运行时先提供兼容层。",
+        labels: ["runtime", "compat"],
+        assignees: ["lilia-user"],
+        htmlUrl: "https://github.com/sena-nana/Mutsuki/issues/17",
+        updatedAt: "2026-06-20T11:10:00Z",
+        createdAt: "2026-06-18T17:00:00Z",
       },
     ],
   };
 }
 
 function createFallbackGitHubPullRequests(): Record<string, GitHubPullRequest[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          number: 7,
+          title: "补齐 Git 仓库批量操作",
+          state: "open",
+          draft: false,
+          body: "补齐 pull / push / sync / fetch all 基础能力。",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/7",
+          updatedAt: "2026-06-17T12:20:00Z",
+          createdAt: "2026-06-16T09:00:00Z",
+          author: "lilia-user",
+          baseBranch: "main",
+          headBranch: "codex/project-view",
+          merged: false,
+          mergeable: true,
+          mergeableState: "clean",
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
       {
-        number: 7,
-        title: "补齐 Git 仓库批量操作",
+        number: 32,
+        title: "更新 README 展示截图",
         state: "open",
         draft: false,
-        body: "补齐 pull / push / sync / fetch all 基础能力。",
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/7",
-        updatedAt: "2026-06-17T12:20:00Z",
-        createdAt: "2026-06-16T09:00:00Z",
+        body: "加入 mock 数据、截图资产和 README 展示区。",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/32",
+        updatedAt: "2026-06-21T09:24:00Z",
+        createdAt: "2026-06-21T08:50:00Z",
         author: "lilia-user",
         baseBranch: "main",
-        headBranch: "codex/project-view",
+        headBranch: "codex/readme-gallery",
         merged: false,
         mergeable: true,
         mergeableState: "clean",
+      },
+      {
+        number: 27,
+        title: "仓库快速启动主视图",
+        state: "closed",
+        draft: false,
+        body: "把命令候选和运行日志移到主内容区。",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/27",
+        updatedAt: "2026-06-20T10:12:00Z",
+        createdAt: "2026-06-19T13:00:00Z",
+        author: "sena-nana",
+        baseBranch: "main",
+        headBranch: "codex/quick-launch",
+        merged: true,
+        mergeable: false,
+        mergeableState: "merged",
+      },
+    ],
+    "sena-nana/LiliaCode": [
+      {
+        number: 118,
+        title: "拆分 workflow 与 runtime options",
+        state: "open",
+        draft: false,
+        body: "同步前端协议、后端持久化和 provider adapter。",
+        htmlUrl: "https://github.com/sena-nana/LiliaCode/pull/118",
+        updatedAt: "2026-06-21T08:42:00Z",
+        createdAt: "2026-06-20T22:00:00Z",
+        author: "sena-nana",
+        baseBranch: "main",
+        headBranch: "codex/runtime-boundary",
+        merged: false,
+        mergeable: true,
+        mergeableState: "unstable",
       },
     ],
   };
 }
 
 function createFallbackGitHubPullRequestChecks(): Record<string, Record<number, GitHubPullRequestCheck[]>> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": {
+        7: [
+          {
+            id: 9001,
+            name: "verify",
+            status: "completed",
+            conclusion: "success",
+            detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+            htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+            startedAt: "2026-06-17T12:00:00Z",
+            completedAt: "2026-06-17T12:08:00Z",
+          },
+        ],
+      },
+    };
+  }
   return {
     "sena-nana/LiliaGithub": {
-      7: [
+      32: [
         {
-          id: 9001,
+          id: 9301,
           name: "verify",
           status: "completed",
           conclusion: "success",
-          detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
-          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
-          startedAt: "2026-06-17T12:00:00Z",
-          completedAt: "2026-06-17T12:08:00Z",
+          detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1301",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1301",
+          startedAt: "2026-06-21T09:10:00Z",
+          completedAt: "2026-06-21T09:18:00Z",
+        },
+        {
+          id: 9302,
+          name: "pages",
+          status: "completed",
+          conclusion: "success",
+          detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1302",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1302",
+          startedAt: "2026-06-21T09:18:00Z",
+          completedAt: "2026-06-21T09:21:00Z",
+        },
+      ],
+    },
+    "sena-nana/LiliaCode": {
+      118: [
+        {
+          id: 9401,
+          name: "desktop verify",
+          status: "completed",
+          conclusion: "failure",
+          detailsUrl: "https://github.com/sena-nana/LiliaCode/actions/runs/4102",
+          htmlUrl: "https://github.com/sena-nana/LiliaCode/actions/runs/4102",
+          startedAt: "2026-06-21T08:22:00Z",
+          completedAt: "2026-06-21T08:36:00Z",
         },
       ],
     },
@@ -398,56 +958,154 @@ function createFallbackGitHubPullRequestChecks(): Record<string, Record<number, 
 }
 
 function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          id: 1201,
+          name: "CI",
+          displayTitle: "验证仓库详情页",
+          status: "completed",
+          conclusion: "success",
+          branch: "main",
+          event: "push",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+          createdAt: "2026-06-12T10:00:00Z",
+          updatedAt: "2026-06-12T10:08:00Z",
+        },
+        {
+          id: 1200,
+          name: "Release",
+          displayTitle: "打包桌面应用",
+          status: "in_progress",
+          conclusion: null,
+          branch: "codex/project-view",
+          event: "workflow_dispatch",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1200",
+          createdAt: "2026-06-12T09:00:00Z",
+          updatedAt: "2026-06-12T09:02:00Z",
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
       {
-        id: 1201,
+        id: 1301,
         name: "CI",
-        displayTitle: "验证仓库详情页",
+        displayTitle: "README screenshot gallery",
+        status: "completed",
+        conclusion: "success",
+        branch: "codex/readme-gallery",
+        event: "push",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1301",
+        createdAt: "2026-06-21T09:10:00Z",
+        updatedAt: "2026-06-21T09:18:00Z",
+      },
+      {
+        id: 1300,
+        name: "Release",
+        displayTitle: "alpha package smoke test",
+        status: "in_progress",
+        conclusion: null,
+        branch: "main",
+        event: "workflow_dispatch",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1300",
+        createdAt: "2026-06-21T08:55:00Z",
+        updatedAt: "2026-06-21T09:02:00Z",
+      },
+    ],
+    "sena-nana/LiliaCode": [
+      {
+        id: 4102,
+        name: "Verify desktop",
+        displayTitle: "runtime command split",
+        status: "completed",
+        conclusion: "failure",
+        branch: "codex/runtime-boundary",
+        event: "pull_request",
+        htmlUrl: "https://github.com/sena-nana/LiliaCode/actions/runs/4102",
+        createdAt: "2026-06-21T08:22:00Z",
+        updatedAt: "2026-06-21T08:36:00Z",
+      },
+    ],
+    "sena-nana/LiliaDocs": [
+      {
+        id: 2204,
+        name: "Pages",
+        displayTitle: "publish documentation",
         status: "completed",
         conclusion: "success",
         branch: "main",
         event: "push",
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
-        createdAt: "2026-06-12T10:00:00Z",
-        updatedAt: "2026-06-12T10:08:00Z",
+        htmlUrl: "https://github.com/sena-nana/LiliaDocs/actions/runs/2204",
+        createdAt: "2026-06-20T15:31:00Z",
+        updatedAt: "2026-06-20T15:35:00Z",
       },
+    ],
+    "sena-nana/Mutsuki": [
       {
-        id: 1200,
-        name: "Release",
-        displayTitle: "打包桌面应用",
-        status: "in_progress",
-        conclusion: null,
-        branch: "codex/project-view",
-        event: "workflow_dispatch",
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1200",
-        createdAt: "2026-06-12T09:00:00Z",
-        updatedAt: "2026-06-12T09:02:00Z",
+        id: 771,
+        name: "Cargo check",
+        displayTitle: "compatibility shims",
+        status: "completed",
+        conclusion: "success",
+        branch: "runtime-compat",
+        event: "push",
+        htmlUrl: "https://github.com/sena-nana/Mutsuki/actions/runs/771",
+        createdAt: "2026-06-20T10:50:00Z",
+        updatedAt: "2026-06-20T11:05:00Z",
       },
     ],
   };
 }
 
 function createFallbackGitHubCommits(): Record<string, CommitSummary[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          hash: "1234567890abcdef",
+          shortHash: "1234567",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          timestamp: 1_785_000_000,
+          subject: "搭建 LiliaGithub MVP",
+          parents: ["abcdef1234567890"],
+          refs: ["main"],
+        },
+        {
+          hash: "abcdef1234567890",
+          shortHash: "abcdef1",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          timestamp: 1_784_990_000,
+          subject: "初始化工作区扫描",
+          parents: [],
+          refs: [],
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
       {
-        hash: "1234567890abcdef",
-        shortHash: "1234567",
+        hash: "d1e2f3a4b5c6d7e8",
+        shortHash: "d1e2f3a",
         author: "Sena",
         authorEmail: "sena@example.com",
-        timestamp: 1_785_000_000,
-        subject: "搭建 LiliaGithub MVP",
-        parents: ["abcdef1234567890"],
-        refs: ["main"],
+        timestamp: 1_781_990_000,
+        subject: "更新 README 展示截图",
+        parents: ["c0ffee1234567890"],
+        refs: ["codex/readme-gallery"],
       },
       {
-        hash: "abcdef1234567890",
-        shortHash: "abcdef1",
+        hash: "c0ffee1234567890",
+        shortHash: "c0ffee1",
         author: "Sena",
         authorEmail: "sena@example.com",
-        timestamp: 1_784_990_000,
-        subject: "初始化工作区扫描",
+        timestamp: 1_781_920_000,
+        subject: "加入仓库详情页项目视图",
         parents: [],
         refs: [],
       },
@@ -456,20 +1114,79 @@ function createFallbackGitHubCommits(): Record<string, CommitSummary[]> {
 }
 
 function createFallbackGitHubCommitDetails(): Record<string, Record<string, CommitDetail>> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": {
+        "1234567890abcdef": {
+          hash: "1234567890abcdef",
+          shortHash: "1234567",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          committer: "Sena",
+          committerEmail: "sena@example.com",
+          timestamp: 1_785_000_000,
+          subject: "搭建 LiliaGithub MVP",
+          body: "搭建远程仓库项目视图。",
+          parents: ["abcdef1234567890"],
+          refs: ["main"],
+          files: [
+            {
+              path: "src/pages/Home.vue",
+              oldPath: null,
+              status: "modified",
+              additions: 24,
+              deletions: 8,
+              patch: "diff --git a/src/pages/Home.vue b/src/pages/Home.vue\n@@ -1,3 +1,4 @@\n <template>\n-  <h1>Lilia</h1>\n+  <h1>LiliaGithub</h1>\n+  <p>远程仓库管理</p>\n </template>",
+              hunks: [
+                {
+                  header: "@@ -1,3 +1,4 @@",
+                  oldStart: 1,
+                  oldLines: 3,
+                  newStart: 1,
+                  newLines: 4,
+                  lines: [
+                    { kind: "context", content: "<template>", oldLine: 1, newLine: 1 },
+                    { kind: "deleted", content: "  <h1>Lilia</h1>", oldLine: 2, newLine: null },
+                    { kind: "added", content: "  <h1>LiliaGithub</h1>", oldLine: null, newLine: 2 },
+                    { kind: "added", content: "  <p>远程仓库管理</p>", oldLine: null, newLine: 3 },
+                    { kind: "context", content: "</template>", oldLine: 3, newLine: 4 },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        "abcdef1234567890": {
+          hash: "abcdef1234567890",
+          shortHash: "abcdef1",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          committer: "Sena",
+          committerEmail: "sena@example.com",
+          timestamp: 1_784_990_000,
+          subject: "初始化工作区扫描",
+          body: "",
+          parents: [],
+          refs: [],
+          files: [],
+        },
+      },
+    };
+  }
   return {
     "sena-nana/LiliaGithub": {
-      "1234567890abcdef": {
-        hash: "1234567890abcdef",
-        shortHash: "1234567",
+      "d1e2f3a4b5c6d7e8": {
+        hash: "d1e2f3a4b5c6d7e8",
+        shortHash: "d1e2f3a",
         author: "Sena",
         authorEmail: "sena@example.com",
         committer: "Sena",
         committerEmail: "sena@example.com",
-        timestamp: 1_785_000_000,
-        subject: "搭建 LiliaGithub MVP",
-        body: "搭建远程仓库项目视图。",
-        parents: ["abcdef1234567890"],
-        refs: ["main"],
+        timestamp: 1_781_990_000,
+        subject: "更新 README 展示截图",
+        body: "准备演示数据和 README 图片展示区。",
+        parents: ["c0ffee1234567890"],
+        refs: ["codex/readme-gallery"],
         files: [
           {
             path: "src/pages/Home.vue",
@@ -497,15 +1214,15 @@ function createFallbackGitHubCommitDetails(): Record<string, Record<string, Comm
           },
         ],
       },
-      "abcdef1234567890": {
-        hash: "abcdef1234567890",
-        shortHash: "abcdef1",
+      "c0ffee1234567890": {
+        hash: "c0ffee1234567890",
+        shortHash: "c0ffee1",
         author: "Sena",
         authorEmail: "sena@example.com",
         committer: "Sena",
         committerEmail: "sena@example.com",
-        timestamp: 1_784_990_000,
-        subject: "初始化工作区扫描",
+        timestamp: 1_781_920_000,
+        subject: "加入仓库详情页项目视图",
         body: "",
         parents: [],
         refs: [],
@@ -516,13 +1233,34 @@ function createFallbackGitHubCommitDetails(): Record<string, Record<string, Comm
 }
 
 function createFallbackGitHubBranches(): Record<string, BranchSummary[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_785_000_000 }),
+        buildBranchSummary({ name: "codex/project-view", remote: true, tipTimestamp: 1_784_995_000 }),
+      ],
+      "sena-nana/Lilia": [
+        buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_784_990_000 }),
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
-      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_785_000_000 }),
-      buildBranchSummary({ name: "codex/project-view", remote: true, tipTimestamp: 1_784_995_000 }),
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_980_000 }),
+      buildBranchSummary({ name: "codex/readme-gallery", remote: true, tipTimestamp: 1_781_990_000 }),
     ],
-    "sena-nana/Lilia": [
-      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_784_990_000 }),
+    "sena-nana/LiliaCode": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_930_000 }),
+    ],
+    "sena-nana/LiliaDocs": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_820_000 }),
+    ],
+    "sena-nana/Mutsuki": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_650_000 }),
+      buildBranchSummary({ name: "runtime-compat", remote: true, tipTimestamp: 1_781_700_000 }),
+    ],
+    "sena-nana/LiliaTodo": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_560_000 }),
     ],
   };
 }
@@ -542,41 +1280,97 @@ function buildBranchSummary(overrides: Partial<BranchSummary> & Pick<BranchSumma
 }
 
 function createFallbackRepoBranches(): Record<string, BranchSummary[]> {
+  if (useDefaultFallback) {
+    return {
+      LiliaGithub: [
+        buildBranchSummary({
+          name: "main",
+          current: true,
+          upstream: "origin/main",
+          ahead: 1,
+          behind: 0,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: ["C:\\Files\\workspace\\LiliaGithub"],
+        }),
+        buildBranchSummary({
+          name: "dev",
+          upstream: "origin/dev",
+          tipTimestamp: 1_784_998_000,
+        }),
+        buildBranchSummary({
+          name: "inventory",
+          upstream: "origin/inventory",
+          tipTimestamp: 1_784_700_000,
+        }),
+        buildBranchSummary({
+          name: "origin/main",
+          remote: true,
+          tipTimestamp: 1_785_000_000,
+        }),
+        buildBranchSummary({
+          name: "origin/dev",
+          remote: true,
+          tipTimestamp: 1_784_998_000,
+        }),
+        buildBranchSummary({
+          name: "origin/feature/notice-update",
+          remote: true,
+          tipTimestamp: 1_784_200_000,
+        }),
+      ],
+      Lilia: [
+        buildBranchSummary({
+          name: "main",
+          current: true,
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 2,
+          tipTimestamp: 1_784_990_000,
+          checkedOutWorktreePaths: ["C:\\Files\\workspace\\Lilia"],
+        }),
+        buildBranchSummary({
+          name: "origin/main",
+          remote: true,
+          tipTimestamp: 1_784_990_000,
+        }),
+      ],
+    };
+  }
   return {
     LiliaGithub: [
       buildBranchSummary({
         name: "main",
-        current: true,
         upstream: "origin/main",
-        ahead: 1,
-        behind: 0,
-        tipTimestamp: 1_785_000_000,
-        checkedOutWorktreePaths: ["C:\\Files\\workspace\\LiliaGithub"],
+        tipTimestamp: 1_781_980_000,
       }),
       buildBranchSummary({
-        name: "dev",
-        upstream: "origin/dev",
-        tipTimestamp: 1_784_998_000,
+        name: "codex/readme-gallery",
+        upstream: "origin/codex/readme-gallery",
+        current: true,
+        ahead: 2,
+        behind: 1,
+        tipTimestamp: 1_781_990_000,
+        checkedOutWorktreePaths: ["D:\\PROJECT\\workspace\\LiliaGithub"],
       }),
       buildBranchSummary({
-        name: "inventory",
-        upstream: "origin/inventory",
-        tipTimestamp: 1_784_700_000,
+        name: "release/alpha",
+        upstream: "origin/release/alpha",
+        tipTimestamp: 1_781_400_000,
       }),
       buildBranchSummary({
         name: "origin/main",
         remote: true,
-        tipTimestamp: 1_785_000_000,
+        tipTimestamp: 1_781_980_000,
       }),
       buildBranchSummary({
-        name: "origin/dev",
+        name: "origin/codex/readme-gallery",
         remote: true,
-        tipTimestamp: 1_784_998_000,
+        tipTimestamp: 1_781_980_000,
       }),
       buildBranchSummary({
-        name: "origin/feature/notice-update",
+        name: "origin/release/alpha",
         remote: true,
-        tipTimestamp: 1_784_200_000,
+        tipTimestamp: 1_781_400_000,
       }),
     ],
     Lilia: [
@@ -586,13 +1380,13 @@ function createFallbackRepoBranches(): Record<string, BranchSummary[]> {
         upstream: "origin/main",
         ahead: 0,
         behind: 2,
-        tipTimestamp: 1_784_990_000,
-        checkedOutWorktreePaths: ["C:\\Files\\workspace\\Lilia"],
+        tipTimestamp: 1_781_930_000,
+        checkedOutWorktreePaths: ["D:\\PROJECT\\workspace\\Lilia"],
       }),
       buildBranchSummary({
         name: "origin/main",
         remote: true,
-        tipTimestamp: 1_784_990_000,
+        tipTimestamp: 1_781_930_000,
       }),
     ],
   };
@@ -607,6 +1401,26 @@ function createFallbackRepoStashes(): Record<string, RepoStashEntry[]> {
 }
 
 function createFallbackRepoRemotes(): Record<string, RepoRemote[]> {
+  if (useDefaultFallback) {
+    return {
+      LiliaGithub: [
+        {
+          name: "origin",
+          fetchUrl: "https://github.com/sena-nana/LiliaGithub.git",
+          pushUrl: "https://github.com/sena-nana/LiliaGithub.git",
+          current: true,
+        },
+      ],
+      Lilia: [
+        {
+          name: "origin",
+          fetchUrl: "https://github.com/sena-nana/Lilia.git",
+          pushUrl: "https://github.com/sena-nana/Lilia.git",
+          current: true,
+        },
+      ],
+    };
+  }
   return {
     LiliaGithub: [
       {
@@ -619,8 +1433,8 @@ function createFallbackRepoRemotes(): Record<string, RepoRemote[]> {
     Lilia: [
       {
         name: "origin",
-        fetchUrl: "https://github.com/sena-nana/Lilia.git",
-        pushUrl: "https://github.com/sena-nana/Lilia.git",
+        fetchUrl: "https://github.com/sena-nana/LiliaCode.git",
+        pushUrl: "https://github.com/sena-nana/LiliaCode.git",
         current: true,
       },
     ],
@@ -628,6 +1442,40 @@ function createFallbackRepoRemotes(): Record<string, RepoRemote[]> {
 }
 
 function createFallbackRepoReadmes(): Record<string, RepoReadme[]> {
+  if (useDefaultFallback) {
+    return {
+      LiliaGithub: [
+        {
+          repoId: "LiliaGithub",
+          path: "README.md",
+          images: {},
+          format: "md",
+          updatedAt: Date.now(),
+          content: [
+            "# LiliaGithub",
+            "",
+            "一个面向本地多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。",
+            "",
+            "## 当前能力",
+            "",
+            "- 工作区 Git 仓库扫描",
+            "- GitHub 仓库管理",
+            "- 快速启动配置",
+          ].join("\n"),
+        },
+      ],
+      Lilia: [
+        {
+          repoId: "Lilia",
+          path: "README.md",
+          images: {},
+          format: "md",
+          updatedAt: Date.now(),
+          content: "# Lilia\n\nDesktop agent workbench.",
+        },
+      ],
+    };
+  }
   return {
     LiliaGithub: [
       {
@@ -639,13 +1487,19 @@ function createFallbackRepoReadmes(): Record<string, RepoReadme[]> {
         content: [
           "# LiliaGithub",
           "",
-          "一个面向本地多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。",
+          "一个面向本地 GitHub 工作区和多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。",
           "",
-          "## 当前能力",
+          "## 当前工作重点",
           "",
-          "- 工作区 Git 仓库扫描",
-          "- GitHub 仓库管理",
-          "- 快速启动配置",
+          "- 工作区 Git 仓库扫描和状态聚合",
+          "- 单仓库变更、历史、分支和 README 视图",
+          "- GitHub Issues、Pull Requests、Actions 和 Settings 管理入口",
+          "- 快速启动命令配置、运行状态轮询和最近输出日志",
+          "- pull / push 批量预检和队列执行",
+          "",
+          "## 截图场景",
+          "",
+          "README 展示截图使用开发态 mock 数据生成，用于呈现多个仓库、多种同步状态和 GitHub 时间线。",
         ].join("\n"),
       },
     ],
@@ -871,15 +1725,49 @@ type FallbackGitHubRepoFilePreviewCall = {
 };
 
 function createFallbackSettings(): WorkspaceSettings {
+  if (useDefaultFallback) {
+    return {
+      workspaceRoot: "C:\\Files\\workspace",
+      githubBinding: defaultFallbackBinding.binding,
+      projectLaunchConfigs: {},
+      repoSyncPreferences: {},
+      hiddenRepoIds: [],
+      managedRepoIds: fallbackRepos.map((repo) => repo.id),
+      systemGitRepoIds: [],
+      repoGroups: [],
+      remoteRepoShortcuts: [],
+      localContributionCache: {},
+    };
+  }
   return {
-    workspaceRoot: "C:\\Files\\workspace",
+    workspaceRoot: "D:\\PROJECT\\workspace",
     githubBinding: defaultFallbackBinding.binding,
-    projectLaunchConfigs: {},
-    repoSyncPreferences: {},
+    projectLaunchConfigs: {
+      LiliaGithub: {
+        command: "yarn tauri:dev",
+        cwd: null,
+        source: "manual",
+        updatedAt: Date.now(),
+      },
+      LiliaDocs: {
+        command: "yarn docs:dev",
+        cwd: null,
+        source: "manual",
+        updatedAt: Date.now(),
+      },
+    },
+    repoSyncPreferences: {
+      LiliaGithub: { autoSync: true },
+      LiliaDocs: { autoSync: true },
+      Mutsuki: { autoSync: false },
+    },
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     systemGitRepoIds: [],
-    repoGroups: [],
+    repoGroups: [
+      { id: "group-lilia-apps", name: "Lilia Apps", repoIds: ["LiliaGithub", "Lilia", "LiliaTodo"] },
+      { id: "group-runtime-docs", name: "Runtime & Docs", repoIds: ["Mutsuki", "LiliaDocs"] },
+    ],
     remoteRepoShortcuts: [],
     localContributionCache: {},
   };
@@ -2694,28 +3582,51 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           diff: "",
         },
       ],
-      commits: [
-        {
-          hash: "1234567890abcdef",
-          shortHash: "1234567",
-          author: "Sena",
-          authorEmail: "sena@example.com",
-          timestamp: 1_785_000_000,
-          subject: "搭建 LiliaGithub MVP",
-          parents: ["abcdef1234567890"],
-          refs: ["HEAD -> main", "origin/main"],
-        },
-        {
-          hash: "abcdef1234567890",
-          shortHash: "abcdef1",
-          author: "Sena",
-          authorEmail: "sena@example.com",
-          timestamp: 1_784_990_000,
-          subject: "初始化工作区扫描",
-          parents: [],
-          refs: [],
-        },
-      ],
+      commits: useDefaultFallback
+        ? [
+            {
+              hash: "1234567890abcdef",
+              shortHash: "1234567",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_785_000_000,
+              subject: "搭建 LiliaGithub MVP",
+              parents: ["abcdef1234567890"],
+              refs: ["HEAD -> main", "origin/main"],
+            },
+            {
+              hash: "abcdef1234567890",
+              shortHash: "abcdef1",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_784_990_000,
+              subject: "初始化工作区扫描",
+              parents: [],
+              refs: [],
+            },
+          ]
+        : [
+            {
+              hash: "d1e2f3a4b5c6d7e8",
+              shortHash: "d1e2f3a",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_781_990_000,
+              subject: "更新 README 展示截图",
+              parents: ["c0ffee1234567890"],
+              refs: ["HEAD -> codex/readme-gallery", "origin/codex/readme-gallery"],
+            },
+            {
+              hash: "c0ffee1234567890",
+              shortHash: "c0ffee1",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_781_920_000,
+              subject: "加入仓库详情页项目视图",
+              parents: [],
+              refs: [],
+            },
+          ],
       branches: [
         ...syncFallbackRepoBranchState(repoId).map(cloneBranchSummary),
       ],
@@ -2749,11 +3660,11 @@ export function getRepoCommitDetail(repoId: string, hash: string): Promise<Commi
       authorEmail: "sena@example.com",
       committer: "Sena",
       committerEmail: "sena@example.com",
-      timestamp: detail.lastCommitAt ?? 1_785_000_000,
-      subject: "搭建 LiliaGithub MVP",
-      body: "搭建本地仓库管理的基础视图。",
-      parents: ["abcdef1234567890"],
-      refs: ["HEAD -> main", "origin/main"],
+      timestamp: detail.lastCommitAt ?? 1_781_990_000,
+      subject: "更新 README 展示截图",
+      body: "准备演示数据和 README 图片展示区。",
+      parents: ["c0ffee1234567890"],
+      refs: ["HEAD -> codex/readme-gallery", "origin/codex/readme-gallery"],
       files: [
         {
           path: "src/pages/Home.vue",

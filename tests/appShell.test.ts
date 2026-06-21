@@ -9,7 +9,7 @@ import { resetWorkspaceStateForTests, setRepoActionError, state } from "../src/c
 import {
   setFallbackGitHubBindingStatusForTests,
   setFallbackGitHubReposErrorForTests,
-} from "../src/services/workspace";
+} from "../src/services/workspace/fallback";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";

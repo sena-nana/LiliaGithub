@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { parseRemoteRepoId } from "../../utils/remoteRepo";
-import * as fallback from "./fallback";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -59,6 +58,7 @@ import type {
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
 const isDev = typeof import.meta !== "undefined" && import.meta.env?.DEV === true;
 const GITHUB_REPO_CACHE_TTL_MS = 5 * 60 * 1000;
+type WorkspaceFallback = typeof import("./fallback");
 
 export type GitHubProjectFetchOptions = {
   forceRefresh?: boolean;
@@ -84,6 +84,8 @@ let githubRepoCache: {
 } | null = null;
 let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
 const githubProjectCache = new Map<string, GitHubProjectRepoClientCache>();
+let workspaceFallbackPromise: Promise<WorkspaceFallback> | null = null;
+let workspaceFallbackModule: WorkspaceFallback | null = null;
 
 export function resolveWorkspaceRuntimeForTests(probe: {
   hasWindow: boolean;
@@ -94,6 +96,24 @@ export function resolveWorkspaceRuntimeForTests(probe: {
   if (probe.hasTauriInternals && !probe.isTest) return "tauri";
   if (probe.isTest || (probe.hasWindow && probe.isDev)) return "mock";
   return "unavailable";
+}
+
+async function loadWorkspaceFallback() {
+  if (import.meta.env.DEV || import.meta.env.MODE === "test") {
+    workspaceFallbackPromise ??= import("./fallback").then((module) => {
+      workspaceFallbackModule = module;
+      return module;
+    });
+    return workspaceFallbackPromise;
+  }
+  throw new Error("Workspace mock data is only available in development and test mode.");
+}
+
+function workspaceFallback() {
+  if (!workspaceFallbackModule) {
+    throw new Error("Workspace mock data has not been loaded.");
+  }
+  return workspaceFallbackModule;
 }
 
 async function call<T>(command: string, args: Record<string, unknown> | undefined, fallbackCall: () => Promise<T>): Promise<T> {
@@ -108,6 +128,7 @@ async function call<T>(command: string, args: Record<string, unknown> | undefine
     return invoke<T>(command, args);
   }
   if (runtime === "mock") {
+    await loadWorkspaceFallback();
     return fallbackCall();
   }
   throw new Error(
@@ -116,33 +137,33 @@ async function call<T>(command: string, args: Record<string, unknown> | undefine
 }
 
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
-  return call("workspace_get_settings", undefined, fallback.getWorkspaceSettings);
+  return call("workspace_get_settings", undefined, () => workspaceFallback().getWorkspaceSettings());
 }
 
 export function readStartupCache(): Promise<WorkspaceStartupCache | null> {
-  return call("workspace_read_startup_cache", undefined, fallback.readStartupCache);
+  return call("workspace_read_startup_cache", undefined, () => workspaceFallback().readStartupCache());
 }
 
 export function clearStartupCache(): Promise<void> {
-  return call("workspace_clear_startup_cache", undefined, fallback.clearStartupCache);
+  return call("workspace_clear_startup_cache", undefined, () => workspaceFallback().clearStartupCache());
 }
 
 export function writeStartupContributions(contributions: WorkspaceStartupContributions): Promise<WorkspaceStartupCache> {
   return call("workspace_write_startup_contributions", { contributions }, () =>
-    fallback.writeStartupContributions(contributions)
+    workspaceFallback().writeStartupContributions(contributions)
   );
 }
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
-  return call("workspace_set_root", { workspaceRoot }, () => fallback.setWorkspaceRoot(workspaceRoot));
+  return call("workspace_set_root", { workspaceRoot }, () => workspaceFallback().setWorkspaceRoot(workspaceRoot));
 }
 
 export function setRepoAutoSync(repoId: string, autoSync: boolean): Promise<WorkspaceSettings> {
-  return call("repo_set_auto_sync", { repoId, autoSync }, () => fallback.setRepoAutoSync(repoId, autoSync));
+  return call("repo_set_auto_sync", { repoId, autoSync }, () => workspaceFallback().setRepoAutoSync(repoId, autoSync));
 }
 
 export function pickWorkspaceRoot(): Promise<string | null> {
-  return call("workspace_pick_root", undefined, fallback.pickWorkspaceRoot);
+  return call("workspace_pick_root", undefined, () => workspaceFallback().pickWorkspaceRoot());
 }
 
 function cloneRepoPage(page: GitHubRepoPage): GitHubRepoPage {
@@ -297,98 +318,98 @@ export function preloadGitHubRepos(opts: { force?: boolean } = {}): Promise<GitH
 }
 
 export function pickRepo(): Promise<string | null> {
-  return call("workspace_pick_repo", undefined, fallback.pickRepo);
+  return call("workspace_pick_repo", undefined, () => workspaceFallback().pickRepo());
 }
 
 export function refreshRepos(): Promise<RepoSummary[]> {
-  return call("workspace_refresh_repos", undefined, fallback.refreshRepos);
+  return call("workspace_refresh_repos", undefined, () => workspaceFallback().refreshRepos());
 }
 
 export function listManagedRepos(): Promise<RepoSummary[]> {
-  return call("workspace_list_managed_repos", undefined, fallback.listManagedRepos);
+  return call("workspace_list_managed_repos", undefined, () => workspaceFallback().listManagedRepos());
 }
 
 export function discoverRepos(): Promise<RepoSummary[]> {
-  return call("workspace_discover_repos", undefined, fallback.discoverRepos);
+  return call("workspace_discover_repos", undefined, () => workspaceFallback().discoverRepos());
 }
 
 export function addRepo(repoPath: string): Promise<RepoSummary> {
-  return call("workspace_add_repo", { repoPath }, () => fallback.addRepo(repoPath));
+  return call("workspace_add_repo", { repoPath }, () => workspaceFallback().addRepo(repoPath));
 }
 
 export function cloneRepo(remoteUrl: string, directoryName?: string | null): Promise<RepoSummary> {
   return call("workspace_clone_repo", { remoteUrl, directoryName: directoryName ?? null }, () =>
-    fallback.cloneRepo(remoteUrl, directoryName),
+    workspaceFallback().cloneRepo(remoteUrl, directoryName),
   );
 }
 
 export function getRepoSummary(repoId: string): Promise<RepoSummary> {
-  return call("repo_get_summary", { repoId }, () => fallback.getRepoSummary(repoId));
+  return call("repo_get_summary", { repoId }, () => workspaceFallback().getRepoSummary(repoId));
 }
 
 export function refreshRepoSummary(
   repoId: string,
   options: RepoRefreshSummaryOptions = {},
 ): Promise<RepoSummary> {
-  return call("repo_refresh_summary", { repoId, options }, () => fallback.refreshRepoSummary(repoId, options));
+  return call("repo_refresh_summary", { repoId, options }, () => workspaceFallback().refreshRepoSummary(repoId, options));
 }
 
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
-  return call("workspace_hide_repo", { repoId }, () => fallback.hideRepo(repoId));
+  return call("workspace_hide_repo", { repoId }, () => workspaceFallback().hideRepo(repoId));
 }
 
 export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
-  return call("workspace_create_repo_group", { name }, () => fallback.createRepoGroup(name));
+  return call("workspace_create_repo_group", { name }, () => workspaceFallback().createRepoGroup(name));
 }
 
 export function renameRepoGroup(groupId: string, name: string): Promise<WorkspaceSettings> {
-  return call("workspace_rename_repo_group", { groupId, name }, () => fallback.renameRepoGroup(groupId, name));
+  return call("workspace_rename_repo_group", { groupId, name }, () => workspaceFallback().renameRepoGroup(groupId, name));
 }
 
 export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
-  return call("workspace_delete_repo_group", { groupId }, () => fallback.deleteRepoGroup(groupId));
+  return call("workspace_delete_repo_group", { groupId }, () => workspaceFallback().deleteRepoGroup(groupId));
 }
 
 export function moveRepoToGroup(repoId: string, groupId: string | null): Promise<WorkspaceSettings> {
-  return call("workspace_move_repo_to_group", { repoId, groupId }, () => fallback.moveRepoToGroup(repoId, groupId));
+  return call("workspace_move_repo_to_group", { repoId, groupId }, () => workspaceFallback().moveRepoToGroup(repoId, groupId));
 }
 
 export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
-  return call("workspace_delete_local_repo", { repoId }, () => fallback.deleteLocalRepo(repoId));
+  return call("workspace_delete_local_repo", { repoId }, () => workspaceFallback().deleteLocalRepo(repoId));
 }
 
 export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
-  return call("workspace_remember_remote_repo", { repo }, () => fallback.rememberRemoteRepo(repo));
+  return call("workspace_remember_remote_repo", { repo }, () => workspaceFallback().rememberRemoteRepo(repo));
 }
 
 export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {
-  return call("workspace_forget_remote_repo", { fullName }, () => fallback.forgetRemoteRepo(fullName));
+  return call("workspace_forget_remote_repo", { fullName }, () => workspaceFallback().forgetRemoteRepo(fullName));
 }
 
 export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
-  return call("workspace_unhide_repo", { repoId }, () => fallback.unhideRepo(repoId));
+  return call("workspace_unhide_repo", { repoId }, () => workspaceFallback().unhideRepo(repoId));
 }
 
 export function listHiddenRepos(): Promise<HiddenRepo[]> {
-  return call("workspace_list_hidden_repos", undefined, fallback.listHiddenRepos);
+  return call("workspace_list_hidden_repos", undefined, () => workspaceFallback().listHiddenRepos());
 }
 
 export function listWorkspaceTasks(): Promise<WorkspaceTask[]> {
-  return call("workspace_list_tasks", undefined, fallback.listWorkspaceTasks);
+  return call("workspace_list_tasks", undefined, () => workspaceFallback().listWorkspaceTasks());
 }
 
 export function cancelWorkspaceTask(taskId: string): Promise<void> {
-  return call("workspace_cancel_task", { taskId }, () => fallback.cancelWorkspaceTask(taskId));
+  return call("workspace_cancel_task", { taskId }, () => workspaceFallback().cancelWorkspaceTask(taskId));
 }
 
 export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
-  const status = await call("github_get_binding_status", undefined, fallback.getGitHubBindingStatus);
+  const status = await call("github_get_binding_status", undefined, () => workspaceFallback().getGitHubBindingStatus());
   if (status.state !== "bound") clearGitHubRepoCache();
   return status;
 }
 
 export function startGitHubDeviceFlow(): Promise<GitHubDeviceFlowStart> {
-  return call("github_start_device_flow", undefined, fallback.startGitHubDeviceFlow);
+  return call("github_start_device_flow", undefined, () => workspaceFallback().startGitHubDeviceFlow());
 }
 
 export function pollGitHubDeviceFlow(
@@ -396,20 +417,20 @@ export function pollGitHubDeviceFlow(
   intervalSeconds?: number | null,
 ): Promise<GitHubDeviceFlowPollResult> {
   return call("github_poll_device_flow", { deviceCode, intervalSeconds: intervalSeconds ?? null }, () =>
-    fallback.pollGitHubDeviceFlow(deviceCode, intervalSeconds),
+    workspaceFallback().pollGitHubDeviceFlow(deviceCode, intervalSeconds),
   );
 }
 
 export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {
   return call("github_list_repo_contribution", { repoFullName: repoScope }, () =>
-    fallback.listRepoContribution(repoScope),
+    workspaceFallback().listRepoContribution(repoScope),
   );
 }
 
 export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
   const pageNo = page ?? null;
   const result = await call("github_list_repos", { page: pageNo }, () =>
-    fallback.listGitHubRepos(pageNo),
+    workspaceFallback().listGitHubRepos(pageNo),
   ).catch((err) => {
     if (isGitHubBindingExpiredError(err)) clearGitHubRepoCache();
     throw err;
@@ -419,11 +440,11 @@ export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoP
 }
 
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
-  return call("github_list_repo_owners", undefined, fallback.listGitHubRepoOwners);
+  return call("github_list_repo_owners", undefined, () => workspaceFallback().listGitHubRepoOwners());
 }
 
 export async function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitHubRepoSummary> {
-  const repo = await call("github_create_repo", { request }, () => fallback.createGitHubRepo(request));
+  const repo = await call("github_create_repo", { request }, () => workspaceFallback().createGitHubRepo(request));
   clearGitHubRepoCache();
   return repo;
 }
@@ -439,7 +460,7 @@ export function getGitHubRepoManagement(
   return call("github_get_repo_management", {
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.getGitHubRepoManagement(repoFullName))
+  }, () => workspaceFallback().getGitHubRepoManagement(repoFullName))
     .then((repo) => {
       cache.management = cloneProjectData(repo);
       return cloneProjectData(repo);
@@ -451,7 +472,7 @@ export function updateGitHubRepoSettings(
   request: GitHubUpdateRepoSettingsRequest,
 ): Promise<GitHubRepoManagement> {
   return call("github_update_repo_settings", { repoFullName, request }, () =>
-    fallback.updateGitHubRepoSettings(repoFullName, request),
+    workspaceFallback().updateGitHubRepoSettings(repoFullName, request),
   ).then((repo) => {
     githubProjectRepoCache(repoFullName).management = cloneProjectData(repo);
     return cloneProjectData(repo);
@@ -459,18 +480,18 @@ export function updateGitHubRepoSettings(
 }
 
 export async function deleteGitHubRepo(repoFullName: string): Promise<void> {
-  await call("github_delete_repo", { repoFullName }, () => fallback.deleteGitHubRepo(repoFullName));
+  await call("github_delete_repo", { repoFullName }, () => workspaceFallback().deleteGitHubRepo(repoFullName));
   clearGitHubRepoCache();
   clearGitHubProjectRepoCache(repoFullName);
 }
 
 export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
-  return call("github_list_branches", { repoFullName }, () => fallback.listGitHubBranches(repoFullName));
+  return call("github_list_branches", { repoFullName }, () => workspaceFallback().listGitHubBranches(repoFullName));
 }
 
 export function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
   return call("github_delete_branch", { repoFullName, branchName }, () =>
-    fallback.deleteGitHubBranch(repoFullName, branchName)
+    workspaceFallback().deleteGitHubBranch(repoFullName, branchName)
   );
 }
 
@@ -487,7 +508,7 @@ export function listGitHubPullRequests(
     repoFullName,
     state: state ?? null,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.listGitHubPullRequests(repoFullName, state))
+  }, () => workspaceFallback().listGitHubPullRequests(repoFullName, state))
     .then((pulls) => {
       cache.pullRequests[key] = cloneProjectList(pulls);
       return cloneProjectList(pulls);
@@ -496,7 +517,7 @@ export function listGitHubPullRequests(
 
 export function getGitHubPullRequest(repoFullName: string, pullNumber: number): Promise<GitHubPullRequest> {
   return call("github_get_pull_request", { repoFullName, pullNumber }, () =>
-    fallback.getGitHubPullRequest(repoFullName, pullNumber),
+    workspaceFallback().getGitHubPullRequest(repoFullName, pullNumber),
   );
 }
 
@@ -505,7 +526,7 @@ export function createGitHubPullRequest(
   request: GitHubCreatePullRequestRequest,
 ): Promise<GitHubPullRequest> {
   return call("github_create_pull_request", { repoFullName, request }, () =>
-    fallback.createGitHubPullRequest(repoFullName, request),
+    workspaceFallback().createGitHubPullRequest(repoFullName, request),
   ).then((pull) => {
     upsertGitHubPullRequest(repoFullName, pull);
     clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
@@ -519,7 +540,7 @@ export function updateGitHubPullRequest(
   request: GitHubUpdatePullRequestRequest,
 ): Promise<GitHubPullRequest> {
   return call("github_update_pull_request", { repoFullName, pullNumber, request }, () =>
-    fallback.updateGitHubPullRequest(repoFullName, pullNumber, request),
+    workspaceFallback().updateGitHubPullRequest(repoFullName, pullNumber, request),
   ).then((pull) => {
     upsertGitHubPullRequest(repoFullName, pull);
     clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
@@ -533,7 +554,7 @@ export function mergeGitHubPullRequest(
   request: GitHubMergePullRequestRequest = {},
 ): Promise<GitHubPullRequest> {
   return call("github_merge_pull_request", { repoFullName, pullNumber, request }, () =>
-    fallback.mergeGitHubPullRequest(repoFullName, pullNumber, request),
+    workspaceFallback().mergeGitHubPullRequest(repoFullName, pullNumber, request),
   ).then((pull) => {
     upsertGitHubPullRequest(repoFullName, pull);
     clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
@@ -553,7 +574,7 @@ export function listGitHubPullRequestChecks(
     repoFullName,
     pullNumber,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.listGitHubPullRequestChecks(repoFullName, pullNumber))
+  }, () => workspaceFallback().listGitHubPullRequestChecks(repoFullName, pullNumber))
     .then((checks) => {
       cache.pullRequestChecks[pullNumber] = cloneProjectList(checks);
       return cloneProjectList(checks);
@@ -580,7 +601,7 @@ export function listGitHubIssues(
     direction: options.direction ?? null,
     since: options.since ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
-  }, () => fallback.listGitHubIssues(repoFullName, options))
+  }, () => workspaceFallback().listGitHubIssues(repoFullName, options))
     .then((issues) => {
       cache.issues[key] = cloneProjectList(issues);
       return cloneProjectList(issues);
@@ -592,7 +613,7 @@ export function createGitHubIssue(
   request: GitHubCreateIssueRequest,
 ): Promise<GitHubIssue> {
   return call("github_create_issue", { repoFullName, request }, () =>
-    fallback.createGitHubIssue(repoFullName, request),
+    workspaceFallback().createGitHubIssue(repoFullName, request),
   ).then((issue) => {
     upsertGitHubIssue(repoFullName, issue);
     return cloneProjectData(issue);
@@ -605,7 +626,7 @@ export function updateGitHubIssue(
   request: GitHubUpdateIssueRequest,
 ): Promise<GitHubIssue> {
   return call("github_update_issue", { repoFullName, issueNumber, request }, () =>
-    fallback.updateGitHubIssue(repoFullName, issueNumber, request),
+    workspaceFallback().updateGitHubIssue(repoFullName, issueNumber, request),
   ).then((issue) => {
     upsertGitHubIssue(repoFullName, issue);
     return cloneProjectData(issue);
@@ -625,7 +646,7 @@ export function listGitHubWorkflowRuns(
     repoFullName,
     perPage: perPage ?? null,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.listGitHubWorkflowRuns(repoFullName, perPage))
+  }, () => workspaceFallback().listGitHubWorkflowRuns(repoFullName, perPage))
     .then((runs) => {
       cache.workflowRuns[key] = cloneProjectList(runs);
       return cloneProjectList(runs);
@@ -646,7 +667,7 @@ export function listGitHubRepoCommits(
     perPage: options.perPage ?? null,
     sha: options.sha ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
-  }, () => fallback.listGitHubRepoCommits(repoFullName, options))
+  }, () => workspaceFallback().listGitHubRepoCommits(repoFullName, options))
     .then((commits) => {
       cache.commits[key] = cloneProjectList(commits);
       return cloneProjectList(commits);
@@ -666,7 +687,7 @@ export function getGitHubRepoCommitDetail(
     repoFullName,
     hash: normalizedHash,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.getGitHubRepoCommitDetail(repoFullName, normalizedHash))
+  }, () => workspaceFallback().getGitHubRepoCommitDetail(repoFullName, normalizedHash))
     .then((detail) => {
       cache.commitDetails[detail.hash] = cloneProjectData(detail);
       if (normalizedHash && normalizedHash !== detail.hash) {
@@ -677,15 +698,15 @@ export function getGitHubRepoCommitDetail(
 }
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
-  return call("repo_get_detail", { repoId }, () => fallback.getRepoDetail(repoId));
+  return call("repo_get_detail", { repoId }, () => workspaceFallback().getRepoDetail(repoId));
 }
 
 export function getRepoReadme(repoId: string): Promise<RepoReadme | null> {
-  return call("repo_get_readme", { repoId }, () => fallback.getRepoReadme(repoId));
+  return call("repo_get_readme", { repoId }, () => workspaceFallback().getRepoReadme(repoId));
 }
 
 export function listRepoReadmes(repoId: string): Promise<RepoReadme[]> {
-  return call("repo_list_readmes", { repoId }, () => fallback.listRepoReadmes(repoId));
+  return call("repo_list_readmes", { repoId }, () => workspaceFallback().listRepoReadmes(repoId));
 }
 
 export function listGitHubRepoReadmes(
@@ -697,7 +718,7 @@ export function listGitHubRepoReadmes(
   return call("github_list_repo_readmes", {
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.listGitHubRepoReadmes(repoFullName))
+  }, () => workspaceFallback().listGitHubRepoReadmes(repoFullName))
     .then((readmes) => {
       cache.readmes = cloneProjectList(readmes);
       return cloneProjectList(readmes);
@@ -719,7 +740,7 @@ export function listGitHubRepoFiles(
     parentPath: parentPath ?? null,
     refName: refName ?? null,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.listGitHubRepoFiles(repoFullName, parentPath, refName))
+  }, () => workspaceFallback().listGitHubRepoFiles(repoFullName, parentPath, refName))
     .then((entries) => {
       cache.files[key] = cloneProjectList(entries);
       return cloneProjectList(entries);
@@ -742,7 +763,7 @@ export function getGitHubRepoFilePreview(
     path: normalizedPath,
     refName: refName ?? null,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => fallback.getGitHubRepoFilePreview(repoFullName, normalizedPath, refName))
+  }, () => workspaceFallback().getGitHubRepoFilePreview(repoFullName, normalizedPath, refName))
     .then((preview) => {
       cache.filePreviews[key] = cloneProjectData(preview);
       return cloneProjectData(preview);
@@ -752,31 +773,31 @@ export function getGitHubRepoFilePreview(
 export function listRepoFiles(repoId: string, parentPath?: string | null, repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
   const remoteFullName = parseRemoteRepoId(repoId);
   if (remoteFullName) return listGitHubRepoFiles(remoteFullName, parentPath, repoRef);
-  return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () => fallback.listRepoFiles(repoId, parentPath, repoRef));
+  return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () => workspaceFallback().listRepoFiles(repoId, parentPath, repoRef));
 }
 
 export function getRepoFilePreview(repoId: string, path: string, repoRef?: string | null): Promise<RepoFilePreview> {
   const remoteFullName = parseRemoteRepoId(repoId);
   if (remoteFullName) return getGitHubRepoFilePreview(remoteFullName, path, repoRef);
-  return call("repo_get_file_preview", { repoId, path }, () => fallback.getRepoFilePreview(repoId, path, repoRef));
+  return call("repo_get_file_preview", { repoId, path }, () => workspaceFallback().getRepoFilePreview(repoId, path, repoRef));
 }
 
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
-  return call("repo_refresh_language_stats", { repoId }, () => fallback.refreshRepoLanguageStats(repoId));
+  return call("repo_refresh_language_stats", { repoId }, () => workspaceFallback().refreshRepoLanguageStats(repoId));
 }
 
 export function getRepoCommitDetail(repoId: string, hash: string): Promise<CommitDetail> {
   const remoteFullName = parseRemoteRepoId(repoId);
   if (remoteFullName) return getGitHubRepoCommitDetail(remoteFullName, hash);
-  return call("repo_get_commit_detail", { repoId, hash }, () => fallback.getRepoCommitDetail(repoId, hash));
+  return call("repo_get_commit_detail", { repoId, hash }, () => workspaceFallback().getRepoCommitDetail(repoId, hash));
 }
 
 export function getRepoLaunchConfig(repoId: string): Promise<ProjectLaunchConfig | null> {
-  return call("repo_get_launch_config", { repoId }, () => fallback.getRepoLaunchConfig(repoId));
+  return call("repo_get_launch_config", { repoId }, () => workspaceFallback().getRepoLaunchConfig(repoId));
 }
 
 export function listRepoLaunchCandidates(repoId: string): Promise<ProjectLaunchCandidate[]> {
-  return call("repo_list_launch_candidates", { repoId }, () => fallback.listRepoLaunchCandidates(repoId));
+  return call("repo_list_launch_candidates", { repoId }, () => workspaceFallback().listRepoLaunchCandidates(repoId));
 }
 
 export function saveRepoLaunchConfig(
@@ -785,40 +806,40 @@ export function saveRepoLaunchConfig(
   cwd?: string | null,
 ): Promise<ProjectLaunchConfig> {
   return call("repo_save_launch_config", { repoId, command, cwd: cwd ?? null }, () =>
-    fallback.saveRepoLaunchConfig(repoId, command, cwd),
+    workspaceFallback().saveRepoLaunchConfig(repoId, command, cwd),
   );
 }
 
 export function getRepoLaunchStatus(repoId: string): Promise<ProjectLaunchStatus> {
-  return call("repo_get_launch_status", { repoId }, () => fallback.getRepoLaunchStatus(repoId));
+  return call("repo_get_launch_status", { repoId }, () => workspaceFallback().getRepoLaunchStatus(repoId));
 }
 
 export function getRepoLaunchLogs(repoId: string, since?: number | null): Promise<ProjectLaunchLog[]> {
-  return call("repo_get_launch_logs", { repoId, since: since ?? null }, () => fallback.getRepoLaunchLogs(repoId, since));
+  return call("repo_get_launch_logs", { repoId, since: since ?? null }, () => workspaceFallback().getRepoLaunchLogs(repoId, since));
 }
 
 export function startRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
-  return call("repo_start_launch", { repoId }, () => fallback.startRepoLaunch(repoId));
+  return call("repo_start_launch", { repoId }, () => workspaceFallback().startRepoLaunch(repoId));
 }
 
 export function stopRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
-  return call("repo_stop_launch", { repoId }, () => fallback.stopRepoLaunch(repoId));
+  return call("repo_stop_launch", { repoId }, () => workspaceFallback().stopRepoLaunch(repoId));
 }
 
 export function stageFiles(repoId: string, files: string[]): Promise<void> {
-  return call("repo_stage_files", { repoId, files }, () => fallback.stageFiles(repoId, files));
+  return call("repo_stage_files", { repoId, files }, () => workspaceFallback().stageFiles(repoId, files));
 }
 
 export function unstageFiles(repoId: string, files: string[]): Promise<void> {
-  return call("repo_unstage_files", { repoId, files }, () => fallback.unstageFiles(repoId, files));
+  return call("repo_unstage_files", { repoId, files }, () => workspaceFallback().unstageFiles(repoId, files));
 }
 
 export function discardFiles(repoId: string, files: string[]): Promise<RepoSummary> {
-  return call("repo_discard_files", { repoId, files }, () => fallback.discardFiles(repoId, files));
+  return call("repo_discard_files", { repoId, files }, () => workspaceFallback().discardFiles(repoId, files));
 }
 
 export function addFilesToGitignore(repoId: string, files: string[]): Promise<RepoSummary> {
-  return call("repo_add_files_to_gitignore", { repoId, files }, () => fallback.addFilesToGitignore(repoId, files));
+  return call("repo_add_files_to_gitignore", { repoId, files }, () => workspaceFallback().addFilesToGitignore(repoId, files));
 }
 
 export function commitRepo(
@@ -828,20 +849,20 @@ export function commitRepo(
   pushAfter: boolean,
 ): Promise<RepoSummary> {
   return call("repo_commit", { repoId, files, message, pushAfter }, () =>
-    fallback.commitRepo(repoId, files, message, pushAfter),
+    workspaceFallback().commitRepo(repoId, files, message, pushAfter),
   );
 }
 
 export function pullRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_pull", { repoId }, () => fallback.pullRepo(repoId));
+  return call("repo_pull", { repoId }, () => workspaceFallback().pullRepo(repoId));
 }
 
 export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
-  return call("repo_merge_pull", { repoId }, () => fallback.mergePullRepo(repoId));
+  return call("repo_merge_pull", { repoId }, () => workspaceFallback().mergePullRepo(repoId));
 }
 
 export function fetchRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_fetch", { repoId }, () => fallback.fetchRepo(repoId));
+  return call("repo_fetch", { repoId }, () => workspaceFallback().fetchRepo(repoId));
 }
 
 export function startRebaseRepo(
@@ -849,16 +870,16 @@ export function startRebaseRepo(
   ontoRef?: string | null,
 ): Promise<RepoOperationResult> {
   return call("repo_start_rebase", { repoId, ontoRef: ontoRef ?? null }, () =>
-    fallback.startRebaseRepo(repoId, ontoRef),
+    workspaceFallback().startRebaseRepo(repoId, ontoRef),
   );
 }
 
 export function mergeBranch(repoId: string, branch: string): Promise<RepoMergePullResult> {
-  return call("repo_merge_branch", { repoId, branch }, () => fallback.mergeBranch(repoId, branch));
+  return call("repo_merge_branch", { repoId, branch }, () => workspaceFallback().mergeBranch(repoId, branch));
 }
 
 export function pushRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_push", { repoId }, () => fallback.pushRepo(repoId));
+  return call("repo_push", { repoId }, () => workspaceFallback().pushRepo(repoId));
 }
 
 export function pushNewBranchRepo(
@@ -867,20 +888,20 @@ export function pushNewBranchRepo(
   branchName?: string | null,
 ): Promise<RepoSummary> {
   return call("repo_push_new_branch", { repoId, remoteName: remoteName ?? null, branchName: branchName ?? null }, () =>
-    fallback.pushNewBranchRepo(repoId, remoteName, branchName),
+    workspaceFallback().pushNewBranchRepo(repoId, remoteName, branchName),
   );
 }
 
 export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
-  return call("repo_push_with_system_git", { repoId }, () => fallback.pushRepoWithSystemGit(repoId));
+  return call("repo_push_with_system_git", { repoId }, () => workspaceFallback().pushRepoWithSystemGit(repoId));
 }
 
 export function useDefaultTokenAuthForRepo(repoId: string): Promise<WorkspaceSettings> {
-  return call("repo_use_default_token_auth", { repoId }, () => fallback.useDefaultTokenAuthForRepo(repoId));
+  return call("repo_use_default_token_auth", { repoId }, () => workspaceFallback().useDefaultTokenAuthForRepo(repoId));
 }
 
 export function checkoutBranch(repoId: string, branch: string): Promise<RepoSummary> {
-  return call("repo_checkout_branch", { repoId, branch }, () => fallback.checkoutBranch(repoId, branch));
+  return call("repo_checkout_branch", { repoId, branch }, () => workspaceFallback().checkoutBranch(repoId, branch));
 }
 
 export function createBranch(
@@ -890,7 +911,7 @@ export function createBranch(
   checkoutAfter: boolean,
 ): Promise<RepoSummary> {
   return call("repo_create_branch", { repoId, name, fromRef, checkoutAfter }, () =>
-    fallback.createBranch(repoId, name, fromRef, checkoutAfter),
+    workspaceFallback().createBranch(repoId, name, fromRef, checkoutAfter),
   );
 }
 
@@ -900,12 +921,12 @@ export function renameBranch(
   newName: string,
 ): Promise<RepoSummary> {
   return call("repo_rename_branch", { repoId, oldName, newName }, () =>
-    fallback.renameBranch(repoId, oldName, newName),
+    workspaceFallback().renameBranch(repoId, oldName, newName),
   );
 }
 
 export function deleteBranch(repoId: string, branch: string): Promise<RepoSummary> {
-  return call("repo_delete_branch", { repoId, branch }, () => fallback.deleteBranch(repoId, branch));
+  return call("repo_delete_branch", { repoId, branch }, () => workspaceFallback().deleteBranch(repoId, branch));
 }
 
 export function setBranchUpstream(
@@ -914,46 +935,46 @@ export function setBranchUpstream(
   upstream: string,
 ): Promise<RepoSummary> {
   return call("repo_set_upstream", { repoId, branch, upstream }, () =>
-    fallback.setBranchUpstream(repoId, branch, upstream),
+    workspaceFallback().setBranchUpstream(repoId, branch, upstream),
   );
 }
 
 export function listRepoStashes(repoId: string): Promise<RepoStashEntry[]> {
-  return call("repo_list_stashes", { repoId }, () => fallback.listRepoStashes(repoId));
+  return call("repo_list_stashes", { repoId }, () => workspaceFallback().listRepoStashes(repoId));
 }
 
 export function getRepoStashDetail(repoId: string, stashId: string): Promise<RepoStashDetail> {
-  return call("repo_get_stash_detail", { repoId, stashId }, () => fallback.getRepoStashDetail(repoId, stashId));
+  return call("repo_get_stash_detail", { repoId, stashId }, () => workspaceFallback().getRepoStashDetail(repoId, stashId));
 }
 
 export function saveRepoStash(repoId: string, message?: string | null): Promise<RepoSummary> {
   return call("repo_stash_save", { repoId, message: message ?? null }, () =>
-    fallback.saveRepoStash(repoId, message),
+    workspaceFallback().saveRepoStash(repoId, message),
   );
 }
 
 export function applyRepoStash(repoId: string, stashId: string): Promise<RepoOperationResult> {
-  return call("repo_stash_apply", { repoId, stashId }, () => fallback.applyRepoStash(repoId, stashId));
+  return call("repo_stash_apply", { repoId, stashId }, () => workspaceFallback().applyRepoStash(repoId, stashId));
 }
 
 export function popRepoStash(repoId: string, stashId: string): Promise<RepoOperationResult> {
-  return call("repo_stash_pop", { repoId, stashId }, () => fallback.popRepoStash(repoId, stashId));
+  return call("repo_stash_pop", { repoId, stashId }, () => workspaceFallback().popRepoStash(repoId, stashId));
 }
 
 export function dropRepoStash(repoId: string, stashId: string): Promise<RepoStashEntry[]> {
-  return call("repo_stash_drop", { repoId, stashId }, () => fallback.dropRepoStash(repoId, stashId));
+  return call("repo_stash_drop", { repoId, stashId }, () => workspaceFallback().dropRepoStash(repoId, stashId));
 }
 
 export function listRepoRemotes(repoId: string): Promise<RepoRemote[]> {
-  return call("repo_list_remotes", { repoId }, () => fallback.listRepoRemotes(repoId));
+  return call("repo_list_remotes", { repoId }, () => workspaceFallback().listRepoRemotes(repoId));
 }
 
 export function cherryPickRepoCommit(repoId: string, hash: string): Promise<RepoOperationResult> {
-  return call("repo_cherry_pick_commit", { repoId, hash }, () => fallback.cherryPickRepoCommit(repoId, hash));
+  return call("repo_cherry_pick_commit", { repoId, hash }, () => workspaceFallback().cherryPickRepoCommit(repoId, hash));
 }
 
 export function revertRepoCommit(repoId: string, hash: string): Promise<RepoOperationResult> {
-  return call("repo_revert_commit", { repoId, hash }, () => fallback.revertRepoCommit(repoId, hash));
+  return call("repo_revert_commit", { repoId, hash }, () => workspaceFallback().revertRepoCommit(repoId, hash));
 }
 
 export function resetRepoToCommit(
@@ -961,11 +982,11 @@ export function resetRepoToCommit(
   hash: string,
   mode: RepoResetMode = "mixed",
 ): Promise<RepoSummary> {
-  return call("repo_reset_to_commit", { repoId, hash, mode }, () => fallback.resetRepoToCommit(repoId, hash, mode));
+  return call("repo_reset_to_commit", { repoId, hash, mode }, () => workspaceFallback().resetRepoToCommit(repoId, hash, mode));
 }
 
 export function getRepoConflicts(repoId: string): Promise<RepoConflictState> {
-  return call("repo_get_conflicts", { repoId }, () => fallback.getRepoConflicts(repoId));
+  return call("repo_get_conflicts", { repoId }, () => workspaceFallback().getRepoConflicts(repoId));
 }
 
 export function acceptConflictFile(
@@ -975,7 +996,7 @@ export function acceptConflictFile(
   stage = true,
 ): Promise<RepoSummary> {
   return call("repo_accept_conflict_file", { repoId, path, side, stage }, () =>
-    fallback.acceptConflictFile(repoId, path, side, stage),
+    workspaceFallback().acceptConflictFile(repoId, path, side, stage),
   );
 }
 
@@ -986,38 +1007,38 @@ export function resolveConflictFile(
   stage = true,
 ): Promise<RepoSummary> {
   return call("repo_resolve_conflict_file", { repoId, path, choices, stage }, () =>
-    fallback.resolveConflictFile(repoId, path, choices, stage),
+    workspaceFallback().resolveConflictFile(repoId, path, choices, stage),
   );
 }
 
 export function markFileResolved(repoId: string, path: string): Promise<RepoSummary> {
-  return call("repo_mark_file_resolved", { repoId, path }, () => fallback.markFileResolved(repoId, path));
+  return call("repo_mark_file_resolved", { repoId, path }, () => workspaceFallback().markFileResolved(repoId, path));
 }
 
 export function abortConflictOperation(repoId: string): Promise<RepoSummary> {
-  return call("repo_abort_conflict_operation", { repoId }, () => fallback.abortConflictOperation(repoId));
+  return call("repo_abort_conflict_operation", { repoId }, () => workspaceFallback().abortConflictOperation(repoId));
 }
 
 export function continueConflictOperation(repoId: string): Promise<RepoSummary> {
-  return call("repo_continue_conflict_operation", { repoId }, () => fallback.continueConflictOperation(repoId));
+  return call("repo_continue_conflict_operation", { repoId }, () => workspaceFallback().continueConflictOperation(repoId));
 }
 
 export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]): Promise<BulkSyncPreview> {
-  return call("bulk_sync_preview", { operation, repos }, () => fallback.bulkSyncPreview(operation, repos));
+  return call("bulk_sync_preview", { operation, repos }, () => workspaceFallback().bulkSyncPreview(operation, repos));
 }
 
 export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {
-  return call("bulk_sync_execute", { operation, repoIds }, () => fallback.bulkSyncExecute(operation, repoIds));
+  return call("bulk_sync_execute", { operation, repoIds }, () => workspaceFallback().bulkSyncExecute(operation, repoIds));
 }
 
 export function openPath(path: string): Promise<void> {
-  return call("system_open_path", { path }, () => fallback.openPath(path));
+  return call("system_open_path", { path }, () => workspaceFallback().openPath(path));
 }
 
 export function openPathTarget(path: string, target: SystemOpenTarget): Promise<void> {
-  return call("system_open_path_target", { path, target }, () => fallback.openPathTarget(path, target));
+  return call("system_open_path_target", { path, target }, () => workspaceFallback().openPathTarget(path, target));
 }
 
 export function openUrl(url: string): Promise<void> {
-  return call("system_open_url", { url }, () => fallback.openUrl(url));
+  return call("system_open_url", { url }, () => workspaceFallback().openUrl(url));
 }

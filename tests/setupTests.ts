@@ -3,7 +3,8 @@ import { cleanup } from "@testing-library/vue";
 import { afterEach } from "vitest";
 import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
 import { clearHomeGitHubOverviewSnapshot } from "../src/pages/homeOverviewCache";
-import { clearGitHubRepoCache, resetWorkspaceFallbacksForTests } from "../src/services/workspace";
+import { clearGitHubRepoCache } from "../src/services/workspace";
+import { resetWorkspaceFallbacksForTests } from "../src/services/workspace/fallback";
 
 afterEach(async () => {
   cleanup();
