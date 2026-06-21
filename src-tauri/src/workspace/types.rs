@@ -787,6 +787,88 @@ pub struct GitHubWorkflowRun {
     pub html_url: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    #[serde(default)]
+    pub run_number: Option<u64>,
+    #[serde(default)]
+    pub run_attempt: Option<u64>,
+    #[serde(default)]
+    pub workflow_id: Option<u64>,
+    #[serde(default)]
+    pub run_started_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowJobStep {
+    pub name: String,
+    pub status: String,
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    pub number: u64,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowJob {
+    pub id: u64,
+    pub name: String,
+    pub status: String,
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
+    pub runner_name: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<GitHubWorkflowJobStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowArtifact {
+    pub id: u64,
+    pub name: String,
+    pub size_in_bytes: u64,
+    pub expired: bool,
+    pub created_at: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowRunDetail {
+    pub run: GitHubWorkflowRun,
+    pub jobs: Vec<GitHubWorkflowJob>,
+    pub artifacts: Vec<GitHubWorkflowArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowJobLog {
+    pub job_id: u64,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowArtifactEntry {
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

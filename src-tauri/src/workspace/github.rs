@@ -1,3 +1,5 @@
+use std::io::{Cursor, Read};
+
 use super::*;
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
@@ -10,6 +12,7 @@ pub(super) const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
 pub(super) const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 pub(super) const GITHUB_CONTRIBUTION_DAYS: usize = 371;
 pub(super) const GITHUB_PROJECT_CACHE_KEY: &str = "workspace.githubProjectCache";
+pub(super) const GITHUB_ACTIONS_ARTIFACT_MAX_BYTES: u64 = 200 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -294,6 +297,11 @@ pub(super) struct GitHubWorkflowRunsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowActorResponse {
+    pub(super) login: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubWorkflowRunResponse {
     pub(super) id: u64,
     #[serde(default)]
@@ -311,6 +319,81 @@ pub(super) struct GitHubWorkflowRunResponse {
     pub(super) html_url: String,
     pub(super) created_at: String,
     pub(super) updated_at: String,
+    #[serde(default)]
+    pub(super) actor: Option<GitHubWorkflowActorResponse>,
+    #[serde(default)]
+    pub(super) head_sha: Option<String>,
+    #[serde(default)]
+    pub(super) run_number: Option<u64>,
+    #[serde(default)]
+    pub(super) run_attempt: Option<u64>,
+    #[serde(default)]
+    pub(super) workflow_id: Option<u64>,
+    #[serde(default)]
+    pub(super) run_started_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowJobsResponse {
+    #[serde(default)]
+    pub(super) jobs: Vec<GitHubWorkflowJobResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowJobResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) status: Option<String>,
+    #[serde(default)]
+    pub(super) conclusion: Option<String>,
+    #[serde(default)]
+    pub(super) started_at: Option<String>,
+    #[serde(default)]
+    pub(super) completed_at: Option<String>,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
+    #[serde(default)]
+    pub(super) runner_name: Option<String>,
+    #[serde(default)]
+    pub(super) steps: Vec<GitHubWorkflowJobStepResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowJobStepResponse {
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) status: Option<String>,
+    #[serde(default)]
+    pub(super) conclusion: Option<String>,
+    #[serde(default)]
+    pub(super) number: Option<u64>,
+    #[serde(default)]
+    pub(super) started_at: Option<String>,
+    #[serde(default)]
+    pub(super) completed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowArtifactsResponse {
+    #[serde(default)]
+    pub(super) artifacts: Vec<GitHubWorkflowArtifactResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowArtifactResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) size_in_bytes: Option<u64>,
+    #[serde(default)]
+    pub(super) expired: bool,
+    pub(super) created_at: String,
+    #[serde(default)]
+    pub(super) expires_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1665,6 +1748,193 @@ pub(super) fn github_workflow_run_from_response(
         html_url: run.html_url,
         created_at: run.created_at,
         updated_at: run.updated_at,
+        actor: run.actor.map(|actor| actor.login),
+        head_sha: normalize_optional_string(run.head_sha),
+        run_number: run.run_number,
+        run_attempt: run.run_attempt,
+        workflow_id: run.workflow_id,
+        run_started_at: normalize_optional_string(run.run_started_at),
+    }
+}
+
+pub(super) fn github_workflow_job_from_response(
+    job: GitHubWorkflowJobResponse,
+) -> GitHubWorkflowJob {
+    GitHubWorkflowJob {
+        id: job.id,
+        name: normalize_optional_string(job.name).unwrap_or_else(|| "Job".to_string()),
+        status: normalize_optional_string(job.status).unwrap_or_else(|| "unknown".to_string()),
+        conclusion: normalize_optional_string(job.conclusion),
+        started_at: normalize_optional_string(job.started_at),
+        completed_at: normalize_optional_string(job.completed_at),
+        html_url: normalize_optional_string(job.html_url),
+        runner_name: normalize_optional_string(job.runner_name),
+        steps: job
+            .steps
+            .into_iter()
+            .enumerate()
+            .map(|(index, step)| GitHubWorkflowJobStep {
+                name: normalize_optional_string(step.name)
+                    .unwrap_or_else(|| format!("Step {}", index + 1)),
+                status: normalize_optional_string(step.status)
+                    .unwrap_or_else(|| "unknown".to_string()),
+                conclusion: normalize_optional_string(step.conclusion),
+                number: step.number.unwrap_or((index + 1) as u64),
+                started_at: normalize_optional_string(step.started_at),
+                completed_at: normalize_optional_string(step.completed_at),
+            })
+            .collect(),
+    }
+}
+
+pub(super) fn github_workflow_artifact_from_response(
+    artifact: GitHubWorkflowArtifactResponse,
+) -> GitHubWorkflowArtifact {
+    GitHubWorkflowArtifact {
+        id: artifact.id,
+        name: normalize_optional_string(artifact.name).unwrap_or_else(|| "artifact".to_string()),
+        size_in_bytes: artifact.size_in_bytes.unwrap_or_default(),
+        expired: artifact.expired,
+        created_at: artifact.created_at,
+        expires_at: normalize_optional_string(artifact.expires_at),
+    }
+}
+
+pub(super) fn github_artifact_cache_path(repo_full_name: &str, artifact_id: u64) -> PathBuf {
+    let safe_repo = repo_full_name
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.') {
+                value
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    std::env::temp_dir()
+        .join("lilia-github-actions")
+        .join(safe_repo)
+        .join(format!("{artifact_id}.zip"))
+}
+
+pub(super) fn github_artifact_entry_path(path: &Path) -> Result<String, String> {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let normalized = normalized.trim_matches('/').to_string();
+    if normalized.is_empty() {
+        return Err("artifact 文件路径不能为空".to_string());
+    }
+    Ok(normalized)
+}
+
+pub(super) fn github_artifact_entry_from_zip_file<R: Read>(
+    file: &zip::read::ZipFile<'_, R>,
+) -> Result<Option<GitHubWorkflowArtifactEntry>, String> {
+    let Some(path) = file.enclosed_name() else {
+        return Ok(None);
+    };
+    let path = github_artifact_entry_path(&path)?;
+    let name = Path::new(&path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&path)
+        .to_string();
+    Ok(Some(GitHubWorkflowArtifactEntry {
+        path,
+        name,
+        kind: if file.is_dir() { "dir" } else { "file" }.to_string(),
+        size: file.size(),
+    }))
+}
+
+pub(super) fn github_artifact_preview_from_bytes(
+    path: String,
+    size: u64,
+    bytes: Vec<u8>,
+) -> RepoFilePreview {
+    let name = Path::new(&path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&path)
+        .to_string();
+    let preview_path = Path::new(&path);
+    let mime = super::file_browser::file_preview_mime(preview_path).map(str::to_string);
+    if size > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+        return RepoFilePreview {
+            path,
+            name,
+            preview_kind: "tooLarge".to_string(),
+            content: None,
+            data_url: None,
+            images: HashMap::new(),
+            size,
+            mime_type: mime,
+            truncated: false,
+        };
+    }
+    if is_markdown_preview_path(&path) {
+        if let Ok(content) = String::from_utf8(bytes) {
+            return RepoFilePreview {
+                path,
+                name,
+                preview_kind: "markdown".to_string(),
+                content: Some(content),
+                data_url: None,
+                images: HashMap::new(),
+                size,
+                mime_type: Some("text/markdown".to_string()),
+                truncated: false,
+            };
+        }
+        return RepoFilePreview {
+            path,
+            name,
+            preview_kind: "binary".to_string(),
+            content: None,
+            data_url: None,
+            images: HashMap::new(),
+            size,
+            mime_type: Some("text/markdown".to_string()),
+            truncated: false,
+        };
+    }
+    if let Some(image_mime) = image_mime_for_path(preview_path) {
+        return RepoFilePreview {
+            path,
+            name,
+            preview_kind: "image".to_string(),
+            content: None,
+            data_url: Some(format!("data:{image_mime};base64,{}", STANDARD.encode(bytes))),
+            images: HashMap::new(),
+            size,
+            mime_type: Some(image_mime.to_string()),
+            truncated: false,
+        };
+    }
+    if let Ok(content) = String::from_utf8(bytes) {
+        if !content.contains('\0') {
+            return RepoFilePreview {
+                path,
+                name,
+                preview_kind: "text".to_string(),
+                content: Some(content),
+                data_url: None,
+                images: HashMap::new(),
+                size,
+                mime_type: mime.or_else(|| Some("text/plain".to_string())),
+                truncated: false,
+            };
+        }
+    }
+    RepoFilePreview {
+        path,
+        name,
+        preview_kind: "binary".to_string(),
+        content: None,
+        data_url: None,
+        images: HashMap::new(),
+        size,
+        mime_type: mime,
+        truncated: false,
     }
 }
 
@@ -3232,6 +3502,237 @@ pub async fn github_list_workflow_runs(
             repo_cache.workflow_runs.insert(runs_key, runs.clone());
         })?;
         Ok(runs)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_workflow_run_detail(
+    app: AppHandle,
+    repo_full_name: String,
+    run_id: u64,
+    _force_refresh: Option<bool>,
+) -> Result<GitHubWorkflowRunDetail, String> {
+    run_blocking("读取 GitHub Actions 详情", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let repo_api_url = github_repo_api_url(&repo_full_name)?;
+        let run_response = github_send(
+            &app,
+            "读取 GitHub Actions 详情失败",
+            github_headers(
+                client.get(format!("{repo_api_url}/actions/runs/{run_id}")),
+                Some(&token),
+            ),
+        )?;
+        let run = github_workflow_run_from_response(github_json::<GitHubWorkflowRunResponse>(
+            "读取 GitHub Actions 详情失败",
+            run_response,
+        )?);
+        let jobs_response = github_send(
+            &app,
+            "读取 GitHub Actions jobs 失败",
+            github_headers(
+                client
+                    .get(format!("{repo_api_url}/actions/runs/{run_id}/jobs"))
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let jobs = github_json::<GitHubWorkflowJobsResponse>(
+            "读取 GitHub Actions jobs 失败",
+            jobs_response,
+        )?
+        .jobs
+        .into_iter()
+        .map(github_workflow_job_from_response)
+        .collect::<Vec<_>>();
+        let artifacts_response = github_send(
+            &app,
+            "读取 GitHub Actions artifacts 失败",
+            github_headers(
+                client
+                    .get(format!("{repo_api_url}/actions/runs/{run_id}/artifacts"))
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let artifacts = github_json::<GitHubWorkflowArtifactsResponse>(
+            "读取 GitHub Actions artifacts 失败",
+            artifacts_response,
+        )?
+        .artifacts
+        .into_iter()
+        .map(github_workflow_artifact_from_response)
+        .collect::<Vec<_>>();
+        Ok(GitHubWorkflowRunDetail {
+            run,
+            jobs,
+            artifacts,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_workflow_job_log(
+    app: AppHandle,
+    repo_full_name: String,
+    job_id: u64,
+    _force_refresh: Option<bool>,
+) -> Result<GitHubWorkflowJobLog, String> {
+    run_blocking("读取 GitHub Actions 日志", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Actions 日志失败",
+            github_headers(
+                client.get(format!(
+                    "{}/actions/jobs/{job_id}/logs",
+                    github_repo_api_url(&repo_full_name)?
+                )),
+                Some(&token),
+            ),
+        )?;
+        let content = response
+            .text()
+            .map_err(|e| format!("读取 GitHub Actions 日志失败：读取响应失败：{e}"))?;
+        Ok(GitHubWorkflowJobLog { job_id, content })
+    })
+    .await
+}
+
+fn ensure_github_artifact_zip(
+    app: &AppHandle,
+    repo_full_name: &str,
+    artifact_id: u64,
+) -> Result<PathBuf, String> {
+    let path = github_artifact_cache_path(repo_full_name, artifact_id);
+    if let Ok(metadata) = fs::metadata(&path) {
+        if metadata.len() <= GITHUB_ACTIONS_ARTIFACT_MAX_BYTES {
+            return Ok(path);
+        }
+        let _ = fs::remove_file(&path);
+    }
+    let (_binding, token) = github_require_token(app)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
+    let response = github_send(
+        app,
+        "下载 GitHub Actions artifact 失败",
+        github_headers(
+            client.get(format!(
+                "{}/actions/artifacts/{artifact_id}/zip",
+                github_repo_api_url(repo_full_name)?
+            )),
+            Some(&token),
+        ),
+    )?;
+    if response
+        .content_length()
+        .is_some_and(|size| size > GITHUB_ACTIONS_ARTIFACT_MAX_BYTES)
+    {
+        return Err("artifact 超过 200 MB，已跳过内置预览".to_string());
+    }
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("下载 GitHub Actions artifact 失败：读取响应失败：{e}"))?;
+    if bytes.len() as u64 > GITHUB_ACTIONS_ARTIFACT_MAX_BYTES {
+        return Err("artifact 超过 200 MB，已跳过内置预览".to_string());
+    }
+    let Some(parent) = path.parent() else {
+        return Err("artifact 缓存路径无效".to_string());
+    };
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("创建 artifact 缓存目录失败：{}（{e}）", parent.display()))?;
+    fs::write(&path, bytes)
+        .map_err(|e| format!("保存 artifact 缓存失败：{}（{e}）", path.display()))?;
+    Ok(path)
+}
+
+#[tauri::command]
+pub async fn github_list_workflow_artifact_files(
+    app: AppHandle,
+    repo_full_name: String,
+    artifact_id: u64,
+) -> Result<Vec<GitHubWorkflowArtifactEntry>, String> {
+    run_blocking("读取 GitHub Actions artifact", move || {
+        let path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
+        let bytes = fs::read(&path)
+            .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", path.display()))?;
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+            .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+        let mut entries = Vec::new();
+        for index in 0..archive.len() {
+            let file = archive
+                .by_index(index)
+                .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
+            if let Some(entry) = github_artifact_entry_from_zip_file(&file)? {
+                entries.push(entry);
+            }
+        }
+        entries.sort_by(|left, right| {
+            (right.kind == "dir")
+                .cmp(&(left.kind == "dir"))
+                .then_with(|| left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()))
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        Ok(entries)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_workflow_artifact_file_preview(
+    app: AppHandle,
+    repo_full_name: String,
+    artifact_id: u64,
+    path: String,
+) -> Result<RepoFilePreview, String> {
+    run_blocking("预览 GitHub Actions artifact 文件", move || {
+        let requested_path = path.trim().trim_matches('/').replace('\\', "/");
+        if requested_path.is_empty()
+            || Path::new(&requested_path)
+                .components()
+                .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        {
+            return Err("artifact 文件路径无效".to_string());
+        }
+        let cache_path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
+        let bytes = fs::read(&cache_path)
+            .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", cache_path.display()))?;
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+            .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+        for index in 0..archive.len() {
+            let mut file = archive
+                .by_index(index)
+                .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
+            let Some(enclosed_name) = file.enclosed_name() else {
+                continue;
+            };
+            let entry_path = github_artifact_entry_path(&enclosed_name)?;
+            if entry_path != requested_path {
+                continue;
+            }
+            if file.is_dir() {
+                return Err("不能预览 artifact 目录".to_string());
+            }
+            let size = file.size();
+            if size > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+                return Ok(github_artifact_preview_from_bytes(entry_path, size, Vec::new()));
+            }
+            let mut file_bytes = Vec::with_capacity(size as usize);
+            file.read_to_end(&mut file_bytes)
+                .map_err(|e| format!("读取 artifact 文件失败：{e}"))?;
+            return Ok(github_artifact_preview_from_bytes(entry_path, size, file_bytes));
+        }
+        Err("artifact 文件不存在".to_string())
     })
     .await
 }

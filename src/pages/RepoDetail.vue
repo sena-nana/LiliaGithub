@@ -70,6 +70,7 @@ const {
   activeProjectIssue,
   activeProjectPullRequest,
   activeProjectRun,
+  activeProjectJob,
   projectRefreshToken,
   toolbarTabs,
   launchCommandOptions,
@@ -379,6 +380,7 @@ const {
           :project-issue-number="activeProjectIssue"
           :project-pull-request-number="activeProjectPullRequest"
           :project-run-id="activeProjectRun"
+          :project-job-id="activeProjectJob"
           :project-refresh-token="projectRefreshToken"
           @update-commit-message="commitMessage = $event"
           @stage-unstaged-changes="stageUnstagedChanges"

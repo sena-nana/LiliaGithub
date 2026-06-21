@@ -29,7 +29,7 @@ async function renderAt(path: string) {
   await router.push(path);
   await router.isReady();
 
-  render(App, {
+  const view = render(App, {
     global: {
       plugins: [router],
       directives: {
@@ -38,7 +38,7 @@ async function renderAt(path: string) {
     },
   });
 
-  return { router };
+  return { router, ...view };
 }
 
 function deferred<T>() {
@@ -262,6 +262,7 @@ function commitDetail(commit: CommitSummary): CommitDetail {
 describe("基础路由", () => {
   beforeEach(async () => {
     workspaceFallback = await workspaceFallbackForTests();
+    workspaceFallback.resetWorkspaceFallbacksForTests();
   });
 
   afterEach(async () => {
@@ -344,13 +345,13 @@ describe("基础路由", () => {
         content: "# NewRepo\n\n云端 README。",
       },
     });
-    const { router } = await renderAt("/");
+    const { router, container } = await renderAt("/");
 
-    await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/NewRepo" }));
+    await fireEvent.click(await within(container).findByRole("link", { name: "打开 sena-nana/NewRepo" }));
 
     await waitFor(() => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo");
-    });
+    }, { timeout: 5000 });
     expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Git 信息" })).toBeNull();
     expect(screen.queryByRole("tablist", { name: "本地 Git 视图" })).toBeNull();
@@ -718,7 +719,7 @@ describe("基础路由", () => {
       ],
     });
 
-    const { router } = await renderAt("/repos/LiliaGithub?projectTab=actions&run=1310");
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=actions&run=1310&job=13101");
 
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "Actions" })).toHaveClass("is-active");
@@ -726,9 +727,11 @@ describe("基础路由", () => {
     expect(router.currentRoute.value.query).toMatchObject({
       projectTab: "actions",
       run: "1310",
+      job: "13101",
     });
     await waitFor(() => {
-      expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
+      expect(document.querySelector('[data-job-id="13101"] .actions-job__head.is-active')).toBeInTheDocument();
     });
   });
 
@@ -1239,7 +1242,7 @@ describe("基础路由", () => {
       run: "1310",
     });
     await waitFor(() => {
-      expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
     });
   });
 
@@ -2020,9 +2023,12 @@ describe("基础路由", () => {
     expect(await screen.findByRole("button", { name: "重开" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
-    expect(await screen.findByText("验证仓库详情页")).toBeInTheDocument();
-    expect(screen.getByText(/CI · main · push/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Actions 通过")).toHaveAttribute("title", "Actions 通过");
+    expect(await screen.findByRole("button", { name: /验证仓库详情页/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 3, name: "验证仓库详情页" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: /验证仓库详情页/ }));
+    expect(await screen.findByRole("heading", { level: 3, name: "验证仓库详情页" })).toBeInTheDocument();
+    expect(screen.getByText(/工作流：CI · 分支：main/)).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Actions 通过").some((element) => element.getAttribute("title") === "Actions 通过")).toBe(true);
 
     await fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();

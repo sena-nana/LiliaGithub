@@ -2184,6 +2184,14 @@ fn maps_github_workflow_runs_with_defaults() {
         html_url: "https://github.com/a/repo/actions/runs/42".to_string(),
         created_at: "2026-06-12T10:00:00Z".to_string(),
         updated_at: "2026-06-12T10:05:00Z".to_string(),
+        actor: Some(GitHubWorkflowActorResponse {
+            login: "sena".to_string(),
+        }),
+        head_sha: Some("abc123".to_string()),
+        run_number: Some(7),
+        run_attempt: Some(1),
+        workflow_id: Some(99),
+        run_started_at: Some("2026-06-12T10:01:00Z".to_string()),
     });
 
     assert_eq!(mapped.id, 42);
@@ -2193,6 +2201,99 @@ fn maps_github_workflow_runs_with_defaults() {
     assert_eq!(mapped.conclusion.as_deref(), Some("success"));
     assert_eq!(mapped.branch, "main");
     assert_eq!(mapped.event, "push");
+    assert_eq!(mapped.actor.as_deref(), Some("sena"));
+    assert_eq!(mapped.head_sha.as_deref(), Some("abc123"));
+    assert_eq!(mapped.run_number, Some(7));
+    assert_eq!(mapped.run_attempt, Some(1));
+    assert_eq!(mapped.workflow_id, Some(99));
+    assert_eq!(mapped.run_started_at.as_deref(), Some("2026-06-12T10:01:00Z"));
+}
+
+#[test]
+fn maps_github_workflow_jobs_and_artifacts_with_defaults() {
+    let job = github_workflow_job_from_response(GitHubWorkflowJobResponse {
+        id: 77,
+        name: Some("build".to_string()),
+        status: Some("completed".to_string()),
+        conclusion: Some("success".to_string()),
+        started_at: Some("2026-06-12T10:00:00Z".to_string()),
+        completed_at: Some("2026-06-12T10:02:00Z".to_string()),
+        html_url: Some("https://github.com/a/repo/actions/runs/42/job/77".to_string()),
+        runner_name: Some("GitHub Actions".to_string()),
+        steps: vec![
+            GitHubWorkflowJobStepResponse {
+                name: Some("Set up job".to_string()),
+                status: Some("completed".to_string()),
+                conclusion: Some("success".to_string()),
+                number: Some(1),
+                started_at: None,
+                completed_at: None,
+            },
+            GitHubWorkflowJobStepResponse {
+                name: None,
+                status: None,
+                conclusion: None,
+                number: None,
+                started_at: None,
+                completed_at: None,
+            },
+        ],
+    });
+    let artifact = github_workflow_artifact_from_response(GitHubWorkflowArtifactResponse {
+        id: 88,
+        name: Some("dist".to_string()),
+        size_in_bytes: Some(2048),
+        expired: false,
+        created_at: "2026-06-12T10:03:00Z".to_string(),
+        expires_at: Some("2026-07-12T10:03:00Z".to_string()),
+    });
+
+    assert_eq!(job.name, "build");
+    assert_eq!(job.steps[0].name, "Set up job");
+    assert_eq!(job.steps[1].name, "Step 2");
+    assert_eq!(job.steps[1].status, "unknown");
+    assert_eq!(artifact.name, "dist");
+    assert_eq!(artifact.size_in_bytes, 2048);
+}
+
+#[test]
+fn previews_github_artifact_files_by_kind() {
+    let text = github_artifact_preview_from_bytes(
+        "logs/build.log".to_string(),
+        5,
+        b"hello".to_vec(),
+    );
+    let markdown = github_artifact_preview_from_bytes(
+        "README.md".to_string(),
+        7,
+        b"# title".to_vec(),
+    );
+    let image = github_artifact_preview_from_bytes(
+        "image.png".to_string(),
+        4,
+        vec![1, 2, 3, 4],
+    );
+    let large = github_artifact_preview_from_bytes(
+        "large.log".to_string(),
+        super::file_browser::MAX_FILE_PREVIEW_BYTES + 1,
+        Vec::new(),
+    );
+
+    assert_eq!(text.preview_kind, "text");
+    assert_eq!(text.content.as_deref(), Some("hello"));
+    assert_eq!(markdown.preview_kind, "markdown");
+    assert_eq!(image.preview_kind, "image");
+    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQIDBA=="));
+    assert_eq!(large.preview_kind, "tooLarge");
+}
+
+#[test]
+fn rejects_empty_github_artifact_entry_paths() {
+    assert!(github_artifact_entry_path(Path::new("")).is_err());
+    assert_eq!(
+        github_artifact_entry_path(Path::new("logs/build.log")).unwrap(),
+        "logs/build.log"
+    );
 }
 
 #[test]
