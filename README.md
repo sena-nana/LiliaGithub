@@ -18,9 +18,9 @@
   </a>
 </p>
 
-<p align="center"><strong>A local GitHub workspace and repository management desktop app.</strong></p>
+<p align="center"><strong>A desktop workbench for local Git and day-to-day GitHub operations.</strong></p>
 
-<p align="center">LiliaGithub brings local multi-repository status, focused repository operations, quick launch commands, and queued pull / push workflows into a compact Tauri desktop workbench.</p>
+<p align="center">LiliaGithub brings local multi-repository status, focused repository operations, GitHub project visibility, personal workspace controls, and push activity tracking into one compact desktop app.</p>
 
 <p align="center">
   <img src="./.github/assets/home-overview.png" alt="LiliaGithub workspace overview" />
@@ -38,9 +38,9 @@
 
 ## Product Positioning
 
-LiliaGithub is the GitHub workspace tool in the Lilia family. It is built for developers who keep many local repositories active and need a quiet desktop surface for checking status, entering a repository, running common commands, and moving pull / push work forward without losing the shape of the whole workspace.
+LiliaGithub is the GitHub workspace tool in the Lilia family. It is built for developers who keep many local repositories active and want to handle most everyday GitHub work without opening the web UI.
 
-It is not a replacement for Git, GitHub Desktop, or the GitHub web UI. The app focuses on local repository visibility and repeated engineering operations, while leaving source control truth in the repositories themselves.
+The long-term goal is a desktop-first workflow for local Git management, GitHub repository and project inspection, personal account workspace management, and push / sync activity review. The web UI remains the fallback for uncommon administration, organization policy, and advanced GitHub features that are better handled by GitHub itself.
 
 ## The Lilia Family
 
@@ -50,50 +50,65 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It keeps 
 
 ## What Makes It Different
 
-- Workspace-first repository view: scan a local workspace and keep repository status, branch state, changes, and history close together.
-- Focused repository operations: stage, commit, pull, push, checkout, open in GitHub, and open in the file system from one repository surface.
+- Workspace-first repository view: scan a local workspace and keep repository status, branch state, changes, history, and sync state close together.
+- Focused repository operations: stage, commit, pull, push, checkout, open the remote page when needed, and open the local folder from one repository surface.
+- GitHub project visibility: bring repository, issue, pull request, review, release, and project-board context into the desktop app instead of requiring constant browser switching.
+- Personal workspace management: provide a signed-in home for account state, repository lists, notifications, saved workspaces, and personal preferences.
+- Push activity review: surface recent pushes, outgoing changes, CI / release results, and sync problems where developers already manage their repositories.
 - Quick launch commands: save a repository launch target, poll running state, and inspect recent command output without turning the main workspace into a terminal-only app.
 - Queued sync workflows: preflight pull / push operations and execute them in a controlled queue.
-- Lilia desktop shell: use the same compact title bar, draggable sidebar, theme persistence, and declarative context menu patterns from the Lilia desktop family.
+- Compact desktop workbench: keep the app quiet, dense, and readable so the repository content stays primary.
 
 ## Feature Status
 
 The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked. Last checked: 2026-06-21.
 
-### Workspace And Repository Management
+### Local Git And Repository Management
 
 - [x] Workspace selection and local Git repository scanning.
 - [x] Repository status summary, branch information, change details, history, and repository detail view.
-- [x] Single-repository staging, committing, pull, push, checkout, GitHub open, and folder open actions.
+- [x] Single-repository staging, committing, pull, push, checkout, remote-page open, and folder open actions.
 - [x] Pull / push batch preflight and queued execution.
 - [x] GitHub device-code authorization and system keychain credential reuse.
-- [ ] Full GitHub issue, pull request, review, and notification workflows.
-- [ ] Multi-host provider support beyond the current GitHub-oriented flow.
+- [ ] Safer conflict, failed-sync, and multi-step recovery guidance inside the app.
+
+### GitHub Project And Collaboration View
+
+- [ ] GitHub repository metadata, stars, forks, releases, and default branch state.
+- [ ] Issue, pull request, review, and discussion browsing.
+- [ ] GitHub Projects board viewing for repositories and personal work.
+- [ ] Notification inbox with repository, issue, pull request, and review filters.
+- [ ] Recent push activity, Actions results, release status, and failed workflow visibility.
+
+### Personal Workspace
+
+- [x] Signed-in GitHub account connection.
+- [x] Local workspace preferences and theme persistence.
+- [ ] Personal home view for assigned work, recently touched repositories, and saved workspaces.
+- [ ] Account-level repository list, watched repositories, and notification preferences.
+- [ ] Local organization of favorite repositories and common workspaces.
 
 ### Quick Launch
 
 - [x] Repository launch candidate discovery and selection.
 - [x] Saved quick launch configuration per repository.
 - [x] Launch running-state polling and recent output log display.
-- [ ] Full terminal session management, input, and long-running process supervision.
+- [ ] Clearer launch history and failure diagnostics.
 
-### Desktop Shell
+### Desktop Experience
 
-- [x] Lilia-style frameless title bar, compact sidebar, and restrained workbench UI.
-- [x] Window position, size, and maximized-state restoration before the main window becomes visible.
-- [x] Light / dark theme switching with local persistence.
-- [x] Component-declared context menus, programmatic menu opening, dangerous-action confirmation, and global suppression of the browser native context menu.
-- [x] Shared confirmation dialog and local `AGENTS.md` development guidance.
-- [ ] Plugin management, skill marketplace, and third-party integration management.
-- [ ] Tray, widgets, WebDAV, SQLite-backed product data, or other unrelated app-domain features.
+- [x] Compact desktop shell with workspace, repository, and settings navigation.
+- [x] Window position, size, and maximized-state restoration.
+- [x] Light / dark theme switching.
+- [x] Context menus and confirmation dialogs for repository actions.
+- [ ] More complete keyboard navigation and command access for repeated GitHub work.
 
 ### Build And Release
 
-- [x] Single-app Tauri 2 + Vue 3 + TypeScript structure.
-- [x] Yarn 4 contributor path with package-manager guards.
-- [x] `yarn verify` for tests, frontend build, and Tauri Rust compile check.
-- [x] GitHub Actions CI, Pages documentation build, and Windows release packaging workflow.
-- [ ] Signed installers, updater integration, and cross-platform release verification.
+- [x] Windows desktop app packaging.
+- [x] Contributor verification command for tests and builds.
+- [x] GitHub Actions CI, documentation build, and release packaging workflow.
+- [ ] Signed installers and updater integration.
 
 ## Project Structure
 
