@@ -656,6 +656,58 @@ describe("基础路由", () => {
     });
   });
 
+  it("仓库 Issues 筛选写入 URL，并支持返回前进恢复", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      "sena-nana/LiliaGithub": [
+        githubIssue("sena-nana/LiliaGithub", 12, "2026-06-18T08:00:00Z"),
+      ],
+    });
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=issues&issueQ=initial");
+
+    const searchInput = await screen.findByLabelText("搜索 Issues");
+    await waitFor(() => {
+      expect(searchInput).toHaveValue("initial");
+      expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
+        expect.objectContaining({
+          repoFullName: "sena-nana/LiliaGithub",
+          query: "initial",
+        }),
+      );
+    });
+
+    await fireEvent.update(searchInput, "Roadmap");
+    await waitFor(() => {
+      expect(router.currentRoute.value.query).toMatchObject({
+        projectTab: "issues",
+        issueQ: "Roadmap",
+      });
+    });
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
+      expect.objectContaining({
+        repoFullName: "sena-nana/LiliaGithub",
+        query: "Roadmap",
+      }),
+    );
+
+    router.back();
+    await waitFor(() => {
+      expect(router.currentRoute.value.query.issueQ).toBe("initial");
+      expect(screen.getByLabelText("搜索 Issues")).toHaveValue("initial");
+    });
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
+      expect.objectContaining({
+        repoFullName: "sena-nana/LiliaGithub",
+        query: "initial",
+      }),
+    );
+
+    router.forward();
+    await waitFor(() => {
+      expect(router.currentRoute.value.query.issueQ).toBe("Roadmap");
+      expect(screen.getByLabelText("搜索 Issues")).toHaveValue("Roadmap");
+    });
+  });
+
   it("直接进入 actions 深链时按需拉取并定位目标 run", async () => {
     const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubWorkflowRunsForTests({
@@ -677,6 +729,55 @@ describe("基础路由", () => {
     });
     await waitFor(() => {
       expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+    });
+  });
+
+  it("仓库 Pull Requests 筛选可从分享 URL 恢复", async () => {
+    const repoFullName = "sena-nana/LiliaGithub";
+    workspaceFallback.setFallbackGitHubPullRequestsForTests({
+      [repoFullName]: [
+        githubPullRequest(repoFullName, 52, "2026-06-18T10:00:00Z", {
+          title: "筛选恢复 PR",
+        }),
+      ],
+    });
+
+    const { router } = await renderAt(
+      [
+        "/repos/LiliaGithub?projectTab=pulls",
+        "pullState=merged",
+        "pullQ=workflow",
+        "pullCreator=lilia-user",
+        "pullLabels=bug",
+        "pullReview=approved",
+        "pullSort=created",
+        "pullDirection=asc",
+      ].join("&"),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.query).toMatchObject({
+      projectTab: "pulls",
+      pullState: "merged",
+      pullQ: "workflow",
+      pullReview: "approved",
+    });
+    expect(await screen.findByLabelText("搜索 Pull Requests")).toHaveValue("workflow");
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual(
+        expect.objectContaining({
+          repoFullName,
+          state: "merged",
+          query: "workflow",
+          creator: "lilia-user",
+          labels: ["bug"],
+          review: "approved",
+          sort: "created",
+          direction: "asc",
+        }),
+      );
     });
   });
 

@@ -259,12 +259,15 @@ type RenderProjectPanelProps = Omit<RepoProjectPanelProps, "repoContext"> & {
   repoContext?: RepoProjectPanelProps["repoContext"];
 };
 
-async function renderProjectPanel(props: Partial<RepoProjectPanelProps> = {}) {
+async function renderProjectPanel(
+  props: Partial<RepoProjectPanelProps> = {},
+  routePath = "/repos/local-repo",
+) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: "/repos/:repoId(.*)", component: { template: "<div />" } }],
   });
-  await router.push("/repos/local-repo");
+  await router.push(routePath);
   await router.isReady();
 
   const panelProps = {
@@ -316,7 +319,7 @@ async function renderProjectPanel(props: Partial<RepoProjectPanelProps> = {}) {
     githubAuthorized: true,
   });
 
-  return render(RepoProjectPanel, {
+  const view = render(RepoProjectPanel, {
     props: {
       ...panelProps,
       repoContext,
@@ -328,6 +331,7 @@ async function renderProjectPanel(props: Partial<RepoProjectPanelProps> = {}) {
       },
     },
   });
+  return { ...view, router };
 }
 
 function deferred<T>() {
@@ -825,6 +829,12 @@ describe("RepoProjectPanel", () => {
         expect.objectContaining({ query: "workflow" }),
       );
     });
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({
+        projectTab: "pulls",
+        pullQ: "workflow",
+      });
+    });
 
     await fireEvent.click(view.getByRole("button", { name: "筛选" }));
     const filters = view.getByLabelText("Pull Request 筛选项");
@@ -873,6 +883,11 @@ describe("RepoProjectPanel", () => {
         expect.objectContaining({ review: "approved" }),
       );
     });
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({
+        pullReview: "approved",
+      });
+    });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意负责人" }));
     await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
@@ -891,6 +906,41 @@ describe("RepoProjectPanel", () => {
         expect.objectContaining({ sort: "comments", direction: "desc" }),
       );
     });
+  });
+
+  it("Pull Requests 筛选条件可从 URL 恢复", async () => {
+    vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
+    const view = await renderProjectPanel(
+      {
+        repoFullName: "sena-nana/remote-repo",
+        projectTab: "pulls",
+      },
+      [
+        "/repos/local-repo?projectTab=pulls",
+        "pullState=merged",
+        "pullQ=workflow",
+        "pullCreator=sena",
+        "pullLabels=bug",
+        "pullReview=approved",
+        "pullSort=created",
+        "pullDirection=asc",
+      ].join("&"),
+    );
+
+    expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+    expect(view.getByLabelText("搜索 Pull Requests")).toHaveValue("workflow");
+    expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({
+        state: "merged",
+        query: "workflow",
+        creator: "sena",
+        labels: ["bug"],
+        review: "approved",
+        sort: "created",
+        direction: "asc",
+      }),
+    );
   });
 
   it("Issues 分区通过模板创建视图提交 Issue Form", async () => {
@@ -1101,6 +1151,12 @@ describe("RepoProjectPanel", () => {
         expect.objectContaining({ creator: "sena" }),
       );
     });
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({
+        projectTab: "issues",
+        issueCreator: "sena",
+      });
+    });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意标签" }));
     await fireEvent.click(await within(filters).findByRole("option", { name: "bug" }));
@@ -1109,6 +1165,9 @@ describe("RepoProjectPanel", () => {
         "sena-nana/remote-repo",
         expect.objectContaining({ labels: ["bug"] }),
       );
+    });
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query.issueLabels).toEqual(["bug"]);
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意项目" }));
@@ -1146,6 +1205,40 @@ describe("RepoProjectPanel", () => {
         expect.objectContaining({ sort: "comments", direction: "desc" }),
       );
     });
+  });
+
+  it("Issues 筛选条件可从 URL 恢复", async () => {
+    vi.mocked(listGitHubIssues).mockResolvedValue(githubIssues);
+    const view = await renderProjectPanel(
+      {
+        repoFullName: "sena-nana/remote-repo",
+        projectTab: "issues",
+      },
+      [
+        "/repos/local-repo?projectTab=issues",
+        "issueState=closed",
+        "issueQ=Roadmap",
+        "issueCreator=sena",
+        "issueLabels=bug",
+        "issueLabels=documentation",
+        "issueSort=updated",
+        "issueDirection=asc",
+      ].join("&"),
+    );
+
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(view.getByLabelText("搜索 Issues")).toHaveValue("Roadmap");
+    expect(listGitHubIssues).toHaveBeenLastCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({
+        state: "closed",
+        query: "Roadmap",
+        creator: "sena",
+        labels: ["bug", "documentation"],
+        sort: "updated",
+        direction: "asc",
+      }),
+    );
   });
 
   it("项目刷新 token 变化后对当前已加载分区强制刷新", async () => {

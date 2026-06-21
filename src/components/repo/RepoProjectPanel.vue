@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { AnsiUp } from "ansi_up";
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 import {
   AlertCircle,
   ArrowLeft,
@@ -106,6 +106,7 @@ import type {
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
 type ProjectContentMode = "launch" | ProjectTab | GitTab;
+type IssueState = "open" | "closed" | "all";
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
   label: string;
@@ -137,6 +138,22 @@ type IssuePanelFilters = {
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
+type SharedPanelFilters = Pick<
+  IssuePanelFilters,
+  "creator" | "assignee" | "labels" | "milestone" | "project" | "sort" | "direction" | "query"
+>;
+type RouteFilterKeys = {
+  state: string;
+  query: string;
+  creator: string;
+  assignee: string;
+  labels: string;
+  milestone: string;
+  project: string;
+  sort: string;
+  direction: string;
+  review?: string;
+};
 
 const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
   authors: [],
@@ -145,6 +162,35 @@ const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
   milestones: [],
   projects: [],
 });
+
+const issueStates = ["open", "closed", "all"] as const;
+const pullRequestStates = ["open", "closed", "merged"] as const;
+const listSorts = ["created", "updated", "comments"] as const;
+const listDirections = ["asc", "desc"] as const;
+const pullRequestReviews = ["none", "required", "approved", "changes_requested"] as const;
+const issueRouteKeys: RouteFilterKeys = {
+  state: "issueState",
+  query: "issueQ",
+  creator: "issueCreator",
+  assignee: "issueAssignee",
+  labels: "issueLabels",
+  milestone: "issueMilestone",
+  project: "issueProject",
+  sort: "issueSort",
+  direction: "issueDirection",
+};
+const pullRequestRouteKeys: RouteFilterKeys = {
+  state: "pullState",
+  query: "pullQ",
+  creator: "pullCreator",
+  assignee: "pullAssignee",
+  labels: "pullLabels",
+  milestone: "pullMilestone",
+  project: "pullProject",
+  sort: "pullSort",
+  direction: "pullDirection",
+  review: "pullReview",
+};
 
 const blankIssuePanelFilters = (): IssuePanelFilters => ({
   creator: null,
@@ -253,7 +299,6 @@ const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
 const githubError = ref<string | null>(null);
 const pulls = ref<GitHubPullRequest[]>([]);
-const pullState = ref<PullRequestState>("open");
 const pullChecks = ref<Record<number, GitHubPullRequestCheck[]>>({});
 const pullsLoading = ref(false);
 const pullChecksLoading = ref(false);
@@ -289,7 +334,7 @@ const aboutTopicMeasureList = ref<HTMLElement | null>(null);
 const aboutTopicsExpanded = ref(false);
 const collapsedAboutTopicCount = ref(0);
 const settingsTopicDraft = ref("");
-const issueState = ref<"open" | "closed" | "all">("open");
+const issueState = ref<IssueState>(issueStateFromRoute());
 const issueTitle = ref("");
 const issueBody = ref("");
 const issueLabels = ref<string[]>([]);
@@ -307,8 +352,9 @@ const issueMetadataLoadedRepo = ref<string | null>(null);
 const issueFilterMetadata = ref<GitHubIssueFilterMetadata>(emptyIssueFilterMetadata());
 const issueFilterMetadataLoading = ref(false);
 const issueFilterMetadataLoadedRepo = ref<string | null>(null);
-const issuePanelFilters = ref<IssuePanelFilters>(blankIssuePanelFilters());
-const pullRequestPanelFilters = ref<PullRequestPanelFilters>(blankPullRequestPanelFilters());
+const issuePanelFilters = ref<IssuePanelFilters>(issuePanelFiltersFromRoute());
+const pullRequestPanelFilters = ref<PullRequestPanelFilters>(pullRequestPanelFiltersFromRoute());
+const pullState = ref<PullRequestState>(pullRequestStateFromRoute());
 const editingIssueNumber = ref<number | null>(null);
 const editingIssueTitle = ref("");
 const editingIssueBody = ref("");
@@ -603,9 +649,17 @@ function isProjectSectionActive(section: ProjectContentMode, options?: { readmeP
   }
   return activeSection.value === section;
 }
-const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
+const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
+const routedIssueFilterState = computed(() => JSON.stringify({
+  state: issueStateFromRoute(),
+  filters: issuePanelFiltersFromRoute(),
+}));
+const routedPullRequestFilterState = computed(() => JSON.stringify({
+  state: pullRequestStateFromRoute(),
+  filters: pullRequestPanelFiltersFromRoute(),
+}));
 
 onMounted(() => {
   void applyProjectRouteState();
@@ -684,6 +738,10 @@ watch(pullState, () => {
   }
 });
 
+watch([routedIssueFilterState, routedPullRequestFilterState], () => {
+  applyRoutedListFilters();
+});
+
 watch(
   [routedProjectTab, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId],
   () => {
@@ -707,6 +765,62 @@ function normalizeProjectTab(value: unknown): ProjectTab | null {
   return null;
 }
 
+function routeStringValue(value: unknown) {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (typeof next !== "string") return null;
+  const trimmed = next.trim();
+  return trimmed || null;
+}
+
+function routeStringList(value: unknown) {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return values
+    .flatMap((item) => item.split(","))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function routeEnum<T extends string>(value: unknown, allowed: readonly T[]) {
+  const next = routeStringValue(value);
+  return next && (allowed as readonly string[]).includes(next) ? next as T : null;
+}
+
+function issueStateFromRoute(): IssueState {
+  return routeEnum(route.query[issueRouteKeys.state], issueStates) ?? "open";
+}
+
+function pullRequestStateFromRoute(): PullRequestState {
+  return routeEnum(route.query[pullRequestRouteKeys.state], pullRequestStates) ?? "open";
+}
+
+function sharedPanelFiltersFromRoute<T extends SharedPanelFilters>(
+  keys: RouteFilterKeys,
+  defaults: T,
+): T {
+  return {
+    ...defaults,
+    creator: routeStringValue(route.query[keys.creator]),
+    assignee: routeStringValue(route.query[keys.assignee]),
+    labels: routeStringList(route.query[keys.labels]),
+    milestone: routeStringValue(route.query[keys.milestone]),
+    project: routeStringValue(route.query[keys.project]),
+    sort: routeEnum(route.query[keys.sort], listSorts) ?? defaults.sort,
+    direction: routeEnum(route.query[keys.direction], listDirections) ?? defaults.direction,
+    query: routeStringValue(route.query[keys.query]) ?? "",
+  };
+}
+
+function issuePanelFiltersFromRoute(): IssuePanelFilters {
+  return sharedPanelFiltersFromRoute(issueRouteKeys, blankIssuePanelFilters());
+}
+
+function pullRequestPanelFiltersFromRoute(): PullRequestPanelFilters {
+  return {
+    ...sharedPanelFiltersFromRoute(pullRequestRouteKeys, blankPullRequestPanelFilters()),
+    review: routeEnum(route.query[pullRequestRouteKeys.review ?? ""], pullRequestReviews),
+  };
+}
+
 function normalizePositiveNumber(value: unknown) {
   const next = Array.isArray(value) ? value[0] : value;
   if (typeof next !== "string") return null;
@@ -716,7 +830,7 @@ function normalizePositiveNumber(value: unknown) {
 }
 
 function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
-  if (tab === "repo") return normalizeProjectTab(props.projectTab) ?? "readme";
+  if (tab === "repo") return normalizeProjectTab(route.query.projectTab) ?? normalizeProjectTab(props.projectTab) ?? "readme";
   if (tab === "run") return "launch";
   return tab;
 }
@@ -730,10 +844,13 @@ function hasIssue(issueNumber: number) {
 }
 
 function setIssueState(value: "open" | "closed" | "all") {
+  if (issueState.value === value) return;
   issueState.value = value;
+  void pushProjectTabRoute("issues");
 }
 
 function setIssuePanelFilters(filters: IssuePanelFilters) {
+  if (sameIssuePanelFilters(issuePanelFilters.value, filters)) return;
   issuePanelFilters.value = {
     ...filters,
     labels: [...filters.labels],
@@ -741,13 +858,17 @@ function setIssuePanelFilters(filters: IssuePanelFilters) {
   if (activeSection.value === "issues") {
     void loadIssues();
   }
+  void pushProjectTabRoute("issues");
 }
 
 function setPullRequestState(value: PullRequestState) {
+  if (pullState.value === value) return;
   pullState.value = value;
+  void pushProjectTabRoute("pulls");
 }
 
 function setPullRequestPanelFilters(filters: PullRequestPanelFilters) {
+  if (samePullRequestPanelFilters(pullRequestPanelFilters.value, filters)) return;
   pullRequestPanelFilters.value = {
     ...filters,
     labels: [...filters.labels],
@@ -755,6 +876,159 @@ function setPullRequestPanelFilters(filters: PullRequestPanelFilters) {
   if (activeSection.value === "pulls") {
     void loadPullRequests();
   }
+  void pushProjectTabRoute("pulls");
+}
+
+function applyRoutedListFilters() {
+  const nextIssueState = issueStateFromRoute();
+  const nextIssueFilters = issuePanelFiltersFromRoute();
+  const issueChanged = issueState.value !== nextIssueState ||
+    !sameIssuePanelFilters(issuePanelFilters.value, nextIssueFilters);
+  if (issueChanged) {
+    if (issueState.value !== nextIssueState) suppressIssueStateReload = true;
+    issueState.value = nextIssueState;
+    issuePanelFilters.value = {
+      ...nextIssueFilters,
+      labels: [...nextIssueFilters.labels],
+    };
+    if (activeSection.value === "issues") {
+      void loadIssues();
+    }
+  }
+
+  const nextPullState = pullRequestStateFromRoute();
+  const nextPullFilters = pullRequestPanelFiltersFromRoute();
+  const pullChanged = pullState.value !== nextPullState ||
+    !samePullRequestPanelFilters(pullRequestPanelFilters.value, nextPullFilters);
+  if (pullChanged) {
+    if (pullState.value !== nextPullState) suppressPullStateReload = true;
+    pullState.value = nextPullState;
+    pullRequestPanelFilters.value = {
+      ...nextPullFilters,
+      labels: [...nextPullFilters.labels],
+    };
+    if (activeSection.value === "pulls") {
+      void loadPullRequests();
+    }
+  }
+}
+
+function sameIssuePanelFilters(left: IssuePanelFilters, right: IssuePanelFilters) {
+  return sameSharedPanelFilters(left, right);
+}
+
+function samePullRequestPanelFilters(left: PullRequestPanelFilters, right: PullRequestPanelFilters) {
+  return sameSharedPanelFilters(left, right) && left.review === right.review;
+}
+
+function sameSharedPanelFilters(left: SharedPanelFilters, right: SharedPanelFilters) {
+  return left.creator === right.creator &&
+    left.assignee === right.assignee &&
+    left.milestone === right.milestone &&
+    left.project === right.project &&
+    left.sort === right.sort &&
+    left.direction === right.direction &&
+    left.query === right.query &&
+    sameStringList(left.labels, right.labels);
+}
+
+function pushProjectTabRoute(tab: ProjectTab) {
+  const nextQuery = projectTabRouteQuery(tab);
+  if (sameRouteQuery(route.query, nextQuery)) return Promise.resolve();
+  return router.push({ query: nextQuery }).then(() => undefined);
+}
+
+function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
+  const query: LocationQueryRaw = { ...route.query };
+  delete query.issue;
+  delete query.pr;
+  delete query.run;
+  clearRouteFilters(query, issueRouteKeys);
+  clearRouteFilters(query, pullRequestRouteKeys);
+
+  if (tab === "readme") {
+    delete query.projectTab;
+    return query;
+  }
+
+  query.projectTab = tab;
+  if (tab === "issues") {
+    applyRouteFilters(query, issueRouteKeys, issueState.value, "open", issuePanelFilters.value, blankIssuePanelFilters());
+  } else if (tab === "pulls") {
+    applyRouteFilters(
+      query,
+      pullRequestRouteKeys,
+      pullState.value,
+      "open",
+      pullRequestPanelFilters.value,
+      blankPullRequestPanelFilters(),
+    );
+  }
+  return query;
+}
+
+function clearRouteFilters(query: LocationQueryRaw, keys: RouteFilterKeys) {
+  for (const key of Object.values(keys)) delete query[key];
+}
+
+function applyRouteFilters<T extends SharedPanelFilters>(
+  query: LocationQueryRaw,
+  keys: RouteFilterKeys,
+  state: string,
+  defaultState: string,
+  filters: T,
+  defaults: T,
+) {
+  setRouteString(query, keys.state, state === defaultState ? null : state);
+  setRouteString(query, keys.query, filters.query);
+  setRouteString(query, keys.creator, filters.creator);
+  setRouteString(query, keys.assignee, filters.assignee);
+  setRouteList(query, keys.labels, filters.labels);
+  setRouteString(query, keys.milestone, filters.milestone);
+  setRouteString(query, keys.project, filters.project);
+  setRouteString(query, keys.sort, filters.sort === defaults.sort ? null : filters.sort);
+  setRouteString(query, keys.direction, filters.direction === defaults.direction ? null : filters.direction);
+  if (keys.review && "review" in filters) {
+    setRouteString(query, keys.review, filters.review as string | null);
+  }
+}
+
+function setRouteString(query: LocationQueryRaw, key: string, value: string | number | null | undefined) {
+  const next = typeof value === "number" ? String(value) : value?.trim();
+  if (next) {
+    query[key] = next;
+  } else {
+    delete query[key];
+  }
+}
+
+function setRouteList(query: LocationQueryRaw, key: string, values: readonly string[]) {
+  const next = values.map((value) => value.trim()).filter(Boolean);
+  if (next.length) {
+    query[key] = next;
+  } else {
+    delete query[key];
+  }
+}
+
+function sameRouteQuery(current: typeof route.query, next: LocationQueryRaw) {
+  return normalizedQueryEntries(current) === normalizedQueryEntries(next);
+}
+
+function normalizedQueryEntries(query: typeof route.query | LocationQueryRaw) {
+  return JSON.stringify(
+    Object.entries(query)
+      .flatMap(([key, value]) => {
+        if (value == null) return [];
+        const values = Array.isArray(value) ? value : [value];
+        return values
+          .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+          .map((item) => [key, String(item)] as const);
+      })
+      .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
+      ),
+  );
 }
 
 function hasPullRequest(pullNumber: number) {
@@ -964,6 +1238,7 @@ function isPullRequestRowFocused(pullNumber: number) {
 }
 
 async function applyProjectRouteState() {
+  applyRoutedListFilters();
   activeSection.value = routeTabToSection(props.activeGitTab);
   if (props.activeGitTab !== "repo") {
     clearProjectTargets();
@@ -1336,15 +1611,16 @@ function resetGitHubSectionState() {
   settingsLoaded.value = false;
   issues.value = [];
   issuesLoadedKey.value = null;
-  issuePanelFilters.value = blankIssuePanelFilters();
+  issueState.value = issueStateFromRoute();
+  issuePanelFilters.value = issuePanelFiltersFromRoute();
   issueFilterMetadata.value = emptyIssueFilterMetadata();
   issueFilterMetadataLoading.value = false;
   issueFilterMetadataLoadedRepo.value = null;
   pulls.value = [];
   pullChecks.value = {};
   pullsLoadedKey.value = null;
-  pullState.value = "open";
-  pullRequestPanelFilters.value = blankPullRequestPanelFilters();
+  pullState.value = pullRequestStateFromRoute();
+  pullRequestPanelFilters.value = pullRequestPanelFiltersFromRoute();
   pullsLoading.value = false;
   pullChecksLoading.value = false;
   focusedPullRequestNumber.value = null;
@@ -1916,21 +2192,22 @@ async function scrollTerminalToEnd() {
   body.scrollTop = body.scrollHeight;
 }
 
-function activateProjectTab(tab: ProjectTab) {
+async function activateProjectTab(tab: ProjectTab) {
   activeSection.value = tab;
   if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
     emit("hideTerminal");
   }
-  void ensureSectionData(tab);
+  await pushProjectTabRoute(tab);
+  await ensureSectionData(tab);
 }
 
 function activateProjectSection(tab: ProjectSectionConfig["key"]) {
-  activateProjectTab(tab);
+  void activateProjectTab(tab);
 }
 
 function selectReadme(path: string) {
   activeReadmePath.value = path;
-  activateProjectTab("readme");
+  void activateProjectTab("readme");
 }
 
 </script>
