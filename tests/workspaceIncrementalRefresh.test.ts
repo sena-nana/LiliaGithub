@@ -16,6 +16,7 @@ import {
   renameBranch,
   autoSyncRepoIfNeeded,
   useDefaultTokenAuthForRepo,
+  refreshRepoContributions,
   refreshRepos,
   refreshRepoLanguageStats,
   refreshRepoSummaries,
@@ -53,6 +54,9 @@ function deferred<T>() {
 
 const service = {
   getWorkspaceSettings: vi.fn(),
+  readStartupCache: vi.fn(),
+  clearStartupCache: vi.fn(),
+  writeStartupContributions: vi.fn(),
   setRepoAutoSync: vi.fn(),
   getGitHubBindingStatus: vi.fn(),
   listManagedRepos: vi.fn(),
@@ -110,9 +114,21 @@ beforeEach(() => {
     },
   });
   service.listWorkspaceTasks.mockResolvedValue([]);
-  service.getWorkspaceSettings.mockResolvedValue(workspaceSettings());
+  const settings = workspaceSettings();
+  service.getWorkspaceSettings.mockResolvedValue(settings);
+  service.readStartupCache.mockResolvedValue(null);
+  service.clearStartupCache.mockResolvedValue(undefined);
+  service.writeStartupContributions.mockImplementation(async (contributions) => ({
+    workspaceRoot: settings.workspaceRoot,
+    bindingLogin: settings.githubBinding?.login ?? null,
+    reposById: {},
+    contributions: {
+      ...contributions,
+      cachedAt: Date.now(),
+    },
+  }));
   service.setRepoAutoSync.mockImplementation(async (repoId: string, autoSync: boolean) => ({
-    ...workspaceSettings(),
+    ...settings,
     repoSyncPreferences: { [repoId]: { autoSync } },
   }));
   service.getGitHubBindingStatus.mockResolvedValue({
@@ -173,6 +189,58 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
     resolveSummary?.(refreshed);
     await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 2, stagedCount: 1 }));
+  });
+
+  it("初始化从启动缓存恢复贡献图，再继续刷新仓库列表", async () => {
+    service.listManagedRepos.mockResolvedValue([]);
+    service.readStartupCache.mockResolvedValue({
+      workspaceRoot: "C:\\Files\\workspace",
+      bindingLogin: null,
+      reposById: {},
+      contributions: {
+        days: [{ date: "2026-06-11", count: 3 }],
+        meta: {
+          repoCount: 1,
+          requestedRepoCount: 1,
+          repoLimit: 30,
+          truncated: false,
+          skippedRepoCount: 0,
+          refreshedAt: 1_780_000_000_000,
+        },
+        cachedAt: 1_780_000_001_000,
+      },
+    });
+
+    await initialize();
+
+    expect(service.readStartupCache).toHaveBeenCalledTimes(1);
+    expect(state.githubContributions.days).toEqual([{ date: "2026-06-11", count: 3 }]);
+    expect(state.githubContributions.meta?.repoCount).toBe(1);
+    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+  });
+
+  it("贡献图刷新完成后写入启动缓存", async () => {
+    state.repos = [repoSummary("Repo1")];
+    service.listRepoContribution.mockResolvedValue({
+      days: [{ date: "2026-06-11", count: 2 }],
+      meta: {
+        repoCount: 1,
+        requestedRepoCount: 1,
+        repoLimit: 30,
+        truncated: false,
+        skippedRepoCount: 0,
+        refreshedAt: 1_780_000_000_000,
+      },
+    } satisfies GitHubContributionResult);
+
+    await refreshRepoContributions();
+
+    await waitFor(() =>
+      expect(service.writeStartupContributions).toHaveBeenCalledWith({
+        days: expect.arrayContaining([{ date: "2026-06-11", count: 2 }]),
+        meta: expect.objectContaining({ repoCount: 1 }),
+      }),
+    );
   });
 
   it("自动刷新发现开启自动同步的仓库有待同步提交时执行同步", async () => {

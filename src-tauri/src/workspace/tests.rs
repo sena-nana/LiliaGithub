@@ -998,11 +998,33 @@ fn repo_branches_reports_checked_out_worktrees() {
         .iter()
         .find(|branch| branch.name == "feature/worktree")
         .unwrap();
+    let normalize_display_path = |value: String| {
+        value
+            .strip_prefix(r"\\?\")
+            .unwrap_or(value.as_str())
+            .to_string()
+    };
 
-    assert_eq!(main.checked_out_worktree_paths, vec![path.to_string_lossy().to_string()]);
     assert_eq!(
-        feature.checked_out_worktree_paths,
-        vec![linked.to_string_lossy().to_string()]
+        main.checked_out_worktree_paths
+            .iter()
+            .cloned()
+            .map(normalize_display_path)
+            .collect::<Vec<_>>(),
+        vec![normalize_display_path(
+            canonical_repo_path(&path).to_string_lossy().to_string()
+        )]
+    );
+    assert_eq!(
+        feature
+            .checked_out_worktree_paths
+            .iter()
+            .cloned()
+            .map(normalize_display_path)
+            .collect::<Vec<_>>(),
+        vec![normalize_display_path(
+            canonical_repo_path(&linked).to_string_lossy().to_string()
+        )]
     );
 }
 
@@ -2290,6 +2312,62 @@ fn lightweight_managed_repos_returns_visible_repo_list_without_git_metadata() {
     assert_eq!(repos[0].last_commit_at, None);
     assert_eq!(repos[0].last_commit_message, None);
     assert_eq!(repos[0].worktree.role, "standalone");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_managed_repos_merges_cached_metadata_with_current_repo_identity() {
+    let root = temp_dir("cached-managed-repos");
+    let visible = root.join("visible");
+    fs::create_dir_all(visible.join(".git")).unwrap();
+    let settings = WorkspaceSettings {
+        workspace_root: Some(root.to_string_lossy().to_string()),
+        managed_repo_ids: vec!["visible".to_string()],
+        ..WorkspaceSettings::default()
+    };
+    let mut cached = test_repo_summary(|summary| {
+        summary.id = "visible".to_string();
+        summary.name = "old-name".to_string();
+        summary.path = "C:/old/path".to_string();
+        summary.relative_path = "old/relative".to_string();
+        summary.current_branch = Some("cached-main".to_string());
+        summary.github_full_name = Some("cached/repo".to_string());
+        summary.ahead = 2;
+        summary.language_stats = vec![LanguageStat {
+            language: "Rust".to_string(),
+            bytes: 100,
+            lines: 10,
+        }];
+    });
+    cached.worktree = RepoWorktree {
+        role: "old".to_string(),
+        shared_repo_key: "old".to_string(),
+        main_repo_id: Some("old-main".to_string()),
+    };
+    let cache = WorkspaceStartupCache {
+        workspace_root: settings.workspace_root.clone(),
+        repos_by_id: HashMap::from([(
+            "visible".to_string(),
+            CachedRepoSummary {
+                summary: cached,
+                cached_at: 1,
+            },
+        )]),
+        ..WorkspaceStartupCache::default()
+    };
+
+    let repos = cached_managed_repos(&root, &settings, &cache);
+
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].id, "visible");
+    assert_eq!(repos[0].name, "visible");
+    assert_eq!(repos[0].path, visible.to_string_lossy().to_string());
+    assert_eq!(repos[0].relative_path, "visible");
+    assert_eq!(repos[0].worktree.role, "standalone");
+    assert_eq!(repos[0].current_branch.as_deref(), Some("cached-main"));
+    assert_eq!(repos[0].github_full_name.as_deref(), Some("cached/repo"));
+    assert_eq!(repos[0].ahead, 2);
+    assert_eq!(repos[0].language_stats[0].language, "Rust");
     fs::remove_dir_all(root).unwrap();
 }
 

@@ -43,6 +43,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ping,
             workspace::settings::workspace_get_settings,
+            workspace::settings::workspace_read_startup_cache,
+            workspace::settings::workspace_clear_startup_cache,
+            workspace::settings::workspace_write_startup_contributions,
             workspace::settings::workspace_set_root,
             workspace::settings::repo_set_auto_sync,
             workspace::settings::workspace_pick_root,

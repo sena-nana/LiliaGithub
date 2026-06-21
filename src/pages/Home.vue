@@ -54,6 +54,7 @@ import {
 } from "../services/workspace";
 import {
   clearHomeGitHubOverviewSnapshot,
+  homeGitHubOverviewSnapshotNeedsRefresh,
   readHomeGitHubOverviewSnapshot,
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
@@ -354,7 +355,11 @@ watch(
       void loadGitHubRepoStatus({ force: true });
       return;
     }
-    if (restoreGitHubOverviewSnapshot()) {
+    const restoredSnapshot = restoreGitHubOverviewSnapshot();
+    if (restoredSnapshot) {
+      if (homeGitHubOverviewSnapshotNeedsRefresh(restoredSnapshot)) {
+        void loadGitHubRepoStatus({ force: true });
+      }
       return;
     }
     void loadGitHubRepoStatus();
@@ -414,9 +419,17 @@ function applyGitHubRepoPage(
   prepareGitHubTimeline(page.items, refreshIssues);
 }
 
+function currentGitHubAccountLogin() {
+  return workspace.githubBinding.value?.login ?? null;
+}
+
 function restoreGitHubOverviewSnapshot() {
   const snapshot = readHomeGitHubOverviewSnapshot();
-  if (!snapshot) return false;
+  if (!snapshot) return null;
+  if (snapshot.accountLogin !== currentGitHubAccountLogin()) {
+    clearHomeGitHubOverviewSnapshot();
+    return null;
+  }
   githubRepos.value = snapshot.repos;
   githubReposNextPage.value = snapshot.nextPage;
   githubIssuesByRepo.value = snapshot.issuesByRepo;
@@ -425,11 +438,14 @@ function restoreGitHubOverviewSnapshot() {
   githubWorkflowRunsByRepo.value = snapshot.workflowRunsByRepo;
   githubReposError.value = null;
   prepareGitHubTimeline(snapshot.repos);
-  return true;
+  return snapshot;
 }
 
 function writeGitHubOverviewSnapshot() {
   writeHomeGitHubOverviewSnapshot({
+    schemaVersion: 1,
+    accountLogin: currentGitHubAccountLogin(),
+    cachedAt: Date.now(),
     repos: githubRepos.value,
     nextPage: githubReposNextPage.value,
     issuesByRepo: githubIssuesByRepo.value,

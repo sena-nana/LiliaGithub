@@ -15,16 +15,53 @@ export async function initialize() {
   state.error = null;
   try {
     const service = await loadWorkspaceService();
-    const [settings, bindingStatus] = await Promise.all([
-      service.getWorkspaceSettings(),
-      service.getGitHubBindingStatus(),
-    ]);
+    const bindingStatusPromise = service.getGitHubBindingStatus().catch((err) => {
+      if (generation === lifecycleGeneration) state.error = String(err);
+      return null;
+    });
+    const settingsPromise = service.getWorkspaceSettings();
+    const startupCachePromise = service.readStartupCache().catch(() => null);
+    const settings = await settingsPromise;
     if (generation !== lifecycleGeneration) return;
     state.settings = settings;
-    state.bindingStatus = bindingStatus;
+    const provisionalBindingStatus = settings.githubBinding
+      ? {
+          state: "bound" as const,
+          clientIdConfigured: true,
+          clientIdSource: settings.githubBinding.clientIdSource,
+          binding: settings.githubBinding,
+        }
+      : null;
+    if (settings.githubBinding) {
+      void bindingStatusPromise.then((bindingStatus) => {
+        if (generation !== lifecycleGeneration) return;
+        if (!bindingStatus) return;
+        state.bindingStatus = bindingStatus;
+        if (bindingStatus.state !== "bound") {
+          void service.clearStartupCache().catch(() => undefined);
+        }
+      });
+    } else {
+      const bindingStatus = await bindingStatusPromise;
+      if (generation !== lifecycleGeneration) return;
+      if (!bindingStatus) return;
+      state.bindingStatus = bindingStatus;
+    }
+    const startupCache = await startupCachePromise;
+    if (generation !== lifecycleGeneration) return;
+    if (startupCache?.contributions) {
+      state.githubContributions = {
+        days: startupCache.contributions.days,
+        meta: startupCache.contributions.meta,
+        loading: false,
+        error: null,
+      };
+    }
     if (settings.workspaceRoot) {
       await refreshRepos();
     }
+    if (generation !== lifecycleGeneration) return;
+    if (provisionalBindingStatus && !state.bindingStatus) state.bindingStatus = provisionalBindingStatus;
   } catch (err) {
     if (generation !== lifecycleGeneration) return;
     state.error = String(err);

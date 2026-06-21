@@ -13,6 +13,29 @@ export interface WorkspaceSettings {
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
 }
 
+export interface WorkspaceStartupCache {
+  workspaceRoot: string | null;
+  bindingLogin: string | null;
+  reposById: Record<string, CachedRepoSummary>;
+  contributions: CachedContributionResult | null;
+}
+
+export interface CachedRepoSummary {
+  summary: RepoSummary;
+  cachedAt: number;
+}
+
+export interface CachedContributionResult {
+  days: GitHubContributionDay[];
+  meta: GitHubContributionMeta;
+  cachedAt: number;
+}
+
+export interface WorkspaceStartupContributions {
+  days: GitHubContributionDay[];
+  meta: GitHubContributionMeta;
+}
+
 export interface RepoSyncPreference {
   autoSync: boolean;
 }

@@ -12,6 +12,9 @@ import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 const service = vi.hoisted(() => ({
   listManagedRepos: vi.fn(),
   getWorkspaceSettings: vi.fn(),
+  readStartupCache: vi.fn(),
+  clearStartupCache: vi.fn(),
+  writeStartupContributions: vi.fn(),
   getGitHubBindingStatus: vi.fn(),
   pickWorkspaceRoot: vi.fn(),
   setWorkspaceRoot: vi.fn(),
@@ -56,8 +59,17 @@ describe("workspace focus refresh", () => {
     vi.setSystemTime(new Date("2026-06-12T00:00:00Z"));
     resetWorkspaceStateForTests();
     vi.clearAllMocks();
-    state.settings = workspaceSettings();
-    service.getWorkspaceSettings.mockResolvedValue(workspaceSettings());
+    const settings = workspaceSettings();
+    state.settings = settings;
+    service.getWorkspaceSettings.mockResolvedValue(settings);
+    service.readStartupCache.mockResolvedValue(null);
+    service.clearStartupCache.mockResolvedValue(undefined);
+    service.writeStartupContributions.mockResolvedValue({
+      workspaceRoot: settings.workspaceRoot,
+      bindingLogin: settings.githubBinding?.login ?? null,
+      reposById: {},
+      contributions: null,
+    });
     service.getGitHubBindingStatus.mockResolvedValue({
       state: "bound",
       clientIdConfigured: true,
