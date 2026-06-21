@@ -4,7 +4,6 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, r
 import { useRoute, useRouter } from "vue-router";
 import {
   ArrowLeft,
-  Check,
   CircleDot,
   CircleOff,
   Eye,
@@ -29,6 +28,7 @@ import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
+import RepoIssuesPanel from "./RepoIssuesPanel.vue";
 import RepoTopicEditor from "./RepoTopicEditor.vue";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
@@ -37,6 +37,7 @@ import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
   createGitHubPullRequest,
+  getGitHubIssueFilterMetadata,
   getGitHubRepoManagement,
   listGitHubRepoReadmes,
   listRepoReadmes,
@@ -58,6 +59,8 @@ import {
 import type {
   CommitSummary,
   GitHubIssue,
+  GitHubIssueFilterMetadata,
+  GitHubIssueListOptions,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubRepoManagement,
@@ -110,9 +113,38 @@ type GitHubAccessUnavailable = {
   title: string;
   reason: string;
 };
+type IssuePanelFilters = {
+  creator: string | null;
+  assignee: string | null;
+  labels: string[];
+  milestone: string | number | null;
+  project: string | null;
+  sort: "created" | "updated" | "comments";
+  direction: "asc" | "desc";
+  query: string;
+};
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
+
+const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
+  authors: [],
+  labels: [],
+  assignees: [],
+  milestones: [],
+  projects: [],
+});
+
+const blankIssuePanelFilters = (): IssuePanelFilters => ({
+  creator: null,
+  assignee: null,
+  labels: [],
+  milestone: null,
+  project: null,
+  sort: "created",
+  direction: "desc",
+  query: "",
+});
 
 const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
@@ -231,7 +263,7 @@ const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
 const issues = ref<GitHubIssue[]>([]);
-const issuesLoadedState = ref<"open" | "closed" | "all" | null>(null);
+const issuesLoadedKey = ref<string | null>(null);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
 const actionsLoaded = ref(false);
 const aboutEditing = ref(false);
@@ -256,6 +288,10 @@ const remoteIssueLabels = ref<string[]>([]);
 const remoteIssueAssignees = ref<string[]>([]);
 const issueMetadataLoading = ref(false);
 const issueMetadataLoadedRepo = ref<string | null>(null);
+const issueFilterMetadata = ref<GitHubIssueFilterMetadata>(emptyIssueFilterMetadata());
+const issueFilterMetadataLoading = ref(false);
+const issueFilterMetadataLoadedRepo = ref<string | null>(null);
+const issuePanelFilters = ref<IssuePanelFilters>(blankIssuePanelFilters());
 const editingIssueNumber = ref<number | null>(null);
 const editingIssueTitle = ref("");
 const editingIssueBody = ref("");
@@ -483,10 +519,23 @@ const issueAssigneeOptions = computed(() =>
     ...issueAssignees.value,
   ])
 );
-const issueLabelSummary = computed(() => multiSelectSummary(issueLabels.value, "No labels"));
-const issueAssigneeSummary = computed(() => multiSelectSummary(issueAssignees.value, "No assignees"));
+const issueLabelSummary = computed(() => multiSelectSummary(issueLabels.value, "无标签"));
+const issueAssigneeSummary = computed(() => multiSelectSummary(issueAssignees.value, "未分配"));
 const issueLabelDropdownOptions = computed(() => stringOptions(issueLabelOptions.value));
 const issueAssigneeDropdownOptions = computed(() => stringOptions(issueAssigneeOptions.value));
+const issueListOptions = computed<GitHubIssueListOptions>(() => ({
+  state: issueState.value,
+  perPage: 100,
+  sort: issuePanelFilters.value.sort,
+  direction: issuePanelFilters.value.direction,
+  creator: issuePanelFilters.value.creator,
+  assignee: issuePanelFilters.value.assignee,
+  labels: issuePanelFilters.value.labels,
+  milestone: issuePanelFilters.value.milestone,
+  project: issuePanelFilters.value.project,
+  query: issuePanelFilters.value.query,
+}));
+const issueListKey = computed(() => JSON.stringify(issueListOptions.value));
 const canSubmitIssueCreate = computed(() =>
   Boolean(props.repoFullName) &&
   !creatingIssue.value &&
@@ -643,6 +692,20 @@ function isGitHubProjectSection(section: ProjectContentMode) {
 
 function hasIssue(issueNumber: number) {
   return issues.value.some((issue) => issue.number === issueNumber);
+}
+
+function setIssueState(value: "open" | "closed" | "all") {
+  issueState.value = value;
+}
+
+function setIssuePanelFilters(filters: IssuePanelFilters) {
+  issuePanelFilters.value = {
+    ...filters,
+    labels: [...filters.labels],
+  };
+  if (activeSection.value === "issues") {
+    void loadIssues();
+  }
 }
 
 function hasPullRequest(pullNumber: number) {
@@ -982,17 +1045,18 @@ async function loadIssues(force = false) {
     return;
   }
   if (!repoFullName || remoteDeleted.value) return;
-  if (!force && issuesLoadedState.value === issueState.value) return;
-  const stateKey = issueState.value;
+  const loadKey = issueListKey.value;
+  if (!force && issuesLoadedKey.value === loadKey) return;
+  const options = { ...issueListOptions.value, labels: [...(issueListOptions.value.labels ?? [])] };
   githubError.value = null;
-  await issuesLoader.run(stateKey, async (runId) => {
+  await issuesLoader.run(loadKey, async (runId) => {
     try {
       const nextIssues = force
-        ? await listGitHubIssues(repoFullName, stateKey, { forceRefresh: true })
-        : await listGitHubIssues(repoFullName, stateKey);
+        ? await listGitHubIssues(repoFullName, options, { forceRefresh: true })
+        : await listGitHubIssues(repoFullName, options);
       if (!issuesLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       issues.value = nextIssues;
-      issuesLoadedState.value = stateKey;
+      issuesLoadedKey.value = loadKey;
       syncEditingIssue();
     } catch (err) {
       githubError.value = String(err);
@@ -1105,7 +1169,10 @@ async function ensureSectionData(section: ProjectContentMode) {
     return;
   }
   if (section === "issues") {
-    await loadIssues();
+    await Promise.all([
+      loadIssues(),
+      loadIssueFilterMetadata(),
+    ]);
     return;
   }
   if (section === "pulls") {
@@ -1133,8 +1200,11 @@ async function refreshLoadedSectionData() {
     }
     return;
   }
-  if (activeSection.value === "issues" && issuesLoadedState.value) {
-    await loadIssues(true);
+  if (activeSection.value === "issues" && issuesLoadedKey.value) {
+    await Promise.all([
+      loadIssues(true),
+      issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
+    ]);
     return;
   }
   if (activeSection.value === "pulls" && pullsLoadedState.value) {
@@ -1205,7 +1275,11 @@ function resetGitHubSectionState() {
   settings.value = null;
   settingsLoaded.value = false;
   issues.value = [];
-  issuesLoadedState.value = null;
+  issuesLoadedKey.value = null;
+  issuePanelFilters.value = blankIssuePanelFilters();
+  issueFilterMetadata.value = emptyIssueFilterMetadata();
+  issueFilterMetadataLoading.value = false;
+  issueFilterMetadataLoadedRepo.value = null;
   pulls.value = [];
   pullChecks.value = {};
   pullsLoadedState.value = null;
@@ -1503,6 +1577,23 @@ async function loadIssueMetadata(force = false) {
   }
 }
 
+async function loadIssueFilterMetadata(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || issueFilterMetadataLoading.value) return;
+  if (!force && issueFilterMetadataLoadedRepo.value === repoFullName) return;
+  issueFilterMetadataLoading.value = true;
+  try {
+    const metadata = await getGitHubIssueFilterMetadata(repoFullName, { forceRefresh: force });
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    issueFilterMetadata.value = metadata;
+    issueFilterMetadataLoadedRepo.value = repoFullName;
+  } catch (err) {
+    if (repoFullName === props.repoFullName) githubError.value = String(err);
+  } finally {
+    if (repoFullName === props.repoFullName) issueFilterMetadataLoading.value = false;
+  }
+}
+
 function issueFieldValue(field: GitHubIssueTemplateField) {
   const value = issueTemplateAnswers.value[field.id];
   return Array.isArray(value) ? value.join(", ") : value ?? "";
@@ -1578,10 +1669,6 @@ function selectPullRequestTemplate(key: string) {
 
 function applyPullRequestTemplate(template: GitHubPullRequestTemplate) {
   pullRequestBody.value = template.body;
-}
-
-function isEditingIssue(issueNumber: number) {
-  return editingIssueNumber.value === issueNumber;
 }
 
 function syncEditingIssue() {
@@ -1860,36 +1947,6 @@ function selectReadme(path: string) {
         </section>
 
         <section v-else-if="activeSection === 'issues'" class="project-section project-github-section">
-          <div class="project-section__head project-section__head--compact">
-            <div class="project-section__title">
-              <h3>Issues</h3>
-              <span>{{ issues.length }} items</span>
-            </div>
-            <div class="project-toolbar" aria-label="Issue actions">
-              <button
-                v-if="!issueCreateView && !issuesAccessUnavailable"
-                type="button"
-                class="primary project-create-button"
-                @click="openIssueCreateView"
-              >
-                <Plus :size="14" aria-hidden="true" />
-                New issue
-              </button>
-              <ListFilter v-if="!issueCreateView" :size="14" aria-hidden="true" />
-              <div v-if="!issueCreateView" class="ui-segmented project-segmented" role="group" aria-label="Issue 状态">
-                <button
-                  v-for="filter in githubStateFilters"
-                  :key="filter.value"
-                  type="button"
-                  :class="{ 'is-active': issueState === filter.value }"
-                  :aria-pressed="issueState === filter.value"
-                  @click="issueState = filter.value"
-                >
-                  {{ filter.label }}
-                </button>
-              </div>
-            </div>
-          </div>
           <RepoGitHubUnavailableNotice
             v-if="issuesAccessUnavailable"
             :title="issuesAccessUnavailable.title"
@@ -1901,7 +1958,7 @@ function selectReadme(path: string) {
           <form
             v-if="!issuesAccessUnavailable && issueCreateView"
             class="project-create-form"
-            aria-label="Create issue"
+            aria-label="新建 Issue"
             @submit.prevent="createIssue"
           >
             <div class="project-create-form__head">
@@ -1910,63 +1967,63 @@ function selectReadme(path: string) {
                 Issues
               </button>
               <div class="project-create-form__actions">
-                <button type="button" class="ghost" :disabled="creatingIssue" @click="() => closeIssueCreateView()">Cancel</button>
+                <button type="button" class="ghost" :disabled="creatingIssue" @click="() => closeIssueCreateView()">取消</button>
                 <button type="submit" class="primary" :disabled="!canSubmitIssueCreate">
                   <LoaderCircle v-if="creatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
                   <Plus v-else :size="14" aria-hidden="true" />
-                  Create issue
+                  创建 Issue
                 </button>
               </div>
             </div>
             <div class="project-template-picker">
               <div class="project-template-picker__control">
-                <span>Template</span>
+                <span>模板</span>
                 <Dropdown
                   :model-value="issueTemplateKey"
                   :options="issueTemplateOptions"
                   :disabled="issueTemplatesLoading"
                   button-class="project-template-dropdown"
                   menu-width="260px"
-                  menu-label="Issue templates"
+                  menu-label="Issue 模板"
                   placement="bottom"
                   @update:model-value="selectIssueTemplate"
                 />
               </div>
               <p class="muted">
-                {{ issueTemplatesLoading ? "Loading templates..." : selectedIssueTemplate.description }}
+                {{ issueTemplatesLoading ? "正在读取模板..." : selectedIssueTemplate.description }}
               </p>
             </div>
             <div class="project-create-grid">
               <label class="project-create-field project-create-field--wide">
-                <span>Title</span>
-                <input v-model="issueTitle" type="text" placeholder="Issue title" />
+                <span>标题</span>
+                <input v-model="issueTitle" type="text" placeholder="Issue 标题" />
               </label>
               <div class="project-create-field">
-                <span>Labels</span>
+                <span>标签</span>
                 <Dropdown
                   v-model="issueLabels"
                   multiple
                   :options="issueLabelDropdownOptions"
                   :display-label="issueLabelSummary"
-                  :placeholder="issueMetadataLoading ? 'Loading labels...' : 'No labels'"
+                  :placeholder="issueMetadataLoading ? '正在读取标签...' : '无标签'"
                   button-class="project-template-dropdown"
                   menu-width="220px"
-                  menu-label="Labels"
+                  menu-label="标签"
                   placement="bottom"
                   :disabled="issueMetadataLoading && !issueLabelOptions.length"
                 />
               </div>
               <div class="project-create-field">
-                <span>Assignees</span>
+                <span>负责人</span>
                 <Dropdown
                   v-model="issueAssignees"
                   multiple
                   :options="issueAssigneeDropdownOptions"
                   :display-label="issueAssigneeSummary"
-                  :placeholder="issueMetadataLoading ? 'Loading assignees...' : 'No assignees'"
+                  :placeholder="issueMetadataLoading ? '正在读取负责人...' : '未分配'"
                   button-class="project-template-dropdown"
                   menu-width="220px"
-                  menu-label="Assignees"
+                  menu-label="负责人"
                   placement="bottom"
                   :disabled="issueMetadataLoading && !issueAssigneeOptions.length"
                 />
@@ -2020,81 +2077,37 @@ function selectReadme(path: string) {
               </label>
             </div>
             <label v-else class="project-create-field project-create-field--wide">
-              <span>Body</span>
-              <textarea v-model="issueBody" rows="7" placeholder="Leave a comment"></textarea>
+              <span>内容</span>
+              <textarea v-model="issueBody" rows="7" placeholder="填写 Issue 内容"></textarea>
             </label>
           </form>
-          <div v-if="!issuesAccessUnavailable && !issueCreateView" class="project-list project-dense-list">
-            <div
-              v-for="issue in issues"
-              :key="issue.number"
-              class="project-row project-row--issue"
-              :class="{ 'is-target': isIssueRowFocused(issue.number) }"
-              :data-issue-number="issue.number"
-            >
-              <template v-if="!isEditingIssue(issue.number)">
-                <span class="project-row__status" :class="{ 'is-closed': issue.state !== 'open' }" :title="issue.state">
-                  <CircleDot v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-                  <CircleOff v-else :size="14" aria-hidden="true" />
-                </span>
-                <div class="project-row__content">
-                  <strong>#{{ issue.number }} {{ issue.title }}</strong>
-                  <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
-                </div>
-                <div class="project-row__actions">
-                  <button
-                    type="button"
-                    class="ghost project-icon-action"
-                    aria-label="编辑"
-                    title="编辑"
-                    @click="startEditIssue(issue)"
-                  >
-                    <Pencil :size="14" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    class="ghost project-icon-action"
-                    :aria-label="issue.state === 'open' ? '关闭' : '重开'"
-                    :title="issue.state === 'open' ? '关闭' : '重开'"
-                    @click="toggleIssue(issue)"
-                  >
-                    <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-                    <RotateCcw v-else :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-              </template>
-              <form
-                v-else
-                class="project-issue-edit-form project-compact-form"
-                @submit.prevent="saveIssueEdit(issue)"
-              >
-                <div class="project-compact-form__line">
-                  <input v-model="editingIssueTitle" class="project-compact-form__title" type="text" placeholder="Issue 标题" />
-                  <input v-model="editingIssueLabels" type="text" placeholder="labels, comma separated" />
-                  <input v-model="editingIssueAssignees" type="text" placeholder="assignees" />
-                  <button
-                    type="submit"
-                    class="primary project-icon-action project-icon-action--primary"
-                    :disabled="updatingIssue || !editingIssueTitle.trim()"
-                    aria-label="保存"
-                    title="保存"
-                  >
-                    <LoaderCircle v-if="updatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
-                    <Check v-else :size="14" aria-hidden="true" />
-                  </button>
-                  <button type="button" class="ghost project-icon-action" aria-label="取消" title="取消" @click="cancelEditIssue">
-                    <X :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-                <textarea v-model="editingIssueBody" rows="2" placeholder="Issue 内容"></textarea>
-              </form>
-            </div>
-            <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
-          </div>
+          <RepoIssuesPanel
+            v-if="!issuesAccessUnavailable && !issueCreateView"
+            :issues="issues"
+            :state="issueState"
+            :filters="issuePanelFilters"
+            :metadata="issueFilterMetadata"
+            :metadata-loading="issueFilterMetadataLoading"
+            :loading="githubLoading"
+            :updating="updatingIssue"
+            :editing-issue-number="editingIssueNumber"
+            v-model:editing-title="editingIssueTitle"
+            v-model:editing-labels="editingIssueLabels"
+            v-model:editing-assignees="editingIssueAssignees"
+            v-model:editing-body="editingIssueBody"
+            :is-focused="isIssueRowFocused"
+            @update:state="setIssueState"
+            @update:filters="setIssuePanelFilters"
+            @create="openIssueCreateView"
+            @edit="startEditIssue"
+            @cancel-edit="cancelEditIssue"
+            @save-edit="saveIssueEdit"
+            @toggle="toggleIssue"
+          />
         </section>
 
         <section v-else-if="activeSection === 'pulls'" class="project-section project-github-section">
-          <div class="project-section__head project-section__head--compact">
+          <div v-if="!pullCreateView" class="project-section__head project-section__head--compact">
             <div class="project-section__title">
               <h3>Pull Requests</h3>
               <span>{{ pulls.length }} items</span>
@@ -2107,7 +2120,7 @@ function selectReadme(path: string) {
                 @click="openPullRequestCreateView"
               >
                 <GitPullRequest :size="14" aria-hidden="true" />
-                New pull request
+                新建 PR
               </button>
               <ListFilter v-if="!pullCreateView" :size="14" aria-hidden="true" />
               <div v-if="!pullCreateView" class="ui-segmented project-segmented" role="group" aria-label="Pull Request 状态">
@@ -2135,7 +2148,7 @@ function selectReadme(path: string) {
           <form
             v-if="!pullsAccessUnavailable && pullCreateView"
             class="project-create-form"
-            aria-label="Create pull request"
+            aria-label="新建 PR"
             @submit.prevent="createPullRequest"
           >
             <div class="project-create-form__head">
@@ -2145,57 +2158,57 @@ function selectReadme(path: string) {
               </button>
               <div class="project-create-form__actions">
                 <button type="button" class="ghost" :disabled="creatingPullRequest" @click="() => closePullRequestCreateView()">
-                  Cancel
+                  取消
                 </button>
                 <button type="submit" class="primary" :disabled="!canSubmitPullRequestCreate">
                   <LoaderCircle v-if="creatingPullRequest" :size="14" aria-hidden="true" class="sb-spin" />
                   <GitPullRequest v-else :size="14" aria-hidden="true" />
-                  Create pull request
+                  创建 PR
                 </button>
               </div>
             </div>
             <div class="project-template-picker">
               <div class="project-template-picker__control">
-                <span>Template</span>
+                <span>模板</span>
                 <Dropdown
                   :model-value="pullRequestTemplateKey"
                   :options="pullRequestTemplateOptions"
                   :disabled="pullRequestTemplatesLoading"
                   button-class="project-template-dropdown"
                   menu-width="260px"
-                  menu-label="Pull request templates"
+                  menu-label="PR 模板"
                   placement="bottom"
                   @update:model-value="selectPullRequestTemplate"
                 />
               </div>
               <p class="muted">
-                {{ pullRequestTemplatesLoading ? "Loading templates..." : selectedPullRequestTemplate.description }}
+                {{ pullRequestTemplatesLoading ? "正在读取模板..." : selectedPullRequestTemplate.description }}
               </p>
             </div>
             <div class="project-create-grid">
               <label class="project-create-field project-create-field--wide">
-                <span>Title</span>
-                <input v-model="pullRequestTitle" type="text" placeholder="Pull request title" />
+                <span>标题</span>
+                <input v-model="pullRequestTitle" type="text" placeholder="PR 标题" />
               </label>
               <label class="project-create-field">
-                <span>Head branch</span>
+                <span>来源分支</span>
                 <input v-model="pullRequestHead" type="text" placeholder="feature/my-change" />
               </label>
               <label class="project-create-field">
-                <span>Base branch</span>
+                <span>目标分支</span>
                 <input v-model="pullRequestBase" type="text" placeholder="main" />
               </label>
               <label class="project-create-switch ui-switch">
                 <span class="project-create-switch__content">
-                  <strong>Draft</strong>
+                  <strong>草稿</strong>
                 </span>
                 <input v-model="pullRequestDraft" class="ui-switch__input" type="checkbox" />
                 <span class="ui-switch__track" aria-hidden="true"></span>
               </label>
             </div>
             <label class="project-create-field project-create-field--wide">
-              <span>Description</span>
-              <textarea v-model="pullRequestBody" rows="7" placeholder="Describe the change"></textarea>
+              <span>描述</span>
+              <textarea v-model="pullRequestBody" rows="7" placeholder="描述本次变更"></textarea>
             </label>
           </form>
           <p v-if="!pullsAccessUnavailable && !pullCreateView && pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>

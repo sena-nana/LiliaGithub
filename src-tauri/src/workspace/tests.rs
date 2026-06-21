@@ -49,7 +49,9 @@ fn repo_discards_tracked_worktree_changes() {
     discard_repo_files(&path, vec!["app.ts".to_string()]).unwrap();
 
     assert_eq!(
-        fs::read_to_string(path.join("app.ts")).unwrap().replace("\r\n", "\n"),
+        fs::read_to_string(path.join("app.ts"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "before\n"
     );
     assert!(repo_status_entries(&path).is_empty());
@@ -82,10 +84,7 @@ fn repo_adds_untracked_files_to_gitignore_once() {
 
     add_repo_files_to_gitignore(
         &path,
-        vec![
-            "logs/output.log".to_string(),
-            "logs/output.log".to_string(),
-        ],
+        vec!["logs/output.log".to_string(), "logs/output.log".to_string()],
     )
     .unwrap();
 
@@ -103,7 +102,11 @@ fn repo_changes_include_untracked_file_diff() {
     run_git(&path, &["add", "tracked.ts"]);
     run_git(&path, &["commit", "-m", "initial"]);
     fs::create_dir_all(path.join("src")).unwrap();
-    fs::write(path.join("src").join("new.ts"), "export const added = true;\n").unwrap();
+    fs::write(
+        path.join("src").join("new.ts"),
+        "export const added = true;\n",
+    )
+    .unwrap();
 
     let changes = repo_changes(&path);
     let change = changes
@@ -256,6 +259,10 @@ fn test_github_issue(number: u64, state: &str) -> GitHubIssue {
         body: None,
         labels: Vec::new(),
         assignees: Vec::new(),
+        author: Some("sena".to_string()),
+        milestone: None,
+        comments: 0,
+        project_items: Vec::new(),
         html_url: format!("https://github.com/a/repo/issues/{number}"),
         updated_at: "2026-06-18T08:00:00Z".to_string(),
         created_at: "2026-06-18T08:00:00Z".to_string(),
@@ -287,14 +294,54 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
         github_project_cache_repo_key("https://github.com/Sena-Nana/Remote.git").unwrap(),
         "sena-nana/remote"
     );
+    let labels = vec!["bug".to_string(), "docs".to_string()];
+    let key: serde_json::Value = serde_json::from_str(&github_issue_cache_key(
+        Some("closed"),
+        Some(200),
+        Some("updated"),
+        Some("asc"),
+        Some(" 2026-01-01T00:00:00Z "),
+        Some("sena"),
+        Some("mika"),
+        Some(&labels),
+        Some("1"),
+        Some("PVT_roadmap"),
+        Some(" roadmap "),
+    ))
+    .unwrap();
     assert_eq!(
-        github_issue_cache_key(Some("closed"), Some(200), Some("updated"), Some("asc"), Some(" 2026-01-01T00:00:00Z ")),
-        "closed|100|updated|asc|2026-01-01T00:00:00Z"
+        key,
+        serde_json::json!({
+            "state": "closed",
+            "perPage": 100,
+            "sort": "updated",
+            "direction": "asc",
+            "since": "2026-01-01T00:00:00Z",
+            "creator": "sena",
+            "assignee": "mika",
+            "labels": ["bug", "docs"],
+            "milestone": "1",
+            "project": "PVT_roadmap",
+            "query": "roadmap",
+        })
     );
-    assert_eq!(
-        github_issue_cache_key(None, None, Some("invalid"), None, None),
-        "open|100|created|desc|"
-    );
+    let fallback_key: serde_json::Value = serde_json::from_str(&github_issue_cache_key(
+        None,
+        None,
+        Some("invalid"),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(fallback_key["state"], "open");
+    assert_eq!(fallback_key["sort"], "created");
+    assert_eq!(fallback_key["direction"], "desc");
     assert_eq!(github_pull_request_cache_key(Some("all")), "all");
     assert_eq!(github_pull_request_cache_key(Some("invalid")), "open");
     assert_eq!(github_workflow_runs_cache_key(Some(0)), "1");
@@ -309,11 +356,35 @@ fn github_project_cache_serializes_distinct_query_buckets() {
         .entry("sena-nana/remote".to_string())
         .or_default();
     repo_cache.issues.insert(
-        github_issue_cache_key(Some("open"), None, None, None, None),
+        github_issue_cache_key(
+            Some("open"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         vec![test_github_issue(1, "open")],
     );
     repo_cache.issues.insert(
-        github_issue_cache_key(Some("closed"), None, None, None, None),
+        github_issue_cache_key(
+            Some("closed"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         vec![test_github_issue(2, "closed")],
     );
     repo_cache.pull_requests.insert(
@@ -330,11 +401,37 @@ fn github_project_cache_serializes_distinct_query_buckets() {
     let restored_repo = restored.repos.get("sena-nana/remote").unwrap();
 
     assert_eq!(
-        restored_repo.issues[&github_issue_cache_key(Some("open"), None, None, None, None)][0].number,
+        restored_repo.issues[&github_issue_cache_key(
+            Some("open"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )][0]
+            .number,
         1
     );
     assert_eq!(
-        restored_repo.issues[&github_issue_cache_key(Some("closed"), None, None, None, None)][0].number,
+        restored_repo.issues[&github_issue_cache_key(
+            Some("closed"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )][0]
+            .number,
         2
     );
     assert_eq!(
@@ -956,14 +1053,20 @@ fn repo_branches_marks_origin_short_refs_as_remote() {
     let path = temp_dir("branches-origin-short-clone");
     run_git(
         &std::env::temp_dir(),
-        &["clone", remote.to_string_lossy().as_ref(), path.to_string_lossy().as_ref()],
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            path.to_string_lossy().as_ref(),
+        ],
     );
     run_git(&path, &["config", "user.email", "test@example.com"]);
     run_git(&path, &["config", "user.name", "Test User"]);
 
     let branches = repo_branches(&path);
 
-    assert!(branches.iter().any(|branch| branch.remote && branch.name == "origin/main"));
+    assert!(branches
+        .iter()
+        .any(|branch| branch.remote && branch.name == "origin/main"));
     assert!(branches
         .iter()
         .any(|branch| branch.remote && branch.name == "origin/feature/notice-update"));
@@ -989,11 +1092,19 @@ fn repo_branches_reports_checked_out_worktrees() {
     let linked = temp_dir("linked-worktree");
     run_git(
         &path,
-        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/worktree",
+        ],
     );
 
     let branches = repo_branches(&path);
-    let main = branches.iter().find(|branch| branch.name == "main").unwrap();
+    let main = branches
+        .iter()
+        .find(|branch| branch.name == "main")
+        .unwrap();
     let feature = branches
         .iter()
         .find(|branch| branch.name == "feature/worktree")
@@ -1052,7 +1163,12 @@ fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
     let linked = root.join("linked-worktree");
     run_git(
         &main,
-        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/worktree",
+        ],
     );
 
     let standalone_worktree = resolve_repo_worktree(&root, &standalone);
@@ -1064,10 +1180,16 @@ fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
     assert!(!standalone_worktree.summary.shared_repo_key.is_empty());
 
     assert_eq!(main_worktree.summary.role, "main");
-    assert_eq!(main_worktree.summary.main_repo_id.as_deref(), Some("main-repo"));
+    assert_eq!(
+        main_worktree.summary.main_repo_id.as_deref(),
+        Some("main-repo")
+    );
 
     assert_eq!(linked_worktree.summary.role, "linked");
-    assert_eq!(linked_worktree.summary.main_repo_id.as_deref(), Some("main-repo"));
+    assert_eq!(
+        linked_worktree.summary.main_repo_id.as_deref(),
+        Some("main-repo")
+    );
     assert_eq!(
         linked_worktree.summary.shared_repo_key,
         main_worktree.summary.shared_repo_key
@@ -1092,7 +1214,12 @@ fn remove_managed_repo_path_removes_linked_worktree_directory() {
     let linked = root.join("linked-worktree");
     run_git(
         &main,
-        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/worktree",
+        ],
     );
     let worktree = resolve_repo_worktree(&root, &linked);
 
@@ -1118,7 +1245,10 @@ fn delete_branch_blocks_current_branch_and_safely_deletes_merged_branch() {
     run_git(&path, &["add", "feature.txt"]);
     run_git(&path, &["commit", "-m", "feature"]);
     run_git(&path, &["checkout", "main"]);
-    run_git(&path, &["merge", "--no-ff", "feature", "-m", "merge feature"]);
+    run_git(
+        &path,
+        &["merge", "--no-ff", "feature", "-m", "merge feature"],
+    );
 
     assert_eq!(
         delete_branch_at(&path, &path, "main").unwrap_err(),
@@ -1149,7 +1279,11 @@ fn checkout_remote_branch_creates_tracking_local_branch() {
     let path = temp_dir("checkout-remote-branch");
     run_git(
         &std::env::temp_dir(),
-        &["clone", remote.to_string_lossy().as_ref(), path.to_string_lossy().as_ref()],
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            path.to_string_lossy().as_ref(),
+        ],
     );
     run_git(&path, &["config", "user.email", "test@example.com"]);
     run_git(&path, &["config", "user.name", "Test User"]);
@@ -1866,6 +2000,15 @@ fn filters_pull_requests_from_github_issues() {
         html_url: "https://github.com/a/repo/issues/1".to_string(),
         updated_at: "2026-06-11T00:00:00Z".to_string(),
         created_at: "2026-06-11T00:00:00Z".to_string(),
+        user: Some(GitHubAssigneeResponse {
+            login: "sena".to_string(),
+        }),
+        milestone: Some(GitHubIssueMilestoneResponse {
+            number: 7,
+            title: "v1".to_string(),
+            state: Some("open".to_string()),
+        }),
+        comments: 4,
         labels: vec![GitHubLabelResponse {
             name: "bug".to_string(),
         }],
@@ -1885,6 +2028,9 @@ fn filters_pull_requests_from_github_issues() {
         html_url: "https://github.com/a/repo/pull/2".to_string(),
         updated_at: "2026-06-11T00:00:00Z".to_string(),
         created_at: "2026-06-11T00:00:00Z".to_string(),
+        user: None,
+        milestone: None,
+        comments: 0,
         labels: Vec::new(),
         assignees: Vec::new(),
     };
@@ -1892,7 +2038,48 @@ fn filters_pull_requests_from_github_issues() {
     let mapped = github_issue_from_response(issue).unwrap();
     assert_eq!(mapped.labels, vec!["bug"]);
     assert_eq!(mapped.assignees, vec!["octo"]);
+    assert_eq!(mapped.author.as_deref(), Some("sena"));
+    assert_eq!(
+        mapped
+            .milestone
+            .as_ref()
+            .map(|milestone| milestone.title.as_str()),
+        Some("v1")
+    );
+    assert_eq!(mapped.comments, 4);
     assert!(github_issue_from_response(pr).is_none());
+}
+
+#[test]
+fn maps_github_issue_project_items_from_graphql() {
+    let data: GitHubIssueProjectsGraphQlData = serde_json::from_value(serde_json::json!({
+        "repository": {
+            "issues": {
+                "nodes": [
+                    {
+                        "number": 12,
+                        "projectItems": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_item",
+                                    "project": {
+                                        "id": "PVT_roadmap",
+                                        "title": "Roadmap"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+
+    let mapped = github_issue_project_items_from_graphql(data);
+
+    assert_eq!(mapped[&12][0].id, "PVT_roadmap");
+    assert_eq!(mapped[&12][0].title, "Roadmap");
 }
 
 #[test]
@@ -2070,11 +2257,7 @@ fn repo_file_preview_returns_text_markdown_image_binary_and_too_large() {
         "![icon](../assets/icon.png)\n\n# Guide\n",
     )
     .unwrap();
-    fs::write(
-        repo.join("large.log"),
-        vec![b'a'; (1024 * 1024) + 1],
-    )
-    .unwrap();
+    fs::write(repo.join("large.log"), vec![b'a'; (1024 * 1024) + 1]).unwrap();
 
     let text = repo_file_preview(&repo, "plain.txt").unwrap();
     assert_eq!(text.preview_kind, "text");
@@ -2085,14 +2268,20 @@ fn repo_file_preview_returns_text_markdown_image_binary_and_too_large() {
     assert_eq!(markdown.preview_kind, "markdown");
     assert_eq!(markdown.mime_type.as_deref(), Some("text/markdown"));
     assert_eq!(
-        markdown.images.get("../assets/icon.png").map(String::as_str),
+        markdown
+            .images
+            .get("../assets/icon.png")
+            .map(String::as_str),
         Some("data:image/png;base64,AQID")
     );
 
     let image = repo_file_preview(&repo, "assets/icon.png").unwrap();
     assert_eq!(image.preview_kind, "image");
     assert_eq!(image.mime_type.as_deref(), Some("image/png"));
-    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQID"));
+    assert_eq!(
+        image.data_url.as_deref(),
+        Some("data:image/png;base64,AQID")
+    );
 
     let binary = repo_file_preview(&repo, "binary.bin").unwrap();
     assert_eq!(binary.preview_kind, "binary");
@@ -2161,7 +2350,10 @@ fn github_content_files_map_to_repo_tree_and_preview_kinds() {
     )
     .unwrap();
     assert_eq!(image.preview_kind, "image");
-    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQID"));
+    assert_eq!(
+        image.data_url.as_deref(),
+        Some("data:image/png;base64,AQID")
+    );
 
     let too_large = github_file_preview_from_content(
         "读取 GitHub 文件预览失败",
@@ -2637,8 +2829,12 @@ fn infers_all_root_package_scripts_in_priority_order() {
             "yarn verify"
         ]
     );
-    assert!(candidates.iter().any(|candidate| candidate.label == "verify"));
-    assert!(candidates.iter().all(|candidate| candidate.kind == "package"));
+    assert!(candidates
+        .iter()
+        .any(|candidate| candidate.label == "verify"));
+    assert!(candidates
+        .iter()
+        .all(|candidate| candidate.kind == "package"));
     fs::remove_dir_all(path).unwrap();
 }
 

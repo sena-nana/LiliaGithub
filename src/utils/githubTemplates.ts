@@ -85,8 +85,8 @@ export function blankIssueTemplate(): GitHubIssueTemplate {
   return {
     key: BLANK_ISSUE_KEY,
     kind: "blank",
-    name: "Blank issue",
-    description: "Create an issue without a template.",
+    name: "空白 Issue",
+    description: "不使用模板创建 Issue。",
     path: null,
     titlePrefix: "",
     labels: [],
@@ -100,8 +100,8 @@ export function blankPullRequestTemplate(): GitHubPullRequestTemplate {
   return {
     key: BLANK_PULL_REQUEST_KEY,
     kind: "blank",
-    name: "Blank pull request",
-    description: "Create a pull request without a template.",
+    name: "空白 PR",
+    description: "不使用模板创建 PR。",
     path: null,
     body: "",
   };

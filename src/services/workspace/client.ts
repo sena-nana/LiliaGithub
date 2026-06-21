@@ -15,6 +15,7 @@ import type {
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssue,
+  GitHubIssueFilterMetadata,
   GitHubIssueListOptions,
   GitHubMergePullRequestRequest,
   GitHubPullRequest,
@@ -73,6 +74,7 @@ type GitHubProjectRepoClientCache = {
   commitDetails: Record<string, CommitDetail | undefined>;
   issueLabels?: string[];
   issueAssignees?: string[];
+  issueFilterMetadata?: GitHubIssueFilterMetadata;
   issues: Record<string, GitHubIssue[] | undefined>;
   pullRequests: Record<string, GitHubPullRequest[] | undefined>;
   pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
@@ -234,7 +236,13 @@ function githubIssueCacheKey(options: GitHubIssueListOptions) {
   const sort = options.sort === "updated" || options.sort === "comments" ? options.sort : "created";
   const direction = options.direction === "asc" ? "asc" : "desc";
   const since = options.since?.trim() ?? "";
-  return `${state}|${perPage}|${sort}|${direction}|${since}`;
+  const creator = options.creator?.trim() ?? "";
+  const assignee = options.assignee?.trim() ?? "";
+  const labels = [...(options.labels ?? [])].map((label) => label.trim()).filter(Boolean).sort();
+  const milestone = String(options.milestone ?? "").trim();
+  const project = options.project?.trim() ?? "";
+  const query = options.query?.trim() ?? "";
+  return JSON.stringify({ state, perPage, sort, direction, since, creator, assignee, labels, milestone, project, query });
 }
 
 function githubPullRequestCacheKey(state?: "open" | "closed" | "all" | null) {
@@ -263,12 +271,18 @@ function upsertGitHubIssue(repoFullName: string, issue: GitHubIssue) {
   const cache = githubProjectRepoCache(repoFullName);
   for (const [key, items] of Object.entries(cache.issues)) {
     if (!items) continue;
-    const [state] = key.split("|");
+    let state = "open";
+    try {
+      state = JSON.parse(key).state ?? "open";
+    } catch {
+      [state] = key.split("|");
+    }
     const belongs = state === "all" || state === issue.state;
-    const withoutIssue = items.filter((item) => item.number !== issue.number);
+    const existing = items.some((item) => item.number === issue.number);
+    if (!existing) continue;
     cache.issues[key] = belongs
-      ? [cloneProjectData(issue), ...cloneProjectList(withoutIssue)]
-      : cloneProjectList(withoutIssue);
+      ? items.map((item) => item.number === issue.number ? cloneProjectData(issue) : cloneProjectData(item))
+      : items.filter((item) => item.number !== issue.number).map((item) => cloneProjectData(item));
   }
 }
 
@@ -617,11 +631,35 @@ export function listGitHubIssues(
     sort: options.sort ?? null,
     direction: options.direction ?? null,
     since: options.since ?? null,
+    creator: options.creator ?? null,
+    assignee: options.assignee ?? null,
+    labels: options.labels ?? null,
+    milestone: options.milestone ?? null,
+    project: options.project ?? null,
+    query: options.query ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
   }, () => workspaceFallback().listGitHubIssues(repoFullName, options))
     .then((issues) => {
       cache.issues[key] = cloneProjectList(issues);
       return cloneProjectList(issues);
+    });
+}
+
+export function getGitHubIssueFilterMetadata(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubIssueFilterMetadata> {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!options.forceRefresh && cache.issueFilterMetadata) {
+    return Promise.resolve(cloneProjectData(cache.issueFilterMetadata));
+  }
+  return call("github_get_issue_filter_metadata", {
+    repoFullName,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => workspaceFallback().getGitHubIssueFilterMetadata(repoFullName))
+    .then((metadata) => {
+      cache.issueFilterMetadata = cloneProjectData(metadata);
+      return cloneProjectData(metadata);
     });
 }
 

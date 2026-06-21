@@ -10,6 +10,7 @@ import {
   createGitHubPullRequest,
   createGitHubIssue,
   deleteGitHubRepo,
+  getGitHubIssueFilterMetadata,
   getGitHubRepoFilePreview,
   getGitHubRepoManagement,
   listGitHubPullRequestChecks,
@@ -71,6 +72,10 @@ const githubIssues: GitHubIssue[] = [{
   body: null,
   labels: ["bug"],
   assignees: ["sena"],
+  author: "sena",
+  milestone: { number: 1, title: "v1" },
+  comments: 3,
+  projectItems: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
   htmlUrl: "https://github.com/sena-nana/remote-repo/issues/12",
   updatedAt: "2026-06-18T08:00:00Z",
   createdAt: "2026-06-18T08:00:00Z",
@@ -190,6 +195,7 @@ vi.mock("../src/services/workspace/client", () => ({
   createGitHubIssue: vi.fn(),
   deleteGitHubRepo: vi.fn(),
   getGitHubRepoFilePreview: vi.fn(),
+  getGitHubIssueFilterMetadata: vi.fn(),
   getRepoCommitDetail: vi.fn(),
   getGitHubRepoManagement: vi.fn(),
   listGitHubPullRequestChecks: vi.fn(),
@@ -338,6 +344,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(createGitHubIssue).mockReset();
     vi.mocked(deleteGitHubRepo).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
+    vi.mocked(getGitHubIssueFilterMetadata).mockReset();
     vi.mocked(getGitHubRepoManagement).mockReset();
     vi.mocked(listGitHubIssueAssignees).mockReset();
     vi.mocked(listGitHubIssueLabels).mockReset();
@@ -350,6 +357,10 @@ describe("RepoProjectPanel", () => {
       body: request.body ?? null,
       labels: [...request.labels],
       assignees: [...request.assignees],
+      author: "sena",
+      milestone: null,
+      comments: 0,
+      projectItems: [],
       htmlUrl: "https://github.com/sena-nana/remote-repo/issues/99",
       updatedAt: "2026-06-18T09:00:00Z",
       createdAt: "2026-06-18T09:00:00Z",
@@ -373,6 +384,13 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubRepoFiles).mockResolvedValue([]);
     vi.mocked(listGitHubIssueLabels).mockResolvedValue(["bug", "needs triage", "documentation"]);
     vi.mocked(listGitHubIssueAssignees).mockResolvedValue(["mika", "sena"]);
+    vi.mocked(getGitHubIssueFilterMetadata).mockResolvedValue({
+      authors: ["sena"],
+      labels: ["bug", "needs triage", "documentation"],
+      assignees: ["mika", "sena"],
+      milestones: [{ number: 1, title: "v1" }],
+      projects: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
+    });
     vi.mocked(getGitHubRepoFilePreview).mockRejectedValue(new Error("not found"));
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
     vi.mocked(updateGitHubRepoSettings).mockImplementation(async (_repoFullName, request) => ({
@@ -604,11 +622,13 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
+    expect(getGitHubIssueFilterMetadata).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
+    expect(getGitHubIssueFilterMetadata).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
@@ -622,14 +642,14 @@ describe("RepoProjectPanel", () => {
       fail: () => vi.mocked(listGitHubIssues).mockRejectedValueOnce(new Error("GitHub 绑定已失效，请重新绑定")),
       title: "Issues 暂不可用",
       reason: "GitHub 绑定已失效或凭据不可用，请重新绑定 GitHub 后继续使用。",
-      hiddenText: "New issue",
+      hiddenText: "新建 Issue",
     },
     {
       tabName: "Pull Requests",
       fail: () => vi.mocked(listGitHubPullRequests).mockRejectedValueOnce(new Error("Bad credentials")),
       title: "Pull Requests 暂不可用",
       reason: "GitHub 绑定已失效或凭据不可用，请重新绑定 GitHub 后继续使用。",
-      hiddenText: "New pull request",
+      hiddenText: "新建 PR",
     },
     {
       tabName: "Actions",
@@ -726,9 +746,10 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     await view.findByText("#12 修复懒加载");
-    await fireEvent.click(view.getByRole("button", { name: "New issue" }));
+    await fireEvent.click(view.getByRole("button", { name: "新建 Issue" }));
 
-    const form = await view.findByRole("form", { name: "Create issue" });
+    const form = await view.findByRole("form", { name: "新建 Issue" });
+    expect(view.queryByRole("heading", { level: 3, name: "Issues" })).toBeNull();
     await waitFor(() => {
       expect(getGitHubRepoFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", ".github/ISSUE_TEMPLATE/bug_report.yml");
     });
@@ -736,16 +757,16 @@ describe("RepoProjectPanel", () => {
       expect(listGitHubIssueLabels).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
       expect(listGitHubIssueAssignees).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
     });
-    await fireEvent.click(within(form).getByRole("button", { name: "Blank issue" }));
+    await fireEvent.click(within(form).getByRole("button", { name: "空白 Issue" }));
     await fireEvent.click(await within(form).findByRole("option", { name: /Bug report/ }));
-    await fireEvent.click(within(form).getByRole("button", { name: "No assignees" }));
+    await fireEvent.click(within(form).getByRole("button", { name: "未分配" }));
     await fireEvent.click(await within(form).findByRole("option", { name: /^sena$/ }));
-    await fireEvent.update(within(form).getByLabelText("Title"), "[BUG] 模板创建");
+    await fireEvent.update(within(form).getByLabelText("标题"), "[BUG] 模板创建");
     await fireEvent.update(within(form).getByLabelText("Summary*"), "点击按钮后没有进入创建页");
     await fireEvent.update(within(form).getByLabelText("Details"), "需要展示完整模板表单。");
     await fireEvent.click(within(form).getByRole("button", { name: "Area" }));
     await fireEvent.click(await within(form).findByRole("option", { name: /^UI$/ }));
-    await fireEvent.click(within(form).getByRole("button", { name: "Create issue" }));
+    await fireEvent.click(within(form).getByRole("button", { name: "创建 Issue" }));
 
     await waitFor(() => {
       expect(createGitHubIssue).toHaveBeenCalledWith("sena-nana/remote-repo", {
@@ -762,7 +783,7 @@ describe("RepoProjectPanel", () => {
       }),
     );
     await waitFor(() => {
-      expect(view.queryByRole("form", { name: "Create issue" })).toBeNull();
+      expect(view.queryByRole("form", { name: "新建 Issue" })).toBeNull();
     });
   });
 
@@ -784,20 +805,21 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     await view.findByText("#52 接入 Pull Request 工作流");
-    await fireEvent.click(view.getByRole("button", { name: "New pull request" }));
+    await fireEvent.click(view.getByRole("button", { name: "新建 PR" }));
 
-    const form = await view.findByRole("form", { name: "Create pull request" });
+    const form = await view.findByRole("form", { name: "新建 PR" });
+    expect(view.queryByRole("heading", { level: 3, name: "Pull Requests" })).toBeNull();
     await waitFor(() => {
       expect(getGitHubRepoFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", ".github/PULL_REQUEST_TEMPLATE.md");
     });
-    await fireEvent.click(within(form).getByRole("button", { name: "Blank pull request" }));
+    await fireEvent.click(within(form).getByRole("button", { name: "空白 PR" }));
     await fireEvent.click(await within(form).findByRole("option", { name: /PULL REQUEST TEMPLATE/ }));
-    expect(within(form).getByLabelText("Head branch")).toHaveValue("feature/template-create");
-    expect(within(form).getByLabelText("Base branch")).toHaveValue("main");
+    expect(within(form).getByLabelText("来源分支")).toHaveValue("feature/template-create");
+    expect(within(form).getByLabelText("目标分支")).toHaveValue("main");
 
-    await fireEvent.update(within(form).getByLabelText("Title"), "接入模板创建页");
-    expect(within(form).getByLabelText("Description")).toHaveValue("## Summary\n\n- \n");
-    await fireEvent.click(within(form).getByRole("button", { name: "Create pull request" }));
+    await fireEvent.update(within(form).getByLabelText("标题"), "接入模板创建页");
+    expect(within(form).getByLabelText("描述")).toHaveValue("## Summary\n\n- \n");
+    await fireEvent.click(within(form).getByRole("button", { name: "创建 PR" }));
 
     await waitFor(() => {
       expect(createGitHubPullRequest).toHaveBeenCalledWith("sena-nana/remote-repo", {
@@ -809,7 +831,7 @@ describe("RepoProjectPanel", () => {
       });
     });
     await waitFor(() => {
-      expect(view.queryByRole("form", { name: "Create pull request" })).toBeNull();
+      expect(view.queryByRole("form", { name: "新建 PR" })).toBeNull();
     });
   });
 
@@ -825,12 +847,115 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
 
-    await fireEvent.click(within(view.getByRole("group", { name: "Issue 状态" })).getByRole("button", { name: "Closed" }));
+    await fireEvent.click(within(view.getByRole("group", { name: "Issue 状态" })).getByRole("button", { name: /Closed/ }));
     expect(await view.findByText("#34 已关闭问题")).toBeInTheDocument();
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenCalledTimes(2);
     });
-    expect(listGitHubIssues).toHaveBeenLastCalledWith("sena-nana/remote-repo", "closed");
+    expect(listGitHubIssues).toHaveBeenLastCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({ state: "closed", sort: "created", direction: "desc" }),
+    );
+  });
+
+  it("Issues 搜索通过远程接口刷新列表", async () => {
+    const docsIssue: GitHubIssue = {
+      ...githubIssues[0],
+      number: 44,
+      title: "整理文档",
+      labels: ["documentation"],
+      projectItems: [],
+      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/44",
+    };
+    vi.mocked(listGitHubIssues)
+      .mockResolvedValueOnce([githubIssues[0], docsIssue])
+      .mockResolvedValueOnce([githubIssues[0]]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(view.getByText("#44 整理文档")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenCalledTimes(1);
+
+    await fireEvent.update(view.getByLabelText("搜索 Issues"), "Roadmap");
+
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ query: "Roadmap" }),
+      );
+    });
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(view.queryByText("#44 整理文档")).toBeNull();
+    expect(listGitHubIssues).toHaveBeenCalledTimes(2);
+  });
+
+  it("Issues 筛选和排序选择后立即传递请求参数", async () => {
+    vi.mocked(listGitHubIssues).mockResolvedValue(githubIssues);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("button", { name: "筛选" }));
+    const filters = view.getByLabelText("Issue 筛选项");
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意作者" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ creator: "sena" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意标签" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "bug" }));
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ labels: ["bug"] }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意项目" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "Roadmap" }));
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ project: "PVT_kwDOIssue" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意里程碑" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "v1" }));
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ milestone: "1" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意负责人" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ assignee: "sena" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "最新创建" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "评论最多" }));
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ sort: "comments", direction: "desc" }),
+      );
+    });
   });
 
   it("项目刷新 token 变化后对当前已加载分区强制刷新", async () => {
@@ -844,14 +969,17 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
-    expect(listGitHubIssues).toHaveBeenCalledWith("sena-nana/remote-repo", "open");
+    expect(listGitHubIssues).toHaveBeenCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({ state: "open", sort: "created", direction: "desc" }),
+    );
 
     await view.rerender({ projectRefreshToken: 2 });
 
     expect(await view.findByText("#12 刷新后的 Issue")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenLastCalledWith(
       "sena-nana/remote-repo",
-      "open",
+      expect.objectContaining({ state: "open", sort: "created", direction: "desc" }),
       { forceRefresh: true },
     );
   });
@@ -876,10 +1004,10 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
 
-    await fireEvent.click(view.getByRole("button", { name: "New issue" }));
-    const form = await view.findByRole("form", { name: "Create issue" });
-    await fireEvent.update(within(form).getByLabelText("Title"), "old repo created issue");
-    await fireEvent.click(within(form).getByRole("button", { name: "Create issue" }));
+    await fireEvent.click(view.getByRole("button", { name: "新建 Issue" }));
+    const form = await view.findByRole("form", { name: "新建 Issue" });
+    await fireEvent.update(within(form).getByLabelText("标题"), "old repo created issue");
+    await fireEvent.click(within(form).getByRole("button", { name: "创建 Issue" }));
     expect(createGitHubIssue).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
       expect.objectContaining({ title: "old repo created issue" }),

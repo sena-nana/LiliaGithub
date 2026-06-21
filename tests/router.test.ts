@@ -908,6 +908,12 @@ describe("基础路由", () => {
         sort: "updated",
         direction: "desc",
         since: "2026-06-06T12:00:00.000Z",
+        creator: null,
+        assignee: null,
+        labels: null,
+        milestone: null,
+        project: null,
+        query: null,
       })),
     );
     expect(await screen.findByText("Issue #1")).toBeInTheDocument();

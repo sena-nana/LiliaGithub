@@ -79,6 +79,64 @@ describe("workspace GitHub project cache", () => {
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(2);
   });
 
+  it("Issue 缓存按筛选和排序参数分桶", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      [repoFullName]: [
+        issue({
+          title: "Bug issue",
+          labels: ["bug"],
+          author: "sena",
+          milestone: { number: 1, title: "v1" },
+          projectItems: [{ id: "PVT_roadmap", title: "Roadmap" }],
+        }),
+        issue({
+          number: 22,
+          title: "Docs issue",
+          labels: ["documentation"],
+          author: "mika",
+          milestone: { number: 2, title: "v2" },
+          projectItems: [{ id: "PVT_docs", title: "Docs" }],
+        }),
+      ],
+    });
+
+    const bugIssues = await listGitHubIssues(repoFullName, {
+      state: "open",
+      labels: ["bug"],
+      creator: "sena",
+      milestone: "1",
+      project: "PVT_roadmap",
+      sort: "comments",
+      direction: "desc",
+      query: "Bug",
+    });
+    const docsIssues = await listGitHubIssues(repoFullName, {
+      state: "open",
+      labels: ["documentation"],
+      creator: "mika",
+      milestone: "2",
+      project: "PVT_docs",
+      sort: "updated",
+      direction: "asc",
+      query: "Docs",
+    });
+    const cachedBugIssues = await listGitHubIssues(repoFullName, {
+      state: "open",
+      labels: ["bug"],
+      creator: "sena",
+      milestone: "1",
+      project: "PVT_roadmap",
+      sort: "comments",
+      direction: "desc",
+      query: "Bug",
+    });
+
+    expect(bugIssues.map((item) => item.title)).toEqual(["Bug issue"]);
+    expect(docsIssues.map((item) => item.title)).toEqual(["Docs issue"]);
+    expect(cachedBugIssues.map((item) => item.title)).toEqual(["Bug issue"]);
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(2);
+  });
+
   it("更新 Issue 后同步已缓存列表", async () => {
     workspaceFallback.setFallbackGitHubIssuesForTests({ [repoFullName]: [issue()] });
 
