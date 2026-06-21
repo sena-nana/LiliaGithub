@@ -686,6 +686,15 @@ function createFallbackRepoFiles(): Record<string, Record<string, RepoFileTreeEn
   };
 }
 
+function createFallbackGitHubRepoFiles(): Record<string, Record<string, RepoFileTreeEntry[]>> {
+  return Object.fromEntries(
+    Object.entries(createFallbackRepoFiles()).map(([repoId, files]) => {
+      const repo = fallbackRepos.find((item) => item.id === repoId);
+      return [repo?.githubFullName ?? repoId, files];
+    }),
+  );
+}
+
 function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFilePreview>> {
   return {
     LiliaGithub: {
@@ -777,6 +786,15 @@ function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFil
   };
 }
 
+function createFallbackGitHubRepoFilePreviews(): Record<string, Record<string, RepoFilePreview>> {
+  return Object.fromEntries(
+    Object.entries(createFallbackRepoFilePreviews()).map(([repoId, previews]) => {
+      const repo = fallbackRepos.find((item) => item.id === repoId);
+      return [repo?.githubFullName ?? repoId, previews];
+    }),
+  );
+}
+
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
@@ -792,7 +810,9 @@ let fallbackRepoBranches = createFallbackRepoBranches();
 let fallbackRepoReadmes = createFallbackRepoReadmes();
 let fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
 let fallbackRepoFiles = createFallbackRepoFiles();
+let fallbackGitHubRepoFiles = createFallbackGitHubRepoFiles();
 let fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
+let fallbackGitHubRepoFilePreviews = createFallbackGitHubRepoFilePreviews();
 
 type FallbackGitHubIssueListCall = {
   repoFullName: string;
@@ -811,6 +831,18 @@ type FallbackGitHubPullRequestListCall = {
 type FallbackGitHubPullRequestCheckListCall = {
   repoFullName: string;
   pullNumber: number;
+};
+
+type FallbackGitHubRepoFileListCall = {
+  repoFullName: string;
+  parentPath: string | null;
+  refName: string | null;
+};
+
+type FallbackGitHubRepoFilePreviewCall = {
+  repoFullName: string;
+  path: string;
+  refName: string | null;
 };
 
 function createFallbackSettings(): WorkspaceSettings {
@@ -845,6 +877,8 @@ let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListC
 let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
 let fallbackGitHubCommitListCalls: Array<{ repoFullName: string; perPage: number | null; sha: string | null }> = [];
 let fallbackGitHubCommitDetailCalls: Array<{ repoFullName: string; hash: string }> = [];
+let fallbackGitHubRepoFileListCalls: FallbackGitHubRepoFileListCall[] = [];
+let fallbackGitHubRepoFilePreviewCalls: FallbackGitHubRepoFilePreviewCall[] = [];
 let fallbackOpenPathCalls: string[] = [];
 let fallbackOpenPathTargetCalls: Array<{ path: string; target: SystemOpenTarget }> = [];
 let fallbackCloneIndex = 1;
@@ -887,13 +921,17 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoReadmes = createFallbackRepoReadmes();
   fallbackGitHubRepoReadmes = createFallbackGitHubRepoReadmes();
   fallbackRepoFiles = createFallbackRepoFiles();
+  fallbackGitHubRepoFiles = createFallbackGitHubRepoFiles();
   fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
+  fallbackGitHubRepoFilePreviews = createFallbackGitHubRepoFilePreviews();
   fallbackGitHubIssueListCalls = [];
   fallbackGitHubPullRequestListCalls = [];
   fallbackGitHubPullRequestCheckListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
   fallbackGitHubCommitListCalls = [];
   fallbackGitHubCommitDetailCalls = [];
+  fallbackGitHubRepoFileListCalls = [];
+  fallbackGitHubRepoFilePreviewCalls = [];
   fallbackOpenPathCalls = [];
   fallbackOpenPathTargetCalls = [];
   fallbackCloneIndex = 1;
@@ -1021,6 +1059,14 @@ export function getFallbackGitHubCommitListCallsForTests() {
 
 export function getFallbackGitHubCommitDetailCallsForTests() {
   return fallbackGitHubCommitDetailCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubRepoFileListCallsForTests() {
+  return fallbackGitHubRepoFileListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubRepoFilePreviewCallsForTests() {
+  return fallbackGitHubRepoFilePreviewCalls.map((call) => ({ ...call }));
 }
 
 export function getFallbackOpenPathCallsForTests(): string[] {
@@ -1207,10 +1253,35 @@ export function setFallbackRepoFilesForTests(filesByRepo: Record<string, Record<
   );
 }
 
+export function setFallbackGitHubRepoFilesForTests(filesByRepo: Record<string, Record<string, RepoFileTreeEntry[]>>) {
+  fallbackGitHubRepoFiles = Object.fromEntries(
+    Object.entries(filesByRepo).map(([repoFullName, directories]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(directories).map(([parentPath, entries]) => [
+          parentPath,
+          entries.map(cloneRepoFileTreeEntry),
+        ]),
+      ),
+    ]),
+  );
+}
+
 export function setFallbackRepoFilePreviewsForTests(previewsByRepo: Record<string, Record<string, RepoFilePreview>>) {
   fallbackRepoFilePreviews = Object.fromEntries(
     Object.entries(previewsByRepo).map(([repoId, previews]) => [
       repoId,
+      Object.fromEntries(
+        Object.entries(previews).map(([path, preview]) => [path, cloneRepoFilePreview(preview)]),
+      ),
+    ]),
+  );
+}
+
+export function setFallbackGitHubRepoFilePreviewsForTests(previewsByRepo: Record<string, Record<string, RepoFilePreview>>) {
+  fallbackGitHubRepoFilePreviews = Object.fromEntries(
+    Object.entries(previewsByRepo).map(([repoFullName, previews]) => [
+      repoFullName,
       Object.fromEntries(
         Object.entries(previews).map(([path, preview]) => [path, cloneRepoFilePreview(preview)]),
       ),
@@ -2274,13 +2345,48 @@ export function listGitHubRepoReadmes(repoFullName: string): Promise<RepoReadme[
   );
 }
 
-export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {
+export function listGitHubRepoFiles(
+  repoFullName: string,
+  parentPath?: string | null,
+  refName?: string | null,
+): Promise<RepoFileTreeEntry[]> {
+  const normalizedParentPath = parentPath ?? "";
+  fallbackGitHubRepoFileListCalls.push({
+    repoFullName,
+    parentPath: parentPath ?? null,
+    refName: refName ?? null,
+  });
+  return call("github_list_repo_files", { repoFullName, parentPath: parentPath ?? null, refName: refName ?? null }, () =>
+    (fallbackGitHubRepoFiles[repoFullName]?.[normalizedParentPath] ?? []).map(cloneRepoFileTreeEntry),
+  );
+}
+
+export function getGitHubRepoFilePreview(
+  repoFullName: string,
+  path: string,
+  refName?: string | null,
+): Promise<RepoFilePreview> {
+  fallbackGitHubRepoFilePreviewCalls.push({
+    repoFullName,
+    path,
+    refName: refName ?? null,
+  });
+  return call("github_get_repo_file_preview", { repoFullName, path, refName: refName ?? null }, () => {
+    const preview = fallbackGitHubRepoFilePreviews[repoFullName]?.[path];
+    if (!preview) {
+      throw new Error(`未找到远程文件预览：${repoFullName} ${path}`);
+    }
+    return cloneRepoFilePreview(preview);
+  });
+}
+
+export function listRepoFiles(repoId: string, parentPath?: string | null, _repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
   return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () =>
     (fallbackRepoFiles[repoId]?.[parentPath ?? ""] ?? []).map(cloneRepoFileTreeEntry),
   );
 }
 
-export function getRepoFilePreview(repoId: string, path: string): Promise<RepoFilePreview> {
+export function getRepoFilePreview(repoId: string, path: string, _repoRef?: string | null): Promise<RepoFilePreview> {
   return call("repo_get_file_preview", { repoId, path }, () => {
     const preview = fallbackRepoFilePreviews[repoId]?.[path];
     if (!preview) {

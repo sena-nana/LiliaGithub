@@ -115,6 +115,8 @@ pub(super) struct GitHubContentFileResponse {
     pub(super) path: String,
     pub(super) encoding: Option<String>,
     pub(super) content: Option<String>,
+    #[serde(default)]
+    pub(super) size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -705,6 +707,194 @@ pub(super) fn github_repo_api_url(repo_full_name: &str) -> Result<String, String
         "https://api.github.com/repos/{}",
         github_api_repo_path(&repo.full_name)
     ))
+}
+
+pub(super) fn normalize_github_content_path(path: Option<&str>) -> Result<String, String> {
+    let Some(path) = path else {
+        return Ok(String::new());
+    };
+    let trimmed = path.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    if trimmed.contains('\\') {
+        return Err("GitHub 文件路径必须使用 / 分隔".to_string());
+    }
+    let parts = trimmed.split('/').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || *part == "." || *part == "..")
+    {
+        return Err("GitHub 文件路径不能包含 . 或 ..".to_string());
+    }
+    Ok(parts.join("/"))
+}
+
+pub(super) fn normalize_github_ref_name(ref_name: Option<&str>) -> Option<String> {
+    ref_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+pub(super) fn github_repo_contents_api_url(
+    repo_full_name: &str,
+    path: Option<&str>,
+) -> Result<String, String> {
+    let path = normalize_github_content_path(path)?;
+    let base = format!("{}/contents", github_repo_api_url(repo_full_name)?);
+    if path.is_empty() {
+        Ok(base)
+    } else {
+        Ok(format!("{base}/{}", github_api_repo_path(&path)))
+    }
+}
+
+pub(super) fn sort_repo_file_tree_entries(entries: &mut [RepoFileTreeEntry]) {
+    entries.sort_by(|left, right| {
+        let left_kind = left.kind == "dir";
+        let right_kind = right.kind == "dir";
+        right_kind
+            .cmp(&left_kind)
+            .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+}
+
+pub(super) fn github_content_items_to_file_entries(
+    items: Vec<GitHubContentListItem>,
+) -> Vec<RepoFileTreeEntry> {
+    let mut entries = items
+        .into_iter()
+        .filter_map(|item| {
+            let kind = match item.kind.as_str() {
+                "dir" => "dir",
+                "file" | "symlink" => "file",
+                _ => return None,
+            };
+            Some(RepoFileTreeEntry {
+                path: item.path,
+                name: item.name,
+                kind: kind.to_string(),
+                has_children: kind == "dir",
+            })
+        })
+        .collect::<Vec<_>>();
+    sort_repo_file_tree_entries(&mut entries);
+    entries
+}
+
+pub(super) fn is_markdown_preview_path(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase()),
+        Some(extension) if extension == "md" || extension == "markdown"
+    )
+}
+
+pub(super) fn decode_github_preview_bytes(
+    prefix: &str,
+    file: &GitHubContentFileResponse,
+) -> Result<Vec<u8>, String> {
+    let encoding = file.encoding.as_deref().unwrap_or_default();
+    if encoding.to_ascii_lowercase() != "base64" {
+        return Err(format!("{prefix}：不支持的文件编码：{encoding}"));
+    }
+    let encoded = file
+        .content
+        .as_deref()
+        .unwrap_or_default()
+        .chars()
+        .filter(|value| !value.is_whitespace())
+        .collect::<String>();
+    STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("{prefix}：文件解码失败：{e}"))
+}
+
+pub(super) fn github_file_preview_from_content(
+    prefix: &str,
+    file: GitHubContentFileResponse,
+) -> Result<RepoFilePreview, String> {
+    let declared_size = file.size;
+    let path = file.path.clone();
+    let name = file.name.clone();
+    let mime = super::file_browser::file_preview_mime(Path::new(&path)).map(str::to_string);
+    if declared_size.unwrap_or_default() > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+        return Ok(RepoFilePreview {
+            path,
+            name,
+            preview_kind: "tooLarge".to_string(),
+            content: None,
+            data_url: None,
+            images: HashMap::new(),
+            size: declared_size.unwrap_or_default(),
+            mime_type: mime,
+            truncated: false,
+        });
+    }
+
+    let bytes = decode_github_preview_bytes(prefix, &file)?;
+    let size = declared_size.unwrap_or(bytes.len() as u64);
+    if is_markdown_preview_path(&path) {
+        let content = String::from_utf8(bytes)
+            .map_err(|e| format!("{prefix}：Markdown 文件不是 UTF-8 文本：{e}"))?;
+        return Ok(RepoFilePreview {
+            path,
+            name,
+            preview_kind: "markdown".to_string(),
+            content: Some(content),
+            data_url: None,
+            images: HashMap::new(),
+            size,
+            mime_type: Some("text/markdown".to_string()),
+            truncated: false,
+        });
+    }
+
+    if let Some(image_mime) = image_mime_for_path(Path::new(&path)) {
+        return Ok(RepoFilePreview {
+            path,
+            name,
+            preview_kind: "image".to_string(),
+            content: None,
+            data_url: Some(format!("data:{image_mime};base64,{}", STANDARD.encode(bytes))),
+            images: HashMap::new(),
+            size,
+            mime_type: Some(image_mime.to_string()),
+            truncated: false,
+        });
+    }
+
+    if let Ok(content) = String::from_utf8(bytes) {
+        if !content.contains('\0') {
+            return Ok(RepoFilePreview {
+                path,
+                name,
+                preview_kind: "text".to_string(),
+                content: Some(content),
+                data_url: None,
+                images: HashMap::new(),
+                size,
+                mime_type: mime.or_else(|| Some("text/plain".to_string())),
+                truncated: false,
+            });
+        }
+    }
+
+    Ok(RepoFilePreview {
+        path,
+        name,
+        preview_kind: "binary".to_string(),
+        content: None,
+        data_url: None,
+        images: HashMap::new(),
+        size,
+        mime_type: mime,
+        truncated: false,
+    })
 }
 
 pub(super) fn github_repo_topics_api_url(repo_full_name: &str) -> Result<String, String> {
@@ -2252,6 +2442,68 @@ pub async fn github_get_repo_commit_detail(
                 .insert(detail.short_hash.clone(), detail.clone());
         })?;
         Ok(detail)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_repo_files(
+    app: AppHandle,
+    repo_full_name: String,
+    parent_path: Option<String>,
+    ref_name: Option<String>,
+    _force_refresh: Option<bool>,
+) -> Result<Vec<RepoFileTreeEntry>, String> {
+    run_blocking("读取 GitHub 文件树", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let mut request = client.get(github_repo_contents_api_url(
+            &repo_full_name,
+            parent_path.as_deref(),
+        )?);
+        if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
+            request = request.query(&[("ref", ref_name)]);
+        }
+        let response = github_send(
+            &app,
+            "读取 GitHub 文件树失败",
+            github_headers(request, Some(&token)),
+        )?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(Vec::new());
+        }
+        let items = github_json::<Vec<GitHubContentListItem>>("读取 GitHub 文件树失败", response)?;
+        Ok(github_content_items_to_file_entries(items))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_repo_file_preview(
+    app: AppHandle,
+    repo_full_name: String,
+    path: String,
+    ref_name: Option<String>,
+    _force_refresh: Option<bool>,
+) -> Result<RepoFilePreview, String> {
+    run_blocking("读取 GitHub 文件预览", move || {
+        let path = normalize_github_content_path(Some(&path))?;
+        if path.is_empty() {
+            return Err("GitHub 文件路径不能为空".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let mut request = client.get(github_repo_contents_api_url(&repo_full_name, Some(&path))?);
+        if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
+            request = request.query(&[("ref", ref_name)]);
+        }
+        let response = github_send(
+            &app,
+            "读取 GitHub 文件预览失败",
+            github_headers(request, Some(&token)),
+        )?;
+        let file = github_json::<GitHubContentFileResponse>("读取 GitHub 文件预览失败", response)?;
+        github_file_preview_from_content("读取 GitHub 文件预览失败", file)
     })
     .await
 }

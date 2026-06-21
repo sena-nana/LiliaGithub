@@ -63,6 +63,28 @@ async function waitForRepoTitle(name: string) {
   });
 }
 
+function repoStatusRow(repoFullName: string) {
+  const list = screen.getByLabelText("仓库状态列表");
+  const row = within(list).getByText(repoFullName).closest(".repo-status-row");
+  if (!(row instanceof HTMLElement)) throw new Error(`未找到仓库状态行: ${repoFullName}`);
+  return row;
+}
+
+function repoWorkbenchStatus() {
+  const status = document.querySelector(".repo-workbench__status");
+  if (!(status instanceof HTMLElement)) throw new Error("未找到仓库状态区");
+  return status;
+}
+
+function queryRepoWorkbenchStatus() {
+  const status = document.querySelector(".repo-workbench__status");
+  return status instanceof HTMLElement ? status : null;
+}
+
+function repoDetailRecentSyncFailure() {
+  return within(repoWorkbenchStatus()).getByLabelText("最近同步失败");
+}
+
 async function mockLiliaGithubSyncFailure() {
   const service = await import("../src/services/workspace");
   service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
@@ -286,20 +308,6 @@ describe("基础路由", () => {
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(1);
   });
 
-  it("总览页仓库状态行可直接进入仓库详情", async () => {
-    const { router } = await renderAt("/");
-
-    const repoLink = await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" });
-    await waitFor(() => expect(repoLink).toHaveAttribute("title", "C:\\Files\\workspace\\LiliaGithub"), { timeout: 3000 });
-    await fireEvent.click(repoLink);
-
-    await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    });
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" }, { timeout: 3000 }))
-      .toBeInTheDocument();
-  });
-
   it("总览页未 clone 的 GitHub 项目可进入远程详情并屏蔽本地 Git 功能", async () => {
     const service = await import("../src/services/workspace");
     service.setFallbackGitHubRepoPagesForTests([
@@ -429,6 +437,98 @@ describe("基础路由", () => {
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
   });
 
+  it("远程仓库文件树按分支选择器当前分支读取 GitHub 结构", async () => {
+    const service = await import("../src/services/workspace");
+    const repoFullName = "sena-nana/RemoteFiles";
+    service.clearGitHubRepoCache();
+    service.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary(repoFullName, { defaultBranch: "main" })],
+        nextPage: null,
+      },
+    ]);
+    service.setFallbackGitHubBranchesForTests({
+      [repoFullName]: [
+        {
+          name: "main",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: true,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: [],
+        },
+        {
+          name: "dev",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: false,
+          tipTimestamp: 1_784_990_000,
+          checkedOutWorktreePaths: [],
+        },
+      ],
+    });
+    service.setFallbackGitHubRepoFilesForTests({
+      [repoFullName]: {
+        "": [{ path: "README.md", name: "README.md", kind: "file", hasChildren: false }],
+      },
+    });
+    service.setFallbackGitHubRepoFilePreviewsForTests({
+      [repoFullName]: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Remote Files\n",
+          dataUrl: null,
+          images: {},
+          size: 15,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+    await service.rememberRemoteRepo({
+      fullName: repoFullName,
+      name: "RemoteFiles",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: `https://github.com/${repoFullName}`,
+      cloneUrl: `https://github.com/${repoFullName}.git`,
+      openedAt: Date.now(),
+    });
+
+    const { router } = await renderAt("/repos/github%3Asena-nana%2FRemoteFiles/files");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Remote Files" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteFiles/files");
+    await waitFor(() => {
+      expect(service.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
+        repoFullName,
+        parentPath: null,
+        refName: "main",
+      });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "main" }));
+    await fireEvent.click(within(screen.getByRole("listbox", { name: "分支候选" })).getByRole("button", { name: "dev" }));
+
+    await waitFor(() => {
+      expect(service.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
+        repoFullName,
+        parentPath: null,
+        refName: "dev",
+      });
+    });
+  });
+
   it("直接进入仓库详情默认页时不预取 issue 和 workflow runs", async () => {
     const service = await import("../src/services/workspace");
     const initialIssueCalls = service.getFallbackGitHubIssueListCallsForTests().length;
@@ -490,15 +590,14 @@ describe("基础路由", () => {
     });
   });
 
-  it("远端仓库不显示文件树一级 tab，直接访问 /files 会回退到默认页", async () => {
+  it("远端仓库显示文件树一级 tab，直接访问 /files 保留文件页", async () => {
     const { router } = await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FEmptyRemote");
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FEmptyRemote/files");
     });
-    expect(screen.queryByRole("tab", { name: "文件树" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
   });
 
   it("总览页隐藏禁用的 GitHub 项目", async () => {
@@ -2209,29 +2308,28 @@ describe("基础路由", () => {
     expect(screen.queryByText("一键拉取预检")).toBeNull();
   });
 
-  it("批量同步失败后从侧边栏进入项目详情处理失败仓库", async () => {
+  it("批量同步失败后进入项目详情处理失败仓库", async () => {
     const service = await mockLiliaGithubSyncFailure();
-    await renderAt("/");
+    const { router } = await renderAt("/");
 
     await clickOverviewSync();
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
-      expect(screen.queryByLabelText("最近同步失败")).toBeNull();
-      expect(screen.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
+      expect(queryRepoWorkbenchStatus()).toBeNull();
+      expect(within(repoStatusRow("sena-nana/LiliaGithub")).getByLabelText("最近同步失败"))
+        .toHaveAttribute("title", "认证失败");
     });
 
-    const failedLink = screen.getByLabelText("同步失败").closest("a");
-    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到同步失败仓库入口");
-    await fireEvent.click(failedLink);
+    await router.push("/repos/LiliaGithub");
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
 
     service.setFallbackBulkExecuteOverrideForTests(null);
-    await fireEvent.click(within(screen.getByLabelText("最近同步失败")).getByRole("button", { name: "重试" }));
+    await fireEvent.click(within(repoDetailRecentSyncFailure()).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
-      expect(screen.queryByText("认证失败")).toBeNull();
+      expect(queryRepoWorkbenchStatus()).toBeNull();
     });
   });
 
@@ -2255,7 +2353,7 @@ describe("基础路由", () => {
     setRepoActionError(repo.id, "自动同步正在执行");
 
     await waitFor(() => {
-      expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+      expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
     });
     expect(screen.queryByText("自动同步正在执行")).toBeNull();
   });
@@ -2267,25 +2365,22 @@ describe("基础路由", () => {
     await clickOverviewSync();
 
     await waitFor(() => {
-      expect(screen.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
+      expect(within(repoStatusRow("sena-nana/LiliaGithub")).getByLabelText("最近同步失败"))
+        .toHaveAttribute("title", "认证失败");
     });
 
-    const failedLink = screen.getByLabelText("同步失败").closest("a");
-    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到同步失败仓库入口");
-    await fireEvent.click(failedLink);
+    await fireEvent.click(repoStatusRow("sena-nana/LiliaGithub"));
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
 
-    const status = document.querySelector(".repo-workbench__status");
-    if (!(status instanceof HTMLElement)) throw new Error("未找到仓库状态区");
-    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
     expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
 
     service.setFallbackBulkExecuteOverrideForTests(null);
-    await fireEvent.click(within(screen.getByLabelText("最近同步失败")).getByRole("button", { name: "重试" }));
+    await fireEvent.click(within(repoDetailRecentSyncFailure()).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
-      expect(screen.queryByLabelText("最近同步失败")).toBeNull();
+      expect(queryRepoWorkbenchStatus()).toBeNull();
     });
     expect(document.querySelector(".repo-workbench__status")).toBeNull();
     expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
@@ -2298,14 +2393,15 @@ describe("基础路由", () => {
     await clickOverviewSync();
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "处理失败" })).toHaveAttribute("title", "认证失败");
+      expect(within(repoStatusRow("sena-nana/LiliaGithub")).getByLabelText("最近同步失败"))
+        .toHaveAttribute("title", "认证失败");
     });
 
-    await fireEvent.click(screen.getByRole("link", { name: "处理失败" }));
+    await fireEvent.click(repoStatusRow("sena-nana/LiliaGithub"));
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
   });
 
   it("总览页冲突仓库入口进入变更页", async () => {

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearGitHubRepoCache,
+  getRepoFilePreview,
   getGitHubRepoCommitDetail,
+  listRepoFiles,
   listGitHubRepoCommits,
   listGitHubIssues,
   updateGitHubIssue,
@@ -10,10 +12,14 @@ import type { CommitDetail, CommitSummary, GitHubIssue } from "../src/services/w
 import {
   getFallbackGitHubCommitDetailCallsForTests,
   getFallbackGitHubCommitListCallsForTests,
+  getFallbackGitHubRepoFileListCallsForTests,
+  getFallbackGitHubRepoFilePreviewCallsForTests,
   getFallbackGitHubIssueListCallsForTests,
   resetWorkspaceFallbacksForTests,
   setFallbackGitHubCommitDetailsForTests,
   setFallbackGitHubCommitsForTests,
+  setFallbackGitHubRepoFilePreviewsForTests,
+  setFallbackGitHubRepoFilesForTests,
   setFallbackGitHubIssuesForTests,
 } from "../src/services/workspace/fallback";
 
@@ -136,5 +142,40 @@ describe("workspace GitHub project cache", () => {
     const refreshed = await getGitHubRepoCommitDetail(repoFullName, firstCommit.hash, { forceRefresh: true });
     expect(refreshed.body).toBe("远端新详情");
     expect(getFallbackGitHubCommitDetailCallsForTests()).toHaveLength(2);
+  });
+
+  it("github repoId 文件树和预览按远程仓库与 ref 分派", async () => {
+    setFallbackGitHubRepoFilesForTests({
+      [repoFullName]: {
+        "": [{ path: "README.md", name: "README.md", kind: "file", hasChildren: false }],
+      },
+    });
+    setFallbackGitHubRepoFilePreviewsForTests({
+      [repoFullName]: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Remote\n",
+          dataUrl: null,
+          images: {},
+          size: 9,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+
+    const entries = await listRepoFiles(`github:${repoFullName}`, null, "feature/tree");
+    const preview = await getRepoFilePreview(`github:${repoFullName}`, "README.md", "feature/tree");
+
+    expect(entries).toEqual([{ path: "README.md", name: "README.md", kind: "file", hasChildren: false }]);
+    expect(preview.content).toBe("# Remote\n");
+    expect(getFallbackGitHubRepoFileListCallsForTests()).toEqual([
+      { repoFullName, parentPath: null, refName: "feature/tree" },
+    ]);
+    expect(getFallbackGitHubRepoFilePreviewCallsForTests()).toEqual([
+      { repoFullName, path: "README.md", refName: "feature/tree" },
+    ]);
   });
 });

@@ -65,6 +65,8 @@ export type GitHubProjectFetchOptions = {
 type GitHubProjectRepoClientCache = {
   management?: GitHubRepoManagement;
   readmes?: RepoReadme[];
+  files: Record<string, RepoFileTreeEntry[] | undefined>;
+  filePreviews: Record<string, RepoFilePreview | undefined>;
   commits: Record<string, CommitSummary[] | undefined>;
   commitDetails: Record<string, CommitDetail | undefined>;
   issues: Record<string, GitHubIssue[] | undefined>;
@@ -154,6 +156,8 @@ function githubProjectRepoCache(repoFullName: string) {
   let cache = githubProjectCache.get(key);
   if (!cache) {
     cache = {
+      files: {},
+      filePreviews: {},
       commits: {},
       commitDetails: {},
       issues: {},
@@ -191,6 +195,14 @@ function githubCommitListCacheKey(options: GitHubCommitListOptions = {}) {
   const perPage = Math.min(100, Math.max(1, options.perPage ?? 100));
   const sha = options.sha?.trim() ?? "";
   return `${perPage}|${sha}`;
+}
+
+function githubFileListCacheKey(parentPath?: string | null, refName?: string | null) {
+  return `${refName?.trim() ?? ""}|${parentPath?.trim() ?? ""}`;
+}
+
+function githubFilePreviewCacheKey(path: string, refName?: string | null) {
+  return `${refName?.trim() ?? ""}|${path.trim()}`;
 }
 
 function upsertGitHubIssue(repoFullName: string, issue: GitHubIssue) {
@@ -676,12 +688,61 @@ export function listGitHubRepoReadmes(
     });
 }
 
-export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {
-  return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () => fallback.listRepoFiles(repoId, parentPath));
+export function listGitHubRepoFiles(
+  repoFullName: string,
+  parentPath?: string | null,
+  refName?: string | null,
+  options: GitHubProjectFetchOptions = {},
+): Promise<RepoFileTreeEntry[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const key = githubFileListCacheKey(parentPath, refName);
+  const cached = cache.files[key];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
+  return call("github_list_repo_files", {
+    repoFullName,
+    parentPath: parentPath ?? null,
+    refName: refName ?? null,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.listGitHubRepoFiles(repoFullName, parentPath, refName))
+    .then((entries) => {
+      cache.files[key] = cloneProjectList(entries);
+      return cloneProjectList(entries);
+    });
 }
 
-export function getRepoFilePreview(repoId: string, path: string): Promise<RepoFilePreview> {
-  return call("repo_get_file_preview", { repoId, path }, () => fallback.getRepoFilePreview(repoId, path));
+export function getGitHubRepoFilePreview(
+  repoFullName: string,
+  path: string,
+  refName?: string | null,
+  options: GitHubProjectFetchOptions = {},
+): Promise<RepoFilePreview> {
+  const normalizedPath = path.trim();
+  const cache = githubProjectRepoCache(repoFullName);
+  const key = githubFilePreviewCacheKey(normalizedPath, refName);
+  const cached = cache.filePreviews[key];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
+  return call("github_get_repo_file_preview", {
+    repoFullName,
+    path: normalizedPath,
+    refName: refName ?? null,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => fallback.getGitHubRepoFilePreview(repoFullName, normalizedPath, refName))
+    .then((preview) => {
+      cache.filePreviews[key] = cloneProjectData(preview);
+      return cloneProjectData(preview);
+    });
+}
+
+export function listRepoFiles(repoId: string, parentPath?: string | null, repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
+  const remoteFullName = parseRemoteRepoId(repoId);
+  if (remoteFullName) return listGitHubRepoFiles(remoteFullName, parentPath, repoRef);
+  return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () => fallback.listRepoFiles(repoId, parentPath, repoRef));
+}
+
+export function getRepoFilePreview(repoId: string, path: string, repoRef?: string | null): Promise<RepoFilePreview> {
+  const remoteFullName = parseRemoteRepoId(repoId);
+  if (remoteFullName) return getGitHubRepoFilePreview(remoteFullName, path, repoRef);
+  return call("repo_get_file_preview", { repoId, path }, () => fallback.getRepoFilePreview(repoId, path, repoRef));
 }
 
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
