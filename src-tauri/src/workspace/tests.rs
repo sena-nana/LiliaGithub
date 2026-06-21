@@ -2257,6 +2257,49 @@ fn maps_github_workflow_jobs_and_artifacts_with_defaults() {
 }
 
 #[test]
+fn maps_github_workflow_definition_from_content_file() {
+    let definition = github_workflow_definition_from_file(
+        GitHubWorkflowResponse {
+            id: 99,
+            path: Some(".github/workflows/ci.yml".to_string()),
+        },
+        "abc123".to_string(),
+        GitHubContentFileResponse {
+            name: "ci.yml".to_string(),
+            path: ".github/workflows/ci.yml".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some("bmFtZTogQ0kK".to_string()),
+            size: Some(9),
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(definition.id, 99);
+    assert_eq!(definition.path, ".github/workflows/ci.yml");
+    assert_eq!(definition.ref_name, "abc123");
+    assert_eq!(definition.content, "name: CI\n");
+}
+
+#[test]
+fn ignores_github_workflow_definition_without_path() {
+    let definition = github_workflow_definition_from_file(
+        GitHubWorkflowResponse { id: 99, path: None },
+        "abc123".to_string(),
+        GitHubContentFileResponse {
+            name: "ci.yml".to_string(),
+            path: ".github/workflows/ci.yml".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some("bmFtZTogQ0kK".to_string()),
+            size: Some(9),
+        },
+    )
+    .unwrap();
+
+    assert!(definition.is_none());
+}
+
+#[test]
 fn previews_github_artifact_files_by_kind() {
     let text = github_artifact_preview_from_bytes(
         "logs/build.log".to_string(),

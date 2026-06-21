@@ -1116,18 +1116,33 @@ function createFallbackGitHubWorkflowRunDetails(
 function fallbackWorkflowRunDetail(run: GitHubWorkflowRun): GitHubWorkflowRunDetail {
   const completed = run.status === "completed";
   const success = completed && run.conclusion === "success";
+  const jobStatus = completed ? "completed" : run.status;
+  const jobConclusion = completed ? run.conclusion : null;
+  const job = (offset: number, name: string, stepName: string, startedAt = run.createdAt) => ({
+    id: run.id * 10 + offset,
+    name,
+    status: jobStatus,
+    conclusion: jobConclusion,
+    startedAt,
+    completedAt: completed ? run.updatedAt : null,
+    htmlUrl: run.htmlUrl,
+    runnerName: "GitHub Actions",
+    steps: [{
+      name: stepName,
+      status: jobStatus,
+      conclusion: jobConclusion,
+      number: 1,
+      startedAt,
+      completedAt: completed ? run.updatedAt : null,
+    }],
+  });
   return {
     run: { ...run },
     jobs: [
       {
-        id: run.id * 10 + 1,
-        name: run.name,
-        status: run.status,
-        conclusion: run.conclusion,
-        startedAt: run.createdAt,
-        completedAt: completed ? run.updatedAt : null,
-        htmlUrl: run.htmlUrl,
-        runnerName: "GitHub Actions",
+        ...job(1, "lint", "Run lint"),
+        name: "lint",
+        completedAt: completed ? run.createdAt : null,
         steps: [
           {
             name: "Set up job",
@@ -1138,9 +1153,9 @@ function fallbackWorkflowRunDetail(run: GitHubWorkflowRun): GitHubWorkflowRunDet
             completedAt: run.createdAt,
           },
           {
-            name: run.displayTitle,
-            status: run.status,
-            conclusion: run.conclusion,
+            name: "Run lint",
+            status: jobStatus,
+            conclusion: jobConclusion,
             number: 2,
             startedAt: run.createdAt,
             completedAt: completed ? run.updatedAt : null,
@@ -1155,6 +1170,9 @@ function fallbackWorkflowRunDetail(run: GitHubWorkflowRun): GitHubWorkflowRunDet
           },
         ],
       },
+      job(2, "build", "Build"),
+      job(3, "test", "Run tests", completed ? run.updatedAt : run.createdAt),
+      job(4, "package", "Package", completed ? run.updatedAt : run.createdAt),
     ],
     artifacts: success
       ? [{
@@ -1166,6 +1184,33 @@ function fallbackWorkflowRunDetail(run: GitHubWorkflowRun): GitHubWorkflowRunDet
         expiresAt: "2026-07-12T10:08:00Z",
       }]
       : [],
+    workflow: {
+      id: run.workflowId ?? run.id,
+      path: ".github/workflows/ci.yml",
+      refName: run.headSha ?? run.branch,
+      content: [
+        "name: CI",
+        "jobs:",
+        "  lint:",
+        "    name: lint",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+        "  build:",
+        "    name: build",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+        "  test:",
+        "    name: test",
+        "    needs: [lint, build]",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+        "  package:",
+        "    name: package",
+        "    needs: test",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+      ].join("\n"),
+    },
   };
 }
 
@@ -2364,6 +2409,7 @@ function cloneWorkflowRunDetail(detail: GitHubWorkflowRunDetail): GitHubWorkflow
       steps: job.steps.map((step) => ({ ...step })),
     })),
     artifacts: detail.artifacts.map((artifact) => ({ ...artifact })),
+    workflow: detail.workflow ? { ...detail.workflow } : null,
   };
 }
 

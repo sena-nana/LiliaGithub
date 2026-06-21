@@ -849,10 +849,21 @@ pub struct GitHubWorkflowArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct GitHubWorkflowDefinition {
+    pub id: u64,
+    pub path: String,
+    pub ref_name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubWorkflowRunDetail {
     pub run: GitHubWorkflowRun,
     pub jobs: Vec<GitHubWorkflowJob>,
     pub artifacts: Vec<GitHubWorkflowArtifact>,
+    #[serde(default)]
+    pub workflow: Option<GitHubWorkflowDefinition>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
