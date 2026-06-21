@@ -54,6 +54,8 @@ import type {
   WorkspaceTask,
   WorkspaceSettings,
   WorkspaceRepoGroup,
+  WorkspaceStartupCache,
+  WorkspaceStartupContributions,
 } from "./types";
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
@@ -199,6 +201,29 @@ function cloneRepoSummary(repo: RepoSummary): RepoSummary {
     languageStats: repo.languageStats.map((stat) => ({ ...stat })),
     workingTreeLanguageStats: repo.workingTreeLanguageStats.map((stat) => ({ ...stat })),
     worktree: { ...repo.worktree },
+  };
+}
+
+function cloneStartupCache(cache: WorkspaceStartupCache): WorkspaceStartupCache {
+  return {
+    workspaceRoot: cache.workspaceRoot,
+    bindingLogin: cache.bindingLogin,
+    reposById: Object.fromEntries(
+      Object.entries(cache.reposById).map(([repoId, entry]) => [
+        repoId,
+        {
+          summary: cloneRepoSummary(entry.summary),
+          cachedAt: entry.cachedAt,
+        },
+      ]),
+    ),
+    contributions: cache.contributions
+      ? {
+          days: cache.contributions.days.map((day) => ({ ...day })),
+          meta: { ...cache.contributions.meta },
+          cachedAt: cache.contributions.cachedAt,
+        }
+      : null,
   };
 }
 
@@ -886,6 +911,7 @@ let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackRepoOverrides: Record<string, RepoSummary> = {};
 let fallbackTaskIndex = 1;
 let fallbackTasks: WorkspaceTask[] = [];
+let fallbackStartupCache: WorkspaceStartupCache | null = null;
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
@@ -939,6 +965,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoOverrides = {};
   fallbackTaskIndex = 1;
   fallbackTasks = [];
+  fallbackStartupCache = null;
   for (const key of Object.keys(fallbackLaunchStatuses)) {
     delete fallbackLaunchStatuses[key];
   }
@@ -1015,6 +1042,10 @@ export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingSta
     ...fallbackSettings,
     githubBinding: binding.binding,
   };
+}
+
+export function setFallbackStartupCacheForTests(cache: WorkspaceStartupCache | null) {
+  fallbackStartupCache = cache ? cloneStartupCache(cache) : null;
 }
 
 export function setFallbackGitHubReposErrorForTests(error: string | null) {
@@ -1331,9 +1362,64 @@ export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
   return call("workspace_get_settings", undefined, () => cloneWorkspaceSettings(fallbackSettings));
 }
 
+function startupCacheMatchesSettings(cache: WorkspaceStartupCache | null) {
+  return Boolean(cache) &&
+    cache?.workspaceRoot === fallbackSettings.workspaceRoot &&
+    cache?.bindingLogin === (fallbackSettings.githubBinding?.login ?? null);
+}
+
+function currentStartupCache(): WorkspaceStartupCache {
+  if (startupCacheMatchesSettings(fallbackStartupCache)) {
+    return cloneStartupCache(fallbackStartupCache!);
+  }
+  return {
+    workspaceRoot: fallbackSettings.workspaceRoot,
+    bindingLogin: fallbackSettings.githubBinding?.login ?? null,
+    reposById: {},
+    contributions: null,
+  };
+}
+
+function writeFallbackStartupRepoSummary(summary: RepoSummary) {
+  const cache = currentStartupCache();
+  cache.reposById[summary.id] = {
+    summary: cloneRepoSummary(summary),
+    cachedAt: Date.now(),
+  };
+  fallbackStartupCache = cache;
+}
+
+export function readStartupCache(): Promise<WorkspaceStartupCache | null> {
+  return call("workspace_read_startup_cache", undefined, () =>
+    startupCacheMatchesSettings(fallbackStartupCache) ? cloneStartupCache(fallbackStartupCache!) : null,
+  );
+}
+
+export function clearStartupCache(): Promise<void> {
+  return call("workspace_clear_startup_cache", undefined, () => {
+    fallbackStartupCache = null;
+  });
+}
+
+export function writeStartupContributions(
+  contributions: WorkspaceStartupContributions,
+): Promise<WorkspaceStartupCache> {
+  return call("workspace_write_startup_contributions", { contributions }, () => {
+    const cache = currentStartupCache();
+    cache.contributions = {
+      days: contributions.days.map((day) => ({ ...day })),
+      meta: { ...contributions.meta },
+      cachedAt: Date.now(),
+    };
+    fallbackStartupCache = cache;
+    return cloneStartupCache(cache);
+  });
+}
+
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
+    fallbackStartupCache = null;
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }
@@ -1385,9 +1471,21 @@ export function refreshRepos(): Promise<RepoSummary[]> {
 }
 
 export function listManagedRepos(): Promise<RepoSummary[]> {
-  return call("workspace_list_managed_repos", undefined, () =>
-    visibleManagedFallbackRepos().map(lightweightRepoSummary),
-  );
+  return call("workspace_list_managed_repos", undefined, () => {
+    const cache = startupCacheMatchesSettings(fallbackStartupCache) ? fallbackStartupCache : null;
+    return visibleManagedFallbackRepos().map((repo) => {
+      const lightweight = lightweightRepoSummary(repo);
+      const cached = cache?.reposById[repo.id]?.summary;
+      return cached ? {
+        ...cloneRepoSummary(cached),
+        id: lightweight.id,
+        name: lightweight.name,
+        path: lightweight.path,
+        relativePath: lightweight.relativePath,
+        worktree: { ...lightweight.worktree },
+      } : lightweight;
+    });
+  });
 }
 
 export function discoverRepos(): Promise<RepoSummary[]> {
@@ -1478,7 +1576,8 @@ export function refreshRepoSummary(
       error ? "error" : "success",
       error ? `仓库状态已刷新，远端同步失败：${error}` : "仓库状态已更新",
     );
-    return { ...repo };
+    writeFallbackStartupRepoSummary(repo);
+    return cloneRepoSummary(repo);
   });
 }
 
@@ -1533,6 +1632,13 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
     if (!fallbackSettings.hiddenRepoIds.includes(repoId)) {
       const localContributionCache = { ...fallbackSettings.localContributionCache };
       delete localContributionCache[repoId];
+      const startupCache = startupCacheMatchesSettings(fallbackStartupCache)
+        ? cloneStartupCache(fallbackStartupCache!)
+        : null;
+      if (startupCache) {
+        delete startupCache.reposById[repoId];
+        fallbackStartupCache = startupCache;
+      }
       fallbackSettings = {
         ...fallbackSettings,
         hiddenRepoIds: [...fallbackSettings.hiddenRepoIds, repoId].sort(),
@@ -1674,6 +1780,11 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
     delete fallbackRepoReadmes[repoId];
     delete fallbackLaunchStatuses[repoId];
     delete fallbackLaunchLogs[repoId];
+    if (startupCacheMatchesSettings(fallbackStartupCache)) {
+      const cache = cloneStartupCache(fallbackStartupCache!);
+      delete cache.reposById[repoId];
+      fallbackStartupCache = cache;
+    }
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }
@@ -2288,9 +2399,10 @@ function fallbackRepo(repoId: string): RepoSummary {
 function updateFallbackRepo(summary: RepoSummary) {
   fallbackRepoOverrides = {
     ...fallbackRepoOverrides,
-    [summary.id]: { ...summary },
+    [summary.id]: cloneRepoSummary(summary),
   };
-  return { ...summary };
+  writeFallbackStartupRepoSummary(summary);
+  return cloneRepoSummary(summary);
 }
 
 function fallbackLocalBranchName(remoteBranchName: string) {

@@ -52,6 +52,8 @@ import type {
   SystemOpenTarget,
   WorkspaceTask,
   WorkspaceSettings,
+  WorkspaceStartupCache,
+  WorkspaceStartupContributions,
 } from "./types";
 
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
@@ -115,6 +117,20 @@ async function call<T>(command: string, args: Record<string, unknown> | undefine
 
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
   return call("workspace_get_settings", undefined, fallback.getWorkspaceSettings);
+}
+
+export function readStartupCache(): Promise<WorkspaceStartupCache | null> {
+  return call("workspace_read_startup_cache", undefined, fallback.readStartupCache);
+}
+
+export function clearStartupCache(): Promise<void> {
+  return call("workspace_clear_startup_cache", undefined, fallback.clearStartupCache);
+}
+
+export function writeStartupContributions(contributions: WorkspaceStartupContributions): Promise<WorkspaceStartupCache> {
+  return call("workspace_write_startup_contributions", { contributions }, () =>
+    fallback.writeStartupContributions(contributions)
+  );
 }
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {

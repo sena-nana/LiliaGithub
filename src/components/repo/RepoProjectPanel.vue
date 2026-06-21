@@ -819,7 +819,8 @@ async function loadReadme(force = false) {
     readmeError.value = null;
     const previousPath = activeReadmePath.value;
     try {
-      const nextReadmes = readmeUsesGitHub.value && repoFullName
+      const usesGitHubReadme = readmeProvider === "github";
+      const nextReadmes = usesGitHubReadme && repoFullName
         ? force
           ? await listGitHubRepoReadmes(repoFullName, { forceRefresh: true })
           : await listGitHubRepoReadmes(repoFullName)
@@ -827,7 +828,7 @@ async function loadReadme(force = false) {
       if (
         !readmeLoader.isCurrent(runId) ||
         repoId !== props.repoId ||
-        repoFullName !== props.repoFullName ||
+        (usesGitHubReadme && repoFullName !== props.repoFullName) ||
         readmeProvider !== resolvedRepoContext.value.capabilities.readme.provider
       ) return;
       readmes.value = nextReadmes;

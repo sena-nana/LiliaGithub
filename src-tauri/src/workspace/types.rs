@@ -25,6 +25,42 @@ pub struct WorkspaceSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceStartupCache {
+    #[serde(default)]
+    pub workspace_root: Option<String>,
+    #[serde(default)]
+    pub binding_login: Option<String>,
+    #[serde(default)]
+    pub repos_by_id: HashMap<String, CachedRepoSummary>,
+    #[serde(default)]
+    pub contributions: Option<CachedContributionResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedRepoSummary {
+    pub summary: RepoSummary,
+    pub cached_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedContributionResult {
+    pub days: Vec<GitHubContributionDay>,
+    pub meta: GitHubContributionMeta,
+    pub cached_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceStartupContributions {
+    #[serde(default)]
+    pub days: Vec<GitHubContributionDay>,
+    pub meta: GitHubContributionMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkspaceRepoGroup {
     pub id: String,
     pub name: String,

@@ -11,6 +11,7 @@ export {
   getFallbackOpenPathCallsForTests,
   getFallbackOpenPathTargetCallsForTests,
   resetWorkspaceFallbacksForTests,
+  setFallbackStartupCacheForTests,
   setFallbackBulkExecuteOverrideForTests,
   setFallbackConflictOverrideForTests,
   setFallbackGitHubBindingStatusForTests,

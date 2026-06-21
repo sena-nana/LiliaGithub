@@ -32,6 +32,7 @@ let contributionRefreshGeneration = 0;
 let contributionRefreshPendingCount = 0;
 let contributionRefreshSeenFullNames = new Set<string>();
 let contributionRefreshSampledCount = 0;
+let contributionRefreshDays: GitHubContributionDay[] = [];
 let workspaceTaskRefreshGeneration = 0;
 let languageStatsLoadingGenerations = new Map<string, number>();
 const autoSyncRunningRepoIds = new Set<string>();
@@ -308,17 +309,22 @@ function beginContributionRefresh() {
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;
+  contributionRefreshDays = emptyContributionDays(refreshedAt);
+  if (!state.githubContributions.days.length) {
+    state.githubContributions.days = contributionRefreshDays;
+  }
   state.githubContributions.loading = false;
   state.githubContributions.error = null;
-  state.githubContributions.days = emptyContributionDays(refreshedAt);
-  state.githubContributions.meta = {
-    repoCount: 0,
-    requestedRepoCount: 0,
-    repoLimit: CONTRIBUTION_REPO_LIMIT,
-    truncated: false,
-    skippedRepoCount: 0,
-    refreshedAt,
-  };
+  if (!state.githubContributions.meta) {
+    state.githubContributions.meta = {
+      repoCount: 0,
+      requestedRepoCount: 0,
+      repoLimit: CONTRIBUTION_REPO_LIMIT,
+      truncated: false,
+      skippedRepoCount: 0,
+      refreshedAt,
+    };
+  }
   return generation;
 }
 
@@ -344,7 +350,8 @@ async function refreshSingleRepoContribution(scope: string, generation: number) 
     const service = await loadWorkspaceService();
     const result = await service.listRepoContribution(scope);
     if (generation !== contributionRefreshGeneration) return;
-    state.githubContributions.days = mergeContributionDays(state.githubContributions.days, result.days);
+    contributionRefreshDays = mergeContributionDays(contributionRefreshDays, result.days);
+    state.githubContributions.days = contributionRefreshDays;
     updateContributionMeta({
       repoCount: (state.githubContributions.meta?.repoCount ?? 0) + (result.meta.repoCount ?? 1),
       requestedRepoCount: contributionRefreshSeenFullNames.size,
@@ -363,6 +370,23 @@ function finishRepoContributionRefresh(generation: number) {
   if (generation !== contributionRefreshGeneration) return;
   contributionRefreshPendingCount = Math.max(0, contributionRefreshPendingCount - 1);
   state.githubContributions.loading = contributionRefreshPendingCount > 0;
+  if (contributionRefreshPendingCount === 0 && state.githubContributions.meta) {
+    void persistStartupContributions();
+  }
+}
+
+async function persistStartupContributions() {
+  const meta = state.githubContributions.meta;
+  if (!meta) return;
+  try {
+    const service = await loadWorkspaceService();
+    await service.writeStartupContributions({
+      days: state.githubContributions.days,
+      meta,
+    });
+  } catch {
+    // Startup cache persistence is an optimization; visible refresh state is already updated.
+  }
 }
 
 function emptyContributionDays(now = Date.now()) {
@@ -497,6 +521,7 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;
+  contributionRefreshDays = [];
 }
 
 export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {

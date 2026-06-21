@@ -892,6 +892,7 @@ pub(super) fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSumma
     })
 }
 
+#[cfg(test)]
 pub(super) fn lightweight_managed_repos(
     root: &Path,
     settings: &WorkspaceSettings,
@@ -899,6 +900,19 @@ pub(super) fn lightweight_managed_repos(
     let mut repos: Vec<_> = managed_repo_paths(root, settings)
         .into_iter()
         .map(|path| lightweight_repo_summary(root, &path))
+        .collect();
+    sort_repos(&mut repos);
+    repos
+}
+
+pub(super) fn cached_managed_repos(
+    root: &Path,
+    settings: &WorkspaceSettings,
+    cache: &WorkspaceStartupCache,
+) -> Vec<RepoSummary> {
+    let mut repos: Vec<_> = managed_repo_paths(root, settings)
+        .into_iter()
+        .map(|path| cached_repo_summary(cache, lightweight_repo_summary(root, &path)))
         .collect();
     sort_repos(&mut repos);
     repos
@@ -1041,6 +1055,9 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
         let failures = refresh_managed_repo_remotes(&paths, |path| run_fetch(&app, path));
         let mut repos = summarize_repos(&root, paths);
         sort_repos(&mut repos);
+        for summary in &repos {
+            let _ = write_startup_repo_summary(&app, &settings, summary);
+        }
         if failures.is_empty() {
             update_workspace_task(
                 &task.id,
@@ -1064,7 +1081,8 @@ pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSumm
     run_blocking("读取已管理仓库", move || {
         let root = workspace_root(&app)?;
         let settings = load_settings(&app);
-        Ok(lightweight_managed_repos(&root, &settings))
+        let cache = matching_startup_cache(&app, &settings);
+        Ok(cached_managed_repos(&root, &settings, &cache))
     })
     .await
 }
@@ -1122,6 +1140,7 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
         settings.hidden_repo_ids.retain(|id| id != &repo_id);
         save_settings(&app, &settings)?;
         let summary = summarize_repo(&root, &path);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
         update_workspace_task(&task.id, "success", Some("已添加仓库".to_string()));
         Ok(summary)
     })
@@ -1176,7 +1195,9 @@ pub async fn workspace_clone_repo(
         let mut settings = load_settings(&app);
         add_managed_repo_id(&mut settings, repo_id(&root, &target));
         save_settings(&app, &settings)?;
-        Ok(summarize_repo(&root, &target))
+        let summary = summarize_repo(&root, &target);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
+        Ok(summary)
     })
     .await
 }
@@ -1216,6 +1237,8 @@ pub async fn repo_refresh_summary(
             None
         };
         let summary = summarize_repo(&root, &path);
+        let settings = load_settings(&app);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
         if let Some(error) = fetch_error {
             update_workspace_task(
                 &task.id,
@@ -1246,6 +1269,8 @@ pub async fn repo_refresh_language_stats(
             Some("刷新语言统计".to_string()),
         );
         let summary = summarize_repo_with_language_stats(&root, &path);
+        let settings = load_settings(&app);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
         update_workspace_task(&task.id, "success", Some("语言统计已更新".to_string()));
         Ok(summary)
     })
