@@ -90,6 +90,7 @@ export function useRepoDetailController() {
 
   const repoId = computed(() => String(route.params.repoId ?? ""));
   const remoteFullName = computed(() => parseRemoteRepoId(repoId.value));
+  const remoteContextRestored = computed(() => !remoteFullName.value || workspace.state.settings !== null);
   const remoteShortcut = computed(() =>
     workspace.state.settings?.remoteRepoShortcuts.find((repo) => repo.fullName === remoteFullName.value) ?? null,
   );
@@ -129,9 +130,11 @@ export function useRepoDetailController() {
   const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);
   const summary = computed(() => remoteSummary.value ?? detail.value?.summary ?? workspace.repoById(repoId.value));
   const githubAuthorized = computed(() => {
-    if (workspace.state.bindingStatus) return Boolean(workspace.state.bindingStatus.binding);
+    if (workspace.state.bindingStatus) {
+      return workspace.state.bindingStatus.state === "bound" && Boolean(workspace.state.bindingStatus.binding);
+    }
     if (workspace.state.settings) return Boolean(workspace.state.settings.githubBinding);
-    return true;
+    return false;
   });
   const repoContext = computed(() => resolveRepoContext({
     repoId: repoId.value,
@@ -142,6 +145,15 @@ export function useRepoDetailController() {
   const hasLocalRepo = computed(() => hasRepoTag(repoContext.value, "local"));
   const githubRepoFullName = computed(() => repoContext.value.githubFullName ?? null);
   const canShowChanges = computed(() => repoContext.value.capabilities.changes.available);
+  const canLoadFiles = computed(() => remoteContextRestored.value && repoContext.value.capabilities.files.available);
+  const canShowFilesTab = computed(() =>
+    canLoadFiles.value || (!remoteContextRestored.value && Boolean(remoteFullName.value))
+  );
+  const filesUnavailableMessage = computed(() =>
+    remoteContextRestored.value
+      ? repoContext.value.capabilities.files.reason ?? "文件树暂不可用。"
+      : "正在恢复仓库上下文。"
+  );
   const branchBrowseUsesGitHub = computed(() => repoContext.value.capabilities.branchBrowse.provider === "github");
   const historyUsesGitHub = computed(() => repoContext.value.capabilities.history.provider === "github");
   const canUseGitHubData = computed(() => repoContext.value.capabilities.issues.available);
@@ -203,7 +215,9 @@ export function useRepoDetailController() {
       refs: [...commit.refs],
     })),
   );
-  const activeFileRepoRef = computed(() => branchBrowseUsesGitHub.value ? remoteBrowseBranch.value : null);
+  const activeFileRepoRef = computed(() =>
+    repoContext.value.capabilities.files.provider === "github" ? remoteBrowseBranch.value : null
+  );
   const panelConflictFiles = computed<RepoConflictFile[]>(() =>
     conflictFiles.value.map((file) => ({
       ...file,
@@ -259,7 +273,10 @@ export function useRepoDetailController() {
       canShowChanges.value ? { key: "changes", title: "变更" } : null,
       { key: "history", title: "历史" },
       repoContext.value.capabilities.stash.available ? { key: "stash", title: "Stash" } : null,
-    ].filter((tab): tab is { key: RepoToolbarTab; title: string } => Boolean(tab)),
+    ].filter((tab): tab is { key: RepoToolbarTab; title: string } => {
+      if (!tab) return false;
+      return tab.key !== "files" || canShowFilesTab.value;
+    }),
   );
   const launchCommandOptions = computed(() => {
     const candidates = [...launchCandidates.value];
@@ -411,6 +428,10 @@ export function useRepoDetailController() {
     void load();
   });
 
+  watch(remoteContextRestored, (ready, wasReady) => {
+    if (ready && !wasReady) void load();
+  });
+
   watch(changes, () => {
     syncFocusedChange();
   });
@@ -477,6 +498,7 @@ export function useRepoDetailController() {
       actionError.value = null;
       launchError.value = null;
       if (!hasLocalRepo.value) {
+        if (!remoteContextRestored.value) return;
         await loadRemoteGitHubData(githubRepoFullName.value);
         return;
       }
@@ -1108,7 +1130,9 @@ export function useRepoDetailController() {
       launchLoading,
       launchRunning,
       statusCommits,
+      canLoadFiles,
       activeFileRepoRef,
+      filesUnavailableMessage,
       panelConflictFiles,
       panelConflicts,
       panelFocusedConflict,

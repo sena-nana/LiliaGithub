@@ -530,6 +530,85 @@ describe("基础路由", () => {
     });
   });
 
+  it("冷启动直达远程文件树等待 settings 恢复后再按默认分支读取", async () => {
+    const service = await import("../src/services/workspace");
+    const repoFullName = "sena-nana/ColdRemoteFiles";
+    service.clearGitHubRepoCache();
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary(repoFullName, { defaultBranch: "main" })],
+        nextPage: null,
+      },
+    ]);
+    workspaceFallback.setFallbackGitHubBranchesForTests({
+      [repoFullName]: [
+        {
+          name: "main",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: true,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: [],
+        },
+      ],
+    });
+    workspaceFallback.setFallbackGitHubRepoFilesForTests({
+      [repoFullName]: {
+        "": [{ path: "README.md", name: "README.md", kind: "file", hasChildren: false }],
+      },
+    });
+    workspaceFallback.setFallbackGitHubRepoFilePreviewsForTests({
+      [repoFullName]: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Cold Remote Files\n",
+          dataUrl: null,
+          images: {},
+          size: 20,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+    const restoredSettings = await service.rememberRemoteRepo({
+      fullName: repoFullName,
+      name: "ColdRemoteFiles",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: `https://github.com/${repoFullName}`,
+      cloneUrl: `https://github.com/${repoFullName}.git`,
+      openedAt: Date.now(),
+    });
+    const settingsGate = deferred<typeof restoredSettings>();
+    const settingsSpy = vi.spyOn(service, "getWorkspaceSettings").mockReturnValueOnce(settingsGate.promise);
+
+    const { router } = await renderAt("/repos/github%3Asena-nana%2FColdRemoteFiles/files");
+
+    expect(await screen.findByText("正在恢复仓库上下文。")).toBeInTheDocument();
+    expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toEqual([]);
+
+    settingsGate.resolve(restoredSettings);
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FColdRemoteFiles/files");
+      expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
+        repoFullName,
+        parentPath: null,
+        refName: "main",
+      });
+    });
+    const rootFileListCalls = workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()
+      .filter((call) => call.repoFullName === repoFullName && call.parentPath === null);
+    expect(rootFileListCalls).toEqual([{ repoFullName, parentPath: null, refName: "main" }]);
+    settingsSpy.mockRestore();
+  });
+
   it("直接进入仓库详情默认页时不预取 issue 和 workflow runs", async () => {
     const service = await import("../src/services/workspace");
     const initialIssueCalls = workspaceFallback.getFallbackGitHubIssueListCallsForTests().length;

@@ -55,7 +55,9 @@ const {
   launchLogs,
   launchRunning,
   statusCommits,
+  canLoadFiles,
   activeFileRepoRef,
+  filesUnavailableMessage,
   panelConflictFiles,
   panelConflicts,
   panelFocusedConflict,
@@ -329,12 +331,15 @@ const {
     <div class="repo-workbench__body">
       <main class="workbench-main workbench-main--project">
         <RepoFilesPanel
-          v-if="activeTab === 'files'"
+          v-if="activeTab === 'files' && canLoadFiles"
           :repo-id="repoId"
           :repo-path="summary?.path ?? null"
           :repo-ref="activeFileRepoRef"
           :changes="changes"
         />
+        <div v-else-if="activeTab === 'files'" class="repo-workbench__empty">
+          <p class="muted">{{ filesUnavailableMessage }}</p>
+        </div>
         <RepoStashPanel
           v-else-if="activeTab === 'stash'"
           :repo-id="repoId"
@@ -786,6 +791,14 @@ const {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.repo-workbench__empty {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px;
+  text-align: center;
 }
 
 .section-toolbar {
