@@ -23,6 +23,7 @@ import type {
   GitHubMergePullRequestRequest,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -497,7 +498,13 @@ function cloneBranchSummary(branch: BranchSummary): BranchSummary {
 }
 
 function clonePullRequest(pullRequest: GitHubPullRequest): GitHubPullRequest {
-  return { ...pullRequest };
+  return {
+    ...pullRequest,
+    labels: [...(pullRequest.labels ?? [])],
+    assignees: [...(pullRequest.assignees ?? [])],
+    milestone: pullRequest.milestone ? { ...pullRequest.milestone } : null,
+    projectItems: pullRequest.projectItems?.map((project) => ({ ...project })) ?? [],
+  };
 }
 
 function cloneIssue(issue: GitHubIssue): GitHubIssue {
@@ -839,6 +846,11 @@ function createFallbackGitHubPullRequests(): Record<string, GitHubPullRequest[]>
           state: "open",
           draft: false,
           body: "补齐 pull / push / sync / fetch all 基础能力。",
+          labels: ["git", "workflow"],
+          assignees: ["lilia-user"],
+          milestone: { number: 1, title: "v1", state: "open" },
+          comments: 2,
+          projectItems: [{ id: "PVT_LiliaGithub", title: "Roadmap" }],
           htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/7",
           updatedAt: "2026-06-17T12:20:00Z",
           createdAt: "2026-06-16T09:00:00Z",
@@ -860,6 +872,11 @@ function createFallbackGitHubPullRequests(): Record<string, GitHubPullRequest[]>
         state: "open",
         draft: false,
         body: "加入 mock 数据、截图资产和 README 展示区。",
+        labels: ["documentation", "ui"],
+        assignees: ["lilia-user"],
+        milestone: { number: 1, title: "v1", state: "open" },
+        comments: 3,
+        projectItems: [{ id: "PVT_LiliaGithub", title: "Roadmap" }],
         htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/32",
         updatedAt: "2026-06-21T09:24:00Z",
         createdAt: "2026-06-21T08:50:00Z",
@@ -876,6 +893,11 @@ function createFallbackGitHubPullRequests(): Record<string, GitHubPullRequest[]>
         state: "closed",
         draft: false,
         body: "把命令候选和运行日志移到主内容区。",
+        labels: ["ui", "workflow"],
+        assignees: [],
+        milestone: { number: 1, title: "v1", state: "open" },
+        comments: 5,
+        projectItems: [{ id: "PVT_LiliaGithub", title: "Roadmap" }],
         htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/27",
         updatedAt: "2026-06-20T10:12:00Z",
         createdAt: "2026-06-19T13:00:00Z",
@@ -894,6 +916,11 @@ function createFallbackGitHubPullRequests(): Record<string, GitHubPullRequest[]>
         state: "open",
         draft: false,
         body: "同步前端协议、后端持久化和 provider adapter。",
+        labels: ["runtime", "protocol"],
+        assignees: ["sena-nana"],
+        milestone: null,
+        comments: 4,
+        projectItems: [],
         htmlUrl: "https://github.com/sena-nana/LiliaCode/pull/118",
         updatedAt: "2026-06-21T08:42:00Z",
         createdAt: "2026-06-20T22:00:00Z",
@@ -1723,6 +1750,16 @@ type FallbackGitHubIssueListCall = {
 type FallbackGitHubPullRequestListCall = {
   repoFullName: string;
   state: string | null;
+  perPage: number | null;
+  sort: string | null;
+  direction: string | null;
+  creator: string | null;
+  assignee: string | null;
+  labels: string[] | null;
+  milestone: string | number | null;
+  project: string | null;
+  review: string | null;
+  query: string | null;
 };
 
 type FallbackGitHubPullRequestCheckListCall = {
@@ -1979,7 +2016,10 @@ export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueLi
 }
 
 export function getFallbackGitHubPullRequestListCallsForTests(): FallbackGitHubPullRequestListCall[] {
-  return fallbackGitHubPullRequestListCalls.map((call) => ({ ...call }));
+  return fallbackGitHubPullRequestListCalls.map((call) => ({
+    ...call,
+    labels: call.labels ? [...call.labels] : null,
+  }));
 }
 
 export function getFallbackGitHubPullRequestCheckListCallsForTests(): FallbackGitHubPullRequestCheckListCall[] {
@@ -2992,17 +3032,145 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
 
 export function listGitHubPullRequests(
   repoFullName: string,
-  state: "open" | "closed" | "all" | null = "open",
+  stateOrOptions?: string | null | GitHubPullRequestListOptions,
 ): Promise<GitHubPullRequest[]> {
-  return call("github_list_pull_requests", { repoFullName, state: state ?? null }, () =>
-    {
-      fallbackGitHubPullRequestListCalls.push({ repoFullName, state: state ?? null });
-      return [...(fallbackGitHubPullRequests[repoFullName] ?? [])]
-        .filter((pullRequest) => !state || state === "all" || pullRequest.state === state)
-        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-        .map(clonePullRequest);
-    },
-  );
+  const options = typeof stateOrOptions === "object" && stateOrOptions != null
+    ? stateOrOptions
+    : { state: stateOrOptions ?? null };
+  const state = options.state ?? null;
+  const sort = options.sort ?? "updated";
+  const direction = options.direction ?? "desc";
+  const creator = options.creator ?? null;
+  const assignee = options.assignee ?? null;
+  const labels = options.labels ?? null;
+  const milestone = options.milestone ?? null;
+  const project = options.project ?? null;
+  const review = options.review ?? null;
+  const query = options.query?.trim() || null;
+  const perPage = Number.isFinite(options.perPage) ? Math.max(1, Math.trunc(options.perPage ?? 0)) : null;
+  fallbackGitHubPullRequestListCalls.push({
+    repoFullName,
+    state,
+    perPage,
+    sort,
+    direction,
+    creator,
+    assignee,
+    labels: labels ? [...labels] : null,
+    milestone,
+    project,
+    review,
+    query,
+  });
+  return call("github_list_pull_requests", {
+    repoFullName,
+    state,
+    perPage,
+    sort,
+    direction,
+    creator,
+    assignee,
+    labels,
+    milestone,
+    project,
+    review,
+    query,
+  }, () => {
+    const sorted = [...(fallbackGitHubPullRequests[repoFullName] ?? [])]
+      .filter((pullRequest) => isFallbackGitHubPullRequestState(pullRequest, state))
+      .filter((pullRequest) => isFallbackGitHubPullRequestQuery(pullRequest, query))
+      .filter((pullRequest) => isFallbackGitHubPullRequestCreator(pullRequest, creator))
+      .filter((pullRequest) => isFallbackGitHubPullRequestAssignee(pullRequest, assignee))
+      .filter((pullRequest) => isFallbackGitHubPullRequestLabels(pullRequest, labels))
+      .filter((pullRequest) => isFallbackGitHubPullRequestMilestone(pullRequest, milestone))
+      .filter((pullRequest) => isFallbackGitHubPullRequestProject(pullRequest, project))
+      .filter((pullRequest) => isFallbackGitHubPullRequestReview(pullRequest, review))
+      .sort((a, b) => compareFallbackGitHubPullRequests(a, b, sort, direction));
+    return sorted
+      .slice(0, perPage ?? sorted.length)
+      .map(clonePullRequest);
+  });
+}
+
+function isFallbackGitHubPullRequestState(pullRequest: GitHubPullRequest, state: string | null) {
+  if (!state || state === "open") return pullRequest.state === "open";
+  if (state === "merged") return pullRequest.merged;
+  if (state === "closed") return pullRequest.state === "closed" && !pullRequest.merged;
+  if (state === "all") return true;
+  return pullRequest.state === state;
+}
+
+function isFallbackGitHubPullRequestCreator(pullRequest: GitHubPullRequest, creator: string | null) {
+  if (!creator) return true;
+  return pullRequest.author.toLowerCase() === creator.toLowerCase();
+}
+
+function isFallbackGitHubPullRequestAssignee(pullRequest: GitHubPullRequest, assignee: string | null) {
+  if (!assignee) return true;
+  const assignees = pullRequest.assignees ?? [];
+  if (assignee === "none") return assignees.length === 0;
+  return assignees.some((value) => value.toLowerCase() === assignee.toLowerCase());
+}
+
+function isFallbackGitHubPullRequestLabels(pullRequest: GitHubPullRequest, labels: readonly string[] | null) {
+  const normalized = (labels ?? []).map((label) => label.toLowerCase()).filter(Boolean);
+  if (!normalized.length) return true;
+  const pullLabels = (pullRequest.labels ?? []).map((label) => label.toLowerCase());
+  return normalized.every((label) => pullLabels.includes(label));
+}
+
+function isFallbackGitHubPullRequestMilestone(pullRequest: GitHubPullRequest, milestone: string | number | null) {
+  if (milestone == null || milestone === "") return true;
+  if (milestone === "none") return !pullRequest.milestone;
+  return String(pullRequest.milestone?.number ?? "") === String(milestone);
+}
+
+function isFallbackGitHubPullRequestProject(pullRequest: GitHubPullRequest, project: string | null) {
+  if (!project) return true;
+  return (pullRequest.projectItems ?? []).some((item) => item.id === project || item.title === project);
+}
+
+function isFallbackGitHubPullRequestReview(pullRequest: GitHubPullRequest, review: string | null) {
+  if (!review) return true;
+  if (review === "approved") return pullRequest.mergeableState === "clean";
+  if (review === "changes_requested") return pullRequest.mergeableState === "blocked";
+  if (review === "required") return pullRequest.mergeableState === "unstable" || pullRequest.mergeableState === "blocked";
+  if (review === "none") return !pullRequest.mergeableState || pullRequest.mergeableState === "unknown";
+  return true;
+}
+
+function isFallbackGitHubPullRequestQuery(pullRequest: GitHubPullRequest, query: string | null) {
+  const normalized = query?.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    pullRequest.number,
+    pullRequest.title,
+    pullRequest.body ?? "",
+    pullRequest.author,
+    pullRequest.headBranch,
+    pullRequest.baseBranch,
+    (pullRequest.labels ?? []).join(" "),
+    (pullRequest.assignees ?? []).join(" "),
+    pullRequest.milestone?.title ?? "",
+    pullRequest.projectItems?.map((project) => project.title).join(" ") ?? "",
+  ].join(" ").toLowerCase().includes(normalized);
+}
+
+function compareFallbackGitHubPullRequests(
+  a: GitHubPullRequest,
+  b: GitHubPullRequest,
+  sort: string | null,
+  direction: string | null,
+) {
+  if (sort === "comments") {
+    const comparedComments = (a.comments ?? 0) - (b.comments ?? 0);
+    return direction === "asc" ? comparedComments : -comparedComments;
+  }
+  const sortKey = sort === "created" ? "createdAt" : "updatedAt";
+  const left = Date.parse(a[sortKey]);
+  const right = Date.parse(b[sortKey]);
+  const compared = (Number.isFinite(left) ? left : 0) - (Number.isFinite(right) ? right : 0);
+  return direction === "asc" ? compared : -compared;
 }
 
 export function getGitHubPullRequest(repoFullName: string, pullNumber: number): Promise<GitHubPullRequest> {
@@ -3029,6 +3197,11 @@ export function createGitHubPullRequest(
       state: "open",
       draft: request.draft === true,
       body: request.body?.trim() || null,
+      labels: [],
+      assignees: [],
+      milestone: null,
+      comments: 0,
+      projectItems: [],
       htmlUrl: `https://github.com/${repoFullName}/pull/${pullRequests.length + 1}`,
       updatedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),

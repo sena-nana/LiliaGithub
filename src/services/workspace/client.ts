@@ -20,6 +20,7 @@ import type {
   GitHubMergePullRequestRequest,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -245,8 +246,29 @@ function githubIssueCacheKey(options: GitHubIssueListOptions) {
   return JSON.stringify({ state, perPage, sort, direction, since, creator, assignee, labels, milestone, project, query });
 }
 
-function githubPullRequestCacheKey(state?: "open" | "closed" | "all" | null) {
-  return state === "closed" || state === "all" ? state : "open";
+function normalizeGitHubPullRequestListOptions(
+  stateOrOptions?: "open" | "closed" | "merged" | "all" | string | null | GitHubPullRequestListOptions,
+): GitHubPullRequestListOptions {
+  return typeof stateOrOptions === "object" && stateOrOptions != null
+    ? stateOrOptions
+    : { state: stateOrOptions ?? null };
+}
+
+function githubPullRequestCacheKey(options: GitHubPullRequestListOptions) {
+  const state = options.state === "closed" || options.state === "merged" || options.state === "all"
+    ? options.state
+    : "open";
+  const perPage = Math.min(100, Math.max(1, options.perPage ?? 100));
+  const sort = options.sort === "created" || options.sort === "comments" ? options.sort : "updated";
+  const direction = options.direction === "asc" ? "asc" : "desc";
+  const creator = options.creator?.trim() ?? "";
+  const assignee = options.assignee?.trim() ?? "";
+  const labels = [...(options.labels ?? [])].map((label) => label.trim()).filter(Boolean).sort();
+  const milestone = String(options.milestone ?? "").trim();
+  const project = options.project?.trim() ?? "";
+  const review = options.review?.trim() ?? "";
+  const query = options.query?.trim() ?? "";
+  return JSON.stringify({ state, perPage, sort, direction, creator, assignee, labels, milestone, project, review, query });
 }
 
 function githubWorkflowRunsCacheKey(perPage?: number | null) {
@@ -290,7 +312,15 @@ function upsertGitHubPullRequest(repoFullName: string, pull: GitHubPullRequest) 
   const cache = githubProjectRepoCache(repoFullName);
   for (const [key, items] of Object.entries(cache.pullRequests)) {
     if (!items) continue;
-    const belongs = key === "all" || key === pull.state;
+    let state = "open";
+    try {
+      state = JSON.parse(key).state ?? "open";
+    } catch {
+      state = key;
+    }
+    const belongs =
+      state === "all" ||
+      (state === "merged" ? pull.merged : state === pull.state && (state !== "closed" || !pull.merged));
     const withoutPull = items.filter((item) => item.number !== pull.number);
     cache.pullRequests[key] = belongs
       ? [cloneProjectData(pull), ...cloneProjectList(withoutPull)]
@@ -528,18 +558,29 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
 
 export function listGitHubPullRequests(
   repoFullName: string,
-  state?: "open" | "closed" | "all" | null,
-  options: GitHubProjectFetchOptions = {},
+  stateOrOptions?: "open" | "closed" | "merged" | "all" | string | null | GitHubPullRequestListOptions,
+  fetchOptions: GitHubProjectFetchOptions = {},
 ): Promise<GitHubPullRequest[]> {
+  const options = normalizeGitHubPullRequestListOptions(stateOrOptions);
   const cache = githubProjectRepoCache(repoFullName);
-  const key = githubPullRequestCacheKey(state);
+  const key = githubPullRequestCacheKey(options);
   const cached = cache.pullRequests[key];
-  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
+  if (!fetchOptions.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
   return call("github_list_pull_requests", {
     repoFullName,
-    state: state ?? null,
-    forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().listGitHubPullRequests(repoFullName, state))
+    state: options.state ?? null,
+    perPage: options.perPage ?? null,
+    sort: options.sort ?? null,
+    direction: options.direction ?? null,
+    creator: options.creator ?? null,
+    assignee: options.assignee ?? null,
+    labels: options.labels ?? null,
+    milestone: options.milestone ?? null,
+    project: options.project ?? null,
+    review: options.review ?? null,
+    query: options.query ?? null,
+    forceRefresh: fetchOptions.forceRefresh ?? null,
+  }, () => workspaceFallback().listGitHubPullRequests(repoFullName, options))
     .then((pulls) => {
       cache.pullRequests[key] = cloneProjectList(pulls);
       return cloneProjectList(pulls);

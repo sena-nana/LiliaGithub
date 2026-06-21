@@ -732,6 +732,16 @@ pub struct GitHubPullRequest {
     pub draft: bool,
     #[serde(default)]
     pub body: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
+    #[serde(default)]
+    pub milestone: Option<GitHubIssueMilestone>,
+    #[serde(default)]
+    pub comments: u64,
+    #[serde(default)]
+    pub project_items: Vec<GitHubIssueProjectItem>,
     pub html_url: String,
     pub updated_at: String,
     pub created_at: String,

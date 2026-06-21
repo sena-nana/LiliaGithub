@@ -108,6 +108,11 @@ const githubPullRequests: GitHubPullRequest[] = [{
   state: "open",
   draft: false,
   body: null,
+  labels: ["bug"],
+  assignees: ["sena"],
+  milestone: { number: 1, title: "v1", state: "open" },
+  comments: 2,
+  projectItems: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
   htmlUrl: "https://github.com/sena-nana/remote-repo/pull/52",
   updatedAt: "2026-06-18T08:00:00Z",
   createdAt: "2026-06-18T08:00:00Z",
@@ -371,6 +376,11 @@ describe("RepoProjectPanel", () => {
       state: "open",
       draft: request.draft ?? false,
       body: request.body ?? null,
+      labels: [],
+      assignees: [],
+      milestone: null,
+      comments: 0,
+      projectItems: [],
       htmlUrl: "https://github.com/sena-nana/remote-repo/pull/101",
       updatedAt: "2026-06-18T09:00:00Z",
       createdAt: "2026-06-18T09:00:00Z",
@@ -694,12 +704,148 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
     expect(await view.findByText("1 个 checks")).toBeInTheDocument();
     expect(view.getByText("ci / build")).toBeInTheDocument();
-    expect(listGitHubPullRequests).toHaveBeenCalledWith("sena-nana/remote-repo", "open");
+    expect(listGitHubPullRequests).toHaveBeenCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({ state: "open", sort: "updated", direction: "desc" }),
+    );
     expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
 
     await fireEvent.click(view.getByRole("button", { name: "合并" }));
     await waitFor(() => {
       expect(mergeGitHubPullRequest).toHaveBeenCalledWith("sena-nana/remote-repo", 52, { method: "merge" });
+    });
+  });
+
+  it("Pull Requests 状态切换按 Open、Closed、Merged 刷新", async () => {
+    const closedPull: GitHubPullRequest = {
+      ...githubPullRequests[0],
+      number: 53,
+      title: "关闭未合并 PR",
+      state: "closed",
+      merged: false,
+      htmlUrl: "https://github.com/sena-nana/remote-repo/pull/53",
+    };
+    const mergedPull: GitHubPullRequest = {
+      ...githubPullRequests[0],
+      number: 54,
+      title: "已合并 PR",
+      state: "closed",
+      merged: true,
+      htmlUrl: "https://github.com/sena-nana/remote-repo/pull/54",
+    };
+    vi.mocked(listGitHubPullRequests)
+      .mockResolvedValueOnce(githubPullRequests)
+      .mockResolvedValueOnce([closedPull])
+      .mockResolvedValueOnce([mergedPull]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
+    expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+    expect(listGitHubPullRequests).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(within(view.getByRole("group", { name: "Pull Request 状态" })).getByRole("button", { name: /Closed/ }));
+    expect(await view.findByText("#53 关闭未合并 PR")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ state: "closed", sort: "updated", direction: "desc" }),
+      );
+    });
+
+    await fireEvent.click(within(view.getByRole("group", { name: "Pull Request 状态" })).getByRole("button", { name: /Merged/ }));
+    expect(await view.findByText("#54 已合并 PR")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ state: "merged", sort: "updated", direction: "desc" }),
+      );
+    });
+    expect(listGitHubPullRequests).toHaveBeenCalledTimes(3);
+  });
+
+  it("Pull Requests 搜索、筛选和排序选择后立即传递请求参数", async () => {
+    vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
+    expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+
+    await fireEvent.update(view.getByLabelText("搜索 Pull Requests"), "workflow");
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ query: "workflow" }),
+      );
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "筛选" }));
+    const filters = view.getByLabelText("Pull Request 筛选项");
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意作者" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ creator: "sena" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意标签" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "bug" }));
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ labels: ["bug"] }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意项目" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "Roadmap" }));
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ project: "PVT_kwDOIssue" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意里程碑" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "v1" }));
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ milestone: "1" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意 Review" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "已批准" }));
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ review: "approved" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "任意负责人" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ assignee: "sena" }),
+      );
+    });
+
+    await fireEvent.click(within(filters).getByRole("button", { name: "最近更新" }));
+    await fireEvent.click(await within(filters).findByRole("option", { name: "评论最多" }));
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ sort: "comments", direction: "desc" }),
+      );
     });
   });
 

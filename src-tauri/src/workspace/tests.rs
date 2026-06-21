@@ -280,12 +280,23 @@ fn test_github_pull_request(number: u64, state: &str) -> GitHubPullRequest {
         updated_at: "2026-06-18T08:00:00Z".to_string(),
         created_at: "2026-06-18T08:00:00Z".to_string(),
         author: "sena".to_string(),
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        milestone: None,
+        comments: 0,
+        project_items: Vec::new(),
         base_branch: "main".to_string(),
         head_branch: "feature/cache".to_string(),
         merged: false,
         mergeable: Some(true),
         mergeable_state: Some("clean".to_string()),
     }
+}
+
+fn test_github_pull_request_cache_key(state: Option<&str>) -> String {
+    github_pull_request_cache_key(
+        state, None, None, None, None, None, None, None, None, None, None,
+    )
 }
 
 #[test]
@@ -342,10 +353,88 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
     assert_eq!(fallback_key["state"], "open");
     assert_eq!(fallback_key["sort"], "created");
     assert_eq!(fallback_key["direction"], "desc");
-    assert_eq!(github_pull_request_cache_key(Some("all")), "all");
-    assert_eq!(github_pull_request_cache_key(Some("invalid")), "open");
+    let pull_key: serde_json::Value = serde_json::from_str(&github_pull_request_cache_key(
+        Some("merged"),
+        Some(250),
+        Some("comments"),
+        Some("asc"),
+        Some("sena"),
+        Some("none"),
+        Some(&labels),
+        Some("2"),
+        Some("PVT_prs"),
+        Some("approved"),
+        Some(" docs "),
+    ))
+    .unwrap();
+    assert_eq!(
+        pull_key,
+        serde_json::json!({
+            "state": "merged",
+            "perPage": 100,
+            "sort": "comments",
+            "direction": "asc",
+            "creator": "sena",
+            "assignee": "none",
+            "labels": ["bug", "docs"],
+            "milestone": "2",
+            "project": "PVT_prs",
+            "review": "approved",
+            "query": "docs",
+        })
+    );
+    let fallback_pull_key: serde_json::Value = serde_json::from_str(
+        &github_pull_request_cache_key(
+            Some("invalid"),
+            None,
+            Some("invalid"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+    )
+    .unwrap();
+    assert_eq!(fallback_pull_key["state"], "open");
+    assert_eq!(fallback_pull_key["sort"], "updated");
+    assert_eq!(fallback_pull_key["direction"], "desc");
     assert_eq!(github_workflow_runs_cache_key(Some(0)), "1");
     assert_eq!(github_workflow_runs_cache_key(Some(200)), "100");
+}
+
+#[test]
+fn github_pull_request_search_query_includes_pr_review_and_merge_qualifiers() {
+    let labels = vec!["needs triage".to_string(), "bug".to_string()];
+    let query = github_pull_request_search_query(
+        "Sena-Nana/Remote",
+        "merged",
+        "dashboard",
+        Some("sena"),
+        Some("none"),
+        Some(&labels),
+        Some("v1"),
+        Some("approved"),
+    );
+
+    assert!(query.contains("repo:Sena-Nana/Remote"));
+    assert!(query.contains("is:pr"));
+    assert!(query.contains("is:merged"));
+    assert!(query.contains("dashboard"));
+    assert!(query.contains("author:sena"));
+    assert!(query.contains("no:assignee"));
+    assert!(query.contains("label:\"needs triage\""));
+    assert!(query.contains("label:bug"));
+    assert!(query.contains("milestone:v1"));
+    assert!(query.contains("review:approved"));
+
+    let closed_query =
+        github_pull_request_search_query("a/repo", "closed", "", None, None, None, None, None);
+    assert!(closed_query.contains("state:closed"));
+    assert!(closed_query.contains("-is:merged"));
 }
 
 #[test]
@@ -388,11 +477,11 @@ fn github_project_cache_serializes_distinct_query_buckets() {
         vec![test_github_issue(2, "closed")],
     );
     repo_cache.pull_requests.insert(
-        github_pull_request_cache_key(Some("open")),
+        test_github_pull_request_cache_key(Some("open")),
         vec![test_github_pull_request(3, "open")],
     );
     repo_cache.pull_requests.insert(
-        github_pull_request_cache_key(Some("all")),
+        test_github_pull_request_cache_key(Some("all")),
         vec![test_github_pull_request(4, "closed")],
     );
 
@@ -435,11 +524,11 @@ fn github_project_cache_serializes_distinct_query_buckets() {
         2
     );
     assert_eq!(
-        restored_repo.pull_requests[&github_pull_request_cache_key(Some("open"))][0].number,
+        restored_repo.pull_requests[&test_github_pull_request_cache_key(Some("open"))][0].number,
         3
     );
     assert_eq!(
-        restored_repo.pull_requests[&github_pull_request_cache_key(Some("all"))][0].number,
+        restored_repo.pull_requests[&test_github_pull_request_cache_key(Some("all"))][0].number,
         4
     );
 }
