@@ -841,6 +841,8 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    const issueDate = new Date(githubIssues[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    expect(view.container.querySelector(".issues-list__meta")).toHaveTextContent(`sena · bug · sena · Roadmap · v1 · ${issueDate}`);
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
     expect(getGitHubIssueFilterMetadata).toHaveBeenCalledTimes(1);
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
@@ -961,6 +963,10 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+    const pullDate = new Date(githubPullRequests[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    expect(view.container.querySelector(".pulls-list__meta")).toHaveTextContent(
+      `sena · feature/pr-flow -> main · bug · sena · Roadmap · v1 · ${pullDate}`,
+    );
     expect(await view.findByText("1 个 checks")).toBeInTheDocument();
     expect(view.getByText("ci / build")).toBeInTheDocument();
     expect(listGitHubPullRequests).toHaveBeenCalledWith(

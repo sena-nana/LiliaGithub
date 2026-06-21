@@ -163,12 +163,16 @@ function pullStatusText(pull: GitHubPullRequest) {
   return pull.state;
 }
 
-function pullProjectText(pull: GitHubPullRequest) {
-  return pull.projectItems?.map((project) => project.title).join(", ") || "-";
-}
-
-function pullMilestoneText(pull: GitHubPullRequest) {
-  return pull.milestone?.title || "-";
+function pullMetaText(pull: GitHubPullRequest) {
+  return [
+    pull.author || "未知作者",
+    `${pull.headBranch} -> ${pull.baseBranch}`,
+    pull.labels?.join(", ") || "无标签",
+    pull.assignees?.join(", ") || "未分配",
+    pull.projectItems?.map((project) => project.title).join(", ") || "-",
+    pull.milestone?.title || "-",
+    formatPullDate(pull.updatedAt),
+  ].join(" · ");
 }
 
 function uniqueSorted(values: readonly string[]) {
@@ -349,13 +353,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
         <div class="pulls-list__content">
           <div class="pulls-list__line">
             <strong class="pulls-list__title">#{{ pull.number }} {{ pull.title }}</strong>
-            <span class="pulls-list__meta">{{ pull.author || "未知作者" }}</span>
-            <span class="pulls-list__summary">{{ pull.headBranch }} -> {{ pull.baseBranch }}</span>
-            <span class="pulls-list__meta">{{ pull.labels?.join(", ") || "无标签" }}</span>
-            <span class="pulls-list__meta">{{ pull.assignees?.join(", ") || "未分配" }}</span>
-            <span class="pulls-list__meta">{{ pullProjectText(pull) }}</span>
-            <span class="pulls-list__meta">{{ pullMilestoneText(pull) }}</span>
-            <span class="pulls-list__meta">{{ formatPullDate(pull.updatedAt) }}</span>
+            <span class="pulls-list__meta">{{ pullMetaText(pull) }}</span>
           </div>
           <div v-if="focusedPullRequestNumber === pull.number" class="pulls-list__checks">
             <p class="muted">
@@ -621,17 +619,14 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
 }
 
 .pulls-list__line {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
 }
 
-.pulls-list__title,
-.pulls-list__summary,
-.pulls-list__meta {
+.pulls-list__title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -643,10 +638,13 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
   font-size: 13px;
 }
 
-.pulls-list__summary,
 .pulls-list__meta {
+  justify-self: end;
+  min-width: max-content;
   color: var(--text-muted);
   font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .pulls-list__status {
@@ -746,11 +744,6 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
     grid-column: 2;
     justify-content: flex-start;
     padding-bottom: 7px;
-  }
-
-  .pulls-list__line {
-    flex-wrap: wrap;
-    white-space: normal;
   }
 }
 </style>
