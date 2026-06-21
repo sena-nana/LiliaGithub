@@ -1979,6 +1979,41 @@ fn github_delete_repo_requires_delete_repo_scope() {
 }
 
 #[test]
+fn github_oauth_scope_requests_project_read_access() {
+    let scopes = normalize_scope_list(Some(GITHUB_SCOPE));
+
+    assert!(scopes
+        .iter()
+        .any(|scope| scope == GITHUB_READ_PROJECT_SCOPE));
+}
+
+#[test]
+fn detects_github_read_project_scope_graphql_errors() {
+    let project_scope_errors = vec![
+        GitHubGraphQlError {
+            message: "Your token has not been granted the required scopes to execute this query. The 'id' field requires one of the following scopes: ['read:project']".to_string(),
+        },
+        GitHubGraphQlError {
+            message: "Your token has not been granted the required scopes to execute this query. The 'title' field requires one of the following scopes: ['read:project']".to_string(),
+        },
+    ];
+    let mixed_errors = vec![
+        GitHubGraphQlError {
+            message: "Your token has not been granted the required scopes to execute this query. The 'id' field requires one of the following scopes: ['read:project']".to_string(),
+        },
+        GitHubGraphQlError {
+            message: "Something else failed".to_string(),
+        },
+    ];
+
+    assert!(github_graphql_errors_require_read_project(
+        &project_scope_errors
+    ));
+    assert!(!github_graphql_errors_require_read_project(&mixed_errors));
+    assert!(!github_graphql_errors_require_read_project(&[]));
+}
+
+#[test]
 fn workspace_task_priority_orders_high_before_low() {
     assert!(task_priority_rank("high") < task_priority_rank("normal"));
     assert!(task_priority_rank("normal") < task_priority_rank("low"));

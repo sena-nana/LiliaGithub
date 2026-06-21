@@ -3,8 +3,9 @@ use std::io::{Cursor, Read};
 use super::*;
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
-pub(super) const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo";
+pub(super) const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo read:project";
 pub(super) const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
+pub(super) const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";
 pub(super) const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 pub(super) const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 pub(super) const GITHUB_OAUTH_ACCEPT: &str = "application/json";
@@ -601,23 +602,12 @@ pub(super) fn github_json<T: for<'de> Deserialize<'de>>(
         .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
 }
 
-pub(super) fn github_graphql_json<T: for<'de> Deserialize<'de>>(
-    prefix: &str,
-    response: Response,
-) -> Result<T, String> {
-    let result = github_json::<GitHubGraphQlResponse<T>>(prefix, response)?;
-    if !result.errors.is_empty() {
-        let detail = result
-            .errors
-            .into_iter()
-            .map(|error| error.message)
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(format!("{prefix}：{detail}"));
-    }
-    result
-        .data
-        .ok_or_else(|| format!("{prefix}：GraphQL 响应缺少 data"))
+pub(super) fn github_graphql_errors_require_read_project(errors: &[GitHubGraphQlError]) -> bool {
+    !errors.is_empty()
+        && errors.iter().all(|error| {
+            let message = error.message.as_str();
+            message.contains(GITHUB_READ_PROJECT_SCOPE) && message.contains("scopes")
+        })
 }
 
 pub(super) fn load_github_project_cache(app: &AppHandle) -> GitHubProjectCache {
@@ -871,11 +861,15 @@ pub(super) fn github_require_token(
     Ok((binding, token))
 }
 
+pub(super) fn github_binding_has_scope(binding: &GitHubBindingMetadata, scope: &str) -> bool {
+    binding.scopes.iter().any(|item| item == scope)
+}
+
 pub(super) fn github_require_scope(
     binding: &GitHubBindingMetadata,
     scope: &str,
 ) -> Result<(), String> {
-    if binding.scopes.iter().any(|item| item == scope) {
+    if github_binding_has_scope(binding, scope) {
         return Ok(());
     }
     Err(format!(
@@ -1603,8 +1597,12 @@ pub(super) fn github_issue_project_items_from_graphql(
 pub(super) fn fetch_github_issue_project_items(
     app: &AppHandle,
     repo_full_name: &str,
+    binding: &GitHubBindingMetadata,
     token: &str,
 ) -> Result<std::collections::HashMap<u64, Vec<GitHubIssueProjectItem>>, String> {
+    if !github_binding_has_scope(binding, GITHUB_READ_PROJECT_SCOPE) {
+        return Ok(std::collections::HashMap::new());
+    }
     let repo = normalize_github_repo_input(repo_full_name)?;
     let client = build_client()?;
     let query = r#"
@@ -1657,23 +1655,39 @@ pub(super) fn fetch_github_issue_project_items(
             Some(token),
         ),
     )?;
-    let data = github_graphql_json::<GitHubIssueProjectsGraphQlData>(
+    let result = github_json::<GitHubGraphQlResponse<GitHubIssueProjectsGraphQlData>>(
         "读取 GitHub Issue Projects 失败",
         response,
     )?;
+    if !result.errors.is_empty() {
+        if github_graphql_errors_require_read_project(&result.errors) {
+            return Ok(std::collections::HashMap::new());
+        }
+        let detail = result
+            .errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("读取 GitHub Issue Projects 失败：{detail}"));
+    }
+    let data = result
+        .data
+        .ok_or_else(|| "读取 GitHub Issue Projects 失败：GraphQL 响应缺少 data".to_string())?;
     Ok(github_issue_project_items_from_graphql(data))
 }
 
 pub(super) fn enrich_github_issues_with_projects(
     app: &AppHandle,
     repo_full_name: &str,
+    binding: &GitHubBindingMetadata,
     token: &str,
     issues: &mut [GitHubIssue],
 ) -> Result<(), String> {
     if issues.is_empty() {
         return Ok(());
     }
-    let project_items = fetch_github_issue_project_items(app, repo_full_name, token)?;
+    let project_items = fetch_github_issue_project_items(app, repo_full_name, binding, token)?;
     for issue in issues {
         issue.project_items = project_items
             .get(&issue.number)
@@ -2789,7 +2803,7 @@ pub async fn github_list_pull_requests(
                 return Ok(cached);
             }
         }
-        let (_binding, token) = github_require_token(&app)?;
+        let (binding, token) = github_require_token(&app)?;
         let pull_state = match state.as_deref() {
             Some("closed") => "closed",
             Some("merged") => "merged",
@@ -2842,7 +2856,7 @@ pub async fn github_list_pull_requests(
                 .into_iter()
                 .filter_map(github_pull_request_issue_from_response)
                 .collect::<Vec<_>>();
-        enrich_github_issues_with_projects(&app, &repo_full_name, &token, &mut issues)?;
+        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
         if let Some(project_filter) = normalize_optional_string(project) {
             issues.retain(|issue| {
                 issue
@@ -3161,7 +3175,7 @@ pub async fn github_list_issues(
                 return Ok(cached);
             }
         }
-        let (_binding, token) = github_require_token(&app)?;
+        let (binding, token) = github_require_token(&app)?;
         let issue_state = state.unwrap_or_else(|| "open".to_string());
         let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
         let issue_sort = match sort.as_deref() {
@@ -3250,7 +3264,7 @@ pub async fn github_list_issues(
             .into_iter()
             .filter_map(github_issue_from_response)
             .collect::<Vec<_>>();
-        enrich_github_issues_with_projects(&app, &repo_full_name, &token, &mut issues)?;
+        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
         if let Some(project_filter) = normalize_optional_string(project) {
             issues.retain(|issue| {
                 issue
@@ -3285,7 +3299,7 @@ pub async fn github_get_issue_filter_metadata(
                 }
             }
         }
-        let (_binding, token) = github_require_token(&app)?;
+        let (binding, token) = github_require_token(&app)?;
         let client = build_client()?;
         let query = vec![
             ("state", "all".to_string()),
@@ -3309,7 +3323,7 @@ pub async fn github_get_issue_filter_metadata(
             .into_iter()
             .filter_map(github_issue_from_response)
             .collect::<Vec<_>>();
-        enrich_github_issues_with_projects(&app, &repo_full_name, &token, &mut issues)?;
+        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
         let mut metadata = github_issue_filter_metadata_from_issues(&issues);
         let repo_labels = list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)?;
         metadata.labels = merge_unique_sorted_strings(metadata.labels, repo_labels);
