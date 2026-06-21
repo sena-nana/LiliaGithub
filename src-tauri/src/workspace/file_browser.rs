@@ -1,6 +1,6 @@
 use super::*;
 
-const MAX_FILE_PREVIEW_BYTES: u64 = 1024 * 1024;
+pub(super) const MAX_FILE_PREVIEW_BYTES: u64 = 1024 * 1024;
 
 pub(super) fn repo_file_entries(
     repo_path: &Path,
@@ -168,7 +168,7 @@ fn is_markdown_path(path: &Path) -> bool {
     )
 }
 
-fn file_preview_mime(path: &Path) -> Option<&'static str> {
+pub(super) fn file_preview_mime(path: &Path) -> Option<&'static str> {
     if let Some(mime) = image_mime_for_path(path) {
         return Some(mime);
     }

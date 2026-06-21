@@ -85,6 +85,8 @@ pub fn run() {
             workspace::github::github_merge_pull_request,
             workspace::github::github_list_pull_request_checks,
             workspace::github::github_list_repo_readmes,
+            workspace::github::github_list_repo_files,
+            workspace::github::github_get_repo_file_preview,
             workspace::github::github_list_issues,
             workspace::github::github_create_issue,
             workspace::github::github_update_issue,

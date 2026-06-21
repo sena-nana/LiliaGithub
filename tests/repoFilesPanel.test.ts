@@ -4,8 +4,8 @@ import RepoFilesPanel from "../src/components/repo/RepoFilesPanel.vue";
 import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../src/services/workspace/types";
 
 const clientMocks = vi.hoisted(() => ({
-  listRepoFiles: vi.fn<(repoId: string, parentPath?: string | null) => Promise<RepoFileTreeEntry[]>>(),
-  getRepoFilePreview: vi.fn<(repoId: string, path: string) => Promise<RepoFilePreview>>(),
+  listRepoFiles: vi.fn<(repoId: string, parentPath?: string | null, repoRef?: string | null) => Promise<RepoFileTreeEntry[]>>(),
+  getRepoFilePreview: vi.fn<(repoId: string, path: string, repoRef?: string | null) => Promise<RepoFilePreview>>(),
   openPath: vi.fn<(path: string) => Promise<void>>(),
   openUrl: vi.fn<(url: string) => Promise<void>>(),
 }));
@@ -224,6 +224,48 @@ describe("RepoFilesPanel", () => {
     });
     expect(listRepoFiles).toHaveBeenNthCalledWith(1, "old-repo", null);
     expect(listRepoFiles).toHaveBeenNthCalledWith(2, "new-repo", null);
+  });
+
+  it("远程仓库按当前分支读取文件树并隐藏本地打开按钮", async () => {
+    listRepoFiles
+      .mockResolvedValueOnce([file("README.md")])
+      .mockResolvedValueOnce([file("README.md")]);
+    getRepoFilePreview
+      .mockResolvedValueOnce(preview({
+        path: "README.md",
+        name: "README.md",
+        previewKind: "markdown",
+        content: "# Main branch\n",
+        size: 14,
+      }))
+      .mockResolvedValueOnce(preview({
+        path: "README.md",
+        name: "README.md",
+        previewKind: "markdown",
+        content: "# Dev branch\n",
+        size: 13,
+      }));
+
+    const view = await renderFilesPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoPath: null,
+      repoRef: "main",
+    });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Main branch" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开文件" })).toBeNull();
+
+    await view.rerender({
+      repoId: "github:sena-nana/remote-repo",
+      repoPath: null,
+      repoRef: "dev",
+    });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Dev branch" })).toBeInTheDocument();
+    expect(listRepoFiles).toHaveBeenNthCalledWith(1, "github:sena-nana/remote-repo", null, "main");
+    expect(listRepoFiles).toHaveBeenNthCalledWith(2, "github:sena-nana/remote-repo", null, "dev");
+    expect(getRepoFilePreview).toHaveBeenNthCalledWith(1, "github:sena-nana/remote-repo", "README.md", "main");
+    expect(getRepoFilePreview).toHaveBeenNthCalledWith(2, "github:sena-nana/remote-repo", "README.md", "dev");
   });
 
   it("代码文本预览复用 diff token 高亮", async () => {

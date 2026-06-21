@@ -2082,6 +2082,80 @@ fn repo_file_preview_returns_text_markdown_image_binary_and_too_large() {
 }
 
 #[test]
+fn github_content_files_map_to_repo_tree_and_preview_kinds() {
+    let entries = github_content_items_to_file_entries(vec![
+        GitHubContentListItem {
+            name: "README.md".to_string(),
+            path: "README.md".to_string(),
+            kind: "file".to_string(),
+        },
+        GitHubContentListItem {
+            name: "src".to_string(),
+            path: "src".to_string(),
+            kind: "dir".to_string(),
+        },
+        GitHubContentListItem {
+            name: "ignored".to_string(),
+            path: "ignored".to_string(),
+            kind: "submodule".to_string(),
+        },
+    ]);
+
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.kind.as_str(), entry.has_children))
+            .collect::<Vec<_>>(),
+        vec![("src", "dir", true), ("README.md", "file", false)]
+    );
+    assert_eq!(
+        normalize_github_content_path(Some("../README.md")).unwrap_err(),
+        "GitHub 文件路径不能包含 . 或 .."
+    );
+
+    let markdown = github_file_preview_from_content(
+        "读取 GitHub 文件预览失败",
+        GitHubContentFileResponse {
+            name: "README.md".to_string(),
+            path: "README.md".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some(STANDARD.encode("# Title\n")),
+            size: Some(8),
+        },
+    )
+    .unwrap();
+    assert_eq!(markdown.preview_kind, "markdown");
+    assert_eq!(markdown.content.as_deref(), Some("# Title\n"));
+
+    let image = github_file_preview_from_content(
+        "读取 GitHub 文件预览失败",
+        GitHubContentFileResponse {
+            name: "icon.png".to_string(),
+            path: "assets/icon.png".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some(STANDARD.encode([1_u8, 2, 3])),
+            size: Some(3),
+        },
+    )
+    .unwrap();
+    assert_eq!(image.preview_kind, "image");
+    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQID"));
+
+    let too_large = github_file_preview_from_content(
+        "读取 GitHub 文件预览失败",
+        GitHubContentFileResponse {
+            name: "large.log".to_string(),
+            path: "large.log".to_string(),
+            encoding: Some("none".to_string()),
+            content: None,
+            size: Some((1024 * 1024) + 1),
+        },
+    )
+    .unwrap();
+    assert_eq!(too_large.preview_kind, "tooLarge");
+}
+
+#[test]
 fn managed_repo_ids_are_deduplicated_and_sorted() {
     let mut settings = WorkspaceSettings::default();
 

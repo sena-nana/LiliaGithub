@@ -56,6 +56,7 @@ const {
   usingSystemGit,
   launchRunning,
   statusCommits,
+  activeFileRepoRef,
   panelConflictFiles,
   panelConflicts,
   panelFocusedConflict,
@@ -165,7 +166,7 @@ const {
                 button-class="repo-toolbar__btn repo-toolbar__branch-select"
                 :disabled="branchActionRunning || !branchItems.length"
                 :action-running="branchActionRunning"
-                :allow-remote-checkout="!remoteOnly"
+                :allow-remote-checkout="true"
                 :allow-remote-create="!remoteOnly"
                 :allow-remote-delete="remoteOnly || Boolean(summary?.githubFullName)"
                 :show-repository-actions="!remoteOnly"
@@ -332,6 +333,7 @@ const {
           v-if="activeTab === 'files'"
           :repo-id="repoId"
           :repo-path="summary?.path ?? null"
+          :repo-ref="activeFileRepoRef"
           :changes="changes"
         />
         <RepoStashPanel

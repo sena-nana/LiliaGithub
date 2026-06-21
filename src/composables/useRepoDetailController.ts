@@ -73,6 +73,7 @@ export function useRepoDetailController() {
   const githubBranches = ref<BranchSummary[]>([]);
   const githubCommits = ref<CommitSummary[]>([]);
   const githubDefaultBranch = ref<string | null>(null);
+  const activeRemoteBranch = ref<string | null>(null);
   const githubBranchLoading = ref(false);
   const deletingRemoteBranchName = ref<string | null>(null);
   const deletedRemoteBranchNames = ref<string[]>([]);
@@ -92,6 +93,9 @@ export function useRepoDetailController() {
   const remoteShortcut = computed(() =>
     workspace.state.settings?.remoteRepoShortcuts.find((repo) => repo.fullName === remoteFullName.value) ?? null,
   );
+  const remoteBrowseBranch = computed(() =>
+    activeRemoteBranch.value ?? githubDefaultBranch.value ?? remoteShortcut.value?.defaultBranch ?? null
+  );
   const githubRepoFullName = computed(() => remoteFullName.value ?? summary.value?.githubFullName ?? null);
   const remoteSummary = computed<RepoSummary | null>(() => {
     const fullName = remoteFullName.value;
@@ -102,7 +106,7 @@ export function useRepoDetailController() {
       name: shortcut?.name ?? remoteRepoName(fullName),
       path: "",
       relativePath: fullName,
-      currentBranch: githubDefaultBranch.value ?? shortcut?.defaultBranch ?? null,
+      currentBranch: remoteBrowseBranch.value,
       remoteUrl: shortcut?.cloneUrl ?? `https://github.com/${fullName}.git`,
       githubFullName: fullName,
       ahead: 0,
@@ -184,6 +188,7 @@ export function useRepoDetailController() {
       refs: [...commit.refs],
     })),
   );
+  const activeFileRepoRef = computed(() => remoteOnly.value ? remoteBrowseBranch.value : null);
   const panelConflictFiles = computed<RepoConflictFile[]>(() =>
     conflictFiles.value.map((file) => ({
       ...file,
@@ -234,7 +239,7 @@ export function useRepoDetailController() {
 
   const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
     [
-      !remoteOnly.value ? { key: "files", title: "文件树" } : null,
+      { key: "files", title: "文件树" },
       { key: "repo", title: "项目" },
       !remoteOnly.value ? { key: "changes", title: "变更" } : null,
       { key: "history", title: "历史" },
@@ -294,6 +299,7 @@ export function useRepoDetailController() {
         !deletedRemoteBranchNames.value.includes(remoteBranchShortName(branch.name)),
       )
       .map((branch) => {
+        const browseBranch = remoteBrowseBranch.value;
         const section: RepoBranchPickerItem["section"] =
           remoteOnly.value ? "remote" : branch.current && !branch.remote ? "current" : branch.remote ? "remote" : "local";
         const checkedOutWorktreePaths = [...branch.checkedOutWorktreePaths];
@@ -310,6 +316,7 @@ export function useRepoDetailController() {
           : false;
         return {
           ...branch,
+          current: remoteOnly.value ? branch.name === browseBranch : branch.current,
           protected: githubBranch?.protected ?? branch.protected,
           canonicalName,
           displayName,
@@ -337,7 +344,7 @@ export function useRepoDetailController() {
       ),
   );
   const activeBranchName = computed(() => {
-    if (remoteOnly.value) return githubDefaultBranch.value ?? summary.value?.currentBranch ?? "远程分支";
+    if (remoteOnly.value) return remoteBrowseBranch.value ?? "远程分支";
     return summary.value?.currentBranch ?? "detached";
   });
   const aheadCount = computed(() => summary.value?.ahead ?? 0);
@@ -382,6 +389,7 @@ export function useRepoDetailController() {
     githubBranches.value = [];
     githubCommits.value = [];
     githubDefaultBranch.value = null;
+    activeRemoteBranch.value = null;
     githubBranchLoading.value = false;
     deletingRemoteBranchName.value = null;
     deletedRemoteBranchNames.value = [];
@@ -399,7 +407,7 @@ export function useRepoDetailController() {
   watch(
     [activeTab, remoteOnly, repoId],
     ([tab, isRemoteOnly, nextRepoId]) => {
-      if ((tab !== "files" && tab !== "changes") || !isRemoteOnly || !nextRepoId) return;
+      if (tab !== "changes" || !isRemoteOnly || !nextRepoId) return;
       void router.replace(repoRoute(nextRepoId));
     },
     { immediate: true },
@@ -514,6 +522,13 @@ export function useRepoDetailController() {
         if (!githubBranchesLoader.isCurrent(runId) || repoFullName !== githubRepoFullName.value) return;
         githubDefaultBranch.value = management.defaultBranch || null;
         githubBranches.value = branches;
+        if (remoteOnly.value) {
+          const current = activeRemoteBranch.value;
+          const nextBranch = current && branches.some((branch) => branch.name === current)
+            ? current
+            : management.defaultBranch || branches[0]?.name || null;
+          activeRemoteBranch.value = nextBranch;
+        }
       } catch (err) {
         if (!githubBranchesLoader.isCurrent(runId)) return;
         actionError.value = String(err);
@@ -546,6 +561,7 @@ export function useRepoDetailController() {
     githubBranches.value = [];
     githubDefaultBranch.value = null;
     githubCommits.value = [];
+    activeRemoteBranch.value = null;
   }
 
   async function refreshLaunch() {
@@ -917,6 +933,10 @@ export function useRepoDetailController() {
   }
 
   function checkout(branch: string) {
+    if (remoteOnly.value) {
+      activeRemoteBranch.value = branch.trim() || activeRemoteBranch.value;
+      return;
+    }
     void runAction(() => workspace.checkout(repoId.value, branch));
   }
 
@@ -957,6 +977,11 @@ export function useRepoDetailController() {
           await deleteGitHubBranch(repoFullName, branchName);
           if (!isActionCurrent(generation, targetRepoId)) return;
           githubBranches.value = githubBranches.value.filter((item) => item.name !== branchName);
+          if (activeRemoteBranch.value === branchName) {
+            activeRemoteBranch.value = githubDefaultBranch.value && githubDefaultBranch.value !== branchName
+              ? githubDefaultBranch.value
+              : githubBranches.value[0]?.name ?? null;
+          }
           if (!deletedRemoteBranchNames.value.includes(branchName)) {
             deletedRemoteBranchNames.value = [...deletedRemoteBranchNames.value, branchName];
           }
@@ -1068,6 +1093,7 @@ export function useRepoDetailController() {
       usingSystemGit,
       launchRunning,
       statusCommits,
+      activeFileRepoRef,
       panelConflictFiles,
       panelConflicts,
       panelFocusedConflict,
