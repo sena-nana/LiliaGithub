@@ -68,7 +68,11 @@ import type {
   RepoSummary,
 } from "../../services/workspace/types";
 import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
-import { isLinkedWorktree } from "../../utils/repoWorktree";
+import {
+  hasRepoTag,
+  type RepoCapability,
+  type RepoContext,
+} from "../../utils/repoContext";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import type { RepoRouteTab } from "../../utils/repoRoutes";
@@ -100,14 +104,13 @@ const props = defineProps<{
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
   repoSummary?: RepoSummary | null;
+  repoContext: RepoContext;
   launchConfig: ProjectLaunchConfig | null;
   launchLogs: readonly ProjectLaunchLog[];
   launchError?: string | null;
   launchTerminalVisible: boolean;
   actionRunning: boolean;
   launchRunning: boolean;
-  remoteOnly?: boolean;
-  usingSystemGit?: boolean;
   activeGitTab: RepoRouteTab;
   changes: readonly RepoChange[];
   previewChange: RepoChange | null;
@@ -168,7 +171,8 @@ const emit = defineEmits<{
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
-const linkedWorktree = computed(() => isLinkedWorktree(workspace.repoById(props.repoId)));
+const resolvedRepoContext = computed(() => props.repoContext);
+const linkedWorktree = computed(() => hasRepoTag(resolvedRepoContext.value, "linked-worktree"));
 
 const activeSection = ref<ProjectContentMode>(routeTabToSection(props.activeGitTab));
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
@@ -302,19 +306,27 @@ const mergeSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hi
   { key: "deleteBranchOnMerge", label: "合并后删分支", hint: "合并 Pull Request 后删除来源分支。" },
 ];
 
-const isSystemGitBlocked = computed(() => props.usingSystemGit === true && !props.remoteOnly);
 const githubAuthLoading = computed(() => workspace.state.authLoading);
 
 const githubUnavailableMessage = computed(() => {
   if (remoteDeleted.value) return "GitHub 远端仓库已删除，本地目录仍保留。";
-  if (isSystemGitBlocked.value) return "系统 Git 下暂不获取 GitHub 权限内容。";
-  if (!props.repoFullName) return "当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。";
+  if (!resolvedRepoContext.value.capabilities.issues.available) {
+    return resolvedRepoContext.value.capabilities.issues.reason ?? "GitHub 功能暂不可用。";
+  }
   return null;
 });
-const issuesAccessUnavailable = computed(() => githubAccessUnavailable("Issues", githubError.value));
-const pullsAccessUnavailable = computed(() => githubAccessUnavailable("Pull Requests", githubError.value));
-const actionsAccessUnavailable = computed(() => githubAccessUnavailable("Actions", actionsError.value));
-const settingsAccessUnavailable = computed(() => githubAccessUnavailable("Settings", githubError.value));
+const issuesAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Issues", githubError.value, resolvedRepoContext.value.capabilities.issues)
+);
+const pullsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Pull Requests", githubError.value, resolvedRepoContext.value.capabilities.pulls)
+);
+const actionsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Actions", actionsError.value, resolvedRepoContext.value.capabilities.actions)
+);
+const settingsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Settings", githubError.value, resolvedRepoContext.value.capabilities.settings)
+);
 const aboutDescription = computed(() => settings.value?.description?.trim() ?? "");
 const aboutHomepage = computed(() => settings.value?.homepage?.trim() ?? "");
 const aboutHomepageHref = computed(() => normalizedExternalUrl(aboutHomepage.value));
@@ -381,7 +393,15 @@ const mergeMethodOptions: readonly { value: "merge" | "squash" | "rebase"; label
   { value: "squash", label: "Squash" },
   { value: "rebase", label: "Rebase" },
 ];
-const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
+const canUseLaunchWorkflow = computed(() => resolvedRepoContext.value.capabilities.launch.available);
+const canShowChanges = computed(() => resolvedRepoContext.value.capabilities.changes.available);
+const historyReadOnly = computed(() => !resolvedRepoContext.value.capabilities.commit.available);
+const readmeUsesGitHub = computed(() => resolvedRepoContext.value.capabilities.readme.provider === "github");
+const readmeEmptyText = computed(() =>
+  readmeUsesGitHub.value ? "当前远程仓库没有 README。" : "当前仓库没有本地 README。"
+);
+const canDeleteLocal = computed(() => resolvedRepoContext.value.capabilities.deleteLocal.available);
+const canDeleteRemote = computed(() => resolvedRepoContext.value.capabilities.deleteRemote.available);
 const showCommitDetail = computed(() =>
   activeSection.value === "history" && Boolean(props.selectedCommitHash),
 );
@@ -456,8 +476,8 @@ watch(() => props.repoFullName, () => {
   void applyProjectRouteState();
 });
 
-watch(() => props.usingSystemGit, (usingSystemGit) => {
-  if (usingSystemGit && !props.remoteOnly) {
+watch(() => resolvedRepoContext.value.capabilities.issues.available, (githubAvailable) => {
+  if (!githubAvailable) {
     clearBlockedGitHubState();
   }
 });
@@ -615,7 +635,17 @@ function toggleAboutTopicsExpanded() {
   aboutTopicsExpanded.value = !aboutTopicsExpanded.value;
 }
 
-function githubAccessUnavailable(section: GitHubAccessSection, error: string | null): GitHubAccessUnavailable | null {
+function githubAccessUnavailable(
+  section: GitHubAccessSection,
+  error: string | null,
+  capability: RepoCapability,
+): GitHubAccessUnavailable | null {
+  if (!capability.available) {
+    return {
+      title: `${section} 暂不可用`,
+      reason: capability.reason ?? "GitHub 功能暂不可用。",
+    };
+  }
   if (!error || !isGitHubBindingExpiredError(error)) return null;
   const lower = error.toLowerCase();
   const permissionDenied = error.includes("HTTP 403") ||
@@ -783,13 +813,13 @@ async function loadReadme(force = false) {
   if (!force && readmesLoaded.value) return;
   const repoId = props.repoId;
   const repoFullName = props.repoFullName;
-  const remoteOnly = props.remoteOnly;
+  const readmeProvider = resolvedRepoContext.value.capabilities.readme.provider;
   await readmeLoader.run(null, async (runId) => {
     readmeLoading.value = true;
     readmeError.value = null;
     const previousPath = activeReadmePath.value;
     try {
-      const nextReadmes = remoteOnly && repoFullName
+      const nextReadmes = readmeUsesGitHub.value && repoFullName
         ? force
           ? await listGitHubRepoReadmes(repoFullName, { forceRefresh: true })
           : await listGitHubRepoReadmes(repoFullName)
@@ -798,7 +828,7 @@ async function loadReadme(force = false) {
         !readmeLoader.isCurrent(runId) ||
         repoId !== props.repoId ||
         repoFullName !== props.repoFullName ||
-        remoteOnly !== props.remoteOnly
+        readmeProvider !== resolvedRepoContext.value.capabilities.readme.provider
       ) return;
       readmes.value = nextReadmes;
       activeReadmePath.value = nextReadmes.some((item) => item.path === previousPath)
@@ -817,7 +847,7 @@ async function loadReadme(force = false) {
 
 async function loadSettings(force = false) {
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.settings.available) {
     clearBlockedGitHubState();
     return;
   }
@@ -851,7 +881,7 @@ async function loadSettings(force = false) {
 
 async function loadIssues(force = false) {
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.issues.available) {
     clearBlockedGitHubState();
     return;
   }
@@ -876,7 +906,7 @@ async function loadIssues(force = false) {
 
 async function loadPullRequests(force = false) {
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.pulls.available) {
     clearBlockedGitHubState();
     return;
   }
@@ -939,7 +969,7 @@ async function loadPullRequestChecks(pullNumber: number, force = false) {
 
 async function loadActions(force = false) {
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.actions.available) {
     clearBlockedGitHubState();
     actionsLoading.value = false;
     return;
@@ -972,7 +1002,10 @@ async function loadActions(force = false) {
 
 async function ensureSectionData(section: ProjectContentMode) {
   if (section === "readme") {
-    await Promise.all([loadReadme(), props.repoFullName ? loadSettings() : Promise.resolve()]);
+    await Promise.all([
+      loadReadme(),
+      resolvedRepoContext.value.capabilities.settings.available ? loadSettings() : Promise.resolve(),
+    ]);
     return;
   }
   if (section === "issues") {
@@ -997,7 +1030,9 @@ async function refreshLoadedSectionData() {
     if (readmesLoaded.value || settingsLoaded.value) {
       await Promise.all([
         readmesLoaded.value ? loadReadme(true) : Promise.resolve(),
-        props.repoFullName && settingsLoaded.value ? loadSettings(true) : Promise.resolve(),
+        resolvedRepoContext.value.capabilities.settings.available && settingsLoaded.value
+          ? loadSettings(true)
+          : Promise.resolve(),
       ]);
     }
     return;
@@ -1175,8 +1210,8 @@ function sameStringList(left: readonly string[], right: readonly string[]) {
 }
 
 function openDeleteDialog(target: DeleteTarget) {
-  if (target === "remote" && (!props.repoFullName || deletingRepo.value)) return;
-  if (target === "local" && (props.remoteOnly || !props.repoPath || deletingLocalRepo.value)) return;
+  if (target === "remote" && (!canDeleteRemote.value || !props.repoFullName || deletingRepo.value)) return;
+  if (target === "local" && (!canDeleteLocal.value || !props.repoPath || deletingLocalRepo.value)) return;
   deleteDialogTarget.value = target;
   deleteConfirmInput.value = "";
   deleteError.value = null;
@@ -1199,7 +1234,7 @@ async function confirmDeleteDialog() {
 
 async function confirmDeleteLocalRepo() {
   const repoId = props.repoId;
-  if (!repoId || props.remoteOnly || !deleteConfirmMatches.value || deletingLocalRepo.value) return;
+  if (!repoId || !canDeleteLocal.value || !deleteConfirmMatches.value || deletingLocalRepo.value) return;
   const generation = repoMutationGeneration;
   deleteError.value = null;
   try {
@@ -1218,7 +1253,7 @@ async function confirmDeleteLocalRepo() {
 
 async function confirmDeleteRepo() {
   const repoFullName = props.repoFullName;
-  if (!repoFullName || !deleteConfirmMatches.value || deletingRepo.value) return;
+  if (!repoFullName || !canDeleteRemote.value || !deleteConfirmMatches.value || deletingRepo.value) return;
   const generation = githubMutationGeneration;
   deleteError.value = null;
   githubError.value = null;
@@ -1239,7 +1274,7 @@ async function confirmDeleteRepo() {
     const targetRoute = remoteRepoRoute(repoFullName);
     const currentRemoteFullName = parseRemoteRepoId(String(route.params.repoId ?? ""));
     if (
-      props.remoteOnly &&
+      hasRepoTag(resolvedRepoContext.value, "github-remote") &&
       currentRemoteFullName && repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
       && route.fullPath.startsWith(targetRoute)
     ) {
@@ -1473,7 +1508,7 @@ function selectReadme(path: string) {
         </section>
 
         <RepoChangesPanel
-          v-else-if="!remoteOnly && activeSection === 'changes'"
+          v-else-if="canShowChanges && activeSection === 'changes'"
           :commit-message="commitMessage"
           :changes="changes"
           :has-conflicts="hasConflicts"
@@ -1493,7 +1528,7 @@ function selectReadme(path: string) {
           :commits="statusCommits"
           :commit-meta-title="commitMetaTitle"
           :selected-commit-hash="selectedCommitHash"
-          :read-only="remoteOnly"
+          :read-only="historyReadOnly"
           @open-commit="emit('openCommit', $event)"
           @cherry-pick-commit="emit('cherryPickCommit', $event)"
           @revert-commit="emit('revertCommit', $event)"
@@ -1509,7 +1544,7 @@ function selectReadme(path: string) {
           <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
           <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
           <p v-else-if="!activeReadme" class="muted repo-empty project-empty">
-            {{ remoteOnly ? "当前远程仓库没有 README。" : "当前仓库没有本地 README。" }}
+            {{ readmeEmptyText }}
           </p>
           <MarkdownReadme
             v-else
@@ -1926,8 +1961,8 @@ function selectReadme(path: string) {
               </div>
             </section>
           </template>
-          <div v-if="(!remoteOnly && repoPath) || settings" class="project-settings-danger-list">
-            <section v-if="!remoteOnly && repoPath" class="project-danger-zone" aria-label="本地危险操作">
+          <div v-if="(canDeleteLocal && repoPath) || (canDeleteRemote && settings)" class="project-settings-danger-list">
+            <section v-if="canDeleteLocal && repoPath" class="project-danger-zone" aria-label="本地危险操作">
               <div>
                 <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
                 <span>
@@ -1950,7 +1985,7 @@ function selectReadme(path: string) {
                 <Trash2 v-else :size="14" aria-hidden="true" />
               </button>
             </section>
-            <section v-if="settings" class="project-danger-zone" aria-label="远端危险操作">
+            <section v-if="canDeleteRemote && settings" class="project-danger-zone" aria-label="远端危险操作">
               <div>
                 <strong>删除 GitHub 远端仓库</strong>
                 <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
@@ -1958,7 +1993,7 @@ function selectReadme(path: string) {
               <button
                 type="button"
                 class="ghost danger project-icon-action"
-                :disabled="deletingRepo || githubLoading || !settings || !repoFullName"
+                :disabled="deletingRepo || githubLoading || !settings || !repoFullName || !canDeleteRemote"
                 aria-label="删除仓库"
                 title="删除仓库"
                 @click="openDeleteDialog('remote')"
@@ -2154,7 +2189,7 @@ function selectReadme(path: string) {
 
         <RepoLanguageStatsCard
           :repo="repoSummary ?? null"
-          :remote-only="remoteOnly"
+          :show-line-counts="resolvedRepoContext.capabilities.open.available"
           :loading="languageStatsLoading"
         />
 

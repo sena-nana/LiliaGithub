@@ -6,12 +6,13 @@ import { createPendingTaskTracker } from "../../composables/usePendingTaskTracke
 import { useWorkspace } from "../../composables/useWorkspace";
 import { getRepoStashDetail, type CommitFileChange, type RepoStashDetail, type RepoStashEntry } from "../../services/workspace";
 import { commitFileStatusText } from "../../utils/repoDisplay";
+import type { RepoContext } from "../../utils/repoContext";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
 import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 
 const props = defineProps<{
   repoId: string;
-  remoteOnly: boolean;
+  repoContext: RepoContext;
   hasConflicts: boolean;
 }>();
 
@@ -34,7 +35,9 @@ let actionGeneration = 0;
 const selectedStash = computed(() =>
   stashes.value.find((stash) => stash.id === selectedStashId.value) ?? null,
 );
-const canMutate = computed(() => !props.remoteOnly && !props.hasConflicts && !actionRunning.value);
+const canUseStash = computed(() => props.repoContext.capabilities.stash.available);
+const stashUnavailableReason = computed(() => props.repoContext.capabilities.stash.reason ?? "stash 仅支持本地仓库。");
+const canMutate = computed(() => canUseStash.value && !props.hasConflicts && !actionRunning.value);
 const workspaceFiles = computed<RepoDiffWorkspaceFile[]>(() =>
   (detail.value?.files ?? []).map((file) => ({
     key: `${file.oldPath ?? ""}:${file.path}`,
@@ -70,7 +73,7 @@ onUnmounted(() => {
   invalidateActions();
 });
 
-watch(() => [props.repoId, props.remoteOnly] as const, () => {
+watch(() => [props.repoId, canUseStash.value] as const, () => {
   resetStashState();
   void loadStashes();
 });
@@ -92,7 +95,7 @@ function resetStashState() {
 }
 
 async function loadStashes() {
-  if (props.remoteOnly || !props.repoId) {
+  if (!canUseStash.value || !props.repoId) {
     resetStashState();
     return;
   }
@@ -102,7 +105,7 @@ async function loadStashes() {
     error.value = null;
     try {
       const nextStashes = await workspace.listStashes(repoId);
-      if (!stashesLoader.isCurrent(runId) || repoId !== props.repoId || props.remoteOnly) return;
+      if (!stashesLoader.isCurrent(runId) || repoId !== props.repoId || !canUseStash.value) return;
       stashes.value = nextStashes;
       const nextStashId = nextStashes.some((stash) => stash.id === selectedStashId.value)
         ? selectedStashId.value
@@ -153,11 +156,11 @@ function invalidateActions() {
 }
 
 function isActionCurrent(generation: number, repoId: string) {
-  return generation === actionGeneration && repoId === props.repoId && !props.remoteOnly;
+  return generation === actionGeneration && repoId === props.repoId && canUseStash.value;
 }
 
 async function runStashAction(repoId: string, action: () => Promise<unknown>) {
-  if (!repoId || props.remoteOnly) return;
+  if (!repoId || !canUseStash.value) return;
   const generation = actionGeneration;
   error.value = null;
   try {
@@ -231,7 +234,7 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
 
 <template>
   <section class="repo-stash-panel">
-    <p v-if="remoteOnly" class="muted repo-empty repo-stash-panel__empty">stash 仅支持本地仓库。</p>
+    <p v-if="!canUseStash" class="muted repo-empty repo-stash-panel__empty">{{ stashUnavailableReason }}</p>
     <div v-else class="repo-stash-panel__shell">
       <aside class="repo-stash-panel__list" aria-label="Stash 列表">
         <header class="repo-stash-panel__head">

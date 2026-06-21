@@ -10,7 +10,7 @@ import {
 
 const props = defineProps<{
   repo: RepoSummary | null;
-  remoteOnly: boolean;
+  showLineCounts: boolean;
   loading: boolean;
 }>();
 
@@ -48,12 +48,12 @@ const hasLanguageStats = computed(() => overview.value.slices.length > 0);
           <span class="repo-language-card__dot" :style="{ background: slice.color }" aria-hidden="true" />
           <span class="repo-language-card__name">{{ slice.language }}</span>
           <strong>
-            <span v-if="!remoteOnly">{{ formatLines(slice.lines) }} · </span>
+            <span v-if="showLineCounts">{{ formatLines(slice.lines) }} · </span>
             {{ formatPercent(slice.percent) }}
           </strong>
         </li>
 
-        <li v-if="!remoteOnly && overview.totalLines > 0">
+        <li v-if="showLineCounts && overview.totalLines > 0">
           <span class="repo-language-card__dot" :style="{ background: 'var(--text-muted)' }" aria-hidden="true" />
           <span class="repo-language-card__name">总代码行数</span>
           <strong>{{ formatLines(overview.totalLines) }}</strong>
