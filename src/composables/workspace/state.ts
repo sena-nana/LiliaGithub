@@ -58,6 +58,14 @@ export interface RepoActionErrorState {
   updatedAt: number;
 }
 
+export interface RepoSyncIssueDisplay {
+  label: string;
+  message: string;
+  retryable: boolean;
+  retrying: boolean;
+  updatedAt: number;
+}
+
 export interface GitHubContributionsState {
   days: GitHubContributionDay[];
   meta: GitHubContributionMeta | null;
@@ -274,6 +282,41 @@ export function repoActionErrorForRepo(repoId: string) {
 
 export function repoActionErrorDetailForRepo(repoId: string) {
   return state.repoActionErrors[repoId] ?? null;
+}
+
+export function repoSyncIssueForRepo(repoId: string): RepoSyncIssueDisplay | null {
+  const recentSyncError = recentSyncErrorForRepo(repoId);
+  if (recentSyncError) {
+    return {
+      label: "最近同步失败",
+      message: recentSyncError.message,
+      retryable: true,
+      retrying: recentSyncError.retrying,
+      updatedAt: state.recentSync?.updatedAt ?? 0,
+    };
+  }
+
+  const syncError = syncErrorDetailsByRepoId().get(repoId);
+  if (syncError) {
+    return {
+      label: "同步失败",
+      message: syncError.message,
+      retryable: false,
+      retrying: false,
+      updatedAt: syncError.updatedAt,
+    };
+  }
+
+  const actionError = repoActionErrorDetailForRepo(repoId);
+  if (!actionError) return null;
+  const isAutoSyncSkip = actionError.message.includes("已跳过自动同步");
+  return {
+    label: isAutoSyncSkip ? "自动同步已跳过" : "仓库操作失败",
+    message: actionError.message,
+    retryable: false,
+    retrying: false,
+    updatedAt: actionError.updatedAt,
+  };
 }
 
 export function setRepoActionError(repoId: string, message: string) {
