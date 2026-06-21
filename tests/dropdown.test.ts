@@ -54,6 +54,45 @@ describe("Dropdown", () => {
     expect(screen.getByRole("button", { name: /向上展开/i })).toBeInTheDocument();
   });
 
+  it("多选模式会保留菜单并切换多个选项", async () => {
+    render(
+      defineComponent({
+        components: { Dropdown },
+        setup() {
+          const value = ref<Array<"bottom" | "top">>(["bottom"]);
+          return { options, value };
+        },
+        template: `
+          <Dropdown
+            v-model="value"
+            multiple
+            :options="options"
+            placement="bottom"
+            menu-label="展开方向"
+          />
+        `,
+      }),
+      {
+        global: {
+          stubs: {
+            transition: false,
+          },
+        },
+      },
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: /向下展开/i }));
+    const listbox = await screen.findByRole("listbox", { name: "展开方向" });
+    expect(listbox).toHaveAttribute("aria-multiselectable", "true");
+    expect(screen.getByRole("option", { name: /向下展开/i })).toHaveAttribute("aria-selected", "true");
+
+    await fireEvent.click(screen.getByRole("option", { name: /向上展开/i }));
+
+    expect(screen.getByRole("listbox", { name: "展开方向" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /向下展开, 向上展开/i })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /向上展开/i })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("向下展开时会从触发点击位置展开", async () => {
     const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
     Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {

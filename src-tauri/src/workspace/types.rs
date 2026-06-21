@@ -766,6 +766,10 @@ pub struct GitHubProjectRepoCache {
     pub commits: HashMap<String, Vec<CommitSummary>>,
     #[serde(default)]
     pub commit_details: HashMap<String, CommitDetail>,
+    #[serde(default)]
+    pub issue_labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub issue_assignees: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

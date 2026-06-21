@@ -2188,6 +2188,98 @@ pub async fn github_list_issues(
     .await
 }
 
+fn list_github_issue_values(
+    app: &AppHandle,
+    repo_full_name: &str,
+    force_refresh: Option<bool>,
+    cache_read: impl Fn(&GitHubProjectRepoCache) -> Option<Vec<String>>,
+    cache_write: impl Fn(&mut GitHubProjectRepoCache, Vec<String>),
+    endpoint: &str,
+    error_label: &'static str,
+    parse_values: impl Fn(Response) -> Result<Vec<String>, String>,
+) -> Result<Vec<String>, String> {
+    let cache_key = github_project_cache_repo_key(repo_full_name)?;
+    if github_project_cache_enabled(force_refresh) {
+        if let Some(cached) = load_github_project_cache(app)
+            .repos
+            .get(&cache_key)
+            .and_then(cache_read)
+        {
+            return Ok(cached);
+        }
+    }
+    let (_binding, token) = github_require_token(app)?;
+    let client = build_client()?;
+    let response = github_send(
+        app,
+        error_label,
+        github_headers(
+            client
+                .get(format!("{}/{}", github_repo_api_url(repo_full_name)?, endpoint))
+                .query(&[("per_page", "100")]),
+            Some(&token),
+        ),
+    )?;
+    let values = parse_values(response)?;
+    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+        cache_write(repo_cache, values.clone());
+    })?;
+    Ok(values)
+}
+
+#[tauri::command]
+pub async fn github_list_issue_labels(
+    app: AppHandle,
+    repo_full_name: String,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    run_blocking("读取 GitHub Issue Labels", move || {
+        list_github_issue_values(
+            &app,
+            &repo_full_name,
+            force_refresh,
+            |repo_cache| repo_cache.issue_labels.clone(),
+            |repo_cache, labels| repo_cache.issue_labels = Some(labels),
+            "labels",
+            "读取 GitHub Issue Labels 失败",
+            |response| Ok(github_json::<Vec<GitHubLabelResponse>>("读取 GitHub Issue Labels 失败", response)?
+                .into_iter()
+                .map(|label| label.name)
+                .filter(|label| !label.trim().is_empty())
+                .collect()),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_issue_assignees(
+    app: AppHandle,
+    repo_full_name: String,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    run_blocking("读取 GitHub Issue Assignees", move || {
+        list_github_issue_values(
+            &app,
+            &repo_full_name,
+            force_refresh,
+            |repo_cache| repo_cache.issue_assignees.clone(),
+            |repo_cache, assignees| repo_cache.issue_assignees = Some(assignees),
+            "assignees",
+            "读取 GitHub Issue Assignees 失败",
+            |response| Ok(github_json::<Vec<GitHubAssigneeResponse>>(
+                "读取 GitHub Issue Assignees 失败",
+                response,
+            )?
+            .into_iter()
+            .map(|assignee| assignee.login)
+            .filter(|assignee| !assignee.trim().is_empty())
+            .collect()),
+        )
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn github_create_issue(
     app: AppHandle,
