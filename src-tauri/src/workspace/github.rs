@@ -587,7 +587,9 @@ pub(super) fn github_send(
     prefix: &str,
     builder: RequestBuilder,
 ) -> Result<Response, String> {
-    let response = builder.send().map_err(|e| format!("{prefix}：{e}"))?;
+    let response = builder.send().map_err(|e| {
+        format!("{prefix}：GitHub API 连接失败，请检查网络、代理或系统证书：{e}")
+    })?;
     if github_binding_expired_status(response.status()) {
         let mut settings = load_settings(app);
         settings.github_binding = None;
