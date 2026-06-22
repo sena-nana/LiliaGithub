@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { parseRemoteRepoId } from "../../utils/remoteRepo";
+import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";
+import { WORKSPACE_COMMAND_MANIFEST } from "./manifest";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -145,7 +147,12 @@ export async function resetWorkspaceFallbacksForTests(): Promise<void> {
   fallback?.resetWorkspaceFallbacksForTests();
 }
 
-async function call<T>(command: string, args: Record<string, unknown> | undefined, fallbackCall: () => Promise<T>): Promise<T> {
+async function call<TCommand extends WorkspaceCommandName>(
+  command: TCommand,
+  args: WorkspaceCommandArgs<TCommand>,
+  fallbackCall: () => Promise<WorkspaceCommandResult<TCommand>>,
+): Promise<WorkspaceCommandResult<TCommand>> {
+  const commandEntry = WORKSPACE_COMMAND_MANIFEST[command];
   const hasWindow = typeof window !== "undefined";
   const runtime = resolveWorkspaceRuntimeForTests({
     hasWindow,
@@ -154,14 +161,14 @@ async function call<T>(command: string, args: Record<string, unknown> | undefine
     isTest,
   });
   if (runtime === "tauri") {
-    return invoke<T>(command, args);
+    return invoke<WorkspaceCommandResult<TCommand>>(commandEntry.command, args);
   }
   if (runtime === "mock") {
     await loadWorkspaceFallback();
     return fallbackCall();
   }
   throw new Error(
-    `Tauri command ${command} is unavailable outside Tauri. Use yarn tauri:dev, or yarn dev for the development mock mode.`,
+    `Tauri command ${commandEntry.command} is unavailable outside Tauri. Use yarn tauri:dev, or yarn dev for the development mock mode.`,
   );
 }
 

@@ -152,6 +152,7 @@ const {
                 :aria-label="tab.title"
               >
                 <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
+                <FolderOpen v-else-if="tab.key === 'files'" :size="17" aria-hidden="true" />
                 <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
                 <History v-else-if="tab.key === 'history'" :size="17" aria-hidden="true" />
                 <Archive v-else :size="17" aria-hidden="true" />
