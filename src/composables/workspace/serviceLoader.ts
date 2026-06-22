@@ -1,8 +1,9 @@
+import { createCachedAsyncModule } from "../../utils/asyncModule";
+
 export type WorkspaceService = typeof import("../../services/workspace");
 
-let servicePromise: Promise<WorkspaceService> | null = null;
+const serviceModule = createCachedAsyncModule<WorkspaceService>(() => import("../../services/workspace"));
 
 export function loadWorkspaceService() {
-  servicePromise ??= import("../../services/workspace");
-  return servicePromise;
+  return serviceModule.load();
 }

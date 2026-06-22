@@ -15,16 +15,18 @@ import {
   SquareTerminal,
   TriangleAlert,
 } from "@lucide/vue";
-import { defineAsyncComponent } from "vue";
 import Dropdown from "../components/Dropdown.vue";
 import RepoBranchPicker from "../components/repo/RepoBranchPicker.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
+import { createCachedAsyncComponent } from "../utils/asyncComponent";
 import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
-const RepoStashPanel = defineAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
-const RepoToolbarSettingsMenu = defineAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
+const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
+const repoToolbarSettingsMenuModule = createCachedAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
+const RepoStashPanel = repoStashPanelModule.component;
+const RepoToolbarSettingsMenu = repoToolbarSettingsMenuModule.component;
 
 const {
   activeTab,
