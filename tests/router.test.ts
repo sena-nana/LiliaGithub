@@ -461,7 +461,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "Files View" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(screen.getAllByRole("tab", { name: "文件树" }).some((tab) => tab.classList.contains("is-active"))).toBe(true);
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
   });
 
@@ -535,7 +535,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/github%3Asena-nana%2FRemoteFiles/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "Remote Files" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(screen.getAllByRole("tab", { name: "文件树" }).some((tab) => tab.classList.contains("is-active"))).toBe(true);
     expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteFiles/files");
     await waitFor(() => {
       expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
@@ -617,7 +617,7 @@ describe("基础路由", () => {
 
     const { router } = await renderAt("/repos/github%3Asena-nana%2FColdRemoteFiles/files");
 
-    expect(await screen.findByText("正在恢复仓库上下文。")).toBeInTheDocument();
+    expect((await screen.findAllByText("正在恢复仓库上下文。")).length).toBeGreaterThan(0);
     expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toEqual([]);
 
     settingsGate.resolve(restoredSettings);
@@ -807,7 +807,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FEmptyRemote/files");
     });
-    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(screen.getAllByRole("tab", { name: "文件树" }).some((tab) => tab.classList.contains("is-active"))).toBe(true);
   });
 
   it("总览页隐藏禁用的 GitHub 项目", async () => {
@@ -1223,9 +1223,8 @@ describe("基础路由", () => {
       projectTab: "pulls",
       pr: "52",
     });
-    await waitFor(() => {
-      expect(document.querySelector('[data-pull-number="52"].project-row--pull.is-target')).toBeInTheDocument();
-    });
+    expect(await screen.findByRole("heading", { level: 3, name: "#52 总览接入 PR 时间线" })).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Pull Request 详情" })).toBeInTheDocument();
   });
 
   it("总览页 GitHub 时间线点击 Actions 事件进入仓库详情项目信息 Actions 并定位目标 run", async () => {
@@ -1917,7 +1916,7 @@ describe("基础路由", () => {
     await renderAt("/repos/LiliaGithub/stash");
 
     expect(await screen.findByRole("tab", { name: "Stash" })).toHaveClass("is-active");
-    expect(screen.getByRole("tab", { name: "文件树" })).toBeInTheDocument();
+    expect(screen.getAllByRole("tab", { name: "文件树" }).length).toBeGreaterThan(0);
     await waitForRepoTitle("LiliaGithub");
     expect(screen.queryByRole("group", { name: "扩展仓库操作" })).toBeNull();
 
@@ -2043,7 +2042,8 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub");
 
     expect((await screen.findAllByRole("heading", { level: 1, name: "LiliaGithub" })).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("tablist", { name: "项目信息视图" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "右侧面板" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
     expect(screen.queryByRole("tab", { name: "README.md" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "README.txt" })).toBeNull();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");

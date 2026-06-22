@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import {
+  ArrowRight,
   CircleOff,
-  ExternalLink,
   GitMerge,
   GitPullRequest,
   ListFilter,
-  LoaderCircle,
   Plus,
-  RotateCcw,
   Search,
 } from "@lucide/vue";
 import Dropdown from "../Dropdown.vue";
@@ -23,6 +21,7 @@ import type {
   PullRequestSort,
   PullRequestState,
 } from "./pullRequestPanelTypes";
+import RepoPullRequestDetail from "./RepoPullRequestDetail.vue";
 
 const props = defineProps<{
   pulls: GitHubPullRequest[];
@@ -44,6 +43,7 @@ const emit = defineEmits<{
   "update:filters": [value: PullRequestPanelFilters];
   "update:mergeMethod": [value: "merge" | "squash" | "rebase"];
   create: [];
+  back: [];
   focus: [pull: GitHubPullRequest];
   open: [pull: GitHubPullRequest];
   toggle: [pull: GitHubPullRequest];
@@ -73,17 +73,16 @@ const reviewOptions = [
   { value: "changes_requested", label: "请求更改" },
 ] as const;
 
-const mergeMethodOptions: readonly { value: "merge" | "squash" | "rebase"; label: string }[] = [
-  { value: "merge", label: "Merge" },
-  { value: "squash", label: "Squash" },
-  { value: "rebase", label: "Rebase" },
-];
-
 const pullAuthors = computed(() => props.pulls.map((pull) => pull.author));
 const pullLabels = computed(() => props.pulls.flatMap((pull) => pull.labels ?? []));
 const pullAssignees = computed(() => props.pulls.flatMap((pull) => pull.assignees ?? []));
 const pullMilestones = computed(() => props.pulls.flatMap((pull) => pull.milestone ? [pull.milestone] : []));
 const pullProjects = computed(() => props.pulls.flatMap((pull) => pull.projectItems ?? []));
+const focusedPullRequest = computed(() =>
+  props.focusedPullRequestNumber == null
+    ? null
+    : props.pulls.find((pull) => pull.number === props.focusedPullRequestNumber) ?? null
+);
 
 const authorOptions = computed(() => [
   { value: "", label: "任意作者" },
@@ -163,16 +162,25 @@ function pullStatusText(pull: GitHubPullRequest) {
   return pull.state;
 }
 
-function pullMetaText(pull: GitHubPullRequest) {
+function pullUpdatedText(pull: GitHubPullRequest) {
+  return `更新于 ${formatPullDate(pull.updatedAt)}`;
+}
+
+function pullMetaItems(pull: GitHubPullRequest) {
   return [
     pull.author || "未知作者",
     `${pull.headBranch} -> ${pull.baseBranch}`,
-    pull.labels?.join(", ") || "无标签",
-    pull.assignees?.join(", ") || "未分配",
-    pull.projectItems?.map((project) => project.title).join(", ") || "-",
-    pull.milestone?.title || "-",
-    formatPullDate(pull.updatedAt),
-  ].join(" · ");
+    pullUpdatedText(pull),
+  ];
+}
+
+function pullChips(pull: GitHubPullRequest) {
+  return [
+    ...(pull.labels?.length ? pull.labels.map((label) => ({ key: `label:${label}`, text: label })) : []),
+    ...(pull.assignees?.length ? pull.assignees.map((assignee) => ({ key: `assignee:${assignee}`, text: assignee })) : []),
+    ...(pull.projectItems?.length ? pull.projectItems.map((project) => ({ key: `project:${project.id}`, text: project.title })) : []),
+    ...(pull.milestone ? [{ key: `milestone:${pull.milestone.number}`, text: pull.milestone.title }] : []),
+  ];
 }
 
 function uniqueSorted(values: readonly string[]) {
@@ -195,6 +203,21 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
 
 <template>
   <div class="pulls-panel">
+    <RepoPullRequestDetail
+      v-if="focusedPullRequest"
+      :pull="focusedPullRequest"
+      :checks="checksFor(focusedPullRequest.number)"
+      :checks-loading="checksLoading"
+      :updating="updating"
+      :merge-method="mergeMethod"
+      @back="emit('back')"
+      @open="emit('open', $event)"
+      @toggle="emit('toggle', $event)"
+      @merge="emit('merge', $event)"
+      @update:merge-method="emit('update:mergeMethod', $event)"
+    />
+
+    <template v-else>
     <h3 class="pulls-panel__sr-title">Pull Requests</h3>
     <div class="pulls-panel__toolbar">
       <div class="pulls-panel__states" role="group" aria-label="Pull Request 状态">
@@ -351,79 +374,16 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           <CircleOff v-else :size="15" aria-hidden="true" />
         </span>
         <div class="pulls-list__content">
-          <div class="pulls-list__line">
-            <strong class="pulls-list__title">#{{ pull.number }} {{ pull.title }}</strong>
-            <span class="pulls-list__meta">{{ pullMetaText(pull) }}</span>
+          <strong class="pulls-list__title">#{{ pull.number }} {{ pull.title }}</strong>
+          <div class="pulls-list__meta">
+            <span v-for="item in pullMetaItems(pull)" :key="item">{{ item }}</span>
           </div>
-          <div v-if="focusedPullRequestNumber === pull.number" class="pulls-list__checks">
-            <p class="muted">
-              {{
-                checksLoading
-                  ? "正在读取 checks..."
-                  : checksFor(pull.number).length
-                    ? `${checksFor(pull.number).length} 个 checks`
-                    : "没有 checks"
-              }}
-            </p>
-            <ul v-if="checksFor(pull.number).length" class="pulls-list__check-list">
-              <li v-for="check in checksFor(pull.number)" :key="check.id">
-                <span>{{ check.name }}</span>
-                <em>{{ check.conclusion ?? check.status }}</em>
-              </li>
-            </ul>
+          <div v-if="pullChips(pull).length" class="pulls-list__chips" aria-label="Pull Request 元数据">
+            <span v-for="chip in pullChips(pull)" :key="chip.key">{{ chip.text }}</span>
           </div>
+          <span v-else class="pulls-list__empty-meta">无标签 · 未分配 · 无项目</span>
         </div>
-        <div class="pulls-list__actions">
-          <div class="ui-segmented pulls-list__merge" role="group" aria-label="合并方式">
-            <button
-              v-for="method in mergeMethodOptions"
-              :key="method.value"
-              type="button"
-              :class="{ 'is-active': mergeMethod === method.value }"
-              :aria-pressed="mergeMethod === method.value"
-              @click.stop="emit('update:mergeMethod', method.value)"
-            >
-              {{ method.label }}
-            </button>
-          </div>
-          <button type="button" class="ghost project-icon-action" aria-label="打开" title="打开" @click.stop="emit('open', pull)">
-            <ExternalLink :size="14" aria-hidden="true" />
-          </button>
-          <button
-            v-if="pull.state === 'open' && !pull.merged"
-            type="button"
-            class="ghost project-icon-action"
-            :disabled="updating"
-            aria-label="关闭"
-            title="关闭"
-            @click.stop="emit('toggle', pull)"
-          >
-            <CircleOff :size="14" aria-hidden="true" />
-          </button>
-          <button
-            v-if="pull.state === 'open' && !pull.merged"
-            type="button"
-            class="primary project-icon-action project-icon-action--primary"
-            :disabled="updating"
-            aria-label="合并"
-            title="合并"
-            @click.stop="emit('merge', pull)"
-          >
-            <LoaderCircle v-if="updating" :size="14" aria-hidden="true" class="sb-spin" />
-            <GitMerge v-else :size="14" aria-hidden="true" />
-          </button>
-          <button
-            v-else-if="pull.state === 'closed' && !pull.merged"
-            type="button"
-            class="ghost project-icon-action"
-            :disabled="updating"
-            aria-label="重开"
-            title="重开"
-            @click.stop="emit('toggle', pull)"
-          >
-            <RotateCcw :size="14" aria-hidden="true" />
-          </button>
-        </div>
+        <ArrowRight class="pulls-list__arrow" :size="15" aria-hidden="true" />
       </div>
 
       <p v-if="!pulls.length && !loading" class="muted repo-empty pulls-list__empty">
@@ -433,6 +393,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
         正在读取 Pull Requests。
       </p>
     </div>
+    </template>
   </div>
 </template>
 
@@ -589,12 +550,12 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
 
 .pulls-list__item {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 22px minmax(0, 1fr) 22px;
+  align-items: start;
   gap: 8px;
   min-width: 0;
-  min-height: 44px;
-  padding: 0 2px;
+  min-height: 56px;
+  padding: 9px 4px;
   border-bottom: 1px solid var(--border-soft);
   cursor: pointer;
 }
@@ -613,44 +574,32 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
 
 .pulls-list__content {
   display: grid;
-  gap: 5px;
-  min-width: 0;
-  padding: 7px 0;
-}
-
-.pulls-list__line {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
 }
 
 .pulls-list__title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pulls-list__title {
   color: var(--text);
   font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .pulls-list__meta {
-  justify-self: end;
-  min-width: max-content;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
   color: var(--text-muted);
   font-size: 12px;
-  text-align: right;
-  white-space: nowrap;
 }
 
 .pulls-list__status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  padding-top: 1px;
   color: var(--success);
 }
 
@@ -658,64 +607,40 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
   color: var(--text-muted);
 }
 
-.pulls-list__checks {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.pulls-list__checks p {
-  margin: 0;
-}
-
-.pulls-list__check-list {
+.pulls-list__chips {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  min-width: 0;
 }
 
-.pulls-list__check-list li {
+.pulls-list__chips span {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   min-width: 0;
-  max-width: 220px;
+  max-width: 180px;
   padding: 2px 6px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.pulls-list__check-list span {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pulls-list__check-list em {
-  color: var(--text);
-  font-style: normal;
-}
-
-.pulls-list__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.pulls-list__merge {
-  height: 28px;
-}
-
-.pulls-list__merge button {
-  height: 26px;
-  padding: 0 7px;
+.pulls-list__empty-meta {
+  color: var(--text-faint);
   font-size: 11px;
+}
+
+.pulls-list__arrow {
+  align-self: center;
+  color: var(--text-faint);
+}
+
+.pulls-list__item:hover .pulls-list__arrow {
+  color: var(--text-muted);
 }
 
 .pulls-list__empty {
@@ -737,13 +662,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
   }
 
   .pulls-list__item {
-    grid-template-columns: 22px minmax(0, 1fr);
-  }
-
-  .pulls-list__actions {
-    grid-column: 2;
-    justify-content: flex-start;
-    padding-bottom: 7px;
+    grid-template-columns: 22px minmax(0, 1fr) 18px;
   }
 }
 </style>

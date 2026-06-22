@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { AnsiUp } from "ansi_up";
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch, type Component } from "vue";
 import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 import {
   AlertCircle,
   ArrowLeft,
   Eye,
+  CircleDot,
+  FolderTree,
   ExternalLink,
   GitFork,
   GitPullRequest,
   LoaderCircle,
+  Monitor,
   Pencil,
+  Play,
   Plus,
   RotateCw,
   Save,
@@ -24,10 +28,13 @@ import CommitDetailCard from "./CommitDetailCard.vue";
 import Dropdown from "../Dropdown.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
+import RepoFilePreviewPane from "./RepoFilePreviewPane.vue";
+import RepoFileTreeCard from "./RepoFileTreeCard.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
 import RepoIssuesPanel from "./RepoIssuesPanel.vue";
 import RepoTopicEditor from "./RepoTopicEditor.vue";
+import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
   blankPullRequestPanelFilters,
   type PullRequestPanelFilters,
@@ -108,6 +115,14 @@ type IssueState = "open" | "closed" | "all";
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
   label: string;
+  icon: Component;
+};
+type ProjectSidebarMode = "repo" | "files" | Exclude<ProjectTab, "readme">;
+type ProjectSidebarButtonConfig = {
+  key: ProjectSidebarMode;
+  label: string;
+  icon: Component;
+  disabled?: boolean;
 };
 type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
 type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
@@ -231,6 +246,11 @@ const props = defineProps<{
   canCommit: boolean;
   statusCommits: readonly CommitSummary[];
   selectedCommitHash?: string | null;
+  canLoadFiles?: boolean;
+  fileRepoRef?: string | null;
+  filesUnavailableMessage?: string | null;
+  fileTargetPath?: string | null;
+  fileTargetHash?: string | null;
   conflictOperationText: string;
   conflictSummaryText: string;
   conflictContinueText: string;
@@ -289,6 +309,20 @@ const resolvedRepoContext = computed(() => props.repoContext);
 const linkedWorktree = computed(() => hasRepoTag(resolvedRepoContext.value, "linked-worktree"));
 
 const activeSection = ref<ProjectContentMode>(routeTabToSection(props.activeGitTab));
+const canBrowseFiles = computed(() => props.canLoadFiles ?? resolvedRepoContext.value.capabilities.files.available);
+const fileUnavailableMessage = computed(() =>
+  props.filesUnavailableMessage ?? resolvedRepoContext.value.capabilities.files.reason ?? "文件树暂不可用。"
+);
+const fileBrowserEnabled = computed(() => activeSection.value === "files" && canBrowseFiles.value);
+const fileBrowser = useRepoFileBrowser({
+  repoId: toRef(props, "repoId"),
+  repoPath: toRef(props, "repoPath"),
+  repoRef: toRef(props, "fileRepoRef"),
+  changes: toRef(props, "changes"),
+  targetPath: toRef(props, "fileTargetPath"),
+  targetHash: toRef(props, "fileTargetHash"),
+  enabled: fileBrowserEnabled,
+});
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const terminalBody = ref<HTMLElement | null>(null);
 const projectMainRef = ref<HTMLElement | null>(null);
@@ -515,11 +549,25 @@ const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.
 const languageStatsLoading = computed(() => workspace.state.languageStatsLoadingRepoIds.includes(props.repoId));
 const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
 const projectSections: readonly ProjectSectionConfig[] = [
-  { key: "issues", label: "Issues" },
-  { key: "pulls", label: "Pull Requests" },
-  { key: "actions", label: "Actions" },
-  { key: "settings", label: "Settings" },
+  { key: "issues", label: "Issues", icon: CircleDot },
+  { key: "pulls", label: "Pull Requests", icon: GitPullRequest },
+  { key: "actions", label: "Actions", icon: Play },
+  { key: "settings", label: "Settings", icon: Settings2 },
 ];
+const projectSidebarButtons = computed<ProjectSidebarButtonConfig[]>(() => [
+  { key: "repo", label: "Repo", icon: Monitor },
+  {
+    key: "files",
+    label: "文件树",
+    icon: FolderTree,
+    disabled: !canBrowseFiles.value,
+  },
+  ...projectSections.map((section) => ({
+    key: section.key,
+    label: section.label,
+    icon: section.icon,
+  })),
+]);
 const canUseLaunchWorkflow = computed(() => resolvedRepoContext.value.capabilities.launch.available);
 const canShowChanges = computed(() => resolvedRepoContext.value.capabilities.changes.available);
 const historyReadOnly = computed(() => !resolvedRepoContext.value.capabilities.commit.available);
@@ -549,6 +597,7 @@ const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
 const hasProjectSidebarErrors = computed(() => projectSidebarErrors.value.length > 0);
 const showProjectSidebar = computed(() =>
   hasProjectSidebarErrors.value ||
+  activeSection.value === "files" ||
   activeSection.value === "readme" ||
   activeSection.value === "issues" ||
   activeSection.value === "pulls" ||
@@ -643,9 +692,16 @@ const canSubmitPullRequestCreate = computed(() =>
   pullRequestBase.value.trim().length > 0
 );
 
-function isProjectSectionActive(section: ProjectContentMode) {
-  return activeSection.value === section;
+function isProjectSidebarButtonActive(section: ProjectSidebarMode) {
+  return projectSidebarMode.value === section;
 }
+const projectSidebarMode = computed<ProjectSidebarMode>(() => {
+  if (activeSection.value === "files") return "files";
+  if (activeSection.value === "issues" || activeSection.value === "pulls" || activeSection.value === "actions" || activeSection.value === "settings") {
+    return activeSection.value;
+  }
+  return "repo";
+});
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
@@ -933,8 +989,9 @@ function sameSharedPanelFilters(left: SharedPanelFilters, right: SharedPanelFilt
 
 function pushProjectTabRoute(tab: ProjectTab) {
   const nextQuery = projectTabRouteQuery(tab);
-  if (sameRouteQuery(route.query, nextQuery)) return Promise.resolve();
-  return router.push({ query: nextQuery }).then(() => undefined);
+  const nextPath = repoRoute(props.repoId);
+  if (route.path === nextPath && sameRouteQuery(route.query, nextQuery)) return Promise.resolve();
+  return router.push({ path: nextPath, query: nextQuery }).then(() => undefined);
 }
 
 function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
@@ -963,6 +1020,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
       pullRequestPanelFilters.value,
       blankPullRequestPanelFilters(),
     );
+    if (focusedPullRequestNumber.value) query.pr = String(focusedPullRequestNumber.value);
   } else if (tab === "actions") {
     if (focusedRunId.value) query.run = String(focusedRunId.value);
     if (focusedJobId.value) query.job = String(focusedJobId.value);
@@ -1204,10 +1262,7 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
   focusedJobId.value = null;
   if (!pullNumber) {
     await loadPullRequests();
-    focusedPullRequestNumber.value = pulls.value[0]?.number ?? null;
-    if (focusedPullRequestNumber.value) {
-      await loadPullRequestChecks(focusedPullRequestNumber.value);
-    }
+    focusedPullRequestNumber.value = null;
     return;
   }
   await loadPullRequests();
@@ -1433,10 +1488,7 @@ async function loadPullRequests(force = false) {
       if (current && nextPulls.some((pull) => pull.number === current)) {
         await loadPullRequestChecks(current, force);
       } else {
-        focusedPullRequestNumber.value = nextPulls[0]?.number ?? null;
-        if (focusedPullRequestNumber.value) {
-          await loadPullRequestChecks(focusedPullRequestNumber.value, force);
-        }
+        focusedPullRequestNumber.value = null;
       }
     } catch (err) {
       githubError.value = String(err);
@@ -2180,6 +2232,12 @@ async function mergePullRequest(pull: GitHubPullRequest) {
 async function focusPullRequestRow(pull: GitHubPullRequest) {
   focusedPullRequestNumber.value = pull.number;
   await loadPullRequestChecks(pull.number);
+  if (activeSection.value === "pulls") void pushProjectTabRoute("pulls");
+}
+
+function closePullRequestDetail() {
+  focusedPullRequestNumber.value = null;
+  if (activeSection.value === "pulls") void pushProjectTabRoute("pulls");
 }
 
 async function openReadmeLink(target: ReadmeLinkTarget) {
@@ -2229,8 +2287,21 @@ async function activateProjectTab(tab: ProjectTab) {
   await ensureSectionData(tab);
 }
 
-function activateProjectSection(tab: ProjectSectionConfig["key"]) {
-  void activateProjectTab(tab);
+async function activateProjectSidebarButton(tab: ProjectSidebarMode) {
+  if (tab === "repo") {
+    await activateProjectTab("readme");
+    return;
+  }
+  if (tab === "files") {
+    if (!canBrowseFiles.value) return;
+    activeSection.value = "files";
+    if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
+      emit("hideTerminal");
+    }
+    await router.push(repoRoute(props.repoId, "files"));
+    return;
+  }
+  await activateProjectTab(tab);
 }
 
 function focusActionRun(runId: number | null) {
@@ -2255,7 +2326,11 @@ function focusActionJob(jobId: number | null) {
         'project-layout--full': !showProjectSidebar,
       }"
     >
-      <main ref="projectMainRef" class="project-main">
+      <main
+        ref="projectMainRef"
+        class="project-main"
+        :class="{ 'project-main--plain': activeSection === 'files' }"
+      >
         <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
           <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
             <div v-if="launchError" class="project-terminal__line project-terminal__line--error">{{ launchError }}</div>
@@ -2295,6 +2370,15 @@ function focusActionJob(jobId: number | null) {
 
         <section v-else-if="activeSection === 'launch'" class="project-section">
           <p class="muted repo-empty project-empty">命令运行仅支持本地仓库。</p>
+        </section>
+
+        <RepoFilePreviewPane
+          v-else-if="activeSection === 'files' && canBrowseFiles"
+          :browser="fileBrowser"
+        />
+
+        <section v-else-if="activeSection === 'files'" class="project-section">
+          <p class="muted repo-empty project-empty">{{ fileUnavailableMessage }}</p>
         </section>
 
         <section v-else-if="activeSection === 'readme'" class="project-readme-card">
@@ -2568,6 +2652,7 @@ function focusActionJob(jobId: number | null) {
             @update:state="setPullRequestState"
             @update:filters="setPullRequestPanelFilters"
             @create="openPullRequestCreateView"
+            @back="closePullRequestDetail"
             @focus="focusPullRequestRow"
             @open="(pull) => openUrl(pull.htmlUrl)"
             @toggle="togglePullRequestState"
@@ -2798,7 +2883,29 @@ function focusActionJob(jobId: number | null) {
         @close="emit('closeCommit')"
       />
 
-      <aside v-if="showProjectSidebar" class="project-sidebar">
+      <aside
+        v-if="showProjectSidebar"
+        class="project-sidebar"
+        :class="{ 'project-sidebar--fill': projectSidebarMode === 'files' && !hasProjectSidebarErrors }"
+      >
+        <div class="project-sidebar-switcher" role="tablist" aria-label="右侧面板">
+          <button
+            v-for="tab in projectSidebarButtons"
+            :key="tab.key"
+            type="button"
+            class="project-sidebar-switcher__button"
+            :class="{ 'is-active': isProjectSidebarButtonActive(tab.key) }"
+            role="tab"
+            :aria-selected="isProjectSidebarButtonActive(tab.key)"
+            :aria-label="tab.label"
+            :title="tab.label"
+            :disabled="tab.disabled"
+            @click="activateProjectSidebarButton(tab.key)"
+          >
+            <component :is="tab.icon" :size="15" aria-hidden="true" />
+          </button>
+        </div>
+
         <section
           v-if="hasProjectSidebarErrors"
           class="project-sidebar-error-card"
@@ -2829,7 +2936,7 @@ function focusActionJob(jobId: number | null) {
           </div>
         </section>
 
-        <section v-if="repoFullName && !hasProjectSidebarErrors" class="project-about-card" aria-label="仓库描述">
+        <section v-if="repoFullName && !hasProjectSidebarErrors && projectSidebarMode === 'repo'" class="project-about-card" aria-label="仓库描述">
           <button
             v-if="!aboutEditing"
             type="button"
@@ -2919,22 +3026,162 @@ function focusActionJob(jobId: number | null) {
           </div>
         </section>
 
-        <div class="project-sidebar__card" role="tablist" aria-label="项目信息视图">
+        <RepoFileTreeCard
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'files' && canBrowseFiles"
+          :browser="fileBrowser"
+        />
+
+        <section
+          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'files'"
+          class="project-sidebar-summary-card"
+          aria-label="文件树摘要"
+        >
+          <div class="project-sidebar-summary-card__head">
+            <FolderTree :size="14" aria-hidden="true" />
+            <strong>文件树</strong>
+          </div>
+          <p>{{ fileUnavailableMessage }}</p>
+        </section>
+
+        <section
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues'"
+          class="project-sidebar-summary-card"
+          aria-label="Issues 摘要"
+        >
+          <div class="project-sidebar-summary-card__head">
+            <CircleDot :size="14" aria-hidden="true" />
+            <strong>Issues</strong>
+          </div>
+          <dl class="project-sidebar-summary-card__stats">
+            <div>
+              <dt>状态</dt>
+              <dd>{{ issueState }}</dd>
+            </div>
+            <div>
+              <dt>已加载</dt>
+              <dd>{{ issues.length }}</dd>
+            </div>
+            <div v-if="issuePanelFilters.query">
+              <dt>搜索</dt>
+              <dd>{{ issuePanelFilters.query }}</dd>
+            </div>
+            <div v-if="issuePanelFilters.labels.length">
+              <dt>标签</dt>
+              <dd>{{ issuePanelFilters.labels.join(', ') }}</dd>
+            </div>
+          </dl>
           <button
-            v-for="tab in projectSections"
-            :key="tab.key"
             type="button"
-            class="sb-tree__row sb-tree__row--project"
-            :class="{ 'is-active': isProjectSectionActive(tab.key) }"
-            role="tab"
-            :aria-selected="isProjectSectionActive(tab.key)"
-            @click="activateProjectSection(tab.key)"
+            class="ghost project-sidebar-summary-card__action"
+            aria-label="侧栏新建 Issue"
+            :disabled="issueCreateView || creatingIssue || !!issuesAccessUnavailable"
+            @click="openIssueCreateView"
           >
-            <span class="sb-tree__name">{{ tab.label }}</span>
+            <Plus :size="14" aria-hidden="true" />
+            新建
           </button>
-        </div>
+        </section>
+
+        <section
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls'"
+          class="project-sidebar-summary-card"
+          aria-label="Pull Requests 摘要"
+        >
+          <div class="project-sidebar-summary-card__head">
+            <GitPullRequest :size="14" aria-hidden="true" />
+            <strong>Pull Requests</strong>
+          </div>
+          <dl class="project-sidebar-summary-card__stats">
+            <div>
+              <dt>状态</dt>
+              <dd>{{ pullState }}</dd>
+            </div>
+            <div>
+              <dt>已加载</dt>
+              <dd>{{ pulls.length }}</dd>
+            </div>
+            <div v-if="focusedPullRequestNumber">
+              <dt>焦点</dt>
+              <dd>#{{ focusedPullRequestNumber }}</dd>
+            </div>
+            <div v-if="pullRequestPanelFilters.query">
+              <dt>搜索</dt>
+              <dd>{{ pullRequestPanelFilters.query }}</dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            class="ghost project-sidebar-summary-card__action"
+            aria-label="侧栏新建 PR"
+            :disabled="pullCreateView || creatingPullRequest || !!pullsAccessUnavailable"
+            @click="openPullRequestCreateView"
+          >
+            <GitPullRequest :size="14" aria-hidden="true" />
+            新建
+          </button>
+        </section>
+
+        <section
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'actions'"
+          class="project-sidebar-summary-card"
+          aria-label="Actions 摘要"
+        >
+          <div class="project-sidebar-summary-card__head">
+            <Play :size="14" aria-hidden="true" />
+            <strong>Actions</strong>
+          </div>
+          <dl class="project-sidebar-summary-card__stats">
+            <div>
+              <dt>已加载</dt>
+              <dd>{{ workflowRuns.length }}</dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>{{ actionsLoading ? "读取中" : actionsLoaded ? "已同步" : "未读取" }}</dd>
+            </div>
+            <div v-if="focusedRunId">
+              <dt>Run</dt>
+              <dd>#{{ focusedRunId }}</dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            class="ghost project-sidebar-summary-card__action"
+            :disabled="actionsLoading || !!actionsAccessUnavailable"
+            @click="loadActions(true)"
+          >
+            <RotateCw :size="14" aria-hidden="true" />
+            刷新 Actions
+          </button>
+        </section>
+
+        <section
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'settings'"
+          class="project-sidebar-summary-card"
+          aria-label="Settings 摘要"
+        >
+          <div class="project-sidebar-summary-card__head">
+            <Settings2 :size="14" aria-hidden="true" />
+            <strong>Settings</strong>
+          </div>
+          <dl class="project-sidebar-summary-card__stats">
+            <div>
+              <dt>仓库</dt>
+              <dd>{{ settings ? settings.fullName : repoFullName || repoId }}</dd>
+            </div>
+            <div v-if="settings">
+              <dt>可见性</dt>
+              <dd>{{ settings.private ? "Private" : "Public" }}</dd>
+            </div>
+            <div v-if="settings">
+              <dt>Default</dt>
+              <dd>{{ settings.defaultBranch }}</dd>
+            </div>
+          </dl>
+        </section>
 
         <RepoLanguageStatsCard
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'repo'"
           :repo="repoSummary ?? null"
           :show-line-counts="resolvedRepoContext.capabilities.open.available"
           :loading="languageStatsLoading"
@@ -3046,6 +3293,12 @@ function focusActionJob(jobId: number | null) {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
+}
+
+.project-main--plain {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .project-main :deep(.error-line) {
@@ -3168,6 +3421,56 @@ function focusActionJob(jobId: number | null) {
   min-height: 0;
   align-content: start;
   align-self: start;
+}
+
+.project-sidebar--fill {
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  align-self: stretch;
+  height: 100%;
+}
+
+.project-sidebar-switcher {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 36px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.project-sidebar-switcher__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.project-sidebar-switcher__button:hover:not(:disabled),
+.project-sidebar-switcher__button:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.project-sidebar-switcher__button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.project-sidebar-switcher__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .project-sidebar-error-card {
@@ -3396,16 +3699,83 @@ function focusActionJob(jobId: number | null) {
   grid-row: 1 / span 2;
 }
 
-.project-sidebar__card {
+.project-sidebar-summary-card {
   display: grid;
-  gap: 2px;
+  gap: 10px;
   min-width: 0;
-  max-height: min(420px, 100%);
-  overflow: auto;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
+}
+
+.project-sidebar-summary-card__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.project-sidebar-summary-card__head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-sidebar-summary-card p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.project-sidebar-summary-card__stats {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+}
+
+.project-sidebar-summary-card__stats div {
+  display: grid;
+  grid-template-columns: minmax(58px, max-content) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-sidebar-summary-card__stats dt,
+.project-sidebar-summary-card__stats dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-sidebar-summary-card__stats dt {
+  color: var(--text-muted);
+}
+
+.project-sidebar-summary-card__stats dd {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.project-sidebar-summary-card__action {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
 }
 
 .project-section label {

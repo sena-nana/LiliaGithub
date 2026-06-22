@@ -24,7 +24,6 @@ import { useRepoDetailController } from "../composables/useRepoDetailController"
 import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
-const RepoFilesPanel = defineAsyncComponent(() => import("../components/repo/RepoFilesPanel.vue"));
 const RepoStashPanel = defineAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
 const RepoToolbarSettingsMenu = defineAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
 
@@ -320,20 +319,8 @@ const {
 
     <div class="repo-workbench__body">
       <main class="workbench-main workbench-main--project">
-        <RepoFilesPanel
-          v-if="activeTab === 'files' && canLoadFiles"
-          :repo-id="repoId"
-          :repo-path="summary?.path ?? null"
-          :repo-ref="activeFileRepoRef"
-          :changes="changes"
-          :target-path="activeFilePath"
-          :target-hash="activeFileHash"
-        />
-        <div v-else-if="activeTab === 'files'" class="repo-workbench__empty">
-          <p class="muted">{{ filesUnavailableMessage }}</p>
-        </div>
         <RepoStashPanel
-          v-else-if="activeTab === 'stash'"
+          v-if="activeTab === 'stash'"
           :repo-id="repoId"
           :repo-context="repoContext"
           :has-conflicts="hasConflicts"
@@ -353,6 +340,11 @@ const {
           :can-commit="canCommit"
           :status-commits="statusCommits"
           :selected-commit-hash="selectedCommitHash"
+          :can-load-files="canLoadFiles"
+          :file-repo-ref="activeFileRepoRef"
+          :files-unavailable-message="filesUnavailableMessage"
+          :file-target-path="activeFilePath"
+          :file-target-hash="activeFileHash"
           :conflict-operation-text="conflictOperationText"
           :conflict-summary-text="conflictSummaryText"
           :conflict-continue-text="conflictContinueText"
