@@ -8,6 +8,7 @@ import {
   state,
   replaceRepos,
   setRepoDetail,
+  setWorkspaceTasks,
   setRepoActionError,
   upsertRepo,
 } from "./state";
@@ -431,7 +432,7 @@ export async function refreshWorkspaceTasks() {
   const service = await loadWorkspaceService();
   const tasks = await service.listWorkspaceTasks();
   if (generation !== workspaceTaskRefreshGeneration) return;
-  state.tasks = tasks;
+  setWorkspaceTasks(tasks);
 }
 
 export async function cancelWorkspaceTask(taskId: string) {

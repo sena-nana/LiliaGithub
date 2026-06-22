@@ -439,6 +439,45 @@ describe("workspace incremental refresh", () => {
     expect(state.tasks.map((task) => task.id)).toEqual(["new-task"]);
   });
 
+  it("任务列表同 ID 只保留更新时间最新的一笔", async () => {
+    service.listWorkspaceTasks.mockResolvedValueOnce([
+      {
+        id: "repo-task",
+        kind: "repoStatus",
+        priority: "normal",
+        repoId: "Repo1",
+        status: "running",
+        message: "old",
+        updatedAt: 1,
+      },
+      {
+        id: "repo-task",
+        kind: "repoStatus",
+        priority: "normal",
+        repoId: "Repo1",
+        status: "success",
+        message: "new",
+        updatedAt: 2,
+      },
+      {
+        id: "other-task",
+        kind: "languageStats",
+        priority: "low",
+        repoId: "Repo2",
+        status: "pending",
+        message: null,
+        updatedAt: 1,
+      },
+    ]);
+
+    await refreshWorkspaceTasks();
+
+    expect(state.tasks.map((task) => [task.id, task.status, task.updatedAt])).toEqual([
+      ["repo-task", "success", 2],
+      ["other-task", "pending", 1],
+    ]);
+  });
+
   it("新一代语言统计刷新不会被旧一代同仓库 loading 跳过", async () => {
     const oldStats = deferred<ReturnType<typeof repoSummary>>();
     const newStats = deferred<ReturnType<typeof repoSummary>>();

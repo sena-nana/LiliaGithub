@@ -23,6 +23,7 @@ import {
 } from "@lucide/vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
+import { invalidateSessionContextSnapshot } from "../composables/sessionContext";
 import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
@@ -1424,6 +1425,7 @@ async function openCloneDialog() {
 
 function closeCloneDialog() {
   if (cloneBusy.value) return;
+  if (cloneOpen.value) invalidateSessionContextSnapshot();
   cloneBindingLoader.invalidate();
   cloneRepoPageLoader.invalidate();
   cloneOpen.value = false;
@@ -1502,6 +1504,7 @@ function handleCloneRepoInput() {
 }
 
 async function openGitHubBindingSettings() {
+  invalidateSessionContextSnapshot();
   cloneBindingLoader.invalidate();
   cloneRepoPageLoader.invalidate();
   cloneOpen.value = false;

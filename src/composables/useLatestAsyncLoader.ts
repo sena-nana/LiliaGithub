@@ -1,4 +1,5 @@
 import type { ComponentEpoch } from "./useComponentEpoch";
+import { getSessionContextVersion, isSessionContextVersionCurrent } from "./sessionContext";
 
 export type AsyncLoaderKey = string | number | null | undefined;
 
@@ -14,13 +15,16 @@ export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) 
   let currentRunId = 0;
   let pendingKey: AsyncLoaderKey = null;
   let pending: Promise<void> | null = null;
+  let currentRunSessionContextVersion = getSessionContextVersion();
 
   function isLatestRun(runId: number) {
     return runId === currentRunId;
   }
 
   function isCurrent(runId: number) {
-    return isLatestRun(runId) && (options.componentEpoch?.assertAlive() ?? true);
+    return isLatestRun(runId) &&
+      (options.componentEpoch?.assertAlive() ?? true) &&
+      isSessionContextVersionCurrent(currentRunSessionContextVersion);
   }
 
   function isPending(key?: AsyncLoaderKey) {
@@ -45,6 +49,7 @@ export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) 
       return;
     }
     const runId = ++currentRunId;
+    currentRunSessionContextVersion = getSessionContextVersion();
     pendingKey = key;
     let taskResult: Promise<void>;
     try {
@@ -66,6 +71,7 @@ export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) 
     currentRunId += 1;
     pending = null;
     pendingKey = null;
+    currentRunSessionContextVersion = getSessionContextVersion();
   }
 
   return {

@@ -42,6 +42,7 @@ import {
   type PullRequestState,
 } from "./pullRequestPanelTypes";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
+import { invalidateSessionContextSnapshot } from "../../composables/sessionContext";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
@@ -1911,6 +1912,7 @@ function openDeleteDialog(target: DeleteTarget) {
 
 function closeDeleteDialog() {
   if (deletingAnything.value) return;
+  if (deleteDialogTarget.value) invalidateSessionContextSnapshot();
   deleteDialogTarget.value = null;
   deleteConfirmInput.value = "";
   deleteError.value = null;
@@ -2028,6 +2030,7 @@ async function openIssueCreateView() {
 }
 
 function closeIssueCreateView(resetDraft = true) {
+  if (issueCreateView.value) invalidateSessionContextSnapshot();
   issueCreateView.value = false;
   if (!resetDraft) return;
   issueTitle.value = "";
@@ -2145,6 +2148,7 @@ async function openPullRequestCreateView() {
 }
 
 function closePullRequestCreateView(resetDraft = true) {
+  if (pullCreateView.value) invalidateSessionContextSnapshot();
   pullCreateView.value = false;
   if (!resetDraft) return;
   pullRequestTitle.value = "";
@@ -2354,6 +2358,7 @@ async function focusIssueRow(issue: GitHubIssue) {
 }
 
 function closeIssueDetail() {
+  if (focusedIssueNumber.value || issueDiscussion.value) invalidateSessionContextSnapshot();
   focusedIssueNumber.value = null;
   issueDiscussion.value = null;
   issueDiscussionError.value = null;
@@ -2370,6 +2375,7 @@ async function focusPullRequestRow(pull: GitHubPullRequest) {
 }
 
 function closePullRequestDetail() {
+  if (focusedPullRequestNumber.value || pullRequestDiscussion.value) invalidateSessionContextSnapshot();
   focusedPullRequestNumber.value = null;
   pullRequestDiscussion.value = null;
   pullRequestDiscussionError.value = null;
