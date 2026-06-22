@@ -173,14 +173,6 @@ function pullUpdatedText(pull: GitHubPullRequest) {
   return `更新于 ${formatPullDate(pull.updatedAt)}`;
 }
 
-function pullMetaItems(pull: GitHubPullRequest) {
-  return [
-    pull.author || "未知作者",
-    `${pull.headBranch} -> ${pull.baseBranch}`,
-    pullUpdatedText(pull),
-  ];
-}
-
 function pullChips(pull: GitHubPullRequest) {
   return [
     ...(pull.labels?.length ? pull.labels.map((label) => ({ key: `label:${label}`, text: label })) : []),
@@ -373,26 +365,32 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
       <div
         v-for="pull in pulls"
         :key="pull.number"
-        class="pulls-list__item project-row--pull"
+        class="pulls-list__item project-row--pull repo-list-row repo-list-row--with-actions"
         :class="{ 'is-target': isFocused(pull.number) }"
         :data-pull-number="pull.number"
         role="listitem"
         @click="emit('focus', pull)"
       >
-        <span class="pulls-list__status" :class="{ 'is-closed': pull.state !== 'open' || pull.merged }" :title="pullStatusText(pull)">
+        <span class="pulls-list__status repo-list-row__status" :class="{ 'is-closed': pull.state !== 'open' || pull.merged }" :title="pullStatusText(pull)">
           <GitMerge v-if="pull.merged" :size="15" aria-hidden="true" />
           <GitPullRequest v-else-if="pull.state === 'open'" :size="15" aria-hidden="true" />
           <CircleOff v-else :size="15" aria-hidden="true" />
         </span>
-        <div class="pulls-list__content">
-          <strong class="pulls-list__title">#{{ pull.number }} {{ pull.title }}</strong>
-          <div class="pulls-list__meta">
-            <span v-for="item in pullMetaItems(pull)" :key="item">{{ item }}</span>
+        <div class="pulls-list__content repo-list-row__body">
+          <div class="pulls-list__main">
+            <strong class="pulls-list__title repo-list-row__title">#{{ pull.number }} {{ pull.title }}</strong>
+            <div class="pulls-list__byline">
+              <span>{{ pull.author || "未知作者" }}</span>
+              <span>{{ pull.headBranch }} -> {{ pull.baseBranch }}</span>
+            </div>
           </div>
-          <div v-if="pullChips(pull).length" class="pulls-list__chips" aria-label="Pull Request 元数据">
-            <span v-for="chip in pullChips(pull)" :key="chip.key">{{ chip.text }}</span>
+          <div class="pulls-list__side repo-list-row__meta">
+            <span class="pulls-list__updated">{{ pullUpdatedText(pull) }}</span>
+            <div v-if="pullChips(pull).length" class="pulls-list__chips" aria-label="Pull Request 元数据">
+              <span v-for="chip in pullChips(pull)" :key="chip.key">{{ chip.text }}</span>
+            </div>
+            <span v-else class="pulls-list__empty-meta">无标签 · 未分配 · 无项目</span>
           </div>
-          <span v-else class="pulls-list__empty-meta">无标签 · 未分配 · 无项目</span>
         </div>
         <ArrowRight class="pulls-list__arrow" :size="15" aria-hidden="true" />
       </div>
@@ -560,14 +558,13 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
 }
 
 .pulls-list__item {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 22px;
-  align-items: start;
-  gap: 8px;
   min-width: 0;
-  min-height: 56px;
-  padding: 9px 4px;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.pulls-list__item.repo-list-row {
+  min-height: 44px;
+  padding: 7px 8px;
   cursor: pointer;
 }
 
@@ -575,42 +572,38 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
   border-bottom: 0;
 }
 
-.pulls-list__item:hover {
-  background: var(--bg-hover);
-}
-
-.pulls-list__item.is-target {
-  background: var(--bg-active);
-}
-
-.pulls-list__content {
+.pulls-list__main {
   display: grid;
-  gap: 6px;
+  gap: 3px;
   min-width: 0;
 }
 
-.pulls-list__title {
-  min-width: 0;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.pulls-list__meta {
+.pulls-list__byline {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
   min-width: 0;
+  overflow: hidden;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.pulls-list__side {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.pulls-list__updated {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pulls-list__status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding-top: 1px;
   color: var(--success);
 }
 
@@ -673,7 +666,11 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
   }
 
   .pulls-list__item {
-    grid-template-columns: 22px minmax(0, 1fr) 18px;
+    padding-inline: 6px;
+  }
+
+  .pulls-list__side {
+    justify-items: start;
   }
 }
 </style>

@@ -321,19 +321,19 @@ function formatBytes(value: number) {
         v-for="run in runs"
         :key="run.id"
         type="button"
-        class="actions-run"
+        class="actions-run repo-list-row"
         :class="{ 'is-active': selectedRunId === run.id }"
         :data-run-id="run.id"
         @click="selectRun(run.id, { load: false })"
       >
-        <span class="actions-status" :class="runToneClass(run)" :title="workflowRunStatusText(run)" :aria-label="workflowRunStatusText(run)">
+        <span class="actions-status repo-list-row__status" :class="runToneClass(run)" :title="workflowRunStatusText(run)" :aria-label="workflowRunStatusText(run)">
           <XCircle v-if="statusIconKind(run) === 'error'" :size="15" aria-hidden="true" />
           <CheckCircle2 v-else-if="statusIconKind(run) === 'ok'" :size="15" aria-hidden="true" />
           <CircleDot v-else :size="15" aria-hidden="true" />
         </span>
-        <span class="actions-run__body">
-          <strong>{{ run.displayTitle }}</strong>
-          <span class="actions-run__meta">{{ runMetaText(run) }}</span>
+        <span class="actions-run__body repo-list-row__body">
+          <strong class="repo-list-row__title">{{ run.displayTitle }}</strong>
+          <span class="actions-run__meta repo-list-row__meta">{{ runMetaText(run) }}</span>
         </span>
       </button>
       <p v-if="!runs.length && !loading" class="muted actions-empty">没有 GitHub Actions 运行记录。</p>
@@ -604,7 +604,6 @@ function formatBytes(value: number) {
   font-size: 11px;
 }
 
-.actions-run,
 .actions-job__head,
 .actions-step__head,
 .actions-job-node,
@@ -623,28 +622,24 @@ function formatBytes(value: number) {
 }
 
 .actions-run {
-  grid-template-columns: 18px minmax(0, 1fr);
   min-height: 36px;
   padding: 7px 8px;
 }
 
-.actions-run:hover,
 .actions-job-node:hover,
 .actions-artifact:hover,
 .actions-artifact-files button:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 
-  .actions-run.is-active,
-  .actions-job__head.is-active,
-  .actions-job-node.is-active,
-  .actions-artifact.is-active,
-  .actions-artifact-files button.is-active {
+.actions-job__head.is-active,
+.actions-job-node.is-active,
+.actions-artifact.is-active,
+.actions-artifact-files button.is-active {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
   background: var(--accent-soft);
 }
 
-.actions-run__body,
 .actions-job__title,
 .actions-job-node span,
 .actions-artifact span {
@@ -653,19 +648,10 @@ function formatBytes(value: number) {
   min-width: 0;
 }
 
-.actions-run__body {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-
 .actions-run__meta {
-  justify-self: end;
   min-width: max-content;
-  text-align: right;
-  white-space: nowrap;
 }
 
-.actions-run strong,
 .actions-job strong,
 .actions-job-node strong,
 .actions-artifact strong,
@@ -678,7 +664,6 @@ function formatBytes(value: number) {
   white-space: nowrap;
 }
 
-.actions-run strong,
 .actions-job strong,
 .actions-job-node strong,
 .actions-artifact strong {

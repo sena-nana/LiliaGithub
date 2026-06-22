@@ -320,20 +320,24 @@ function issueMetaText(issue: GitHubIssue) {
         v-for="issue in issues"
         :key="issue.number"
         class="issues-list__item project-row--issue"
-        :class="{ 'is-target': isFocused(issue.number) }"
+        :class="{
+          'is-target': isFocused(issue.number),
+          'repo-list-row': editingIssueNumber !== issue.number,
+          'repo-list-row--with-actions': editingIssueNumber !== issue.number,
+        }"
         :data-issue-number="issue.number"
         role="listitem"
       >
         <template v-if="editingIssueNumber !== issue.number">
-          <span class="issues-list__status" :class="{ 'is-closed': issue.state !== 'open' }" :title="issue.state">
+          <span class="issues-list__status repo-list-row__status" :class="{ 'is-closed': issue.state !== 'open' }" :title="issue.state">
             <CircleDot v-if="issue.state === 'open'" :size="15" aria-hidden="true" />
             <CircleOff v-else :size="15" aria-hidden="true" />
           </span>
-          <div class="issues-list__content">
-            <button type="button" class="issues-list__title" @click="emit('focus', issue)">
+          <div class="issues-list__content repo-list-row__body">
+            <button type="button" class="issues-list__title repo-list-row__title" @click="emit('focus', issue)">
               #{{ issue.number }} {{ issue.title }}
             </button>
-            <span class="issues-list__meta">{{ issueMetaText(issue) }}</span>
+            <span class="issues-list__meta repo-list-row__meta">{{ issueMetaText(issue) }}</span>
           </div>
           <div class="issues-list__actions">
             <button type="button" class="ghost project-icon-action" aria-label="编辑" title="编辑" @click.stop="emit('edit', issue)">
@@ -559,41 +563,21 @@ function issueMetaText(issue: GitHubIssue) {
 }
 
 .issues-list__item {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
   min-width: 0;
-  min-height: 44px;
-  padding: 0 2px;
   border-bottom: 1px solid var(--border-soft);
+}
+
+.issues-list__item:not(.repo-list-row) {
+  display: grid;
+}
+
+.issues-list__item.repo-list-row {
+  min-height: 44px;
+  padding: 4px 8px;
 }
 
 .issues-list__item:last-of-type {
   border-bottom: 0;
-}
-
-.issues-list__item:hover {
-  background: var(--bg-hover);
-}
-
-.issues-list__item.is-target {
-  background: var(--bg-active);
-}
-
-.issues-list__content {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.issues-list__title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .issues-list__title {
@@ -601,26 +585,11 @@ function issueMetaText(issue: GitHubIssue) {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
   text-align: left;
   cursor: pointer;
 }
 
-.issues-list__meta {
-  justify-self: end;
-  min-width: max-content;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-align: right;
-  white-space: nowrap;
-}
-
 .issues-list__status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   color: var(--ok);
 }
 
@@ -703,7 +672,7 @@ function issueMetaText(issue: GitHubIssue) {
   }
 
   .issues-list__item {
-    grid-template-columns: 20px minmax(0, 1fr) auto;
+    padding-inline: 6px;
   }
 }
 </style>
