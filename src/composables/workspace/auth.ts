@@ -72,6 +72,7 @@ async function copyAuthUserCode() {
 
 export async function startAuthFlow() {
   authFlowVersion += 1;
+  const currentVersion = authFlowVersion;
   clearAuthTimers();
   state.authLoading = true;
   state.error = null;
@@ -80,19 +81,26 @@ export async function startAuthFlow() {
   state.authRemainingSeconds = null;
   try {
     const service = await loadWorkspaceService();
-    deviceFlow.value = await service.startGitHubDeviceFlow();
+    const flow = await service.startGitHubDeviceFlow();
+    if (currentVersion !== authFlowVersion) return;
+    deviceFlow.value = flow;
     state.authFlowStatus = "pending";
     updateAuthRemainingSeconds();
     await copyAuthUserCode();
+    if (currentVersion !== authFlowVersion || !deviceFlow.value) return;
     await service.openUrl(deviceFlow.value.verificationUri);
+    if (currentVersion !== authFlowVersion || !deviceFlow.value) return;
     startAuthCountdown();
     scheduleAuthPoll(deviceFlow.value.intervalSeconds);
   } catch (err) {
+    if (currentVersion !== authFlowVersion) return;
     const message = String(err);
     state.error = message;
     stopAuthFlow("error");
   } finally {
-    state.authLoading = false;
+    if (currentVersion === authFlowVersion) {
+      state.authLoading = false;
+    }
   }
 }
 

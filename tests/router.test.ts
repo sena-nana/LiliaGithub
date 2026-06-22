@@ -1,21 +1,27 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
+import { workspaceFallbackForTests } from "../src/services/workspace";
 import type {
+  CommitDetail,
+  CommitSummary,
   GitHubIssue,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubRepoSummary,
   GitHubWorkflowRun,
   RepoChange,
+  RepoOperationResult,
 } from "../src/services/workspace";
 import { repoDetail, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
+type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+let workspaceFallback: WorkspaceFallbackForTests;
 
 async function renderAt(path: string) {
   installContextMenu();
@@ -23,7 +29,7 @@ async function renderAt(path: string) {
   await router.push(path);
   await router.isReady();
 
-  render(App, {
+  const view = render(App, {
     global: {
       plugins: [router],
       directives: {
@@ -32,7 +38,17 @@ async function renderAt(path: string) {
     },
   });
 
-  return { router };
+  return { router, ...view };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, reject, resolve };
 }
 
 async function clickOverviewSync() {
@@ -50,9 +66,30 @@ async function waitForRepoTitle(name: string) {
   });
 }
 
+function repoStatusRow(repoFullName: string) {
+  const list = screen.getByLabelText("仓库状态列表");
+  const row = within(list).getByText(repoFullName).closest(".repo-status-row");
+  if (!(row instanceof HTMLElement)) throw new Error(`未找到仓库状态行: ${repoFullName}`);
+  return row;
+}
+
+function repoSidebarErrorCard() {
+  const status = screen.getByRole("region", { name: "仓库错误" });
+  if (!(status instanceof HTMLElement)) throw new Error("未找到仓库错误区");
+  return status;
+}
+
+function queryRepoSidebarErrorCard() {
+  return screen.queryByRole("region", { name: "仓库错误" });
+}
+
+function repoDetailRecentSyncFailure() {
+  return within(repoSidebarErrorCard()).getByText("最近同步失败").closest(".project-sidebar-error-card__item") as HTMLElement;
+}
+
 async function mockLiliaGithubSyncFailure() {
   const service = await import("../src/services/workspace");
-  service.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
+  workspaceFallback.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
     repoIds.map((repoId) => ({
       repoId,
       status: repoId === "LiliaGithub" && operation === "sync" ? "error" : "success",
@@ -130,6 +167,11 @@ function githubPullRequest(
     state: "open",
     draft: false,
     body: null,
+    labels: [],
+    assignees: [],
+    milestone: null,
+    comments: 0,
+    projectItems: [],
     htmlUrl: `https://github.com/${repoFullName}/pull/${number}`,
     updatedAt,
     createdAt: updatedAt,
@@ -175,12 +217,59 @@ function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChan
   };
 }
 
+function commitSummary(overrides: Partial<CommitSummary> = {}): CommitSummary {
+  return {
+    hash: "fedcba9876543210",
+    shortHash: "fedcba9",
+    author: "Sena",
+    authorEmail: "sena@example.com",
+    timestamp: 1_785_010_000,
+    subject: "远程历史提交",
+    parents: ["1234567890abcdef"],
+    refs: ["main"],
+    ...overrides,
+  };
+}
+
+function commitDetail(commit: CommitSummary): CommitDetail {
+  return {
+    ...commit,
+    committer: commit.author,
+    committerEmail: commit.authorEmail ?? null,
+    body: "远程提交详情。",
+    files: [{
+      path: "src/remote.ts",
+      oldPath: null,
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      patch: "diff --git a/src/remote.ts b/src/remote.ts\n@@ -1 +1,2 @@\n export const remote = true;\n+export const history = true;",
+      hunks: [{
+        header: "@@ -1 +1,2 @@",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        lines: [
+          { kind: "context", content: "export const remote = true;", oldLine: 1, newLine: 1 },
+          { kind: "added", content: "export const history = true;", oldLine: null, newLine: 2 },
+        ],
+      }],
+    }],
+  };
+}
+
 describe("基础路由", () => {
+  beforeEach(async () => {
+    workspaceFallback = await workspaceFallbackForTests();
+    workspaceFallback.resetWorkspaceFallbacksForTests();
+  });
+
   afterEach(async () => {
     cleanup();
     vi.useRealTimers();
     const service = await import("../src/services/workspace");
-    service.setFallbackStopLaunchOverrideForTests(null);
+    workspaceFallback.setFallbackStopLaunchOverrideForTests(null);
   });
 
   it("默认首页显示 Git 项目总览", async () => {
@@ -231,23 +320,8 @@ describe("基础路由", () => {
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(1);
   });
 
-  it("总览页仓库状态行可直接进入仓库详情", async () => {
-    const { router } = await renderAt("/");
-
-    const repoLink = await screen.findByRole("link", { name: "打开 sena-nana/LiliaGithub" });
-    await waitFor(() => expect(repoLink).toHaveAttribute("title", "C:\\Files\\workspace\\LiliaGithub"), { timeout: 3000 });
-    await fireEvent.click(repoLink);
-
-    await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    });
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" }, { timeout: 3000 }))
-      .toBeInTheDocument();
-  });
-
   it("总览页未 clone 的 GitHub 项目可进入远程详情并屏蔽本地 Git 功能", async () => {
-    const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
           githubRepoSummary("sena-nana/LiliaGithub"),
@@ -260,13 +334,13 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    const { router } = await renderAt("/");
+    const { router, container } = await renderAt("/");
 
-    await fireEvent.click(await screen.findByRole("link", { name: "打开 sena-nana/NewRepo" }));
+    await fireEvent.click(await within(container).findByRole("link", { name: "打开 sena-nana/NewRepo" }));
 
     await waitFor(() => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo");
-    });
+    }, { timeout: 5000 });
     expect(await screen.findByRole("heading", { level: 1, name: "NewRepo" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Git 信息" })).toBeNull();
     expect(screen.queryByRole("tablist", { name: "本地 Git 视图" })).toBeNull();
@@ -279,16 +353,48 @@ describe("基础路由", () => {
     expect(screen.getByRole("tab", { name: "Issues" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Actions" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "变更" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "历史" })).toBeInTheDocument();
+  });
+
+  it("远程仓库屏蔽变更路由但保留远程历史和提交详情", async () => {
+    const service = await import("../src/services/workspace");
+    const repoFullName = "sena-nana/NewRepo";
+    const commit = commitSummary();
+    service.clearGitHubRepoCache();
+    workspaceFallback.setFallbackGitHubCommitsForTests({ [repoFullName]: [commit] });
+    workspaceFallback.setFallbackGitHubCommitDetailsForTests({ [repoFullName]: { [commit.hash]: commitDetail(commit) } });
+
+    const { router } = await renderAt("/repos/github%3Asena-nana%2FNewRepo/changes");
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FNewRepo");
+    });
+    expect(screen.queryByRole("tab", { name: "变更" })).toBeNull();
+    expect(await screen.findByRole("tab", { name: "历史" })).toBeInTheDocument();
+    expect(workspaceFallback.getFallbackGitHubCommitListCallsForTests()).toEqual([
+      { repoFullName, perPage: 100, sha: null },
+    ]);
+
+    await router.push("/repos/github%3Asena-nana%2FNewRepo/history");
+    await fireEvent.click(await screen.findByRole("button", { name: /远程历史提交/ }));
+
+    expect(await screen.findByLabelText("提交详情卡片")).toBeInTheDocument();
+    expect(await screen.findByLabelText("提交元数据")).toHaveTextContent("远程历史提交");
+    expect(await screen.findByLabelText("改动文件列表")).toHaveTextContent("src/remote.ts");
+    expect(workspaceFallback.getFallbackGitHubCommitDetailCallsForTests()).toEqual([
+      { repoFullName, hash: commit.hash },
+    ]);
   });
 
   it("远程详情页没有 README.md 时显示空态", async () => {
-    const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [githubRepoSummary("sena-nana/EmptyRemote")],
         nextPage: null,
       },
     ]);
+
     await renderAt("/repos/github%3Asena-nana%2FEmptyRemote");
 
     expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
@@ -299,19 +405,14 @@ describe("基础路由", () => {
 
   it("本地仓库可通过一级文件树 tab 进入文件浏览页", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoFilesForTests({
+    workspaceFallback.setFallbackRepoFilesForTests({
       LiliaGithub: {
         "": [
           { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
-          { path: "README.txt", name: "README.txt", kind: "file", hasChildren: false },
-          { path: "docs", name: "docs", kind: "dir", hasChildren: true },
-        ],
-        docs: [
-          { path: "docs/guide.md", name: "guide.md", kind: "file", hasChildren: false },
         ],
       },
     });
-    service.setFallbackRepoFilePreviewsForTests({
+    workspaceFallback.setFallbackRepoFilePreviewsForTests({
       LiliaGithub: {
         "README.md": {
           path: "README.md",
@@ -333,10 +434,181 @@ describe("基础路由", () => {
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
   });
 
+  it("远程仓库文件树按分支选择器当前分支读取 GitHub 结构", async () => {
+    const service = await import("../src/services/workspace");
+    const repoFullName = "sena-nana/RemoteFiles";
+    service.clearGitHubRepoCache();
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary(repoFullName, { defaultBranch: "main" })],
+        nextPage: null,
+      },
+    ]);
+    workspaceFallback.setFallbackGitHubBranchesForTests({
+      [repoFullName]: [
+        {
+          name: "main",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: true,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: [],
+        },
+        {
+          name: "dev",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: false,
+          tipTimestamp: 1_784_990_000,
+          checkedOutWorktreePaths: [],
+        },
+      ],
+    });
+    workspaceFallback.setFallbackGitHubRepoFilesForTests({
+      [repoFullName]: {
+        "": [{ path: "README.md", name: "README.md", kind: "file", hasChildren: false }],
+      },
+    });
+    workspaceFallback.setFallbackGitHubRepoFilePreviewsForTests({
+      [repoFullName]: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Remote Files\n",
+          dataUrl: null,
+          images: {},
+          size: 15,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+    await service.rememberRemoteRepo({
+      fullName: repoFullName,
+      name: "RemoteFiles",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: `https://github.com/${repoFullName}`,
+      cloneUrl: `https://github.com/${repoFullName}.git`,
+      openedAt: Date.now(),
+    });
+
+    const { router } = await renderAt("/repos/github%3Asena-nana%2FRemoteFiles/files");
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Remote Files" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteFiles/files");
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
+        repoFullName,
+        parentPath: null,
+        refName: "main",
+      });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "main" }));
+    await fireEvent.click(within(screen.getByRole("listbox", { name: "分支候选" })).getByRole("button", { name: "dev" }));
+
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
+        repoFullName,
+        parentPath: null,
+        refName: "dev",
+      });
+    });
+  });
+
+  it("冷启动直达远程文件树等待 settings 恢复后再按默认分支读取", async () => {
+    const service = await import("../src/services/workspace");
+    const repoFullName = "sena-nana/ColdRemoteFiles";
+    service.clearGitHubRepoCache();
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary(repoFullName, { defaultBranch: "main" })],
+        nextPage: null,
+      },
+    ]);
+    workspaceFallback.setFallbackGitHubBranchesForTests({
+      [repoFullName]: [
+        {
+          name: "main",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          protected: true,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: [],
+        },
+      ],
+    });
+    workspaceFallback.setFallbackGitHubRepoFilesForTests({
+      [repoFullName]: {
+        "": [{ path: "README.md", name: "README.md", kind: "file", hasChildren: false }],
+      },
+    });
+    workspaceFallback.setFallbackGitHubRepoFilePreviewsForTests({
+      [repoFullName]: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Cold Remote Files\n",
+          dataUrl: null,
+          images: {},
+          size: 20,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+    const restoredSettings = await service.rememberRemoteRepo({
+      fullName: repoFullName,
+      name: "ColdRemoteFiles",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: `https://github.com/${repoFullName}`,
+      cloneUrl: `https://github.com/${repoFullName}.git`,
+      openedAt: Date.now(),
+    });
+    const settingsGate = deferred<typeof restoredSettings>();
+    const settingsSpy = vi.spyOn(service, "getWorkspaceSettings").mockReturnValueOnce(settingsGate.promise);
+
+    const { router } = await renderAt("/repos/github%3Asena-nana%2FColdRemoteFiles/files");
+
+    expect(await screen.findByText("正在恢复仓库上下文。")).toBeInTheDocument();
+    expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toEqual([]);
+
+    settingsGate.resolve(restoredSettings);
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FColdRemoteFiles/files");
+      expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
+        repoFullName,
+        parentPath: null,
+        refName: "main",
+      });
+    });
+    const rootFileListCalls = workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()
+      .filter((call) => call.repoFullName === repoFullName && call.parentPath === null);
+    expect(rootFileListCalls).toEqual([{ repoFullName, parentPath: null, refName: "main" }]);
+    settingsSpy.mockRestore();
+  });
+
   it("直接进入仓库详情默认页时不预取 issue 和 workflow runs", async () => {
     const service = await import("../src/services/workspace");
-    const initialIssueCalls = service.getFallbackGitHubIssueListCallsForTests().length;
-    const initialWorkflowRunCalls = service.getFallbackGitHubWorkflowRunListCallsForTests().length;
+    const initialIssueCalls = workspaceFallback.getFallbackGitHubIssueListCallsForTests().length;
+    const initialWorkflowRunCalls = workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests().length;
 
     await renderAt("/repos/LiliaGithub");
 
@@ -344,13 +616,13 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
     });
-    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(initialIssueCalls);
-    expect(service.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(initialWorkflowRunCalls);
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(initialIssueCalls);
+    expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(initialWorkflowRunCalls);
   });
 
   it("直接进入 issue 深链时按需拉取并定位目标 issue", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubIssuesForTests({
+    workspaceFallback.setFallbackGitHubIssuesForTests({
       "sena-nana/LiliaGithub": [
         githubIssue("sena-nana/LiliaGithub", 12, "2026-06-18T08:00:00Z"),
       ],
@@ -370,9 +642,61 @@ describe("基础路由", () => {
     });
   });
 
+  it("仓库 Issues 筛选写入 URL，并支持返回前进恢复", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      "sena-nana/LiliaGithub": [
+        githubIssue("sena-nana/LiliaGithub", 12, "2026-06-18T08:00:00Z"),
+      ],
+    });
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=issues&issueQ=initial");
+
+    const searchInput = await screen.findByLabelText("搜索 Issues");
+    await waitFor(() => {
+      expect(searchInput).toHaveValue("initial");
+      expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
+        expect.objectContaining({
+          repoFullName: "sena-nana/LiliaGithub",
+          query: "initial",
+        }),
+      );
+    });
+
+    await fireEvent.update(searchInput, "Roadmap");
+    await waitFor(() => {
+      expect(router.currentRoute.value.query).toMatchObject({
+        projectTab: "issues",
+        issueQ: "Roadmap",
+      });
+    });
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
+      expect.objectContaining({
+        repoFullName: "sena-nana/LiliaGithub",
+        query: "Roadmap",
+      }),
+    );
+
+    router.back();
+    await waitFor(() => {
+      expect(router.currentRoute.value.query.issueQ).toBe("initial");
+      expect(screen.getByLabelText("搜索 Issues")).toHaveValue("initial");
+    });
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
+      expect.objectContaining({
+        repoFullName: "sena-nana/LiliaGithub",
+        query: "initial",
+      }),
+    );
+
+    router.forward();
+    await waitFor(() => {
+      expect(router.currentRoute.value.query.issueQ).toBe("Roadmap");
+      expect(screen.getByLabelText("搜索 Issues")).toHaveValue("Roadmap");
+    });
+  });
+
   it("直接进入 actions 深链时按需拉取并定位目标 run", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubWorkflowRunsForTests({
+    workspaceFallback.setFallbackGitHubWorkflowRunsForTests({
       "sena-nana/LiliaGithub": [
         githubWorkflowRun("sena-nana/LiliaGithub", 1310, "2026-06-18T08:00:00Z", {
           displayTitle: "release pipeline",
@@ -380,7 +704,7 @@ describe("基础路由", () => {
       ],
     });
 
-    const { router } = await renderAt("/repos/LiliaGithub?projectTab=actions&run=1310");
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=actions&run=1310&job=13101");
 
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "Actions" })).toHaveClass("is-active");
@@ -388,26 +712,76 @@ describe("基础路由", () => {
     expect(router.currentRoute.value.query).toMatchObject({
       projectTab: "actions",
       run: "1310",
+      job: "13101",
     });
     await waitFor(() => {
-      expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
+      expect(document.querySelector('[data-job-id="13101"] .actions-job__head.is-active')).toBeInTheDocument();
     });
   });
 
-  it("远端仓库不显示文件树一级 tab，直接访问 /files 会回退到默认页", async () => {
+  it("仓库 Pull Requests 筛选可从分享 URL 恢复", async () => {
+    const repoFullName = "sena-nana/LiliaGithub";
+    workspaceFallback.setFallbackGitHubPullRequestsForTests({
+      [repoFullName]: [
+        githubPullRequest(repoFullName, 52, "2026-06-18T10:00:00Z", {
+          title: "筛选恢复 PR",
+        }),
+      ],
+    });
+
+    const { router } = await renderAt(
+      [
+        "/repos/LiliaGithub?projectTab=pulls",
+        "pullState=merged",
+        "pullQ=workflow",
+        "pullCreator=lilia-user",
+        "pullLabels=bug",
+        "pullReview=approved",
+        "pullSort=created",
+        "pullDirection=asc",
+      ].join("&"),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.query).toMatchObject({
+      projectTab: "pulls",
+      pullState: "merged",
+      pullQ: "workflow",
+      pullReview: "approved",
+    });
+    expect(await screen.findByLabelText("搜索 Pull Requests")).toHaveValue("workflow");
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual(
+        expect.objectContaining({
+          repoFullName,
+          state: "merged",
+          query: "workflow",
+          creator: "lilia-user",
+          labels: ["bug"],
+          review: "approved",
+          sort: "created",
+          direction: "asc",
+        }),
+      );
+    });
+  });
+
+  it("远端仓库显示文件树一级 tab，直接访问 /files 保留文件页", async () => {
     const { router } = await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FEmptyRemote");
+      expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FEmptyRemote/files");
     });
-    expect(screen.queryByRole("tab", { name: "文件树" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
   });
 
   it("总览页隐藏禁用的 GitHub 项目", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
           githubRepoSummary("sena-nana/LiliaGithub"),
@@ -428,7 +802,7 @@ describe("基础路由", () => {
 
   it("总览页归档 GitHub 项目显示 Archive 标签", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
           githubRepoSummary("sena-nana/ArchivedRepo", {
@@ -449,7 +823,7 @@ describe("基础路由", () => {
 
   it("总览页归档 GitHub 项目排序到最后", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
           githubRepoSummary("sena-nana/ArchivedRepo", {
@@ -476,7 +850,7 @@ describe("基础路由", () => {
 
   it("总览页 GitHub 项目支持手动加载更多并去重", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [githubRepoSummary("sena-nana/LiliaGithub")],
         nextPage: 2,
@@ -520,7 +894,7 @@ describe("基础路由", () => {
     };
     const originalRequestIdleCallback = windowWithIdle.requestIdleCallback;
     const originalCancelIdleCallback = windowWithIdle.cancelIdleCallback;
-    service.setFallbackGitHubRepoPagesForTests([{ items: repos, nextPage: null }]);
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: repos, nextPage: null }]);
     const issueSpy = vi.spyOn(service, "listGitHubIssues").mockImplementation((repoFullName) => {
       issueCalls.push(repoFullName);
       return new Promise((resolve) => {
@@ -602,8 +976,8 @@ describe("基础路由", () => {
         updatedAt: `2026-06-${String(index + 1).padStart(2, "0")}T09:00:00Z`,
       }),
     );
-    service.setFallbackGitHubRepoPagesForTests([{ items: repos, nextPage: null }]);
-    service.setFallbackGitHubIssuesForTests(Object.fromEntries(
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: repos, nextPage: null }]);
+    workspaceFallback.setFallbackGitHubIssuesForTests(Object.fromEntries(
       repos.map((repo, repoIndex) => [
         repo.fullName,
         [
@@ -617,9 +991,9 @@ describe("基础路由", () => {
 
     await screen.findByLabelText("GitHub 时间线列表");
     await waitFor(() => {
-      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(3);
+      expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(3);
     });
-    expect(service.getFallbackGitHubIssueListCallsForTests()).toEqual(
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toEqual(
       repos.map((repo) => ({
         repoFullName: repo.fullName,
         state: "all",
@@ -627,6 +1001,12 @@ describe("基础路由", () => {
         sort: "updated",
         direction: "desc",
         since: "2026-06-06T12:00:00.000Z",
+        creator: null,
+        assignee: null,
+        labels: null,
+        milestone: null,
+        project: null,
+        query: null,
       })),
     );
     expect(await screen.findByText("Issue #1")).toBeInTheDocument();
@@ -637,7 +1017,7 @@ describe("基础路由", () => {
     const { setRepoActionError } = await import("../src/composables/workspace/state");
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/LiliaGithub");
-    service.setFallbackGitHubWorkflowRunsForTests({
+    workspaceFallback.setFallbackGitHubWorkflowRunsForTests({
       [repo.fullName]: [
         githubWorkflowRun(repo.fullName, 1200, "2026-08-13T12:30:00Z", {
           status: "in_progress",
@@ -656,7 +1036,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(service.getFallbackGitHubWorkflowRunListCallsForTests()).toContainEqual({
+      expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toContainEqual({
         repoFullName: repo.fullName,
         perPage: 5,
       });
@@ -691,12 +1071,12 @@ describe("基础路由", () => {
     const fastRepo = githubRepoSummary("sena-nana/FastTimeline", { updatedAt: "2026-06-12T08:00:00Z" });
     const slowRepo = githubRepoSummary("sena-nana/SlowTimeline", { updatedAt: "2026-06-12T09:00:00Z" });
     const workflowResolvers = new Map<string, (runs: GitHubWorkflowRun[]) => void>();
-    service.setFallbackGitHubRepoPagesForTests([{ items: [fastRepo, slowRepo], nextPage: null }]);
-    service.setFallbackGitHubIssuesForTests({
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [fastRepo, slowRepo], nextPage: null }]);
+    workspaceFallback.setFallbackGitHubIssuesForTests({
       [fastRepo.fullName]: [],
       [slowRepo.fullName]: [],
     });
-    service.setFallbackGitHubWorkflowRunsOverrideForTests((repoFullName) =>
+    workspaceFallback.setFallbackGitHubWorkflowRunsOverrideForTests((repoFullName) =>
       new Promise((resolve) => {
         workflowResolvers.set(repoFullName, resolve);
       }),
@@ -705,7 +1085,7 @@ describe("基础路由", () => {
     await renderAt("/");
 
     await waitFor(() => {
-      expect(service.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(2);
+      expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(2);
     });
     workflowResolvers.get(fastRepo.fullName)?.([
       githubWorkflowRun(fastRepo.fullName, 2101, "2026-06-13T10:00:00Z", {
@@ -752,14 +1132,14 @@ describe("基础路由", () => {
     vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/LiliaGithub");
-    service.setFallbackGitHubPullRequestsForTests({
+    workspaceFallback.setFallbackGitHubPullRequestsForTests({
       [repo.fullName]: [
         githubPullRequest(repo.fullName, 52, "2026-06-18T10:00:00Z", {
           title: "总览接入 PR 时间线",
         }),
       ],
     });
-    service.setFallbackGitHubPullRequestChecksForTests({
+    workspaceFallback.setFallbackGitHubPullRequestChecksForTests({
       [repo.fullName]: {
         52: [
           githubPullRequestCheck(5201, {
@@ -776,17 +1156,32 @@ describe("基础路由", () => {
     expect(timeline).toHaveTextContent("总览接入 PR 时间线");
     expect(timeline).toHaveTextContent("Checks 失败：lint");
     await waitFor(() => {
-      expect(service.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual({
+      expect(workspaceFallback.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual({
         repoFullName: repo.fullName,
         state: "all",
+        perPage: null,
+        sort: "updated",
+        direction: "desc",
+        creator: null,
+        assignee: null,
+        labels: null,
+        milestone: null,
+        project: null,
+        review: null,
+        query: null,
       });
-      expect(service.getFallbackGitHubPullRequestCheckListCallsForTests()).toContainEqual({
+      expect(workspaceFallback.getFallbackGitHubPullRequestCheckListCallsForTests()).toContainEqual({
         repoFullName: repo.fullName,
         pullNumber: 52,
       });
     });
-
-    await fireEvent.click(within(timeline).getByRole("link", { name: "PR #52" }));
+    const pullRequestLink = within(timeline).getByRole("link", { name: "PR #52" });
+    expect(pullRequestLink).toHaveAttribute("href", "/repos/LiliaGithub?projectTab=pulls&pr=52");
+    vi.useRealTimers();
+    await fireEvent.click(pullRequestLink);
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub?projectTab=pulls&pr=52");
+    });
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     await waitFor(() => {
@@ -805,7 +1200,7 @@ describe("基础路由", () => {
   it("总览页 GitHub 时间线点击 Actions 事件进入仓库详情项目信息 Actions 并定位目标 run", async () => {
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/LiliaGithub");
-    service.setFallbackGitHubWorkflowRunsForTests({
+    workspaceFallback.setFallbackGitHubWorkflowRunsForTests({
       [repo.fullName]: [
         githubWorkflowRun(repo.fullName, 1310, "2026-06-12T14:00:00Z", {
           status: "completed",
@@ -832,7 +1227,7 @@ describe("基础路由", () => {
       run: "1310",
     });
     await waitFor(() => {
-      expect(document.querySelector('[data-run-id="1310"].project-row--action.is-target')).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
     });
   });
 
@@ -841,7 +1236,7 @@ describe("基础路由", () => {
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/CachedTimeline");
-    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
     localStorage.setItem(TIMELINE_ISSUE_CACHE_KEY, JSON.stringify({
       [repo.fullName]: {
         repoFullName: repo.fullName,
@@ -855,7 +1250,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("Issue #88")).toBeInTheDocument();
     await waitFor(() => {
-      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(0);
+      expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(0);
     });
   });
 
@@ -864,8 +1259,8 @@ describe("基础路由", () => {
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/ExpiredTimeline");
-    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
-    service.setFallbackGitHubIssuesForTests({
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    workspaceFallback.setFallbackGitHubIssuesForTests({
       [repo.fullName]: [githubIssue(repo.fullName, 90, "2026-06-13T10:00:00Z")],
     });
     localStorage.setItem(TIMELINE_ISSUE_CACHE_KEY, JSON.stringify({
@@ -881,7 +1276,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("Issue #90")).toBeInTheDocument();
     await waitFor(() => {
-      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+      expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
     });
     expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
       .toBe(90);
@@ -892,15 +1287,15 @@ describe("基础路由", () => {
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/ReturnTimeline");
-    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
-    service.setFallbackGitHubIssuesForTests({
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    workspaceFallback.setFallbackGitHubIssuesForTests({
       [repo.fullName]: [githubIssue(repo.fullName, 93, "2026-06-13T10:00:00Z")],
     });
     const { router } = await renderAt("/");
 
     expect(await screen.findByText("Issue #93")).toBeInTheDocument();
     await waitFor(() => {
-      expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+      expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
     });
 
     await router.push("/repos/LiliaGithub");
@@ -910,7 +1305,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
     expect(await screen.findByText("Issue #93")).toBeInTheDocument();
     expect(screen.getByLabelText("仓库状态列表")).toHaveTextContent(repo.fullName);
-    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
     expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
       .toBe(93);
   });
@@ -920,8 +1315,8 @@ describe("基础路由", () => {
     vi.setSystemTime(new Date("2026-06-13T12:00:00Z"));
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/RefreshTimeline");
-    service.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
-    service.setFallbackGitHubIssuesForTests({
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [repo], nextPage: null }]);
+    workspaceFallback.setFallbackGitHubIssuesForTests({
       [repo.fullName]: [githubIssue(repo.fullName, 92, "2026-06-13T10:00:00Z")],
     });
     localStorage.setItem(TIMELINE_ISSUE_CACHE_KEY, JSON.stringify({
@@ -936,7 +1331,7 @@ describe("基础路由", () => {
     await renderAt("/");
 
     expect(await screen.findByText("Issue #91")).toBeInTheDocument();
-    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(0);
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(0);
 
     const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" });
     await waitFor(() => {
@@ -948,14 +1343,14 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.queryByText("Issue #91")).toBeNull();
     });
-    expect(service.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
     expect(JSON.parse(localStorage.getItem(TIMELINE_ISSUE_CACHE_KEY) ?? "{}")[repo.fullName].issues[0].number)
       .toBe(92);
   });
 
   it("总览页 GitHub 项目加载失败时保留本地侧栏并可重试", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
+    workspaceFallback.setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
     await renderAt("/");
 
     expect(await screen.findByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
@@ -964,7 +1359,7 @@ describe("基础路由", () => {
     expect(ungroupedSection).toHaveTextContent("2");
     expect(screen.getAllByText("LiliaGithub").length).toBeGreaterThan(0);
 
-    service.setFallbackGitHubReposErrorForTests(null);
+    workspaceFallback.setFallbackGitHubReposErrorForTests(null);
     await fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
     expect(await within(screen.getByLabelText("仓库状态列表")).findByText("sena-nana/LiliaGithub")).toBeInTheDocument();
@@ -994,7 +1389,7 @@ describe("基础路由", () => {
 
   it("首页本地提交贡献图支持空状态和错误重试", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionOverrideForTests(() => ({
+    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => ({
       days: [],
       meta: {
         repoCount: 1,
@@ -1010,7 +1405,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("暂无本地提交")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionOverrideForTests(() => {
+    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => {
       throw new Error("rate limited");
     });
     const refreshRepos = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" });
@@ -1021,7 +1416,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByText("Error: rate limited")).toBeInTheDocument();
 
-    service.setFallbackRepoContributionOverrideForTests((repoScope) => ({
+    workspaceFallback.setFallbackRepoContributionOverrideForTests((repoScope) => ({
       days: [{ date: "2026-06-11", count: repoScope === "local:LiliaGithub" ? 4 : 0 }],
       meta: {
         repoCount: 1,
@@ -1039,7 +1434,7 @@ describe("基础路由", () => {
 
   it("首页本地提交贡献图命中仓库采样上限时显示提示", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionOverrideForTests(() => ({
+    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => ({
       days: [{ date: "2026-06-11", count: 1 }],
       meta: {
         repoCount: 1,
@@ -1062,7 +1457,7 @@ describe("基础路由", () => {
 
   it("首页本地提交贡献图使用固定右侧窗口显示", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoContributionOverrideForTests((repoScope) => ({
+    workspaceFallback.setFallbackRepoContributionOverrideForTests((repoScope) => ({
       days: Array.from({ length: 371 }, (_, index) => ({
         date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
         count: index === 370 && repoScope === "local:LiliaGithub" ? 4 : 0,
@@ -1119,12 +1514,13 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByRole("button", { name: "推送" })).toBeInTheDocument();
+    await within(screen.getByLabelText("仓库操作")).findByRole("button", { name: "设置" });
     expect(
       within(screen.getByLabelText("仓库操作"))
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label"))
         .filter(Boolean),
-    ).toEqual(["文件夹", "拉取", "推送"]);
+    ).toEqual(["设置", "文件夹", "拉取", "推送"]);
     expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
     expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
     expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
@@ -1256,7 +1652,7 @@ describe("基础路由", () => {
     await fireEvent.click(within(menu).getByRole("option", { name: "VSCode" }));
 
     await waitFor(() => {
-      expect(service.getFallbackOpenPathTargetCallsForTests()).toEqual([
+      expect(workspaceFallback.getFallbackOpenPathTargetCallsForTests()).toEqual([
         { path: "C:\\Files\\workspace\\LiliaGithub", target: "vscode" },
       ]);
     });
@@ -1265,7 +1661,7 @@ describe("基础路由", () => {
 
   it("本地仓库页的本地分支和远程分支右键菜单都提供删除入口", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubBranchesForTests({
+    workspaceFallback.setFallbackGitHubBranchesForTests({
       "sena-nana/LiliaGithub": [
         {
           name: "main",
@@ -1337,7 +1733,7 @@ describe("基础路由", () => {
     const unstageFiles = vi.spyOn(service, "unstageFiles");
     const addFilesToGitignore = vi.spyOn(service, "addFilesToGitignore");
     const discardFiles = vi.spyOn(service, "discardFiles");
-    service.setFallbackRepoDetailOverrideForTests((repoId) => {
+    workspaceFallback.setFallbackRepoDetailOverrideForTests((repoId) => {
       if (repoId !== "LiliaGithub") return null;
       const summary = repoSummary("LiliaGithub", {
         stagedCount: 2,
@@ -1499,12 +1895,49 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(applyStash).toHaveBeenCalledWith("LiliaGithub", "stash@{1}");
     });
-    service.resetWorkspaceFallbacksForTests();
+    workspaceFallback.resetWorkspaceFallbacksForTests();
+  });
+
+  it("stash 操作完成时不会把旧仓库状态写回新路由", async () => {
+    const service = await import("../src/services/workspace");
+    await service.saveRepoStash("LiliaGithub", "On main: delayed stash");
+    const applyResult = deferred<RepoOperationResult>();
+    const applyStash = vi.spyOn(service, "applyRepoStash").mockReturnValue(applyResult.promise);
+    workspaceFallback.setFallbackGitHubBranchesForTests({ "sena-nana/EmptyRemote": [] });
+
+    const { router } = await renderAt("/repos/LiliaGithub/stash");
+    await fireEvent.click(await screen.findByRole("button", { name: /stash@\{1\}/ }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Stash 内容")).toHaveTextContent("On main: WIP toolbar");
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(applyStash).toHaveBeenCalledWith("LiliaGithub", "stash@{1}");
+
+    await router.push("/repos/github%3Asena-nana%2FEmptyRemote/stash");
+    await waitFor(() => {
+      expect(screen.getByText("stash 仅支持本地仓库。")).toBeInTheDocument();
+    });
+
+    applyResult.resolve({
+      status: "success",
+      message: "applied",
+      summary: repoSummary("LiliaGithub"),
+      conflicts: { operation: "none", files: [], allResolved: true },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("stash 仅支持本地仓库。")).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText("Stash 列表")).toBeNull();
+
+    applyStash.mockRestore();
+    workspaceFallback.resetWorkspaceFallbacksForTests();
   });
 
   it("远程仓库直达 stash 页显示本地限制空状态", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubBranchesForTests({ "sena-nana/EmptyRemote": [] });
+    workspaceFallback.setFallbackGitHubBranchesForTests({ "sena-nana/EmptyRemote": [] });
 
     await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/stash");
 
@@ -1514,14 +1947,19 @@ describe("基础路由", () => {
 
   it("仓库项目信息页显示 README、Issues、Actions 和 Settings", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackRepoFilesForTests({
+    workspaceFallback.setFallbackRepoFilesForTests({
       LiliaGithub: {
         "": [
           { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+          { path: "README.txt", name: "README.txt", kind: "file", hasChildren: false },
+          { path: "docs", name: "docs", kind: "dir", hasChildren: true },
+        ],
+        docs: [
+          { path: "docs/guide.md", name: "guide.md", kind: "file", hasChildren: false },
         ],
       },
     });
-    service.setFallbackRepoFilePreviewsForTests({
+    workspaceFallback.setFallbackRepoFilePreviewsForTests({
       LiliaGithub: {
         "README.md": {
           path: "README.md",
@@ -1583,7 +2021,7 @@ describe("基础路由", () => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files?file=docs/guide.md");
     });
     expect(await screen.findByRole("heading", { level: 1, name: "开发指南" })).toBeInTheDocument();
-    expect(service.getFallbackOpenPathCallsForTests()).toEqual([]);
+    expect(workspaceFallback.getFallbackOpenPathCallsForTests()).toEqual([]);
 
     await router.push("/repos/LiliaGithub");
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
@@ -1594,9 +2032,12 @@ describe("基础路由", () => {
     expect(await screen.findByRole("button", { name: "重开" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("tab", { name: "Actions" }));
-    expect(await screen.findByText("验证仓库详情页")).toBeInTheDocument();
-    expect(screen.getByText(/CI · main · push/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Actions 通过")).toHaveAttribute("title", "Actions 通过");
+    expect(await screen.findByRole("button", { name: /验证仓库详情页/ })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 3, name: "验证仓库详情页" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: /验证仓库详情页/ }));
+    expect(await screen.findByRole("heading", { level: 3, name: "验证仓库详情页" })).toBeInTheDocument();
+    expect(screen.getByText(/工作流：CI · 分支：main/)).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Actions 通过").some((element) => element.getAttribute("title") === "Actions 通过")).toBe(true);
 
     await fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();
@@ -1700,7 +2141,7 @@ describe("基础路由", () => {
 
   it("未 clone 的远程详情页删除 GitHub 远端后移除侧边栏入口并跳回首页", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
           githubRepoSummary("sena-nana/DeleteRemoteRepo", {
@@ -1759,7 +2200,7 @@ describe("基础路由", () => {
 
   it("未 clone 的远程详情页在现有分支选择器中展示并删除 GitHub 远程分支", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackGitHubRepoPagesForTests([
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
           githubRepoSummary("sena-nana/RemoteBranchMenu", {
@@ -1770,7 +2211,7 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    service.setFallbackGitHubBranchesForTests({
+    workspaceFallback.setFallbackGitHubBranchesForTests({
       "sena-nana/RemoteBranchMenu": [
         {
           name: "main",
@@ -1833,7 +2274,7 @@ describe("基础路由", () => {
       if (!row) throw new Error("未找到 Issue 行");
       return row as HTMLElement;
     };
-    service.setFallbackGitHubIssuesForTests({
+    workspaceFallback.setFallbackGitHubIssuesForTests({
       "sena-nana/LiliaGithub": [
         {
           number: 12,
@@ -1862,22 +2303,22 @@ describe("基础路由", () => {
     await fireEvent.click(within(issueRow()).getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText("#12 编辑后标题")).toBeInTheDocument();
-    expect(screen.getByText("backend, docs · carol, dana")).toBeInTheDocument();
+    expect(issueRow()).toHaveTextContent("backend, docs");
+    expect(issueRow()).toHaveTextContent("carol, dana");
 
     await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
     expect(within(issueRow()).getByDisplayValue("新正文")).toBeInTheDocument();
   });
 
   it("仓库项目信息页无 GitHub 远端时保留 README 并显示远端空态", async () => {
-    const service = await import("../src/services/workspace");
-    service.setFallbackRepoFilesForTests({
+    workspaceFallback.setFallbackRepoFilesForTests({
       LiliaGithub: {
         "": [
           { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
         ],
       },
     });
-    service.setFallbackRepoFilePreviewsForTests({
+    workspaceFallback.setFallbackRepoFilePreviewsForTests({
       LiliaGithub: {
         "README.md": {
           path: "README.md",
@@ -1890,7 +2331,7 @@ describe("基础路由", () => {
         },
       },
     });
-    service.setFallbackRepoOverridesForTests({
+    workspaceFallback.setFallbackRepoOverridesForTests({
       LiliaGithub: repoSummary("LiliaGithub", { githubFullName: null, remoteUrl: null }),
     });
     await renderAt("/repos/LiliaGithub");
@@ -2044,7 +2485,7 @@ describe("基础路由", () => {
 
   it("运行失败信息显示在命令卡片内而不是页头状态区", async () => {
     const service = await import("../src/services/workspace");
-    service.setFallbackStopLaunchOverrideForTests(() => {
+    workspaceFallback.setFallbackStopLaunchOverrideForTests(() => {
       throw new Error("停止失败：operation attempted is not supported");
     });
 
@@ -2083,58 +2524,79 @@ describe("基础路由", () => {
     expect(screen.queryByText("一键拉取预检")).toBeNull();
   });
 
-  it("批量同步失败后从侧边栏进入项目详情处理失败仓库", async () => {
+  it("批量同步失败后进入项目详情处理失败仓库", async () => {
     const service = await mockLiliaGithubSyncFailure();
-    await renderAt("/");
+    const { router } = await renderAt("/");
 
     await clickOverviewSync();
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
-      expect(screen.queryByLabelText("最近同步失败")).toBeNull();
-      expect(screen.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
+      expect(queryRepoSidebarErrorCard()).toBeNull();
+      expect(within(repoStatusRow("sena-nana/LiliaGithub")).getByLabelText("最近同步失败"))
+        .toHaveAttribute("title", "认证失败");
     });
 
-    const failedLink = screen.getByLabelText("同步失败").closest("a");
-    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到同步失败仓库入口");
-    await fireEvent.click(failedLink);
+    await router.push("/repos/LiliaGithub");
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
 
-    service.setFallbackBulkExecuteOverrideForTests(null);
-    await fireEvent.click(within(screen.getByLabelText("最近同步失败")).getByRole("button", { name: "重试" }));
+    workspaceFallback.setFallbackBulkExecuteOverrideForTests(null);
+    await fireEvent.click(within(repoDetailRecentSyncFailure()).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
-      expect(screen.queryByText("认证失败")).toBeNull();
+      expect(queryRepoSidebarErrorCard()).toBeNull();
     });
   });
 
-  it("仓库详情页状态区出现或消失时保留项目主内容区", async () => {
+  it("仓库详情页把最近同步失败和仓库操作错误都显示到右侧", async () => {
+    const { setRepoActionError, state } = await import("../src/composables/workspace/state");
+    await renderAt("/repos/LiliaGithub");
+    await waitForRepoTitle("LiliaGithub");
+
+    const repo = state.repos.find((item) => item.id === "LiliaGithub") ?? repoSummary("LiliaGithub", { ahead: 1 });
+    state.recentSync = {
+      preview: {
+        operation: "sync",
+        eligible: [{ repo, reason: "有本地提交待推送" }],
+        blocked: [],
+        warnings: [],
+      },
+      results: [{ repoId: repo.id, status: "error", message: "认证失败", summary: null }],
+      retryingRepoIds: [],
+      updatedAt: 2,
+    };
+    setRepoActionError(repo.id, "自动同步正在执行");
+
+    await waitFor(() => {
+      expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
+    });
+    expect(repoSidebarErrorCard()).toHaveTextContent("自动同步正在执行");
+  });
+
+  it("仓库详情页右侧错误区出现或消失时保留项目主内容区", async () => {
     const service = await mockLiliaGithubSyncFailure();
     await renderAt("/");
 
     await clickOverviewSync();
 
     await waitFor(() => {
-      expect(screen.getByLabelText("同步失败")).toHaveAttribute("title", "认证失败");
+      expect(within(repoStatusRow("sena-nana/LiliaGithub")).getByLabelText("最近同步失败"))
+        .toHaveAttribute("title", "认证失败");
     });
 
-    const failedLink = screen.getByLabelText("同步失败").closest("a");
-    if (!(failedLink instanceof HTMLElement)) throw new Error("未找到同步失败仓库入口");
-    await fireEvent.click(failedLink);
+    await fireEvent.click(repoStatusRow("sena-nana/LiliaGithub"));
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
 
-    const status = document.querySelector(".repo-workbench__status");
-    if (!(status instanceof HTMLElement)) throw new Error("未找到仓库状态区");
-    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
     expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
 
-    service.setFallbackBulkExecuteOverrideForTests(null);
-    await fireEvent.click(within(screen.getByLabelText("最近同步失败")).getByRole("button", { name: "重试" }));
+    workspaceFallback.setFallbackBulkExecuteOverrideForTests(null);
+    await fireEvent.click(within(repoDetailRecentSyncFailure()).getByRole("button", { name: "重试" }));
 
     await waitFor(() => {
-      expect(screen.queryByLabelText("最近同步失败")).toBeNull();
+      expect(queryRepoSidebarErrorCard()).toBeNull();
     });
     expect(document.querySelector(".repo-workbench__status")).toBeNull();
     expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
@@ -2147,14 +2609,15 @@ describe("基础路由", () => {
     await clickOverviewSync();
 
     await waitFor(() => {
-      expect(screen.getByRole("link", { name: "处理失败" })).toHaveAttribute("title", "认证失败");
+      expect(within(repoStatusRow("sena-nana/LiliaGithub")).getByLabelText("最近同步失败"))
+        .toHaveAttribute("title", "认证失败");
     });
 
-    await fireEvent.click(screen.getByRole("link", { name: "处理失败" }));
+    await fireEvent.click(repoStatusRow("sena-nana/LiliaGithub"));
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    expect(screen.getByLabelText("最近同步失败")).toHaveTextContent("认证失败");
+    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
   });
 
   it("总览页冲突仓库入口进入变更页", async () => {
@@ -2173,7 +2636,7 @@ describe("基础路由", () => {
   it("总览页待同步按钮直接执行同步", async () => {
     const service = await import("../src/services/workspace");
     const initial = repoSummary("LiliaGithub", { ahead: 0, behind: 2 });
-    service.setFallbackRepoOverridesForTests({
+    workspaceFallback.setFallbackRepoOverridesForTests({
       LiliaGithub: initial,
     });
     await renderAt("/");

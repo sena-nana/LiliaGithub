@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { Archive, ArchiveRestore, LoaderCircle, Plus, Trash2 } from "@lucide/vue";
+import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
+import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { getRepoStashDetail, type CommitFileChange, type RepoStashDetail, type RepoStashEntry } from "../../services/workspace";
 import { commitFileStatusText } from "../../utils/repoDisplay";
+import type { RepoContext } from "../../utils/repoContext";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
 import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 
 const props = defineProps<{
   repoId: string;
-  remoteOnly: boolean;
+  repoContext: RepoContext;
   hasConflicts: boolean;
 }>();
 
@@ -20,15 +23,21 @@ const detail = ref<RepoStashDetail | null>(null);
 const activeFilePath = ref<string | null>(null);
 const loading = ref(false);
 const detailLoading = ref(false);
-const actionRunning = ref(false);
 const error = ref<string | null>(null);
 const diffMode = ref<RepoDiffWorkspaceMode>("hunks");
 const dropConfirmStashId = ref<string | null>(null);
+const stashesLoader = createLatestAsyncLoader();
+const stashDetailLoader = createLatestAsyncLoader();
+const actionTracker = createPendingTaskTracker();
+const actionRunning = actionTracker.running;
+let actionGeneration = 0;
 
 const selectedStash = computed(() =>
   stashes.value.find((stash) => stash.id === selectedStashId.value) ?? null,
 );
-const canMutate = computed(() => !props.remoteOnly && !props.hasConflicts && !actionRunning.value);
+const canUseStash = computed(() => props.repoContext.capabilities.stash.available);
+const stashUnavailableReason = computed(() => props.repoContext.capabilities.stash.reason ?? "stash 仅支持本地仓库。");
+const canMutate = computed(() => canUseStash.value && !props.hasConflicts && !actionRunning.value);
 const workspaceFiles = computed<RepoDiffWorkspaceFile[]>(() =>
   (detail.value?.files ?? []).map((file) => ({
     key: `${file.oldPath ?? ""}:${file.path}`,
@@ -58,7 +67,13 @@ onMounted(() => {
   void loadStashes();
 });
 
-watch(() => [props.repoId, props.remoteOnly] as const, () => {
+onUnmounted(() => {
+  stashesLoader.invalidate();
+  stashDetailLoader.invalidate();
+  invalidateActions();
+});
+
+watch(() => [props.repoId, canUseStash.value] as const, () => {
   resetStashState();
   void loadStashes();
 });
@@ -68,6 +83,9 @@ watch(() => detail.value?.files, (files) => {
 });
 
 function resetStashState() {
+  stashesLoader.invalidate();
+  stashDetailLoader.invalidate();
+  invalidateActions();
   stashes.value = [];
   selectedStashId.value = null;
   detail.value = null;
@@ -77,74 +95,108 @@ function resetStashState() {
 }
 
 async function loadStashes() {
-  if (props.remoteOnly || !props.repoId) {
+  if (!canUseStash.value || !props.repoId) {
     resetStashState();
     return;
   }
-  loading.value = true;
-  error.value = null;
-  try {
-    const nextStashes = await workspace.listStashes(props.repoId);
-    stashes.value = nextStashes;
-    const nextStashId = nextStashes.some((stash) => stash.id === selectedStashId.value)
-      ? selectedStashId.value
-      : nextStashes[0]?.id ?? null;
-    selectedStashId.value = nextStashId;
-    if (nextStashId) await loadStashDetail(nextStashId);
-    else detail.value = null;
-  } catch (err) {
-    error.value = String(err);
-  } finally {
-    loading.value = false;
-  }
+  const repoId = props.repoId;
+  await stashesLoader.run(repoId, async (runId) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const nextStashes = await workspace.listStashes(repoId);
+      if (!stashesLoader.isCurrent(runId) || repoId !== props.repoId || !canUseStash.value) return;
+      stashes.value = nextStashes;
+      const nextStashId = nextStashes.some((stash) => stash.id === selectedStashId.value)
+        ? selectedStashId.value
+        : nextStashes[0]?.id ?? null;
+      selectedStashId.value = nextStashId;
+      if (nextStashId) await loadStashDetail(nextStashId);
+      else detail.value = null;
+    } catch (err) {
+      if (!stashesLoader.isCurrent(runId)) return;
+      error.value = String(err);
+    } finally {
+      if (stashesLoader.isCurrent(runId)) {
+        loading.value = false;
+      }
+    }
+  });
 }
 
 async function loadStashDetail(stashId: string) {
   if (!props.repoId) return;
-  detailLoading.value = true;
-  error.value = null;
-  try {
-    const nextDetail = await getRepoStashDetail(props.repoId, stashId);
-    if (stashId !== selectedStashId.value) return;
-    detail.value = nextDetail;
-  } catch (err) {
-    error.value = String(err);
-    detail.value = null;
-  } finally {
-    detailLoading.value = false;
-  }
+  const repoId = props.repoId;
+  await stashDetailLoader.run(`${repoId}:${stashId}`, async (runId) => {
+    detailLoading.value = true;
+    error.value = null;
+    try {
+      const nextDetail = await getRepoStashDetail(repoId, stashId);
+      if (
+        !stashDetailLoader.isCurrent(runId) ||
+        repoId !== props.repoId ||
+        stashId !== selectedStashId.value
+      ) return;
+      detail.value = nextDetail;
+    } catch (err) {
+      if (!stashDetailLoader.isCurrent(runId)) return;
+      error.value = String(err);
+      detail.value = null;
+    } finally {
+      if (stashDetailLoader.isCurrent(runId)) {
+        detailLoading.value = false;
+      }
+    }
+  });
 }
 
-async function runStashAction(action: () => Promise<unknown>) {
-  actionRunning.value = true;
+function invalidateActions() {
+  actionGeneration += 1;
+  actionTracker.reset();
+}
+
+function isActionCurrent(generation: number, repoId: string) {
+  return generation === actionGeneration && repoId === props.repoId && canUseStash.value;
+}
+
+async function runStashAction(repoId: string, action: () => Promise<unknown>) {
+  if (!repoId || !canUseStash.value) return;
+  const generation = actionGeneration;
   error.value = null;
   try {
-    await action();
+    await actionTracker.run(action);
+    if (!isActionCurrent(generation, repoId)) return;
     await loadStashes();
-    await workspace.loadRepoDetail(props.repoId).catch(() => undefined);
+    if (!isActionCurrent(generation, repoId)) return;
+    await workspace.loadRepoDetail(repoId).catch(() => undefined);
   } catch (err) {
-    error.value = String(err);
-  } finally {
-    actionRunning.value = false;
+    if (isActionCurrent(generation, repoId)) {
+      error.value = String(err);
+    }
   }
 }
 
 function saveStash() {
   const message = window.prompt("stash 说明（可选）", "");
   if (message === null) return;
-  void runStashAction(() => workspace.saveStash(props.repoId, message));
+  const repoId = props.repoId;
+  void runStashAction(repoId, () => workspace.saveStash(repoId, message));
 }
 
 function applySelectedStash() {
   const stash = selectedStash.value;
   if (!stash) return;
-  void runStashAction(() => workspace.applyStash(props.repoId, stash.id));
+  const repoId = props.repoId;
+  const stashId = stash.id;
+  void runStashAction(repoId, () => workspace.applyStash(repoId, stashId));
 }
 
 function popSelectedStash() {
   const stash = selectedStash.value;
   if (!stash) return;
-  void runStashAction(() => workspace.popStash(props.repoId, stash.id));
+  const repoId = props.repoId;
+  const stashId = stash.id;
+  void runStashAction(repoId, () => workspace.popStash(repoId, stashId));
 }
 
 function dropSelectedStash() {
@@ -154,7 +206,9 @@ function dropSelectedStash() {
     dropConfirmStashId.value = stash.id;
     return;
   }
-  void runStashAction(() => workspace.dropStash(props.repoId, stash.id));
+  const repoId = props.repoId;
+  const stashId = stash.id;
+  void runStashAction(repoId, () => workspace.dropStash(repoId, stashId));
 }
 
 function selectStash(stash: RepoStashEntry) {
@@ -180,7 +234,7 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
 
 <template>
   <section class="repo-stash-panel">
-    <p v-if="remoteOnly" class="muted repo-empty repo-stash-panel__empty">stash 仅支持本地仓库。</p>
+    <p v-if="!canUseStash" class="muted repo-empty repo-stash-panel__empty">{{ stashUnavailableReason }}</p>
     <div v-else class="repo-stash-panel__shell">
       <aside class="repo-stash-panel__list" aria-label="Stash 列表">
         <header class="repo-stash-panel__head">

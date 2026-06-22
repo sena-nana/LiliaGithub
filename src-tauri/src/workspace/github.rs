@@ -1,8 +1,11 @@
+use std::io::{Cursor, Read};
+
 use super::*;
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
-pub(super) const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo";
+pub(super) const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo read:project";
 pub(super) const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
+pub(super) const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";
 pub(super) const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 pub(super) const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 pub(super) const GITHUB_OAUTH_ACCEPT: &str = "application/json";
@@ -10,6 +13,7 @@ pub(super) const GITHUB_USER_AGENT: &str = "LiliaGithub/0.1";
 pub(super) const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 pub(super) const GITHUB_CONTRIBUTION_DAYS: usize = 371;
 pub(super) const GITHUB_PROJECT_CACHE_KEY: &str = "workspace.githubProjectCache";
+pub(super) const GITHUB_ACTIONS_ARTIFACT_MAX_BYTES: u64 = 200 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +116,24 @@ pub(super) struct GitHubRepoTopicsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubContentListItem {
+    pub(super) name: String,
+    pub(super) path: String,
+    #[serde(rename = "type")]
+    pub(super) kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubContentFileResponse {
+    pub(super) name: String,
+    pub(super) path: String,
+    pub(super) encoding: Option<String>,
+    pub(super) content: Option<String>,
+    #[serde(default)]
+    pub(super) size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubOrgResponse {
     pub(super) login: String,
 }
@@ -127,6 +149,14 @@ pub(super) struct GitHubAssigneeResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueMilestoneResponse {
+    pub(super) number: u64,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubIssueResponse {
     pub(super) number: u64,
     pub(super) title: String,
@@ -136,11 +166,78 @@ pub(super) struct GitHubIssueResponse {
     pub(super) updated_at: String,
     pub(super) created_at: String,
     #[serde(default)]
+    pub(super) user: Option<GitHubAssigneeResponse>,
+    #[serde(default)]
+    pub(super) milestone: Option<GitHubIssueMilestoneResponse>,
+    #[serde(default)]
+    pub(super) comments: u64,
+    #[serde(default)]
     pub(super) labels: Vec<GitHubLabelResponse>,
     #[serde(default)]
     pub(super) assignees: Vec<GitHubAssigneeResponse>,
     #[serde(default)]
     pub(super) pull_request: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueSearchResponse {
+    #[serde(default)]
+    pub(super) items: Vec<GitHubIssueResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubGraphQlResponse<T> {
+    pub(super) data: Option<T>,
+    #[serde(default)]
+    pub(super) errors: Vec<GitHubGraphQlError>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubGraphQlError {
+    pub(super) message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct GitHubIssueProjectsGraphQlData {
+    pub(super) repository: Option<GitHubIssueProjectsRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueProjectsRepository {
+    pub(super) issues: GitHubIssueProjectsConnection,
+    #[serde(rename = "pullRequests", default)]
+    pub(super) pull_requests: GitHubIssueProjectsConnection,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct GitHubIssueProjectsConnection {
+    #[serde(default)]
+    pub(super) nodes: Vec<Option<GitHubIssueProjectsNode>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueProjectsNode {
+    pub(super) number: u64,
+    #[serde(rename = "projectItems")]
+    pub(super) project_items: GitHubProjectItemsConnection,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubProjectItemsConnection {
+    #[serde(default)]
+    pub(super) nodes: Vec<Option<GitHubProjectItemNode>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubProjectItemNode {
+    pub(super) project: Option<GitHubProjectItemProject>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubProjectItemProject {
+    pub(super) id: String,
+    pub(super) title: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +308,18 @@ pub(super) struct GitHubWorkflowRunsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowActorResponse {
+    pub(super) login: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubWorkflowRunResponse {
     pub(super) id: u64,
     #[serde(default)]
@@ -228,6 +337,129 @@ pub(super) struct GitHubWorkflowRunResponse {
     pub(super) html_url: String,
     pub(super) created_at: String,
     pub(super) updated_at: String,
+    #[serde(default)]
+    pub(super) actor: Option<GitHubWorkflowActorResponse>,
+    #[serde(default)]
+    pub(super) head_sha: Option<String>,
+    #[serde(default)]
+    pub(super) run_number: Option<u64>,
+    #[serde(default)]
+    pub(super) run_attempt: Option<u64>,
+    #[serde(default)]
+    pub(super) workflow_id: Option<u64>,
+    #[serde(default)]
+    pub(super) run_started_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowJobsResponse {
+    #[serde(default)]
+    pub(super) jobs: Vec<GitHubWorkflowJobResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowJobResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) status: Option<String>,
+    #[serde(default)]
+    pub(super) conclusion: Option<String>,
+    #[serde(default)]
+    pub(super) started_at: Option<String>,
+    #[serde(default)]
+    pub(super) completed_at: Option<String>,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
+    #[serde(default)]
+    pub(super) runner_name: Option<String>,
+    #[serde(default)]
+    pub(super) steps: Vec<GitHubWorkflowJobStepResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowJobStepResponse {
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) status: Option<String>,
+    #[serde(default)]
+    pub(super) conclusion: Option<String>,
+    #[serde(default)]
+    pub(super) number: Option<u64>,
+    #[serde(default)]
+    pub(super) started_at: Option<String>,
+    #[serde(default)]
+    pub(super) completed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowArtifactsResponse {
+    #[serde(default)]
+    pub(super) artifacts: Vec<GitHubWorkflowArtifactResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubWorkflowArtifactResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) size_in_bytes: Option<u64>,
+    #[serde(default)]
+    pub(super) expired: bool,
+    pub(super) created_at: String,
+    #[serde(default)]
+    pub(super) expires_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitUserResponse {
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) email: Option<String>,
+    #[serde(default)]
+    pub(super) date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitPayloadResponse {
+    #[serde(default)]
+    pub(super) author: Option<GitHubCommitUserResponse>,
+    #[serde(default)]
+    pub(super) committer: Option<GitHubCommitUserResponse>,
+    pub(super) message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitParentResponse {
+    pub(super) sha: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitFileResponse {
+    pub(super) filename: String,
+    pub(super) status: String,
+    #[serde(default)]
+    pub(super) previous_filename: Option<String>,
+    #[serde(default)]
+    pub(super) additions: i32,
+    #[serde(default)]
+    pub(super) deletions: i32,
+    #[serde(default)]
+    pub(super) patch: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubCommitResponse {
+    pub(super) sha: String,
+    pub(super) commit: GitHubCommitPayloadResponse,
+    #[serde(default)]
+    pub(super) parents: Vec<GitHubCommitParentResponse>,
+    #[serde(default)]
+    pub(super) files: Vec<GitHubCommitFileResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -380,6 +612,14 @@ pub(super) fn github_json<T: for<'de> Deserialize<'de>>(
         .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
 }
 
+pub(super) fn github_graphql_errors_require_read_project(errors: &[GitHubGraphQlError]) -> bool {
+    !errors.is_empty()
+        && errors.iter().all(|error| {
+            let message = error.message.as_str();
+            message.contains(GITHUB_READ_PROJECT_SCOPE) && message.contains("scopes")
+        })
+}
+
 pub(super) fn load_github_project_cache(app: &AppHandle) -> GitHubProjectCache {
     app.store(STORE_FILE)
         .ok()
@@ -442,6 +682,7 @@ pub(super) fn clear_github_project_issue_cache(
 ) -> Result<(), String> {
     update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
         repo_cache.issues.clear();
+        repo_cache.issue_filter_metadata = None;
     })
 }
 
@@ -461,6 +702,12 @@ pub(super) fn github_issue_cache_key(
     sort: Option<&str>,
     direction: Option<&str>,
     since: Option<&str>,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+    project: Option<&str>,
+    query: Option<&str>,
 ) -> String {
     let issue_state = state.unwrap_or("open");
     let issue_per_page = per_page.unwrap_or(100).clamp(1, 100);
@@ -477,20 +724,136 @@ pub(super) fn github_issue_cache_key(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("");
-    format!("{issue_state}|{issue_per_page}|{issue_sort}|{issue_direction}|{issue_since}")
+    let issue_creator = creator
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let issue_assignee = assignee
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let mut issue_labels = labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    issue_labels.sort();
+    let issue_milestone = milestone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let issue_project = project
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let issue_query = query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    serde_json::json!({
+        "state": issue_state,
+        "perPage": issue_per_page,
+        "sort": issue_sort,
+        "direction": issue_direction,
+        "since": issue_since,
+        "creator": issue_creator,
+        "assignee": issue_assignee,
+        "labels": issue_labels,
+        "milestone": issue_milestone,
+        "project": issue_project,
+        "query": issue_query,
+    })
+    .to_string()
 }
 
-pub(super) fn github_pull_request_cache_key(state: Option<&str>) -> String {
-    match state {
+pub(super) fn github_pull_request_cache_key(
+    state: Option<&str>,
+    per_page: Option<u32>,
+    sort: Option<&str>,
+    direction: Option<&str>,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+    project: Option<&str>,
+    review: Option<&str>,
+    query: Option<&str>,
+) -> String {
+    let pull_state = match state {
         Some("closed") => "closed",
+        Some("merged") => "merged",
         Some("all") => "all",
         _ => "open",
-    }
+    };
+    let pull_per_page = per_page.unwrap_or(100).clamp(1, 100);
+    let pull_sort = match sort {
+        Some("created") => "created",
+        Some("comments") => "comments",
+        _ => "updated",
+    };
+    let pull_direction = match direction {
+        Some("asc") => "asc",
+        _ => "desc",
+    };
+    let pull_creator = creator
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_assignee = assignee
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let mut pull_labels = labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    pull_labels.sort();
+    let pull_milestone = milestone
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_project = project
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_review = review
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let pull_query = query
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    serde_json::json!({
+        "state": pull_state,
+        "perPage": pull_per_page,
+        "sort": pull_sort,
+        "direction": pull_direction,
+        "creator": pull_creator,
+        "assignee": pull_assignee,
+        "labels": pull_labels,
+        "milestone": pull_milestone,
+        "project": pull_project,
+        "review": pull_review,
+        "query": pull_query,
+    })
     .to_string()
 }
 
 pub(super) fn github_workflow_runs_cache_key(per_page: Option<u32>) -> String {
     per_page.unwrap_or(30).clamp(1, 100).to_string()
+}
+
+pub(super) fn github_commit_list_cache_key(per_page: Option<u32>, sha: Option<&str>) -> String {
+    let commit_per_page = per_page.unwrap_or(100).clamp(1, 100);
+    let commit_sha = sha
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    format!("{commit_per_page}|{commit_sha}")
 }
 
 pub(super) fn github_require_token(
@@ -508,11 +871,15 @@ pub(super) fn github_require_token(
     Ok((binding, token))
 }
 
+pub(super) fn github_binding_has_scope(binding: &GitHubBindingMetadata, scope: &str) -> bool {
+    binding.scopes.iter().any(|item| item == scope)
+}
+
 pub(super) fn github_require_scope(
     binding: &GitHubBindingMetadata,
     scope: &str,
 ) -> Result<(), String> {
-    if binding.scopes.iter().any(|item| item == scope) {
+    if github_binding_has_scope(binding, scope) {
         return Ok(());
     }
     Err(format!(
@@ -525,7 +892,9 @@ pub(super) fn github_send(
     prefix: &str,
     builder: RequestBuilder,
 ) -> Result<Response, String> {
-    let response = builder.send().map_err(|e| format!("{prefix}：{e}"))?;
+    let response = builder
+        .send()
+        .map_err(|e| format!("{prefix}：GitHub API 连接失败，请检查网络、代理或系统证书：{e}"))?;
     if github_binding_expired_status(response.status()) {
         let mut settings = load_settings(app);
         settings.github_binding = None;
@@ -653,6 +1022,209 @@ pub(super) fn github_repo_api_url(repo_full_name: &str) -> Result<String, String
     ))
 }
 
+pub(super) fn normalize_github_content_path(path: Option<&str>) -> Result<String, String> {
+    let Some(path) = path else {
+        return Ok(String::new());
+    };
+    let trimmed = path.trim().trim_matches('/');
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    if trimmed.contains('\\') {
+        return Err("GitHub 文件路径必须使用 / 分隔".to_string());
+    }
+    let parts = trimmed.split('/').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || *part == "." || *part == "..")
+    {
+        return Err("GitHub 文件路径不能包含 . 或 ..".to_string());
+    }
+    Ok(parts.join("/"))
+}
+
+pub(super) fn normalize_github_ref_name(ref_name: Option<&str>) -> Option<String> {
+    ref_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+pub(super) fn github_repo_contents_api_url(
+    repo_full_name: &str,
+    path: Option<&str>,
+) -> Result<String, String> {
+    let path = normalize_github_content_path(path)?;
+    let base = format!("{}/contents", github_repo_api_url(repo_full_name)?);
+    if path.is_empty() {
+        Ok(base)
+    } else {
+        Ok(format!("{base}/{}", github_api_repo_path(&path)))
+    }
+}
+
+pub(super) fn sort_repo_file_tree_entries(entries: &mut [RepoFileTreeEntry]) {
+    entries.sort_by(|left, right| {
+        let left_kind = left.kind == "dir";
+        let right_kind = right.kind == "dir";
+        right_kind
+            .cmp(&left_kind)
+            .then_with(|| {
+                left.name
+                    .to_ascii_lowercase()
+                    .cmp(&right.name.to_ascii_lowercase())
+            })
+            .then_with(|| left.name.cmp(&right.name))
+    });
+}
+
+pub(super) fn github_content_items_to_file_entries(
+    items: Vec<GitHubContentListItem>,
+) -> Vec<RepoFileTreeEntry> {
+    let mut entries = items
+        .into_iter()
+        .filter_map(|item| {
+            let kind = match item.kind.as_str() {
+                "dir" => "dir",
+                "file" | "symlink" => "file",
+                _ => return None,
+            };
+            Some(RepoFileTreeEntry {
+                path: item.path,
+                name: item.name,
+                kind: kind.to_string(),
+                has_children: kind == "dir",
+            })
+        })
+        .collect::<Vec<_>>();
+    sort_repo_file_tree_entries(&mut entries);
+    entries
+}
+
+pub(super) fn is_markdown_preview_path(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase()),
+        Some(extension) if extension == "md" || extension == "markdown"
+    )
+}
+
+pub(super) fn decode_github_preview_bytes(
+    prefix: &str,
+    file: &GitHubContentFileResponse,
+) -> Result<Vec<u8>, String> {
+    let encoding = file.encoding.as_deref().unwrap_or_default();
+    if encoding.to_ascii_lowercase() != "base64" {
+        return Err(format!("{prefix}：不支持的文件编码：{encoding}"));
+    }
+    let encoded = file
+        .content
+        .as_deref()
+        .unwrap_or_default()
+        .chars()
+        .filter(|value| !value.is_whitespace())
+        .collect::<String>();
+    STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("{prefix}：文件解码失败：{e}"))
+}
+
+pub(super) fn github_text_content_from_file(
+    prefix: &str,
+    file: GitHubContentFileResponse,
+) -> Result<String, String> {
+    let bytes = decode_github_preview_bytes(prefix, &file)?;
+    String::from_utf8(bytes).map_err(|e| format!("{prefix}：文件不是 UTF-8 文本：{e}"))
+}
+
+pub(super) fn github_file_preview_from_content(
+    prefix: &str,
+    file: GitHubContentFileResponse,
+) -> Result<RepoFilePreview, String> {
+    let declared_size = file.size;
+    let path = file.path.clone();
+    let name = file.name.clone();
+    let mime = super::file_browser::file_preview_mime(Path::new(&path)).map(str::to_string);
+    if declared_size.unwrap_or_default() > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+        return Ok(RepoFilePreview {
+            path,
+            name,
+            preview_kind: "tooLarge".to_string(),
+            content: None,
+            data_url: None,
+            images: HashMap::new(),
+            size: declared_size.unwrap_or_default(),
+            mime_type: mime,
+            truncated: false,
+        });
+    }
+
+    let bytes = decode_github_preview_bytes(prefix, &file)?;
+    let size = declared_size.unwrap_or(bytes.len() as u64);
+    if is_markdown_preview_path(&path) {
+        let content = String::from_utf8(bytes)
+            .map_err(|e| format!("{prefix}：Markdown 文件不是 UTF-8 文本：{e}"))?;
+        return Ok(RepoFilePreview {
+            path,
+            name,
+            preview_kind: "markdown".to_string(),
+            content: Some(content),
+            data_url: None,
+            images: HashMap::new(),
+            size,
+            mime_type: Some("text/markdown".to_string()),
+            truncated: false,
+        });
+    }
+
+    if let Some(image_mime) = image_mime_for_path(Path::new(&path)) {
+        return Ok(RepoFilePreview {
+            path,
+            name,
+            preview_kind: "image".to_string(),
+            content: None,
+            data_url: Some(format!(
+                "data:{image_mime};base64,{}",
+                STANDARD.encode(bytes)
+            )),
+            images: HashMap::new(),
+            size,
+            mime_type: Some(image_mime.to_string()),
+            truncated: false,
+        });
+    }
+
+    if let Ok(content) = String::from_utf8(bytes) {
+        if !content.contains('\0') {
+            return Ok(RepoFilePreview {
+                path,
+                name,
+                preview_kind: "text".to_string(),
+                content: Some(content),
+                data_url: None,
+                images: HashMap::new(),
+                size,
+                mime_type: mime.or_else(|| Some("text/plain".to_string())),
+                truncated: false,
+            });
+        }
+    }
+
+    Ok(RepoFilePreview {
+        path,
+        name,
+        preview_kind: "binary".to_string(),
+        content: None,
+        data_url: None,
+        images: HashMap::new(),
+        size,
+        mime_type: mime,
+        truncated: false,
+    })
+}
+
 pub(super) fn github_repo_topics_api_url(repo_full_name: &str) -> Result<String, String> {
     Ok(format!("{}/topics", github_repo_api_url(repo_full_name)?))
 }
@@ -771,7 +1343,18 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
     if issue.pull_request.is_some() {
         return None;
     }
-    Some(GitHubIssue {
+    Some(github_issue_like_from_response(issue))
+}
+
+fn github_pull_request_issue_from_response(issue: GitHubIssueResponse) -> Option<GitHubIssue> {
+    if issue.pull_request.is_none() {
+        return None;
+    }
+    Some(github_issue_like_from_response(issue))
+}
+
+fn github_issue_like_from_response(issue: GitHubIssueResponse) -> GitHubIssue {
+    GitHubIssue {
         number: issue.number,
         title: issue.title,
         state: issue.state,
@@ -782,10 +1365,18 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
             .into_iter()
             .map(|assignee| assignee.login)
             .collect(),
+        author: issue.user.map(|user| user.login),
+        milestone: issue.milestone.map(|milestone| GitHubIssueMilestone {
+            number: milestone.number,
+            title: milestone.title,
+            state: normalize_optional_string(milestone.state),
+        }),
+        comments: issue.comments,
+        project_items: Vec::new(),
         html_url: issue.html_url,
         updated_at: issue.updated_at,
         created_at: issue.created_at,
-    })
+    }
 }
 
 pub(super) fn github_pull_request_from_response(
@@ -797,6 +1388,11 @@ pub(super) fn github_pull_request_from_response(
         state: pull_request.state,
         draft: pull_request.draft,
         body: pull_request.body,
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        milestone: None,
+        comments: 0,
+        project_items: Vec::new(),
         html_url: pull_request.html_url,
         updated_at: pull_request.updated_at,
         created_at: pull_request.created_at,
@@ -812,6 +1408,18 @@ pub(super) fn github_pull_request_from_response(
     }
 }
 
+fn github_pull_request_with_issue_metadata(
+    mut pull_request: GitHubPullRequest,
+    issue: GitHubIssue,
+) -> GitHubPullRequest {
+    pull_request.labels = issue.labels;
+    pull_request.assignees = issue.assignees;
+    pull_request.milestone = issue.milestone;
+    pull_request.comments = issue.comments;
+    pull_request.project_items = issue.project_items;
+    pull_request
+}
+
 pub(super) fn github_pull_request_check_from_response(
     check: GitHubPullRequestCheckRunResponse,
 ) -> GitHubPullRequestCheck {
@@ -825,6 +1433,347 @@ pub(super) fn github_pull_request_check_from_response(
         started_at: normalize_optional_string(check.started_at),
         completed_at: normalize_optional_string(check.completed_at),
     }
+}
+
+pub(super) fn github_issue_labels_param(labels: Option<Vec<String>>) -> Option<String> {
+    let labels = labels?
+        .into_iter()
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty())
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        None
+    } else {
+        Some(labels.join(","))
+    }
+}
+
+pub(super) fn github_issue_milestone_param(value: Option<serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::Number(number) => number.as_u64().map(|value| value.to_string()),
+        serde_json::Value::String(value) => normalize_optional_string(Some(value)),
+        _ => None,
+    }
+}
+
+fn github_search_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn github_search_qualifier(name: &str, value: &str) -> String {
+    if value.chars().any(char::is_whitespace) {
+        format!("{name}:\"{}\"", github_search_escape(value))
+    } else {
+        format!("{name}:{value}")
+    }
+}
+
+fn github_issue_search_query(
+    repo_full_name: &str,
+    state: &str,
+    text: &str,
+    since: Option<&str>,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+) -> String {
+    let mut parts = vec![
+        github_search_qualifier("repo", repo_full_name),
+        "is:issue".to_string(),
+    ];
+    let text = text.trim();
+    if !text.is_empty() {
+        parts.push(text.to_string());
+    }
+    if state == "open" || state == "closed" {
+        parts.push(github_search_qualifier("state", state));
+    }
+    if let Some(value) = since.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(format!("updated:>={value}"));
+    }
+    if let Some(value) = creator.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(github_search_qualifier("author", value));
+    }
+    if let Some(value) = assignee.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:assignee".to_string());
+        } else {
+            parts.push(github_search_qualifier("assignee", value));
+        }
+    }
+    for label in labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|label| label.trim())
+        .filter(|label| !label.is_empty())
+    {
+        parts.push(github_search_qualifier("label", label));
+    }
+    if let Some(value) = milestone.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:milestone".to_string());
+        } else {
+            parts.push(github_search_qualifier("milestone", value));
+        }
+    }
+    parts.join(" ")
+}
+
+pub(super) fn github_pull_request_search_query(
+    repo_full_name: &str,
+    state: &str,
+    text: &str,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+    review: Option<&str>,
+) -> String {
+    let mut parts = vec![
+        github_search_qualifier("repo", repo_full_name),
+        "is:pr".to_string(),
+    ];
+    let text = text.trim();
+    if !text.is_empty() {
+        parts.push(text.to_string());
+    }
+    match state {
+        "merged" => parts.push("is:merged".to_string()),
+        "closed" => {
+            parts.push(github_search_qualifier("state", "closed"));
+            parts.push("-is:merged".to_string());
+        }
+        "all" => {}
+        _ => parts.push(github_search_qualifier("state", "open")),
+    }
+    if let Some(value) = creator.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(github_search_qualifier("author", value));
+    }
+    if let Some(value) = assignee.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:assignee".to_string());
+        } else {
+            parts.push(github_search_qualifier("assignee", value));
+        }
+    }
+    for label in labels
+        .unwrap_or(&[])
+        .iter()
+        .map(|label| label.trim())
+        .filter(|label| !label.is_empty())
+    {
+        parts.push(github_search_qualifier("label", label));
+    }
+    if let Some(value) = milestone.map(str::trim).filter(|value| !value.is_empty()) {
+        if value == "none" {
+            parts.push("no:milestone".to_string());
+        } else {
+            parts.push(github_search_qualifier("milestone", value));
+        }
+    }
+    if let Some(value) = review.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(github_search_qualifier("review", value));
+    }
+    parts.join(" ")
+}
+
+pub(super) fn github_issue_project_items_from_graphql(
+    data: GitHubIssueProjectsGraphQlData,
+) -> std::collections::HashMap<u64, Vec<GitHubIssueProjectItem>> {
+    let mut map = std::collections::HashMap::new();
+    let Some(repository) = data.repository else {
+        return map;
+    };
+    for issue in repository
+        .issues
+        .nodes
+        .into_iter()
+        .chain(repository.pull_requests.nodes.into_iter())
+        .flatten()
+    {
+        let projects = issue
+            .project_items
+            .nodes
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let project = item.project?;
+                Some(GitHubIssueProjectItem {
+                    id: project.id,
+                    title: project.title,
+                })
+            })
+            .collect::<Vec<_>>();
+        map.insert(issue.number, projects);
+    }
+    map
+}
+
+pub(super) fn fetch_github_issue_project_items(
+    app: &AppHandle,
+    repo_full_name: &str,
+    binding: &GitHubBindingMetadata,
+    token: &str,
+) -> Result<std::collections::HashMap<u64, Vec<GitHubIssueProjectItem>>, String> {
+    if !github_binding_has_scope(binding, GITHUB_READ_PROJECT_SCOPE) {
+        return Ok(std::collections::HashMap::new());
+    }
+    let repo = normalize_github_repo_input(repo_full_name)?;
+    let client = build_client()?;
+    let query = r#"
+      query RepoIssueProjects($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) {
+          issues(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes {
+              number
+              projectItems(first: 20) {
+                nodes {
+                  id
+                  project {
+                    id
+                    title
+                  }
+                }
+              }
+            }
+          }
+          pullRequests(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes {
+              number
+              projectItems(first: 20) {
+                nodes {
+                  id
+                  project {
+                    id
+                    title
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    "#;
+    let response = github_send(
+        app,
+        "读取 GitHub Issue Projects 失败",
+        github_headers(
+            client
+                .post("https://api.github.com/graphql")
+                .json(&serde_json::json!({
+                    "query": query,
+                    "variables": {
+                        "owner": repo.owner,
+                        "name": repo.name,
+                    },
+                })),
+            Some(token),
+        ),
+    )?;
+    let result = github_json::<GitHubGraphQlResponse<GitHubIssueProjectsGraphQlData>>(
+        "读取 GitHub Issue Projects 失败",
+        response,
+    )?;
+    if !result.errors.is_empty() {
+        if github_graphql_errors_require_read_project(&result.errors) {
+            return Ok(std::collections::HashMap::new());
+        }
+        let detail = result
+            .errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!("读取 GitHub Issue Projects 失败：{detail}"));
+    }
+    let data = result
+        .data
+        .ok_or_else(|| "读取 GitHub Issue Projects 失败：GraphQL 响应缺少 data".to_string())?;
+    Ok(github_issue_project_items_from_graphql(data))
+}
+
+pub(super) fn enrich_github_issues_with_projects(
+    app: &AppHandle,
+    repo_full_name: &str,
+    binding: &GitHubBindingMetadata,
+    token: &str,
+    issues: &mut [GitHubIssue],
+) -> Result<(), String> {
+    if issues.is_empty() {
+        return Ok(());
+    }
+    let project_items = fetch_github_issue_project_items(app, repo_full_name, binding, token)?;
+    for issue in issues {
+        issue.project_items = project_items
+            .get(&issue.number)
+            .cloned()
+            .unwrap_or_default();
+    }
+    Ok(())
+}
+
+pub(super) fn github_issue_filter_metadata_from_issues(
+    issues: &[GitHubIssue],
+) -> GitHubIssueFilterMetadata {
+    let mut authors = issues
+        .iter()
+        .filter_map(|issue| issue.author.clone())
+        .filter(|author| !author.trim().is_empty())
+        .collect::<Vec<_>>();
+    authors.sort();
+    authors.dedup();
+
+    let mut labels = issues
+        .iter()
+        .flat_map(|issue| issue.labels.clone())
+        .filter(|label| !label.trim().is_empty())
+        .collect::<Vec<_>>();
+    labels.sort();
+    labels.dedup();
+
+    let mut assignees = issues
+        .iter()
+        .flat_map(|issue| issue.assignees.clone())
+        .filter(|assignee| !assignee.trim().is_empty())
+        .collect::<Vec<_>>();
+    assignees.sort();
+    assignees.dedup();
+
+    let mut milestone_map = std::collections::HashMap::<u64, GitHubIssueMilestone>::new();
+    let mut project_map = std::collections::HashMap::<String, GitHubIssueProjectItem>::new();
+    for issue in issues {
+        if let Some(milestone) = &issue.milestone {
+            milestone_map.insert(milestone.number, milestone.clone());
+        }
+        for project in &issue.project_items {
+            project_map.insert(project.id.clone(), project.clone());
+        }
+    }
+    let mut milestones = milestone_map.into_values().collect::<Vec<_>>();
+    milestones.sort_by(|left, right| left.title.cmp(&right.title));
+    let mut projects = project_map.into_values().collect::<Vec<_>>();
+    projects.sort_by(|left, right| left.title.cmp(&right.title));
+
+    GitHubIssueFilterMetadata {
+        authors,
+        labels,
+        assignees,
+        milestones,
+        projects,
+    }
+}
+
+fn merge_unique_sorted_strings(left: Vec<String>, right: Vec<String>) -> Vec<String> {
+    let mut values = left
+        .into_iter()
+        .chain(right)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
 }
 
 pub(super) fn github_workflow_run_from_response(
@@ -844,7 +1793,417 @@ pub(super) fn github_workflow_run_from_response(
         html_url: run.html_url,
         created_at: run.created_at,
         updated_at: run.updated_at,
+        actor: run.actor.map(|actor| actor.login),
+        head_sha: normalize_optional_string(run.head_sha),
+        run_number: run.run_number,
+        run_attempt: run.run_attempt,
+        workflow_id: run.workflow_id,
+        run_started_at: normalize_optional_string(run.run_started_at),
     }
+}
+
+pub(super) fn github_workflow_job_from_response(
+    job: GitHubWorkflowJobResponse,
+) -> GitHubWorkflowJob {
+    GitHubWorkflowJob {
+        id: job.id,
+        name: normalize_optional_string(job.name).unwrap_or_else(|| "Job".to_string()),
+        status: normalize_optional_string(job.status).unwrap_or_else(|| "unknown".to_string()),
+        conclusion: normalize_optional_string(job.conclusion),
+        started_at: normalize_optional_string(job.started_at),
+        completed_at: normalize_optional_string(job.completed_at),
+        html_url: normalize_optional_string(job.html_url),
+        runner_name: normalize_optional_string(job.runner_name),
+        steps: job
+            .steps
+            .into_iter()
+            .enumerate()
+            .map(|(index, step)| GitHubWorkflowJobStep {
+                name: normalize_optional_string(step.name)
+                    .unwrap_or_else(|| format!("Step {}", index + 1)),
+                status: normalize_optional_string(step.status)
+                    .unwrap_or_else(|| "unknown".to_string()),
+                conclusion: normalize_optional_string(step.conclusion),
+                number: step.number.unwrap_or((index + 1) as u64),
+                started_at: normalize_optional_string(step.started_at),
+                completed_at: normalize_optional_string(step.completed_at),
+            })
+            .collect(),
+    }
+}
+
+pub(super) fn github_workflow_artifact_from_response(
+    artifact: GitHubWorkflowArtifactResponse,
+) -> GitHubWorkflowArtifact {
+    GitHubWorkflowArtifact {
+        id: artifact.id,
+        name: normalize_optional_string(artifact.name).unwrap_or_else(|| "artifact".to_string()),
+        size_in_bytes: artifact.size_in_bytes.unwrap_or_default(),
+        expired: artifact.expired,
+        created_at: artifact.created_at,
+        expires_at: normalize_optional_string(artifact.expires_at),
+    }
+}
+
+pub(super) fn github_workflow_definition_from_file(
+    workflow: GitHubWorkflowResponse,
+    ref_name: String,
+    file: GitHubContentFileResponse,
+) -> Result<Option<GitHubWorkflowDefinition>, String> {
+    let Some(path) = normalize_optional_string(workflow.path) else {
+        return Ok(None);
+    };
+    let content = github_text_content_from_file("读取 GitHub Actions workflow 文件失败", file)?;
+    Ok(Some(GitHubWorkflowDefinition {
+        id: workflow.id,
+        path,
+        ref_name,
+        content,
+    }))
+}
+
+pub(super) fn github_workflow_definition_for_run(
+    app: &AppHandle,
+    client: &reqwest::blocking::Client,
+    repo_api_url: &str,
+    repo_full_name: &str,
+    token: &str,
+    run: &GitHubWorkflowRun,
+) -> Result<Option<GitHubWorkflowDefinition>, String> {
+    let Some(workflow_id) = run.workflow_id else {
+        return Ok(None);
+    };
+    let Some(ref_name) = normalize_github_ref_name(run.head_sha.as_deref()) else {
+        return Ok(None);
+    };
+    let workflow_response = github_send(
+        app,
+        "读取 GitHub Actions workflow 失败",
+        github_headers(
+            client.get(format!("{repo_api_url}/actions/workflows/{workflow_id}")),
+            Some(token),
+        ),
+    )?;
+    let workflow = github_json::<GitHubWorkflowResponse>(
+        "读取 GitHub Actions workflow 失败",
+        workflow_response,
+    )?;
+    let Some(path) = normalize_optional_string(workflow.path.clone()) else {
+        return Ok(None);
+    };
+    let file_response = github_send(
+        app,
+        "读取 GitHub Actions workflow 文件失败",
+        github_headers(
+            client
+                .get(github_repo_contents_api_url(repo_full_name, Some(&path))?)
+                .query(&[("ref", ref_name.as_str())]),
+            Some(token),
+        ),
+    )?;
+    let file = github_json::<GitHubContentFileResponse>(
+        "读取 GitHub Actions workflow 文件失败",
+        file_response,
+    )?;
+    github_workflow_definition_from_file(workflow, ref_name, file)
+}
+
+pub(super) fn github_artifact_cache_path(repo_full_name: &str, artifact_id: u64) -> PathBuf {
+    let safe_repo = repo_full_name
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.') {
+                value
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    std::env::temp_dir()
+        .join("lilia-github-actions")
+        .join(safe_repo)
+        .join(format!("{artifact_id}.zip"))
+}
+
+pub(super) fn github_artifact_entry_path(path: &Path) -> Result<String, String> {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let normalized = normalized.trim_matches('/').to_string();
+    if normalized.is_empty() {
+        return Err("artifact 文件路径不能为空".to_string());
+    }
+    Ok(normalized)
+}
+
+pub(super) fn github_artifact_entry_from_zip_file<R: Read>(
+    file: &zip::read::ZipFile<'_, R>,
+) -> Result<Option<GitHubWorkflowArtifactEntry>, String> {
+    let Some(path) = file.enclosed_name() else {
+        return Ok(None);
+    };
+    let path = github_artifact_entry_path(&path)?;
+    let name = Path::new(&path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&path)
+        .to_string();
+    Ok(Some(GitHubWorkflowArtifactEntry {
+        path,
+        name,
+        kind: if file.is_dir() { "dir" } else { "file" }.to_string(),
+        size: file.size(),
+    }))
+}
+
+pub(super) fn github_artifact_preview_from_bytes(
+    path: String,
+    size: u64,
+    bytes: Vec<u8>,
+) -> RepoFilePreview {
+    let name = Path::new(&path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&path)
+        .to_string();
+    let preview_path = Path::new(&path);
+    let mime = super::file_browser::file_preview_mime(preview_path).map(str::to_string);
+    if size > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+        return RepoFilePreview {
+            path,
+            name,
+            preview_kind: "tooLarge".to_string(),
+            content: None,
+            data_url: None,
+            images: HashMap::new(),
+            size,
+            mime_type: mime,
+            truncated: false,
+        };
+    }
+    if is_markdown_preview_path(&path) {
+        if let Ok(content) = String::from_utf8(bytes) {
+            return RepoFilePreview {
+                path,
+                name,
+                preview_kind: "markdown".to_string(),
+                content: Some(content),
+                data_url: None,
+                images: HashMap::new(),
+                size,
+                mime_type: Some("text/markdown".to_string()),
+                truncated: false,
+            };
+        }
+        return RepoFilePreview {
+            path,
+            name,
+            preview_kind: "binary".to_string(),
+            content: None,
+            data_url: None,
+            images: HashMap::new(),
+            size,
+            mime_type: Some("text/markdown".to_string()),
+            truncated: false,
+        };
+    }
+    if let Some(image_mime) = image_mime_for_path(preview_path) {
+        return RepoFilePreview {
+            path,
+            name,
+            preview_kind: "image".to_string(),
+            content: None,
+            data_url: Some(format!("data:{image_mime};base64,{}", STANDARD.encode(bytes))),
+            images: HashMap::new(),
+            size,
+            mime_type: Some(image_mime.to_string()),
+            truncated: false,
+        };
+    }
+    if let Ok(content) = String::from_utf8(bytes) {
+        if !content.contains('\0') {
+            return RepoFilePreview {
+                path,
+                name,
+                preview_kind: "text".to_string(),
+                content: Some(content),
+                data_url: None,
+                images: HashMap::new(),
+                size,
+                mime_type: mime.or_else(|| Some("text/plain".to_string())),
+                truncated: false,
+            };
+        }
+    }
+    RepoFilePreview {
+        path,
+        name,
+        preview_kind: "binary".to_string(),
+        content: None,
+        data_url: None,
+        images: HashMap::new(),
+        size,
+        mime_type: mime,
+        truncated: false,
+    }
+}
+
+pub(super) fn github_commit_summary_from_response(commit: GitHubCommitResponse) -> CommitSummary {
+    let author = commit.commit.author.as_ref();
+    let subject = commit
+        .commit
+        .message
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    CommitSummary {
+        short_hash: short_github_hash(&commit.sha),
+        hash: commit.sha,
+        author: author
+            .and_then(|item| normalize_optional_string(item.name.clone()))
+            .unwrap_or_else(|| "unknown".to_string()),
+        author_email: author.and_then(|item| normalize_optional_string(item.email.clone())),
+        timestamp: author
+            .and_then(|item| item.date.as_deref())
+            .and_then(parse_github_datetime)
+            .unwrap_or_default(),
+        subject,
+        parents: commit
+            .parents
+            .into_iter()
+            .map(|parent| parent.sha)
+            .collect(),
+        refs: Vec::new(),
+    }
+}
+
+pub(super) fn github_commit_detail_from_response(commit: GitHubCommitResponse) -> CommitDetail {
+    let author = commit.commit.author.as_ref();
+    let committer = commit.commit.committer.as_ref();
+    let mut message_lines = commit.commit.message.lines();
+    let subject = message_lines.next().unwrap_or("").trim().to_string();
+    let body = message_lines
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+    let timestamp = author
+        .and_then(|item| item.date.as_deref())
+        .and_then(parse_github_datetime)
+        .unwrap_or_default();
+    CommitDetail {
+        short_hash: short_github_hash(&commit.sha),
+        hash: commit.sha,
+        author: author
+            .and_then(|item| normalize_optional_string(item.name.clone()))
+            .unwrap_or_else(|| "unknown".to_string()),
+        author_email: author.and_then(|item| normalize_optional_string(item.email.clone())),
+        committer: committer
+            .and_then(|item| normalize_optional_string(item.name.clone()))
+            .unwrap_or_else(|| "unknown".to_string()),
+        committer_email: committer.and_then(|item| normalize_optional_string(item.email.clone())),
+        timestamp,
+        subject,
+        body,
+        parents: commit
+            .parents
+            .into_iter()
+            .map(|parent| parent.sha)
+            .collect(),
+        refs: Vec::new(),
+        files: github_commit_file_changes(commit.files),
+    }
+}
+
+pub(super) fn github_commit_file_changes(
+    files: Vec<GitHubCommitFileResponse>,
+) -> Vec<CommitFileChange> {
+    let patch_output = files
+        .iter()
+        .filter_map(github_commit_file_patch_block)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let patches = commit_file_patches(&patch_output);
+    files
+        .into_iter()
+        .map(|file| {
+            let path = file.filename;
+            let parsed = patches.get(&path);
+            CommitFileChange {
+                path,
+                old_path: file.previous_filename,
+                status: github_commit_file_status(&file.status).to_string(),
+                additions: file.additions,
+                deletions: file.deletions,
+                patch: parsed.map(|patch| patch.patch.clone()).unwrap_or_default(),
+                hunks: parsed.map(|patch| patch.hunks.clone()).unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+pub(super) fn github_commit_file_patch_block(file: &GitHubCommitFileResponse) -> Option<String> {
+    let patch = file.patch.as_ref()?.trim_end();
+    if patch.is_empty() {
+        return None;
+    }
+    let old_path = file.previous_filename.as_deref().unwrap_or(&file.filename);
+    let old_header = if file.status == "added" {
+        "/dev/null".to_string()
+    } else {
+        format!("a/{old_path}")
+    };
+    let new_header = if file.status == "removed" {
+        "/dev/null".to_string()
+    } else {
+        format!("b/{new_path}", new_path = file.filename)
+    };
+    Some(format!(
+        "diff --git a/{old_path} b/{new_path}\n--- {old_header}\n+++ {new_header}\n{patch}",
+        new_path = file.filename,
+    ))
+}
+
+pub(super) fn github_commit_file_status(status: &str) -> &str {
+    match status {
+        "added" => "added",
+        "removed" => "deleted",
+        "renamed" => "renamed",
+        "copied" => "copied",
+        _ => "modified",
+    }
+}
+
+pub(super) fn short_github_hash(hash: &str) -> String {
+    hash.chars().take(7).collect()
+}
+
+pub(super) fn parse_github_datetime(value: &str) -> Option<i64> {
+    let trimmed = value.trim().trim_end_matches('Z');
+    let (date, time) = trimmed.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i32>().ok()?;
+    let month = date_parts.next()?.parse::<i32>().ok()?;
+    let day = date_parts.next()?.parse::<i32>().ok()?;
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<i64>().ok()?;
+    let minute = time_parts.next()?.parse::<i64>().ok()?;
+    let second = time_parts.next()?.split('.').next()?.parse::<i64>().ok()?;
+    let days = days_from_civil(year, month, day)?;
+    Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+pub(super) fn days_from_civil(year: i32, month: i32, day: i32) -> Option<i64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let y = year - i32::from(month <= 2);
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146_097 + doe - 719_468) as i64)
 }
 
 pub(super) fn github_branch_from_response(branch: GitHubBranchResponse) -> BranchSummary {
@@ -1244,10 +2603,8 @@ fn fetch_github_repo_management(
             Some(&token),
         ),
     )?;
-    let topics = github_json::<GitHubRepoTopicsResponse>(
-        "读取 GitHub 仓库 topics 失败",
-        topics_response,
-    )?;
+    let topics =
+        github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", topics_response)?;
     Ok(github_repo_management_from_response(repo, topics.names))
 }
 
@@ -1424,10 +2781,34 @@ pub async fn github_list_pull_requests(
     app: AppHandle,
     repo_full_name: String,
     state: Option<String>,
+    per_page: Option<u32>,
+    sort: Option<String>,
+    direction: Option<String>,
+    creator: Option<String>,
+    assignee: Option<String>,
+    labels: Option<Vec<String>>,
+    milestone: Option<serde_json::Value>,
+    project: Option<String>,
+    review: Option<String>,
+    query: Option<String>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubPullRequest>, String> {
     run_blocking("读取 GitHub Pull Requests", move || {
-        let pull_key = github_pull_request_cache_key(state.as_deref());
+        let milestone_key = github_issue_milestone_param(milestone.clone());
+        let search_query = normalize_optional_string(query.clone());
+        let pull_key = github_pull_request_cache_key(
+            state.as_deref(),
+            per_page,
+            sort.as_deref(),
+            direction.as_deref(),
+            creator.as_deref(),
+            assignee.as_deref(),
+            labels.as_deref(),
+            milestone_key.as_deref(),
+            project.as_deref(),
+            review.as_deref(),
+            search_query.as_deref(),
+        );
         let cache_key = github_project_cache_repo_key(&repo_full_name)?;
         if github_project_cache_enabled(force_refresh) {
             if let Some(cached) = load_github_project_cache(&app)
@@ -1438,31 +2819,82 @@ pub async fn github_list_pull_requests(
                 return Ok(cached);
             }
         }
-        let (_binding, token) = github_require_token(&app)?;
+        let (binding, token) = github_require_token(&app)?;
         let pull_state = match state.as_deref() {
             Some("closed") => "closed",
+            Some("merged") => "merged",
             Some("all") => "all",
             _ => "open",
         };
+        let pull_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+        let pull_sort = match sort.as_deref() {
+            Some("created") => "created",
+            Some("comments") => "comments",
+            _ => "updated",
+        };
+        let pull_direction = match direction.as_deref() {
+            Some("asc") => "asc",
+            _ => "desc",
+        };
+        let pull_creator = normalize_optional_string(creator);
+        let pull_assignee = normalize_optional_string(assignee);
+        let pull_review = normalize_optional_string(review);
         let client = build_client()?;
+        let search_q = github_pull_request_search_query(
+            &repo_full_name,
+            pull_state,
+            search_query.as_deref().unwrap_or(""),
+            pull_creator.as_deref(),
+            pull_assignee.as_deref(),
+            labels.as_deref(),
+            milestone_key.as_deref(),
+            pull_review.as_deref(),
+        );
+        let search_params = vec![
+            ("q", search_q),
+            ("per_page", pull_per_page),
+            ("sort", pull_sort.to_string()),
+            ("order", pull_direction.to_string()),
+        ];
         let response = github_send(
             &app,
             "读取 GitHub Pull Requests 失败",
             github_headers(
                 client
-                    .get(format!("{}/pulls", github_repo_api_url(&repo_full_name)?))
-                    .query(&[("state", pull_state), ("per_page", "50"), ("sort", "updated"), ("direction", "desc")]),
+                    .get("https://api.github.com/search/issues")
+                    .query(&search_params),
                 Some(&token),
             ),
         )?;
-        let pull_requests = github_json::<Vec<GitHubPullRequestResponse>>(
-            "读取 GitHub Pull Requests 失败",
-            response,
-        )?;
-        let pulls = pull_requests
-            .into_iter()
-            .map(github_pull_request_from_response)
-            .collect::<Vec<_>>();
+        let mut issues =
+            github_json::<GitHubIssueSearchResponse>("读取 GitHub Pull Requests 失败", response)?
+                .items
+                .into_iter()
+                .filter_map(github_pull_request_issue_from_response)
+                .collect::<Vec<_>>();
+        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
+        if let Some(project_filter) = normalize_optional_string(project) {
+            issues.retain(|issue| {
+                issue
+                    .project_items
+                    .iter()
+                    .any(|item| item.id == project_filter || item.title == project_filter)
+            });
+        }
+        let mut pulls = Vec::with_capacity(issues.len());
+        for issue in issues {
+            let pull_request = github_fetch_pull_request_response(
+                &app,
+                &repo_full_name,
+                issue.number,
+                &token,
+                "读取 GitHub Pull Request 失败",
+            )?;
+            pulls.push(github_pull_request_with_issue_metadata(
+                github_pull_request_from_response(pull_request),
+                issue,
+            ));
+        }
         update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
             repo_cache.pull_requests.insert(pull_key, pulls.clone());
         })?;
@@ -1527,10 +2959,8 @@ pub async fn github_create_pull_request(
                 Some(&token),
             ),
         )?;
-        let pull_request = github_json::<GitHubPullRequestResponse>(
-            "创建 GitHub Pull Request 失败",
-            response,
-        )?;
+        let pull_request =
+            github_json::<GitHubPullRequestResponse>("创建 GitHub Pull Request 失败", response)?;
         let pull = github_pull_request_from_response(pull_request);
         clear_github_project_pull_request_cache(&app, &repo_full_name)?;
         Ok(pull)
@@ -1581,10 +3011,8 @@ pub async fn github_update_pull_request(
                 Some(&token),
             ),
         )?;
-        let pull_request = github_json::<GitHubPullRequestResponse>(
-            "更新 GitHub Pull Request 失败",
-            response,
-        )?;
+        let pull_request =
+            github_json::<GitHubPullRequestResponse>("更新 GitHub Pull Request 失败", response)?;
         let pull = github_pull_request_from_response(pull_request);
         clear_github_project_pull_request_cache(&app, &repo_full_name)?;
         Ok(pull)
@@ -1612,7 +3040,10 @@ pub async fn github_merge_pull_request(
             payload.insert("commit_title".to_string(), serde_json::Value::String(value));
         }
         if let Some(value) = normalize_optional_string(request.commit_message) {
-            payload.insert("commit_message".to_string(), serde_json::Value::String(value));
+            payload.insert(
+                "commit_message".to_string(),
+                serde_json::Value::String(value),
+            );
         }
         if let Some(value) = normalize_optional_string(request.sha) {
             payload.insert("sha".to_string(), serde_json::Value::String(value));
@@ -1726,15 +3157,29 @@ pub async fn github_list_issues(
     sort: Option<String>,
     direction: Option<String>,
     since: Option<String>,
+    creator: Option<String>,
+    assignee: Option<String>,
+    labels: Option<Vec<String>>,
+    milestone: Option<serde_json::Value>,
+    project: Option<String>,
+    query: Option<String>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubIssue>, String> {
     run_blocking("读取 GitHub Issue", move || {
+        let milestone_key = github_issue_milestone_param(milestone.clone());
+        let search_query = normalize_optional_string(query.clone());
         let issue_key = github_issue_cache_key(
             state.as_deref(),
             per_page,
             sort.as_deref(),
             direction.as_deref(),
             since.as_deref(),
+            creator.as_deref(),
+            assignee.as_deref(),
+            labels.as_deref(),
+            milestone_key.as_deref(),
+            project.as_deref(),
+            search_query.as_deref(),
         );
         let cache_key = github_project_cache_repo_key(&repo_full_name)?;
         if github_project_cache_enabled(force_refresh) {
@@ -1746,7 +3191,7 @@ pub async fn github_list_issues(
                 return Ok(cached);
             }
         }
-        let (_binding, token) = github_require_token(&app)?;
+        let (binding, token) = github_require_token(&app)?;
         let issue_state = state.unwrap_or_else(|| "open".to_string());
         let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
         let issue_sort = match sort.as_deref() {
@@ -1758,19 +3203,129 @@ pub async fn github_list_issues(
             Some("asc") => "asc",
             _ => "desc",
         };
-        let mut query = vec![
-            ("state", issue_state),
-            ("per_page", issue_per_page),
+        let issue_since = normalize_optional_string(since);
+        let issue_creator = normalize_optional_string(creator);
+        let issue_assignee = normalize_optional_string(assignee);
+        let issue_labels = github_issue_labels_param(labels.clone());
+        let issue_milestone = milestone_key.clone();
+        let mut rest_query = vec![
+            ("state", issue_state.clone()),
+            ("per_page", issue_per_page.clone()),
             ("sort", issue_sort.to_string()),
             ("direction", issue_direction.to_string()),
         ];
-        if let Some(issue_since) = normalize_optional_string(since) {
-            query.push(("since", issue_since));
+        if let Some(issue_since) = issue_since.clone() {
+            rest_query.push(("since", issue_since));
+        }
+        if let Some(issue_creator) = issue_creator.clone() {
+            rest_query.push(("creator", issue_creator));
+        }
+        if let Some(issue_assignee) = issue_assignee.clone() {
+            rest_query.push(("assignee", issue_assignee));
+        }
+        if let Some(issue_labels) = issue_labels.clone() {
+            rest_query.push(("labels", issue_labels));
+        }
+        if let Some(issue_milestone) = issue_milestone.clone() {
+            rest_query.push(("milestone", issue_milestone));
         }
         let client = build_client()?;
+        let issues = if let Some(search_text) = search_query {
+            let search_sort = match issue_sort {
+                "updated" => "updated",
+                "comments" => "comments",
+                _ => "created",
+            };
+            let search_q = github_issue_search_query(
+                &repo_full_name,
+                &issue_state,
+                &search_text,
+                issue_since.as_deref(),
+                issue_creator.as_deref(),
+                issue_assignee.as_deref(),
+                labels.as_deref(),
+                milestone_key.as_deref(),
+            );
+            let search_params = vec![
+                ("q", search_q),
+                ("per_page", issue_per_page),
+                ("sort", search_sort.to_string()),
+                ("order", issue_direction.to_string()),
+            ];
+            let response = github_send(
+                &app,
+                "搜索 GitHub Issue 失败",
+                github_headers(
+                    client
+                        .get("https://api.github.com/search/issues")
+                        .query(&search_params),
+                    Some(&token),
+                ),
+            )?;
+            github_json::<GitHubIssueSearchResponse>("搜索 GitHub Issue 失败", response)?.items
+        } else {
+            let response = github_send(
+                &app,
+                "读取 GitHub Issue 失败",
+                github_headers(
+                    client
+                        .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
+                        .query(&rest_query),
+                    Some(&token),
+                ),
+            )?;
+            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?
+        };
+        let mut issues = issues
+            .into_iter()
+            .filter_map(github_issue_from_response)
+            .collect::<Vec<_>>();
+        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
+        if let Some(project_filter) = normalize_optional_string(project) {
+            issues.retain(|issue| {
+                issue
+                    .project_items
+                    .iter()
+                    .any(|item| item.id == project_filter || item.title == project_filter)
+            });
+        }
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.issues.insert(issue_key, issues.clone());
+        })?;
+        Ok(issues)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_issue_filter_metadata(
+    app: AppHandle,
+    repo_full_name: String,
+    force_refresh: Option<bool>,
+) -> Result<GitHubIssueFilterMetadata, String> {
+    run_blocking("读取 GitHub Issue 筛选项", move || {
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            let cache = load_github_project_cache(&app);
+            if let Some(repo_cache) = cache.repos.get(&cache_key) {
+                if let Some(cached) = repo_cache.issue_filter_metadata.clone() {
+                    if !cached.labels.is_empty() || repo_cache.issue_labels.is_some() {
+                        return Ok(cached);
+                    }
+                }
+            }
+        }
+        let (binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let query = vec![
+            ("state", "all".to_string()),
+            ("per_page", "100".to_string()),
+            ("sort", "updated".to_string()),
+            ("direction", "desc".to_string()),
+        ];
         let response = github_send(
             &app,
-            "读取 GitHub Issue 失败",
+            "读取 GitHub Issue 筛选项失败",
             github_headers(
                 client
                     .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
@@ -1778,15 +3333,138 @@ pub async fn github_list_issues(
                 Some(&token),
             ),
         )?;
-        let issues = github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?;
-        let issues = issues
+        let issues =
+            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 筛选项失败", response)?;
+        let mut issues = issues
             .into_iter()
             .filter_map(github_issue_from_response)
             .collect::<Vec<_>>();
+        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
+        let mut metadata = github_issue_filter_metadata_from_issues(&issues);
+        let repo_labels = list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)?;
+        metadata.labels = merge_unique_sorted_strings(metadata.labels, repo_labels);
         update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.issues.insert(issue_key, issues.clone());
+            repo_cache.issue_filter_metadata = Some(metadata.clone());
         })?;
-        Ok(issues)
+        Ok(metadata)
+    })
+    .await
+}
+
+fn list_github_issue_values(
+    app: &AppHandle,
+    repo_full_name: &str,
+    force_refresh: Option<bool>,
+    cache_read: impl Fn(&GitHubProjectRepoCache) -> Option<Vec<String>>,
+    cache_write: impl Fn(&mut GitHubProjectRepoCache, Vec<String>),
+    endpoint: &str,
+    error_label: &'static str,
+    parse_values: impl Fn(Response) -> Result<Vec<String>, String>,
+) -> Result<Vec<String>, String> {
+    let cache_key = github_project_cache_repo_key(repo_full_name)?;
+    if github_project_cache_enabled(force_refresh) {
+        if let Some(cached) = load_github_project_cache(app)
+            .repos
+            .get(&cache_key)
+            .and_then(cache_read)
+        {
+            return Ok(cached);
+        }
+    }
+    let (_binding, token) = github_require_token(app)?;
+    let client = build_client()?;
+    let response = github_send(
+        app,
+        error_label,
+        github_headers(
+            client
+                .get(format!(
+                    "{}/{}",
+                    github_repo_api_url(repo_full_name)?,
+                    endpoint
+                ))
+                .query(&[("per_page", "100")]),
+            Some(&token),
+        ),
+    )?;
+    let values = parse_values(response)?;
+    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+        cache_write(repo_cache, values.clone());
+    })?;
+    Ok(values)
+}
+
+fn list_github_issue_labels_inner(
+    app: &AppHandle,
+    repo_full_name: &str,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    list_github_issue_values(
+        app,
+        repo_full_name,
+        force_refresh,
+        |repo_cache| repo_cache.issue_labels.clone(),
+        |repo_cache, labels| repo_cache.issue_labels = Some(labels),
+        "labels",
+        "读取 GitHub Issue Labels 失败",
+        |response| {
+            Ok(
+                github_json::<Vec<GitHubLabelResponse>>("读取 GitHub Issue Labels 失败", response)?
+                    .into_iter()
+                    .map(|label| label.name)
+                    .filter(|label| !label.trim().is_empty())
+                    .collect(),
+            )
+        },
+    )
+}
+
+fn list_github_issue_assignees_inner(
+    app: &AppHandle,
+    repo_full_name: &str,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    list_github_issue_values(
+        app,
+        repo_full_name,
+        force_refresh,
+        |repo_cache| repo_cache.issue_assignees.clone(),
+        |repo_cache, assignees| repo_cache.issue_assignees = Some(assignees),
+        "assignees",
+        "读取 GitHub Issue Assignees 失败",
+        |response| {
+            Ok(github_json::<Vec<GitHubAssigneeResponse>>(
+                "读取 GitHub Issue Assignees 失败",
+                response,
+            )?
+            .into_iter()
+            .map(|assignee| assignee.login)
+            .filter(|assignee| !assignee.trim().is_empty())
+            .collect())
+        },
+    )
+}
+
+#[tauri::command]
+pub async fn github_list_issue_labels(
+    app: AppHandle,
+    repo_full_name: String,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    run_blocking("读取 GitHub Issue Labels", move || {
+        list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_issue_assignees(
+    app: AppHandle,
+    repo_full_name: String,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    run_blocking("读取 GitHub Issue Assignees", move || {
+        list_github_issue_assignees_inner(&app, &repo_full_name, force_refresh)
     })
     .await
 }
@@ -1932,6 +3610,421 @@ pub async fn github_list_workflow_runs(
             repo_cache.workflow_runs.insert(runs_key, runs.clone());
         })?;
         Ok(runs)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_workflow_run_detail(
+    app: AppHandle,
+    repo_full_name: String,
+    run_id: u64,
+    _force_refresh: Option<bool>,
+) -> Result<GitHubWorkflowRunDetail, String> {
+    run_blocking("读取 GitHub Actions 详情", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let repo_api_url = github_repo_api_url(&repo_full_name)?;
+        let run_response = github_send(
+            &app,
+            "读取 GitHub Actions 详情失败",
+            github_headers(
+                client.get(format!("{repo_api_url}/actions/runs/{run_id}")),
+                Some(&token),
+            ),
+        )?;
+        let run = github_workflow_run_from_response(github_json::<GitHubWorkflowRunResponse>(
+            "读取 GitHub Actions 详情失败",
+            run_response,
+        )?);
+        let jobs_response = github_send(
+            &app,
+            "读取 GitHub Actions jobs 失败",
+            github_headers(
+                client
+                    .get(format!("{repo_api_url}/actions/runs/{run_id}/jobs"))
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let jobs = github_json::<GitHubWorkflowJobsResponse>(
+            "读取 GitHub Actions jobs 失败",
+            jobs_response,
+        )?
+        .jobs
+        .into_iter()
+        .map(github_workflow_job_from_response)
+        .collect::<Vec<_>>();
+        let artifacts_response = github_send(
+            &app,
+            "读取 GitHub Actions artifacts 失败",
+            github_headers(
+                client
+                    .get(format!("{repo_api_url}/actions/runs/{run_id}/artifacts"))
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let artifacts = github_json::<GitHubWorkflowArtifactsResponse>(
+            "读取 GitHub Actions artifacts 失败",
+            artifacts_response,
+        )?
+        .artifacts
+        .into_iter()
+        .map(github_workflow_artifact_from_response)
+        .collect::<Vec<_>>();
+        let workflow = github_workflow_definition_for_run(
+            &app,
+            &client,
+            &repo_api_url,
+            &repo_full_name,
+            &token,
+            &run,
+        )
+        .ok()
+        .flatten();
+        Ok(GitHubWorkflowRunDetail {
+            run,
+            jobs,
+            artifacts,
+            workflow,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_workflow_job_log(
+    app: AppHandle,
+    repo_full_name: String,
+    job_id: u64,
+    _force_refresh: Option<bool>,
+) -> Result<GitHubWorkflowJobLog, String> {
+    run_blocking("读取 GitHub Actions 日志", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Actions 日志失败",
+            github_headers(
+                client.get(format!(
+                    "{}/actions/jobs/{job_id}/logs",
+                    github_repo_api_url(&repo_full_name)?
+                )),
+                Some(&token),
+            ),
+        )?;
+        let content = response
+            .text()
+            .map_err(|e| format!("读取 GitHub Actions 日志失败：读取响应失败：{e}"))?;
+        Ok(GitHubWorkflowJobLog { job_id, content })
+    })
+    .await
+}
+
+fn ensure_github_artifact_zip(
+    app: &AppHandle,
+    repo_full_name: &str,
+    artifact_id: u64,
+) -> Result<PathBuf, String> {
+    let path = github_artifact_cache_path(repo_full_name, artifact_id);
+    if let Ok(metadata) = fs::metadata(&path) {
+        if metadata.len() <= GITHUB_ACTIONS_ARTIFACT_MAX_BYTES {
+            return Ok(path);
+        }
+        let _ = fs::remove_file(&path);
+    }
+    let (_binding, token) = github_require_token(app)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
+    let response = github_send(
+        app,
+        "下载 GitHub Actions artifact 失败",
+        github_headers(
+            client.get(format!(
+                "{}/actions/artifacts/{artifact_id}/zip",
+                github_repo_api_url(repo_full_name)?
+            )),
+            Some(&token),
+        ),
+    )?;
+    if response
+        .content_length()
+        .is_some_and(|size| size > GITHUB_ACTIONS_ARTIFACT_MAX_BYTES)
+    {
+        return Err("artifact 超过 200 MB，已跳过内置预览".to_string());
+    }
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("下载 GitHub Actions artifact 失败：读取响应失败：{e}"))?;
+    if bytes.len() as u64 > GITHUB_ACTIONS_ARTIFACT_MAX_BYTES {
+        return Err("artifact 超过 200 MB，已跳过内置预览".to_string());
+    }
+    let Some(parent) = path.parent() else {
+        return Err("artifact 缓存路径无效".to_string());
+    };
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("创建 artifact 缓存目录失败：{}（{e}）", parent.display()))?;
+    fs::write(&path, bytes)
+        .map_err(|e| format!("保存 artifact 缓存失败：{}（{e}）", path.display()))?;
+    Ok(path)
+}
+
+#[tauri::command]
+pub async fn github_list_workflow_artifact_files(
+    app: AppHandle,
+    repo_full_name: String,
+    artifact_id: u64,
+) -> Result<Vec<GitHubWorkflowArtifactEntry>, String> {
+    run_blocking("读取 GitHub Actions artifact", move || {
+        let path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
+        let bytes = fs::read(&path)
+            .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", path.display()))?;
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+            .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+        let mut entries = Vec::new();
+        for index in 0..archive.len() {
+            let file = archive
+                .by_index(index)
+                .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
+            if let Some(entry) = github_artifact_entry_from_zip_file(&file)? {
+                entries.push(entry);
+            }
+        }
+        entries.sort_by(|left, right| {
+            (right.kind == "dir")
+                .cmp(&(left.kind == "dir"))
+                .then_with(|| left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()))
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        Ok(entries)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_workflow_artifact_file_preview(
+    app: AppHandle,
+    repo_full_name: String,
+    artifact_id: u64,
+    path: String,
+) -> Result<RepoFilePreview, String> {
+    run_blocking("预览 GitHub Actions artifact 文件", move || {
+        let requested_path = path.trim().trim_matches('/').replace('\\', "/");
+        if requested_path.is_empty()
+            || Path::new(&requested_path)
+                .components()
+                .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+        {
+            return Err("artifact 文件路径无效".to_string());
+        }
+        let cache_path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
+        let bytes = fs::read(&cache_path)
+            .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", cache_path.display()))?;
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+            .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+        for index in 0..archive.len() {
+            let mut file = archive
+                .by_index(index)
+                .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
+            let Some(enclosed_name) = file.enclosed_name() else {
+                continue;
+            };
+            let entry_path = github_artifact_entry_path(&enclosed_name)?;
+            if entry_path != requested_path {
+                continue;
+            }
+            if file.is_dir() {
+                return Err("不能预览 artifact 目录".to_string());
+            }
+            let size = file.size();
+            if size > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+                return Ok(github_artifact_preview_from_bytes(entry_path, size, Vec::new()));
+            }
+            let mut file_bytes = Vec::with_capacity(size as usize);
+            file.read_to_end(&mut file_bytes)
+                .map_err(|e| format!("读取 artifact 文件失败：{e}"))?;
+            return Ok(github_artifact_preview_from_bytes(entry_path, size, file_bytes));
+        }
+        Err("artifact 文件不存在".to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_repo_commits(
+    app: AppHandle,
+    repo_full_name: String,
+    per_page: Option<u32>,
+    sha: Option<String>,
+    force_refresh: Option<bool>,
+) -> Result<Vec<CommitSummary>, String> {
+    run_blocking("读取 GitHub 提交历史", move || {
+        let sha = sha
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let commits_key = github_commit_list_cache_key(per_page, sha.as_deref());
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.commits.get(&commits_key).cloned())
+            {
+                return Ok(cached);
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let commits_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+        let client = build_client()?;
+        let mut request = client
+            .get(format!("{}/commits", github_repo_api_url(&repo_full_name)?))
+            .query(&[("per_page", commits_per_page.as_str())]);
+        if let Some(sha) = sha.as_deref() {
+            request = request.query(&[("sha", sha)]);
+        }
+        let response = github_send(
+            &app,
+            "读取 GitHub 提交历史失败",
+            github_headers(request, Some(&token)),
+        )?;
+        let commits =
+            github_json::<Vec<GitHubCommitResponse>>("读取 GitHub 提交历史失败", response)?
+                .into_iter()
+                .map(github_commit_summary_from_response)
+                .collect::<Vec<_>>();
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.commits.insert(commits_key, commits.clone());
+        })?;
+        Ok(commits)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_repo_commit_detail(
+    app: AppHandle,
+    repo_full_name: String,
+    hash: String,
+    force_refresh: Option<bool>,
+) -> Result<CommitDetail, String> {
+    run_blocking("读取 GitHub 提交详情", move || {
+        let hash = hash.trim().to_string();
+        if hash.is_empty() {
+            return Err("提交 hash 不能为空".to_string());
+        }
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| {
+                    repo_cache.commit_details.get(&hash).cloned().or_else(|| {
+                        repo_cache
+                            .commit_details
+                            .values()
+                            .find(|detail| detail.hash == hash || detail.short_hash == hash)
+                            .cloned()
+                    })
+                })
+            {
+                return Ok(cached);
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 提交详情失败",
+            github_headers(
+                client.get(format!(
+                    "{}/commits/{}",
+                    github_repo_api_url(&repo_full_name)?,
+                    hash
+                )),
+                Some(&token),
+            ),
+        )?;
+        let detail = github_commit_detail_from_response(github_json::<GitHubCommitResponse>(
+            "读取 GitHub 提交详情失败",
+            response,
+        )?);
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache
+                .commit_details
+                .insert(detail.hash.clone(), detail.clone());
+            repo_cache
+                .commit_details
+                .insert(detail.short_hash.clone(), detail.clone());
+        })?;
+        Ok(detail)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_repo_files(
+    app: AppHandle,
+    repo_full_name: String,
+    parent_path: Option<String>,
+    ref_name: Option<String>,
+    _force_refresh: Option<bool>,
+) -> Result<Vec<RepoFileTreeEntry>, String> {
+    run_blocking("读取 GitHub 文件树", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let mut request = client.get(github_repo_contents_api_url(
+            &repo_full_name,
+            parent_path.as_deref(),
+        )?);
+        if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
+            request = request.query(&[("ref", ref_name)]);
+        }
+        let response = github_send(
+            &app,
+            "读取 GitHub 文件树失败",
+            github_headers(request, Some(&token)),
+        )?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(Vec::new());
+        }
+        let items = github_json::<Vec<GitHubContentListItem>>("读取 GitHub 文件树失败", response)?;
+        Ok(github_content_items_to_file_entries(items))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_repo_file_preview(
+    app: AppHandle,
+    repo_full_name: String,
+    path: String,
+    ref_name: Option<String>,
+    _force_refresh: Option<bool>,
+) -> Result<RepoFilePreview, String> {
+    run_blocking("读取 GitHub 文件预览", move || {
+        let path = normalize_github_content_path(Some(&path))?;
+        if path.is_empty() {
+            return Err("GitHub 文件路径不能为空".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let mut request = client.get(github_repo_contents_api_url(&repo_full_name, Some(&path))?);
+        if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
+            request = request.query(&[("ref", ref_name)]);
+        }
+        let response = github_send(
+            &app,
+            "读取 GitHub 文件预览失败",
+            github_headers(request, Some(&token)),
+        )?;
+        let file = github_json::<GitHubContentFileResponse>("读取 GitHub 文件预览失败", response)?;
+        github_file_preview_from_content("读取 GitHub 文件预览失败", file)
     })
     .await
 }

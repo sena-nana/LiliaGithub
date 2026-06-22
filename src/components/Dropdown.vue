@@ -12,11 +12,12 @@ interface Option {
 }
 
 const props = defineProps<{
-  modelValue: T;
+  modelValue: T | readonly T[];
   options: readonly Option[];
   icon?: unknown;
   placeholder?: string;
   displayLabel?: string;
+  multiple?: boolean;
   placement?: "top" | "bottom";
   disabled?: boolean;
   buttonClass?: string;
@@ -24,7 +25,7 @@ const props = defineProps<{
   menuLabel?: string;
 }>();
 
-const emit = defineEmits<{ "update:modelValue": [value: T] }>();
+const emit = defineEmits<{ "update:modelValue": [value: any] }>();
 
 const open = ref(false);
 const placement = computed(() =>
@@ -35,8 +36,19 @@ const root = menuMotion.rootEl;
 const origin = menuMotion.origin;
 
 const current = computed(() =>
-  props.options.find((option) => option.value === props.modelValue),
+  props.multiple ? undefined : props.options.find((option) => option.value === props.modelValue),
 );
+const selectedValues = computed(() =>
+  props.multiple && Array.isArray(props.modelValue) ? props.modelValue : [],
+);
+const buttonLabel = computed(() => {
+  if (props.displayLabel) return props.displayLabel;
+  if (!props.multiple) return current.value?.label ?? props.placeholder ?? "-";
+  const selected = props.options.filter((option) => selectedValues.value.includes(option.value));
+  if (!selected.length) return props.placeholder ?? "-";
+  if (selected.length <= 2) return selected.map((option) => option.label).join(", ");
+  return `${selected.slice(0, 2).map((option) => option.label).join(", ")} +${selected.length - 2}`;
+});
 
 const placementClass = computed(() => `dd__menu--${placement.value}`);
 
@@ -48,8 +60,24 @@ function toggle(event: MouseEvent) {
 
 function pick(option: Option) {
   if (option.disabled) return;
+  if (props.multiple) {
+    const values = selectedValues.value;
+    emit(
+      "update:modelValue",
+      values.includes(option.value)
+        ? values.filter((value) => value !== option.value)
+        : [...values, option.value],
+    );
+    return;
+  }
   emit("update:modelValue", option.value);
   open.value = false;
+}
+
+function isSelected(option: Option) {
+  return props.multiple
+    ? selectedValues.value.includes(option.value)
+    : option.value === props.modelValue;
 }
 
 function onDocPointer(event: PointerEvent) {
@@ -96,7 +124,7 @@ onBeforeUnmount(() => {
     >
       <component v-if="icon" :is="icon" :size="13" aria-hidden="true" />
       <span class="chat-chip__label">
-        {{ displayLabel ?? current?.label ?? placeholder ?? "-" }}
+        {{ buttonLabel }}
       </span>
       <ChevronDown :size="12" aria-hidden="true" class="chat-chip__caret" />
     </button>
@@ -108,6 +136,7 @@ onBeforeUnmount(() => {
         class="dd__menu"
         :class="placementClass"
         role="listbox"
+        :aria-multiselectable="multiple ? 'true' : undefined"
         :aria-label="menuLabel"
         :style="[
           {
@@ -122,12 +151,15 @@ onBeforeUnmount(() => {
           :key="String(option.value)"
           type="button"
           class="dd__item"
-          :class="{ 'is-active': option.value === modelValue }"
+          :class="{ 'is-active': isSelected(option), 'is-multiple': multiple }"
           :disabled="option.disabled"
           role="option"
-          :aria-selected="option.value === modelValue"
+          :aria-selected="isSelected(option)"
           @click="pick(option)"
         >
+          <span v-if="multiple" class="dd__item-check" aria-hidden="true">
+            <span v-if="isSelected(option)"></span>
+          </span>
           <span class="dd__item-label">{{ option.label }}</span>
           <span v-if="option.hint" class="dd__item-hint">{{ option.hint }}</span>
         </button>
@@ -227,6 +259,29 @@ onBeforeUnmount(() => {
 .dd__item.is-active {
   background: var(--bg-hover);
   filter: none;
+}
+
+.dd__item.is-multiple {
+  align-items: center;
+}
+
+.dd__item-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-subtle);
+}
+
+.dd__item-check span {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .dd__item:disabled {

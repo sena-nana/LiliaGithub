@@ -14,8 +14,13 @@ import {
   pull,
   push,
   renameBranch,
+  autoSyncRepoIfNeeded,
   useDefaultTokenAuthForRepo,
+  refreshRepoContributions,
   refreshRepos,
+  refreshRepoLanguageStats,
+  refreshRepoSummaries,
+  refreshWorkspaceTasks,
   resolveConflictFile,
   stage,
   unhideRepo,
@@ -26,6 +31,7 @@ import { initialize } from "../src/composables/workspace/lifecycle";
 import { closeBulkPreview, executeBulk, previewBulk, syncAll } from "../src/composables/workspace/bulk";
 import {
   bulkSyncRepoIds,
+  bulkSyncRunningRepoIds,
   repoActionErrorForRepo,
   repoActionErrorDetailForRepo,
   syncErrorByRepoId,
@@ -38,8 +44,20 @@ import type { WorkspaceService } from "../src/composables/workspace/serviceLoade
 import type { BulkSyncPreview, GitHubContributionResult } from "../src/services/workspace";
 import { conflictState, repoDetail, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 const service = {
   getWorkspaceSettings: vi.fn(),
+  readStartupCache: vi.fn(),
+  clearStartupCache: vi.fn(),
+  writeStartupContributions: vi.fn(),
+  setRepoAutoSync: vi.fn(),
   getGitHubBindingStatus: vi.fn(),
   listManagedRepos: vi.fn(),
   refreshRepos: vi.fn(),
@@ -96,7 +114,23 @@ beforeEach(() => {
     },
   });
   service.listWorkspaceTasks.mockResolvedValue([]);
-  service.getWorkspaceSettings.mockResolvedValue(workspaceSettings());
+  const settings = workspaceSettings();
+  service.getWorkspaceSettings.mockResolvedValue(settings);
+  service.readStartupCache.mockResolvedValue(null);
+  service.clearStartupCache.mockResolvedValue(undefined);
+  service.writeStartupContributions.mockImplementation(async (contributions) => ({
+    workspaceRoot: settings.workspaceRoot,
+    bindingLogin: settings.githubBinding?.login ?? null,
+    reposById: {},
+    contributions: {
+      ...contributions,
+      cachedAt: Date.now(),
+    },
+  }));
+  service.setRepoAutoSync.mockImplementation(async (repoId: string, autoSync: boolean) => ({
+    ...settings,
+    repoSyncPreferences: { [repoId]: { autoSync } },
+  }));
   service.getGitHubBindingStatus.mockResolvedValue({
     state: "bound",
     clientIdConfigured: true,
@@ -112,8 +146,8 @@ beforeEach(() => {
   service.listManagedRepos.mockResolvedValue([]);
   service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
   service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
-    languageStats: [{ language: "TypeScript", bytes: 1 }],
-    workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+    languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+    workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
     languageStatsUpdatedAt: 1,
   }));
 });
@@ -139,8 +173,8 @@ describe("workspace incremental refresh", () => {
     }));
     service.refreshRepoLanguageStats.mockResolvedValue({
       ...refreshed,
-      languageStats: [{ language: "TypeScript", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     });
 
@@ -155,6 +189,161 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
     resolveSummary?.(refreshed);
     await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 2, stagedCount: 1 }));
+  });
+
+  it("初始化从启动缓存恢复贡献图，再继续刷新仓库列表", async () => {
+    service.listManagedRepos.mockResolvedValue([]);
+    service.readStartupCache.mockResolvedValue({
+      workspaceRoot: "C:\\Files\\workspace",
+      bindingLogin: null,
+      reposById: {},
+      contributions: {
+        days: [{ date: "2026-06-11", count: 3 }],
+        meta: {
+          repoCount: 1,
+          requestedRepoCount: 1,
+          repoLimit: 30,
+          truncated: false,
+          skippedRepoCount: 0,
+          refreshedAt: 1_780_000_000_000,
+        },
+        cachedAt: 1_780_000_001_000,
+      },
+    });
+
+    await initialize();
+
+    expect(service.readStartupCache).toHaveBeenCalledTimes(1);
+    expect(state.githubContributions.days).toEqual([{ date: "2026-06-11", count: 3 }]);
+    expect(state.githubContributions.meta?.repoCount).toBe(1);
+    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+  });
+
+  it("贡献图刷新完成后写入启动缓存", async () => {
+    state.repos = [repoSummary("Repo1")];
+    service.listRepoContribution.mockResolvedValue({
+      days: [{ date: "2026-06-11", count: 2 }],
+      meta: {
+        repoCount: 1,
+        requestedRepoCount: 1,
+        repoLimit: 30,
+        truncated: false,
+        skippedRepoCount: 0,
+        refreshedAt: 1_780_000_000_000,
+      },
+    } satisfies GitHubContributionResult);
+
+    await refreshRepoContributions();
+
+    await waitFor(() =>
+      expect(service.writeStartupContributions).toHaveBeenCalledWith({
+        days: expect.arrayContaining([{ date: "2026-06-11", count: 2 }]),
+        meta: expect.objectContaining({ repoCount: 1 }),
+      }),
+    );
+  });
+
+  it("自动刷新发现开启自动同步的仓库有待同步提交时执行同步", async () => {
+    const stale = repoSummary("Repo1", { ahead: 1, behind: 1 });
+    const synced = repoSummary("Repo1", { ahead: 0, behind: 0 });
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(stale);
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: "Repo1", status: "success", message: "完成", summary: synced },
+    ]);
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]);
+    expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 0, behind: 0 });
+    expect(repoActionErrorForRepo("Repo1")).toBeNull();
+  });
+
+  it("自动刷新不会同步未开启自动同步的仓库", async () => {
+    state.settings = workspaceSettings();
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("Repo1", { ahead: 1 }));
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
+    expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
+  });
+
+  it("自动刷新遇到未提交变更时跳过自动同步并记录仓库错误", async () => {
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("Repo1", { ahead: 1, unstagedCount: 1 }));
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
+    expect(repoActionErrorForRepo("Repo1")).toBe("存在未提交变更，已跳过自动同步");
+    expect(state.recentSync).toBeNull();
+  });
+
+  it("自动刷新执行自动同步时暴露同步中状态并保存最近失败", async () => {
+    const stale = repoSummary("Repo1", { ahead: 1 });
+    const execution = deferred<typeof state.bulkResults>();
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(stale);
+    service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
+
+    const refreshing = refreshRepoSummaries();
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]));
+
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
+
+    execution.resolve([
+      { repoId: "Repo1", status: "error", message: "认证失败", summary: null },
+    ]);
+    await refreshing;
+
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(false);
+    expect(repoActionErrorForRepo("Repo1")).toBe("认证失败");
+    expect(state.recentSync?.preview.operation).toBe("sync");
+    expect(state.recentSync?.preview.eligible).toEqual([{ repo: stale, reason: "有本地提交待推送" }]);
+    expect(recentSyncErrorForRepo("Repo1")).toEqual({ message: "认证失败", retrying: false });
+  });
+
+  it("自动同步重复触发时沿用运行中状态且不覆盖错误提示", async () => {
+    const stale = repoSummary("Repo1", { behind: 1 });
+    const synced = repoSummary("Repo1", { behind: 0 });
+    const execution = deferred<typeof state.bulkResults>();
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    state.repos = [stale];
+    service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
+
+    const running = autoSyncRepoIfNeeded("Repo1");
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]));
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
+
+    await autoSyncRepoIfNeeded("Repo1");
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledTimes(1);
+    expect(repoActionErrorForRepo("Repo1")).toBeNull();
+
+    execution.resolve([
+      { repoId: "Repo1", status: "success", message: "完成", summary: synced },
+    ]);
+    await running;
+
+    expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(false);
+    expect(state.repos[0].behind).toBe(0);
   });
 
   it("仓库状态刷新按固定并发上限启动，单个仓库未完成时不阻塞同批其他仓库", async () => {
@@ -190,6 +379,110 @@ describe("workspace incremental refresh", () => {
     expect(state.refreshingRepoIds).toEqual([]);
   });
 
+  it("新一轮刷新开始后旧刷新完成不会清掉当前刷新状态", async () => {
+    const firstRefresh = deferred<ReturnType<typeof repoSummary>>();
+    const secondRefresh = deferred<ReturnType<typeof repoSummary>>();
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1", { githubFullName: null })]);
+    service.refreshRepoSummary
+      .mockReturnValueOnce(firstRefresh.promise)
+      .mockReturnValueOnce(secondRefresh.promise);
+
+    await refreshRepos();
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(1));
+
+    const currentRefresh = refreshRepoSummaries();
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(2));
+    expect(state.refreshingRepoIds).toEqual(["Repo1"]);
+
+    firstRefresh.resolve(repoSummary("Repo1", { ahead: 1 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(state.scanning).toBe(true);
+    expect(state.refreshingRepoIds).toEqual(["Repo1"]);
+
+    secondRefresh.resolve(repoSummary("Repo1", { ahead: 2 }));
+    await currentRefresh;
+    await waitFor(() => expect(state.scanning).toBe(false));
+    expect(state.refreshingRepoIds).toEqual([]);
+  });
+
+  it("任务列表刷新只应用最后一轮返回结果", async () => {
+    const firstRefresh = deferred<typeof state.tasks>();
+    const secondRefresh = deferred<typeof state.tasks>();
+    service.listWorkspaceTasks
+      .mockReturnValueOnce(firstRefresh.promise)
+      .mockReturnValueOnce(secondRefresh.promise);
+
+    const firstLoad = refreshWorkspaceTasks();
+    const secondLoad = refreshWorkspaceTasks();
+
+    secondRefresh.resolve([{
+      id: "new-task",
+      kind: "repoStatus",
+      priority: "normal",
+      repoId: "Repo1",
+      status: "success",
+      message: "new",
+      updatedAt: 2,
+    }]);
+    await secondLoad;
+    expect(state.tasks.map((task) => task.id)).toEqual(["new-task"]);
+
+    firstRefresh.resolve([{
+      id: "old-task",
+      kind: "repoStatus",
+      priority: "normal",
+      repoId: "Repo1",
+      status: "success",
+      message: "old",
+      updatedAt: 1,
+    }]);
+    await firstLoad;
+    expect(state.tasks.map((task) => task.id)).toEqual(["new-task"]);
+  });
+
+  it("新一代语言统计刷新不会被旧一代同仓库 loading 跳过", async () => {
+    const oldStats = deferred<ReturnType<typeof repoSummary>>();
+    const newStats = deferred<ReturnType<typeof repoSummary>>();
+    state.repos = [repoSummary("Repo1", {
+      languageStats: [{ language: "Vue", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "Vue", bytes: 1, lines: 1 }],
+      languageStatsUpdatedAt: 1,
+    })];
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1", { githubFullName: null })]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("Repo1", { githubFullName: null }));
+    service.refreshRepoLanguageStats
+      .mockReturnValueOnce(oldStats.promise)
+      .mockReturnValueOnce(newStats.promise);
+
+    const oldRefresh = refreshRepoLanguageStats("Repo1");
+    expect(state.languageStatsLoadingRepoIds).toEqual(["Repo1"]);
+
+    await refreshRepoSummaries();
+    const newRefresh = refreshRepoLanguageStats("Repo1");
+    await waitFor(() => expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(2));
+
+    oldStats.resolve(repoSummary("Repo1", {
+      languageStats: [{ language: "Old", bytes: 10, lines: 10 }],
+      workingTreeLanguageStats: [{ language: "Old", bytes: 10, lines: 10 }],
+      languageStatsUpdatedAt: 2,
+    }));
+    await oldRefresh;
+    expect(state.languageStatsLoadingRepoIds).toEqual(["Repo1"]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "Vue", bytes: 1, lines: 1 }]);
+
+    newStats.resolve(repoSummary("Repo1", {
+      languageStats: [{ language: "TypeScript", bytes: 20, lines: 20 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 20, lines: 20 }],
+      languageStatsUpdatedAt: 3,
+    }));
+    await newRefresh;
+
+    expect(state.languageStatsLoadingRepoIds).toEqual([]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 20, lines: 20 }]);
+    expect(state.repos[0].languageStatsUpdatedAt).toBe(3);
+  });
+
   it("轻量刷新后逐个刷新仓库状态并按本地仓库列表刷新贡献图", async () => {
     service.listManagedRepos.mockResolvedValue([
       repoSummary("LiliaGithub", { githubFullName: null }),
@@ -203,8 +496,8 @@ describe("workspace incremental refresh", () => {
     }));
     service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
       githubFullName: repoId === "LocalOnly" ? null : repoId === "LiliaDuplicate" ? "sena-nana/Lilia" : `sena-nana/${repoId}`,
-      languageStats: [{ language: "TypeScript", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     }));
     service.listRepoContribution.mockImplementation(async (repoScope: string) => ({
@@ -476,8 +769,8 @@ describe("workspace incremental refresh", () => {
     });
     service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => ({
       ...(refreshedSummaries.get(repoId) ?? repoSummary(repoId)),
-      languageStats: [{ language: "TypeScript", bytes: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1 }],
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     }));
 
@@ -499,8 +792,8 @@ describe("workspace incremental refresh", () => {
 
   it("轻量列表刷新不会覆盖已刷新的语言统计", async () => {
     const withLanguages = repoSummary("LiliaGithub", {
-      languageStats: [{ language: "TypeScript", bytes: 10 }],
-      workingTreeLanguageStats: [{ language: "Vue", bytes: 5 }],
+      languageStats: [{ language: "TypeScript", bytes: 10, lines: 10 }],
+      workingTreeLanguageStats: [{ language: "Vue", bytes: 5, lines: 5 }],
       languageStatsUpdatedAt: 123,
     });
     state.repos = [withLanguages];
@@ -525,8 +818,8 @@ describe("workspace incremental refresh", () => {
     await refreshRepos();
 
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 10 }]);
-    expect(state.repos[0].workingTreeLanguageStats).toEqual([{ language: "Vue", bytes: 5 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 10, lines: 10 }]);
+    expect(state.repos[0].workingTreeLanguageStats).toEqual([{ language: "Vue", bytes: 5, lines: 5 }]);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(123);
   });
 
@@ -678,6 +971,100 @@ describe("workspace incremental refresh", () => {
 
     expect(service.getWorkspaceSettings).toHaveBeenCalled();
     expect(state.settings?.systemGitRepoIds).toEqual([repo.id]);
+  });
+
+  it("批量预检只应用最后一轮返回结果", async () => {
+    const repo = repoSummary("LiliaGithub", { ahead: 1, behind: 1 });
+    const firstPreview = deferred<BulkSyncPreview>();
+    const secondPreview = deferred<BulkSyncPreview>();
+    service.bulkSyncPreview
+      .mockReturnValueOnce(firstPreview.promise)
+      .mockReturnValueOnce(secondPreview.promise);
+
+    const firstLoad = previewBulk("push");
+    const secondLoad = previewBulk("pull");
+
+    secondPreview.resolve({
+      operation: "pull",
+      eligible: [{ repo, reason: "远端有更新" }],
+      blocked: [],
+      warnings: [],
+    });
+    await secondLoad;
+    expect(state.bulkPreview?.operation).toBe("pull");
+
+    firstPreview.resolve({
+      operation: "push",
+      eligible: [{ repo, reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    });
+    await firstLoad;
+    expect(state.bulkPreview?.operation).toBe("pull");
+  });
+
+  it("批量执行结果绑定启动执行时的预检上下文", async () => {
+    const repo = repoSummary("LiliaGithub", { ahead: 1, behind: 1 });
+    const pushPreview: BulkSyncPreview = {
+      operation: "push",
+      eligible: [{ repo, reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    };
+    const pullPreview: BulkSyncPreview = {
+      operation: "pull",
+      eligible: [{ repo, reason: "远端有更新" }],
+      blocked: [],
+      warnings: [],
+    };
+    const execution = deferred<typeof state.bulkResults>();
+    state.bulkPreview = pushPreview;
+    service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
+
+    const running = executeBulk();
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [repo.id]));
+    state.bulkPreview = pullPreview;
+
+    execution.resolve([
+      { repoId: repo.id, status: "success", message: "完成", summary: repoSummary(repo.id, { ahead: 0 }) },
+    ]);
+    await running;
+
+    expect(state.bulkPreview).toEqual(pullPreview);
+    expect(state.recentSync?.preview).toEqual(pushPreview);
+    expect(state.bulkRunning).toBe(false);
+  });
+
+  it("一键同步会使仍在返回中的普通预检失效", async () => {
+    const repo = repoSummary("LiliaGithub", { ahead: 1 });
+    const pendingPreview = deferred<BulkSyncPreview>();
+    const syncPreview: BulkSyncPreview = {
+      operation: "sync",
+      eligible: [{ repo, reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    };
+    service.bulkSyncPreview
+      .mockReturnValueOnce(pendingPreview.promise)
+      .mockResolvedValueOnce(syncPreview);
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: repo.id, status: "success", message: "完成", summary: repoSummary(repo.id, { ahead: 0 }) },
+    ]);
+
+    const stalePreview = previewBulk("push");
+    await syncAll();
+    expect(state.bulkPreview?.operation).toBe("sync");
+
+    pendingPreview.resolve({
+      operation: "push",
+      eligible: [{ repo, reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    });
+    await stalePreview;
+
+    expect(state.bulkPreview?.operation).toBe("sync");
+    expect(state.recentSync?.preview.operation).toBe("sync");
   });
 
   it("一键同步直接预检并执行可同步仓库，不再调用单仓库 push", async () => {
@@ -960,8 +1347,8 @@ describe("workspace incremental refresh", () => {
     expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(2, initial.id);
     expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(3, initial.id);
     expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(4, initial.id);
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
-    expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
+    expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
   });
 
   it("单仓库创建和重命名分支后刷新当前仓库语言统计", async () => {
@@ -1008,7 +1395,7 @@ describe("workspace incremental refresh", () => {
       ahead: 0,
       stagedCount: 0,
     });
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1 }]);
+    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
   });
 
   it("冲突处理操作只刷新当前仓库详情，不触发全量扫描", async () => {

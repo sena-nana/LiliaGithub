@@ -1,4 +1,5 @@
 import packageJson from "../../../package.json";
+import { withRepoAutoSyncPreference } from "../../config/repoSettingsManifest";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -6,7 +7,9 @@ import type {
   BranchSummary,
   CommitDetail,
   CommitFileChange,
+  CommitSummary,
   GitHubBindingStatus,
+  GitHubCommitListOptions,
   GitHubContributionMeta,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
@@ -14,15 +17,21 @@ import type {
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssue,
+  GitHubIssueFilterMetadata,
+  GitHubIssueMilestone,
   GitHubIssueListOptions,
   GitHubMergePullRequestRequest,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
+  GitHubWorkflowArtifactEntry,
+  GitHubWorkflowJobLog,
   GitHubWorkflowRun,
+  GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
   GitHubUpdateIssueRequest,
@@ -50,6 +59,8 @@ import type {
   WorkspaceTask,
   WorkspaceSettings,
   WorkspaceRepoGroup,
+  WorkspaceStartupCache,
+  WorkspaceStartupContributions,
 } from "./types";
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
@@ -64,36 +75,57 @@ const FALLBACK_LILIA_GITHUB_README = [
   "- GitHub 仓库管理",
   "- 快速启动配置",
 ].join("\n");
+const FALLBACK_SHOWCASE_LILIA_GITHUB_README = [
+  "# LiliaGithub",
+  "",
+  "一个面向本地 GitHub 工作区和多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。",
+  "",
+  "## 当前工作重点",
+  "",
+  "- 工作区 Git 仓库扫描和状态聚合",
+  "- 单仓库变更、历史、分支和 README 视图",
+  "- GitHub Issues、Pull Requests、Actions 和 Settings 管理入口",
+  "- 快速启动命令配置、运行状态轮询和最近输出日志",
+  "- pull / push 批量预检和队列执行",
+  "",
+  "## 截图场景",
+  "",
+  "README 展示截图使用开发态 mock 数据生成，用于呈现多个仓库、多种同步状态和 GitHub 时间线。",
+].join("\n");
 const FALLBACK_LILIA_README = "# Lilia\n\nDesktop agent workbench.";
+const useReadmeShowcaseFallback = typeof import.meta !== "undefined"
+  && import.meta.env?.DEV === true
+  && import.meta.env?.VITE_README_SHOWCASE === "1";
+const useDefaultFallback = !useReadmeShowcaseFallback;
 
 let fallbackRepos: RepoSummary[] = [
   {
     id: "LiliaGithub",
     name: "LiliaGithub",
-    path: "C:\\Files\\workspace\\LiliaGithub",
+    path: "D:\\PROJECT\\workspace\\LiliaGithub",
     relativePath: "LiliaGithub",
-    currentBranch: "main",
+    currentBranch: "codex/readme-gallery",
     remoteUrl: "https://github.com/sena-nana/LiliaGithub.git",
     githubFullName: "sena-nana/LiliaGithub",
-    ahead: 1,
-    behind: 0,
-    stagedCount: 1,
-    unstagedCount: 2,
+    ahead: 2,
+    behind: 1,
+    stagedCount: 2,
+    unstagedCount: 3,
     untrackedCount: 1,
     conflictCount: 0,
-    lastCommitAt: 1_785_000_000,
-    lastCommitMessage: "搭建 LiliaGithub MVP",
+    lastCommitAt: 1_781_990_000,
+    lastCommitMessage: "更新 README 展示截图",
     languageStats: [
-      { language: "TypeScript", bytes: 66_000 },
-      { language: "Vue", bytes: 42_000 },
-      { language: "Rust", bytes: 32_000 },
-      { language: "CSS", bytes: 10_000 },
+      { language: "TypeScript", bytes: 118_000, lines: 3120 },
+      { language: "Vue", bytes: 86_000, lines: 1910 },
+      { language: "Rust", bytes: 54_000, lines: 1280 },
+      { language: "CSS", bytes: 18_000, lines: 640 },
     ],
     workingTreeLanguageStats: [
-      { language: "TypeScript", bytes: 68_000 },
-      { language: "Vue", bytes: 42_000 },
-      { language: "Rust", bytes: 35_000 },
-      { language: "CSS", bytes: 10_000 },
+      { language: "TypeScript", bytes: 120_000, lines: 3180 },
+      { language: "Vue", bytes: 88_000, lines: 1960 },
+      { language: "Rust", bytes: 54_000, lines: 1280 },
+      { language: "CSS", bytes: 19_000, lines: 670 },
     ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
@@ -104,29 +136,31 @@ let fallbackRepos: RepoSummary[] = [
   },
   {
     id: "Lilia",
-    name: "Lilia",
-    path: "C:\\Files\\workspace\\Lilia",
+    name: "LiliaCode",
+    path: "D:\\PROJECT\\workspace\\Lilia",
     relativePath: "Lilia",
     currentBranch: "main",
-    remoteUrl: "https://github.com/sena-nana/Lilia.git",
-    githubFullName: "sena-nana/Lilia",
+    remoteUrl: "https://github.com/sena-nana/LiliaCode.git",
+    githubFullName: "sena-nana/LiliaCode",
     ahead: 0,
     behind: 2,
     stagedCount: 0,
     unstagedCount: 0,
     untrackedCount: 0,
-    conflictCount: 1,
-    lastCommitAt: 1_784_990_000,
-    lastCommitMessage: "完善 GitHub 授权",
+    conflictCount: 0,
+    lastCommitAt: 1_781_930_000,
+    lastCommitMessage: "整理 Codex 运行时边界",
     languageStats: [
-      { language: "TypeScript", bytes: 52_000 },
-      { language: "Vue", bytes: 28_000 },
-      { language: "CSS", bytes: 8_000 },
+      { language: "TypeScript", bytes: 184_000, lines: 5200 },
+      { language: "Vue", bytes: 132_000, lines: 2900 },
+      { language: "Rust", bytes: 88_000, lines: 2140 },
+      { language: "CSS", bytes: 32_000, lines: 980 },
     ],
     workingTreeLanguageStats: [
-      { language: "TypeScript", bytes: 52_000 },
-      { language: "Vue", bytes: 28_000 },
-      { language: "CSS", bytes: 8_000 },
+      { language: "TypeScript", bytes: 184_000, lines: 5200 },
+      { language: "Vue", bytes: 132_000, lines: 2900 },
+      { language: "Rust", bytes: 88_000, lines: 2140 },
+      { language: "CSS", bytes: 32_000, lines: 980 },
     ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
@@ -135,8 +169,183 @@ let fallbackRepos: RepoSummary[] = [
       mainRepoId: null,
     },
   },
+  {
+    id: "LiliaDocs",
+    name: "LiliaDocs",
+    path: "D:\\PROJECT\\workspace\\LiliaDocs",
+    relativePath: "LiliaDocs",
+    currentBranch: "main",
+    remoteUrl: "https://github.com/sena-nana/LiliaDocs.git",
+    githubFullName: "sena-nana/LiliaDocs",
+    ahead: 0,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 4,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: 1_781_820_000,
+    lastCommitMessage: "补充发布说明",
+    languageStats: [
+      { language: "Markdown", bytes: 72_000, lines: 1650 },
+      { language: "Vue", bytes: 22_000, lines: 480 },
+      { language: "CSS", bytes: 8_000, lines: 210 },
+    ],
+    workingTreeLanguageStats: [
+      { language: "Markdown", bytes: 78_000, lines: 1780 },
+      { language: "Vue", bytes: 22_000, lines: 480 },
+      { language: "CSS", bytes: 8_000, lines: 210 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:LiliaDocs",
+      mainRepoId: null,
+    },
+  },
+  {
+    id: "Mutsuki",
+    name: "Mutsuki",
+    path: "D:\\PROJECT\\workspace\\Mutsuki",
+    relativePath: "Mutsuki",
+    currentBranch: "runtime-compat",
+    remoteUrl: "https://github.com/sena-nana/Mutsuki.git",
+    githubFullName: "sena-nana/Mutsuki",
+    ahead: 4,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 1,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: 1_781_700_000,
+    lastCommitMessage: "恢复兼容 API",
+    languageStats: [
+      { language: "Rust", bytes: 148_000, lines: 4100 },
+      { language: "TypeScript", bytes: 24_000, lines: 620 },
+      { language: "TOML", bytes: 4_000, lines: 120 },
+    ],
+    workingTreeLanguageStats: [
+      { language: "Rust", bytes: 150_000, lines: 4160 },
+      { language: "TypeScript", bytes: 24_000, lines: 620 },
+      { language: "TOML", bytes: 4_000, lines: 120 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:Mutsuki",
+      mainRepoId: null,
+    },
+  },
+  {
+    id: "LiliaTodo",
+    name: "LiliaTodo",
+    path: "D:\\PROJECT\\workspace\\LiliaTodo",
+    relativePath: "LiliaTodo",
+    currentBranch: "main",
+    remoteUrl: "https://github.com/sena-nana/LiliaTodo.git",
+    githubFullName: "sena-nana/LiliaTodo",
+    ahead: 0,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: 1_781_560_000,
+    lastCommitMessage: "拆分日历和 WebDAV 清理提交",
+    languageStats: [
+      { language: "TypeScript", bytes: 98_000, lines: 2600 },
+      { language: "Vue", bytes: 54_000, lines: 1180 },
+      { language: "CSS", bytes: 12_000, lines: 340 },
+    ],
+    workingTreeLanguageStats: [
+      { language: "TypeScript", bytes: 98_000, lines: 2600 },
+      { language: "Vue", bytes: 54_000, lines: 1180 },
+      { language: "CSS", bytes: 12_000, lines: 340 },
+    ],
+    languageStatsUpdatedAt: Date.now(),
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "repo:LiliaTodo",
+      mainRepoId: null,
+    },
+  },
 ];
+if (useDefaultFallback) {
+  fallbackRepos = createDefaultFallbackRepos();
+}
 const baseFallbackRepos = fallbackRepos.map(cloneRepoSummary);
+
+function createDefaultFallbackRepos(): RepoSummary[] {
+  return [
+    {
+      id: "LiliaGithub",
+      name: "LiliaGithub",
+      path: "C:\\Files\\workspace\\LiliaGithub",
+      relativePath: "LiliaGithub",
+      currentBranch: "main",
+      remoteUrl: "https://github.com/sena-nana/LiliaGithub.git",
+      githubFullName: "sena-nana/LiliaGithub",
+      ahead: 1,
+      behind: 0,
+      stagedCount: 1,
+      unstagedCount: 2,
+      untrackedCount: 1,
+      conflictCount: 0,
+      lastCommitAt: 1_785_000_000,
+      lastCommitMessage: "搭建 LiliaGithub MVP",
+      languageStats: [
+        { language: "TypeScript", bytes: 66_000, lines: 1800 },
+        { language: "Vue", bytes: 42_000, lines: 920 },
+        { language: "Rust", bytes: 32_000, lines: 760 },
+        { language: "CSS", bytes: 10_000, lines: 360 },
+      ],
+      workingTreeLanguageStats: [
+        { language: "TypeScript", bytes: 68_000, lines: 1850 },
+        { language: "Vue", bytes: 42_000, lines: 920 },
+        { language: "Rust", bytes: 35_000, lines: 820 },
+        { language: "CSS", bytes: 10_000, lines: 360 },
+      ],
+      languageStatsUpdatedAt: Date.now(),
+      worktree: {
+        role: "standalone",
+        sharedRepoKey: "repo:LiliaGithub",
+        mainRepoId: null,
+      },
+    },
+    {
+      id: "Lilia",
+      name: "Lilia",
+      path: "C:\\Files\\workspace\\Lilia",
+      relativePath: "Lilia",
+      currentBranch: "main",
+      remoteUrl: "https://github.com/sena-nana/Lilia.git",
+      githubFullName: "sena-nana/Lilia",
+      ahead: 0,
+      behind: 2,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      conflictCount: 1,
+      lastCommitAt: 1_784_990_000,
+      lastCommitMessage: "完善 GitHub 授权",
+      languageStats: [
+        { language: "TypeScript", bytes: 52_000, lines: 1420 },
+        { language: "Vue", bytes: 28_000, lines: 610 },
+        { language: "CSS", bytes: 8_000, lines: 250 },
+      ],
+      workingTreeLanguageStats: [
+        { language: "TypeScript", bytes: 52_000, lines: 1420 },
+        { language: "Vue", bytes: 28_000, lines: 610 },
+        { language: "CSS", bytes: 8_000, lines: 250 },
+      ],
+      languageStatsUpdatedAt: Date.now(),
+      worktree: {
+        role: "standalone",
+        sharedRepoKey: "repo:Lilia",
+        mainRepoId: null,
+      },
+    },
+  ];
+}
 
 const defaultFallbackBinding: GitHubBindingStatus = {
   state: "bound",
@@ -154,6 +363,40 @@ const defaultFallbackBinding: GitHubBindingStatus = {
 const CONTRIBUTION_DAYS = 371;
 const CONTRIBUTION_REPO_LIMIT = 30;
 function createFallbackGitHubRepos(): GitHubRepoSummary[] {
+  if (useDefaultFallback) {
+    return [
+      {
+        id: 1,
+        name: "LiliaGithub",
+        fullName: "sena-nana/LiliaGithub",
+        ownerLogin: "sena-nana",
+        private: false,
+        disabled: false,
+        archived: false,
+        description: "Local GitHub workspace manager",
+        defaultBranch: "main",
+        createdAt: "2026-06-08T09:00:00Z",
+        updatedAt: "2026-06-11T00:00:00Z",
+        cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+      },
+      {
+        id: 2,
+        name: "Lilia",
+        fullName: "sena-nana/Lilia",
+        ownerLogin: "sena-nana",
+        private: true,
+        disabled: false,
+        archived: false,
+        description: "Desktop agent workbench",
+        defaultBranch: "main",
+        createdAt: "2026-06-07T09:00:00Z",
+        updatedAt: "2026-06-10T00:00:00Z",
+        cloneUrl: "https://github.com/sena-nana/Lilia.git",
+        htmlUrl: "https://github.com/sena-nana/Lilia",
+      },
+    ];
+  }
   return [
     {
       id: 1,
@@ -163,27 +406,72 @@ function createFallbackGitHubRepos(): GitHubRepoSummary[] {
       private: false,
       disabled: false,
       archived: false,
-      description: "Local GitHub workspace manager",
+      description: "Local GitHub workspace and repository manager",
       defaultBranch: "main",
       createdAt: "2026-06-08T09:00:00Z",
-      updatedAt: "2026-06-11T00:00:00Z",
+      updatedAt: "2026-06-21T09:20:00Z",
       cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
     },
     {
       id: 2,
-      name: "Lilia",
-      fullName: "sena-nana/Lilia",
+      name: "LiliaCode",
+      fullName: "sena-nana/LiliaCode",
       ownerLogin: "sena-nana",
       private: true,
       disabled: false,
       archived: false,
       description: "Desktop agent workbench",
       defaultBranch: "main",
-      createdAt: "2026-06-07T09:00:00Z",
-      updatedAt: "2026-06-10T00:00:00Z",
-      cloneUrl: "https://github.com/sena-nana/Lilia.git",
-      htmlUrl: "https://github.com/sena-nana/Lilia",
+      createdAt: "2026-05-12T09:00:00Z",
+      updatedAt: "2026-06-21T08:40:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaCode.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaCode",
+    },
+    {
+      id: 3,
+      name: "LiliaDocs",
+      fullName: "sena-nana/LiliaDocs",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: "Documentation and release notes for the Lilia family",
+      defaultBranch: "main",
+      createdAt: "2026-06-01T09:00:00Z",
+      updatedAt: "2026-06-20T15:30:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaDocs.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaDocs",
+    },
+    {
+      id: 4,
+      name: "Mutsuki",
+      fullName: "sena-nana/Mutsuki",
+      ownerLogin: "sena-nana",
+      private: true,
+      disabled: false,
+      archived: false,
+      description: "Runtime compatibility layer for Lilia desktop apps",
+      defaultBranch: "main",
+      createdAt: "2026-04-18T09:00:00Z",
+      updatedAt: "2026-06-20T11:10:00Z",
+      cloneUrl: "https://github.com/sena-nana/Mutsuki.git",
+      htmlUrl: "https://github.com/sena-nana/Mutsuki",
+    },
+    {
+      id: 5,
+      name: "LiliaTodo",
+      fullName: "sena-nana/LiliaTodo",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: "Focused todo and calendar workspace",
+      defaultBranch: "main",
+      createdAt: "2026-03-04T09:00:00Z",
+      updatedAt: "2026-06-19T18:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/LiliaTodo.git",
+      htmlUrl: "https://github.com/sena-nana/LiliaTodo",
     },
   ];
 }
@@ -198,7 +486,6 @@ function cloneGitHubRepoManagement(repo: GitHubRepoManagement): GitHubRepoManage
   return {
     ...repo,
     topics: [...repo.topics],
-    license: repo.license ? { ...repo.license } : null,
   };
 }
 
@@ -211,6 +498,29 @@ function cloneRepoSummary(repo: RepoSummary): RepoSummary {
   };
 }
 
+function cloneStartupCache(cache: WorkspaceStartupCache): WorkspaceStartupCache {
+  return {
+    workspaceRoot: cache.workspaceRoot,
+    bindingLogin: cache.bindingLogin,
+    reposById: Object.fromEntries(
+      Object.entries(cache.reposById).map(([repoId, entry]) => [
+        repoId,
+        {
+          summary: cloneRepoSummary(entry.summary),
+          cachedAt: entry.cachedAt,
+        },
+      ]),
+    ),
+    contributions: cache.contributions
+      ? {
+          days: cache.contributions.days.map((day) => ({ ...day })),
+          meta: { ...cache.contributions.meta },
+          cachedAt: cache.contributions.cachedAt,
+        }
+      : null,
+  };
+}
+
 function cloneBranchSummary(branch: BranchSummary): BranchSummary {
   return {
     ...branch,
@@ -219,7 +529,23 @@ function cloneBranchSummary(branch: BranchSummary): BranchSummary {
 }
 
 function clonePullRequest(pullRequest: GitHubPullRequest): GitHubPullRequest {
-  return { ...pullRequest };
+  return {
+    ...pullRequest,
+    labels: [...(pullRequest.labels ?? [])],
+    assignees: [...(pullRequest.assignees ?? [])],
+    milestone: pullRequest.milestone ? { ...pullRequest.milestone } : null,
+    projectItems: pullRequest.projectItems?.map((project) => ({ ...project })) ?? [],
+  };
+}
+
+function cloneIssue(issue: GitHubIssue): GitHubIssue {
+  return {
+    ...issue,
+    labels: [...issue.labels],
+    assignees: [...issue.assignees],
+    milestone: issue.milestone ? { ...issue.milestone } : null,
+    projectItems: issue.projectItems?.map((project) => ({ ...project })) ?? [],
+  };
 }
 
 function clonePullRequestCheck(check: GitHubPullRequestCheck): GitHubPullRequestCheck {
@@ -240,6 +566,23 @@ function cloneCommitFileChange(file: CommitFileChange): CommitFileChange {
   };
 }
 
+function cloneCommitSummary(commit: CommitSummary): CommitSummary {
+  return {
+    ...commit,
+    parents: [...commit.parents],
+    refs: [...commit.refs],
+  };
+}
+
+function cloneCommitDetail(detail: CommitDetail): CommitDetail {
+  return {
+    ...detail,
+    parents: [...detail.parents],
+    refs: [...detail.refs],
+    files: detail.files.map(cloneCommitFileChange),
+  };
+}
+
 function cloneRepoRemote(remote: RepoRemote): RepoRemote {
   return { ...remote };
 }
@@ -252,13 +595,65 @@ function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
 }
 
 function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManagement> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": {
+        fullName: "sena-nana/LiliaGithub",
+        name: "LiliaGithub",
+        description: "Local GitHub workspace manager",
+        homepage: "",
+        topics: ["tauri", "vue", "github"],
+        private: false,
+        defaultBranch: "main",
+        hasIssues: true,
+        hasWiki: false,
+        hasProjects: true,
+        hasDiscussions: false,
+        allowMergeCommit: true,
+        allowSquashMerge: true,
+        allowRebaseMerge: true,
+        allowAutoMerge: false,
+        deleteBranchOnMerge: true,
+        allowForking: true,
+        webCommitSignoffRequired: false,
+        stargazersCount: 128,
+        watchersCount: 9,
+        forksCount: 14,
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+      },
+      "sena-nana/Lilia": {
+        fullName: "sena-nana/Lilia",
+        name: "Lilia",
+        description: "Desktop agent workbench",
+        homepage: "",
+        topics: ["desktop", "agent"],
+        private: true,
+        defaultBranch: "main",
+        hasIssues: true,
+        hasWiki: true,
+        hasProjects: false,
+        hasDiscussions: false,
+        allowMergeCommit: true,
+        allowSquashMerge: true,
+        allowRebaseMerge: false,
+        allowAutoMerge: false,
+        deleteBranchOnMerge: false,
+        allowForking: false,
+        webCommitSignoffRequired: false,
+        stargazersCount: 86,
+        watchersCount: 7,
+        forksCount: 6,
+        htmlUrl: "https://github.com/sena-nana/Lilia",
+      },
+    };
+  }
   return {
     "sena-nana/LiliaGithub": {
       fullName: "sena-nana/LiliaGithub",
       name: "LiliaGithub",
-      description: "Local GitHub workspace manager",
-      homepage: "",
-      topics: ["tauri", "vue", "github"],
+      description: "Local GitHub workspace and repository manager",
+      homepage: "https://sena-nana.github.io/LiliaGithub/",
+      topics: ["tauri", "vue", "github", "desktop", "workspace"],
       private: false,
       defaultBranch: "main",
       hasIssues: true,
@@ -276,19 +671,13 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 9,
       forksCount: 14,
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
-      license: {
-        key: "bsd-3-clause",
-        name: "BSD 3-Clause License",
-        spdxId: "BSD-3-Clause",
-        url: "https://api.github.com/licenses/bsd-3-clause",
-      },
     },
-    "sena-nana/Lilia": {
-      fullName: "sena-nana/Lilia",
-      name: "Lilia",
+    "sena-nana/LiliaCode": {
+      fullName: "sena-nana/LiliaCode",
+      name: "LiliaCode",
       description: "Desktop agent workbench",
-      homepage: "",
-      topics: ["desktop", "agent"],
+      homepage: "https://sena-nana.github.io/LiliaCode/",
+      topics: ["desktop", "agent", "codex", "claude"],
       private: true,
       defaultBranch: "main",
       hasIssues: true,
@@ -305,66 +694,333 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       stargazersCount: 86,
       watchersCount: 7,
       forksCount: 6,
-      htmlUrl: "https://github.com/sena-nana/Lilia",
-      license: null,
+      htmlUrl: "https://github.com/sena-nana/LiliaCode",
+    },
+    "sena-nana/LiliaDocs": {
+      fullName: "sena-nana/LiliaDocs",
+      name: "LiliaDocs",
+      description: "Documentation and release notes for the Lilia family",
+      homepage: "https://sena-nana.github.io/LiliaDocs/",
+      topics: ["docs", "vitepress", "release-notes"],
+      private: false,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: false,
+      hasProjects: true,
+      hasDiscussions: true,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: true,
+      allowAutoMerge: true,
+      deleteBranchOnMerge: true,
+      allowForking: true,
+      webCommitSignoffRequired: false,
+      stargazersCount: 42,
+      watchersCount: 5,
+      forksCount: 8,
+      htmlUrl: "https://github.com/sena-nana/LiliaDocs",
+    },
+    "sena-nana/Mutsuki": {
+      fullName: "sena-nana/Mutsuki",
+      name: "Mutsuki",
+      description: "Runtime compatibility layer for Lilia desktop apps",
+      homepage: "",
+      topics: ["runtime", "rust", "mcp"],
+      private: true,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: false,
+      hasProjects: false,
+      hasDiscussions: false,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: false,
+      allowAutoMerge: false,
+      deleteBranchOnMerge: false,
+      allowForking: false,
+      webCommitSignoffRequired: true,
+      stargazersCount: 31,
+      watchersCount: 4,
+      forksCount: 3,
+      htmlUrl: "https://github.com/sena-nana/Mutsuki",
+    },
+    "sena-nana/LiliaTodo": {
+      fullName: "sena-nana/LiliaTodo",
+      name: "LiliaTodo",
+      description: "Focused todo and calendar workspace",
+      homepage: "",
+      topics: ["todo", "calendar", "webdav"],
+      private: false,
+      defaultBranch: "main",
+      hasIssues: true,
+      hasWiki: false,
+      hasProjects: true,
+      hasDiscussions: false,
+      allowMergeCommit: true,
+      allowSquashMerge: true,
+      allowRebaseMerge: true,
+      allowAutoMerge: false,
+      deleteBranchOnMerge: true,
+      allowForking: true,
+      webCommitSignoffRequired: false,
+      stargazersCount: 54,
+      watchersCount: 6,
+      forksCount: 10,
+      htmlUrl: "https://github.com/sena-nana/LiliaTodo",
     },
   };
 }
 
 function createFallbackGitHubIssues(): Record<string, GitHubIssue[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          number: 12,
+          title: "补齐仓库管理入口",
+          state: "open",
+          body: "需要在桌面端管理仓库设置和 issue。",
+          labels: ["enhancement"],
+          assignees: ["lilia-user"],
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
+          updatedAt: "2026-06-17T12:00:00Z",
+          createdAt: "2026-06-16T12:00:00Z",
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
       {
-        number: 12,
-        title: "补齐仓库管理入口",
+        number: 28,
+        title: "README 展示图需要覆盖首页和项目详情",
         state: "open",
-        body: "需要在桌面端管理仓库设置和 issue。",
-        labels: ["enhancement"],
+        body: "为公开 README 准备稳定的演示数据和截图资产。",
+        labels: ["docs", "design"],
         assignees: ["lilia-user"],
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
-        updatedAt: "2026-06-17T12:00:00Z",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/28",
+        updatedAt: "2026-06-21T09:12:00Z",
+        createdAt: "2026-06-21T08:40:00Z",
+      },
+      {
+        number: 21,
+        title: "批量同步预检需要展示阻塞原因",
+        state: "open",
+        body: "pull / push 队列应在执行前解释 eligible、blocked 和 warnings。",
+        labels: ["workflow"],
+        assignees: ["sena-nana"],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/21",
+        updatedAt: "2026-06-20T13:30:00Z",
+        createdAt: "2026-06-18T11:00:00Z",
+      },
+      {
+        number: 16,
+        title: "仓库详情页补充 Actions 入口",
+        state: "closed",
+        body: "在 project tab 中展示 workflow runs。",
+        labels: ["github"],
+        assignees: [],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/16",
+        updatedAt: "2026-06-19T18:00:00Z",
         createdAt: "2026-06-16T12:00:00Z",
+      },
+    ],
+    "sena-nana/LiliaCode": [
+      {
+        number: 84,
+        title: "统一 runtime command 和 workflow intent 边界",
+        state: "open",
+        body: "保持用户可见工作流与后端运行时命令分离。",
+        labels: ["architecture"],
+        assignees: ["lilia-user"],
+        htmlUrl: "https://github.com/sena-nana/LiliaCode/issues/84",
+        updatedAt: "2026-06-21T08:05:00Z",
+        createdAt: "2026-06-19T09:15:00Z",
+      },
+    ],
+    "sena-nana/LiliaDocs": [
+      {
+        number: 9,
+        title: "整理 first alpha 发布说明",
+        state: "open",
+        body: "文档站需要记录安装包、验证方式和已知限制。",
+        labels: ["release"],
+        assignees: ["sena-nana"],
+        htmlUrl: "https://github.com/sena-nana/LiliaDocs/issues/9",
+        updatedAt: "2026-06-20T15:30:00Z",
+        createdAt: "2026-06-20T09:30:00Z",
+      },
+    ],
+    "sena-nana/Mutsuki": [
+      {
+        number: 17,
+        title: "恢复 OperationBackend 兼容 API",
+        state: "closed",
+        body: "主应用仍依赖旧调用面，运行时先提供兼容层。",
+        labels: ["runtime", "compat"],
+        assignees: ["lilia-user"],
+        htmlUrl: "https://github.com/sena-nana/Mutsuki/issues/17",
+        updatedAt: "2026-06-20T11:10:00Z",
+        createdAt: "2026-06-18T17:00:00Z",
       },
     ],
   };
 }
 
 function createFallbackGitHubPullRequests(): Record<string, GitHubPullRequest[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          number: 7,
+          title: "补齐 Git 仓库批量操作",
+          state: "open",
+          draft: false,
+          body: "补齐 pull / push / sync / fetch all 基础能力。",
+          labels: ["git", "workflow"],
+          assignees: ["lilia-user"],
+          milestone: { number: 1, title: "v1", state: "open" },
+          comments: 2,
+          projectItems: [{ id: "PVT_LiliaGithub", title: "Roadmap" }],
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/7",
+          updatedAt: "2026-06-17T12:20:00Z",
+          createdAt: "2026-06-16T09:00:00Z",
+          author: "lilia-user",
+          baseBranch: "main",
+          headBranch: "codex/project-view",
+          merged: false,
+          mergeable: true,
+          mergeableState: "clean",
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
       {
-        number: 7,
-        title: "补齐 Git 仓库批量操作",
+        number: 32,
+        title: "更新 README 展示截图",
         state: "open",
         draft: false,
-        body: "补齐 pull / push / sync / fetch all 基础能力。",
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/7",
-        updatedAt: "2026-06-17T12:20:00Z",
-        createdAt: "2026-06-16T09:00:00Z",
+        body: "加入 mock 数据、截图资产和 README 展示区。",
+        labels: ["documentation", "ui"],
+        assignees: ["lilia-user"],
+        milestone: { number: 1, title: "v1", state: "open" },
+        comments: 3,
+        projectItems: [{ id: "PVT_LiliaGithub", title: "Roadmap" }],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/32",
+        updatedAt: "2026-06-21T09:24:00Z",
+        createdAt: "2026-06-21T08:50:00Z",
         author: "lilia-user",
         baseBranch: "main",
-        headBranch: "codex/project-view",
+        headBranch: "codex/readme-gallery",
         merged: false,
         mergeable: true,
         mergeableState: "clean",
+      },
+      {
+        number: 27,
+        title: "仓库快速启动主视图",
+        state: "closed",
+        draft: false,
+        body: "把命令候选和运行日志移到主内容区。",
+        labels: ["ui", "workflow"],
+        assignees: [],
+        milestone: { number: 1, title: "v1", state: "open" },
+        comments: 5,
+        projectItems: [{ id: "PVT_LiliaGithub", title: "Roadmap" }],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/pull/27",
+        updatedAt: "2026-06-20T10:12:00Z",
+        createdAt: "2026-06-19T13:00:00Z",
+        author: "sena-nana",
+        baseBranch: "main",
+        headBranch: "codex/quick-launch",
+        merged: true,
+        mergeable: false,
+        mergeableState: "merged",
+      },
+    ],
+    "sena-nana/LiliaCode": [
+      {
+        number: 118,
+        title: "拆分 workflow 与 runtime options",
+        state: "open",
+        draft: false,
+        body: "同步前端协议、后端持久化和 provider adapter。",
+        labels: ["runtime", "protocol"],
+        assignees: ["sena-nana"],
+        milestone: null,
+        comments: 4,
+        projectItems: [],
+        htmlUrl: "https://github.com/sena-nana/LiliaCode/pull/118",
+        updatedAt: "2026-06-21T08:42:00Z",
+        createdAt: "2026-06-20T22:00:00Z",
+        author: "sena-nana",
+        baseBranch: "main",
+        headBranch: "codex/runtime-boundary",
+        merged: false,
+        mergeable: true,
+        mergeableState: "unstable",
       },
     ],
   };
 }
 
 function createFallbackGitHubPullRequestChecks(): Record<string, Record<number, GitHubPullRequestCheck[]>> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": {
+        7: [
+          {
+            id: 9001,
+            name: "verify",
+            status: "completed",
+            conclusion: "success",
+            detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+            htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+            startedAt: "2026-06-17T12:00:00Z",
+            completedAt: "2026-06-17T12:08:00Z",
+          },
+        ],
+      },
+    };
+  }
   return {
     "sena-nana/LiliaGithub": {
-      7: [
+      32: [
         {
-          id: 9001,
+          id: 9301,
           name: "verify",
           status: "completed",
           conclusion: "success",
-          detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
-          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
-          startedAt: "2026-06-17T12:00:00Z",
-          completedAt: "2026-06-17T12:08:00Z",
+          detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1301",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1301",
+          startedAt: "2026-06-21T09:10:00Z",
+          completedAt: "2026-06-21T09:18:00Z",
+        },
+        {
+          id: 9302,
+          name: "pages",
+          status: "completed",
+          conclusion: "success",
+          detailsUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1302",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1302",
+          startedAt: "2026-06-21T09:18:00Z",
+          completedAt: "2026-06-21T09:21:00Z",
+        },
+      ],
+    },
+    "sena-nana/LiliaCode": {
+      118: [
+        {
+          id: 9401,
+          name: "desktop verify",
+          status: "completed",
+          conclusion: "failure",
+          detailsUrl: "https://github.com/sena-nana/LiliaCode/actions/runs/4102",
+          htmlUrl: "https://github.com/sena-nana/LiliaCode/actions/runs/4102",
+          startedAt: "2026-06-21T08:22:00Z",
+          completedAt: "2026-06-21T08:36:00Z",
         },
       ],
     },
@@ -372,44 +1028,487 @@ function createFallbackGitHubPullRequestChecks(): Record<string, Record<number, 
 }
 
 function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          id: 1201,
+          name: "CI",
+          displayTitle: "验证仓库详情页",
+          status: "completed",
+          conclusion: "success",
+          branch: "main",
+          event: "push",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
+          createdAt: "2026-06-12T10:00:00Z",
+          updatedAt: "2026-06-12T10:08:00Z",
+        },
+        {
+          id: 1200,
+          name: "Release",
+          displayTitle: "打包桌面应用",
+          status: "in_progress",
+          conclusion: null,
+          branch: "codex/project-view",
+          event: "workflow_dispatch",
+          htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1200",
+          createdAt: "2026-06-12T09:00:00Z",
+          updatedAt: "2026-06-12T09:02:00Z",
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
       {
-        id: 1201,
+        id: 1301,
         name: "CI",
-        displayTitle: "验证仓库详情页",
+        displayTitle: "README screenshot gallery",
+        status: "completed",
+        conclusion: "success",
+        branch: "codex/readme-gallery",
+        event: "push",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1301",
+        createdAt: "2026-06-21T09:10:00Z",
+        updatedAt: "2026-06-21T09:18:00Z",
+      },
+      {
+        id: 1300,
+        name: "Release",
+        displayTitle: "alpha package smoke test",
+        status: "in_progress",
+        conclusion: null,
+        branch: "main",
+        event: "workflow_dispatch",
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1300",
+        createdAt: "2026-06-21T08:55:00Z",
+        updatedAt: "2026-06-21T09:02:00Z",
+      },
+    ],
+    "sena-nana/LiliaCode": [
+      {
+        id: 4102,
+        name: "Verify desktop",
+        displayTitle: "runtime command split",
+        status: "completed",
+        conclusion: "failure",
+        branch: "codex/runtime-boundary",
+        event: "pull_request",
+        htmlUrl: "https://github.com/sena-nana/LiliaCode/actions/runs/4102",
+        createdAt: "2026-06-21T08:22:00Z",
+        updatedAt: "2026-06-21T08:36:00Z",
+      },
+    ],
+    "sena-nana/LiliaDocs": [
+      {
+        id: 2204,
+        name: "Pages",
+        displayTitle: "publish documentation",
         status: "completed",
         conclusion: "success",
         branch: "main",
         event: "push",
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1201",
-        createdAt: "2026-06-12T10:00:00Z",
-        updatedAt: "2026-06-12T10:08:00Z",
+        htmlUrl: "https://github.com/sena-nana/LiliaDocs/actions/runs/2204",
+        createdAt: "2026-06-20T15:31:00Z",
+        updatedAt: "2026-06-20T15:35:00Z",
       },
+    ],
+    "sena-nana/Mutsuki": [
       {
-        id: 1200,
-        name: "Release",
-        displayTitle: "打包桌面应用",
-        status: "in_progress",
-        conclusion: null,
-        branch: "codex/project-view",
-        event: "workflow_dispatch",
-        htmlUrl: "https://github.com/sena-nana/LiliaGithub/actions/runs/1200",
-        createdAt: "2026-06-12T09:00:00Z",
-        updatedAt: "2026-06-12T09:02:00Z",
+        id: 771,
+        name: "Cargo check",
+        displayTitle: "compatibility shims",
+        status: "completed",
+        conclusion: "success",
+        branch: "runtime-compat",
+        event: "push",
+        htmlUrl: "https://github.com/sena-nana/Mutsuki/actions/runs/771",
+        createdAt: "2026-06-20T10:50:00Z",
+        updatedAt: "2026-06-20T11:05:00Z",
       },
     ],
   };
 }
 
-function createFallbackGitHubBranches(): Record<string, BranchSummary[]> {
+function createFallbackGitHubWorkflowRunDetails(
+  runsByRepo = fallbackGitHubWorkflowRuns,
+): Record<string, Record<number, GitHubWorkflowRunDetail>> {
+  return Object.fromEntries(
+    Object.entries(runsByRepo).map(([repoFullName, runs]) => [
+      repoFullName,
+      Object.fromEntries(runs.map((run) => [run.id, fallbackWorkflowRunDetail(run)])),
+    ]),
+  );
+}
+
+function fallbackWorkflowRunDetail(run: GitHubWorkflowRun): GitHubWorkflowRunDetail {
+  const completed = run.status === "completed";
+  const success = completed && run.conclusion === "success";
+  const jobStatus = completed ? "completed" : run.status;
+  const jobConclusion = completed ? run.conclusion : null;
+  const job = (offset: number, name: string, stepName: string, startedAt = run.createdAt) => ({
+    id: run.id * 10 + offset,
+    name,
+    status: jobStatus,
+    conclusion: jobConclusion,
+    startedAt,
+    completedAt: completed ? run.updatedAt : null,
+    htmlUrl: run.htmlUrl,
+    runnerName: "GitHub Actions",
+    steps: [{
+      name: stepName,
+      status: jobStatus,
+      conclusion: jobConclusion,
+      number: 1,
+      startedAt,
+      completedAt: completed ? run.updatedAt : null,
+    }],
+  });
+  return {
+    run: { ...run },
+    jobs: [
+      {
+        ...job(1, "lint", "Run lint"),
+        name: "lint",
+        completedAt: completed ? run.createdAt : null,
+        steps: [
+          {
+            name: "Set up job",
+            status: "completed",
+            conclusion: "success",
+            number: 1,
+            startedAt: run.createdAt,
+            completedAt: run.createdAt,
+          },
+          {
+            name: "Run lint",
+            status: jobStatus,
+            conclusion: jobConclusion,
+            number: 2,
+            startedAt: run.createdAt,
+            completedAt: completed ? run.updatedAt : null,
+          },
+          {
+            name: "Complete job",
+            status: completed ? "completed" : "queued",
+            conclusion: success ? "success" : run.conclusion,
+            number: 3,
+            startedAt: completed ? run.updatedAt : null,
+            completedAt: completed ? run.updatedAt : null,
+          },
+        ],
+      },
+      job(2, "build", "Build"),
+      job(3, "test", "Run tests", completed ? run.updatedAt : run.createdAt),
+      job(4, "package", "Package", completed ? run.updatedAt : run.createdAt),
+    ],
+    artifacts: success
+      ? [{
+        id: run.id * 100 + 1,
+        name: "dist",
+        sizeInBytes: 1840,
+        expired: false,
+        createdAt: run.updatedAt,
+        expiresAt: "2026-07-12T10:08:00Z",
+      }]
+      : [],
+    workflow: {
+      id: run.workflowId ?? run.id,
+      path: ".github/workflows/ci.yml",
+      refName: run.headSha ?? run.branch,
+      content: [
+        "name: CI",
+        "jobs:",
+        "  lint:",
+        "    name: lint",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+        "  build:",
+        "    name: build",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+        "  test:",
+        "    name: test",
+        "    needs: [lint, build]",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+        "  package:",
+        "    name: package",
+        "    needs: test",
+        "    runs-on: ubuntu-latest",
+        "    steps: []",
+      ].join("\n"),
+    },
+  };
+}
+
+function createFallbackGitHubWorkflowJobLogs(
+  detailsByRepo = fallbackGitHubWorkflowRunDetails,
+): Record<string, Record<number, GitHubWorkflowJobLog>> {
+  const logs: Record<string, Record<number, GitHubWorkflowJobLog>> = {};
+  for (const [repoFullName, detailsByRun] of Object.entries(detailsByRepo)) {
+    logs[repoFullName] = {};
+    for (const detail of Object.values(detailsByRun)) {
+      for (const job of detail.jobs) {
+        logs[repoFullName][job.id] = {
+          jobId: job.id,
+          content: job.steps.map((step) => [
+            `##[group]${step.name}`,
+            `${step.name} log line`,
+            "##[endgroup]",
+          ].join("\n")).join("\n"),
+        };
+      }
+    }
+  }
+  return logs;
+}
+
+function createFallbackGitHubWorkflowArtifactEntries(
+  detailsByRepo = fallbackGitHubWorkflowRunDetails,
+): Record<string, Record<number, GitHubWorkflowArtifactEntry[]>> {
+  const entries: Record<string, Record<number, GitHubWorkflowArtifactEntry[]>> = {};
+  for (const [repoFullName, detailsByRun] of Object.entries(detailsByRepo)) {
+    entries[repoFullName] = {};
+    for (const detail of Object.values(detailsByRun)) {
+      for (const artifact of detail.artifacts) {
+        entries[repoFullName][artifact.id] = [
+          { path: "README.md", name: "README.md", kind: "file", size: 58 },
+          { path: "logs/build.log", name: "build.log", kind: "file", size: 36 },
+        ];
+      }
+    }
+  }
+  return entries;
+}
+
+function createFallbackGitHubWorkflowArtifactPreviews(
+  entriesByRepo = fallbackGitHubWorkflowArtifactEntries,
+): Record<string, Record<number, Record<string, RepoFilePreview>>> {
+  const previews: Record<string, Record<number, Record<string, RepoFilePreview>>> = {};
+  for (const [repoFullName, entriesByArtifact] of Object.entries(entriesByRepo)) {
+    previews[repoFullName] = {};
+    for (const [artifactId, entries] of Object.entries(entriesByArtifact)) {
+      previews[repoFullName][Number(artifactId)] = Object.fromEntries(entries.map((entry) => [
+        entry.path,
+        {
+          path: entry.path,
+          name: entry.name,
+          previewKind: entry.path.endsWith(".md") ? "markdown" : "text",
+          content: entry.path.endsWith(".md") ? "# Artifact\n\nFallback artifact preview." : "Fallback artifact log preview.",
+          dataUrl: null,
+          images: {},
+          size: entry.size,
+          mimeType: entry.path.endsWith(".md") ? "text/markdown" : "text/plain",
+          truncated: false,
+        } satisfies RepoFilePreview,
+      ]));
+    }
+  }
+  return previews;
+}
+
+function createFallbackGitHubCommits(): Record<string, CommitSummary[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        {
+          hash: "1234567890abcdef",
+          shortHash: "1234567",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          timestamp: 1_785_000_000,
+          subject: "搭建 LiliaGithub MVP",
+          parents: ["abcdef1234567890"],
+          refs: ["main"],
+        },
+        {
+          hash: "abcdef1234567890",
+          shortHash: "abcdef1",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          timestamp: 1_784_990_000,
+          subject: "初始化工作区扫描",
+          parents: [],
+          refs: [],
+        },
+      ],
+    };
+  }
   return {
     "sena-nana/LiliaGithub": [
-      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_785_000_000 }),
-      buildBranchSummary({ name: "codex/project-view", remote: true, tipTimestamp: 1_784_995_000 }),
+      {
+        hash: "d1e2f3a4b5c6d7e8",
+        shortHash: "d1e2f3a",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        timestamp: 1_781_990_000,
+        subject: "更新 README 展示截图",
+        parents: ["c0ffee1234567890"],
+        refs: ["codex/readme-gallery"],
+      },
+      {
+        hash: "c0ffee1234567890",
+        shortHash: "c0ffee1",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        timestamp: 1_781_920_000,
+        subject: "加入仓库详情页项目视图",
+        parents: [],
+        refs: [],
+      },
     ],
-    "sena-nana/Lilia": [
-      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_784_990_000 }),
+  };
+}
+
+function createFallbackGitHubCommitDetails(): Record<string, Record<string, CommitDetail>> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": {
+        "1234567890abcdef": {
+          hash: "1234567890abcdef",
+          shortHash: "1234567",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          committer: "Sena",
+          committerEmail: "sena@example.com",
+          timestamp: 1_785_000_000,
+          subject: "搭建 LiliaGithub MVP",
+          body: "搭建远程仓库项目视图。",
+          parents: ["abcdef1234567890"],
+          refs: ["main"],
+          files: [
+            {
+              path: "src/pages/Home.vue",
+              oldPath: null,
+              status: "modified",
+              additions: 24,
+              deletions: 8,
+              patch: "diff --git a/src/pages/Home.vue b/src/pages/Home.vue\n@@ -1,3 +1,4 @@\n <template>\n-  <h1>Lilia</h1>\n+  <h1>LiliaGithub</h1>\n+  <p>远程仓库管理</p>\n </template>",
+              hunks: [
+                {
+                  header: "@@ -1,3 +1,4 @@",
+                  oldStart: 1,
+                  oldLines: 3,
+                  newStart: 1,
+                  newLines: 4,
+                  lines: [
+                    { kind: "context", content: "<template>", oldLine: 1, newLine: 1 },
+                    { kind: "deleted", content: "  <h1>Lilia</h1>", oldLine: 2, newLine: null },
+                    { kind: "added", content: "  <h1>LiliaGithub</h1>", oldLine: null, newLine: 2 },
+                    { kind: "added", content: "  <p>远程仓库管理</p>", oldLine: null, newLine: 3 },
+                    { kind: "context", content: "</template>", oldLine: 3, newLine: 4 },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        "abcdef1234567890": {
+          hash: "abcdef1234567890",
+          shortHash: "abcdef1",
+          author: "Sena",
+          authorEmail: "sena@example.com",
+          committer: "Sena",
+          committerEmail: "sena@example.com",
+          timestamp: 1_784_990_000,
+          subject: "初始化工作区扫描",
+          body: "",
+          parents: [],
+          refs: [],
+          files: [],
+        },
+      },
+    };
+  }
+  return {
+    "sena-nana/LiliaGithub": {
+      "d1e2f3a4b5c6d7e8": {
+        hash: "d1e2f3a4b5c6d7e8",
+        shortHash: "d1e2f3a",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        committer: "Sena",
+        committerEmail: "sena@example.com",
+        timestamp: 1_781_990_000,
+        subject: "更新 README 展示截图",
+        body: "准备演示数据和 README 图片展示区。",
+        parents: ["c0ffee1234567890"],
+        refs: ["codex/readme-gallery"],
+        files: [
+          {
+            path: "src/pages/Home.vue",
+            oldPath: null,
+            status: "modified",
+            additions: 24,
+            deletions: 8,
+            patch: "diff --git a/src/pages/Home.vue b/src/pages/Home.vue\n@@ -1,3 +1,4 @@\n <template>\n-  <h1>Lilia</h1>\n+  <h1>LiliaGithub</h1>\n+  <p>远程仓库管理</p>\n </template>",
+            hunks: [
+              {
+                header: "@@ -1,3 +1,4 @@",
+                oldStart: 1,
+                oldLines: 3,
+                newStart: 1,
+                newLines: 4,
+                lines: [
+                  { kind: "context", content: "<template>", oldLine: 1, newLine: 1 },
+                  { kind: "deleted", content: "  <h1>Lilia</h1>", oldLine: 2, newLine: null },
+                  { kind: "added", content: "  <h1>LiliaGithub</h1>", oldLine: null, newLine: 2 },
+                  { kind: "added", content: "  <p>远程仓库管理</p>", oldLine: null, newLine: 3 },
+                  { kind: "context", content: "</template>", oldLine: 3, newLine: 4 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      "c0ffee1234567890": {
+        hash: "c0ffee1234567890",
+        shortHash: "c0ffee1",
+        author: "Sena",
+        authorEmail: "sena@example.com",
+        committer: "Sena",
+        committerEmail: "sena@example.com",
+        timestamp: 1_781_920_000,
+        subject: "加入仓库详情页项目视图",
+        body: "",
+        parents: [],
+        refs: [],
+        files: [],
+      },
+    },
+  };
+}
+
+function createFallbackGitHubBranches(): Record<string, BranchSummary[]> {
+  if (useDefaultFallback) {
+    return {
+      "sena-nana/LiliaGithub": [
+        buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_785_000_000 }),
+        buildBranchSummary({ name: "codex/project-view", remote: true, tipTimestamp: 1_784_995_000 }),
+      ],
+      "sena-nana/Lilia": [
+        buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_784_990_000 }),
+      ],
+    };
+  }
+  return {
+    "sena-nana/LiliaGithub": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_980_000 }),
+      buildBranchSummary({ name: "codex/readme-gallery", remote: true, tipTimestamp: 1_781_990_000 }),
+    ],
+    "sena-nana/LiliaCode": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_930_000 }),
+    ],
+    "sena-nana/LiliaDocs": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_820_000 }),
+    ],
+    "sena-nana/Mutsuki": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_650_000 }),
+      buildBranchSummary({ name: "runtime-compat", remote: true, tipTimestamp: 1_781_700_000 }),
+    ],
+    "sena-nana/LiliaTodo": [
+      buildBranchSummary({ name: "main", remote: true, protected: true, tipTimestamp: 1_781_560_000 }),
     ],
   };
 }
@@ -429,41 +1528,97 @@ function buildBranchSummary(overrides: Partial<BranchSummary> & Pick<BranchSumma
 }
 
 function createFallbackRepoBranches(): Record<string, BranchSummary[]> {
+  if (useDefaultFallback) {
+    return {
+      LiliaGithub: [
+        buildBranchSummary({
+          name: "main",
+          current: true,
+          upstream: "origin/main",
+          ahead: 1,
+          behind: 0,
+          tipTimestamp: 1_785_000_000,
+          checkedOutWorktreePaths: ["C:\\Files\\workspace\\LiliaGithub"],
+        }),
+        buildBranchSummary({
+          name: "dev",
+          upstream: "origin/dev",
+          tipTimestamp: 1_784_998_000,
+        }),
+        buildBranchSummary({
+          name: "inventory",
+          upstream: "origin/inventory",
+          tipTimestamp: 1_784_700_000,
+        }),
+        buildBranchSummary({
+          name: "origin/main",
+          remote: true,
+          tipTimestamp: 1_785_000_000,
+        }),
+        buildBranchSummary({
+          name: "origin/dev",
+          remote: true,
+          tipTimestamp: 1_784_998_000,
+        }),
+        buildBranchSummary({
+          name: "origin/feature/notice-update",
+          remote: true,
+          tipTimestamp: 1_784_200_000,
+        }),
+      ],
+      Lilia: [
+        buildBranchSummary({
+          name: "main",
+          current: true,
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 2,
+          tipTimestamp: 1_784_990_000,
+          checkedOutWorktreePaths: ["C:\\Files\\workspace\\Lilia"],
+        }),
+        buildBranchSummary({
+          name: "origin/main",
+          remote: true,
+          tipTimestamp: 1_784_990_000,
+        }),
+      ],
+    };
+  }
   return {
     LiliaGithub: [
       buildBranchSummary({
         name: "main",
-        current: true,
         upstream: "origin/main",
-        ahead: 1,
-        behind: 0,
-        tipTimestamp: 1_785_000_000,
-        checkedOutWorktreePaths: ["C:\\Files\\workspace\\LiliaGithub"],
+        tipTimestamp: 1_781_980_000,
       }),
       buildBranchSummary({
-        name: "dev",
-        upstream: "origin/dev",
-        tipTimestamp: 1_784_998_000,
+        name: "codex/readme-gallery",
+        upstream: "origin/codex/readme-gallery",
+        current: true,
+        ahead: 2,
+        behind: 1,
+        tipTimestamp: 1_781_990_000,
+        checkedOutWorktreePaths: ["D:\\PROJECT\\workspace\\LiliaGithub"],
       }),
       buildBranchSummary({
-        name: "inventory",
-        upstream: "origin/inventory",
-        tipTimestamp: 1_784_700_000,
+        name: "release/alpha",
+        upstream: "origin/release/alpha",
+        tipTimestamp: 1_781_400_000,
       }),
       buildBranchSummary({
         name: "origin/main",
         remote: true,
-        tipTimestamp: 1_785_000_000,
+        tipTimestamp: 1_781_980_000,
       }),
       buildBranchSummary({
-        name: "origin/dev",
+        name: "origin/codex/readme-gallery",
         remote: true,
-        tipTimestamp: 1_784_998_000,
+        tipTimestamp: 1_781_980_000,
       }),
       buildBranchSummary({
-        name: "origin/feature/notice-update",
+        name: "origin/release/alpha",
         remote: true,
-        tipTimestamp: 1_784_200_000,
+        tipTimestamp: 1_781_400_000,
       }),
     ],
     Lilia: [
@@ -473,13 +1628,13 @@ function createFallbackRepoBranches(): Record<string, BranchSummary[]> {
         upstream: "origin/main",
         ahead: 0,
         behind: 2,
-        tipTimestamp: 1_784_990_000,
-        checkedOutWorktreePaths: ["C:\\Files\\workspace\\Lilia"],
+        tipTimestamp: 1_781_930_000,
+        checkedOutWorktreePaths: ["D:\\PROJECT\\workspace\\Lilia"],
       }),
       buildBranchSummary({
         name: "origin/main",
         remote: true,
-        tipTimestamp: 1_784_990_000,
+        tipTimestamp: 1_781_930_000,
       }),
     ],
   };
@@ -494,6 +1649,26 @@ function createFallbackRepoStashes(): Record<string, RepoStashEntry[]> {
 }
 
 function createFallbackRepoRemotes(): Record<string, RepoRemote[]> {
+  if (useDefaultFallback) {
+    return {
+      LiliaGithub: [
+        {
+          name: "origin",
+          fetchUrl: "https://github.com/sena-nana/LiliaGithub.git",
+          pushUrl: "https://github.com/sena-nana/LiliaGithub.git",
+          current: true,
+        },
+      ],
+      Lilia: [
+        {
+          name: "origin",
+          fetchUrl: "https://github.com/sena-nana/Lilia.git",
+          pushUrl: "https://github.com/sena-nana/Lilia.git",
+          current: true,
+        },
+      ],
+    };
+  }
   return {
     LiliaGithub: [
       {
@@ -506,8 +1681,8 @@ function createFallbackRepoRemotes(): Record<string, RepoRemote[]> {
     Lilia: [
       {
         name: "origin",
-        fetchUrl: "https://github.com/sena-nana/Lilia.git",
-        pushUrl: "https://github.com/sena-nana/Lilia.git",
+        fetchUrl: "https://github.com/sena-nana/LiliaCode.git",
+        pushUrl: "https://github.com/sena-nana/LiliaCode.git",
         current: true,
       },
     ],
@@ -547,6 +1722,15 @@ function createFallbackRepoFiles(): Record<string, Record<string, RepoFileTreeEn
   };
 }
 
+function createFallbackGitHubRepoFiles(): Record<string, Record<string, RepoFileTreeEntry[]>> {
+  return Object.fromEntries(
+    Object.entries(createFallbackRepoFiles()).map(([repoId, files]) => {
+      const repo = fallbackRepos.find((item) => item.id === repoId);
+      return [repo?.githubFullName ?? repoId, files];
+    }),
+  );
+}
+
 function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFilePreview>> {
   return {
     LiliaGithub: {
@@ -554,7 +1738,7 @@ function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFil
         path: "README.md",
         name: "README.md",
         previewKind: "markdown",
-        content: FALLBACK_LILIA_GITHUB_README,
+        content: useDefaultFallback ? FALLBACK_LILIA_GITHUB_README : FALLBACK_SHOWCASE_LILIA_GITHUB_README,
         images: {},
         size: 168,
         mimeType: "text/markdown",
@@ -638,18 +1822,35 @@ function createFallbackRepoFilePreviews(): Record<string, Record<string, RepoFil
   };
 }
 
+function createFallbackGitHubRepoFilePreviews(): Record<string, Record<string, RepoFilePreview>> {
+  return Object.fromEntries(
+    Object.entries(createFallbackRepoFilePreviews()).map(([repoId, previews]) => {
+      const repo = fallbackRepos.find((item) => item.id === repoId);
+      return [repo?.githubFullName ?? repoId, previews];
+    }),
+  );
+}
+
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
 let fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+let fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
+let fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs();
+let fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries();
+let fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews();
+let fallbackGitHubCommits = createFallbackGitHubCommits();
+let fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
 let fallbackGitHubBranches = createFallbackGitHubBranches();
 let fallbackRepoStashes = createFallbackRepoStashes();
 let fallbackRepoRemotes = createFallbackRepoRemotes();
 let fallbackRepoBranches = createFallbackRepoBranches();
 let fallbackRepoFiles = createFallbackRepoFiles();
+let fallbackGitHubRepoFiles = createFallbackGitHubRepoFiles();
 let fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
+let fallbackGitHubRepoFilePreviews = createFallbackGitHubRepoFilePreviews();
 
 type FallbackGitHubIssueListCall = {
   repoFullName: string;
@@ -658,11 +1859,27 @@ type FallbackGitHubIssueListCall = {
   sort: string | null;
   direction: string | null;
   since: string | null;
+  creator: string | null;
+  assignee: string | null;
+  labels: string[] | null;
+  milestone: string | number | null;
+  project: string | null;
+  query: string | null;
 };
 
 type FallbackGitHubPullRequestListCall = {
   repoFullName: string;
   state: string | null;
+  perPage: number | null;
+  sort: string | null;
+  direction: string | null;
+  creator: string | null;
+  assignee: string | null;
+  labels: string[] | null;
+  milestone: string | number | null;
+  project: string | null;
+  review: string | null;
+  query: string | null;
 };
 
 type FallbackGitHubPullRequestCheckListCall = {
@@ -670,15 +1887,62 @@ type FallbackGitHubPullRequestCheckListCall = {
   pullNumber: number;
 };
 
+type FallbackGitHubRepoFileListCall = {
+  repoFullName: string;
+  parentPath: string | null;
+  refName: string | null;
+};
+
+type FallbackGitHubRepoFilePreviewCall = {
+  repoFullName: string;
+  path: string;
+  refName: string | null;
+};
+
 function createFallbackSettings(): WorkspaceSettings {
+  if (useDefaultFallback) {
+    return {
+      workspaceRoot: "C:\\Files\\workspace",
+      githubBinding: defaultFallbackBinding.binding,
+      projectLaunchConfigs: {},
+      repoSyncPreferences: {},
+      hiddenRepoIds: [],
+      managedRepoIds: fallbackRepos.map((repo) => repo.id),
+      systemGitRepoIds: [],
+      repoGroups: [],
+      remoteRepoShortcuts: [],
+      localContributionCache: {},
+    };
+  }
   return {
-    workspaceRoot: "C:\\Files\\workspace",
+    workspaceRoot: "D:\\PROJECT\\workspace",
     githubBinding: defaultFallbackBinding.binding,
-    projectLaunchConfigs: {},
+    projectLaunchConfigs: {
+      LiliaGithub: {
+        command: "yarn tauri:dev",
+        cwd: null,
+        source: "manual",
+        updatedAt: Date.now(),
+      },
+      LiliaDocs: {
+        command: "yarn docs:dev",
+        cwd: null,
+        source: "manual",
+        updatedAt: Date.now(),
+      },
+    },
+    repoSyncPreferences: {
+      LiliaGithub: { autoSync: true },
+      LiliaDocs: { autoSync: true },
+      Mutsuki: { autoSync: false },
+    },
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     systemGitRepoIds: [],
-    repoGroups: [],
+    repoGroups: [
+      { id: "group-lilia-apps", name: "Lilia Apps", repoIds: ["LiliaGithub", "Lilia", "LiliaTodo"] },
+      { id: "group-runtime-docs", name: "Runtime & Docs", repoIds: ["Mutsuki", "LiliaDocs"] },
+    ],
     remoteRepoShortcuts: [],
     localContributionCache: {},
   };
@@ -699,6 +1963,14 @@ let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackGitHubPullRequestListCalls: FallbackGitHubPullRequestListCall[] = [];
 let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListCall[] = [];
 let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
+let fallbackGitHubWorkflowRunDetailCalls: Array<{ repoFullName: string; runId: number }> = [];
+let fallbackGitHubWorkflowJobLogCalls: Array<{ repoFullName: string; jobId: number }> = [];
+let fallbackGitHubWorkflowArtifactListCalls: Array<{ repoFullName: string; artifactId: number }> = [];
+let fallbackGitHubWorkflowArtifactPreviewCalls: Array<{ repoFullName: string; artifactId: number; path: string }> = [];
+let fallbackGitHubCommitListCalls: Array<{ repoFullName: string; perPage: number | null; sha: string | null }> = [];
+let fallbackGitHubCommitDetailCalls: Array<{ repoFullName: string; hash: string }> = [];
+let fallbackGitHubRepoFileListCalls: FallbackGitHubRepoFileListCall[] = [];
+let fallbackGitHubRepoFilePreviewCalls: FallbackGitHubRepoFilePreviewCall[] = [];
 let fallbackOpenPathCalls: string[] = [];
 let fallbackOpenPathTargetCalls: Array<{ path: string; target: SystemOpenTarget }> = [];
 let fallbackCloneIndex = 1;
@@ -706,6 +1978,7 @@ let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackRepoOverrides: Record<string, RepoSummary> = {};
 let fallbackTaskIndex = 1;
 let fallbackTasks: WorkspaceTask[] = [];
+let fallbackStartupCache: WorkspaceStartupCache | null = null;
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
@@ -732,16 +2005,32 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
   fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
+  fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
+  fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs();
+  fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries();
+  fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews();
+  fallbackGitHubCommits = createFallbackGitHubCommits();
+  fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
   fallbackGitHubBranches = createFallbackGitHubBranches();
   fallbackRepoStashes = createFallbackRepoStashes();
   fallbackRepoRemotes = createFallbackRepoRemotes();
   fallbackRepoBranches = createFallbackRepoBranches();
   fallbackRepoFiles = createFallbackRepoFiles();
+  fallbackGitHubRepoFiles = createFallbackGitHubRepoFiles();
   fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
+  fallbackGitHubRepoFilePreviews = createFallbackGitHubRepoFilePreviews();
   fallbackGitHubIssueListCalls = [];
   fallbackGitHubPullRequestListCalls = [];
   fallbackGitHubPullRequestCheckListCalls = [];
   fallbackGitHubWorkflowRunListCalls = [];
+  fallbackGitHubWorkflowRunDetailCalls = [];
+  fallbackGitHubWorkflowJobLogCalls = [];
+  fallbackGitHubWorkflowArtifactListCalls = [];
+  fallbackGitHubWorkflowArtifactPreviewCalls = [];
+  fallbackGitHubCommitListCalls = [];
+  fallbackGitHubCommitDetailCalls = [];
+  fallbackGitHubRepoFileListCalls = [];
+  fallbackGitHubRepoFilePreviewCalls = [];
   fallbackOpenPathCalls = [];
   fallbackOpenPathTargetCalls = [];
   fallbackCloneIndex = 1;
@@ -749,6 +2038,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoOverrides = {};
   fallbackTaskIndex = 1;
   fallbackTasks = [];
+  fallbackStartupCache = null;
   for (const key of Object.keys(fallbackLaunchStatuses)) {
     delete fallbackLaunchStatuses[key];
   }
@@ -827,6 +2117,10 @@ export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingSta
   };
 }
 
+export function setFallbackStartupCacheForTests(cache: WorkspaceStartupCache | null) {
+  fallbackStartupCache = cache ? cloneStartupCache(cache) : null;
+}
+
 export function setFallbackGitHubReposErrorForTests(error: string | null) {
   fallbackGitHubReposError = error;
 }
@@ -852,7 +2146,10 @@ export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueLi
 }
 
 export function getFallbackGitHubPullRequestListCallsForTests(): FallbackGitHubPullRequestListCall[] {
-  return fallbackGitHubPullRequestListCalls.map((call) => ({ ...call }));
+  return fallbackGitHubPullRequestListCalls.map((call) => ({
+    ...call,
+    labels: call.labels ? [...call.labels] : null,
+  }));
 }
 
 export function getFallbackGitHubPullRequestCheckListCallsForTests(): FallbackGitHubPullRequestCheckListCall[] {
@@ -861,6 +2158,22 @@ export function getFallbackGitHubPullRequestCheckListCallsForTests(): FallbackGi
 
 export function getFallbackGitHubWorkflowRunListCallsForTests() {
   return fallbackGitHubWorkflowRunListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubCommitListCallsForTests() {
+  return fallbackGitHubCommitListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubCommitDetailCallsForTests() {
+  return fallbackGitHubCommitDetailCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubRepoFileListCallsForTests() {
+  return fallbackGitHubRepoFileListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubRepoFilePreviewCallsForTests() {
+  return fallbackGitHubRepoFilePreviewCalls.map((call) => ({ ...call }));
 }
 
 export function getFallbackOpenPathCallsForTests(): string[] {
@@ -875,7 +2188,7 @@ export function setFallbackGitHubIssuesForTests(issuesByRepo: Record<string, Git
   fallbackGitHubIssues = Object.fromEntries(
     Object.entries(issuesByRepo).map(([repoFullName, issues]) => [
       repoFullName,
-      issues.map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] })),
+      issues.map(cloneIssue),
     ]),
   );
 }
@@ -912,6 +2225,94 @@ export function setFallbackGitHubWorkflowRunsForTests(runsByRepo: Record<string,
       runs.map((run) => ({ ...run })),
     ]),
   );
+  fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails(fallbackGitHubWorkflowRuns);
+  fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews(fallbackGitHubWorkflowArtifactEntries);
+}
+
+export function setFallbackGitHubWorkflowRunDetailsForTests(
+  detailsByRepo: Record<string, Record<number, GitHubWorkflowRunDetail>>,
+) {
+  fallbackGitHubWorkflowRunDetails = Object.fromEntries(
+    Object.entries(detailsByRepo).map(([repoFullName, details]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(details).map(([runId, detail]) => [Number(runId), cloneWorkflowRunDetail(detail)]),
+      ),
+    ]),
+  );
+  fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactEntries = createFallbackGitHubWorkflowArtifactEntries(fallbackGitHubWorkflowRunDetails);
+  fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifactPreviews(fallbackGitHubWorkflowArtifactEntries);
+}
+
+export function setFallbackGitHubWorkflowJobLogsForTests(
+  logsByRepo: Record<string, Record<number, GitHubWorkflowJobLog>>,
+) {
+  fallbackGitHubWorkflowJobLogs = Object.fromEntries(
+    Object.entries(logsByRepo).map(([repoFullName, logs]) => [
+      repoFullName,
+      Object.fromEntries(Object.entries(logs).map(([jobId, log]) => [Number(jobId), { ...log }])),
+    ]),
+  );
+}
+
+export function setFallbackGitHubWorkflowArtifactEntriesForTests(
+  entriesByRepo: Record<string, Record<number, GitHubWorkflowArtifactEntry[]>>,
+) {
+  fallbackGitHubWorkflowArtifactEntries = Object.fromEntries(
+    Object.entries(entriesByRepo).map(([repoFullName, entries]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(entries).map(([artifactId, artifactEntries]) => [
+          Number(artifactId),
+          artifactEntries.map((entry) => ({ ...entry })),
+        ]),
+      ),
+    ]),
+  );
+}
+
+export function setFallbackGitHubWorkflowArtifactPreviewsForTests(
+  previewsByRepo: Record<string, Record<number, Record<string, RepoFilePreview>>>,
+) {
+  fallbackGitHubWorkflowArtifactPreviews = Object.fromEntries(
+    Object.entries(previewsByRepo).map(([repoFullName, previewsByArtifact]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(previewsByArtifact).map(([artifactId, previews]) => [
+          Number(artifactId),
+          Object.fromEntries(
+            Object.entries(previews).map(([path, preview]) => [path, cloneRepoFilePreview(preview)]),
+          ),
+        ]),
+      ),
+    ]),
+  );
+}
+
+export function setFallbackGitHubCommitsForTests(commitsByRepo: Record<string, CommitSummary[]>) {
+  fallbackGitHubCommits = Object.fromEntries(
+    Object.entries(commitsByRepo).map(([repoFullName, commits]) => [
+      repoFullName,
+      commits.map(cloneCommitSummary),
+    ]),
+  );
+}
+
+export function setFallbackGitHubCommitDetailsForTests(detailsByRepo: Record<string, Record<string, CommitDetail>>) {
+  fallbackGitHubCommitDetails = Object.fromEntries(
+    Object.entries(detailsByRepo).map(([repoFullName, details]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(details).map(([hash, detail]) => [
+          hash,
+          cloneCommitDetail(detail),
+        ]),
+      ),
+    ]),
+  );
 }
 
 function cloneRepoFileTreeEntry(entry: RepoFileTreeEntry): RepoFileTreeEntry {
@@ -923,6 +2324,18 @@ function cloneRepoFilePreview(preview: RepoFilePreview): RepoFilePreview {
     ...preview,
     dataUrl: preview.dataUrl ?? null,
     images: preview.images ? { ...preview.images } : {},
+  };
+}
+
+function cloneWorkflowRunDetail(detail: GitHubWorkflowRunDetail): GitHubWorkflowRunDetail {
+  return {
+    run: { ...detail.run },
+    jobs: detail.jobs.map((job) => ({
+      ...job,
+      steps: job.steps.map((step) => ({ ...step })),
+    })),
+    artifacts: detail.artifacts.map((artifact) => ({ ...artifact })),
+    workflow: detail.workflow ? { ...detail.workflow } : null,
   };
 }
 
@@ -963,6 +2376,12 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
   return {
     ...settings,
     projectLaunchConfigs: { ...settings.projectLaunchConfigs },
+    repoSyncPreferences: Object.fromEntries(
+      Object.entries(settings.repoSyncPreferences ?? {}).map(([repoId, preference]) => [
+        repoId,
+        { ...preference },
+      ]),
+    ),
     hiddenRepoIds: [...settings.hiddenRepoIds],
     managedRepoIds: [...settings.managedRepoIds],
     systemGitRepoIds: [...settings.systemGitRepoIds],
@@ -993,10 +2412,35 @@ export function setFallbackRepoFilesForTests(filesByRepo: Record<string, Record<
   );
 }
 
+export function setFallbackGitHubRepoFilesForTests(filesByRepo: Record<string, Record<string, RepoFileTreeEntry[]>>) {
+  fallbackGitHubRepoFiles = Object.fromEntries(
+    Object.entries(filesByRepo).map(([repoFullName, directories]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(directories).map(([parentPath, entries]) => [
+          parentPath,
+          entries.map(cloneRepoFileTreeEntry),
+        ]),
+      ),
+    ]),
+  );
+}
+
 export function setFallbackRepoFilePreviewsForTests(previewsByRepo: Record<string, Record<string, RepoFilePreview>>) {
   fallbackRepoFilePreviews = Object.fromEntries(
     Object.entries(previewsByRepo).map(([repoId, previews]) => [
       repoId,
+      Object.fromEntries(
+        Object.entries(previews).map(([path, preview]) => [path, cloneRepoFilePreview(preview)]),
+      ),
+    ]),
+  );
+}
+
+export function setFallbackGitHubRepoFilePreviewsForTests(previewsByRepo: Record<string, Record<string, RepoFilePreview>>) {
+  fallbackGitHubRepoFilePreviews = Object.fromEntries(
+    Object.entries(previewsByRepo).map(([repoFullName, previews]) => [
+      repoFullName,
       Object.fromEntries(
         Object.entries(previews).map(([path, preview]) => [path, cloneRepoFilePreview(preview)]),
       ),
@@ -1046,9 +2490,80 @@ export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
   return call("workspace_get_settings", undefined, () => cloneWorkspaceSettings(fallbackSettings));
 }
 
+function startupCacheMatchesSettings(cache: WorkspaceStartupCache | null) {
+  return Boolean(cache) &&
+    cache?.workspaceRoot === fallbackSettings.workspaceRoot &&
+    cache?.bindingLogin === (fallbackSettings.githubBinding?.login ?? null);
+}
+
+function currentStartupCache(): WorkspaceStartupCache {
+  if (startupCacheMatchesSettings(fallbackStartupCache)) {
+    return cloneStartupCache(fallbackStartupCache!);
+  }
+  return {
+    workspaceRoot: fallbackSettings.workspaceRoot,
+    bindingLogin: fallbackSettings.githubBinding?.login ?? null,
+    reposById: {},
+    contributions: null,
+  };
+}
+
+function writeFallbackStartupRepoSummary(summary: RepoSummary) {
+  const cache = currentStartupCache();
+  cache.reposById[summary.id] = {
+    summary: cloneRepoSummary(summary),
+    cachedAt: Date.now(),
+  };
+  fallbackStartupCache = cache;
+}
+
+export function readStartupCache(): Promise<WorkspaceStartupCache | null> {
+  return call("workspace_read_startup_cache", undefined, () =>
+    startupCacheMatchesSettings(fallbackStartupCache) ? cloneStartupCache(fallbackStartupCache!) : null,
+  );
+}
+
+export function clearStartupCache(): Promise<void> {
+  return call("workspace_clear_startup_cache", undefined, () => {
+    fallbackStartupCache = null;
+  });
+}
+
+export function writeStartupContributions(
+  contributions: WorkspaceStartupContributions,
+): Promise<WorkspaceStartupCache> {
+  return call("workspace_write_startup_contributions", { contributions }, () => {
+    const cache = currentStartupCache();
+    cache.contributions = {
+      days: contributions.days.map((day) => ({ ...day })),
+      meta: { ...contributions.meta },
+      cachedAt: Date.now(),
+    };
+    fallbackStartupCache = cache;
+    return cloneStartupCache(cache);
+  });
+}
+
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
+    fallbackStartupCache = null;
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function setRepoAutoSync(repoId: string, autoSync: boolean): Promise<WorkspaceSettings> {
+  return call("repo_set_auto_sync", { repoId, autoSync }, () => {
+    const normalized = repoId.trim();
+    if (!normalized) throw new Error("仓库 ID 不能为空");
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoSyncPreferences: withRepoAutoSyncPreference(
+        fallbackSettings.repoSyncPreferences,
+        normalized,
+        autoSync,
+      ),
+    };
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }
@@ -1084,9 +2599,21 @@ export function refreshRepos(): Promise<RepoSummary[]> {
 }
 
 export function listManagedRepos(): Promise<RepoSummary[]> {
-  return call("workspace_list_managed_repos", undefined, () =>
-    visibleManagedFallbackRepos().map(lightweightRepoSummary),
-  );
+  return call("workspace_list_managed_repos", undefined, () => {
+    const cache = startupCacheMatchesSettings(fallbackStartupCache) ? fallbackStartupCache : null;
+    return visibleManagedFallbackRepos().map((repo) => {
+      const lightweight = lightweightRepoSummary(repo);
+      const cached = cache?.reposById[repo.id]?.summary;
+      return cached ? {
+        ...cloneRepoSummary(cached),
+        id: lightweight.id,
+        name: lightweight.name,
+        path: lightweight.path,
+        relativePath: lightweight.relativePath,
+        worktree: { ...lightweight.worktree },
+      } : lightweight;
+    });
+  });
 }
 
 export function discoverRepos(): Promise<RepoSummary[]> {
@@ -1177,7 +2704,8 @@ export function refreshRepoSummary(
       error ? "error" : "success",
       error ? `仓库状态已刷新，远端同步失败：${error}` : "仓库状态已更新",
     );
-    return { ...repo };
+    writeFallbackStartupRepoSummary(repo);
+    return cloneRepoSummary(repo);
   });
 }
 
@@ -1232,6 +2760,13 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
     if (!fallbackSettings.hiddenRepoIds.includes(repoId)) {
       const localContributionCache = { ...fallbackSettings.localContributionCache };
       delete localContributionCache[repoId];
+      const startupCache = startupCacheMatchesSettings(fallbackStartupCache)
+        ? cloneStartupCache(fallbackStartupCache!)
+        : null;
+      if (startupCache) {
+        delete startupCache.reposById[repoId];
+        fallbackStartupCache = startupCache;
+      }
       fallbackSettings = {
         ...fallbackSettings,
         hiddenRepoIds: [...fallbackSettings.hiddenRepoIds, repoId].sort(),
@@ -1353,9 +2888,12 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
     delete localContributionCache[repoId];
     const projectLaunchConfigs = { ...fallbackSettings.projectLaunchConfigs };
     delete projectLaunchConfigs[repoId];
+    const repoSyncPreferences = { ...fallbackSettings.repoSyncPreferences };
+    delete repoSyncPreferences[repoId];
     fallbackSettings = {
       ...fallbackSettings,
       projectLaunchConfigs,
+      repoSyncPreferences,
       managedRepoIds: fallbackSettings.managedRepoIds.filter((id) => id !== repoId),
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
       systemGitRepoIds: fallbackSettings.systemGitRepoIds.filter((id) => id !== repoId),
@@ -1369,6 +2907,11 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
     delete fallbackRepoOverrides[repoId];
     delete fallbackLaunchStatuses[repoId];
     delete fallbackLaunchLogs[repoId];
+    if (startupCacheMatchesSettings(fallbackStartupCache)) {
+      const cache = cloneStartupCache(fallbackStartupCache!);
+      delete cache.reposById[repoId];
+      fallbackStartupCache = cache;
+    }
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }
@@ -1525,7 +3068,6 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
     watchersCount: 0,
     forksCount: 0,
     htmlUrl: repo.htmlUrl,
-    license: null,
   };
   fallbackGitHubRepoManagement[repoFullName] = management;
   return cloneGitHubRepoManagement(management);
@@ -1590,14 +3132,6 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       watchersCount: 0,
       forksCount: 0,
       htmlUrl: repo.htmlUrl,
-      license: request.licenseTemplate
-        ? {
-            key: request.licenseTemplate,
-            name: `${request.licenseTemplate} license`,
-            spdxId: request.licenseTemplate.toUpperCase(),
-            url: null,
-          }
-        : null,
     };
     fallbackGitHubIssues[fullName] = [];
     fallbackGitHubPullRequests[fullName] = [];
@@ -1678,17 +3212,145 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
 
 export function listGitHubPullRequests(
   repoFullName: string,
-  state: "open" | "closed" | "all" | null = "open",
+  stateOrOptions?: string | null | GitHubPullRequestListOptions,
 ): Promise<GitHubPullRequest[]> {
-  return call("github_list_pull_requests", { repoFullName, state: state ?? null }, () =>
-    {
-      fallbackGitHubPullRequestListCalls.push({ repoFullName, state: state ?? null });
-      return [...(fallbackGitHubPullRequests[repoFullName] ?? [])]
-        .filter((pullRequest) => !state || state === "all" || pullRequest.state === state)
-        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-        .map(clonePullRequest);
-    },
-  );
+  const options = typeof stateOrOptions === "object" && stateOrOptions != null
+    ? stateOrOptions
+    : { state: stateOrOptions ?? null };
+  const state = options.state ?? null;
+  const sort = options.sort ?? "updated";
+  const direction = options.direction ?? "desc";
+  const creator = options.creator ?? null;
+  const assignee = options.assignee ?? null;
+  const labels = options.labels ?? null;
+  const milestone = options.milestone ?? null;
+  const project = options.project ?? null;
+  const review = options.review ?? null;
+  const query = options.query?.trim() || null;
+  const perPage = Number.isFinite(options.perPage) ? Math.max(1, Math.trunc(options.perPage ?? 0)) : null;
+  fallbackGitHubPullRequestListCalls.push({
+    repoFullName,
+    state,
+    perPage,
+    sort,
+    direction,
+    creator,
+    assignee,
+    labels: labels ? [...labels] : null,
+    milestone,
+    project,
+    review,
+    query,
+  });
+  return call("github_list_pull_requests", {
+    repoFullName,
+    state,
+    perPage,
+    sort,
+    direction,
+    creator,
+    assignee,
+    labels,
+    milestone,
+    project,
+    review,
+    query,
+  }, () => {
+    const sorted = [...(fallbackGitHubPullRequests[repoFullName] ?? [])]
+      .filter((pullRequest) => isFallbackGitHubPullRequestState(pullRequest, state))
+      .filter((pullRequest) => isFallbackGitHubPullRequestQuery(pullRequest, query))
+      .filter((pullRequest) => isFallbackGitHubPullRequestCreator(pullRequest, creator))
+      .filter((pullRequest) => isFallbackGitHubPullRequestAssignee(pullRequest, assignee))
+      .filter((pullRequest) => isFallbackGitHubPullRequestLabels(pullRequest, labels))
+      .filter((pullRequest) => isFallbackGitHubPullRequestMilestone(pullRequest, milestone))
+      .filter((pullRequest) => isFallbackGitHubPullRequestProject(pullRequest, project))
+      .filter((pullRequest) => isFallbackGitHubPullRequestReview(pullRequest, review))
+      .sort((a, b) => compareFallbackGitHubPullRequests(a, b, sort, direction));
+    return sorted
+      .slice(0, perPage ?? sorted.length)
+      .map(clonePullRequest);
+  });
+}
+
+function isFallbackGitHubPullRequestState(pullRequest: GitHubPullRequest, state: string | null) {
+  if (!state || state === "open") return pullRequest.state === "open";
+  if (state === "merged") return pullRequest.merged;
+  if (state === "closed") return pullRequest.state === "closed" && !pullRequest.merged;
+  if (state === "all") return true;
+  return pullRequest.state === state;
+}
+
+function isFallbackGitHubPullRequestCreator(pullRequest: GitHubPullRequest, creator: string | null) {
+  if (!creator) return true;
+  return pullRequest.author.toLowerCase() === creator.toLowerCase();
+}
+
+function isFallbackGitHubPullRequestAssignee(pullRequest: GitHubPullRequest, assignee: string | null) {
+  if (!assignee) return true;
+  const assignees = pullRequest.assignees ?? [];
+  if (assignee === "none") return assignees.length === 0;
+  return assignees.some((value) => value.toLowerCase() === assignee.toLowerCase());
+}
+
+function isFallbackGitHubPullRequestLabels(pullRequest: GitHubPullRequest, labels: readonly string[] | null) {
+  const normalized = (labels ?? []).map((label) => label.toLowerCase()).filter(Boolean);
+  if (!normalized.length) return true;
+  const pullLabels = (pullRequest.labels ?? []).map((label) => label.toLowerCase());
+  return normalized.every((label) => pullLabels.includes(label));
+}
+
+function isFallbackGitHubPullRequestMilestone(pullRequest: GitHubPullRequest, milestone: string | number | null) {
+  if (milestone == null || milestone === "") return true;
+  if (milestone === "none") return !pullRequest.milestone;
+  return String(pullRequest.milestone?.number ?? "") === String(milestone);
+}
+
+function isFallbackGitHubPullRequestProject(pullRequest: GitHubPullRequest, project: string | null) {
+  if (!project) return true;
+  return (pullRequest.projectItems ?? []).some((item) => item.id === project || item.title === project);
+}
+
+function isFallbackGitHubPullRequestReview(pullRequest: GitHubPullRequest, review: string | null) {
+  if (!review) return true;
+  if (review === "approved") return pullRequest.mergeableState === "clean";
+  if (review === "changes_requested") return pullRequest.mergeableState === "blocked";
+  if (review === "required") return pullRequest.mergeableState === "unstable" || pullRequest.mergeableState === "blocked";
+  if (review === "none") return !pullRequest.mergeableState || pullRequest.mergeableState === "unknown";
+  return true;
+}
+
+function isFallbackGitHubPullRequestQuery(pullRequest: GitHubPullRequest, query: string | null) {
+  const normalized = query?.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    pullRequest.number,
+    pullRequest.title,
+    pullRequest.body ?? "",
+    pullRequest.author,
+    pullRequest.headBranch,
+    pullRequest.baseBranch,
+    (pullRequest.labels ?? []).join(" "),
+    (pullRequest.assignees ?? []).join(" "),
+    pullRequest.milestone?.title ?? "",
+    pullRequest.projectItems?.map((project) => project.title).join(" ") ?? "",
+  ].join(" ").toLowerCase().includes(normalized);
+}
+
+function compareFallbackGitHubPullRequests(
+  a: GitHubPullRequest,
+  b: GitHubPullRequest,
+  sort: string | null,
+  direction: string | null,
+) {
+  if (sort === "comments") {
+    const comparedComments = (a.comments ?? 0) - (b.comments ?? 0);
+    return direction === "asc" ? comparedComments : -comparedComments;
+  }
+  const sortKey = sort === "created" ? "createdAt" : "updatedAt";
+  const left = Date.parse(a[sortKey]);
+  const right = Date.parse(b[sortKey]);
+  const compared = (Number.isFinite(left) ? left : 0) - (Number.isFinite(right) ? right : 0);
+  return direction === "asc" ? compared : -compared;
 }
 
 export function getGitHubPullRequest(repoFullName: string, pullNumber: number): Promise<GitHubPullRequest> {
@@ -1715,6 +3377,11 @@ export function createGitHubPullRequest(
       state: "open",
       draft: request.draft === true,
       body: request.body?.trim() || null,
+      labels: [],
+      assignees: [],
+      milestone: null,
+      comments: 0,
+      projectItems: [],
       htmlUrl: `https://github.com/${repoFullName}/pull/${pullRequests.length + 1}`,
       updatedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -1803,8 +3470,27 @@ export function listGitHubIssues(
   const sort = options.sort ?? null;
   const direction = options.direction ?? null;
   const since = options.since ?? null;
+  const creator = options.creator ?? null;
+  const assignee = options.assignee ?? null;
+  const labels = options.labels ?? null;
+  const milestone = options.milestone ?? null;
+  const project = options.project ?? null;
+  const query = options.query?.trim() || null;
   const perPage = Number.isFinite(options.perPage) ? Math.max(1, Math.trunc(options.perPage ?? 0)) : null;
-  fallbackGitHubIssueListCalls.push({ repoFullName, state, perPage, sort, direction, since });
+  fallbackGitHubIssueListCalls.push({
+    repoFullName,
+    state,
+    perPage,
+    sort,
+    direction,
+    since,
+    creator,
+    assignee,
+    labels: labels ? [...labels] : null,
+    milestone,
+    project,
+    query,
+  });
   return call("github_list_issues", {
     repoFullName,
     state,
@@ -1812,14 +3498,82 @@ export function listGitHubIssues(
     sort,
     direction,
     since,
+    creator,
+    assignee,
+    labels,
+    milestone,
+    project,
+    query,
   }, () => {
     const sorted = [...(fallbackGitHubIssues[repoFullName] ?? [])]
       .filter((issue) => !state || state === "all" || issue.state === state)
+      .filter((issue) => isFallbackGitHubIssueQuery(issue, query))
       .filter((issue) => isFallbackGitHubIssueSince(issue, since))
+      .filter((issue) => isFallbackGitHubIssueCreator(issue, creator))
+      .filter((issue) => isFallbackGitHubIssueAssignee(issue, assignee))
+      .filter((issue) => isFallbackGitHubIssueLabels(issue, labels))
+      .filter((issue) => isFallbackGitHubIssueMilestone(issue, milestone))
+      .filter((issue) => isFallbackGitHubIssueProject(issue, project))
       .sort((a, b) => compareFallbackGitHubIssues(a, b, sort, direction));
     return sorted
       .slice(0, perPage ?? sorted.length)
-      .map((issue) => ({ ...issue, labels: [...issue.labels], assignees: [...issue.assignees] }));
+      .map(cloneIssue);
+  });
+}
+
+function fallbackIssueValues(repoFullName: string, key: "labels" | "assignees") {
+  return [...new Set((fallbackGitHubIssues[repoFullName] ?? [])
+    .flatMap((issue) => issue[key])
+    .map((value) => value.trim())
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function uniqueSorted(values: readonly string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function uniqueMilestones(issues: readonly GitHubIssue[]): GitHubIssueMilestone[] {
+  const byNumber = new Map<number, GitHubIssueMilestone>();
+  for (const issue of issues) {
+    if (!issue.milestone) continue;
+    byNumber.set(issue.milestone.number, { ...issue.milestone });
+  }
+  return [...byNumber.values()].sort((left, right) => left.title.localeCompare(right.title));
+}
+
+function uniqueIssueProjects(issues: readonly GitHubIssue[]) {
+  const byId = new Map<string, { id: string; title: string }>();
+  for (const issue of issues) {
+    for (const project of issue.projectItems ?? []) {
+      byId.set(project.id, { ...project });
+    }
+  }
+  return [...byId.values()].sort((left, right) => left.title.localeCompare(right.title));
+}
+
+export function listGitHubIssueLabels(repoFullName: string): Promise<string[]> {
+  return call("github_list_issue_labels", { repoFullName }, () =>
+    fallbackIssueValues(repoFullName, "labels"),
+  );
+}
+
+export function listGitHubIssueAssignees(repoFullName: string): Promise<string[]> {
+  return call("github_list_issue_assignees", { repoFullName }, () =>
+    fallbackIssueValues(repoFullName, "assignees"),
+  );
+}
+
+export function getGitHubIssueFilterMetadata(repoFullName: string): Promise<GitHubIssueFilterMetadata> {
+  return call("github_get_issue_filter_metadata", { repoFullName }, () => {
+    const issues = fallbackGitHubIssues[repoFullName] ?? [];
+    const authors = uniqueSorted(issues.map((issue) => issue.author ?? "").filter(Boolean));
+    const labels = fallbackIssueValues(repoFullName, "labels");
+    const assignees = fallbackIssueValues(repoFullName, "assignees");
+    const milestones = uniqueMilestones(issues);
+    const projects = uniqueIssueProjects(issues);
+    return Promise.resolve({ authors, labels, assignees, milestones, projects });
   });
 }
 
@@ -1831,12 +3585,60 @@ function isFallbackGitHubIssueSince(issue: GitHubIssue, since: string | null) {
   return issueUpdatedAt >= sinceTimestamp;
 }
 
+function isFallbackGitHubIssueCreator(issue: GitHubIssue, creator: string | null) {
+  if (!creator) return true;
+  return (issue.author ?? "").toLowerCase() === creator.toLowerCase();
+}
+
+function isFallbackGitHubIssueAssignee(issue: GitHubIssue, assignee: string | null) {
+  if (!assignee) return true;
+  if (assignee === "none") return issue.assignees.length === 0;
+  return issue.assignees.some((value) => value.toLowerCase() === assignee.toLowerCase());
+}
+
+function isFallbackGitHubIssueLabels(issue: GitHubIssue, labels: readonly string[] | null) {
+  const normalized = (labels ?? []).map((label) => label.toLowerCase()).filter(Boolean);
+  if (!normalized.length) return true;
+  const issueLabels = issue.labels.map((label) => label.toLowerCase());
+  return normalized.every((label) => issueLabels.includes(label));
+}
+
+function isFallbackGitHubIssueMilestone(issue: GitHubIssue, milestone: string | number | null) {
+  if (milestone == null || milestone === "") return true;
+  if (milestone === "none") return !issue.milestone;
+  return String(issue.milestone?.number ?? "") === String(milestone);
+}
+
+function isFallbackGitHubIssueProject(issue: GitHubIssue, project: string | null) {
+  if (!project) return true;
+  return (issue.projectItems ?? []).some((item) => item.id === project || item.title === project);
+}
+
+function isFallbackGitHubIssueQuery(issue: GitHubIssue, query: string | null) {
+  const normalized = query?.trim().toLowerCase();
+  if (!normalized) return true;
+  return [
+    issue.number,
+    issue.title,
+    issue.body ?? "",
+    issue.author ?? "",
+    issue.labels.join(" "),
+    issue.assignees.join(" "),
+    issue.milestone?.title ?? "",
+    issue.projectItems?.map((project) => project.title).join(" ") ?? "",
+  ].join(" ").toLowerCase().includes(normalized);
+}
+
 function compareFallbackGitHubIssues(
   a: GitHubIssue,
   b: GitHubIssue,
   sort: string | null,
   direction: string | null,
 ) {
+  if (sort === "comments") {
+    const comparedComments = (a.comments ?? 0) - (b.comments ?? 0);
+    return direction === "asc" ? comparedComments : -comparedComments;
+  }
   const sortKey = sort === "created" ? "createdAt" : "updatedAt";
   const left = Date.parse(a[sortKey]);
   const right = Date.parse(b[sortKey]);
@@ -1859,12 +3661,16 @@ export function createGitHubIssue(
       body: request.body?.trim() || null,
       labels: [...request.labels],
       assignees: [...request.assignees],
+      author: fallbackBinding.binding?.login ?? "lilia-user",
+      milestone: null,
+      comments: 0,
+      projectItems: [],
       htmlUrl: `https://github.com/${repoFullName}/issues/${issues.length + 1}`,
       updatedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     };
     fallbackGitHubIssues[repoFullName] = [issue, ...issues];
-    return { ...issue, labels: [...issue.labels], assignees: [...issue.assignees] };
+    return cloneIssue(issue);
   });
 }
 
@@ -1887,7 +3693,7 @@ export function updateGitHubIssue(
       updatedAt: new Date().toISOString(),
     };
     fallbackGitHubIssues[repoFullName] = issues.map((issue) => issue.number === issueNumber ? updated : issue);
-    return { ...updated, labels: [...updated.labels], assignees: [...updated.assignees] };
+    return cloneIssue(updated);
   });
 }
 
@@ -1901,6 +3707,89 @@ export function listGitHubWorkflowRuns(repoFullName: string, perPage?: number | 
       .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .slice(0, perPage ?? undefined)
       .map((run) => ({ ...run }));
+  });
+}
+
+export function getGitHubWorkflowRunDetail(repoFullName: string, runId: number): Promise<GitHubWorkflowRunDetail> {
+  fallbackGitHubWorkflowRunDetailCalls.push({ repoFullName, runId });
+  return call("github_get_workflow_run_detail", { repoFullName, runId }, async () => {
+    const detail = fallbackGitHubWorkflowRunDetails[repoFullName]?.[runId];
+    if (detail) return cloneWorkflowRunDetail(detail);
+    const run = fallbackGitHubWorkflowRuns[repoFullName]?.find((item) => item.id === runId);
+    if (!run) throw new Error("GitHub Actions run 不存在");
+    return fallbackWorkflowRunDetail(run);
+  });
+}
+
+export function getGitHubWorkflowJobLog(repoFullName: string, jobId: number): Promise<GitHubWorkflowJobLog> {
+  fallbackGitHubWorkflowJobLogCalls.push({ repoFullName, jobId });
+  return call("github_get_workflow_job_log", { repoFullName, jobId }, async () => {
+    const log = fallbackGitHubWorkflowJobLogs[repoFullName]?.[jobId];
+    if (!log) throw new Error("GitHub Actions job 日志不存在");
+    return { ...log };
+  });
+}
+
+export function listGitHubWorkflowArtifactFiles(
+  repoFullName: string,
+  artifactId: number,
+): Promise<GitHubWorkflowArtifactEntry[]> {
+  fallbackGitHubWorkflowArtifactListCalls.push({ repoFullName, artifactId });
+  return call("github_list_workflow_artifact_files", { repoFullName, artifactId }, async () => (
+    fallbackGitHubWorkflowArtifactEntries[repoFullName]?.[artifactId] ?? []
+  ).map((entry) => ({ ...entry })));
+}
+
+export function getGitHubWorkflowArtifactFilePreview(
+  repoFullName: string,
+  artifactId: number,
+  path: string,
+): Promise<RepoFilePreview> {
+  fallbackGitHubWorkflowArtifactPreviewCalls.push({ repoFullName, artifactId, path });
+  return call("github_get_workflow_artifact_file_preview", { repoFullName, artifactId, path }, async () => {
+    const preview = fallbackGitHubWorkflowArtifactPreviews[repoFullName]?.[artifactId]?.[path];
+    if (!preview) throw new Error("artifact 文件不存在");
+    return cloneRepoFilePreview(preview);
+  });
+}
+
+export function listGitHubRepoCommits(
+  repoFullName: string,
+  options: GitHubCommitListOptions = {},
+): Promise<CommitSummary[]> {
+  fallbackGitHubCommitListCalls.push({
+    repoFullName,
+    perPage: options.perPage ?? null,
+    sha: options.sha ?? null,
+  });
+  return call("github_list_repo_commits", {
+    repoFullName,
+    perPage: options.perPage ?? null,
+    sha: options.sha ?? null,
+  }, () =>
+    (fallbackGitHubCommits[repoFullName] ?? [])
+      .map(cloneCommitSummary)
+      .slice(0, options.perPage ?? undefined),
+  );
+}
+
+export function getGitHubRepoCommitDetail(repoFullName: string, hash: string): Promise<CommitDetail> {
+  fallbackGitHubCommitDetailCalls.push({ repoFullName, hash });
+  return call("github_get_repo_commit_detail", { repoFullName, hash }, () => {
+    const details = fallbackGitHubCommitDetails[repoFullName] ?? {};
+    const detail = details[hash] ??
+      Object.values(details).find((item) => item.hash === hash || item.shortHash === hash);
+    if (detail) return cloneCommitDetail(detail);
+    const commit = (fallbackGitHubCommits[repoFullName] ?? [])
+      .find((item) => item.hash === hash || item.shortHash === hash);
+    if (!commit) throw new Error(`未找到远程提交：${hash}`);
+    return {
+      ...cloneCommitSummary(commit),
+      committer: commit.author,
+      committerEmail: commit.authorEmail ?? null,
+      body: "",
+      files: [],
+    };
   });
 }
 
@@ -1951,9 +3840,10 @@ function fallbackRepo(repoId: string): RepoSummary {
 function updateFallbackRepo(summary: RepoSummary) {
   fallbackRepoOverrides = {
     ...fallbackRepoOverrides,
-    [summary.id]: { ...summary },
+    [summary.id]: cloneRepoSummary(summary),
   };
-  return { ...summary };
+  writeFallbackStartupRepoSummary(summary);
+  return cloneRepoSummary(summary);
 }
 
 function fallbackLocalBranchName(remoteBranchName: string) {
@@ -1989,13 +3879,48 @@ function syncFallbackRepoBranchState(repoId: string) {
   return next;
 }
 
-export function listRepoFiles(repoId: string, parentPath?: string | null): Promise<RepoFileTreeEntry[]> {
+export function listGitHubRepoFiles(
+  repoFullName: string,
+  parentPath?: string | null,
+  refName?: string | null,
+): Promise<RepoFileTreeEntry[]> {
+  const normalizedParentPath = parentPath ?? "";
+  fallbackGitHubRepoFileListCalls.push({
+    repoFullName,
+    parentPath: parentPath ?? null,
+    refName: refName ?? null,
+  });
+  return call("github_list_repo_files", { repoFullName, parentPath: parentPath ?? null, refName: refName ?? null }, () =>
+    (fallbackGitHubRepoFiles[repoFullName]?.[normalizedParentPath] ?? []).map(cloneRepoFileTreeEntry),
+  );
+}
+
+export function getGitHubRepoFilePreview(
+  repoFullName: string,
+  path: string,
+  refName?: string | null,
+): Promise<RepoFilePreview> {
+  fallbackGitHubRepoFilePreviewCalls.push({
+    repoFullName,
+    path,
+    refName: refName ?? null,
+  });
+  return call("github_get_repo_file_preview", { repoFullName, path, refName: refName ?? null }, () => {
+    const preview = fallbackGitHubRepoFilePreviews[repoFullName]?.[path];
+    if (!preview) {
+      throw new Error(`未找到远程文件预览：${repoFullName} ${path}`);
+    }
+    return cloneRepoFilePreview(preview);
+  });
+}
+
+export function listRepoFiles(repoId: string, parentPath?: string | null, _repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
   return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () =>
     (fallbackRepoFiles[repoId]?.[parentPath ?? ""] ?? []).map(cloneRepoFileTreeEntry),
   );
 }
 
-export function getRepoFilePreview(repoId: string, path: string): Promise<RepoFilePreview> {
+export function getRepoFilePreview(repoId: string, path: string, _repoRef?: string | null): Promise<RepoFilePreview> {
   return call("repo_get_file_preview", { repoId, path }, () => {
     const preview = fallbackRepoFilePreviews[repoId]?.[path];
     if (!preview) {
@@ -2191,28 +4116,51 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
           diff: "",
         },
       ],
-      commits: [
-        {
-          hash: "1234567890abcdef",
-          shortHash: "1234567",
-          author: "Sena",
-          authorEmail: "sena@example.com",
-          timestamp: 1_785_000_000,
-          subject: "搭建 LiliaGithub MVP",
-          parents: ["abcdef1234567890"],
-          refs: ["HEAD -> main", "origin/main"],
-        },
-        {
-          hash: "abcdef1234567890",
-          shortHash: "abcdef1",
-          author: "Sena",
-          authorEmail: "sena@example.com",
-          timestamp: 1_784_990_000,
-          subject: "初始化工作区扫描",
-          parents: [],
-          refs: [],
-        },
-      ],
+      commits: useDefaultFallback
+        ? [
+            {
+              hash: "1234567890abcdef",
+              shortHash: "1234567",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_785_000_000,
+              subject: "搭建 LiliaGithub MVP",
+              parents: ["abcdef1234567890"],
+              refs: ["HEAD -> main", "origin/main"],
+            },
+            {
+              hash: "abcdef1234567890",
+              shortHash: "abcdef1",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_784_990_000,
+              subject: "初始化工作区扫描",
+              parents: [],
+              refs: [],
+            },
+          ]
+        : [
+            {
+              hash: "d1e2f3a4b5c6d7e8",
+              shortHash: "d1e2f3a",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_781_990_000,
+              subject: "更新 README 展示截图",
+              parents: ["c0ffee1234567890"],
+              refs: ["HEAD -> codex/readme-gallery", "origin/codex/readme-gallery"],
+            },
+            {
+              hash: "c0ffee1234567890",
+              shortHash: "c0ffee1",
+              author: "Sena",
+              authorEmail: "sena@example.com",
+              timestamp: 1_781_920_000,
+              subject: "加入仓库详情页项目视图",
+              parents: [],
+              refs: [],
+            },
+          ],
       branches: [
         ...syncFallbackRepoBranchState(repoId).map(cloneBranchSummary),
       ],
@@ -2227,10 +4175,10 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
     recordFallbackTask("languageStats", "low", repo.id, "success", "语言统计已更新");
     return updateFallbackRepo({
       ...repo,
-      languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000 }],
+      languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000, lines: 40 }],
       workingTreeLanguageStats: repo.workingTreeLanguageStats.length
         ? repo.workingTreeLanguageStats
-        : [{ language: "TypeScript", bytes: 1200 }],
+        : [{ language: "TypeScript", bytes: 1200, lines: 48 }],
       languageStatsUpdatedAt: Date.now(),
     });
   });
@@ -2246,11 +4194,11 @@ export function getRepoCommitDetail(repoId: string, hash: string): Promise<Commi
       authorEmail: "sena@example.com",
       committer: "Sena",
       committerEmail: "sena@example.com",
-      timestamp: detail.lastCommitAt ?? 1_785_000_000,
-      subject: "搭建 LiliaGithub MVP",
-      body: "搭建本地仓库管理的基础视图。",
-      parents: ["abcdef1234567890"],
-      refs: ["HEAD -> main", "origin/main"],
+      timestamp: detail.lastCommitAt ?? 1_781_990_000,
+      subject: "更新 README 展示截图",
+      body: "准备演示数据和 README 图片展示区。",
+      parents: ["c0ffee1234567890"],
+      refs: ["HEAD -> codex/readme-gallery", "origin/codex/readme-gallery"],
       files: [
         {
           path: "src/pages/Home.vue",

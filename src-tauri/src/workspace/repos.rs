@@ -29,6 +29,12 @@ pub(super) struct ResolvedRepoWorktree {
     pub(super) main_worktree_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct LanguageStatAccumulator {
+    bytes: u64,
+    lines: u64,
+}
+
 pub(super) fn git_command(
     repo_path: &Path,
     args: &[&str],
@@ -71,6 +77,83 @@ pub(super) fn git_command_lossy(repo_path: &Path, args: &[&str]) -> Option<Strin
     git_command(repo_path, args, None)
         .ok()
         .map(|s| s.trim().to_string())
+}
+
+pub(super) fn git_diff_command_lossy(repo_path: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = command.output().ok()?;
+    if output.status.success() || output.status.code() == Some(1) {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn git_blob_line_counts(repo_path: &Path, object_ids: &[String]) -> Result<Vec<u64>, String> {
+    if object_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut child = Command::new("git")
+        .args(["cat-file", "--batch"])
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("无法启动 git（请确认 git 在 PATH 中）：{e}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write as _;
+        for object_id in object_ids {
+            writeln!(stdin, "{object_id}").map_err(|e| format!("写入 git cat-file 失败：{e}"))?;
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("读取 git cat-file 失败：{e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!(
+                "git cat-file --batch 失败：exit {}",
+                output.status.code().unwrap_or(-1)
+            )
+        } else {
+            stderr
+        });
+    }
+
+    let mut counts = Vec::with_capacity(object_ids.len());
+    let mut cursor = 0;
+    while cursor < output.stdout.len() && counts.len() < object_ids.len() {
+        let Some(header_end) = output.stdout[cursor..].iter().position(|byte| *byte == b'\n')
+        else {
+            break;
+        };
+        let header_end = cursor + header_end;
+        let header = String::from_utf8_lossy(&output.stdout[cursor..header_end]);
+        let size = header
+            .split_whitespace()
+            .last()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let content_start = header_end + 1;
+        let content_end = content_start.saturating_add(size).min(output.stdout.len());
+        counts.push(count_lines(&output.stdout[content_start..content_end]));
+        cursor = content_end;
+        if output.stdout.get(cursor) == Some(&b'\n') {
+            cursor += 1;
+        }
+    }
+    Ok(counts)
 }
 
 pub(super) fn should_skip_dir(path: &Path) -> bool {
@@ -369,11 +452,14 @@ pub(super) fn github_full_name_from_remote(remote: &str) -> Option<String> {
 pub(super) fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
     let output =
         git_command(path, &["ls-tree", "-r", "-z", "-l", "HEAD"], None).unwrap_or_default();
-    let mut stats: HashMap<String, u64> = HashMap::new();
+    let mut blobs: Vec<(String, u64)> = Vec::new();
+    let mut object_ids = Vec::new();
     for entry in output.split('\0').filter(|value| !value.is_empty()) {
         let Some((metadata, raw_path)) = entry.split_once('\t') else {
             continue;
         };
+        let mut metadata_parts = metadata.split_whitespace();
+        let object_id = metadata_parts.nth(2).unwrap_or("").to_string();
         let Some(bytes) = metadata
             .split_whitespace()
             .last()
@@ -382,6 +468,9 @@ pub(super) fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
         else {
             continue;
         };
+        if object_id.is_empty() {
+            continue;
+        }
         let relative = Path::new(raw_path);
         if should_skip_language_path(relative) {
             continue;
@@ -389,7 +478,18 @@ pub(super) fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
         let Some(language) = language_for_path(relative) else {
             continue;
         };
-        *stats.entry(language.to_string()).or_default() += bytes;
+        object_ids.push(object_id.clone());
+        blobs.push((language.to_string(), bytes));
+    }
+    let line_counts = git_blob_line_counts(path, &object_ids).unwrap_or_default();
+    let mut stats: HashMap<String, LanguageStatAccumulator> = HashMap::new();
+    for (index, (language, bytes)) in blobs.into_iter().enumerate() {
+        record_language_stats(
+            &mut stats,
+            &language,
+            bytes,
+            line_counts.get(index).copied().unwrap_or(0),
+        );
     }
     language_stats_from_map(stats)
 }
@@ -408,7 +508,7 @@ pub(super) fn repo_working_tree_language_stats(path: &Path) -> Vec<LanguageStat>
         None,
     )
     .unwrap_or_default();
-    let mut stats: HashMap<String, u64> = HashMap::new();
+    let mut stats: HashMap<String, LanguageStatAccumulator> = HashMap::new();
     let mut seen = HashSet::new();
     for raw_path in output.split('\0').filter(|value| !value.is_empty()) {
         if !seen.insert(raw_path.to_string()) {
@@ -428,15 +528,31 @@ pub(super) fn repo_working_tree_language_stats(path: &Path) -> Vec<LanguageStat>
         else {
             continue;
         };
-        *stats.entry(language.to_string()).or_default() += bytes;
+        let file_bytes = fs::read(path.join(relative)).unwrap_or_default();
+        record_language_stats(&mut stats, language, bytes, count_lines(&file_bytes));
     }
     language_stats_from_map(stats)
 }
 
-pub(super) fn language_stats_from_map(stats: HashMap<String, u64>) -> Vec<LanguageStat> {
+fn record_language_stats(
+    stats: &mut HashMap<String, LanguageStatAccumulator>,
+    language: &str,
+    bytes: u64,
+    lines: u64,
+) {
+    let stat = stats.entry(language.to_string()).or_default();
+    stat.bytes += bytes;
+    stat.lines += lines;
+}
+
+fn language_stats_from_map(stats: HashMap<String, LanguageStatAccumulator>) -> Vec<LanguageStat> {
     let mut items = stats
         .into_iter()
-        .map(|(language, bytes)| LanguageStat { language, bytes })
+        .map(|(language, stat)| LanguageStat {
+            language,
+            bytes: stat.bytes,
+            lines: stat.lines,
+        })
         .collect::<Vec<_>>();
     items.sort_by(|a, b| {
         b.bytes
@@ -444,6 +560,18 @@ pub(super) fn language_stats_from_map(stats: HashMap<String, u64>) -> Vec<Langua
             .then_with(|| a.language.cmp(&b.language))
     });
     items
+}
+
+fn count_lines(bytes: &[u8]) -> u64 {
+    if bytes.is_empty() {
+        return 0;
+    }
+    let newline_count = bytes.iter().filter(|byte| **byte == b'\n').count() as u64;
+    if bytes.last() == Some(&b'\n') {
+        newline_count
+    } else {
+        newline_count + 1
+    }
 }
 
 pub(super) fn should_skip_language_path(path: &Path) -> bool {
@@ -764,6 +892,7 @@ pub(super) fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSumma
     })
 }
 
+#[cfg(test)]
 pub(super) fn lightweight_managed_repos(
     root: &Path,
     settings: &WorkspaceSettings,
@@ -771,6 +900,19 @@ pub(super) fn lightweight_managed_repos(
     let mut repos: Vec<_> = managed_repo_paths(root, settings)
         .into_iter()
         .map(|path| lightweight_repo_summary(root, &path))
+        .collect();
+    sort_repos(&mut repos);
+    repos
+}
+
+pub(super) fn cached_managed_repos(
+    root: &Path,
+    settings: &WorkspaceSettings,
+    cache: &WorkspaceStartupCache,
+) -> Vec<RepoSummary> {
+    let mut repos: Vec<_> = managed_repo_paths(root, settings)
+        .into_iter()
+        .map(|path| cached_repo_summary(cache, lightweight_repo_summary(root, &path)))
         .collect();
     sort_repos(&mut repos);
     repos
@@ -913,6 +1055,9 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
         let failures = refresh_managed_repo_remotes(&paths, |path| run_fetch(&app, path));
         let mut repos = summarize_repos(&root, paths);
         sort_repos(&mut repos);
+        for summary in &repos {
+            let _ = write_startup_repo_summary(&app, &settings, summary);
+        }
         if failures.is_empty() {
             update_workspace_task(
                 &task.id,
@@ -936,7 +1081,8 @@ pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSumm
     run_blocking("读取已管理仓库", move || {
         let root = workspace_root(&app)?;
         let settings = load_settings(&app);
-        Ok(lightweight_managed_repos(&root, &settings))
+        let cache = matching_startup_cache(&app, &settings);
+        Ok(cached_managed_repos(&root, &settings, &cache))
     })
     .await
 }
@@ -994,6 +1140,7 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
         settings.hidden_repo_ids.retain(|id| id != &repo_id);
         save_settings(&app, &settings)?;
         let summary = summarize_repo(&root, &path);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
         update_workspace_task(&task.id, "success", Some("已添加仓库".to_string()));
         Ok(summary)
     })
@@ -1048,7 +1195,9 @@ pub async fn workspace_clone_repo(
         let mut settings = load_settings(&app);
         add_managed_repo_id(&mut settings, repo_id(&root, &target));
         save_settings(&app, &settings)?;
-        Ok(summarize_repo(&root, &target))
+        let summary = summarize_repo(&root, &target);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
+        Ok(summary)
     })
     .await
 }
@@ -1088,6 +1237,8 @@ pub async fn repo_refresh_summary(
             None
         };
         let summary = summarize_repo(&root, &path);
+        let settings = load_settings(&app);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
         if let Some(error) = fetch_error {
             update_workspace_task(
                 &task.id,
@@ -1118,6 +1269,8 @@ pub async fn repo_refresh_language_stats(
             Some("刷新语言统计".to_string()),
         );
         let summary = summarize_repo_with_language_stats(&root, &path);
+        let settings = load_settings(&app);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
         update_workspace_task(&task.id, "success", Some("语言统计已更新".to_string()));
         Ok(summary)
     })
@@ -2218,7 +2371,11 @@ pub(super) fn repo_changes(path: &Path) -> Vec<RepoChange> {
                     let staged = !untracked && index != " ";
                     let unstaged = !untracked && worktree != " ";
                     let diff = if untracked {
-                        String::new()
+                        git_diff_command_lossy(
+                            path,
+                            &["diff", "--no-index", "--", "/dev/null", &file_path],
+                        )
+                        .unwrap_or_default()
                     } else if staged {
                         git_command_lossy(path, &["diff", "--cached", "--", &file_path])
                             .unwrap_or_default()
@@ -2568,6 +2725,11 @@ pub(super) fn parse_commit_patch_block(block: &str) -> Option<ParsedCommitPatch>
 pub(super) fn patch_target_path(block: &str) -> Option<String> {
     for line in block.lines() {
         if let Some(path) = line.strip_prefix("+++ b/") {
+            return Some(path.to_string());
+        }
+    }
+    for line in block.lines() {
+        if let Some(path) = line.strip_prefix("--- a/") {
             return Some(path.to_string());
         }
     }

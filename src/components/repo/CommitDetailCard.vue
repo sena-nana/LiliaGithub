@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronDown, Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lucide/vue";
+import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { getRepoCommitDetail, type CommitDetail } from "../../services/workspace";
 import { copyText } from "../../composables/workspace/system";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
@@ -33,6 +34,7 @@ const activeFilePath = ref<string | null>(null);
 const copyNotice = ref<string | null>(null);
 const diffCollapsed = ref(true);
 const panelHeight = ref(460);
+const detailLoader = createLatestAsyncLoader();
 let resizeCleanup: (() => void) | null = null;
 let copyNoticeTimer: number | null = null;
 
@@ -98,22 +100,32 @@ watch(() => detail.value?.files, (files) => {
 });
 
 onUnmounted(() => {
+  detailLoader.invalidate();
   stopResize();
   clearCopyNoticeTimer();
 });
 
 async function load() {
   if (!props.repoId || !props.hash) return;
-  loading.value = true;
-  error.value = null;
-  try {
-    detail.value = await getRepoCommitDetail(props.repoId, props.hash);
-  } catch (err) {
-    error.value = String(err);
-    detail.value = null;
-  } finally {
-    loading.value = false;
-  }
+  const repoId = props.repoId;
+  const hash = props.hash;
+  await detailLoader.run(`${repoId}:${hash}`, async (runId) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const nextDetail = await getRepoCommitDetail(repoId, hash);
+      if (!detailLoader.isCurrent(runId) || repoId !== props.repoId || hash !== props.hash) return;
+      detail.value = nextDetail;
+    } catch (err) {
+      if (!detailLoader.isCurrent(runId)) return;
+      error.value = String(err);
+      detail.value = null;
+    } finally {
+      if (detailLoader.isCurrent(runId)) {
+        loading.value = false;
+      }
+    }
+  });
 }
 
 function fileStatusLetter(status: string) {

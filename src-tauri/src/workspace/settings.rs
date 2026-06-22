@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
+pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
 pub(super) fn load_settings(app: &AppHandle) -> WorkspaceSettings {
     app.store(STORE_FILE)
         .ok()
@@ -19,6 +20,123 @@ pub(super) fn save_settings(app: &AppHandle, settings: &WorkspaceSettings) -> Re
         serde_json::to_value(settings).map_err(|e| e.to_string())?,
     );
     store.save().map_err(|e| format!("保存配置失败：{e}"))
+}
+
+pub(super) fn load_startup_cache(app: &AppHandle) -> Option<WorkspaceStartupCache> {
+    app.store(STORE_FILE)
+        .ok()
+        .and_then(|store| store.get(STARTUP_CACHE_KEY))
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
+pub(super) fn save_startup_cache(
+    app: &AppHandle,
+    cache: &WorkspaceStartupCache,
+) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("打开启动缓存失败：{e}"))?;
+    store.set(
+        STARTUP_CACHE_KEY,
+        serde_json::to_value(cache).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| format!("保存启动缓存失败：{e}"))
+}
+
+pub(super) fn clear_startup_cache(app: &AppHandle) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("打开启动缓存失败：{e}"))?;
+    store.delete(STARTUP_CACHE_KEY);
+    store.save().map_err(|e| format!("清理启动缓存失败：{e}"))
+}
+
+pub(super) fn startup_cache_matches_settings(
+    cache: &WorkspaceStartupCache,
+    settings: &WorkspaceSettings,
+) -> bool {
+    cache.workspace_root == settings.workspace_root
+        && cache.binding_login
+            == settings
+                .github_binding
+                .as_ref()
+                .map(|binding| binding.login.clone())
+}
+
+fn startup_cache_shell(settings: &WorkspaceSettings) -> WorkspaceStartupCache {
+    WorkspaceStartupCache {
+        workspace_root: settings.workspace_root.clone(),
+        binding_login: settings.github_binding.as_ref().map(|binding| binding.login.clone()),
+        ..WorkspaceStartupCache::default()
+    }
+}
+
+pub(super) fn matching_startup_cache(
+    app: &AppHandle,
+    settings: &WorkspaceSettings,
+) -> WorkspaceStartupCache {
+    load_startup_cache(app)
+        .filter(|cache| startup_cache_matches_settings(cache, settings))
+        .unwrap_or_else(|| startup_cache_shell(settings))
+}
+
+pub(super) fn cached_repo_summary(
+    cache: &WorkspaceStartupCache,
+    lightweight: RepoSummary,
+) -> RepoSummary {
+    let Some(entry) = cache.repos_by_id.get(&lightweight.id) else {
+        return lightweight;
+    };
+    let mut summary = entry.summary.clone();
+    summary.id = lightweight.id;
+    summary.name = lightweight.name;
+    summary.path = lightweight.path;
+    summary.relative_path = lightweight.relative_path;
+    summary.worktree = lightweight.worktree;
+    summary
+}
+
+pub(super) fn write_startup_repo_summary(
+    app: &AppHandle,
+    settings: &WorkspaceSettings,
+    summary: &RepoSummary,
+) -> Result<(), String> {
+    let mut cache = matching_startup_cache(app, settings);
+    cache.repos_by_id.insert(
+        summary.id.clone(),
+        CachedRepoSummary {
+            summary: summary.clone(),
+            cached_at: now_millis(),
+        },
+    );
+    save_startup_cache(app, &cache)
+}
+
+pub(super) fn write_startup_contributions(
+    app: &AppHandle,
+    settings: &WorkspaceSettings,
+    contributions: WorkspaceStartupContributions,
+) -> Result<WorkspaceStartupCache, String> {
+    let mut cache = matching_startup_cache(app, settings);
+    cache.contributions = Some(CachedContributionResult {
+        days: contributions.days,
+        meta: contributions.meta,
+        cached_at: now_millis(),
+    });
+    save_startup_cache(app, &cache)?;
+    Ok(cache)
+}
+
+pub(super) fn remove_startup_cache_repo(app: &AppHandle, repo_id: &str) -> Result<(), String> {
+    let Some(mut cache) = load_startup_cache(app) else {
+        return Ok(());
+    };
+    cache.repos_by_id.remove(repo_id);
+    if cache.repos_by_id.is_empty() && cache.contributions.is_none() {
+        clear_startup_cache(app)
+    } else {
+        save_startup_cache(app, &cache)
+    }
 }
 
 pub(super) fn sort_dedup(values: &mut Vec<String>) {
@@ -238,12 +356,33 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
         group.repo_ids.retain(|id| id != repo_id);
     }
     settings.project_launch_configs.remove(repo_id);
+    settings.repo_sync_preferences.remove(repo_id);
     remove_local_contribution_cache(settings, repo_id);
 }
 
 #[tauri::command]
 pub fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings {
     load_settings(&app)
+}
+
+#[tauri::command]
+pub fn workspace_read_startup_cache(app: AppHandle) -> Option<WorkspaceStartupCache> {
+    let settings = load_settings(&app);
+    load_startup_cache(&app).filter(|cache| startup_cache_matches_settings(cache, &settings))
+}
+
+#[tauri::command]
+pub fn workspace_clear_startup_cache(app: AppHandle) -> Result<(), String> {
+    clear_startup_cache(&app)
+}
+
+#[tauri::command]
+pub fn workspace_write_startup_contributions(
+    app: AppHandle,
+    contributions: WorkspaceStartupContributions,
+) -> Result<WorkspaceStartupCache, String> {
+    let settings = load_settings(&app);
+    write_startup_contributions(&app, &settings, contributions)
 }
 
 #[tauri::command]
@@ -257,6 +396,30 @@ pub fn workspace_set_root(
     }
     let mut settings = load_settings(&app);
     settings.workspace_root = Some(root.to_string_lossy().to_string());
+    save_settings(&app, &settings)?;
+    let _ = clear_startup_cache(&app);
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn repo_set_auto_sync(
+    app: AppHandle,
+    repo_id: String,
+    auto_sync: bool,
+) -> Result<WorkspaceSettings, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    let mut settings = load_settings(&app);
+    if auto_sync {
+        settings.repo_sync_preferences.insert(
+            normalized.to_string(),
+            RepoSyncPreference { auto_sync },
+        );
+    } else {
+        settings.repo_sync_preferences.remove(normalized);
+    }
     save_settings(&app, &settings)?;
     Ok(settings)
 }
@@ -295,6 +458,7 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
     }
     remove_local_contribution_cache(&mut settings, normalized);
     save_settings(&app, &settings)?;
+    remove_startup_cache_repo(&app, normalized)?;
     Ok(settings)
 }
 
@@ -366,6 +530,7 @@ pub async fn workspace_delete_local_repo(
         let mut settings = load_settings(&app);
         prune_deleted_repo_settings(&mut settings, normalized);
         save_settings(&app, &settings)?;
+        remove_startup_cache_repo(&app, normalized)?;
         Ok(settings)
     })
     .await

@@ -20,13 +20,13 @@ import { defineAsyncComponent } from "vue";
 import Dropdown from "../components/Dropdown.vue";
 import RepoBranchPicker from "../components/repo/RepoBranchPicker.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
-import RepoPushError from "../components/repo/RepoPushError.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
 const RepoFilesPanel = defineAsyncComponent(() => import("../components/repo/RepoFilesPanel.vue"));
 const RepoStashPanel = defineAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
+const RepoToolbarSettingsMenu = defineAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
 
 const {
   activeTab,
@@ -39,7 +39,7 @@ const {
   conflictChoices,
   selectedCommitHash,
   repoId,
-  remoteOnly,
+  repoContext,
   summary,
   repoTitle,
   changes,
@@ -52,9 +52,11 @@ const {
   canCommit,
   launchConfig,
   launchLogs,
-  usingSystemGit,
   launchRunning,
   statusCommits,
+  canLoadFiles,
+  activeFileRepoRef,
+  filesUnavailableMessage,
   panelConflictFiles,
   panelConflicts,
   panelFocusedConflict,
@@ -68,6 +70,7 @@ const {
   activeProjectIssue,
   activeProjectPullRequest,
   activeProjectRun,
+  activeProjectJob,
   activeFilePath,
   activeFileHash,
   projectRefreshToken,
@@ -85,6 +88,8 @@ const {
   activeBranchName,
   aheadCount,
   behindCount,
+  autoSyncEnabled,
+  repoActionError,
   focusChange,
   focusConflict,
   pickConflictHunk,
@@ -95,6 +100,7 @@ const {
   refreshAndFetchRepo,
   selectOpenTarget,
   selectPullStrategy,
+  setAutoSync,
   runSelectedPullStrategy,
   push,
   pushCurrentBranchWithUpstream,
@@ -163,10 +169,10 @@ const {
                 button-class="repo-toolbar__btn repo-toolbar__branch-select"
                 :disabled="branchActionRunning || !branchItems.length"
                 :action-running="branchActionRunning"
-                :allow-remote-checkout="!remoteOnly"
-                :allow-remote-create="!remoteOnly"
-                :allow-remote-delete="remoteOnly || Boolean(summary?.githubFullName)"
-                :show-repository-actions="!remoteOnly"
+                :allow-remote-checkout="true"
+                :allow-remote-create="repoContext.capabilities.branch.available"
+                :allow-remote-delete="repoContext.capabilities.deleteRemote.available"
+                :show-repository-actions="repoContext.capabilities.branch.available"
                 @checkout="checkout"
                 @update-current="updateCurrentBranch"
                 @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
@@ -179,7 +185,7 @@ const {
               />
             </nav>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__launch" role="group" aria-label="命令执行">
+            <div v-if="repoContext.capabilities.launch.available" class="repo-toolbar__group repo-toolbar__launch" role="group" aria-label="命令执行">
               <Dropdown
                 :model-value="activeLaunchValue"
                 :options="launchCommandOptions"
@@ -198,7 +204,7 @@ const {
                 class="repo-toolbar__btn"
                 :aria-label="launchRunning ? '停止' : '运行'"
                 :title="launchRunning ? '停止' : '运行'"
-                :disabled="actionRunning || (!launchRunning && !launchConfig?.command?.trim())"
+                :disabled="!launchRunning && (actionRunning || !launchConfig?.command?.trim())"
                 @click="launchRunning ? stopLaunch() : startLaunch()"
               >
                 <Square v-if="launchRunning" :size="17" aria-hidden="true" />
@@ -215,9 +221,14 @@ const {
               </RouterLink>
             </div>
 
-            <div v-if="!remoteOnly" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
+            <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
+              <RepoToolbarSettingsMenu
+                :auto-sync="autoSyncEnabled"
+                :disabled="actionRunning"
+                @update:auto-sync="setAutoSync"
+              />
               <button
-                v-if="usingSystemGit"
+                v-if="repoContext.tags.includes('system-git')"
                 type="button"
                 class="repo-toolbar__btn"
                 title="恢复默认 token 推送"
@@ -305,33 +316,26 @@ const {
           </div>
         </div>
       </header>
-
-    <div v-if="actionError || recentSyncError" class="repo-workbench__status">
-      <p v-if="actionError" class="error-line">{{ actionError }}</p>
-      <RepoPushError
-        v-if="recentSyncError"
-          :message="recentSyncError.message"
-          :retrying="recentSyncError.retrying"
-          :action-running="actionRunning"
-          @retry="push"
-        />
-      </div>
     </div>
 
     <div class="repo-workbench__body">
       <main class="workbench-main workbench-main--project">
         <RepoFilesPanel
-          v-if="activeTab === 'files'"
+          v-if="activeTab === 'files' && canLoadFiles"
           :repo-id="repoId"
           :repo-path="summary?.path ?? null"
+          :repo-ref="activeFileRepoRef"
           :changes="changes"
           :target-path="activeFilePath"
           :target-hash="activeFileHash"
         />
+        <div v-else-if="activeTab === 'files'" class="repo-workbench__empty">
+          <p class="muted">{{ filesUnavailableMessage }}</p>
+        </div>
         <RepoStashPanel
           v-else-if="activeTab === 'stash'"
           :repo-id="repoId"
-          :remote-only="remoteOnly"
+          :repo-context="repoContext"
           :has-conflicts="hasConflicts"
         />
         <RepoProjectPanel
@@ -340,6 +344,7 @@ const {
           :repo-title="repoTitle"
           :repo-full-name="summary?.githubFullName"
           :repo-path="summary?.path"
+          :repo-summary="summary"
           :active-git-tab="activeTab"
           :changes="changes"
           :preview-change="previewChange"
@@ -366,16 +371,20 @@ const {
           :launch-config="launchConfig"
           :launch-logs="launchLogs"
           :launch-error="launchError"
+          :action-error="actionError"
+          :repo-action-error="repoActionError"
+          :recent-sync-error="recentSyncError"
           :launch-terminal-visible="launchTerminalVisible"
           :action-running="actionRunning"
           :launch-running="launchRunning"
+          @retry-sync="push"
           @hide-terminal="launchTerminalVisible = false"
-          :remote-only="remoteOnly"
-          :using-system-git="usingSystemGit"
+          :repo-context="repoContext"
           :project-tab="activeProjectTab"
           :project-issue-number="activeProjectIssue"
           :project-pull-request-number="activeProjectPullRequest"
           :project-run-id="activeProjectRun"
+          :project-job-id="activeProjectJob"
           :project-refresh-token="projectRefreshToken"
           @update-commit-message="commitMessage = $event"
           @stage-unstaged-changes="stageUnstagedChanges"
@@ -714,48 +723,6 @@ const {
   flex-wrap: wrap;
 }
 
-.repo-push-error {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--err-soft);
-  border-radius: 8px;
-  background: var(--err-soft);
-  color: var(--err);
-}
-
-.repo-push-error div {
-  min-width: 0;
-}
-
-.repo-push-error strong,
-.repo-push-error p {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.repo-push-error strong {
-  font-size: 13px;
-}
-
-.repo-push-error p {
-  margin: 2px 0 0;
-  color: var(--text);
-  font-size: 12px;
-}
-
-.repo-workbench__status {
-  display: grid;
-  grid-template-rows: minmax(0, auto);
-  gap: 14px;
-  min-height: 0;
-}
-
 .repo-workbench__body {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
@@ -779,6 +746,14 @@ const {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.repo-workbench__empty {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px;
+  text-align: center;
 }
 
 .section-toolbar {
@@ -1227,11 +1202,6 @@ const {
   overflow-wrap: anywhere;
 }
 
-.error-line {
-  margin: 0;
-  color: var(--err);
-}
-
 @media (max-width: 1180px) {
   .conflict-workspace {
     grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
@@ -1247,7 +1217,6 @@ const {
   }
 
   .repo-header,
-  .repo-push-error,
   .conflict-workspace {
     grid-template-columns: 1fr;
   }

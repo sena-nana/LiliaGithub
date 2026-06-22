@@ -11,6 +11,14 @@ const service = {
 };
 const writeText = vi.fn();
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 vi.mock("../src/composables/workspace/serviceLoader", () => ({
   loadWorkspaceService: vi.fn(async () => service as unknown as WorkspaceService),
 }));
@@ -126,6 +134,48 @@ describe("GitHub 设备码授权", () => {
     expect(state.error).toBeNull();
     expect(state.authFlowStatus).toBe("idle");
     expect(deviceFlow.value).toBeNull();
+
+    vi.useRealTimers();
+  });
+
+  it("重叠启动时旧设备码返回不会覆盖当前授权流程", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-10T00:00:00.000Z"));
+    const firstFlow = deferred<Awaited<ReturnType<WorkspaceService["startGitHubDeviceFlow"]>>>();
+    service.startGitHubDeviceFlow
+      .mockReturnValueOnce(firstFlow.promise)
+      .mockResolvedValueOnce({
+        deviceCode: "new-device-code",
+        userCode: "NEW-1234",
+        verificationUri: "https://github.com/login/device-new",
+        expiresAt: Date.now() + 600_000,
+        intervalSeconds: 2,
+      });
+    service.openUrl.mockResolvedValue(undefined);
+
+    const firstStart = startAuthFlow();
+    const secondStart = startAuthFlow();
+    await secondStart;
+
+    expect(deviceFlow.value?.deviceCode).toBe("new-device-code");
+    expect(writeText).toHaveBeenCalledWith("NEW-1234");
+    expect(service.openUrl).toHaveBeenCalledWith("https://github.com/login/device-new");
+    expect(state.authLoading).toBe(false);
+
+    firstFlow.resolve({
+      deviceCode: "old-device-code",
+      userCode: "OLD-1234",
+      verificationUri: "https://github.com/login/device-old",
+      expiresAt: Date.now() + 600_000,
+      intervalSeconds: 1,
+    });
+    await firstStart;
+
+    expect(deviceFlow.value?.deviceCode).toBe("new-device-code");
+    expect(writeText).not.toHaveBeenCalledWith("OLD-1234");
+    expect(service.openUrl).not.toHaveBeenCalledWith("https://github.com/login/device-old");
+    expect(state.authFlowStatus).toBe("pending");
+    expect(state.authLoading).toBe(false);
 
     vi.useRealTimers();
   });

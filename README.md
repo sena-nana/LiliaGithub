@@ -1,36 +1,174 @@
-# LiliaGithub
+<!-- To replace README screenshots, keep the file names .github/assets/home-overview.png and .github/assets/repo-detail.png to avoid README changes. -->
 
-一个面向本地多仓库管理的 Tauri 2 + Vue 3 + TypeScript 桌面应用。当前实现以 GitHub 工作区、仓库状态总览、单仓库操作和快速启动为核心，同时保留从 Lilia 桌面端提取出的工程工具外壳。
+> English | [简体中文](README.zh-CN.md) | [Documentation](https://sena-nana.github.io/LiliaGithub/)
 
-当前包含：
+> **Development Status**
+>
+> LiliaGithub is still in early alpha. Core repository workflows are usable, but local workspace metadata, launch command state, and release packaging may still change as the app evolves. Keep important repository work in Git and GitHub, not only in the app's local state.
 
-- Lilia 风格的自绘标题栏、可拖拽侧栏、紧凑工作台 UI。
-- 主窗口位置、尺寸与最大化状态恢复，避免启动时先闪默认窗口再跳转。
-- 暗色 / 浅色主题切换与本地持久化。
-- 组件声明式右键菜单、程序化打开菜单、危险项二次确认，并全局屏蔽浏览器原生右键菜单。
-- 通用确认弹层和 `AGENTS.md` 开发规范。
-- 工作区选择、GitHub 设备码授权和系统钥匙串凭证复用。
-- 工作区 Git 仓库扫描、状态统计、变更 / 历史 / 分支详情。
-- 单仓库暂存、提交、pull、push、checkout 和 GitHub / 文件夹打开入口。
-- 仓库快速启动配置、运行状态轮询和最近输出日志。
-- pull / push 批量预检和按队列执行。
-- Yarn 4 单应用包管理与 `verify` 验证脚本。
-- 最小 Tauri Rust 壳和 `ping` invoke 冒烟命令。
+<p align="center">
+  <img src="./src-tauri/icons/icon.png" width="128" alt="LiliaGithub logo" />
+</p>
 
-当前不包含：
+<h1 align="center">LiliaGithub</h1>
 
-- Lilia 的 Claude / Codex / CC-Switch / agent runner 业务。
-- `packages/contracts`、项目 stub、聊天流、provider 配置。
-- 真实插件管理、技能市场或第三方集成管理。
-- SQLite、WebDAV、托盘、小组件等 Momo 业务能力。
+<p align="center">
+  <a href="https://github.com/sena-nana/LiliaGithub/releases">
+    <img alt="LiliaGithub release" src="https://img.shields.io/github/v/release/sena-nana/LiliaGithub?include_prereleases">
+  </a>
+</p>
 
-## 命令
+<p align="center"><strong>A desktop workbench for local Git and day-to-day GitHub operations.</strong></p>
 
-```bash
-yarn install
-yarn dev
-yarn tauri:dev
-yarn verify
+<p align="center">LiliaGithub brings local multi-repository status, focused repository operations, GitHub project visibility, personal workspace controls, and push activity tracking into one compact desktop app.</p>
+
+<p align="center">
+  <img src="./.github/assets/home-overview.png" alt="LiliaGithub workspace overview" />
+</p>
+
+<p align="center"><strong>Workspace overview</strong></p>
+
+<p align="center">
+  <img src="./.github/assets/repo-detail.png" alt="LiliaGithub repository detail" />
+</p>
+
+<p align="center"><strong>Repository detail</strong></p>
+
+---
+
+## Product Positioning
+
+LiliaGithub is the GitHub workspace tool in the Lilia family. It is built for developers who keep many local repositories active and want to handle most everyday GitHub work without opening the web UI.
+
+The long-term goal is a desktop-first workflow for local Git management, GitHub repository and project inspection, personal account workspace management, and push / sync activity review. The web UI remains the fallback for uncommon administration, organization policy, and advanced GitHub features that are better handled by GitHub itself.
+
+## The Lilia Family
+
+Lilia is a family of toolchain applications for high-collaboration engineering workflows. Its apps share a preference for observable local state, compact desktop shells, recoverable workflows, and clear human control over automation.
+
+LiliaGithub focuses on repository operations around GitHub workspaces. It keeps the Lilia desktop shell style, theme system, context menu model, and engineering-tool interaction language, but intentionally does not include LiliaCode's agent runtime, chat timeline, provider configuration, or task orchestration features.
+
+## What Makes It Different
+
+- Workspace-first repository view: scan a local workspace and keep repository status, branch state, changes, history, and sync state close together.
+- Focused repository operations: stage, commit, pull, push, checkout, open the remote page when needed, and open the local folder from one repository surface.
+- GitHub project visibility: bring repository, issue, pull request, review, release, and project-board context into the desktop app instead of requiring constant browser switching.
+- Personal workspace management: provide a signed-in home for account state, repository lists, notifications, saved workspaces, and personal preferences.
+- Push activity review: surface recent pushes, outgoing changes, CI / release results, and sync problems where developers already manage their repositories.
+- Quick launch commands: save a repository launch target, poll running state, and inspect recent command output without turning the main workspace into a terminal-only app.
+- Queued sync workflows: preflight pull / push operations and execute them in a controlled queue.
+- Compact desktop workbench: keep the app quiet, dense, and readable so the repository content stays primary.
+
+## Feature Status
+
+The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked. Last checked: 2026-06-21.
+
+### Local Git And Repository Management
+
+- [x] Workspace selection and local Git repository scanning.
+- [x] Repository status summary, branch information, change details, history, and repository detail view.
+- [x] Single-repository staging, committing, pull, push, checkout, remote-page open, and folder open actions.
+- [x] Pull / push batch preflight and queued execution.
+- [x] GitHub device-code authorization and system keychain credential reuse.
+- [ ] Safer conflict, failed-sync, and multi-step recovery guidance inside the app.
+
+### GitHub Project And Collaboration View
+
+- [ ] GitHub repository metadata, stars, forks, releases, and default branch state.
+- [ ] Issue, pull request, review, and discussion browsing.
+- [ ] GitHub Projects board viewing for repositories and personal work.
+- [ ] Notification inbox with repository, issue, pull request, and review filters.
+- [ ] Recent push activity, Actions results, release status, and failed workflow visibility.
+
+### Personal Workspace
+
+- [x] Signed-in GitHub account connection.
+- [x] Local workspace preferences and theme persistence.
+- [ ] Personal home view for assigned work, recently touched repositories, and saved workspaces.
+- [ ] Account-level repository list, watched repositories, and notification preferences.
+- [ ] Local organization of favorite repositories and common workspaces.
+
+### Quick Launch
+
+- [x] Repository launch candidate discovery and selection.
+- [x] Saved quick launch configuration per repository.
+- [x] Launch running-state polling and recent output log display.
+- [ ] Clearer launch history and failure diagnostics.
+
+### Desktop Experience
+
+- [x] Compact desktop shell with workspace, repository, and settings navigation.
+- [x] Window position, size, and maximized-state restoration.
+- [x] Light / dark theme switching.
+- [x] Context menus and confirmation dialogs for repository actions.
+- [ ] More complete keyboard navigation and command access for repeated GitHub work.
+
+### Build And Release
+
+- [x] Windows desktop app packaging.
+- [x] Contributor verification command for tests and builds.
+- [x] GitHub Actions CI, documentation build, and release packaging workflow.
+- [ ] Signed installers and updater integration.
+
+## Project Structure
+
+```text
+LiliaGithub/
+├── docs/                       # VitePress documentation
+├── scripts/                    # Contributor and Tauri helper scripts
+├── src/                        # Vue 3 frontend
+│   ├── components/             # Reusable UI and app components
+│   ├── pages/                  # Workspace, repository, and settings pages
+│   ├── services/               # Frontend service and state helpers
+│   ├── styles/                 # Theme tokens, shell, and page styles
+│   ├── router.ts
+│   └── main.ts
+├── src-tauri/                  # Tauri 2 Rust side
+│   ├── icons/
+│   ├── src/                    # IPC commands and desktop integration
+│   └── tauri.conf.json
+├── tests/                      # Vitest coverage
+├── package.json
+└── yarn.lock
 ```
 
-`yarn verify` 会串行运行前端测试、前端构建和 Tauri Rust 编译检查。
+## Early Development
+
+LiliaGithub uses Yarn 4.14.1 through Corepack. Enable Corepack first, then run contributor commands from the repository root through the root `yarn ...` scripts. `npm`, `pnpm`, global Yarn 1.x, and direct package-manager drift are guarded and not supported as the contributor path.
+
+```bash
+# 1) Enable Corepack and activate the repository Yarn version
+corepack enable
+corepack prepare yarn@4.14.1 --activate
+
+# 2) Install dependencies
+yarn install
+
+# 3) Start only the Vite frontend
+yarn dev
+
+# 4) Start the Tauri desktop app
+yarn tauri:dev
+
+# 5) Run tests, frontend build, and Tauri Rust check
+yarn verify
+
+# 6) Start, build, or preview the documentation site
+yarn docs:dev
+yarn docs:build
+yarn docs:preview
+```
+
+If `yarn --version` still reports `1.x` after enabling Corepack, run commands through Corepack explicitly, for example `corepack yarn install` and `corepack yarn dev`.
+
+## First Release Packaging
+
+Release packaging is driven by the GitHub Actions release workflow. The root `package.json` may use prerelease names such as `0.1.0-alpha.1`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
+
+Pushing a `v*` tag runs verification and builds the Windows Tauri bundle for the draft release. Before publishing a release, download the artifact and manually verify install, launch, basic window behavior, repository scanning, and uninstall. Current release artifacts are Windows-first, unsigned, and do not include the Tauri updater.
+
+The Tauri icon source is [src-tauri/icons/icon.png](src-tauri/icons/icon.png).
+
+## Thanks
+
+- LiliaCode provides the desktop shell style, interaction language, and engineering-workbench direction that LiliaGithub builds on.
