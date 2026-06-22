@@ -6,7 +6,7 @@ const base = process.env.GITHUB_ACTIONS && isProjectPages ? `/${repository}/` : 
 
 export default defineConfig({
   title: "LiliaGithub",
-  description: "A minimal Tauri 2 + Vue 3 desktop application template.",
+  description: "A desktop workbench for local Git and day-to-day GitHub operations.",
   base,
   themeConfig: {
     nav: [{ text: "开发启动", link: "/guide/development" }],
