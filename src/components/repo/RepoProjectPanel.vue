@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AnsiUp } from "ansi_up";
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch, type Component } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch, type Component } from "vue";
 import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 import {
   AlertCircle,
@@ -99,6 +99,7 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { repoRoute, type RepoRouteTab } from "../../utils/repoRoutes";
+import { createCachedAsyncComponent } from "../../utils/asyncComponent";
 import {
   blankIssueTemplate,
   blankPullRequestTemplate,
@@ -225,9 +226,12 @@ const blankIssuePanelFilters = (): IssuePanelFilters => ({
 
 const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const README_PATH = "README.md";
-const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
-const RepoActionsPanel = defineAsyncComponent(() => import("./RepoActionsPanel.vue"));
-const RepoPullRequestsPanel = defineAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
+const repoLanguageStatsCardModule = createCachedAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
+const repoActionsPanelModule = createCachedAsyncComponent(() => import("./RepoActionsPanel.vue"));
+const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
+const RepoLanguageStatsCard = repoLanguageStatsCardModule.component;
+const RepoActionsPanel = repoActionsPanelModule.component;
+const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
 
 const props = defineProps<{
   repoId: string;

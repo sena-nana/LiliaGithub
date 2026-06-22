@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createCachedAsyncModule } from "../../utils/asyncModule";
 import { parseRemoteRepoId } from "../../utils/remoteRepo";
 import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";
 import { WORKSPACE_COMMAND_MANIFEST } from "./manifest";
@@ -101,7 +102,7 @@ let githubRepoCache: {
 let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
 const githubProjectCache = new Map<string, GitHubProjectRepoClientCache>();
 const pendingWorkspaceReads = new Map<string, Promise<unknown>>();
-let workspaceFallbackPromise: Promise<WorkspaceFallback> | null = null;
+const workspaceFallbackModuleLoader = createCachedAsyncModule(() => import("./fallback"));
 let workspaceFallbackModule: WorkspaceFallback | null = null;
 
 export function resolveWorkspaceRuntimeForTests(probe: {
@@ -117,11 +118,9 @@ export function resolveWorkspaceRuntimeForTests(probe: {
 
 async function loadWorkspaceFallback() {
   if (isDev || isTest) {
-    workspaceFallbackPromise ??= import("./fallback").then((module) => {
-      workspaceFallbackModule = module;
-      return module;
-    });
-    return workspaceFallbackPromise;
+    const module = await workspaceFallbackModuleLoader.load();
+    workspaceFallbackModule = module;
+    return module;
   }
   throw new Error("Workspace mock data is only available in development and test mode.");
 }
@@ -144,8 +143,7 @@ export async function resetWorkspaceFallbacksForTests(): Promise<void> {
   if (!isTest) {
     throw new Error("Workspace fallback test helpers are only available in test mode.");
   }
-  const fallback = workspaceFallbackModule ?? (workspaceFallbackPromise ? await workspaceFallbackPromise : null);
-  fallback?.resetWorkspaceFallbacksForTests();
+  workspaceFallbackModule?.resetWorkspaceFallbacksForTests();
 }
 
 async function call<TCommand extends WorkspaceCommandName>(

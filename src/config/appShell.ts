@@ -5,8 +5,9 @@ import {
   Palette,
   Sparkles,
 } from "@lucide/vue";
-import { defineAsyncComponent, type Component } from "vue";
+import type { Component } from "vue";
 import type { RouteLocationRaw } from "vue-router";
+import { createCachedAsyncComponent } from "../utils/asyncComponent";
 
 export const APP_TITLE = "LiliaGithub";
 
@@ -99,10 +100,14 @@ export const SETTINGS_TABS: SettingsTab[] = [
 
 export const DEFAULT_SETTINGS_TAB: SettingsTabKey = "appearance";
 
+const appearanceSection = createCachedAsyncComponent(() => import("../pages/settings/AppearanceSection.vue"));
+const repositoriesSection = createCachedAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue"));
+const aboutSection = createCachedAsyncComponent(() => import("../pages/settings/AboutSection.vue"));
+
 export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
-  appearance: defineAsyncComponent(() => import("../pages/settings/AppearanceSection.vue")),
-  repositories: defineAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue")),
-  about: defineAsyncComponent(() => import("../pages/settings/AboutSection.vue")),
+  appearance: appearanceSection.component,
+  repositories: repositoriesSection.component,
+  about: aboutSection.component,
 };
 
 export function normalizeSettingsTab(value: unknown): SettingsTabKey {
