@@ -995,12 +995,15 @@ describe("RepoProjectPanel", () => {
     expect(view.getAllByText("关闭了讨论")).toHaveLength(2);
     expect(view.container.querySelector(".issue-detail__summary")).toBeNull();
     const issueSidebar = view.getByLabelText("Issue 详情侧栏");
+    const issueSidebarChips = Array.from(issueSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
+      .map((chip) => chip.textContent ?? "");
     expect(issueSidebar).toHaveTextContent("Issue #12");
-    expect(issueSidebar).toHaveTextContent("Open");
+    expect(issueSidebar).toHaveTextContent("打开");
     expect(issueSidebar).toHaveTextContent("sena");
     expect(issueSidebar).toHaveTextContent("bug");
     expect(issueSidebar).toHaveTextContent("Roadmap");
     expect(issueSidebar).toHaveTextContent("v1");
+    expect(issueSidebarChips).toEqual(expect.arrayContaining(["打开", "sena", "bug", "Roadmap", "v1"]));
     expect(view.container.querySelector("script")).toBeNull();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "issues", issue: "12" });
@@ -1144,15 +1147,26 @@ describe("RepoProjectPanel", () => {
     expect(view.getByText("接入 PR 工作流。")).toBeInTheDocument();
     expect(view.container.querySelector(".pull-detail__summary")).toBeNull();
     const pullSidebar = view.getByLabelText("Pull Requests 详情侧栏");
+    const pullSidebarChips = Array.from(pullSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
+      .map((chip) => chip.textContent ?? "");
     expect(pullSidebar).toHaveTextContent("PR #52");
-    expect(pullSidebar).toHaveTextContent("Open");
-    expect(pullSidebar).toHaveTextContent("No reviewers");
+    expect(pullSidebar).toHaveTextContent("打开");
+    expect(pullSidebar).toHaveTextContent("暂无审阅人");
     expect(pullSidebar).toHaveTextContent("sena");
     expect(pullSidebar).toHaveTextContent("bug");
     expect(pullSidebar).toHaveTextContent("Roadmap");
     expect(pullSidebar).toHaveTextContent("v1");
     expect(pullSidebar).toHaveTextContent("feature/pr-flow -> main");
-    expect(pullSidebar).toHaveTextContent("clean");
+    expect(pullSidebar).toHaveTextContent("可合并");
+    expect(pullSidebarChips).toEqual(expect.arrayContaining([
+      "打开",
+      "sena",
+      "bug",
+      "Roadmap",
+      "v1",
+      "feature/pr-flow -> main",
+      "可合并",
+    ]));
     expect(getGitHubPullRequestDiscussion).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     await waitFor(() => {
