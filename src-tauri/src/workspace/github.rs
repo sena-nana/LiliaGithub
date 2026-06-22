@@ -205,6 +205,26 @@ pub(super) struct GitHubIssueTimelineResponse {
     pub(super) created_at: Option<String>,
     #[serde(default)]
     pub(super) updated_at: Option<String>,
+    #[serde(default)]
+    pub(super) source: Option<GitHubIssueTimelineSourceResponse>,
+    #[serde(default)]
+    pub(super) commit_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueTimelineSourceResponse {
+    #[serde(default)]
+    pub(super) issue: Option<GitHubIssueTimelineSourceIssueResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueTimelineSourceIssueResponse {
+    pub(super) number: u64,
+    pub(super) title: String,
+    pub(super) state: String,
+    pub(super) html_url: String,
+    #[serde(default)]
+    pub(super) pull_request: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,6 +317,22 @@ pub(super) struct GitHubPullRequestResponse {
     pub(super) mergeable: Option<bool>,
     #[serde(default)]
     pub(super) mergeable_state: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubRequestedReviewersResponse {
+    #[serde(default)]
+    pub(super) users: Vec<GitHubPullRequestUserResponse>,
+    #[serde(default)]
+    pub(super) teams: Vec<GitHubTeamResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubTeamResponse {
+    #[serde(default)]
+    pub(super) slug: Option<String>,
+    #[serde(default)]
+    pub(super) name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -516,6 +552,8 @@ pub(super) struct GitHubCommitFileResponse {
 pub(super) struct GitHubCommitResponse {
     pub(super) sha: String,
     pub(super) commit: GitHubCommitPayloadResponse,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
     #[serde(default)]
     pub(super) parents: Vec<GitHubCommitParentResponse>,
     #[serde(default)]
@@ -1497,6 +1535,7 @@ fn github_issue_like_from_response(issue: GitHubIssueResponse) -> GitHubIssue {
         }),
         comments: issue.comments,
         project_items: Vec::new(),
+        development_items: Vec::new(),
         html_url: issue.html_url,
         updated_at: issue.updated_at,
         created_at: issue.created_at,
@@ -1517,6 +1556,9 @@ pub(super) fn github_pull_request_from_response(
         milestone: None,
         comments: 0,
         project_items: Vec::new(),
+        reviewers: Vec::new(),
+        development_items: Vec::new(),
+        commit_count: None,
         html_url: pull_request.html_url,
         updated_at: pull_request.updated_at,
         created_at: pull_request.created_at,
@@ -1718,6 +1760,238 @@ pub(super) fn sort_github_discussion_timeline(items: &mut [GitHubDiscussionTimel
             .cmp(&right_time)
             .then_with(|| left.id.cmp(&right.id))
     });
+}
+
+fn github_repo_full_name_from_html_url(html_url: &str) -> Option<String> {
+    let path = html_url
+        .trim()
+        .strip_prefix("https://github.com/")
+        .or_else(|| html_url.trim().strip_prefix("http://github.com/"))?;
+    let mut parts = path.split('/').filter(|part| !part.trim().is_empty());
+    let owner = parts.next()?.trim();
+    let repo = parts.next()?.trim();
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{repo}"))
+}
+
+fn short_sha(sha: &str) -> String {
+    sha.chars().take(7).collect()
+}
+
+fn commit_subject(message: &str) -> String {
+    message.lines().next().unwrap_or("").trim().to_string()
+}
+
+fn push_unique_development_item(
+    items: &mut Vec<GitHubDevelopmentItem>,
+    seen: &mut HashSet<String>,
+    item: GitHubDevelopmentItem,
+) {
+    if seen.insert(item.id.clone()) {
+        items.push(item);
+    }
+}
+
+fn github_issue_source_development_item(
+    issue: &GitHubIssueTimelineSourceIssueResponse,
+) -> GitHubDevelopmentItem {
+    let kind = if issue.pull_request.is_some() {
+        "pullRequest"
+    } else {
+        "issue"
+    };
+    let repository_full_name = github_repo_full_name_from_html_url(&issue.html_url);
+    let prefix = if kind == "pullRequest" { "PR" } else { "Issue" };
+    GitHubDevelopmentItem {
+        id: format!(
+            "{kind}:{}:{}",
+            repository_full_name
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string())
+                .to_ascii_lowercase(),
+            issue.number
+        ),
+        kind: kind.to_string(),
+        label: format!("{prefix} #{} {}", issue.number, issue.title),
+        url: Some(issue.html_url.clone()),
+        number: Some(issue.number),
+        state: Some(issue.state.clone()),
+        repository_full_name,
+        ref_name: None,
+        sha: None,
+    }
+}
+
+fn github_commit_event_development_item(
+    repo_full_name: &str,
+    commit_id: &str,
+) -> Option<GitHubDevelopmentItem> {
+    let sha = normalize_optional_string(Some(commit_id.to_string()))?;
+    let short = short_sha(&sha);
+    Some(GitHubDevelopmentItem {
+        id: format!("commit:{}:{sha}", repo_full_name.to_ascii_lowercase()),
+        kind: "commit".to_string(),
+        label: format!("Commit {short}"),
+        url: Some(format!("https://github.com/{repo_full_name}/commit/{sha}")),
+        number: None,
+        state: None,
+        repository_full_name: Some(repo_full_name.to_string()),
+        ref_name: None,
+        sha: Some(sha),
+    })
+}
+
+fn github_commit_development_item(
+    repo_full_name: &str,
+    commit: &GitHubCommitResponse,
+) -> Option<GitHubDevelopmentItem> {
+    let sha = normalize_optional_string(Some(commit.sha.clone()))?;
+    let subject = commit_subject(&commit.commit.message);
+    let short = short_sha(&sha);
+    Some(GitHubDevelopmentItem {
+        id: format!("commit:{}:{sha}", repo_full_name.to_ascii_lowercase()),
+        kind: "commit".to_string(),
+        label: if subject.is_empty() {
+            format!("Commit {short}")
+        } else {
+            format!("{short} {subject}")
+        },
+        url: commit
+            .html_url
+            .clone()
+            .or_else(|| Some(format!("https://github.com/{repo_full_name}/commit/{sha}"))),
+        number: None,
+        state: None,
+        repository_full_name: Some(repo_full_name.to_string()),
+        ref_name: None,
+        sha: Some(sha),
+    })
+}
+
+pub(super) fn github_development_items_from_timeline(
+    repo_full_name: &str,
+    timeline: &[GitHubIssueTimelineResponse],
+) -> Vec<GitHubDevelopmentItem> {
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for item in timeline {
+        match item.event.as_deref() {
+            Some("cross-referenced") => {
+                if let Some(source_issue) = item
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.issue.as_ref())
+                {
+                    push_unique_development_item(
+                        &mut items,
+                        &mut seen,
+                        github_issue_source_development_item(source_issue),
+                    );
+                }
+            }
+            Some("referenced") | Some("closed") | Some("merged") | Some("committed") => {
+                if let Some(commit_item) = item
+                    .commit_id
+                    .as_deref()
+                    .and_then(|sha| github_commit_event_development_item(repo_full_name, sha))
+                {
+                    push_unique_development_item(&mut items, &mut seen, commit_item);
+                }
+            }
+            _ => {}
+        }
+    }
+    items
+}
+
+fn push_pull_request_reviewer(
+    reviewers: &mut Vec<GitHubPullRequestReviewer>,
+    login: String,
+    kind: &str,
+    state: &str,
+) {
+    let login = login.trim().to_string();
+    if login.is_empty() {
+        return;
+    }
+    if let Some(existing) = reviewers
+        .iter_mut()
+        .find(|reviewer| reviewer.login == login && reviewer.kind == kind)
+    {
+        if existing.state == "requested" || state != "requested" {
+            existing.state = state.to_string();
+        }
+        return;
+    }
+    reviewers.push(GitHubPullRequestReviewer {
+        login,
+        kind: kind.to_string(),
+        state: state.to_string(),
+    });
+}
+
+pub(super) fn github_pull_request_reviewers_from_requested(
+    requested: GitHubRequestedReviewersResponse,
+) -> Vec<GitHubPullRequestReviewer> {
+    let mut reviewers = Vec::new();
+    for user in requested.users {
+        push_pull_request_reviewer(&mut reviewers, user.login, "user", "requested");
+    }
+    for team in requested.teams {
+        if let Some(login) = normalize_optional_string(team.slug.or(team.name)) {
+            push_pull_request_reviewer(&mut reviewers, login, "team", "requested");
+        }
+    }
+    reviewers
+}
+
+pub(super) fn add_pull_request_reviewers_from_reviews(
+    reviewers: &mut Vec<GitHubPullRequestReviewer>,
+    reviews: &[GitHubPullRequestReviewResponse],
+) {
+    for review in reviews {
+        if let Some(user) = review.user.as_ref() {
+            push_pull_request_reviewer(reviewers, user.login.clone(), "user", &review.state);
+        }
+    }
+}
+
+fn fetch_github_pull_request_requested_reviewers(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    repo_url: &str,
+    pull_number: u64,
+) -> Result<Vec<GitHubPullRequestReviewer>, String> {
+    let response = github_send(
+        app,
+        "读取 GitHub Pull Request Reviewers 失败",
+        github_headers(
+            client.get(format!(
+                "{repo_url}/pulls/{pull_number}/requested_reviewers"
+            )),
+            Some(token),
+        ),
+    )?;
+    let requested = github_json::<GitHubRequestedReviewersResponse>(
+        "读取 GitHub Pull Request Reviewers 失败",
+        response,
+    )?;
+    Ok(github_pull_request_reviewers_from_requested(requested))
+}
+
+fn github_pull_request_commit_development_items(
+    repo_full_name: &str,
+    commits: &[GitHubCommitResponse],
+) -> Vec<GitHubDevelopmentItem> {
+    commits
+        .iter()
+        .rev()
+        .take(3)
+        .filter_map(|commit| github_commit_development_item(repo_full_name, commit))
+        .collect()
 }
 
 pub(super) fn github_issue_labels_param(labels: Option<Vec<String>>) -> Option<String> {
@@ -3261,39 +3535,71 @@ pub async fn github_get_pull_request_discussion(
         let client = build_client()?;
         let repo_url = github_repo_api_url(&repo_full_name)?;
         let mut timeline = vec![github_timeline_item_from_pull_request(&pull_request)];
+        let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
+            &app,
+            &client,
+            &token,
+            format!("{repo_url}/issues/{pull_number}/timeline"),
+            "读取 GitHub Pull Request 时间线失败",
+        )?;
+        let mut development_items =
+            github_development_items_from_timeline(&repo_full_name, &timeline_events);
         timeline.extend(
-            github_fetch_paginated::<GitHubIssueTimelineResponse>(
-                &app,
-                &client,
-                &token,
-                format!("{repo_url}/issues/{pull_number}/timeline"),
-                "读取 GitHub Pull Request 时间线失败",
-            )?
-            .into_iter()
-            .map(github_timeline_item_from_response),
+            timeline_events
+                .into_iter()
+                .map(github_timeline_item_from_response),
         );
+
+        let review_responses = github_fetch_paginated::<GitHubPullRequestReviewResponse>(
+            &app,
+            &client,
+            &token,
+            format!("{repo_url}/pulls/{pull_number}/reviews"),
+            "读取 GitHub Pull Request Reviews 失败",
+        )?;
+        let mut reviewers = fetch_github_pull_request_requested_reviewers(
+            &app,
+            &client,
+            &token,
+            &repo_url,
+            pull_number,
+        )?;
+        add_pull_request_reviewers_from_reviews(&mut reviewers, &review_responses);
         timeline.extend(
-            github_fetch_paginated::<GitHubPullRequestReviewResponse>(
-                &app,
-                &client,
-                &token,
-                format!("{repo_url}/pulls/{pull_number}/reviews"),
-                "读取 GitHub Pull Request Reviews 失败",
-            )?
-            .into_iter()
-            .map(github_review_timeline_item_from_response),
+            review_responses
+                .into_iter()
+                .map(github_review_timeline_item_from_response),
         );
+
+        let review_comments = github_fetch_paginated::<GitHubPullRequestReviewCommentResponse>(
+            &app,
+            &client,
+            &token,
+            format!("{repo_url}/pulls/{pull_number}/comments"),
+            "读取 GitHub Pull Request Review Comments 失败",
+        )?;
         timeline.extend(
-            github_fetch_paginated::<GitHubPullRequestReviewCommentResponse>(
-                &app,
-                &client,
-                &token,
-                format!("{repo_url}/pulls/{pull_number}/comments"),
-                "读取 GitHub Pull Request Review Comments 失败",
-            )?
-            .into_iter()
-            .map(github_review_comment_timeline_item_from_response),
+            review_comments
+                .into_iter()
+                .map(github_review_comment_timeline_item_from_response),
         );
+
+        let commits = github_fetch_paginated::<GitHubCommitResponse>(
+            &app,
+            &client,
+            &token,
+            format!("{repo_url}/pulls/{pull_number}/commits"),
+            "读取 GitHub Pull Request Commits 失败",
+        )?;
+        development_items.extend(github_pull_request_commit_development_items(
+            &repo_full_name,
+            &commits,
+        ));
+        let mut development_seen = HashSet::new();
+        development_items.retain(|item| development_seen.insert(item.id.clone()));
+        pull_request.reviewers = reviewers;
+        pull_request.development_items = development_items;
+        pull_request.commit_count = Some(commits.len() as u64);
         let mut seen = HashSet::new();
         timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
         sort_github_discussion_timeline(&mut timeline);
@@ -3715,21 +4021,24 @@ pub async fn github_get_issue_discussion(
             &token,
             "读取 GitHub Issue 失败",
         )?;
-        let issue = github_issue_from_response(issue_response)
+        let mut issue = github_issue_from_response(issue_response)
             .ok_or_else(|| format!("#{issue_number} 是 Pull Request，不是 Issue"))?;
         let client = build_client()?;
         let repo_url = github_repo_api_url(&repo_full_name)?;
         let mut timeline = vec![github_timeline_item_from_issue(&issue)];
+        let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
+            &app,
+            &client,
+            &token,
+            format!("{repo_url}/issues/{issue_number}/timeline"),
+            "读取 GitHub Issue 时间线失败",
+        )?;
+        issue.development_items =
+            github_development_items_from_timeline(&repo_full_name, &timeline_events);
         timeline.extend(
-            github_fetch_paginated::<GitHubIssueTimelineResponse>(
-                &app,
-                &client,
-                &token,
-                format!("{repo_url}/issues/{issue_number}/timeline"),
-                "读取 GitHub Issue 时间线失败",
-            )?
-            .into_iter()
-            .map(github_timeline_item_from_response),
+            timeline_events
+                .into_iter()
+                .map(github_timeline_item_from_response),
         );
         let mut seen = HashSet::new();
         timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
