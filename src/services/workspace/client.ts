@@ -244,6 +244,15 @@ function cachedWorkspaceRead<T>(
   return next;
 }
 
+function cachedCall<TCommand extends WorkspaceCommandName>(
+  command: TCommand,
+  args: WorkspaceCommandArgs<TCommand>,
+  fallback: () => Promise<WorkspaceCommandResult<TCommand>>,
+  cacheArgs: unknown = args,
+): Promise<WorkspaceCommandResult<TCommand>> {
+  return cachedWorkspaceRead(command, cacheArgs, () => call(command, args, fallback));
+}
+
 function githubProjectRepoCache(repoFullName: string) {
   const key = githubProjectRepoKey(repoFullName);
   let cache = githubProjectCache.get(key);
@@ -533,10 +542,8 @@ export function listRepoContribution(repoScope: string): Promise<GitHubContribut
 
 export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
   const pageNo = page ?? null;
-  const result = await cachedWorkspaceRead("github_list_repos", { page: pageNo }, () =>
-    call("github_list_repos", { page: pageNo }, () =>
-      workspaceFallback().listGitHubRepos(pageNo),
-    )
+  const result = await cachedCall("github_list_repos", { page: pageNo }, () =>
+    workspaceFallback().listGitHubRepos(pageNo),
   ).catch((err) => {
     if (isGitHubBindingExpiredError(err)) clearGitHubRepoCache();
     throw err;
@@ -567,9 +574,7 @@ export function getGitHubRepoManagement(
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_repo_management", args, () =>
-    call("github_get_repo_management", args, () => workspaceFallback().getGitHubRepoManagement(repoFullName))
-  )
+  return cachedCall("github_get_repo_management", args, () => workspaceFallback().getGitHubRepoManagement(repoFullName))
     .then((repo) => {
       cache.management = cloneProjectData(repo);
       return cloneProjectData(repo);
@@ -629,9 +634,7 @@ export function listGitHubPullRequests(
     query: options.query ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_list_pull_requests", args, () =>
-    call("github_list_pull_requests", args, () => workspaceFallback().listGitHubPullRequests(repoFullName, options))
-  )
+  return cachedCall("github_list_pull_requests", args, () => workspaceFallback().listGitHubPullRequests(repoFullName, options))
     .then((pulls) => {
       cache.pullRequests[key] = cloneProjectList(pulls);
       return cloneProjectList(pulls);
@@ -657,10 +660,8 @@ export function getGitHubPullRequestDiscussion(
     pullNumber,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_pull_request_discussion", args, () =>
-    call("github_get_pull_request_discussion", args, () =>
-      workspaceFallback().getGitHubPullRequestDiscussion(repoFullName, pullNumber)
-    )
+  return cachedCall("github_get_pull_request_discussion", args, () =>
+    workspaceFallback().getGitHubPullRequestDiscussion(repoFullName, pullNumber)
   )
     .then((discussion) => {
       cache.pullRequestDiscussions[pullNumber] = cloneProjectData(discussion);
@@ -723,10 +724,8 @@ export function listGitHubPullRequestChecks(
     pullNumber,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_list_pull_request_checks", args, () =>
-    call("github_list_pull_request_checks", args, () =>
-      workspaceFallback().listGitHubPullRequestChecks(repoFullName, pullNumber)
-    )
+  return cachedCall("github_list_pull_request_checks", args, () =>
+    workspaceFallback().listGitHubPullRequestChecks(repoFullName, pullNumber)
   )
     .then((checks) => {
       cache.pullRequestChecks[pullNumber] = cloneProjectList(checks);
@@ -761,9 +760,7 @@ export function listGitHubIssues(
     query: options.query ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_list_issues", args, () =>
-    call("github_list_issues", args, () => workspaceFallback().listGitHubIssues(repoFullName, options))
-  )
+  return cachedCall("github_list_issues", args, () => workspaceFallback().listGitHubIssues(repoFullName, options))
     .then((issues) => {
       cache.issues[key] = cloneProjectList(issues);
       return cloneProjectList(issues);
@@ -783,10 +780,8 @@ export function getGitHubIssueDiscussion(
     issueNumber,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_issue_discussion", args, () =>
-    call("github_get_issue_discussion", args, () =>
-      workspaceFallback().getGitHubIssueDiscussion(repoFullName, issueNumber)
-    )
+  return cachedCall("github_get_issue_discussion", args, () =>
+    workspaceFallback().getGitHubIssueDiscussion(repoFullName, issueNumber)
   )
     .then((discussion) => {
       cache.issueDiscussions[issueNumber] = cloneProjectData(discussion);
@@ -807,8 +802,8 @@ export function getGitHubIssueFilterMetadata(
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_issue_filter_metadata", args, () =>
-    call("github_get_issue_filter_metadata", args, () => workspaceFallback().getGitHubIssueFilterMetadata(repoFullName))
+  return cachedCall("github_get_issue_filter_metadata", args, () =>
+    workspaceFallback().getGitHubIssueFilterMetadata(repoFullName)
   )
     .then((metadata) => {
       cache.issueFilterMetadata = cloneProjectData(metadata);
@@ -830,7 +825,7 @@ function listGitHubIssueValues(
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead(command, args, () => call(command, args, fallbackCall))
+  return cachedCall(command, args, fallbackCall)
     .then((values) => {
       cache[cacheKey] = [...values];
       return [...values];
@@ -894,8 +889,8 @@ export function listGitHubWorkflowRuns(
     perPage: perPage ?? null,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_list_workflow_runs", args, () =>
-    call("github_list_workflow_runs", args, () => workspaceFallback().listGitHubWorkflowRuns(repoFullName, perPage))
+  return cachedCall("github_list_workflow_runs", args, () =>
+    workspaceFallback().listGitHubWorkflowRuns(repoFullName, perPage)
   )
     .then((runs) => {
       cache.workflowRuns[key] = cloneProjectList(runs);
@@ -916,10 +911,8 @@ export function getGitHubWorkflowRunDetail(
     runId,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_workflow_run_detail", args, () =>
-    call("github_get_workflow_run_detail", args, () =>
-      workspaceFallback().getGitHubWorkflowRunDetail(repoFullName, runId)
-    )
+  return cachedCall("github_get_workflow_run_detail", args, () =>
+    workspaceFallback().getGitHubWorkflowRunDetail(repoFullName, runId)
   )
     .then((detail) => {
       cache.workflowRunDetails[runId] = cloneProjectData(detail);
@@ -940,8 +933,8 @@ export function getGitHubWorkflowJobLog(
     jobId,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_workflow_job_log", args, () =>
-    call("github_get_workflow_job_log", args, () => workspaceFallback().getGitHubWorkflowJobLog(repoFullName, jobId))
+  return cachedCall("github_get_workflow_job_log", args, () =>
+    workspaceFallback().getGitHubWorkflowJobLog(repoFullName, jobId)
   )
     .then((log) => {
       cache.workflowJobLogs[jobId] = { ...log };
@@ -961,10 +954,8 @@ export function listGitHubWorkflowArtifactFiles(
     repoFullName,
     artifactId,
   };
-  return cachedWorkspaceRead("github_list_workflow_artifact_files", args, () =>
-    call("github_list_workflow_artifact_files", args, () =>
-      workspaceFallback().listGitHubWorkflowArtifactFiles(repoFullName, artifactId)
-    )
+  return cachedCall("github_list_workflow_artifact_files", args, () =>
+    workspaceFallback().listGitHubWorkflowArtifactFiles(repoFullName, artifactId)
   )
     .then((entries) => {
       cache.workflowArtifactEntries[artifactId] = cloneProjectList(entries);
@@ -987,10 +978,8 @@ export function getGitHubWorkflowArtifactFilePreview(
     artifactId,
     path,
   };
-  return cachedWorkspaceRead("github_get_workflow_artifact_file_preview", args, () =>
-    call("github_get_workflow_artifact_file_preview", args, () =>
-      workspaceFallback().getGitHubWorkflowArtifactFilePreview(repoFullName, artifactId, path)
-    )
+  return cachedCall("github_get_workflow_artifact_file_preview", args, () =>
+    workspaceFallback().getGitHubWorkflowArtifactFilePreview(repoFullName, artifactId, path)
   )
     .then((preview) => {
       cache.workflowArtifactPreviews[key] = cloneProjectData(preview);
@@ -1013,8 +1002,8 @@ export function listGitHubRepoCommits(
     sha: options.sha ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_list_repo_commits", args, () =>
-    call("github_list_repo_commits", args, () => workspaceFallback().listGitHubRepoCommits(repoFullName, options))
+  return cachedCall("github_list_repo_commits", args, () =>
+    workspaceFallback().listGitHubRepoCommits(repoFullName, options)
   )
     .then((commits) => {
       cache.commits[key] = cloneProjectList(commits);
@@ -1036,10 +1025,8 @@ export function getGitHubRepoCommitDetail(
     hash: normalizedHash,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_repo_commit_detail", args, () =>
-    call("github_get_repo_commit_detail", args, () =>
-      workspaceFallback().getGitHubRepoCommitDetail(repoFullName, normalizedHash)
-    )
+  return cachedCall("github_get_repo_commit_detail", args, () =>
+    workspaceFallback().getGitHubRepoCommitDetail(repoFullName, normalizedHash)
   )
     .then((detail) => {
       cache.commitDetails[detail.hash] = cloneProjectData(detail);
@@ -1051,9 +1038,7 @@ export function getGitHubRepoCommitDetail(
 }
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
-  return cachedWorkspaceRead("repo_get_detail", { repoId }, () =>
-    call("repo_get_detail", { repoId }, () => workspaceFallback().getRepoDetail(repoId))
-  );
+  return cachedCall("repo_get_detail", { repoId }, () => workspaceFallback().getRepoDetail(repoId));
 }
 
 export function listGitHubRepoFiles(
@@ -1072,10 +1057,8 @@ export function listGitHubRepoFiles(
     refName: refName ?? null,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_list_repo_files", args, () =>
-    call("github_list_repo_files", args, () =>
-      workspaceFallback().listGitHubRepoFiles(repoFullName, parentPath, refName)
-    )
+  return cachedCall("github_list_repo_files", args, () =>
+    workspaceFallback().listGitHubRepoFiles(repoFullName, parentPath, refName)
   )
     .then((entries) => {
       cache.files[key] = cloneProjectList(entries);
@@ -1100,10 +1083,8 @@ export function getGitHubRepoFilePreview(
     refName: refName ?? null,
     forceRefresh: options.forceRefresh ?? null,
   };
-  return cachedWorkspaceRead("github_get_repo_file_preview", args, () =>
-    call("github_get_repo_file_preview", args, () =>
-      workspaceFallback().getGitHubRepoFilePreview(repoFullName, normalizedPath, refName)
-    )
+  return cachedCall("github_get_repo_file_preview", args, () =>
+    workspaceFallback().getGitHubRepoFilePreview(repoFullName, normalizedPath, refName)
   )
     .then((preview) => {
       cache.filePreviews[key] = cloneProjectData(preview);
@@ -1116,8 +1097,9 @@ export function listRepoFiles(repoId: string, parentPath?: string | null, repoRe
   if (remoteFullName) return listGitHubRepoFiles(remoteFullName, parentPath, repoRef);
   const args = { repoId, parentPath: parentPath ?? null };
   const cacheArgs = { ...args, repoRef: repoRef ?? null };
-  return cachedWorkspaceRead("repo_list_files", cacheArgs, () =>
-    call("repo_list_files", args, () => workspaceFallback().listRepoFiles(repoId, parentPath, repoRef))
+  return cachedCall("repo_list_files", args, () =>
+    workspaceFallback().listRepoFiles(repoId, parentPath, repoRef),
+    cacheArgs,
   );
 }
 
@@ -1126,8 +1108,9 @@ export function getRepoFilePreview(repoId: string, path: string, repoRef?: strin
   if (remoteFullName) return getGitHubRepoFilePreview(remoteFullName, path, repoRef);
   const args = { repoId, path };
   const cacheArgs = { ...args, repoRef: repoRef ?? null };
-  return cachedWorkspaceRead("repo_get_file_preview", cacheArgs, () =>
-    call("repo_get_file_preview", args, () => workspaceFallback().getRepoFilePreview(repoId, path, repoRef))
+  return cachedCall("repo_get_file_preview", args, () =>
+    workspaceFallback().getRepoFilePreview(repoId, path, repoRef),
+    cacheArgs,
   );
 }
 
@@ -1138,8 +1121,8 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
 export function getRepoCommitDetail(repoId: string, hash: string): Promise<CommitDetail> {
   const remoteFullName = parseRemoteRepoId(repoId);
   if (remoteFullName) return getGitHubRepoCommitDetail(remoteFullName, hash);
-  return cachedWorkspaceRead("repo_get_commit_detail", { repoId, hash }, () =>
-    call("repo_get_commit_detail", { repoId, hash }, () => workspaceFallback().getRepoCommitDetail(repoId, hash))
+  return cachedCall("repo_get_commit_detail", { repoId, hash }, () =>
+    workspaceFallback().getRepoCommitDetail(repoId, hash)
   );
 }
 
