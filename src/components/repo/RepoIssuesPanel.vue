@@ -11,7 +11,7 @@ import {
   Search,
   X,
 } from "@lucide/vue";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import Dropdown from "../Dropdown.vue";
 import type {
   GitHubDiscussionTimelineItem,
@@ -32,6 +32,12 @@ type IssuePanelFilters = {
   sort: IssueSort;
   direction: IssueDirection;
   query: string;
+};
+
+type IssueDisplayRow = {
+  issue: GitHubIssue;
+  metaText: string;
+  closed: boolean;
 };
 
 const props = defineProps<{
@@ -73,6 +79,8 @@ const emit = defineEmits<{
 }>();
 
 const filtersOpen = ref(false);
+const ISSUE_RENDER_PAGE_SIZE = 50;
+const visibleIssueCount = ref(ISSUE_RENDER_PAGE_SIZE);
 const focusedIssue = computed(() =>
   props.focusedIssueNumber == null
     ? null
@@ -139,6 +147,34 @@ const activeFilterCount = computed(() =>
     props.filters.labels.length ? "labels" : null,
   ].filter(Boolean).length
 );
+const visibleIssues = computed(() => props.issues.slice(0, visibleIssueCount.value));
+const visibleIssueRows = computed<IssueDisplayRow[]>(() =>
+  visibleIssues.value.map((issue) => ({
+    issue,
+    metaText: issueMetaText(issue),
+    closed: issue.state !== "open",
+  })),
+);
+const hiddenIssueCount = computed(() =>
+  Math.max(0, props.issues.length - visibleIssueRows.value.length),
+);
+
+watch(
+  () => [
+    props.state,
+    props.filters.query,
+    props.filters.creator,
+    props.filters.assignee,
+    props.filters.milestone,
+    props.filters.project,
+    props.filters.sort,
+    props.filters.direction,
+    props.filters.labels.join("\0"),
+  ] as const,
+  () => {
+    visibleIssueCount.value = ISSUE_RENDER_PAGE_SIZE;
+  },
+);
 
 function updateFilters(next: Partial<IssuePanelFilters>) {
   emit("update:filters", {
@@ -151,6 +187,10 @@ function updateFilters(next: Partial<IssuePanelFilters>) {
 function updateSort(value: string) {
   const [sort, direction] = value.split("-") as [IssueSort, IssueDirection];
   updateFilters({ sort, direction });
+}
+
+function showMoreIssues() {
+  visibleIssueCount.value += ISSUE_RENDER_PAGE_SIZE;
 }
 
 function formatIssueDate(value: string) {
@@ -313,46 +353,46 @@ function issueMetaText(issue: GitHubIssue) {
 
     <div class="issues-list" role="list" aria-label="Issues">
       <div
-        v-for="issue in issues"
-        :key="issue.number"
+        v-for="row in visibleIssueRows"
+        :key="row.issue.number"
         class="issues-list__item project-row--issue"
         :class="{
-          'is-target': isFocused(issue.number),
-          'repo-list-row': editingIssueNumber !== issue.number,
-          'repo-list-row--with-actions': editingIssueNumber !== issue.number,
+          'is-target': isFocused(row.issue.number),
+          'repo-list-row': editingIssueNumber !== row.issue.number,
+          'repo-list-row--with-actions': editingIssueNumber !== row.issue.number,
         }"
-        :data-issue-number="issue.number"
+        :data-issue-number="row.issue.number"
         role="listitem"
       >
-        <template v-if="editingIssueNumber !== issue.number">
-          <span class="issues-list__status repo-list-row__status" :class="{ 'is-closed': issue.state !== 'open' }" :title="issue.state">
-            <CircleDot v-if="issue.state === 'open'" :size="15" aria-hidden="true" />
+        <template v-if="editingIssueNumber !== row.issue.number">
+          <span class="issues-list__status repo-list-row__status" :class="{ 'is-closed': row.closed }" :title="row.issue.state">
+            <CircleDot v-if="row.issue.state === 'open'" :size="15" aria-hidden="true" />
             <CircleOff v-else :size="15" aria-hidden="true" />
           </span>
           <div class="issues-list__content repo-list-row__body">
-            <button type="button" class="issues-list__title repo-list-row__title" @click="emit('focus', issue)">
-              #{{ issue.number }} {{ issue.title }}
+            <button type="button" class="issues-list__title repo-list-row__title" @click="emit('focus', row.issue)">
+              #{{ row.issue.number }} {{ row.issue.title }}
             </button>
-            <span class="issues-list__meta repo-list-row__meta">{{ issueMetaText(issue) }}</span>
+            <span class="issues-list__meta repo-list-row__meta">{{ row.metaText }}</span>
           </div>
           <div class="issues-list__actions">
-            <button type="button" class="ghost project-icon-action" aria-label="编辑" title="编辑" @click.stop="emit('edit', issue)">
+            <button type="button" class="ghost project-icon-action" aria-label="编辑" title="编辑" @click.stop="emit('edit', row.issue)">
               <Pencil :size="14" aria-hidden="true" />
             </button>
             <button
               type="button"
               class="ghost project-icon-action"
-              :aria-label="issue.state === 'open' ? '关闭' : '重开'"
-              :title="issue.state === 'open' ? '关闭' : '重开'"
-              @click.stop="emit('toggle', issue)"
+              :aria-label="row.issue.state === 'open' ? '关闭' : '重开'"
+              :title="row.issue.state === 'open' ? '关闭' : '重开'"
+              @click.stop="emit('toggle', row.issue)"
             >
-              <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
+              <CircleOff v-if="row.issue.state === 'open'" :size="14" aria-hidden="true" />
               <RotateCcw v-else :size="14" aria-hidden="true" />
             </button>
           </div>
         </template>
 
-        <form v-else class="issues-list__edit project-compact-form" @submit.prevent="emit('save-edit', issue)">
+        <form v-else class="issues-list__edit project-compact-form" @submit.prevent="emit('save-edit', row.issue)">
           <div class="project-compact-form__line">
             <input
               :value="editingTitle"
@@ -402,6 +442,14 @@ function issueMetaText(issue: GitHubIssue) {
       <p v-else-if="loading && !issues.length" class="muted repo-empty issues-list__empty">
         正在读取 Issues。
       </p>
+      <button
+        v-if="hiddenIssueCount > 0"
+        type="button"
+        class="issues-list__more"
+        @click="showMoreIssues"
+      >
+        显示更多 {{ hiddenIssueCount }} 个
+      </button>
     </div>
     </template>
   </div>
@@ -651,6 +699,24 @@ function issueMetaText(issue: GitHubIssue) {
   margin: 0;
   padding: 46px 12px;
   text-align: center;
+}
+
+.issues-list__more {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.issues-list__more:hover,
+.issues-list__more:focus-visible {
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 
 @media (max-width: 820px) {

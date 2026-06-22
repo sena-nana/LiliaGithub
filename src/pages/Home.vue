@@ -97,6 +97,8 @@ type RepoStatusRow = {
   workflowRun: WorkflowRunOverview | null;
 };
 
+type GitHubTimelineRepoSource = Pick<RepoStatusRow, "githubRepo" | "localRepo">;
+
 type GitHubTimelineEvent = {
   id: string;
   kind: "repo" | "operation" | "commit" | "issue" | "pull" | "workflow";
@@ -148,6 +150,7 @@ type HomeCodeOverview = {
 };
 
 type ProjectTabRef = "issues" | "pulls" | "actions";
+const REPO_STATUS_RENDER_PAGE_SIZE = 60;
 const GITHUB_TIMELINE_EVENT_LIMIT = 12;
 const GITHUB_TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 const GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -220,6 +223,7 @@ const cloneRepoLoadingMore = ref(false);
 const cloneRepoLoadError = ref<string | null>(null);
 const cloneNextRepoPage = ref<number | null>(null);
 const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
+const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const githubRepoStatusLoader = createLatestAsyncLoader();
 const githubRepoMoreLoader = createLatestAsyncLoader();
 const cloneBindingLoader = createLatestAsyncLoader();
@@ -305,9 +309,21 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
   }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived)),
 );
 
+const visibleRepoStatusRows = computed(() =>
+  repoStatusRows.value.slice(0, repoStatusVisibleCount.value),
+);
+const hiddenRepoStatusRowCount = computed(() =>
+  Math.max(0, repoStatusRows.value.length - visibleRepoStatusRows.value.length),
+);
+const githubTimelineRepoSources = computed<GitHubTimelineRepoSource[]>(() =>
+  githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => ({
+    githubRepo,
+    localRepo: localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null,
+  })),
+);
 const githubTimelineNodes = computed<TimelineDisplayNode[]>(() =>
-  repoStatusRows.value
-    .flatMap((row) => buildGitHubTimelineEvents(row))
+  githubTimelineRepoSources.value
+    .flatMap((source) => buildGitHubTimelineEvents(source))
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, GITHUB_TIMELINE_EVENT_LIMIT)
     .map(toGitHubTimelineDisplayNode),
@@ -362,6 +378,15 @@ const githubTimelineWorkflowTasks = createConcurrentTaskQueue<GitHubTimelineWork
   isCurrent: (task) => task.generation === githubTimelineGeneration,
   worker: processGitHubTimelineWorkflowTask,
 });
+
+watch(
+  () => repoStatusRows.value.length,
+  (length, previousLength) => {
+    if (length < previousLength) {
+      repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
+    }
+  },
+);
 
 onUnmounted(() => {
   githubTimelineGeneration += 1;
@@ -963,6 +988,10 @@ async function loadMoreGitHubRepos() {
   });
 }
 
+function showMoreRepoStatusRows() {
+  repoStatusVisibleCount.value += REPO_STATUS_RENDER_PAGE_SIZE;
+}
+
 function repoAction(repo: RepoSummary): RepoAction | null {
   if (repo.conflictCount > 0) {
     return {
@@ -1033,7 +1062,7 @@ function formatCheckNames(checks: readonly GitHubPullRequestCheck[]) {
   return `${names.join("、") || `${checks.length} 项`}${suffix}`;
 }
 
-function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
+function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelineEvent[] {
   const { githubRepo, localRepo } = row;
   const events: GitHubTimelineEvent[] = [];
   addTimelineEvent(events, {
@@ -1950,7 +1979,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             <div class="repo-status-list" aria-label="仓库状态列表">
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
-                v-for="{ githubRepo, localRepo, action, syncIssue, workflowRun } in repoStatusRows"
+                v-for="{ githubRepo, localRepo, action, syncIssue, workflowRun } in visibleRepoStatusRows"
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
@@ -2054,7 +2083,15 @@ function bulkOperationDescription(operation: BulkOperation) {
                 </span>
               </div>
               <button
-                v-if="githubReposNextPage"
+                v-if="hiddenRepoStatusRowCount > 0"
+                type="button"
+                class="repo-status-more"
+                @click="showMoreRepoStatusRows"
+              >
+                显示更多 {{ hiddenRepoStatusRowCount }} 个
+              </button>
+              <button
+                v-else-if="githubReposNextPage"
                 type="button"
                 class="repo-status-more"
                 :disabled="githubReposLoadingMore"
