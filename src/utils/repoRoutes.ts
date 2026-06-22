@@ -1,7 +1,7 @@
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
 export type RepoRouteTab = "files" | "repo" | "changes" | "history" | "stash" | "run";
-export type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
+export type RepoProjectTab = "readme" | "board" | "issues" | "pulls" | "actions" | "settings";
 
 export function repoRoute(repoId: string, tab: RepoRouteTab = "repo") {
   const base = `/repos/${encodeURIComponent(repoId)}`;

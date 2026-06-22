@@ -1007,6 +1007,40 @@ describe("RepoProjectPanel", () => {
     });
   });
 
+  it("Board 分区复用 issue 和 PR 项目数据并打开详情", async () => {
+    vi.mocked(listGitHubIssues).mockResolvedValue(githubIssues);
+    vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
+    vi.mocked(listGitHubPullRequestChecks).mockResolvedValue(githubPullRequestChecks);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Board" }));
+
+    const board = await view.findByLabelText("Projects board", {}, { timeout: 5000 });
+    expect(within(board).getByText("Roadmap")).toBeInTheDocument();
+    expect(within(board).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
+    expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
+    expect(within(board).getByText("1 Issues")).toBeInTheDocument();
+    expect(within(board).getByText("1 PRs")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
+      { forceRefresh: false },
+    );
+    expect(listGitHubPullRequests).toHaveBeenCalledWith(
+      "sena-nana/remote-repo",
+      expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
+      { forceRefresh: false },
+    );
+
+    await fireEvent.click(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ }));
+    expect(await view.findByRole("heading", { level: 3, name: "#52 接入 Pull Request 工作流" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });
+    });
+  });
+
   it("Actions 列表同一行显示标题与右侧信息，并省略同名来源", async () => {
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([
       githubWorkflowRuns[0],

@@ -11,6 +11,7 @@ import {
   ExternalLink,
   GitFork,
   GitPullRequest,
+  LayoutDashboard,
   LoaderCircle,
   Monitor,
   Pencil,
@@ -96,7 +97,7 @@ import {
 } from "../../utils/repoContext";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
-import { repoRoute, type RepoRouteTab } from "../../utils/repoRoutes";
+import { repoRoute, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
 import {
   blankIssueTemplate,
   blankPullRequestTemplate,
@@ -114,7 +115,7 @@ import type {
 } from "../../utils/githubTemplates";
 
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
-type ProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
+type ProjectTab = RepoProjectTab;
 type ProjectContentMode = "launch" | ProjectTab | GitTab;
 type IssueState = "open" | "closed" | "all";
 type ProjectSectionConfig = {
@@ -131,7 +132,7 @@ type ProjectSidebarButtonConfig = {
 };
 type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
 type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
-type GitHubAccessSection = "Issues" | "Pull Requests" | "Actions" | "Settings";
+type GitHubAccessSection = "Issues" | "Pull Requests" | "Projects" | "Actions" | "Settings";
 type GitHubAccessUnavailable = {
   title: string;
   reason: string;
@@ -225,6 +226,7 @@ const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const README_PATH = "README.md";
 const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
 const RepoActionsPanel = defineAsyncComponent(() => import("./RepoActionsPanel.vue"));
+const RepoProjectsBoard = defineAsyncComponent(() => import("./RepoProjectsBoard.vue"));
 const RepoPullRequestsPanel = defineAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
 
 const props = defineProps<{
@@ -366,6 +368,10 @@ const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
 const issues = ref<GitHubIssue[]>([]);
+const boardIssues = ref<GitHubIssue[]>([]);
+const boardPulls = ref<GitHubPullRequest[]>([]);
+const boardLoadedRepo = ref<string | null>(null);
+const boardLoading = ref(false);
 const issueDiscussion = ref<GitHubIssueDiscussion | null>(null);
 const issueDiscussionLoading = ref(false);
 const issueDiscussionError = ref<string | null>(null);
@@ -413,6 +419,7 @@ let suppressPullStateReload = false;
 const readmeLoader = createLatestAsyncLoader();
 const settingsLoader = createLatestAsyncLoader();
 const issuesLoader = createLatestAsyncLoader();
+const boardLoader = createLatestAsyncLoader();
 const issueDiscussionLoader = createLatestAsyncLoader();
 const pullsLoader = createLatestAsyncLoader();
 const pullRequestDiscussionLoader = createLatestAsyncLoader();
@@ -502,6 +509,9 @@ const issuesAccessUnavailable = computed(() =>
 const pullsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Pull Requests", githubError.value, resolvedRepoContext.value.capabilities.pulls)
 );
+const projectsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Projects", githubError.value, resolvedRepoContext.value.capabilities.issues)
+);
 const actionsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Actions", actionsError.value, resolvedRepoContext.value.capabilities.actions)
 );
@@ -562,6 +572,7 @@ const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.
 const languageStatsLoading = computed(() => workspace.state.languageStatsLoadingRepoIds.includes(props.repoId));
 const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
 const projectSections: readonly ProjectSectionConfig[] = [
+  { key: "board", label: "Board", icon: LayoutDashboard },
   { key: "issues", label: "Issues", icon: CircleDot },
   { key: "pulls", label: "Pull Requests", icon: GitPullRequest },
   { key: "actions", label: "Actions", icon: Play },
@@ -612,6 +623,7 @@ const showProjectSidebar = computed(() =>
   hasProjectSidebarErrors.value ||
   activeSection.value === "files" ||
   activeSection.value === "readme" ||
+  activeSection.value === "board" ||
   activeSection.value === "issues" ||
   activeSection.value === "pulls" ||
   activeSection.value === "actions" ||
@@ -725,7 +737,13 @@ function isProjectSidebarButtonActive(section: ProjectSidebarMode) {
 
 const projectSidebarMode = computed<ProjectSidebarMode>(() => {
   if (activeSection.value === "files") return "files";
-  if (activeSection.value === "issues" || activeSection.value === "pulls" || activeSection.value === "actions" || activeSection.value === "settings") {
+  if (
+    activeSection.value === "board" ||
+    activeSection.value === "issues" ||
+    activeSection.value === "pulls" ||
+    activeSection.value === "actions" ||
+    activeSection.value === "settings"
+  ) {
     return activeSection.value;
   }
   return "repo";
@@ -845,7 +863,14 @@ watch(() => props.activeGitTab, (tab) => {
 });
 
 function normalizeProjectTab(value: unknown): ProjectTab | null {
-  if (value === "readme" || value === "issues" || value === "pulls" || value === "actions" || value === "settings") return value;
+  if (
+    value === "readme" ||
+    value === "board" ||
+    value === "issues" ||
+    value === "pulls" ||
+    value === "actions" ||
+    value === "settings"
+  ) return value;
   return null;
 }
 
@@ -923,7 +948,7 @@ function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
 }
 
 function isGitHubProjectSection(section: ProjectContentMode) {
-  return section === "issues" || section === "pulls" || section === "actions" || section === "settings";
+  return section === "board" || section === "issues" || section === "pulls" || section === "actions" || section === "settings";
 }
 
 function hasIssue(issueNumber: number) {
@@ -1571,6 +1596,52 @@ async function loadPullRequests(force = false) {
   }, { reusePending: !force });
 }
 
+async function loadBoardItems(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
+  const canUseIssues = resolvedRepoContext.value.capabilities.issues.available;
+  const canUsePulls = resolvedRepoContext.value.capabilities.pulls.available;
+  if (!canUseIssues && !canUsePulls) {
+    clearBlockedGitHubState();
+    return;
+  }
+  if (!force && boardLoadedRepo.value === repoFullName) return;
+  githubError.value = null;
+  boardLoading.value = true;
+  await boardLoader.run(repoFullName, async (runId) => {
+    try {
+      const [nextIssues, nextPulls] = await Promise.all([
+        canUseIssues
+          ? listGitHubIssues(repoFullName, {
+              state: "all",
+              perPage: 100,
+              sort: "updated",
+              direction: "desc",
+            }, { forceRefresh: force })
+          : Promise.resolve([]),
+        canUsePulls
+          ? listGitHubPullRequests(repoFullName, {
+              state: "all",
+              perPage: 100,
+              sort: "updated",
+              direction: "desc",
+            }, { forceRefresh: force })
+          : Promise.resolve([]),
+      ]);
+      if (!boardLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      boardIssues.value = nextIssues;
+      boardPulls.value = nextPulls;
+      boardLoadedRepo.value = repoFullName;
+    } catch (err) {
+      githubError.value = String(err);
+    } finally {
+      if (boardLoader.isCurrent(runId)) {
+        boardLoading.value = false;
+      }
+    }
+  }, { reusePending: !force });
+}
+
 async function loadPullRequestDiscussion(pullNumber: number, force = false) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || remoteDeleted.value) return;
@@ -1666,6 +1737,13 @@ async function ensureSectionData(section: ProjectContentMode) {
     ]);
     return;
   }
+  if (section === "board") {
+    await Promise.all([
+      loadBoardItems(),
+      loadIssueFilterMetadata(),
+    ]);
+    return;
+  }
   if (section === "pulls") {
     await Promise.all([
       loadPullRequests(),
@@ -1699,6 +1777,13 @@ async function refreshLoadedSectionData() {
       loadIssues(true),
       issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
       focusedIssueNumber.value ? loadIssueDiscussion(focusedIssueNumber.value, true) : Promise.resolve(),
+    ]);
+    return;
+  }
+  if (activeSection.value === "board" && boardLoadedRepo.value) {
+    await Promise.all([
+      loadBoardItems(true),
+      issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
     ]);
     return;
   }
@@ -1766,6 +1851,7 @@ function resetProjectSectionState() {
 function resetGitHubSectionState() {
   settingsLoader.invalidate();
   issuesLoader.invalidate();
+  boardLoader.invalidate();
   issueDiscussionLoader.invalidate();
   pullsLoader.invalidate();
   pullRequestDiscussionLoader.invalidate();
@@ -1775,6 +1861,10 @@ function resetGitHubSectionState() {
   settings.value = null;
   settingsLoaded.value = false;
   issues.value = [];
+  boardIssues.value = [];
+  boardPulls.value = [];
+  boardLoadedRepo.value = null;
+  boardLoading.value = false;
   issueDiscussion.value = null;
   issueDiscussionLoading.value = false;
   issueDiscussionError.value = null;
@@ -2346,9 +2436,19 @@ async function mergePullRequest(pull: GitHubPullRequest) {
 }
 
 async function focusIssueRow(issue: GitHubIssue) {
-  focusedIssueNumber.value = issue.number;
-  await loadIssueDiscussion(issue.number);
-  if (activeSection.value === "issues") void pushProjectTabRoute("issues");
+  const issueNumber = issue.number;
+  focusedIssueNumber.value = issueNumber;
+  await loadIssueDiscussion(issueNumber);
+  if (activeSection.value === "issues") {
+    focusedIssueNumber.value = issueNumber;
+    void pushProjectTabRoute("issues");
+  }
+}
+
+async function openIssueFromBoard(issue: GitHubIssue) {
+  activeSection.value = "issues";
+  await focusIssue(issue.number);
+  void pushProjectTabRoute("issues");
 }
 
 function closeIssueDetail() {
@@ -2359,12 +2459,22 @@ function closeIssueDetail() {
 }
 
 async function focusPullRequestRow(pull: GitHubPullRequest) {
-  focusedPullRequestNumber.value = pull.number;
+  const pullNumber = pull.number;
+  focusedPullRequestNumber.value = pullNumber;
   await Promise.all([
-    loadPullRequestChecks(pull.number),
-    loadPullRequestDiscussion(pull.number),
+    loadPullRequestChecks(pullNumber),
+    loadPullRequestDiscussion(pullNumber),
   ]);
-  if (activeSection.value === "pulls") void pushProjectTabRoute("pulls");
+  if (activeSection.value === "pulls") {
+    focusedPullRequestNumber.value = pullNumber;
+    void pushProjectTabRoute("pulls");
+  }
+}
+
+async function openPullRequestFromBoard(pull: GitHubPullRequest) {
+  activeSection.value = "pulls";
+  await focusPullRequest(pull.number);
+  void pushProjectTabRoute("pulls");
 }
 
 function closePullRequestDetail() {
@@ -2534,6 +2644,27 @@ function focusActionJob(jobId: number | null) {
 
         <section v-else-if="githubUnavailableMessage && activeSection !== 'settings'" class="project-section">
           <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
+        </section>
+
+        <section v-else-if="activeSection === 'board'" class="project-section project-github-section">
+          <RepoGitHubUnavailableNotice
+            v-if="projectsAccessUnavailable"
+            :title="projectsAccessUnavailable.title"
+            :reason="projectsAccessUnavailable.reason"
+            :loading="githubAuthLoading"
+            @rebind="rebindGitHub"
+          />
+          <RepoProjectsBoard
+            v-else
+            :issues="boardIssues"
+            :pulls="boardPulls"
+            :projects="issueFilterMetadata.projects"
+            :loading="boardLoading"
+            :metadata-loading="issueFilterMetadataLoading"
+            @refresh="refreshLoadedSectionData"
+            @open-issue="openIssueFromBoard"
+            @open-pull-request="openPullRequestFromBoard"
+          />
         </section>
 
         <section v-else-if="activeSection === 'issues'" class="project-section project-github-section">
@@ -3195,6 +3326,44 @@ function focusActionJob(jobId: number | null) {
           @edit-issue="startEditIssue"
           @toggle-issue="toggleIssue"
         />
+
+        <section
+          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'board'"
+          class="project-sidebar-summary-card"
+          aria-label="Board 摘要"
+        >
+          <div class="project-sidebar-summary-card__head">
+            <LayoutDashboard :size="14" aria-hidden="true" />
+            <strong>Board</strong>
+          </div>
+          <dl class="project-sidebar-summary-card__stats">
+            <div>
+              <dt>Projects</dt>
+              <dd>{{ issueFilterMetadata.projects.length }}</dd>
+            </div>
+            <div>
+              <dt>Issues</dt>
+              <dd>{{ boardIssues.length }}</dd>
+            </div>
+            <div>
+              <dt>Pull Requests</dt>
+              <dd>{{ boardPulls.length }}</dd>
+            </div>
+            <div>
+              <dt>状态</dt>
+              <dd>{{ boardLoading || issueFilterMetadataLoading ? "读取中" : "已同步" }}</dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            class="ghost project-sidebar-summary-card__action"
+            :disabled="boardLoading || issueFilterMetadataLoading || !!projectsAccessUnavailable"
+            @click="refreshLoadedSectionData"
+          >
+            <RotateCw :size="14" aria-hidden="true" />
+            刷新 Board
+          </button>
+        </section>
 
         <section
           v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues'"
