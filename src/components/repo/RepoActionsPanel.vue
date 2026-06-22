@@ -11,6 +11,7 @@ import {
   XCircle,
 } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { invalidateSessionContextSnapshot } from "../../composables/sessionContext";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import {
@@ -125,6 +126,9 @@ async function selectRun(runId: number, options: { emitRoute?: boolean; load?: b
 }
 
 function closeRunDetail() {
+  if (selectedRunId.value != null || detail.value) {
+    invalidateSessionContextSnapshot();
+  }
   emit("focusRun", null);
 }
 

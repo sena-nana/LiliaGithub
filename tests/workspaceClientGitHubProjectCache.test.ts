@@ -105,6 +105,22 @@ describe("workspace GitHub project cache", () => {
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(2);
   });
 
+  it("同 key GitHub 读取 pending 时只发起一笔请求并返回隔离副本", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({ [repoFullName]: [issue()] });
+
+    const firstLoad = listGitHubIssues(repoFullName, "open");
+    const secondLoad = listGitHubIssues(repoFullName, "open");
+
+    const [first, second] = await Promise.all([firstLoad, secondLoad]);
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+    first[0].title = "外部污染";
+    const cached = await listGitHubIssues(repoFullName, "open");
+    expect(cached[0]?.title).toBe("缓存前 Issue");
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+  });
+
   it("Issue 缓存按筛选和排序参数分桶", async () => {
     workspaceFallback.setFallbackGitHubIssuesForTests({
       [repoFullName]: [

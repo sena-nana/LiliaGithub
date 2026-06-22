@@ -3,6 +3,7 @@ import {
   createWebHistory,
   type RouterHistory,
 } from "vue-router";
+import { invalidateSessionContextSnapshot } from "./composables/sessionContext";
 import AppShell from "./layouts/AppShell.vue";
 
 const HomePage = () => import("./pages/Home.vue");
@@ -11,7 +12,7 @@ const RepoPage = () => import("./pages/RepoDetail.vue");
 const CommitDetailPage = () => import("./pages/CommitDetail.vue");
 
 export function createLiliaGithubRouter(history: RouterHistory = createWebHistory()) {
-  return createRouter({
+  const router = createRouter({
     history,
     routes: [
       {
@@ -37,6 +38,11 @@ export function createLiliaGithubRouter(history: RouterHistory = createWebHistor
       { path: "/:pathMatch(.*)*", redirect: "/" },
     ],
   });
+  router.beforeEach((to, from) => {
+    if (to.fullPath !== from.fullPath) invalidateSessionContextSnapshot();
+    return true;
+  });
+  return router;
 }
 
 export const router = createLiliaGithubRouter();

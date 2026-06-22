@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
 import { createComponentEpoch } from "../src/composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../src/composables/useLatestAsyncLoader";
 
@@ -101,6 +102,26 @@ describe("createLatestAsyncLoader", () => {
     await running;
 
     expect(currentAfterDispose).toBe(false);
+    expect(loader.isPending()).toBe(false);
+  });
+
+  it("会话上下文失效后当前任务不可更新", async () => {
+    resetSessionContextForTests();
+    const loader = createLatestAsyncLoader();
+    const first = deferred();
+    let currentAfterInvalidation = true;
+
+    const running = loader.run("repo", async (runId) => {
+      await first.promise;
+      currentAfterInvalidation = loader.isCurrent(runId);
+    });
+
+    expect(loader.isPending("repo")).toBe(true);
+    invalidateSessionContextSnapshot();
+    first.resolve();
+    await running;
+
+    expect(currentAfterInvalidation).toBe(false);
     expect(loader.isPending()).toBe(false);
   });
 });

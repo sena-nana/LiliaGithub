@@ -1,4 +1,5 @@
 import type { BulkOperation } from "../../services/workspace";
+import { invalidateSessionContextSnapshot } from "../sessionContext";
 import { bulkSyncRepoIds, rememberRecentSync, state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 import { refreshLanguageStatsForRepos } from "./repositories";
@@ -67,6 +68,7 @@ export async function syncAll() {
 }
 
 export function closeBulkPreview() {
+  if (state.bulkPreview) invalidateSessionContextSnapshot();
   bulkPreviewGeneration += 1;
   state.bulkPreview = null;
 }
