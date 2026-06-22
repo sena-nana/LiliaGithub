@@ -570,7 +570,7 @@ const projectSidebarButtons = computed<ProjectSidebarButtonConfig[]>(() => [
   { key: "repo", label: "Repo", icon: Monitor },
   {
     key: "files",
-    label: "文件树",
+    label: "工作树",
     icon: FolderTree,
     disabled: !canBrowseFiles.value,
   },
@@ -707,6 +707,7 @@ const canSubmitPullRequestCreate = computed(() =>
 function isProjectSidebarButtonActive(section: ProjectSidebarMode) {
   return projectSidebarMode.value === section;
 }
+
 const projectSidebarMode = computed<ProjectSidebarMode>(() => {
   if (activeSection.value === "files") return "files";
   if (activeSection.value === "issues" || activeSection.value === "pulls" || activeSection.value === "actions" || activeSection.value === "settings") {
@@ -898,7 +899,10 @@ function normalizePositiveNumber(value: unknown) {
 }
 
 function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
-  if (tab === "repo") return normalizeProjectTab(route.query.projectTab) ?? normalizeProjectTab(props.projectTab) ?? "readme";
+  if (tab === "repo") {
+    if (route.path.endsWith("/files")) return "files";
+    return normalizeProjectTab(route.query.projectTab) ?? normalizeProjectTab(props.projectTab) ?? "readme";
+  }
   if (tab === "run") return "launch";
   return tab;
 }

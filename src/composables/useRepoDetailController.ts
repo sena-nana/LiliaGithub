@@ -23,7 +23,7 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
-type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
+type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
 type HistoryCommit = {
   readonly hash: string;
@@ -148,9 +148,6 @@ export function useRepoDetailController() {
   const githubRepoFullName = computed(() => repoContext.value.githubFullName ?? null);
   const canShowChanges = computed(() => repoContext.value.capabilities.changes.available);
   const canLoadFiles = computed(() => remoteContextRestored.value && repoContext.value.capabilities.files.available);
-  const canShowFilesTab = computed(() =>
-    canLoadFiles.value || (!remoteContextRestored.value && Boolean(remoteFullName.value))
-  );
   const filesUnavailableMessage = computed(() =>
     remoteContextRestored.value
       ? repoContext.value.capabilities.files.reason ?? "文件树暂不可用。"
@@ -270,15 +267,11 @@ export function useRepoDetailController() {
 
   const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
     [
-      { key: "files", title: "文件树" },
       { key: "repo", title: "项目" },
       canShowChanges.value ? { key: "changes", title: "变更" } : null,
       { key: "history", title: "历史" },
       repoContext.value.capabilities.stash.available ? { key: "stash", title: "Stash" } : null,
-    ].filter((tab): tab is { key: RepoToolbarTab; title: string } => {
-      if (!tab) return false;
-      return tab.key !== "files" || canShowFilesTab.value;
-    }),
+    ].filter((tab): tab is { key: RepoToolbarTab; title: string } => Boolean(tab)),
   );
   const launchCommandOptions = computed(() => {
     const candidates = [...launchCandidates.value];
