@@ -41,6 +41,10 @@ const editingGroupError = ref<string | null>(null);
 const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
 const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
+const SIDEBAR_LIST_RENDER_PAGE_SIZE = 80;
+const searchResultVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
+const remoteRepoVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
+const sectionVisibleCounts = ref<Record<string, number>>({});
 
 const props = defineProps<{
   searchOpen: boolean;
@@ -114,6 +118,8 @@ interface RepoSection {
   id: string;
   name: string;
   items: RepoItem[];
+  visibleItems: RepoItem[];
+  hiddenItemCount: number;
   collapsed: boolean;
   group: RepoGroupRef | null;
 }
@@ -156,8 +162,15 @@ const filteredRepoItems = computed(() => {
   const query = searchQueryModel.value.trim().toLocaleLowerCase();
   return repoItems.value.filter(({ repo }) => repoMatchesQuery(repo, query));
 });
+const visibleFilteredRepoItems = computed(() =>
+  filteredRepoItems.value.slice(0, searchResultVisibleCount.value),
+);
+const hiddenFilteredRepoItemCount = computed(() =>
+  Math.max(0, filteredRepoItems.value.length - visibleFilteredRepoItems.value.length),
+);
 
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
+const repoGroupIds = computed(() => repoGroups.value.map((group) => group.id));
 
 const repoItemById = computed(() => new Map(repoItems.value.map((item) => [item.repo.id, item])));
 
@@ -173,37 +186,51 @@ const ungroupedRepoItems = computed(() =>
   repoItems.value.filter(({ repo }) => !groupedRepoIds.value.has(repo.id)),
 );
 
-const localRepoSections = computed<RepoSection[]>(() => [
-  {
-    id: UNGROUPED_REPO_GROUP_ID,
-    name: "未分组仓库",
-    items: ungroupedRepoItems.value,
-    collapsed: collapsedGroupIds.value.has(UNGROUPED_REPO_GROUP_ID),
-    group: null,
-  },
-  ...repoGroups.value.map((group) => ({
-    id: group.id,
-    name: group.name,
-    items: group.repoIds
-      .map((repoId) => repoItemById.value.get(repoId))
-      .filter((item): item is RepoItem => Boolean(item)),
-    collapsed: collapsedGroupIds.value.has(group.id),
+function sectionVisibleLimit(sectionId: string) {
+  return sectionVisibleCounts.value[sectionId] ?? SIDEBAR_LIST_RENDER_PAGE_SIZE;
+}
+
+function repoSection(id: string, name: string, items: RepoItem[], group: RepoGroupRef | null): RepoSection {
+  const visibleItems = items.slice(0, sectionVisibleLimit(id));
+  return {
+    id,
+    name,
+    items,
+    visibleItems,
+    hiddenItemCount: Math.max(0, items.length - visibleItems.length),
+    collapsed: collapsedGroupIds.value.has(id),
     group,
-  })),
+  };
+}
+
+const localRepoSections = computed<RepoSection[]>(() => [
+  repoSection(UNGROUPED_REPO_GROUP_ID, "未分组仓库", ungroupedRepoItems.value, null),
+  ...repoGroups.value.map((group) =>
+    repoSection(
+      group.id,
+      group.name,
+      group.repoIds
+        .map((repoId) => repoItemById.value.get(repoId))
+        .filter((item): item is RepoItem => Boolean(item)),
+      group,
+    )
+  ),
 ]);
 
 watch(
-  repoGroups,
-  (groups) => {
-    const groupIds = new Set([UNGROUPED_REPO_GROUP_ID, ...groups.map((group) => group.id)]);
+  repoGroupIds,
+  (ids) => {
+    const groupIds = new Set([UNGROUPED_REPO_GROUP_ID, ...ids]);
     collapsedGroupIds.value = new Set([...collapsedGroupIds.value].filter((id) => groupIds.has(id)));
+    sectionVisibleCounts.value = Object.fromEntries(
+      Object.entries(sectionVisibleCounts.value).filter(([id]) => groupIds.has(id)),
+    );
     if (editingGroupId.value && !groupIds.has(editingGroupId.value)) {
       editingGroupId.value = null;
       editingGroupName.value = "";
       editingGroupError.value = null;
     }
   },
-  { deep: true },
 );
 
 const localRepoFullNames = computed(() =>
@@ -219,6 +246,12 @@ const remoteRepoItems = computed(() =>
     .filter((repo) => !localRepoFullNames.value.has(repo.fullName))
     .sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
 );
+const visibleRemoteRepoItems = computed(() =>
+  remoteRepoItems.value.slice(0, remoteRepoVisibleCount.value),
+);
+const hiddenRemoteRepoItemCount = computed(() =>
+  Math.max(0, remoteRepoItems.value.length - visibleRemoteRepoItems.value.length),
+);
 
 const activeRemoteFullName = computed(() =>
   parseRemoteRepoId(String(route.params.repoId ?? "")),
@@ -231,9 +264,31 @@ watch(
   },
 );
 
+watch(
+  () => props.searchQuery,
+  () => {
+    searchResultVisibleCount.value = SIDEBAR_LIST_RENDER_PAGE_SIZE;
+  },
+);
+
 function closeSearch() {
   emit("update:searchOpen", false);
   emit("update:searchQuery", "");
+}
+
+function showMoreSearchResults() {
+  searchResultVisibleCount.value += SIDEBAR_LIST_RENDER_PAGE_SIZE;
+}
+
+function showMoreRepoSection(sectionId: string) {
+  sectionVisibleCounts.value = {
+    ...sectionVisibleCounts.value,
+    [sectionId]: sectionVisibleLimit(sectionId) + SIDEBAR_LIST_RENDER_PAGE_SIZE,
+  };
+}
+
+function showMoreRemoteRepos() {
+  remoteRepoVisibleCount.value += SIDEBAR_LIST_RENDER_PAGE_SIZE;
 }
 
 async function openFirstSearchResult() {
@@ -475,10 +530,18 @@ async function deleteGroup(group: { id: string }) {
       </div>
       <div class="sb-tree">
         <RepoSidebarRow
-          v-for="item in filteredRepoItems"
+          v-for="item in visibleFilteredRepoItems"
           :key="item.repo.id"
           v-bind="repoRowProps(item)"
         />
+        <button
+          v-if="hiddenFilteredRepoItemCount > 0"
+          type="button"
+          class="sb-tree__more"
+          @click="showMoreSearchResults"
+        >
+          显示更多 {{ hiddenFilteredRepoItemCount }} 个
+        </button>
         <p v-if="!filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
       </div>
     </div>
@@ -555,10 +618,18 @@ async function deleteGroup(group: { id: string }) {
         </div>
         <div v-if="!section.collapsed" class="sb-tree">
           <RepoSidebarRow
-            v-for="item in section.items"
+            v-for="item in section.visibleItems"
             :key="item.repo.id"
             v-bind="repoRowProps(item)"
           />
+          <button
+            v-if="section.hiddenItemCount > 0"
+            type="button"
+            class="sb-tree__more"
+            @click="showMoreRepoSection(section.id)"
+          >
+            显示更多 {{ section.hiddenItemCount }} 个
+          </button>
           <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
           <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
         </div>
@@ -571,7 +642,7 @@ async function deleteGroup(group: { id: string }) {
       </div>
       <div class="sb-tree">
         <div
-          v-for="repo in remoteRepoItems"
+          v-for="repo in visibleRemoteRepoItems"
           :key="repo.fullName"
           class="sb-tree__row sb-tree__row--project sb-tree__row--remote"
           :class="{ 'is-active': activeRemoteFullName === repo.fullName }"
@@ -597,6 +668,14 @@ async function deleteGroup(group: { id: string }) {
             <X :size="13" aria-hidden="true" />
           </button>
         </div>
+        <button
+          v-if="hiddenRemoteRepoItemCount > 0"
+          type="button"
+          class="sb-tree__more"
+          @click="showMoreRemoteRepos"
+        >
+          显示更多 {{ hiddenRemoteRepoItemCount }} 个
+        </button>
       </div>
     </div>
 
@@ -704,6 +783,24 @@ async function deleteGroup(group: { id: string }) {
   margin: 6px 8px;
   color: var(--text-faint);
   font-size: 12px;
+}
+
+.sb-tree__more {
+  width: 100%;
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sb-tree__more:hover,
+.sb-tree__more:focus-visible {
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 
 .sb-tree__row:hover .sb-tree__hover-tools,
