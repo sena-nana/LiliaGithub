@@ -2,11 +2,9 @@
 import {
   ArrowLeft,
   CircleOff,
-  ExternalLink,
   GitMerge,
   GitPullRequest,
   LoaderCircle,
-  RotateCcw,
 } from "@lucide/vue";
 import { computed } from "vue";
 import { openUrl } from "../../services/workspace/client";
@@ -31,8 +29,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   back: [];
-  open: [pull: GitHubPullRequest];
-  toggle: [pull: GitHubPullRequest];
   merge: [pull: GitHubPullRequest];
   "update:mergeMethod": [value: "merge" | "squash" | "rebase"];
 }>();
@@ -50,18 +46,7 @@ const statusText = computed(() => {
 });
 
 const canMerge = computed(() => props.pull.state === "open" && !props.pull.merged);
-const canReopen = computed(() => props.pull.state === "closed" && !props.pull.merged);
 const linkBaseUrl = computed(() => `https://github.com/${props.repoFullName}`);
-const projectText = computed(() => props.pull.projectItems?.map((project) => project.title).join(", ") || "无项目");
-const milestoneText = computed(() => props.pull.milestone?.title || "无里程碑");
-const assigneeText = computed(() => props.pull.assignees.join(", ") || "未分配");
-const labelText = computed(() => props.pull.labels.join(", ") || "无标签");
-const mergeableText = computed(() => {
-  if (props.pull.merged) return "已合并";
-  if (props.pull.mergeable === true) return props.pull.mergeableState || "可合并";
-  if (props.pull.mergeable === false) return props.pull.mergeableState || "不可合并";
-  return props.pull.mergeableState || "状态未知";
-});
 
 function formatDateTime(value: string) {
   const date = new Date(value);
@@ -90,32 +75,6 @@ function openCheck(check: GitHubPullRequestCheck) {
         <ArrowLeft :size="14" aria-hidden="true" />
         Pull Requests
       </button>
-      <div class="pull-detail__head-actions">
-        <button type="button" class="ghost" @click="emit('open', pull)">
-          <ExternalLink :size="14" aria-hidden="true" />
-          打开 GitHub
-        </button>
-        <button
-          v-if="canMerge"
-          type="button"
-          class="ghost"
-          :disabled="updating"
-          @click="emit('toggle', pull)"
-        >
-          <CircleOff :size="14" aria-hidden="true" />
-          关闭
-        </button>
-        <button
-          v-else-if="canReopen"
-          type="button"
-          class="ghost"
-          :disabled="updating"
-          @click="emit('toggle', pull)"
-        >
-          <RotateCcw :size="14" aria-hidden="true" />
-          重开
-        </button>
-      </div>
     </div>
 
     <header class="pull-detail__title-block">
@@ -133,37 +92,6 @@ function openCheck(check: GitHubPullRequestCheck) {
         <time :datetime="pull.updatedAt">{{ formatDateTime(pull.updatedAt) }}</time>
       </p>
     </header>
-
-    <section class="pull-detail__summary" aria-label="Pull Request 摘要">
-      <div>
-        <span>来源</span>
-        <strong>{{ pull.headBranch }}</strong>
-      </div>
-      <div>
-        <span>目标</span>
-        <strong>{{ pull.baseBranch }}</strong>
-      </div>
-      <div>
-        <span>合并状态</span>
-        <strong>{{ mergeableText }}</strong>
-      </div>
-      <div>
-        <span>负责人</span>
-        <strong>{{ assigneeText }}</strong>
-      </div>
-      <div>
-        <span>标签</span>
-        <strong>{{ labelText }}</strong>
-      </div>
-      <div>
-        <span>项目</span>
-        <strong>{{ projectText }}</strong>
-      </div>
-      <div>
-        <span>里程碑</span>
-        <strong>{{ milestoneText }}</strong>
-      </div>
-    </section>
 
     <section class="pull-detail__checks" aria-label="Checks">
       <div class="pull-detail__section-head">
@@ -231,7 +159,6 @@ function openCheck(check: GitHubPullRequestCheck) {
 }
 
 .pull-detail__head,
-.pull-detail__head-actions,
 .pull-detail__merge-actions {
   display: flex;
   align-items: center;
@@ -244,7 +171,6 @@ function openCheck(check: GitHubPullRequestCheck) {
 }
 
 .pull-detail__back,
-.pull-detail__head-actions button,
 .pull-detail__merge-actions > button {
   display: inline-flex;
   align-items: center;
@@ -288,14 +214,6 @@ function openCheck(check: GitHubPullRequestCheck) {
   font-size: 12px;
 }
 
-.pull-detail__summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-
-.pull-detail__summary div,
 .pull-detail__checks,
 .pull-detail__merge,
 .pull-detail__body {
@@ -305,24 +223,10 @@ function openCheck(check: GitHubPullRequestCheck) {
   background: var(--bg-subtle);
 }
 
-.pull-detail__summary div {
-  display: grid;
-  gap: 4px;
-  padding: 9px 10px;
-}
-
-.pull-detail__summary span,
 .pull-detail__section-head span,
 .pull-detail__merge span {
   color: var(--text-muted);
   font-size: 11px;
-}
-
-.pull-detail__summary strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: 12px;
 }
 
 .pull-detail__checks,
@@ -430,7 +334,6 @@ function openCheck(check: GitHubPullRequestCheck) {
   }
 
   .pull-detail__head,
-  .pull-detail__head-actions,
   .pull-detail__merge-actions {
     align-items: stretch;
     flex-wrap: wrap;

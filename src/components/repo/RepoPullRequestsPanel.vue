@@ -214,8 +214,6 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
       :merge-method="mergeMethod"
       :repo-full-name="repoFullName"
       @back="emit('back')"
-      @open="emit('open', $event)"
-      @toggle="emit('toggle', $event)"
       @merge="emit('merge', $event)"
       @update:merge-method="emit('update:mergeMethod', $event)"
     />
