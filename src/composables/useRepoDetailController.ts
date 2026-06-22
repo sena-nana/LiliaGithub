@@ -20,9 +20,8 @@ import type {
 import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 import { hasRepoTag, resolveRepoContext } from "../utils/repoContext";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
-import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
+import { repoRoute, repoRouteTabFromRoute, type RepoProjectTab, type RepoRouteTab } from "../utils/repoRoutes";
 
-type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
 type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
 type HistoryCommit = {
@@ -456,6 +455,7 @@ export function useRepoDetailController() {
   function normalizeProjectTab(value: unknown): RepoProjectTab | null {
     if (
       value === "readme" ||
+      value === "board" ||
       value === "issues" ||
       value === "pulls" ||
       value === "actions" ||
