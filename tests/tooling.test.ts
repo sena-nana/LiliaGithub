@@ -81,7 +81,7 @@ describe("单应用模板工具链", () => {
     const pollDeviceFlow = rustFunctionBody(github, "github_poll_device_flow");
 
     expect(github).toContain('const GITHUB_OAUTH_ACCEPT: &str = "application/json";');
-    expect(github).toContain('const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo";');
+    expect(github).toContain('const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo read:project";');
     expect(github).toContain("fn github_oauth_headers");
     expect(github).toContain("fn github_http_error");
     expect(startDeviceFlow).toContain(".post(\"https://github.com/login/device/code\")");

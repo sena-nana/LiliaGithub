@@ -14,12 +14,14 @@ import type {
   GitHubCreateRepoRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
+  GitHubIssueDiscussion,
   GitHubIssue,
   GitHubIssueFilterMetadata,
   GitHubIssueListOptions,
   GitHubMergePullRequestRequest,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestDiscussion,
   GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubRepoOwner,
@@ -78,7 +80,9 @@ type GitHubProjectRepoClientCache = {
   issueAssignees?: string[];
   issueFilterMetadata?: GitHubIssueFilterMetadata;
   issues: Record<string, GitHubIssue[] | undefined>;
+  issueDiscussions: Record<number, GitHubIssueDiscussion | undefined>;
   pullRequests: Record<string, GitHubPullRequest[] | undefined>;
+  pullRequestDiscussions: Record<number, GitHubPullRequestDiscussion | undefined>;
   pullRequestChecks: Record<number, GitHubPullRequestCheck[] | undefined>;
   workflowRuns: Record<number, GitHubWorkflowRun[] | undefined>;
   workflowRunDetails: Record<number, GitHubWorkflowRunDetail | undefined>;
@@ -223,7 +227,9 @@ function githubProjectRepoCache(repoFullName: string) {
       commits: {},
       commitDetails: {},
       issues: {},
+      issueDiscussions: {},
       pullRequests: {},
+      pullRequestDiscussions: {},
       pullRequestChecks: {},
       workflowRuns: {},
       workflowRunDetails: {},
@@ -602,6 +608,26 @@ export function getGitHubPullRequest(repoFullName: string, pullNumber: number): 
   );
 }
 
+export function getGitHubPullRequestDiscussion(
+  repoFullName: string,
+  pullNumber: number,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubPullRequestDiscussion> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache.pullRequestDiscussions[pullNumber];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
+  return call("github_get_pull_request_discussion", {
+    repoFullName,
+    pullNumber,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => workspaceFallback().getGitHubPullRequestDiscussion(repoFullName, pullNumber))
+    .then((discussion) => {
+      cache.pullRequestDiscussions[pullNumber] = cloneProjectData(discussion);
+      upsertGitHubPullRequest(repoFullName, discussion.pullRequest);
+      return cloneProjectData(discussion);
+    });
+}
+
 export function createGitHubPullRequest(
   repoFullName: string,
   request: GitHubCreatePullRequestRequest,
@@ -692,6 +718,26 @@ export function listGitHubIssues(
     .then((issues) => {
       cache.issues[key] = cloneProjectList(issues);
       return cloneProjectList(issues);
+    });
+}
+
+export function getGitHubIssueDiscussion(
+  repoFullName: string,
+  issueNumber: number,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubIssueDiscussion> {
+  const cache = githubProjectRepoCache(repoFullName);
+  const cached = cache.issueDiscussions[issueNumber];
+  if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
+  return call("github_get_issue_discussion", {
+    repoFullName,
+    issueNumber,
+    forceRefresh: options.forceRefresh ?? null,
+  }, () => workspaceFallback().getGitHubIssueDiscussion(repoFullName, issueNumber))
+    .then((discussion) => {
+      cache.issueDiscussions[issueNumber] = cloneProjectData(discussion);
+      upsertGitHubIssue(repoFullName, discussion.issue);
+      return cloneProjectData(discussion);
     });
 }
 

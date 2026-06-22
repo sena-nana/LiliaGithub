@@ -10,8 +10,10 @@ import {
   createGitHubPullRequest,
   createGitHubIssue,
   deleteGitHubRepo,
+  getGitHubIssueDiscussion,
   getGitHubIssueFilterMetadata,
   getGitHubRepoFilePreview,
+  getGitHubPullRequestDiscussion,
   getGitHubRepoManagement,
   getRepoFilePreview,
   getGitHubWorkflowArtifactFilePreview,
@@ -33,8 +35,10 @@ import type {
   CommitDetail,
   CommitSummary,
   GitHubIssue,
+  GitHubIssueDiscussion,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestDiscussion,
   GitHubRepoManagement,
   GitHubWorkflowRun,
   GitHubWorkflowRunDetail,
@@ -277,6 +281,36 @@ const githubPullRequestChecks: GitHubPullRequestCheck[] = [{
   completedAt: "2026-06-18T08:05:00Z",
 }];
 
+function issueDiscussion(issue: GitHubIssue): GitHubIssueDiscussion {
+  return {
+    issue,
+    timeline: [{
+      id: `issue-${issue.number}-body`,
+      kind: "body",
+      actor: issue.author,
+      body: issue.body,
+      url: issue.htmlUrl,
+      createdAt: issue.createdAt,
+      updatedAt: issue.updatedAt,
+    }],
+  };
+}
+
+function pullRequestDiscussion(pullRequest: GitHubPullRequest): GitHubPullRequestDiscussion {
+  return {
+    pullRequest,
+    timeline: [{
+      id: `pull-${pullRequest.number}-body`,
+      kind: "body",
+      actor: pullRequest.author,
+      body: pullRequest.body,
+      url: pullRequest.htmlUrl,
+      createdAt: pullRequest.createdAt,
+      updatedAt: pullRequest.updatedAt,
+    }],
+  };
+}
+
 const remoteCommit: CommitSummary = {
   hash: "fedcba9876543210",
   shortHash: "fedcba9",
@@ -341,8 +375,10 @@ vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
   deleteGitHubRepo: vi.fn(),
+  getGitHubIssueDiscussion: vi.fn(),
   getGitHubRepoFilePreview: vi.fn(),
   getGitHubIssueFilterMetadata: vi.fn(),
+  getGitHubPullRequestDiscussion: vi.fn(),
   getRepoCommitDetail: vi.fn(),
   getGitHubRepoManagement: vi.fn(),
   getRepoFilePreview: vi.fn(),
@@ -500,6 +536,8 @@ describe("RepoProjectPanel", () => {
     vi.mocked(createGitHubPullRequest).mockReset();
     vi.mocked(createGitHubIssue).mockReset();
     vi.mocked(deleteGitHubRepo).mockReset();
+    vi.mocked(getGitHubIssueDiscussion).mockReset();
+    vi.mocked(getGitHubPullRequestDiscussion).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
     vi.mocked(getRepoFilePreview).mockReset();
     vi.mocked(getGitHubIssueFilterMetadata).mockReset();
@@ -567,9 +605,19 @@ describe("RepoProjectPanel", () => {
       topics: request.topics ? [...request.topics] : [...githubSettings.topics],
     }));
     vi.mocked(listGitHubPullRequests).mockResolvedValue([]);
+    vi.mocked(getGitHubPullRequestDiscussion).mockImplementation(async (_repoFullName, pullNumber) => {
+      const pullRequest = githubPullRequests.find((item) => item.number === pullNumber);
+      if (!pullRequest) throw new Error(`missing pull ${pullNumber}`);
+      return pullRequestDiscussion(pullRequest);
+    });
     vi.mocked(listGitHubPullRequestChecks).mockResolvedValue([]);
     vi.mocked(mergeGitHubPullRequest).mockImplementation(async () => ({ ...githubPullRequests[0], merged: true, state: "closed" }));
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
+    vi.mocked(getGitHubIssueDiscussion).mockImplementation(async (_repoFullName, issueNumber) => {
+      const issue = githubIssues.find((item) => item.number === issueNumber) ?? closedGitHubIssues.find((item) => item.number === issueNumber);
+      if (!issue) throw new Error(`missing issue ${issueNumber}`);
+      return issueDiscussion(issue);
+    });
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([]);
     vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(githubWorkflowRunDetail);
     vi.mocked(getGitHubWorkflowJobLog).mockResolvedValue({
@@ -891,6 +939,62 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
   });
 
+  it("点击 Issue 行进入详情并渲染 Markdown 正文、评论和事件", async () => {
+    const issueWithBody: GitHubIssue = {
+      ...githubIssues[0],
+      body: "## 复现步骤\n\n- 打开 <script>alert(1)</script> [文档](docs/guide.md)",
+    };
+    vi.mocked(listGitHubIssues).mockResolvedValue([issueWithBody]);
+    vi.mocked(getGitHubIssueDiscussion).mockResolvedValue({
+      issue: issueWithBody,
+      timeline: [
+        {
+          id: "issue-12-body",
+          kind: "body",
+          actor: "sena",
+          body: issueWithBody.body,
+          url: issueWithBody.htmlUrl,
+          createdAt: "2026-06-18T08:00:00Z",
+          updatedAt: "2026-06-18T08:00:00Z",
+        },
+        {
+          id: "comment-1",
+          kind: "comment",
+          actor: "mika",
+          body: "**确认** 已复现",
+          url: "https://github.com/sena-nana/remote-repo/issues/12#issuecomment-1",
+          createdAt: "2026-06-18T08:01:00Z",
+          updatedAt: "2026-06-18T08:01:00Z",
+        },
+        {
+          id: "event-closed",
+          kind: "event",
+          actor: "sena",
+          event: "closed",
+          title: "关闭了讨论",
+          createdAt: "2026-06-18T08:02:00Z",
+        },
+      ],
+    });
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    await fireEvent.click(await view.findByText("#12 修复懒加载"));
+
+    expect(await view.findByRole("heading", { level: 3, name: "#12 修复懒加载" })).toBeInTheDocument();
+    expect(getGitHubIssueDiscussion).toHaveBeenCalledWith("sena-nana/remote-repo", 12);
+    expect(view.getByRole("heading", { level: 2, name: "复现步骤" })).toBeInTheDocument();
+    expect(view.getByText("确认")).toBeInTheDocument();
+    expect(view.getByText("已复现")).toBeInTheDocument();
+    expect(view.getAllByText("关闭了讨论")).toHaveLength(2);
+    expect(view.container.querySelector("script")).toBeNull();
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "issues", issue: "12" });
+    });
+  });
+
   it("Actions 列表同一行显示标题与右侧信息，并省略同名来源", async () => {
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([
       githubWorkflowRuns[0],
@@ -1019,6 +1123,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("1 个 checks")).toBeInTheDocument();
     expect(view.getByText("ci / build")).toBeInTheDocument();
     expect(view.getByText("接入 PR 工作流。")).toBeInTheDocument();
+    expect(getGitHubPullRequestDiscussion).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });

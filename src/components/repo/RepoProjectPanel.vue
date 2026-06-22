@@ -47,8 +47,10 @@ import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
   createGitHubPullRequest,
+  getGitHubIssueDiscussion,
   getRepoFilePreview,
   getGitHubIssueFilterMetadata,
+  getGitHubPullRequestDiscussion,
   getGitHubRepoManagement,
   listRepoFiles,
   listGitHubIssues,
@@ -68,10 +70,12 @@ import {
 import type {
   CommitSummary,
   GitHubIssue,
+  GitHubIssueDiscussion,
   GitHubIssueFilterMetadata,
   GitHubIssueListOptions,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestDiscussion,
   GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
@@ -333,6 +337,9 @@ const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
 const githubError = ref<string | null>(null);
 const pulls = ref<GitHubPullRequest[]>([]);
+const pullRequestDiscussion = ref<GitHubPullRequestDiscussion | null>(null);
+const pullRequestDiscussionLoading = ref(false);
+const pullRequestDiscussionError = ref<string | null>(null);
 const pullChecks = ref<Record<number, GitHubPullRequestCheck[]>>({});
 const pullsLoading = ref(false);
 const pullChecksLoading = ref(false);
@@ -358,6 +365,9 @@ const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
 const issues = ref<GitHubIssue[]>([]);
+const issueDiscussion = ref<GitHubIssueDiscussion | null>(null);
+const issueDiscussionLoading = ref(false);
+const issueDiscussionError = ref<string | null>(null);
 const issuesLoadedKey = ref<string | null>(null);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
 const actionsLoaded = ref(false);
@@ -402,7 +412,9 @@ let suppressPullStateReload = false;
 const readmeLoader = createLatestAsyncLoader();
 const settingsLoader = createLatestAsyncLoader();
 const issuesLoader = createLatestAsyncLoader();
+const issueDiscussionLoader = createLatestAsyncLoader();
 const pullsLoader = createLatestAsyncLoader();
+const pullRequestDiscussionLoader = createLatestAsyncLoader();
 const pullChecksLoader = createLatestAsyncLoader();
 const actionsLoader = createLatestAsyncLoader();
 const settingsSaveTracker = createPendingTaskTracker();
@@ -704,6 +716,7 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
 });
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
+const routedProjectIssue = computed(() => normalizePositiveNumber(route.query.issue));
 const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
 const routedIssueFilterState = computed(() => JSON.stringify({
   state: issueStateFromRoute(),
@@ -798,7 +811,7 @@ watch([routedIssueFilterState, routedPullRequestFilterState], () => {
 });
 
 watch(
-  [routedProjectTab, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId, () => props.projectJobId],
+  [routedProjectTab, routedProjectIssue, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId, () => props.projectJobId],
   () => {
     void applyProjectRouteState();
   },
@@ -1011,6 +1024,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   query.projectTab = tab;
   if (tab === "issues") {
     applyRouteFilters(query, issueRouteKeys, issueState.value, "open", issuePanelFilters.value, blankIssuePanelFilters());
+    if (focusedIssueNumber.value) query.issue = String(focusedIssueNumber.value);
   } else if (tab === "pulls") {
     applyRouteFilters(
       query,
@@ -1103,6 +1117,10 @@ function hasRun(runId: number) {
 function clearProjectTargets() {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
+  issueDiscussion.value = null;
+  issueDiscussionError.value = null;
+  pullRequestDiscussion.value = null;
+  pullRequestDiscussionError.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
   cancelEditIssue();
@@ -1208,9 +1226,12 @@ function rebindGitHub() {
 
 async function focusIssue(issueNumber: number | null | undefined) {
   focusedPullRequestNumber.value = null;
+  pullRequestDiscussion.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
   if (!issueNumber) {
+    issueDiscussion.value = null;
+    issueDiscussionError.value = null;
     clearProjectTargets();
     await loadIssues();
     return;
@@ -1222,9 +1243,11 @@ async function focusIssue(issueNumber: number | null | undefined) {
   await loadIssues();
   if (!hasIssue(issueNumber)) {
     focusedIssueNumber.value = null;
+    issueDiscussion.value = null;
     return;
   }
   focusedIssueNumber.value = issueNumber;
+  await loadIssueDiscussion(issueNumber);
   await nextTick();
   const row = projectMainRef.value?.querySelector<HTMLElement>(
     `.project-row--issue[data-issue-number="${issueNumber}"]`,
@@ -1258,11 +1281,14 @@ async function focusRun(runId: number | null | undefined) {
 
 async function focusPullRequest(pullNumber: number | null | undefined) {
   focusedIssueNumber.value = null;
+  issueDiscussion.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
   if (!pullNumber) {
     await loadPullRequests();
     focusedPullRequestNumber.value = null;
+    pullRequestDiscussion.value = null;
+    pullRequestDiscussionError.value = null;
     return;
   }
   await loadPullRequests();
@@ -1276,10 +1302,14 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
   }
   if (!hasPullRequest(pullNumber)) {
     focusedPullRequestNumber.value = null;
+    pullRequestDiscussion.value = null;
     return;
   }
   focusedPullRequestNumber.value = pullNumber;
-  await loadPullRequestChecks(pullNumber);
+  await Promise.all([
+    loadPullRequestChecks(pullNumber),
+    loadPullRequestDiscussion(pullNumber),
+  ]);
   await nextTick();
   const row = projectMainRef.value?.querySelector<HTMLElement>(
     `.project-row--pull[data-pull-number="${pullNumber}"]`,
@@ -1306,7 +1336,7 @@ async function applyProjectRouteState() {
   await nextTick();
   clearProjectTargets();
   if (targetTab === "issues") {
-    await focusIssue(props.projectIssueNumber);
+    await focusIssue(props.projectIssueNumber ?? routedProjectIssue.value);
     return;
   }
   if (targetTab === "pulls") {
@@ -1464,6 +1494,28 @@ async function loadIssues(force = false) {
   }, { reusePending: !force });
 }
 
+async function loadIssueDiscussion(issueNumber: number, force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
+  if (!force && issueDiscussion.value?.issue.number === issueNumber) return;
+  issueDiscussionError.value = null;
+  issueDiscussionLoading.value = true;
+  await issueDiscussionLoader.run(issueNumber, async (runId) => {
+    try {
+      const discussion = force
+        ? await getGitHubIssueDiscussion(repoFullName, issueNumber, { forceRefresh: true })
+        : await getGitHubIssueDiscussion(repoFullName, issueNumber);
+      if (!issueDiscussionLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      issueDiscussion.value = discussion;
+      issues.value = issues.value.map((issue) => issue.number === discussion.issue.number ? discussion.issue : issue);
+    } catch (err) {
+      if (issueDiscussionLoader.isCurrent(runId)) issueDiscussionError.value = String(err);
+    } finally {
+      if (issueDiscussionLoader.isCurrent(runId)) issueDiscussionLoading.value = false;
+    }
+  });
+}
+
 async function loadPullRequests(force = false) {
   const repoFullName = props.repoFullName;
   if (!resolvedRepoContext.value.capabilities.pulls.available) {
@@ -1498,6 +1550,28 @@ async function loadPullRequests(force = false) {
       }
     }
   }, { reusePending: !force });
+}
+
+async function loadPullRequestDiscussion(pullNumber: number, force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
+  if (!force && pullRequestDiscussion.value?.pullRequest.number === pullNumber) return;
+  pullRequestDiscussionError.value = null;
+  pullRequestDiscussionLoading.value = true;
+  await pullRequestDiscussionLoader.run(pullNumber, async (runId) => {
+    try {
+      const discussion = force
+        ? await getGitHubPullRequestDiscussion(repoFullName, pullNumber, { forceRefresh: true })
+        : await getGitHubPullRequestDiscussion(repoFullName, pullNumber);
+      if (!pullRequestDiscussionLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      pullRequestDiscussion.value = discussion;
+      pulls.value = pulls.value.map((pull) => pull.number === discussion.pullRequest.number ? discussion.pullRequest : pull);
+    } catch (err) {
+      if (pullRequestDiscussionLoader.isCurrent(runId)) pullRequestDiscussionError.value = String(err);
+    } finally {
+      if (pullRequestDiscussionLoader.isCurrent(runId)) pullRequestDiscussionLoading.value = false;
+    }
+  });
 }
 
 async function loadPullRequestChecks(pullNumber: number, force = false) {
@@ -1605,6 +1679,7 @@ async function refreshLoadedSectionData() {
     await Promise.all([
       loadIssues(true),
       issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
+      focusedIssueNumber.value ? loadIssueDiscussion(focusedIssueNumber.value, true) : Promise.resolve(),
     ]);
     return;
   }
@@ -1612,6 +1687,7 @@ async function refreshLoadedSectionData() {
     await Promise.all([
       loadPullRequests(true),
       issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
+      focusedPullRequestNumber.value ? loadPullRequestDiscussion(focusedPullRequestNumber.value, true) : Promise.resolve(),
     ]);
     return;
   }
@@ -1671,13 +1747,18 @@ function resetProjectSectionState() {
 function resetGitHubSectionState() {
   settingsLoader.invalidate();
   issuesLoader.invalidate();
+  issueDiscussionLoader.invalidate();
   pullsLoader.invalidate();
+  pullRequestDiscussionLoader.invalidate();
   pullChecksLoader.invalidate();
   actionsLoader.invalidate();
   invalidateGitHubMutations();
   settings.value = null;
   settingsLoaded.value = false;
   issues.value = [];
+  issueDiscussion.value = null;
+  issueDiscussionLoading.value = false;
+  issueDiscussionError.value = null;
   issuesLoadedKey.value = null;
   issueState.value = issueStateFromRoute();
   issuePanelFilters.value = issuePanelFiltersFromRoute();
@@ -1685,6 +1766,9 @@ function resetGitHubSectionState() {
   issueFilterMetadataLoading.value = false;
   issueFilterMetadataLoadedRepo.value = null;
   pulls.value = [];
+  pullRequestDiscussion.value = null;
+  pullRequestDiscussionLoading.value = false;
+  pullRequestDiscussionError.value = null;
   pullChecks.value = {};
   pullsLoadedKey.value = null;
   pullState.value = pullRequestStateFromRoute();
@@ -2085,6 +2169,7 @@ function syncEditingIssue() {
 }
 
 function startEditIssue(issue: GitHubIssue) {
+  focusedIssueNumber.value = null;
   editingIssueNumber.value = issue.number;
   editingIssueTitle.value = issue.title;
   editingIssueBody.value = issue.body ?? "";
@@ -2158,6 +2243,9 @@ async function toggleIssue(issue: GitHubIssue) {
   if (!result.ok) return;
   const updated = result.value;
   issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
+  if (issueDiscussion.value?.issue.number === updated.number) {
+    await loadIssueDiscussion(updated.number, true);
+  }
 }
 
 function preparePullRequestDefaults() {
@@ -2197,7 +2285,10 @@ async function createPullRequest() {
   pullRequestTemplateKey.value = blankPullRequestTemplate().key;
   pullCreateView.value = false;
   pullState.value = "open";
-  await loadPullRequestChecks(pull.number, true);
+  await Promise.all([
+    loadPullRequestChecks(pull.number, true),
+    loadPullRequestDiscussion(pull.number, true),
+  ]);
 }
 
 async function togglePullRequestState(pull: GitHubPullRequest) {
@@ -2211,6 +2302,9 @@ async function togglePullRequestState(pull: GitHubPullRequest) {
   if (!result.ok) return;
   const updated = result.value;
   pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
+  if (pullRequestDiscussion.value?.pullRequest.number === updated.number) {
+    await loadPullRequestDiscussion(updated.number, true);
+  }
 }
 
 async function mergePullRequest(pull: GitHubPullRequest) {
@@ -2226,17 +2320,38 @@ async function mergePullRequest(pull: GitHubPullRequest) {
   const updated = result.value;
   pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
   focusedPullRequestNumber.value = updated.number;
-  await loadPullRequestChecks(updated.number, true);
+  await Promise.all([
+    loadPullRequestChecks(updated.number, true),
+    loadPullRequestDiscussion(updated.number, true),
+  ]);
+}
+
+async function focusIssueRow(issue: GitHubIssue) {
+  focusedIssueNumber.value = issue.number;
+  await loadIssueDiscussion(issue.number);
+  if (activeSection.value === "issues") void pushProjectTabRoute("issues");
+}
+
+function closeIssueDetail() {
+  focusedIssueNumber.value = null;
+  issueDiscussion.value = null;
+  issueDiscussionError.value = null;
+  if (activeSection.value === "issues") void pushProjectTabRoute("issues");
 }
 
 async function focusPullRequestRow(pull: GitHubPullRequest) {
   focusedPullRequestNumber.value = pull.number;
-  await loadPullRequestChecks(pull.number);
+  await Promise.all([
+    loadPullRequestChecks(pull.number),
+    loadPullRequestDiscussion(pull.number),
+  ]);
   if (activeSection.value === "pulls") void pushProjectTabRoute("pulls");
 }
 
 function closePullRequestDetail() {
   focusedPullRequestNumber.value = null;
+  pullRequestDiscussion.value = null;
+  pullRequestDiscussionError.value = null;
   if (activeSection.value === "pulls") void pushProjectTabRoute("pulls");
 }
 
@@ -2550,11 +2665,19 @@ function focusActionJob(jobId: number | null) {
             v-model:editing-labels="editingIssueLabels"
             v-model:editing-assignees="editingIssueAssignees"
             v-model:editing-body="editingIssueBody"
+            :focused-issue-number="focusedIssueNumber"
+            :issue-timeline="issueDiscussion?.timeline ?? []"
+            :issue-discussion-loading="issueDiscussionLoading"
+            :issue-discussion-error="issueDiscussionError"
+            :repo-full-name="repoFullName ?? ''"
             :is-focused="isIssueRowFocused"
             @update:state="setIssueState"
             @update:filters="setIssuePanelFilters"
             @create="openIssueCreateView"
             @edit="startEditIssue"
+            @focus="focusIssueRow"
+            @back="closeIssueDetail"
+            @open="(issue) => openUrl(issue.htmlUrl)"
             @cancel-edit="cancelEditIssue"
             @save-edit="saveIssueEdit"
             @toggle="toggleIssue"
@@ -2644,9 +2767,14 @@ function focusActionJob(jobId: number | null) {
             :metadata-loading="issueFilterMetadataLoading"
             :loading="pullsLoading"
             :checks-loading="pullChecksLoading"
+            :discussion-loading="pullRequestDiscussionLoading"
+            :discussion-error="pullRequestDiscussionError"
+            :discussion-timeline="pullRequestDiscussion?.timeline ?? []"
             :updating="updatingPullRequest"
             :focused-pull-request-number="focusedPullRequestNumber"
+            :focused-pull-request-detail="pullRequestDiscussion?.pullRequest ?? null"
             :pull-checks="pullChecks"
+            :repo-full-name="repoFullName ?? ''"
             v-model:merge-method="pullRequestMergeMethod"
             :is-focused="isPullRequestRowFocused"
             @update:state="setPullRequestState"

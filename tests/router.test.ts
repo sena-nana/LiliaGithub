@@ -669,7 +669,7 @@ describe("基础路由", () => {
       issue: "12",
     });
     await waitFor(() => {
-      expect(document.querySelector('[data-issue-number="12"].project-row--issue.is-target')).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 3, name: /#12/ })).toBeInTheDocument();
     });
   });
 
@@ -1154,7 +1154,7 @@ describe("基础路由", () => {
       issue: "12",
     });
     await waitFor(() => {
-      expect(document.querySelector('[data-issue-number="12"].project-row--issue.is-target')).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 3, name: /#12/ })).toBeInTheDocument();
     });
   });
 

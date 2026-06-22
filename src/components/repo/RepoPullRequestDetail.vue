@@ -11,18 +11,22 @@ import {
 import { computed } from "vue";
 import { openUrl } from "../../services/workspace/client";
 import type {
+  GitHubDiscussionTimelineItem,
   GitHubPullRequest,
   GitHubPullRequestCheck,
 } from "../../services/workspace/types";
-import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
-import MarkdownReadme from "./MarkdownReadme.vue";
+import RepoDiscussionTimeline from "./RepoDiscussionTimeline.vue";
 
 const props = defineProps<{
   pull: GitHubPullRequest;
   checks: readonly GitHubPullRequestCheck[];
   checksLoading: boolean;
+  discussionTimeline: readonly GitHubDiscussionTimelineItem[];
+  discussionLoading: boolean;
+  discussionError: string | null;
   updating: boolean;
   mergeMethod: "merge" | "squash" | "rebase";
+  repoFullName: string;
 }>();
 
 const emit = defineEmits<{
@@ -47,7 +51,7 @@ const statusText = computed(() => {
 
 const canMerge = computed(() => props.pull.state === "open" && !props.pull.merged);
 const canReopen = computed(() => props.pull.state === "closed" && !props.pull.merged);
-const bodyText = computed(() => props.pull.body?.trim() ?? "");
+const linkBaseUrl = computed(() => `https://github.com/${props.repoFullName}`);
 const projectText = computed(() => props.pull.projectItems?.map((project) => project.title).join(", ") || "无项目");
 const milestoneText = computed(() => props.pull.milestone?.title || "无里程碑");
 const assigneeText = computed(() => props.pull.assignees.join(", ") || "未分配");
@@ -76,10 +80,6 @@ function checkUrl(check: GitHubPullRequestCheck) {
 function openCheck(check: GitHubPullRequestCheck) {
   const url = checkUrl(check);
   if (url) void openUrl(url);
-}
-
-function openMarkdownTarget(target: ReadmeLinkTarget) {
-  if (target.kind === "external") void openUrl(target.href);
 }
 </script>
 
@@ -208,17 +208,17 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
       </div>
     </section>
 
-    <section class="pull-detail__body" aria-label="Pull Request 描述">
+    <section class="pull-detail__body" aria-label="Pull Request 讨论">
       <div class="pull-detail__section-head">
-        <h4>描述</h4>
+        <h4>讨论</h4>
       </div>
-      <MarkdownReadme
-        v-if="bodyText"
-        :content="bodyText"
-        current-readme-path="PULL_REQUEST.md"
-        @open-link="openMarkdownTarget"
+      <RepoDiscussionTimeline
+        :items="discussionTimeline"
+        :loading="discussionLoading"
+        :error="discussionError"
+        :link-base-url="linkBaseUrl"
+        empty-text="当前 Pull Request 没有讨论内容。"
       />
-      <p v-else class="muted">没有描述内容。</p>
     </section>
   </article>
 </template>
