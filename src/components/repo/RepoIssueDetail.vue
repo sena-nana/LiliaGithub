@@ -3,10 +3,6 @@ import {
   ArrowLeft,
   CircleDot,
   CircleOff,
-  ExternalLink,
-  LoaderCircle,
-  Pencil,
-  RotateCcw,
 } from "@lucide/vue";
 import { computed } from "vue";
 import type {
@@ -20,22 +16,14 @@ const props = defineProps<{
   timeline: readonly GitHubDiscussionTimelineItem[];
   discussionLoading: boolean;
   discussionError: string | null;
-  updating: boolean;
   repoFullName: string;
 }>();
 
 const emit = defineEmits<{
   back: [];
-  open: [issue: GitHubIssue];
-  edit: [issue: GitHubIssue];
-  toggle: [issue: GitHubIssue];
 }>();
 
 const statusText = computed(() => props.issue.state === "open" ? "Open" : "Closed");
-const labelText = computed(() => props.issue.labels.join(", ") || "无标签");
-const assigneeText = computed(() => props.issue.assignees.join(", ") || "未分配");
-const projectText = computed(() => props.issue.projectItems?.map((project) => project.title).join(", ") || "无项目");
-const milestoneText = computed(() => props.issue.milestone?.title || "无里程碑");
 const linkBaseUrl = computed(() => `https://github.com/${props.repoFullName}`);
 
 function formatDateTime(value: string) {
@@ -52,22 +40,6 @@ function formatDateTime(value: string) {
         <ArrowLeft :size="14" aria-hidden="true" />
         Issues
       </button>
-      <div class="issue-detail__head-actions">
-        <button type="button" class="ghost" @click="emit('open', issue)">
-          <ExternalLink :size="14" aria-hidden="true" />
-          打开 GitHub
-        </button>
-        <button type="button" class="ghost" :disabled="updating" @click="emit('edit', issue)">
-          <Pencil :size="14" aria-hidden="true" />
-          编辑
-        </button>
-        <button type="button" class="ghost" :disabled="updating" @click="emit('toggle', issue)">
-          <LoaderCircle v-if="updating" :size="14" aria-hidden="true" class="sb-spin" />
-          <CircleOff v-else-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-          <RotateCcw v-else :size="14" aria-hidden="true" />
-          {{ issue.state === "open" ? "关闭" : "重开" }}
-        </button>
-      </div>
     </div>
 
     <header class="issue-detail__title-block">
@@ -84,25 +56,6 @@ function formatDateTime(value: string) {
         <time :datetime="issue.updatedAt">{{ formatDateTime(issue.updatedAt) }}</time>
       </p>
     </header>
-
-    <section class="issue-detail__summary" aria-label="Issue 摘要">
-      <div>
-        <span>负责人</span>
-        <strong>{{ assigneeText }}</strong>
-      </div>
-      <div>
-        <span>标签</span>
-        <strong>{{ labelText }}</strong>
-      </div>
-      <div>
-        <span>项目</span>
-        <strong>{{ projectText }}</strong>
-      </div>
-      <div>
-        <span>里程碑</span>
-        <strong>{{ milestoneText }}</strong>
-      </div>
-    </section>
 
     <RepoDiscussionTimeline
       :items="timeline"
@@ -121,8 +74,7 @@ function formatDateTime(value: string) {
   min-width: 0;
 }
 
-.issue-detail__head,
-.issue-detail__head-actions {
+.issue-detail__head {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -133,8 +85,7 @@ function formatDateTime(value: string) {
   justify-content: space-between;
 }
 
-.issue-detail__back,
-.issue-detail__head-actions button {
+.issue-detail__back {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -180,43 +131,10 @@ function formatDateTime(value: string) {
   color: var(--text-muted);
 }
 
-.issue-detail__summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.issue-detail__summary div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.issue-detail__summary span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.issue-detail__summary strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
 @media (max-width: 760px) {
   .issue-detail__head {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .issue-detail__summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

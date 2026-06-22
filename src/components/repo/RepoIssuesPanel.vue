@@ -178,12 +178,8 @@ function issueMetaText(issue: GitHubIssue) {
       :timeline="issueTimeline"
       :discussion-loading="issueDiscussionLoading"
       :discussion-error="issueDiscussionError"
-      :updating="updating"
       :repo-full-name="repoFullName"
       @back="emit('back')"
-      @open="emit('open', $event)"
-      @edit="emit('edit', $event)"
-      @toggle="emit('toggle', $event)"
     />
 
     <template v-else>

@@ -30,6 +30,7 @@ import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
 import RepoFilePreviewPane from "./RepoFilePreviewPane.vue";
 import RepoFileTreeCard from "./RepoFileTreeCard.vue";
+import RepoGitHubDetailSidebar from "./RepoGitHubDetailSidebar.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
 import RepoIssuesPanel from "./RepoIssuesPanel.vue";
@@ -570,7 +571,7 @@ const projectSidebarButtons = computed<ProjectSidebarButtonConfig[]>(() => [
   { key: "repo", label: "Repo", icon: Monitor },
   {
     key: "files",
-    label: "工作树",
+    label: "文件树",
     icon: FolderTree,
     disabled: !canBrowseFiles.value,
   },
@@ -678,6 +679,20 @@ const pullListOptions = computed<GitHubPullRequestListOptions>(() => ({
   query: pullRequestPanelFilters.value.query,
 }));
 const pullListKey = computed(() => JSON.stringify(pullListOptions.value));
+const focusedIssueDetail = computed(() => {
+  const issueNumber = focusedIssueNumber.value;
+  if (issueNumber == null) return null;
+  if (issueDiscussion.value?.issue.number === issueNumber) return issueDiscussion.value.issue;
+  return issues.value.find((issue) => issue.number === issueNumber) ?? null;
+});
+const focusedPullRequestDetail = computed(() => {
+  const pullNumber = focusedPullRequestNumber.value;
+  if (pullNumber == null) return null;
+  if (pullRequestDiscussion.value?.pullRequest.number === pullNumber) {
+    return pullRequestDiscussion.value.pullRequest;
+  }
+  return pulls.value.find((pull) => pull.number === pullNumber) ?? null;
+});
 const canSubmitIssueCreate = computed(() =>
   Boolean(props.repoFullName) &&
   !creatingIssue.value &&
@@ -2681,7 +2696,6 @@ function focusActionJob(jobId: number | null) {
             @edit="startEditIssue"
             @focus="focusIssueRow"
             @back="closeIssueDetail"
-            @open="(issue) => openUrl(issue.htmlUrl)"
             @cancel-edit="cancelEditIssue"
             @save-edit="saveIssueEdit"
             @toggle="toggleIssue"
@@ -2786,8 +2800,6 @@ function focusActionJob(jobId: number | null) {
             @create="openPullRequestCreateView"
             @back="closePullRequestDetail"
             @focus="focusPullRequestRow"
-            @open="(pull) => openUrl(pull.htmlUrl)"
-            @toggle="togglePullRequestState"
             @merge="mergePullRequest"
           />
         </section>
@@ -3175,8 +3187,17 @@ function focusActionJob(jobId: number | null) {
           <p>{{ fileUnavailableMessage }}</p>
         </section>
 
+        <RepoGitHubDetailSidebar
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues' && focusedIssueDetail"
+          :issue="focusedIssueDetail"
+          :updating-issue="updatingIssue"
+          @open-issue="(issue) => openUrl(issue.htmlUrl)"
+          @edit-issue="startEditIssue"
+          @toggle-issue="toggleIssue"
+        />
+
         <section
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues'"
+          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues'"
           class="project-sidebar-summary-card"
           aria-label="Issues 摘要"
         >
@@ -3214,8 +3235,16 @@ function focusActionJob(jobId: number | null) {
           </button>
         </section>
 
+        <RepoGitHubDetailSidebar
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls' && focusedPullRequestDetail"
+          :pull="focusedPullRequestDetail"
+          :updating-pull-request="updatingPullRequest"
+          @open-pull-request="(pull) => openUrl(pull.htmlUrl)"
+          @toggle-pull-request="togglePullRequestState"
+        />
+
         <section
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls'"
+          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls'"
           class="project-sidebar-summary-card"
           aria-label="Pull Requests 摘要"
         >
