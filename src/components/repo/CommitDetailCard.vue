@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronDown, Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lucide/vue";
+import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { getRepoCommitDetail, type CommitDetail } from "../../services/workspace";
 import { copyText } from "../../composables/workspace/system";
@@ -34,7 +35,8 @@ const activeFilePath = ref<string | null>(null);
 const copyNotice = ref<string | null>(null);
 const diffCollapsed = ref(true);
 const panelHeight = ref(460);
-const detailLoader = createLatestAsyncLoader();
+const componentEpoch = useComponentEpoch();
+const detailLoader = createLatestAsyncLoader({ componentEpoch });
 let resizeCleanup: (() => void) | null = null;
 let copyNoticeTimer: number | null = null;
 

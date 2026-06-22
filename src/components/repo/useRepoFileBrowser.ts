@@ -1,4 +1,5 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from "vue";
+import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import {
   getRepoFilePreview,
@@ -38,8 +39,9 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
   const preview = ref<RepoFilePreview | null>(null);
   const previewLoading = ref(false);
   const previewError = ref<string | null>(null);
-  const panelLoader = createLatestAsyncLoader();
-  const previewLoader = createLatestAsyncLoader();
+  const componentEpoch = useComponentEpoch();
+  const panelLoader = createLatestAsyncLoader({ componentEpoch });
+  const previewLoader = createLatestAsyncLoader({ componentEpoch });
   let directoryLoadPromises = new Map<string, Promise<RepoFileTreeEntry[]>>();
 
   const repoPath = computed(() => input.repoPath.value ?? null);

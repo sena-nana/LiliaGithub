@@ -1,16 +1,26 @@
+import type { ComponentEpoch } from "./useComponentEpoch";
+
 export type AsyncLoaderKey = string | number | null | undefined;
 
 export interface LatestAsyncLoaderRunOptions {
   reusePending?: boolean;
 }
 
-export function createLatestAsyncLoader() {
+export interface LatestAsyncLoaderOptions {
+  componentEpoch?: Pick<ComponentEpoch, "assertAlive">;
+}
+
+export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) {
   let currentRunId = 0;
   let pendingKey: AsyncLoaderKey = null;
   let pending: Promise<void> | null = null;
 
-  function isCurrent(runId: number) {
+  function isLatestRun(runId: number) {
     return runId === currentRunId;
+  }
+
+  function isCurrent(runId: number) {
+    return isLatestRun(runId) && (options.componentEpoch?.assertAlive() ?? true);
   }
 
   function isPending(key?: AsyncLoaderKey) {
@@ -43,7 +53,7 @@ export function createLatestAsyncLoader() {
       taskResult = Promise.reject(err);
     }
     const next = taskResult.finally(() => {
-      if (isCurrent(runId)) {
+      if (isLatestRun(runId)) {
         pending = null;
         pendingKey = null;
       }
