@@ -1,4 +1,4 @@
-<!-- To replace README screenshots, keep the file names .github/assets/home-overview.png and .github/assets/repo-detail.png to avoid README changes. -->
+<!-- To replace README screenshots, run the frontend with VITE_README_SHOWCASE=1 and refresh .github/assets/home-overview.png plus .github/assets/repo-detail.png. The repo-detail asset should cover Issues, Pull Requests, and Actions. -->
 
 > English | [简体中文](README.zh-CN.md) | [Documentation](https://sena-nana.github.io/LiliaGithub/)
 
@@ -32,7 +32,7 @@
   <img src="./.github/assets/repo-detail.png" alt="LiliaGithub repository detail" />
 </p>
 
-<p align="center"><strong>Repository detail</strong></p>
+<p align="center"><strong>Repository detail: Issues, Pull Requests, and Actions</strong></p>
 
 ---
 
@@ -61,7 +61,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It keeps 
 
 ## Feature Status
 
-The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked. Last checked: 2026-06-21.
+The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked. Last checked: 2026-06-22.
 
 ### Local Git And Repository Management
 
@@ -74,18 +74,23 @@ The list below tracks the current real integration surface. Only capabilities th
 
 ### GitHub Project And Collaboration View
 
-- [ ] GitHub repository metadata, stars, forks, releases, and default branch state.
-- [ ] Issue, pull request, review, and discussion browsing.
-- [ ] GitHub Projects board viewing for repositories and personal work.
+- [x] GitHub repository metadata, stars, forks, topics, default branch state, and repository settings.
+- [x] Issue browsing, filtering, detail timeline, template-assisted creation, and repository project fields.
+- [x] Pull request browsing, filtering, detail timeline, checks, create flow, and merge action.
+- [x] Repository Projects board view from linked issues and pull requests.
+- [x] Actions run list, run detail, job graph, job logs, and artifact preview.
+- [x] Home GitHub timeline for recent issues, pull requests, workflow runs, pushes, and sync events.
+- [ ] GitHub Discussions browsing and creation.
+- [ ] Release list/status management outside workflow-run visibility.
 - [ ] Notification inbox with repository, issue, pull request, and review filters.
-- [ ] Recent push activity, Actions results, release status, and failed workflow visibility.
 
 ### Personal Workspace
 
 - [x] Signed-in GitHub account connection.
 - [x] Local workspace preferences and theme persistence.
 - [ ] Personal home view for assigned work, recently touched repositories, and saved workspaces.
-- [ ] Account-level repository list, watched repositories, and notification preferences.
+- [x] Account-level repository list, GitHub repository creation, and clone-to-workspace flow.
+- [ ] Watched repositories and notification preferences.
 - [ ] Local organization of favorite repositories and common workspaces.
 
 ### Quick Launch
