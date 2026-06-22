@@ -277,8 +277,6 @@ pub struct RepoSummary {
     #[serde(default)]
     pub language_stats: Vec<LanguageStat>,
     #[serde(default)]
-    pub working_tree_language_stats: Vec<LanguageStat>,
-    #[serde(default)]
     pub language_stats_updated_at: i64,
     pub worktree: RepoWorktree,
 }

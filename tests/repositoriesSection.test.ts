@@ -46,7 +46,6 @@ const workspace = vi.hoisted(() => ({
         lastCommitAt: null,
         lastCommitMessage: null,
         languageStats: [],
-        workingTreeLanguageStats: [],
         languageStatsUpdatedAt: 0,
         worktree: {
           role: "standalone",

@@ -494,46 +494,6 @@ pub(super) fn repo_head_language_stats(path: &Path) -> Vec<LanguageStat> {
     language_stats_from_map(stats)
 }
 
-pub(super) fn repo_working_tree_language_stats(path: &Path) -> Vec<LanguageStat> {
-    let output = git_command(
-        path,
-        &[
-            "ls-files",
-            "-z",
-            "--cached",
-            "--modified",
-            "--others",
-            "--exclude-standard",
-        ],
-        None,
-    )
-    .unwrap_or_default();
-    let mut stats: HashMap<String, LanguageStatAccumulator> = HashMap::new();
-    let mut seen = HashSet::new();
-    for raw_path in output.split('\0').filter(|value| !value.is_empty()) {
-        if !seen.insert(raw_path.to_string()) {
-            continue;
-        }
-        let relative = Path::new(raw_path);
-        if should_skip_language_path(relative) {
-            continue;
-        }
-        let Some(language) = language_for_path(relative) else {
-            continue;
-        };
-        let Some(bytes) = fs::metadata(path.join(relative))
-            .ok()
-            .map(|metadata| metadata.len())
-            .filter(|bytes| *bytes > 0)
-        else {
-            continue;
-        };
-        let file_bytes = fs::read(path.join(relative)).unwrap_or_default();
-        record_language_stats(&mut stats, language, bytes, count_lines(&file_bytes));
-    }
-    language_stats_from_map(stats)
-}
-
 fn record_language_stats(
     stats: &mut HashMap<String, LanguageStatAccumulator>,
     language: &str,
@@ -759,7 +719,6 @@ pub(super) fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
         last_commit_at,
         last_commit_message,
         language_stats: Vec::new(),
-        working_tree_language_stats: Vec::new(),
         language_stats_updated_at: 0,
         worktree,
     }
@@ -789,7 +748,6 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
         last_commit_at: None,
         last_commit_message: None,
         language_stats: Vec::new(),
-        working_tree_language_stats: Vec::new(),
         language_stats_updated_at: 0,
         worktree,
     }
@@ -798,7 +756,6 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
 pub(super) fn summarize_repo_with_language_stats(root: &Path, path: &Path) -> RepoSummary {
     let mut summary = summarize_repo(root, path);
     summary.language_stats = repo_head_language_stats(path);
-    summary.working_tree_language_stats = repo_working_tree_language_stats(path);
     summary.language_stats_updated_at = now_millis();
     summary
 }

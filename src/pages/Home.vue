@@ -65,11 +65,9 @@ import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
 import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
 import {
   buildLanguageOverviewFromRepos,
+  buildProjectCodeOverviewFromRepos,
   formatBytes,
   formatPercent,
-  type LanguageOverview,
-  type LanguageScope,
-  type LanguageSlice,
 } from "../utils/languageStats";
 import "../styles/page.css";
 
@@ -128,13 +126,25 @@ type ContributionMonthLabel = {
   label: string;
 };
 
-type HomeLanguageSlice = LanguageSlice & {
-  to: string;
+type LanguageChartMode = "language" | "project";
+
+type HomeCodeSlice = {
+  key: string;
+  label: string;
+  to: string | null;
   linkTitle: string;
+  bytes: number;
+  lines: number;
+  percent: number;
+  color: string;
+  offset: number;
+  title: string;
 };
 
-type HomeLanguageOverview = Omit<LanguageOverview, "slices"> & {
-  slices: HomeLanguageSlice[];
+type HomeCodeOverview = {
+  totalBytes: number;
+  totalLines: number;
+  slices: HomeCodeSlice[];
 };
 
 type ProjectTabRef = "issues" | "pulls" | "actions";
@@ -179,7 +189,7 @@ type GitHubTimelineWorkflowTask = {
   generation: number;
 };
 
-const languageScope = ref<LanguageScope>("head");
+const languageChartMode = ref<LanguageChartMode>("language");
 const discovering = ref(false);
 const githubRepos = ref<GitHubRepoSummary[]>([]);
 const githubReposNextPage = ref<number | null>(null);
@@ -243,17 +253,18 @@ const filteredCloneRepos = computed(() => {
   );
 });
 
-const languageOverview = computed<HomeLanguageOverview>(() => {
+const languageOverview = computed<HomeCodeOverview>(() => {
   const overview = buildLanguageOverviewFromRepos(
     representativeReposBySharedGroup(workspace.state.repos),
-    languageScope.value,
   );
   const slices = overview.slices.map((slice) => {
     const primaryRepoId = slice.repoIds[0] ?? null;
     const target = workspace.repoById(primaryRepoId ?? "")?.name ?? primaryRepoId;
     return {
       ...slice,
-      to: primaryRepoId ? repoRoute(primaryRepoId) : "/",
+      key: `language:${slice.language}`,
+      label: slice.language,
+      to: primaryRepoId ? repoRoute(primaryRepoId) : null,
       linkTitle: target
         ? `${slice.title}，点击进入 ${target}${slice.repoIds.length > 1 ? ` 等 ${slice.repoIds.length} 个仓库` : ""}`
         : slice.title,
@@ -261,6 +272,23 @@ const languageOverview = computed<HomeLanguageOverview>(() => {
   });
   return { ...overview, slices };
 });
+
+const projectCodeOverview = computed<HomeCodeOverview>(() => {
+  const overview = buildProjectCodeOverviewFromRepos(representativeReposBySharedGroup(workspace.state.repos));
+  return {
+    ...overview,
+    slices: overview.slices.map((slice) => ({
+      ...slice,
+      key: `project:${slice.repoId ?? "other"}`,
+      label: slice.repoName,
+      to: slice.repoId ? repoRoute(slice.repoId) : null,
+      linkTitle: slice.repoId ? `${slice.title}，点击进入 ${slice.repoName}` : slice.title,
+    })),
+  };
+});
+const activeCodeOverview = computed(() =>
+  languageChartMode.value === "project" ? projectCodeOverview.value : languageOverview.value,
+);
 
 const localRepoByGitHubFullName = computed(() => representativeReposByGitHubFullName(workspace.state.repos));
 
@@ -1817,28 +1845,28 @@ function bulkOperationDescription(operation: BulkOperation) {
           <div class="card-heading">
             <div>
               <h2>编程语言占比</h2>
-              <p class="language-total">{{ formatBytes(languageOverview.totalBytes) }} 代码量</p>
+              <p class="language-total">{{ formatBytes(activeCodeOverview.totalBytes) }} 代码量</p>
             </div>
             <div class="language-actions">
-              <div class="language-tabs" aria-label="语言统计口径">
+              <div class="language-tabs" aria-label="代码占比模式">
                 <button
                   type="button"
-                  :class="{ 'is-active': languageScope === 'head' }"
-                  @click="languageScope = 'head'"
+                  :class="{ 'is-active': languageChartMode === 'language' }"
+                  @click="languageChartMode = 'language'"
                 >
-                  已提交
+                  按编程语言
                 </button>
                 <button
                   type="button"
-                  :class="{ 'is-active': languageScope === 'workingTree' }"
-                  @click="languageScope = 'workingTree'"
+                  :class="{ 'is-active': languageChartMode === 'project' }"
+                  @click="languageChartMode = 'project'"
                 >
-                  含改动
+                  按项目
                 </button>
               </div>
             </div>
           </div>
-          <p v-if="!languageOverview.slices.length" class="language-empty">暂无语言数据</p>
+          <p v-if="!activeCodeOverview.slices.length" class="language-empty">暂无语言数据</p>
           <div v-else class="language-chart" aria-label="编程语言占比图">
             <svg
               class="language-pie"
@@ -1848,8 +1876,8 @@ function bulkOperationDescription(operation: BulkOperation) {
             >
               <circle class="language-pie__track" cx="21" cy="21" r="15.9155" />
               <circle
-                v-for="slice in languageOverview.slices"
-                :key="slice.language"
+                v-for="slice in activeCodeOverview.slices"
+                :key="slice.key"
                 class="language-pie__slice"
                 cx="21"
                 cy="21"
@@ -1862,12 +1890,17 @@ function bulkOperationDescription(operation: BulkOperation) {
               </circle>
             </svg>
             <ul class="language-list">
-              <li v-for="slice in languageOverview.slices" :key="slice.language">
-                <RouterLink class="language-list__link" :to="slice.to" :title="slice.linkTitle">
+              <li v-for="slice in activeCodeOverview.slices" :key="slice.key">
+                <RouterLink v-if="slice.to" class="language-list__link" :to="slice.to" :title="slice.linkTitle">
                   <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
-                  <span class="language-name">{{ slice.language }}</span>
+                  <span class="language-name">{{ slice.label }}</span>
                   <strong>{{ formatPercent(slice.percent) }}</strong>
                 </RouterLink>
+                <span v-else class="language-list__link language-list__link--static" :title="slice.linkTitle">
+                  <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
+                  <span class="language-name">{{ slice.label }}</span>
+                  <strong>{{ formatPercent(slice.percent) }}</strong>
+                </span>
               </li>
             </ul>
           </div>
@@ -2588,6 +2621,15 @@ function bulkOperationDescription(operation: BulkOperation) {
 .language-list__link:focus-visible {
   background: var(--bg-hover);
   outline: none;
+}
+
+.language-list__link--static {
+  cursor: default;
+}
+
+.language-list__link--static:hover,
+.language-list__link--static:focus-visible {
+  background: transparent;
 }
 
 .language-dot {
