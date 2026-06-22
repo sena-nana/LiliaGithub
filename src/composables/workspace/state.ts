@@ -43,6 +43,7 @@ export interface WorkspaceState {
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
   refreshingRepoIds: string[];
+  syncingRepoIds: string[];
 }
 
 export interface RecentBulkSyncState {
@@ -54,6 +55,14 @@ export interface RecentBulkSyncState {
 
 export interface RepoActionErrorState {
   message: string;
+  updatedAt: number;
+}
+
+export interface RepoSyncIssueDisplay {
+  label: string;
+  message: string;
+  retryable: boolean;
+  retrying: boolean;
   updatedAt: number;
 }
 
@@ -96,6 +105,7 @@ export const state = reactive<WorkspaceState>({
   tasks: [],
   languageStatsLoadingRepoIds: [],
   refreshingRepoIds: [],
+  syncingRepoIds: [],
 });
 
 export const deviceFlow = ref<GitHubDeviceFlowStart | null>(null);
@@ -232,8 +242,10 @@ export function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPrev
 }
 
 export function bulkSyncRunningRepoIds() {
-  if (!state.bulkRunning) return new Set<string>();
-  return bulkSyncRepoIds();
+  const ids = new Set(state.syncingRepoIds);
+  if (!state.bulkRunning) return ids;
+  for (const repoId of bulkSyncRepoIds()) ids.add(repoId);
+  return ids;
 }
 
 export function syncErrorByRepoId() {
@@ -272,6 +284,41 @@ export function repoActionErrorDetailForRepo(repoId: string) {
   return state.repoActionErrors[repoId] ?? null;
 }
 
+export function repoSyncIssueForRepo(repoId: string): RepoSyncIssueDisplay | null {
+  const recentSyncError = recentSyncErrorForRepo(repoId);
+  if (recentSyncError) {
+    return {
+      label: "最近同步失败",
+      message: recentSyncError.message,
+      retryable: true,
+      retrying: recentSyncError.retrying,
+      updatedAt: state.recentSync?.updatedAt ?? 0,
+    };
+  }
+
+  const syncError = syncErrorDetailsByRepoId().get(repoId);
+  if (syncError) {
+    return {
+      label: "同步失败",
+      message: syncError.message,
+      retryable: false,
+      retrying: false,
+      updatedAt: syncError.updatedAt,
+    };
+  }
+
+  const actionError = repoActionErrorDetailForRepo(repoId);
+  if (!actionError) return null;
+  const isAutoSyncSkip = actionError.message.includes("已跳过自动同步");
+  return {
+    label: isAutoSyncSkip ? "自动同步已跳过" : "仓库操作失败",
+    message: actionError.message,
+    retryable: false,
+    retrying: false,
+    updatedAt: actionError.updatedAt,
+  };
+}
+
 export function setRepoActionError(repoId: string, message: string) {
   state.repoActionErrors = {
     ...state.repoActionErrors,
@@ -287,6 +334,16 @@ export function clearRepoActionError(repoId: string) {
   const next = { ...state.repoActionErrors };
   delete next[repoId];
   state.repoActionErrors = next;
+}
+
+export function beginRepoSync(repoId: string) {
+  if (state.syncingRepoIds.includes(repoId)) return;
+  state.syncingRepoIds = [...state.syncingRepoIds, repoId];
+}
+
+export function finishRepoSync(repoId: string) {
+  if (!state.syncingRepoIds.includes(repoId)) return;
+  state.syncingRepoIds = state.syncingRepoIds.filter((id) => id !== repoId);
 }
 
 export function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncResult[]) {
@@ -377,5 +434,6 @@ export function resetWorkspaceStateForTests() {
   state.tasks = [];
   state.languageStatsLoadingRepoIds = [];
   state.refreshingRepoIds = [];
+  state.syncingRepoIds = [];
   deviceFlow.value = null;
 }

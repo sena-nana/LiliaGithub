@@ -8,7 +8,8 @@ import {
   Folder,
   FolderOpen,
 } from "@lucide/vue";
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import {
   getRepoFilePreview,
   listRepoFiles,
@@ -24,6 +25,7 @@ import MarkdownReadme from "./MarkdownReadme.vue";
 const props = defineProps<{
   repoId: string;
   repoPath?: string | null;
+  repoRef?: string | null;
   changes?: readonly RepoChange[];
   targetPath?: string | null;
   targetHash?: string | null;
@@ -40,6 +42,9 @@ const selectedPath = ref<string | null>(null);
 const preview = ref<RepoFilePreview | null>(null);
 const previewLoading = ref(false);
 const previewError = ref<string | null>(null);
+const panelLoader = createLatestAsyncLoader();
+const previewLoader = createLatestAsyncLoader();
+let directoryLoadPromises = new Map<string, Promise<RepoFileTreeEntry[]>>();
 
 const knownMarkdownPaths = computed(() =>
   Array.from(
@@ -77,8 +82,14 @@ onMounted(() => {
   void initializePanel();
 });
 
+onUnmounted(() => {
+  panelLoader.invalidate();
+  previewLoader.invalidate();
+  directoryLoadPromises.clear();
+});
+
 watch(
-  () => props.repoId,
+  () => [props.repoId, props.repoRef],
   () => {
     void initializePanel();
   },
@@ -93,31 +104,41 @@ watch(
 );
 
 async function initializePanel() {
-  directoryEntries.value = {};
-  expandedDirectories.value = [];
-  directoryLoading.value = [];
-  treeLoading.value = true;
-  treeError.value = null;
-  selectedPath.value = null;
-  preview.value = null;
-  previewLoading.value = false;
-  previewError.value = null;
+  const repoId = props.repoId;
+  const repoRef = currentRepoRef();
+  await panelLoader.run(`${repoId}:${repoRef ?? ""}`, async (runId) => {
+    previewLoader.invalidate();
+    directoryLoadPromises.clear();
+    directoryEntries.value = {};
+    expandedDirectories.value = [];
+    directoryLoading.value = [];
+    treeLoading.value = true;
+    treeError.value = null;
+    selectedPath.value = null;
+    preview.value = null;
+    previewLoading.value = false;
+    previewError.value = null;
 
-  try {
-    const rootEntries = await loadDirectory(null, { force: true });
-    if (props.targetPath) {
-      await selectFile(props.targetPath, props.targetHash);
-    } else {
-      const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md");
-      if (readme) {
-        await selectFile(readme.path);
+    try {
+      const rootEntries = await loadDirectory(null, { force: true, repoId, repoRef });
+      if (!panelLoader.isCurrent(runId) || !isCurrentRepoRequest(repoId, repoRef)) return;
+      if (props.targetPath) {
+        await selectFile(props.targetPath, props.targetHash);
+      } else {
+        const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md");
+        if (readme) {
+          await selectFile(readme.path);
+        }
+      }
+    } catch (err) {
+      if (!panelLoader.isCurrent(runId)) return;
+      treeError.value = String(err);
+    } finally {
+      if (panelLoader.isCurrent(runId)) {
+        treeLoading.value = false;
       }
     }
-  } catch (err) {
-    treeError.value = String(err);
-  } finally {
-    treeLoading.value = false;
-  }
+  });
 }
 
 function flattenEntries(
@@ -135,25 +156,43 @@ function flattenEntries(
   return flattened;
 }
 
-async function loadDirectory(parentPath: string | null, options: { force?: boolean } = {}) {
+async function loadDirectory(
+  parentPath: string | null,
+  options: { force?: boolean; repoId?: string; repoRef?: string | null } = {},
+) {
   const key = parentPath ?? ROOT_KEY;
+  const repoId = options.repoId ?? props.repoId;
+  const repoRef = options.repoRef ?? currentRepoRef();
   if (!options.force && key in directoryEntries.value) {
     return directoryEntries.value[key] ?? [];
   }
-  if (directoryLoading.value.includes(key)) {
-    return directoryEntries.value[key] ?? [];
+  const pending = directoryLoadPromises.get(key);
+  if (!options.force && pending) {
+    return pending;
   }
   directoryLoading.value = [...directoryLoading.value, key];
-  try {
-    const entries = await listRepoFiles(props.repoId, parentPath);
-    directoryEntries.value = {
-      ...directoryEntries.value,
-      [key]: entries,
-    };
-    return entries;
-  } finally {
-    directoryLoading.value = directoryLoading.value.filter((item) => item !== key);
-  }
+  let loadPromise!: Promise<RepoFileTreeEntry[]>;
+  loadPromise = (async () => {
+    try {
+      const entries = repoRef
+        ? await listRepoFiles(repoId, parentPath, repoRef)
+        : await listRepoFiles(repoId, parentPath);
+      if (isCurrentRepoRequest(repoId, repoRef)) {
+        directoryEntries.value = {
+          ...directoryEntries.value,
+          [key]: entries,
+        };
+      }
+      return entries;
+    } finally {
+      if (directoryLoadPromises.get(key) === loadPromise) {
+        directoryLoadPromises.delete(key);
+        directoryLoading.value = directoryLoading.value.filter((item) => item !== key);
+      }
+    }
+  })();
+  directoryLoadPromises.set(key, loadPromise);
+  return loadPromise;
 }
 
 async function toggleDirectory(entry: RepoFileTreeEntry) {
@@ -166,35 +205,56 @@ async function toggleDirectory(entry: RepoFileTreeEntry) {
   await loadDirectory(entry.path);
 }
 
-async function expandAncestors(filePath: string) {
+async function expandAncestors(filePath: string, repoId: string) {
+  const repoRef = currentRepoRef();
   const segments = filePath.split("/").slice(0, -1);
   let current = "";
   for (const segment of segments) {
+    if (!isCurrentRepoRequest(repoId, repoRef)) return false;
     current = current ? `${current}/${segment}` : segment;
     if (!expandedDirectories.value.includes(current)) {
       expandedDirectories.value = [...expandedDirectories.value, current];
     }
-    await loadDirectory(current);
+    await loadDirectory(current, { repoId, repoRef });
   }
+  return isCurrentRepoRequest(repoId, repoRef);
 }
 
 async function selectFile(path: string, hash?: string | null) {
+  const repoId = props.repoId;
+  const repoRef = currentRepoRef();
   selectedPath.value = path;
-  previewLoading.value = true;
-  previewError.value = null;
-  try {
-    await expandAncestors(path);
-    preview.value = await getRepoFilePreview(props.repoId, path);
-    if (hash && preview.value.previewKind === "markdown") {
-      await nextTick();
-      markdownReadme.value?.scrollToAnchor(hash);
+  await previewLoader.run(`${repoId}:${repoRef ?? ""}:${path}`, async (runId) => {
+    previewLoading.value = true;
+    previewError.value = null;
+    try {
+      const ancestorsReady = await expandAncestors(path, repoId);
+      if (!ancestorsReady || !previewLoader.isCurrent(runId)) return;
+      const nextPreview = repoRef
+        ? await getRepoFilePreview(repoId, path, repoRef)
+        : await getRepoFilePreview(repoId, path);
+      if (
+        !previewLoader.isCurrent(runId) ||
+        !isCurrentRepoRequest(repoId, repoRef) ||
+        selectedPath.value !== path
+      ) return;
+      preview.value = nextPreview;
+      if (hash && nextPreview.previewKind === "markdown") {
+        await nextTick();
+        if (previewLoader.isCurrent(runId)) {
+          markdownReadme.value?.scrollToAnchor(hash);
+        }
+      }
+    } catch (err) {
+      if (!previewLoader.isCurrent(runId)) return;
+      preview.value = null;
+      previewError.value = String(err);
+    } finally {
+      if (previewLoader.isCurrent(runId)) {
+        previewLoading.value = false;
+      }
     }
-  } catch (err) {
-    preview.value = null;
-    previewError.value = String(err);
-  } finally {
-    previewLoading.value = false;
-  }
+  });
 }
 
 async function openPreviewLink(target: ReadmeLinkTarget) {
@@ -231,6 +291,14 @@ function treeEntryBadge(entry: RepoFileTreeEntry) {
   return fileChangeBadges.value.get(entry.path) ?? null;
 }
 
+function currentRepoRef() {
+  return props.repoRef ?? null;
+}
+
+function isCurrentRepoRequest(repoId: string, repoRef: string | null) {
+  return repoId === props.repoId && repoRef === currentRepoRef();
+}
+
 function previewTitle() {
   if (preview.value) return preview.value.path;
   if (selectedPath.value) return selectedPath.value;
@@ -248,6 +316,10 @@ function absolutePreviewPath() {
   if (!preview.value || !props.repoPath) return null;
   const separator = props.repoPath.includes("\\") ? "\\" : "/";
   return `${props.repoPath.replace(/[\\/]+$/, "")}${separator}${preview.value.path.replace(/\//g, separator)}`;
+}
+
+function repoLocationLabel() {
+  return props.repoPath || props.repoRef || "";
 }
 
 function openPreviewFile() {
@@ -320,7 +392,7 @@ function formatFileSize(size: number) {
         <div class="files-sidebar__card">
           <div class="files-sidebar__head">
             <strong>文件树</strong>
-            <span v-if="repoPath" :title="repoPath">{{ repoPath }}</span>
+            <span v-if="repoLocationLabel()" :title="repoLocationLabel()">{{ repoLocationLabel() }}</span>
           </div>
           <p v-if="treeError" class="error-line files-sidebar__empty">{{ treeError }}</p>
           <p v-else-if="treeLoading" class="muted files-sidebar__empty">正在读取文件树。</p>

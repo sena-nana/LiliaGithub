@@ -4,8 +4,8 @@ import RepoFilesPanel from "../src/components/repo/RepoFilesPanel.vue";
 import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../src/services/workspace/types";
 
 const clientMocks = vi.hoisted(() => ({
-  listRepoFiles: vi.fn<(repoId: string, parentPath?: string | null) => Promise<RepoFileTreeEntry[]>>(),
-  getRepoFilePreview: vi.fn<(repoId: string, path: string) => Promise<RepoFilePreview>>(),
+  listRepoFiles: vi.fn<(repoId: string, parentPath?: string | null, repoRef?: string | null) => Promise<RepoFileTreeEntry[]>>(),
+  getRepoFilePreview: vi.fn<(repoId: string, path: string, repoRef?: string | null) => Promise<RepoFilePreview>>(),
   openPath: vi.fn<(path: string) => Promise<void>>(),
   openUrl: vi.fn<(url: string) => Promise<void>>(),
 }));
@@ -46,6 +46,16 @@ function preview(overrides: Partial<RepoFilePreview> & Pick<RepoFilePreview, "pa
     truncated: false,
     ...overrides,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
+    resolve = next;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
 }
 
 function change(overrides: Partial<RepoChange> & Pick<RepoChange, "path">): RepoChange {
@@ -154,6 +164,108 @@ describe("RepoFilesPanel", () => {
     await waitFor(() => {
       expect(document.querySelector(".files-main__code")?.textContent).toBe("line 1\nline 2");
     });
+  });
+
+  it("快速切换文件时只显示最后选中的预览", async () => {
+    const firstPreview = deferred<RepoFilePreview>();
+    const secondPreview = deferred<RepoFilePreview>();
+    listRepoFiles.mockResolvedValueOnce([file("first.txt"), file("second.txt")]);
+    getRepoFilePreview
+      .mockReturnValueOnce(firstPreview.promise)
+      .mockReturnValueOnce(secondPreview.promise);
+
+    await renderFilesPanel();
+
+    await fireEvent.click(await screen.findByRole("button", { name: /first\.txt/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /second\.txt/ }));
+    secondPreview.resolve(preview({
+      path: "second.txt",
+      name: "second.txt",
+      previewKind: "text",
+      content: "second file",
+      size: 11,
+    }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".files-main__code")?.textContent).toBe("second file");
+    });
+
+    firstPreview.resolve(preview({
+      path: "first.txt",
+      name: "first.txt",
+      previewKind: "text",
+      content: "first file",
+      size: 10,
+    }));
+
+    await waitFor(() => {
+      expect(document.querySelector(".files-main__code")?.textContent).toBe("second file");
+    });
+    expect(screen.queryByText("first file")).toBeNull();
+  });
+
+  it("切换仓库时忽略旧仓库延迟返回的文件树", async () => {
+    const firstRoot = deferred<RepoFileTreeEntry[]>();
+    const secondRoot = deferred<RepoFileTreeEntry[]>();
+    listRepoFiles
+      .mockReturnValueOnce(firstRoot.promise)
+      .mockReturnValueOnce(secondRoot.promise);
+
+    const view = await renderFilesPanel({ repoId: "old-repo" });
+    await view.rerender({ repoId: "new-repo" });
+    secondRoot.resolve([file("new.txt")]);
+
+    expect(await screen.findByRole("button", { name: /new\.txt/ })).toBeInTheDocument();
+
+    firstRoot.resolve([file("old.txt")]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /old\.txt/ })).toBeNull();
+    });
+    expect(listRepoFiles).toHaveBeenNthCalledWith(1, "old-repo", null);
+    expect(listRepoFiles).toHaveBeenNthCalledWith(2, "new-repo", null);
+  });
+
+  it("远程仓库按当前分支读取文件树并隐藏本地打开按钮", async () => {
+    listRepoFiles
+      .mockResolvedValueOnce([file("README.md")])
+      .mockResolvedValueOnce([file("README.md")]);
+    getRepoFilePreview
+      .mockResolvedValueOnce(preview({
+        path: "README.md",
+        name: "README.md",
+        previewKind: "markdown",
+        content: "# Main branch\n",
+        size: 14,
+      }))
+      .mockResolvedValueOnce(preview({
+        path: "README.md",
+        name: "README.md",
+        previewKind: "markdown",
+        content: "# Dev branch\n",
+        size: 13,
+      }));
+
+    const view = await renderFilesPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoPath: null,
+      repoRef: "main",
+    });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Main branch" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "打开文件" })).toBeNull();
+
+    await view.rerender({
+      repoId: "github:sena-nana/remote-repo",
+      repoPath: null,
+      repoRef: "dev",
+    });
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Dev branch" })).toBeInTheDocument();
+    expect(listRepoFiles).toHaveBeenNthCalledWith(1, "github:sena-nana/remote-repo", null, "main");
+    expect(listRepoFiles).toHaveBeenNthCalledWith(2, "github:sena-nana/remote-repo", null, "dev");
+    expect(getRepoFilePreview).toHaveBeenNthCalledWith(1, "github:sena-nana/remote-repo", "README.md", "main");
+    expect(getRepoFilePreview).toHaveBeenNthCalledWith(2, "github:sena-nana/remote-repo", "README.md", "dev");
   });
 
   it("代码文本预览复用 diff token 高亮", async () => {

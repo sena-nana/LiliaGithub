@@ -13,7 +13,7 @@ afterEach(async () => {
   resetRepositoryRuntimeForTests();
   resetWorkspaceStateForTests();
   clearHomeGitHubOverviewSnapshot();
-  resetWorkspaceFallbacksForTests();
+  await resetWorkspaceFallbacksForTests();
   clearGitHubRepoCache();
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");

@@ -17,8 +17,8 @@ import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
-  repoActionErrorForRepo,
-  syncErrorByRepoId,
+  repoSyncIssueForRepo,
+  type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
@@ -93,18 +93,11 @@ const bulkSyncRunningRepoIds = computed(() => {
   return getBulkSyncRunningRepoIds();
 });
 
-const bulkSyncErrorByRepoId = computed(() => {
-  return syncErrorByRepoId();
-});
-
 function isRefreshingRepo(repoId: string) {
   return workspace.state.refreshingRepoIds.includes(repoId);
 }
 
-interface RepoIssue {
-  label: string;
-  title: string;
-}
+type RepoIssue = RepoSyncIssueDisplay;
 
 interface RepoItem {
   repo: RepoSummary;
@@ -126,12 +119,16 @@ interface RepoSection {
 }
 
 function repoIssue(repo: RepoSummary): RepoIssue | null {
-  const syncError = bulkSyncErrorByRepoId.value.get(repo.id);
-  if (syncError) return { label: "同步失败", title: syncError };
-  const actionError = repoActionErrorForRepo(repo.id);
-  if (actionError) return { label: "仓库操作失败", title: actionError };
+  const syncIssue = repoSyncIssueForRepo(repo.id);
+  if (syncIssue) return syncIssue;
   if (repo.conflictCount > 0) {
-    return { label: "存在合并冲突", title: "存在合并冲突，请处理后再同步" };
+    return {
+      label: "存在合并冲突",
+      message: "存在合并冲突，请处理后再同步",
+      retryable: false,
+      retrying: false,
+      updatedAt: 0,
+    };
   }
   return null;
 }
@@ -321,7 +318,16 @@ function repoRowProps(item: RepoItem) {
     refreshing: isRefreshingRepo(item.repo.id),
     launchRunning: workspace.state.launchStatuses[item.repo.id]?.state === "running",
     contextMenu: repoContextMenu(item.repo),
+    onRetry: () => retryRepoPush(item.repo.id),
   };
+}
+
+async function retryRepoPush(repoId: string) {
+  try {
+    await workspace.push(repoId);
+  } catch {
+    /* retry state is kept in recent sync results */
+  }
 }
 
 function focusEditingGroupInput(groupId: string) {

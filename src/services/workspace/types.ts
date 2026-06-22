@@ -4,12 +4,40 @@ export interface WorkspaceSettings {
   workspaceRoot: string | null;
   githubBinding: GitHubBindingMetadata | null;
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
+  repoSyncPreferences: Record<string, RepoSyncPreference>;
   hiddenRepoIds: string[];
   managedRepoIds: string[];
   systemGitRepoIds: string[];
   repoGroups: WorkspaceRepoGroup[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+}
+
+export interface WorkspaceStartupCache {
+  workspaceRoot: string | null;
+  bindingLogin: string | null;
+  reposById: Record<string, CachedRepoSummary>;
+  contributions: CachedContributionResult | null;
+}
+
+export interface CachedRepoSummary {
+  summary: RepoSummary;
+  cachedAt: number;
+}
+
+export interface CachedContributionResult {
+  days: GitHubContributionDay[];
+  meta: GitHubContributionMeta;
+  cachedAt: number;
+}
+
+export interface WorkspaceStartupContributions {
+  days: GitHubContributionDay[];
+  meta: GitHubContributionMeta;
+}
+
+export interface RepoSyncPreference {
+  autoSync: boolean;
 }
 
 export interface WorkspaceRepoGroup {
@@ -128,6 +156,11 @@ export interface GitHubRepoPage {
   nextPage: number | null;
 }
 
+export interface GitHubCommitListOptions {
+  perPage?: number | null;
+  sha?: string | null;
+}
+
 export interface RemoteRepoShortcut {
   fullName: string;
   name: string;
@@ -199,9 +232,32 @@ export interface GitHubIssue {
   body: string | null;
   labels: string[];
   assignees: string[];
+  author?: string | null;
+  milestone?: GitHubIssueMilestone | null;
+  comments?: number;
+  projectItems?: GitHubIssueProjectItem[];
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
+}
+
+export interface GitHubIssueMilestone {
+  number: number;
+  title: string;
+  state?: string | null;
+}
+
+export interface GitHubIssueProjectItem {
+  id: string;
+  title: string;
+}
+
+export interface GitHubIssueFilterMetadata {
+  authors: string[];
+  labels: string[];
+  assignees: string[];
+  milestones: GitHubIssueMilestone[];
+  projects: GitHubIssueProjectItem[];
 }
 
 export interface GitHubPullRequest {
@@ -210,6 +266,11 @@ export interface GitHubPullRequest {
   state: "open" | "closed" | string;
   draft: boolean;
   body: string | null;
+  labels: string[];
+  assignees: string[];
+  milestone?: GitHubIssueMilestone | null;
+  comments?: number;
+  projectItems?: GitHubIssueProjectItem[];
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
@@ -265,6 +326,68 @@ export interface GitHubWorkflowRun {
   htmlUrl: string;
   createdAt: string;
   updatedAt: string;
+  actor?: string | null;
+  headSha?: string | null;
+  runNumber?: number | null;
+  runAttempt?: number | null;
+  workflowId?: number | null;
+  runStartedAt?: string | null;
+}
+
+export interface GitHubWorkflowJobStep {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  number: number;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface GitHubWorkflowJob {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  htmlUrl: string | null;
+  runnerName: string | null;
+  steps: GitHubWorkflowJobStep[];
+}
+
+export interface GitHubWorkflowArtifact {
+  id: number;
+  name: string;
+  sizeInBytes: number;
+  expired: boolean;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
+export interface GitHubWorkflowDefinition {
+  id: number;
+  path: string;
+  refName: string;
+  content: string;
+}
+
+export interface GitHubWorkflowRunDetail {
+  run: GitHubWorkflowRun;
+  jobs: GitHubWorkflowJob[];
+  artifacts: GitHubWorkflowArtifact[];
+  workflow: GitHubWorkflowDefinition | null;
+}
+
+export interface GitHubWorkflowJobLog {
+  jobId: number;
+  content: string;
+}
+
+export interface GitHubWorkflowArtifactEntry {
+  path: string;
+  name: string;
+  kind: "dir" | "file" | string;
+  size: number;
 }
 
 export interface GitHubIssueListOptions {
@@ -273,6 +396,17 @@ export interface GitHubIssueListOptions {
   sort?: "created" | "updated" | "comments" | string | null;
   direction?: "asc" | "desc" | string | null;
   since?: string | null;
+  creator?: string | null;
+  assignee?: string | null;
+  labels?: string[] | null;
+  milestone?: string | number | null;
+  project?: string | null;
+  query?: string | null;
+}
+
+export interface GitHubPullRequestListOptions extends GitHubIssueListOptions {
+  state?: "open" | "closed" | "merged" | "all" | string | null;
+  review?: "none" | "required" | "approved" | "changes_requested" | string | null;
 }
 
 export interface GitHubCreateIssueRequest {
@@ -293,6 +427,7 @@ export interface GitHubUpdateIssueRequest {
 export interface LanguageStat {
   language: string;
   bytes: number;
+  lines: number;
 }
 
 export type RepoWorktreeRole = "standalone" | "main" | "linked";

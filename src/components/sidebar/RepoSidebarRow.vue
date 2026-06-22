@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertCircle, FolderGit2, GitBranch, LoaderCircle } from "@lucide/vue";
+import { AlertCircle, FolderGit2, GitBranch, LoaderCircle, RotateCw } from "@lucide/vue";
 import { RouterLink } from "vue-router";
 import type { ContextMenuItem } from "../../composables/useContextMenu";
 import type { RepoSummary } from "../../services/workspace";
@@ -8,7 +8,9 @@ import { isLinkedWorktree } from "../../utils/repoWorktree";
 
 interface RepoSidebarIssue {
   label: string;
-  title: string;
+  message: string;
+  retryable: boolean;
+  retrying: boolean;
 }
 
 defineProps<{
@@ -21,6 +23,10 @@ defineProps<{
   refreshing: boolean;
   launchRunning: boolean;
   contextMenu: ContextMenuItem[];
+}>();
+
+defineEmits<{
+  retry: [];
 }>();
 </script>
 
@@ -51,12 +57,25 @@ defineProps<{
     </span>
     <span
       v-else-if="issue"
-      class="sb-badge sb-badge--error"
-      :title="issue.title"
+      class="sb-issue"
+      :title="issue.message"
       :aria-label="issue.label"
     >
       <AlertCircle :size="11" aria-hidden="true" />
+      <span>{{ issue.message }}</span>
     </span>
+    <button
+      v-if="issue?.retryable"
+      type="button"
+      class="sb-retry"
+      :title="issue.retrying ? '正在重试' : '重试'"
+      :aria-label="issue.retrying ? '正在重试' : '重试最近同步失败'"
+      :disabled="issue.retrying"
+      @click.prevent.stop="$emit('retry')"
+    >
+      <LoaderCircle v-if="issue.retrying" :size="11" aria-hidden="true" class="sb-spin" />
+      <RotateCw v-else :size="11" aria-hidden="true" />
+    </button>
     <span v-if="launchRunning" class="sb-badge sb-badge--ok">RUN</span>
     <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
     <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
@@ -108,9 +127,47 @@ defineProps<{
   color: var(--ok);
 }
 
-.sb-badge--error {
+.sb-issue {
+  flex: 0 1 auto;
+  min-width: 24px;
+  max-width: min(45%, 180px);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--err);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sb-issue span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-retry {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
   background: var(--err-soft);
   color: var(--err);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sb-retry:hover {
+  background: color-mix(in srgb, var(--err-soft) 72%, var(--bg-hover));
+}
+
+.sb-retry:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .sb-spin {

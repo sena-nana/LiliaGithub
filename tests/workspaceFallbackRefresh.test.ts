@@ -1,13 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   deleteGitHubRepo,
   listGitHubRepos,
   listWorkspaceTasks,
   refreshRepos,
-  setFallbackRepoRemoteSyncOverrideForTests,
+  workspaceFallbackForTests,
 } from "../src/services/workspace";
 
+type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+let workspaceFallback: WorkspaceFallbackForTests;
+
 describe("workspace fallback refresh", () => {
+  beforeEach(async () => {
+    workspaceFallback = await workspaceFallbackForTests();
+  });
+
   it("刷新仓库时使用远端状态同步语义记录成功任务", async () => {
     const repos = await refreshRepos();
     const tasks = await listWorkspaceTasks();
@@ -23,7 +30,7 @@ describe("workspace fallback refresh", () => {
   });
 
   it("远端同步部分失败时保留仓库刷新结果并记录 error 任务", async () => {
-    setFallbackRepoRemoteSyncOverrideForTests((repo) => (
+    workspaceFallback.setFallbackRepoRemoteSyncOverrideForTests((repo) => (
       repo.id === "LiliaGithub" ? "认证失败" : null
     ));
 
@@ -46,7 +53,9 @@ describe("workspace fallback refresh", () => {
     const githubRepos = await listGitHubRepos();
     const localRepos = await refreshRepos();
 
-    expect(githubRepos.items.map((repo) => repo.fullName)).toEqual(["sena-nana/Lilia"]);
+    expect(githubRepos.items.map((repo) => repo.fullName)).toEqual([
+      "sena-nana/Lilia",
+    ]);
     expect(localRepos.map((repo) => repo.id)).toEqual(["LiliaGithub", "Lilia"]);
   });
 });

@@ -6,10 +6,7 @@ import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { resetWorkspaceStateForTests, setRepoActionError, state } from "../src/composables/workspace/state";
-import {
-  setFallbackGitHubBindingStatusForTests,
-  setFallbackGitHubReposErrorForTests,
-} from "../src/services/workspace";
+import { workspaceFallbackForTests } from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
@@ -94,6 +91,17 @@ function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
   return row;
 }
 
+function repoStatusRowForText(container: HTMLElement, text: string): HTMLElement {
+  const label = Array.from(container.querySelectorAll(".repo-status-row__name")).find(
+    (node) => node.textContent === text,
+  );
+  const row = label?.closest(".repo-status-row");
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`未找到首页仓库状态行: ${text}`);
+  }
+  return row;
+}
+
 function sidebarGroupForText(container: HTMLElement, name: string, count: number): HTMLElement {
   const text = `${name}${count}`;
   const group = Array.from(container.querySelectorAll(".sb-group-toggle")).find(
@@ -106,6 +114,8 @@ function sidebarGroupForText(container: HTMLElement, name: string, count: number
 }
 
 type AppShellView = Awaited<ReturnType<typeof renderAppShell>>;
+type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+let workspaceFallback: WorkspaceFallbackForTests;
 
 async function createSidebarRepoGroup(view: AppShellView, name: string) {
   await fireEvent.click(view.getByRole("button", { name: "创建仓库分组" }));
@@ -133,7 +143,8 @@ async function moveSidebarRepoToGroup(view: AppShellView, repoName: string, grou
   await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  workspaceFallback = await workspaceFallbackForTests();
   resetWorkspaceStateForTests();
   closeContextMenu();
   installContextMenu();
@@ -428,6 +439,64 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("首页仓库行显示最近同步失败并提供就地重试", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.recentSync = {
+      preview: {
+        operation: "sync",
+        eligible: [{ repo: state.repos[0], reason: "有本地提交待推送" }],
+        blocked: [],
+        warnings: [],
+      },
+      results: [
+        {
+          repoId: "LiliaGithub",
+          status: "error",
+          message: "认证失败",
+          summary: null,
+        },
+      ],
+      retryingRepoIds: [],
+      updatedAt: 2,
+    };
+
+    await waitFor(() => {
+      const row = repoStatusRowForText(view.container, "sena-nana/LiliaGithub");
+      expect(within(row).getByLabelText("最近同步失败")).toHaveAttribute("title", "认证失败");
+      expect(within(row).getByText("最近同步失败：认证失败")).toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: "重试" })).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(repoStatusRowForText(view.container, "sena-nana/LiliaGithub")).getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      const row = repoStatusRowForText(view.container, "sena-nana/LiliaGithub");
+      expect(within(row).queryByLabelText("最近同步失败")).toBeNull();
+      expect(within(row).queryByRole("button", { name: "重试" })).toBeNull();
+    });
+  });
+
+  it("侧边栏显示自动同步运行中的仓库行状态", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.syncingRepoIds = ["LiliaGithub"];
+
+    await waitFor(() => {
+      const row = sidebarRowForText(view.container, "LiliaGithub");
+      expect(within(row).getByLabelText("正在同步")).toBeInTheDocument();
+      expect(within(row).queryByLabelText("同步失败")).not.toBeInTheDocument();
+    });
+  });
+
   it("侧边栏显示最近一次同步失败结果", async () => {
     const view = await renderAppShell("/repos/LiliaGithub");
 
@@ -455,9 +524,30 @@ describe("AppShell sidebar", () => {
     };
 
     await waitFor(() => {
-      expect(
-        within(sidebarRowForText(view.container, "LiliaGithub")).getByLabelText("同步失败"),
-      ).toHaveAttribute("title", "认证失败");
+      const row = sidebarRowForText(view.container, "LiliaGithub");
+      expect(within(row).getByLabelText("最近同步失败")).toHaveAttribute("title", "认证失败");
+      expect(within(row).getByText("认证失败")).toBeInTheDocument();
+      expect(within(row).getByRole("button", { name: "重试最近同步失败" })).toBeInTheDocument();
+    });
+  });
+
+  it("侧边栏直接显示自动同步跳过原因且不提供重试", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    setRepoActionError("LiliaGithub", "存在未提交变更，已跳过自动同步");
+
+    await waitFor(() => {
+      const row = sidebarRowForText(view.container, "LiliaGithub");
+      expect(within(row).getByLabelText("自动同步已跳过")).toHaveAttribute(
+        "title",
+        "存在未提交变更，已跳过自动同步",
+      );
+      expect(within(row).getByText("存在未提交变更，已跳过自动同步")).toBeInTheDocument();
+      expect(within(row).queryByRole("button", { name: "重试最近同步失败" })).toBeNull();
     });
   });
 
@@ -636,7 +726,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("GitHub 仓库列表绑定失效时提供重新绑定入口", async () => {
-    setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
+    workspaceFallback.setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -659,7 +749,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("未绑定 GitHub 时首页保持初始化页且不显示总览操作卡片", async () => {
-    setFallbackGitHubBindingStatusForTests({
+    workspaceFallback.setFallbackGitHubBindingStatusForTests({
       state: "unbound",
       clientIdConfigured: true,
       clientIdSource: "bundled",
@@ -673,7 +763,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("首页初始绑定会自动复制授权码并提示已复制", async () => {
-    setFallbackGitHubBindingStatusForTests({
+    workspaceFallback.setFallbackGitHubBindingStatusForTests({
       state: "unbound",
       clientIdConfigured: true,
       clientIdSource: "bundled",

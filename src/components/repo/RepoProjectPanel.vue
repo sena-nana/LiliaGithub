@@ -1,21 +1,18 @@
 <script setup lang="ts">
 import { AnsiUp } from "ansi_up";
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 import {
-  Check,
-  CircleDot,
-  CircleOff,
+  AlertCircle,
+  ArrowLeft,
   Eye,
   ExternalLink,
   GitFork,
-  GitMerge,
   GitPullRequest,
-  ListFilter,
   LoaderCircle,
   Pencil,
   Plus,
-  RotateCcw,
+  RotateCw,
   Save,
   Scale,
   Settings2,
@@ -24,23 +21,35 @@ import {
   X,
 } from "@lucide/vue";
 import CommitDetailCard from "./CommitDetailCard.vue";
+import Dropdown from "../Dropdown.vue";
 import MarkdownReadme from "./MarkdownReadme.vue";
 import RepoChangesPanel from "./RepoChangesPanel.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoHistoryPanel from "./RepoHistoryPanel.vue";
+import RepoIssuesPanel from "./RepoIssuesPanel.vue";
 import RepoTopicEditor from "./RepoTopicEditor.vue";
+import {
+  blankPullRequestPanelFilters,
+  type PullRequestPanelFilters,
+  type PullRequestState,
+} from "./pullRequestPanelTypes";
+import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
+import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
   createGitHubPullRequest,
   getRepoFilePreview,
+  getGitHubIssueFilterMetadata,
   getGitHubRepoManagement,
   listRepoFiles,
   listGitHubIssues,
   listGitHubPullRequestChecks,
   listGitHubPullRequests,
   listGitHubWorkflowRuns,
+  listGitHubIssueAssignees,
+  listGitHubIssueLabels,
   mergeGitHubPullRequest,
   updateGitHubIssue,
   updateGitHubPullRequest,
@@ -52,8 +61,11 @@ import {
 import type {
   CommitSummary,
   GitHubIssue,
+  GitHubIssueFilterMetadata,
+  GitHubIssueListOptions,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
@@ -63,43 +75,154 @@ import type {
   RepoConflictFile,
   RepoConflictState,
   RepoFilePreview,
+  RepoSummary,
 } from "../../services/workspace/types";
-import { isWorkflowRunFailure, workflowRunStatusText, workflowRunStatusTone } from "../../utils/repoDisplay";
-import { isLinkedWorktree } from "../../utils/repoWorktree";
+import {
+  hasRepoTag,
+  type RepoCapability,
+  type RepoContext,
+} from "../../utils/repoContext";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { repoRoute, type RepoRouteTab } from "../../utils/repoRoutes";
+import {
+  blankIssueTemplate,
+  blankPullRequestTemplate,
+  buildIssueTemplateBody,
+  createIssueTemplateAnswers,
+  issueTemplateRequiredFieldsSatisfied,
+  loadGitHubIssueTemplates,
+  loadGitHubPullRequestTemplates,
+} from "../../utils/githubTemplates";
+import type {
+  GitHubIssueTemplate,
+  GitHubIssueTemplateAnswers,
+  GitHubIssueTemplateField,
+  GitHubPullRequestTemplate,
+} from "../../utils/githubTemplates";
 
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
 type ProjectContentMode = "launch" | ProjectTab | GitTab;
+type IssueState = "open" | "closed" | "all";
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
   label: string;
 };
+type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
+type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
 type GitHubAccessSection = "Issues" | "Pull Requests" | "Actions" | "Settings";
 type GitHubAccessUnavailable = {
   title: string;
   reason: string;
 };
+type ProjectSidebarError = {
+  key: string;
+  title: string;
+  message: string;
+  retry?: "sync";
+  retrying?: boolean;
+};
+type IssuePanelFilters = {
+  creator: string | null;
+  assignee: string | null;
+  labels: string[];
+  milestone: string | number | null;
+  project: string | null;
+  sort: "created" | "updated" | "comments";
+  direction: "asc" | "desc";
+  query: string;
+};
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
+type SharedPanelFilters = Pick<
+  IssuePanelFilters,
+  "creator" | "assignee" | "labels" | "milestone" | "project" | "sort" | "direction" | "query"
+>;
+type RouteFilterKeys = {
+  state: string;
+  query: string;
+  creator: string;
+  assignee: string;
+  labels: string;
+  milestone: string;
+  project: string;
+  sort: string;
+  direction: string;
+  review?: string;
+};
+
+const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
+  authors: [],
+  labels: [],
+  assignees: [],
+  milestones: [],
+  projects: [],
+});
+
+const issueStates = ["open", "closed", "all"] as const;
+const pullRequestStates = ["open", "closed", "merged"] as const;
+const listSorts = ["created", "updated", "comments"] as const;
+const listDirections = ["asc", "desc"] as const;
+const pullRequestReviews = ["none", "required", "approved", "changes_requested"] as const;
+const issueRouteKeys: RouteFilterKeys = {
+  state: "issueState",
+  query: "issueQ",
+  creator: "issueCreator",
+  assignee: "issueAssignee",
+  labels: "issueLabels",
+  milestone: "issueMilestone",
+  project: "issueProject",
+  sort: "issueSort",
+  direction: "issueDirection",
+};
+const pullRequestRouteKeys: RouteFilterKeys = {
+  state: "pullState",
+  query: "pullQ",
+  creator: "pullCreator",
+  assignee: "pullAssignee",
+  labels: "pullLabels",
+  milestone: "pullMilestone",
+  project: "pullProject",
+  sort: "pullSort",
+  direction: "pullDirection",
+  review: "pullReview",
+};
+
+const blankIssuePanelFilters = (): IssuePanelFilters => ({
+  creator: null,
+  assignee: null,
+  labels: [],
+  milestone: null,
+  project: null,
+  sort: "created",
+  direction: "desc",
+  query: "",
+});
+
+const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const README_PATH = "README.md";
+const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
+const RepoActionsPanel = defineAsyncComponent(() => import("./RepoActionsPanel.vue"));
+const RepoPullRequestsPanel = defineAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
 
 const props = defineProps<{
   repoId: string;
   repoTitle?: string;
   repoFullName: string | null | undefined;
   repoPath: string | null | undefined;
+  repoSummary?: RepoSummary | null;
+  repoContext: RepoContext;
   launchConfig: ProjectLaunchConfig | null;
   launchLogs: readonly ProjectLaunchLog[];
   launchError?: string | null;
+  actionError?: string | null;
+  repoActionError?: string | null;
+  recentSyncError?: { message: string; retrying: boolean } | null;
   launchTerminalVisible: boolean;
   actionRunning: boolean;
   launchRunning: boolean;
-  remoteOnly?: boolean;
-  usingSystemGit?: boolean;
   activeGitTab: RepoRouteTab;
   changes: readonly RepoChange[];
   previewChange: RepoChange | null;
@@ -127,6 +250,7 @@ const props = defineProps<{
   projectIssueNumber?: number | null;
   projectPullRequestNumber?: number | null;
   projectRunId?: number | null;
+  projectJobId?: number | null;
   projectRefreshToken?: number;
 }>();
 
@@ -156,11 +280,13 @@ const emit = defineEmits<{
   acceptConflict: [side: "ours" | "theirs"];
   markConflictResolved: [];
   openConflictFolder: [];
+  retrySync: [];
 }>();
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
-const linkedWorktree = computed(() => isLinkedWorktree(workspace.repoById(props.repoId)));
+const resolvedRepoContext = computed(() => props.repoContext);
+const linkedWorktree = computed(() => hasRepoTag(resolvedRepoContext.value, "linked-worktree"));
 
 const activeSection = ref<ProjectContentMode>(routeTabToSection(props.activeGitTab));
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
@@ -173,26 +299,24 @@ const readmeError = ref<string | null>(null);
 const githubLoading = ref(false);
 const githubError = ref<string | null>(null);
 const pulls = ref<GitHubPullRequest[]>([]);
-const pullState = ref<"open" | "closed" | "all">("open");
 const pullChecks = ref<Record<number, GitHubPullRequestCheck[]>>({});
 const pullsLoading = ref(false);
 const pullChecksLoading = ref(false);
-const pullsLoadedState = ref<"open" | "closed" | "all" | null>(null);
+const pullsLoadedKey = ref<string | null>(null);
 const focusedPullRequestNumber = ref<number | null>(null);
-const creatingPullRequest = ref(false);
-const updatingPullRequest = ref(false);
 const pullRequestTitle = ref("");
 const pullRequestBody = ref("");
 const pullRequestBase = ref("");
 const pullRequestHead = ref("");
 const pullRequestDraft = ref(false);
+const pullCreateView = ref(false);
+const pullRequestTemplates = ref<GitHubPullRequestTemplate[]>([]);
+const pullRequestTemplateKey = ref(blankPullRequestTemplate().key);
+const pullRequestTemplatesLoading = ref(false);
+const pullRequestTemplatesLoadedRepo = ref<string | null>(null);
 const pullRequestMergeMethod = ref<"merge" | "squash" | "rebase">("merge");
 const actionsLoading = ref(false);
 const actionsError = ref<string | null>(null);
-const savingSettings = ref(false);
-const deletingRepo = ref(false);
-const deletingLocalRepo = ref(false);
-const creatingIssue = ref(false);
 const remoteDeleted = ref(false);
 const deleteDialogTarget = ref<DeleteTarget | null>(null);
 const deleteConfirmInput = ref("");
@@ -200,39 +324,70 @@ const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
 const issues = ref<GitHubIssue[]>([]);
-const issuesLoadedState = ref<"open" | "closed" | "all" | null>(null);
+const issuesLoadedKey = ref<string | null>(null);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
 const actionsLoaded = ref(false);
 const aboutEditing = ref(false);
 const aboutTopicDraft = ref("");
+const aboutTopicList = ref<HTMLElement | null>(null);
+const aboutTopicMeasureList = ref<HTMLElement | null>(null);
+const aboutTopicsExpanded = ref(false);
+const collapsedAboutTopicCount = ref(0);
 const settingsTopicDraft = ref("");
-const issueState = ref<"open" | "closed" | "all">("open");
+const issueState = ref<IssueState>(issueStateFromRoute());
 const issueTitle = ref("");
 const issueBody = ref("");
-const issueLabels = ref("");
-const issueAssignees = ref("");
+const issueLabels = ref<string[]>([]);
+const issueAssignees = ref<string[]>([]);
+const issueCreateView = ref(false);
+const issueTemplates = ref<GitHubIssueTemplate[]>([]);
+const issueTemplateKey = ref(blankIssueTemplate().key);
+const issueTemplateAnswers = ref<GitHubIssueTemplateAnswers>({});
+const issueTemplatesLoading = ref(false);
+const issueTemplatesLoadedRepo = ref<string | null>(null);
+const remoteIssueLabels = ref<string[]>([]);
+const remoteIssueAssignees = ref<string[]>([]);
+const issueMetadataLoading = ref(false);
+const issueMetadataLoadedRepo = ref<string | null>(null);
+const issueFilterMetadata = ref<GitHubIssueFilterMetadata>(emptyIssueFilterMetadata());
+const issueFilterMetadataLoading = ref(false);
+const issueFilterMetadataLoadedRepo = ref<string | null>(null);
+const issuePanelFilters = ref<IssuePanelFilters>(issuePanelFiltersFromRoute());
+const pullRequestPanelFilters = ref<PullRequestPanelFilters>(pullRequestPanelFiltersFromRoute());
+const pullState = ref<PullRequestState>(pullRequestStateFromRoute());
 const editingIssueNumber = ref<number | null>(null);
 const editingIssueTitle = ref("");
 const editingIssueBody = ref("");
 const editingIssueLabels = ref("");
 const editingIssueAssignees = ref("");
-const updatingIssue = ref(false);
 const focusedIssueNumber = ref<number | null>(null);
 const focusedRunId = ref<number | null>(null);
-let githubLoadRunId = 0;
-let issueLoadRunId = 0;
-let pullLoadRunId = 0;
-let pullChecksRunId = 0;
-let actionsLoadRunId = 0;
+const focusedJobId = ref<number | null>(null);
 let suppressIssueStateReload = false;
 let suppressPullStateReload = false;
-let readmeLoadPromise: Promise<void> | null = null;
-let settingsLoadPromise: Promise<void> | null = null;
-let issuesLoadPromise: Promise<void> | null = null;
-let issuesLoadState: "open" | "closed" | "all" | null = null;
-let pullsLoadPromise: Promise<void> | null = null;
-let pullsLoadState: "open" | "closed" | "all" | null = null;
-let actionsLoadPromise: Promise<void> | null = null;
+const readmeLoader = createLatestAsyncLoader();
+const settingsLoader = createLatestAsyncLoader();
+const issuesLoader = createLatestAsyncLoader();
+const pullsLoader = createLatestAsyncLoader();
+const pullChecksLoader = createLatestAsyncLoader();
+const actionsLoader = createLatestAsyncLoader();
+const settingsSaveTracker = createPendingTaskTracker();
+const issueCreateTracker = createPendingTaskTracker();
+const issueUpdateTracker = createPendingTaskTracker();
+const pullCreateTracker = createPendingTaskTracker();
+const pullUpdateTracker = createPendingTaskTracker();
+const remoteDeleteTracker = createPendingTaskTracker();
+const localDeleteTracker = createPendingTaskTracker();
+const savingSettings = settingsSaveTracker.running;
+const creatingIssue = issueCreateTracker.running;
+const updatingIssue = issueUpdateTracker.running;
+const creatingPullRequest = pullCreateTracker.running;
+const updatingPullRequest = pullUpdateTracker.running;
+const deletingRepo = remoteDeleteTracker.running;
+const deletingLocalRepo = localDeleteTracker.running;
+let repoMutationGeneration = 0;
+let githubMutationGeneration = 0;
+let aboutTopicResizeObserver: ResizeObserver | null = null;
 
 const settingsForm = reactive({
   description: "",
@@ -285,23 +440,38 @@ const mergeSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hi
   { key: "deleteBranchOnMerge", label: "合并后删分支", hint: "合并 Pull Request 后删除来源分支。" },
 ];
 
-const isSystemGitBlocked = computed(() => props.usingSystemGit === true && !props.remoteOnly);
 const githubAuthLoading = computed(() => workspace.state.authLoading);
 
 const githubUnavailableMessage = computed(() => {
   if (remoteDeleted.value) return "GitHub 远端仓库已删除，本地目录仍保留。";
-  if (isSystemGitBlocked.value) return "系统 Git 下暂不获取 GitHub 权限内容。";
-  if (!props.repoFullName) return "当前仓库没有 GitHub 远端，Issues、Actions 和 Settings 不可用。";
+  if (!resolvedRepoContext.value.capabilities.issues.available) {
+    return resolvedRepoContext.value.capabilities.issues.reason ?? "GitHub 功能暂不可用。";
+  }
   return null;
 });
-const issuesAccessUnavailable = computed(() => githubAccessUnavailable("Issues", githubError.value));
-const pullsAccessUnavailable = computed(() => githubAccessUnavailable("Pull Requests", githubError.value));
-const actionsAccessUnavailable = computed(() => githubAccessUnavailable("Actions", actionsError.value));
-const settingsAccessUnavailable = computed(() => githubAccessUnavailable("Settings", githubError.value));
+const issuesAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Issues", githubError.value, resolvedRepoContext.value.capabilities.issues)
+);
+const pullsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Pull Requests", githubError.value, resolvedRepoContext.value.capabilities.pulls)
+);
+const actionsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Actions", actionsError.value, resolvedRepoContext.value.capabilities.actions)
+);
+const settingsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Settings", githubError.value, resolvedRepoContext.value.capabilities.settings)
+);
 const aboutDescription = computed(() => settings.value?.description?.trim() ?? "");
 const aboutHomepage = computed(() => settings.value?.homepage?.trim() ?? "");
 const aboutHomepageHref = computed(() => normalizedExternalUrl(aboutHomepage.value));
 const aboutTopics = computed(() => settings.value?.topics ?? []);
+const aboutTopicsOverflowing = computed(() =>
+  collapsedAboutTopicCount.value > 0 && collapsedAboutTopicCount.value < aboutTopics.value.length
+);
+const displayedAboutTopics = computed(() => {
+  if (!aboutTopicsOverflowing.value || aboutTopicsExpanded.value) return aboutTopics.value;
+  return aboutTopics.value.slice(0, collapsedAboutTopicCount.value || aboutTopics.value.length);
+});
 const aboutLicenseText = computed(() => {
   const license = settings.value?.license;
   if (!license) return "";
@@ -342,6 +512,7 @@ const deleteDialogTitle = computed(() =>
   deleteDialogTarget.value === "remote" ? "删除 GitHub 仓库" : localDeleteTitle.value,
 );
 const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.value);
+const languageStatsLoading = computed(() => workspace.state.languageStatsLoadingRepoIds.includes(props.repoId));
 const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
 const projectSections: readonly ProjectSectionConfig[] = [
   { key: "issues", label: "Issues" },
@@ -349,21 +520,35 @@ const projectSections: readonly ProjectSectionConfig[] = [
   { key: "actions", label: "Actions" },
   { key: "settings", label: "Settings" },
 ];
-const githubStateFilters: readonly { value: "open" | "closed" | "all"; label: string }[] = [
-  { value: "open", label: "Open" },
-  { value: "closed", label: "Closed" },
-  { value: "all", label: "All" },
-];
-const mergeMethodOptions: readonly { value: "merge" | "squash" | "rebase"; label: string }[] = [
-  { value: "merge", label: "Merge" },
-  { value: "squash", label: "Squash" },
-  { value: "rebase", label: "Rebase" },
-];
-const canUseLaunchWorkflow = computed(() => !props.remoteOnly);
+const canUseLaunchWorkflow = computed(() => resolvedRepoContext.value.capabilities.launch.available);
+const canShowChanges = computed(() => resolvedRepoContext.value.capabilities.changes.available);
+const historyReadOnly = computed(() => !resolvedRepoContext.value.capabilities.commit.available);
+const canDeleteLocal = computed(() => resolvedRepoContext.value.capabilities.deleteLocal.available);
+const canDeleteRemote = computed(() => resolvedRepoContext.value.capabilities.deleteRemote.available);
 const showCommitDetail = computed(() =>
-  !props.remoteOnly && activeSection.value === "history" && Boolean(props.selectedCommitHash),
+  activeSection.value === "history" && Boolean(props.selectedCommitHash),
 );
+const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
+  const errors: ProjectSidebarError[] = [];
+  if (props.recentSyncError) {
+    errors.push({
+      key: "recent-sync",
+      title: "最近同步失败",
+      message: props.recentSyncError.message,
+      retry: "sync",
+      retrying: props.recentSyncError.retrying,
+    });
+  }
+  if (props.actionError) errors.push({ key: "action", title: "操作失败", message: props.actionError });
+  if (props.repoActionError) errors.push({ key: "repo-action", title: "仓库错误", message: props.repoActionError });
+  if (readmeError.value) errors.push({ key: "readme", title: "README 读取失败", message: readmeError.value });
+  if (githubError.value) errors.push({ key: "github", title: "GitHub 请求失败", message: githubError.value });
+  if (actionsError.value) errors.push({ key: "actions", title: "Actions 读取失败", message: actionsError.value });
+  return errors;
+});
+const hasProjectSidebarErrors = computed(() => projectSidebarErrors.value.length > 0);
 const showProjectSidebar = computed(() =>
+  hasProjectSidebarErrors.value ||
   activeSection.value === "readme" ||
   activeSection.value === "issues" ||
   activeSection.value === "pulls" ||
@@ -371,23 +556,135 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "settings",
 );
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
-const focusedPullRequest = computed(() =>
-  pulls.value.find((pull) => pull.number === focusedPullRequestNumber.value) ?? null,
+const displayedIssueTemplates = computed(() => [blankIssueTemplate(), ...issueTemplates.value]);
+const issueTemplateOptions = computed(() =>
+  displayedIssueTemplates.value.map((template) => ({
+    value: template.key,
+    label: template.name,
+    hint: template.kind === "blank" ? undefined : template.description,
+  }))
 );
-const focusedPullChecks = computed(() =>
-  focusedPullRequestNumber.value ? (pullChecks.value[focusedPullRequestNumber.value] ?? []) : [],
+const selectedIssueTemplate = computed(() =>
+  displayedIssueTemplates.value.find((template) => template.key === issueTemplateKey.value) ??
+  displayedIssueTemplates.value[0]
+);
+const issueTemplateFields = computed(() =>
+  selectedIssueTemplate.value.fields.filter((field) => field.type !== "markdown")
+);
+const issueTemplateMarkdownFields = computed(() =>
+  selectedIssueTemplate.value.fields.filter((field) => field.type === "markdown")
+);
+const issueLabelOptions = computed(() =>
+  uniqueSorted([
+    ...remoteIssueLabels.value,
+    ...issueLabels.value,
+  ])
+);
+const issueAssigneeOptions = computed(() =>
+  uniqueSorted([
+    ...remoteIssueAssignees.value,
+    ...issueAssignees.value,
+  ])
+);
+const issueLabelSummary = computed(() => multiSelectSummary(issueLabels.value, "无标签"));
+const issueAssigneeSummary = computed(() => multiSelectSummary(issueAssignees.value, "未分配"));
+const issueLabelDropdownOptions = computed(() => stringOptions(issueLabelOptions.value));
+const issueAssigneeDropdownOptions = computed(() => stringOptions(issueAssigneeOptions.value));
+const issueListOptions = computed<GitHubIssueListOptions>(() => ({
+  state: issueState.value,
+  perPage: 100,
+  sort: issuePanelFilters.value.sort,
+  direction: issuePanelFilters.value.direction,
+  creator: issuePanelFilters.value.creator,
+  assignee: issuePanelFilters.value.assignee,
+  labels: issuePanelFilters.value.labels,
+  milestone: issuePanelFilters.value.milestone,
+  project: issuePanelFilters.value.project,
+  query: issuePanelFilters.value.query,
+}));
+const issueListKey = computed(() => JSON.stringify(issueListOptions.value));
+const pullListOptions = computed<GitHubPullRequestListOptions>(() => ({
+  state: pullState.value,
+  perPage: 100,
+  sort: pullRequestPanelFilters.value.sort,
+  direction: pullRequestPanelFilters.value.direction,
+  creator: pullRequestPanelFilters.value.creator,
+  assignee: pullRequestPanelFilters.value.assignee,
+  labels: pullRequestPanelFilters.value.labels,
+  milestone: pullRequestPanelFilters.value.milestone,
+  project: pullRequestPanelFilters.value.project,
+  review: pullRequestPanelFilters.value.review,
+  query: pullRequestPanelFilters.value.query,
+}));
+const pullListKey = computed(() => JSON.stringify(pullListOptions.value));
+const canSubmitIssueCreate = computed(() =>
+  Boolean(props.repoFullName) &&
+  !creatingIssue.value &&
+  issueTitle.value.trim().length > 0 &&
+  issueTemplateRequiredFieldsSatisfied(selectedIssueTemplate.value, issueTemplateAnswers.value)
+);
+const displayedPullRequestTemplates = computed(() => [blankPullRequestTemplate(), ...pullRequestTemplates.value]);
+const pullRequestTemplateOptions = computed(() =>
+  displayedPullRequestTemplates.value.map((template) => ({
+    value: template.key,
+    label: template.name,
+    hint: template.kind === "blank" ? undefined : template.description,
+  }))
+);
+const selectedPullRequestTemplate = computed(() =>
+  displayedPullRequestTemplates.value.find((template) => template.key === pullRequestTemplateKey.value) ??
+  displayedPullRequestTemplates.value[0]
+);
+const canSubmitPullRequestCreate = computed(() =>
+  Boolean(props.repoFullName) &&
+  !creatingPullRequest.value &&
+  pullRequestTitle.value.trim().length > 0 &&
+  pullRequestHead.value.trim().length > 0 &&
+  pullRequestBase.value.trim().length > 0
 );
 
 function isProjectSectionActive(section: ProjectContentMode) {
   return activeSection.value === section;
 }
-const projectTab = computed<ProjectTab>(() => normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
+const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
+const routedIssueFilterState = computed(() => JSON.stringify({
+  state: issueStateFromRoute(),
+  filters: issuePanelFiltersFromRoute(),
+}));
+const routedPullRequestFilterState = computed(() => JSON.stringify({
+  state: pullRequestStateFromRoute(),
+  filters: pullRequestPanelFiltersFromRoute(),
+}));
 
 onMounted(() => {
   void applyProjectRouteState();
+  prefetchGitHubProjectMetadata();
+  measureAboutTopicOverflow();
+  window.addEventListener("resize", measureAboutTopicOverflow);
 });
+
+onBeforeUnmount(() => {
+  aboutTopicResizeObserver?.disconnect();
+  aboutTopicResizeObserver = null;
+  window.removeEventListener("resize", measureAboutTopicOverflow);
+});
+
+watch(aboutTopicMeasureList, (measureList) => {
+  aboutTopicResizeObserver?.disconnect();
+  aboutTopicResizeObserver = null;
+  if (measureList && typeof ResizeObserver !== "undefined") {
+    aboutTopicResizeObserver = new ResizeObserver(measureAboutTopicOverflow);
+    aboutTopicResizeObserver.observe(measureList);
+  }
+  measureAboutTopicOverflow();
+}, { flush: "post" });
+
+watch([aboutTopics, () => props.repoFullName], () => {
+  aboutTopicsExpanded.value = false;
+  measureAboutTopicOverflow();
+}, { flush: "post" });
 
 watch(() => props.repoId, () => {
   resetProjectSectionState();
@@ -400,6 +697,7 @@ watch(() => props.repoFullName, () => {
   remoteDeleted.value = false;
   resetGitHubSectionState();
   closeDeleteDialog();
+  prefetchGitHubProjectMetadata();
   if (props.activeGitTab === "repo" && !routedProjectTab.value && isGitHubProjectSection(currentSection)) {
     activeSection.value = currentSection;
     void ensureSectionData(currentSection);
@@ -408,8 +706,8 @@ watch(() => props.repoFullName, () => {
   void applyProjectRouteState();
 });
 
-watch(() => props.usingSystemGit, (usingSystemGit) => {
-  if (usingSystemGit && !props.remoteOnly) {
+watch(() => resolvedRepoContext.value.capabilities.issues.available, (githubAvailable) => {
+  if (!githubAvailable) {
     clearBlockedGitHubState();
   }
 });
@@ -439,8 +737,12 @@ watch(pullState, () => {
   }
 });
 
+watch([routedIssueFilterState, routedPullRequestFilterState], () => {
+  applyRoutedListFilters();
+});
+
 watch(
-  [routedProjectTab, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId],
+  [routedProjectTab, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId, () => props.projectJobId],
   () => {
     void applyProjectRouteState();
   },
@@ -462,6 +764,62 @@ function normalizeProjectTab(value: unknown): ProjectTab | null {
   return null;
 }
 
+function routeStringValue(value: unknown) {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (typeof next !== "string") return null;
+  const trimmed = next.trim();
+  return trimmed || null;
+}
+
+function routeStringList(value: unknown) {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return values
+    .flatMap((item) => item.split(","))
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function routeEnum<T extends string>(value: unknown, allowed: readonly T[]) {
+  const next = routeStringValue(value);
+  return next && (allowed as readonly string[]).includes(next) ? next as T : null;
+}
+
+function issueStateFromRoute(): IssueState {
+  return routeEnum(route.query[issueRouteKeys.state], issueStates) ?? "open";
+}
+
+function pullRequestStateFromRoute(): PullRequestState {
+  return routeEnum(route.query[pullRequestRouteKeys.state], pullRequestStates) ?? "open";
+}
+
+function sharedPanelFiltersFromRoute<T extends SharedPanelFilters>(
+  keys: RouteFilterKeys,
+  defaults: T,
+): T {
+  return {
+    ...defaults,
+    creator: routeStringValue(route.query[keys.creator]),
+    assignee: routeStringValue(route.query[keys.assignee]),
+    labels: routeStringList(route.query[keys.labels]),
+    milestone: routeStringValue(route.query[keys.milestone]),
+    project: routeStringValue(route.query[keys.project]),
+    sort: routeEnum(route.query[keys.sort], listSorts) ?? defaults.sort,
+    direction: routeEnum(route.query[keys.direction], listDirections) ?? defaults.direction,
+    query: routeStringValue(route.query[keys.query]) ?? "",
+  };
+}
+
+function issuePanelFiltersFromRoute(): IssuePanelFilters {
+  return sharedPanelFiltersFromRoute(issueRouteKeys, blankIssuePanelFilters());
+}
+
+function pullRequestPanelFiltersFromRoute(): PullRequestPanelFilters {
+  return {
+    ...sharedPanelFiltersFromRoute(pullRequestRouteKeys, blankPullRequestPanelFilters()),
+    review: routeEnum(route.query[pullRequestRouteKeys.review ?? ""], pullRequestReviews),
+  };
+}
+
 function normalizePositiveNumber(value: unknown) {
   const next = Array.isArray(value) ? value[0] : value;
   if (typeof next !== "string") return null;
@@ -471,7 +829,7 @@ function normalizePositiveNumber(value: unknown) {
 }
 
 function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
-  if (tab === "repo") return normalizeProjectTab(props.projectTab) ?? "readme";
+  if (tab === "repo") return normalizeProjectTab(route.query.projectTab) ?? normalizeProjectTab(props.projectTab) ?? "readme";
   if (tab === "run") return "launch";
   return tab;
 }
@@ -482,6 +840,198 @@ function isGitHubProjectSection(section: ProjectContentMode) {
 
 function hasIssue(issueNumber: number) {
   return issues.value.some((issue) => issue.number === issueNumber);
+}
+
+function setIssueState(value: "open" | "closed" | "all") {
+  if (issueState.value === value) return;
+  issueState.value = value;
+  void pushProjectTabRoute("issues");
+}
+
+function setIssuePanelFilters(filters: IssuePanelFilters) {
+  if (sameIssuePanelFilters(issuePanelFilters.value, filters)) return;
+  issuePanelFilters.value = {
+    ...filters,
+    labels: [...filters.labels],
+  };
+  if (activeSection.value === "issues") {
+    void loadIssues();
+  }
+  void pushProjectTabRoute("issues");
+}
+
+function setPullRequestState(value: PullRequestState) {
+  if (pullState.value === value) return;
+  pullState.value = value;
+  void pushProjectTabRoute("pulls");
+}
+
+function setPullRequestPanelFilters(filters: PullRequestPanelFilters) {
+  if (samePullRequestPanelFilters(pullRequestPanelFilters.value, filters)) return;
+  pullRequestPanelFilters.value = {
+    ...filters,
+    labels: [...filters.labels],
+  };
+  if (activeSection.value === "pulls") {
+    void loadPullRequests();
+  }
+  void pushProjectTabRoute("pulls");
+}
+
+function applyRoutedListFilters() {
+  const nextIssueState = issueStateFromRoute();
+  const nextIssueFilters = issuePanelFiltersFromRoute();
+  const issueChanged = issueState.value !== nextIssueState ||
+    !sameIssuePanelFilters(issuePanelFilters.value, nextIssueFilters);
+  if (issueChanged) {
+    if (issueState.value !== nextIssueState) suppressIssueStateReload = true;
+    issueState.value = nextIssueState;
+    issuePanelFilters.value = {
+      ...nextIssueFilters,
+      labels: [...nextIssueFilters.labels],
+    };
+    if (activeSection.value === "issues") {
+      void loadIssues();
+    }
+  }
+
+  const nextPullState = pullRequestStateFromRoute();
+  const nextPullFilters = pullRequestPanelFiltersFromRoute();
+  const pullChanged = pullState.value !== nextPullState ||
+    !samePullRequestPanelFilters(pullRequestPanelFilters.value, nextPullFilters);
+  if (pullChanged) {
+    if (pullState.value !== nextPullState) suppressPullStateReload = true;
+    pullState.value = nextPullState;
+    pullRequestPanelFilters.value = {
+      ...nextPullFilters,
+      labels: [...nextPullFilters.labels],
+    };
+    if (activeSection.value === "pulls") {
+      void loadPullRequests();
+    }
+  }
+}
+
+function sameIssuePanelFilters(left: IssuePanelFilters, right: IssuePanelFilters) {
+  return sameSharedPanelFilters(left, right);
+}
+
+function samePullRequestPanelFilters(left: PullRequestPanelFilters, right: PullRequestPanelFilters) {
+  return sameSharedPanelFilters(left, right) && left.review === right.review;
+}
+
+function sameSharedPanelFilters(left: SharedPanelFilters, right: SharedPanelFilters) {
+  return left.creator === right.creator &&
+    left.assignee === right.assignee &&
+    left.milestone === right.milestone &&
+    left.project === right.project &&
+    left.sort === right.sort &&
+    left.direction === right.direction &&
+    left.query === right.query &&
+    sameStringList(left.labels, right.labels);
+}
+
+function pushProjectTabRoute(tab: ProjectTab) {
+  const nextQuery = projectTabRouteQuery(tab);
+  if (sameRouteQuery(route.query, nextQuery)) return Promise.resolve();
+  return router.push({ query: nextQuery }).then(() => undefined);
+}
+
+function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
+  const query: LocationQueryRaw = { ...route.query };
+  delete query.issue;
+  delete query.pr;
+  delete query.run;
+  delete query.job;
+  clearRouteFilters(query, issueRouteKeys);
+  clearRouteFilters(query, pullRequestRouteKeys);
+
+  if (tab === "readme") {
+    delete query.projectTab;
+    return query;
+  }
+
+  query.projectTab = tab;
+  if (tab === "issues") {
+    applyRouteFilters(query, issueRouteKeys, issueState.value, "open", issuePanelFilters.value, blankIssuePanelFilters());
+  } else if (tab === "pulls") {
+    applyRouteFilters(
+      query,
+      pullRequestRouteKeys,
+      pullState.value,
+      "open",
+      pullRequestPanelFilters.value,
+      blankPullRequestPanelFilters(),
+    );
+  } else if (tab === "actions") {
+    if (focusedRunId.value) query.run = String(focusedRunId.value);
+    if (focusedJobId.value) query.job = String(focusedJobId.value);
+  }
+  return query;
+}
+
+function clearRouteFilters(query: LocationQueryRaw, keys: RouteFilterKeys) {
+  for (const key of Object.values(keys)) delete query[key];
+}
+
+function applyRouteFilters<T extends SharedPanelFilters>(
+  query: LocationQueryRaw,
+  keys: RouteFilterKeys,
+  state: string,
+  defaultState: string,
+  filters: T,
+  defaults: T,
+) {
+  setRouteString(query, keys.state, state === defaultState ? null : state);
+  setRouteString(query, keys.query, filters.query);
+  setRouteString(query, keys.creator, filters.creator);
+  setRouteString(query, keys.assignee, filters.assignee);
+  setRouteList(query, keys.labels, filters.labels);
+  setRouteString(query, keys.milestone, filters.milestone);
+  setRouteString(query, keys.project, filters.project);
+  setRouteString(query, keys.sort, filters.sort === defaults.sort ? null : filters.sort);
+  setRouteString(query, keys.direction, filters.direction === defaults.direction ? null : filters.direction);
+  if (keys.review && "review" in filters) {
+    setRouteString(query, keys.review, filters.review as string | null);
+  }
+}
+
+function setRouteString(query: LocationQueryRaw, key: string, value: string | number | null | undefined) {
+  const next = typeof value === "number" ? String(value) : value?.trim();
+  if (next) {
+    query[key] = next;
+  } else {
+    delete query[key];
+  }
+}
+
+function setRouteList(query: LocationQueryRaw, key: string, values: readonly string[]) {
+  const next = values.map((value) => value.trim()).filter(Boolean);
+  if (next.length) {
+    query[key] = next;
+  } else {
+    delete query[key];
+  }
+}
+
+function sameRouteQuery(current: typeof route.query, next: LocationQueryRaw) {
+  return normalizedQueryEntries(current) === normalizedQueryEntries(next);
+}
+
+function normalizedQueryEntries(query: typeof route.query | LocationQueryRaw) {
+  return JSON.stringify(
+    Object.entries(query)
+      .flatMap(([key, value]) => {
+        if (value == null) return [];
+        const values = Array.isArray(value) ? value : [value];
+        return values
+          .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+          .map((item) => [key, String(item)] as const);
+      })
+      .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+        leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
+      ),
+  );
 }
 
 function hasPullRequest(pullNumber: number) {
@@ -496,7 +1046,10 @@ function clearProjectTargets() {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
   cancelEditIssue();
+  closeIssueCreateView(false);
+  closePullRequestCreateView(false);
 }
 
 function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
@@ -512,7 +1065,72 @@ function formatGitHubCount(value: number) {
   return githubCountFormatter.format(Math.max(0, value));
 }
 
-function githubAccessUnavailable(section: GitHubAccessSection, error: string | null): GitHubAccessUnavailable | null {
+function measureAboutTopicOverflow() {
+  void nextTick(() => {
+    const list = aboutTopicMeasureList.value;
+    if (!list || !aboutTopics.value.length) {
+      aboutTopicsExpanded.value = false;
+      collapsedAboutTopicCount.value = 0;
+      return;
+    }
+
+    const pills = Array.from(list.querySelectorAll<HTMLElement>(".project-topic-pill"));
+    const lineTops = collectLineTops(pills);
+    if (lineTops.length <= ABOUT_TOPIC_COLLAPSED_LINE_LIMIT) {
+      aboutTopicsExpanded.value = false;
+      collapsedAboutTopicCount.value = aboutTopics.value.length;
+      return;
+    }
+
+    const lastVisibleTop = lineTops[ABOUT_TOPIC_COLLAPSED_LINE_LIMIT - 1];
+    collapsedAboutTopicCount.value = Math.max(
+      1,
+      pills.filter((pill) => Math.round(pill.offsetTop) <= lastVisibleTop + 1).length,
+    );
+    alignAboutTopicToggle();
+  });
+}
+
+function collectLineTops(elements: readonly HTMLElement[]) {
+  return elements.reduce<number[]>((tops, element) => {
+    const top = Math.round(element.offsetTop);
+    if (!tops.some((existing) => Math.abs(existing - top) <= 1)) tops.push(top);
+    return tops;
+  }, []).sort((a, b) => a - b);
+}
+
+function alignAboutTopicToggle() {
+  void nextTick(() => {
+    if (!aboutTopicsOverflowing.value || aboutTopicsExpanded.value || collapsedAboutTopicCount.value <= 1) return;
+    const list = aboutTopicList.value;
+    const toggle = list?.querySelector<HTMLElement>(".project-topic-toggle");
+    if (!list || !toggle) return;
+    const elements = Array.from(list.querySelectorAll<HTMLElement>(".project-topic-pill, .project-topic-toggle"));
+    const lineTops = collectLineTops(elements);
+    const toggleTop = Math.round(toggle.offsetTop);
+    const toggleLineIndex = lineTops.findIndex((top) => Math.abs(top - toggleTop) <= 1);
+    if (toggleLineIndex >= ABOUT_TOPIC_COLLAPSED_LINE_LIMIT) {
+      collapsedAboutTopicCount.value -= 1;
+      alignAboutTopicToggle();
+    }
+  });
+}
+
+function toggleAboutTopicsExpanded() {
+  aboutTopicsExpanded.value = !aboutTopicsExpanded.value;
+}
+
+function githubAccessUnavailable(
+  section: GitHubAccessSection,
+  error: string | null,
+  capability: RepoCapability,
+): GitHubAccessUnavailable | null {
+  if (!capability.available) {
+    return {
+      title: `${section} 暂不可用`,
+      reason: capability.reason ?? "GitHub 功能暂不可用。",
+    };
+  }
   if (!error || !isGitHubBindingExpiredError(error)) return null;
   const lower = error.toLowerCase();
   const permissionDenied = error.includes("HTTP 403") ||
@@ -533,6 +1151,7 @@ function rebindGitHub() {
 async function focusIssue(issueNumber: number | null | undefined) {
   focusedPullRequestNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
   if (!issueNumber) {
     clearProjectTargets();
     await loadIssues();
@@ -558,6 +1177,7 @@ async function focusIssue(issueNumber: number | null | undefined) {
 async function focusRun(runId: number | null | undefined) {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
+  focusedJobId.value = props.projectJobId ?? null;
   if (!runId) {
     clearProjectTargets();
     await loadActions();
@@ -573,7 +1193,7 @@ async function focusRun(runId: number | null | undefined) {
   focusedRunId.value = runId;
   await nextTick();
   const row = projectMainRef.value?.querySelector<HTMLElement>(
-    `.project-row--action[data-run-id="${runId}"]`,
+    `.actions-run[data-run-id="${runId}"]`,
   );
   row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
 }
@@ -581,6 +1201,7 @@ async function focusRun(runId: number | null | undefined) {
 async function focusPullRequest(pullNumber: number | null | undefined) {
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
   if (!pullNumber) {
     await loadPullRequests();
     focusedPullRequestNumber.value = pulls.value[0]?.number ?? null;
@@ -589,11 +1210,15 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
     }
     return;
   }
-  if (pullState.value !== "all" && !hasPullRequest(pullNumber)) {
-    suppressPullStateReload = true;
-    pullState.value = "all";
-  }
   await loadPullRequests();
+  if (!hasPullRequest(pullNumber)) {
+    for (const state of ["closed", "merged"] as const) {
+      suppressPullStateReload = true;
+      pullState.value = state;
+      await loadPullRequests();
+      if (hasPullRequest(pullNumber)) break;
+    }
+  }
   if (!hasPullRequest(pullNumber)) {
     focusedPullRequestNumber.value = null;
     return;
@@ -611,15 +1236,12 @@ function isIssueRowFocused(issueNumber: number) {
   return focusedIssueNumber.value === issueNumber && activeSection.value === "issues";
 }
 
-function isRunRowFocused(runId: number) {
-  return focusedRunId.value === runId && activeSection.value === "actions";
-}
-
 function isPullRequestRowFocused(pullNumber: number) {
   return focusedPullRequestNumber.value === pullNumber && activeSection.value === "pulls";
 }
 
 async function applyProjectRouteState() {
+  applyRoutedListFilters();
   activeSection.value = routeTabToSection(props.activeGitTab);
   if (props.activeGitTab !== "repo") {
     clearProjectTargets();
@@ -641,6 +1263,19 @@ async function applyProjectRouteState() {
     return;
   }
   await ensureSectionData(targetTab);
+}
+
+function prefetchGitHubProjectMetadata() {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
+  const canUseIssues = resolvedRepoContext.value.capabilities.issues.available;
+  const canUsePulls = resolvedRepoContext.value.capabilities.pulls.available;
+  if (!canUseIssues && !canUsePulls) return;
+  void Promise.allSettled([
+    loadIssueFilterMetadata(false, false),
+    ...(canUseIssues ? [loadIssueMetadata(), loadIssueTemplates()] : []),
+    ...(canUsePulls ? [loadPullRequestTemplates()] : []),
+  ]);
 }
 
 function applySettingsForm(next: GitHubRepoManagement) {
@@ -678,36 +1313,45 @@ function cancelEditAbout() {
 async function loadReadme(force = false) {
   if (!props.repoId) return;
   if (!force && readmeLoaded.value) return;
-  if (!force && readmeLoadPromise) {
-    await readmeLoadPromise;
-    return;
-  }
-  readmeLoadPromise = (async () => {
+  const repoId = props.repoId;
+  const fileProvider = resolvedRepoContext.value.capabilities.files.provider;
+  await readmeLoader.run(null, async (runId) => {
     readmeLoading.value = true;
     readmeError.value = null;
     try {
-      if (props.remoteOnly) {
+      if (!resolvedRepoContext.value.capabilities.files.available) {
         readmePreview.value = null;
         readmeLoaded.value = true;
         return;
       }
-      const rootEntries = await listRepoFiles(props.repoId, null);
+      const rootEntries = await listRepoFiles(repoId, null);
+      if (
+        !readmeLoader.isCurrent(runId) ||
+        repoId !== props.repoId ||
+        fileProvider !== resolvedRepoContext.value.capabilities.files.provider
+      ) return;
       const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === README_PATH);
-      readmePreview.value = readme ? await getRepoFilePreview(props.repoId, README_PATH) : null;
+      const nextPreview = readme ? await getRepoFilePreview(repoId, README_PATH) : null;
+      if (
+        !readmeLoader.isCurrent(runId) ||
+        repoId !== props.repoId ||
+        fileProvider !== resolvedRepoContext.value.capabilities.files.provider
+      ) return;
+      readmePreview.value = nextPreview;
       readmeLoaded.value = true;
     } catch (err) {
       readmeError.value = String(err);
     } finally {
-      readmeLoading.value = false;
-      readmeLoadPromise = null;
+      if (readmeLoader.isCurrent(runId)) {
+        readmeLoading.value = false;
+      }
     }
-  })();
-  await readmeLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadSettings(force = false) {
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.settings.available) {
     clearBlockedGitHubState();
     return;
   }
@@ -717,19 +1361,14 @@ async function loadSettings(force = false) {
     return;
   }
   if (!force && settingsLoaded.value) return;
-  if (!force && settingsLoadPromise) {
-    await settingsLoadPromise;
-    return;
-  }
-  settingsLoadPromise = (async () => {
-    const runId = ++githubLoadRunId;
+  await settingsLoader.run(null, async (runId) => {
     githubLoading.value = true;
     githubError.value = null;
     try {
       const nextSettings = force
         ? await getGitHubRepoManagement(repoFullName, { forceRefresh: true })
         : await getGitHubRepoManagement(repoFullName);
-      if (runId !== githubLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      if (!settingsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       settings.value = nextSettings;
       applySettingsForm(nextSettings);
       preparePullRequestDefaults();
@@ -737,71 +1376,59 @@ async function loadSettings(force = false) {
     } catch (err) {
       githubError.value = String(err);
     } finally {
-      githubLoading.value = false;
-      settingsLoadPromise = null;
+      if (settingsLoader.isCurrent(runId)) {
+        githubLoading.value = false;
+      }
     }
-  })();
-  await settingsLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadIssues(force = false) {
-  const runId = ++issueLoadRunId;
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.issues.available) {
     clearBlockedGitHubState();
     return;
   }
   if (!repoFullName || remoteDeleted.value) return;
-  if (!force && issuesLoadedState.value === issueState.value) return;
-  if (!force && issuesLoadPromise && issuesLoadState === issueState.value) {
-    await issuesLoadPromise;
-    return;
-  }
+  const loadKey = issueListKey.value;
+  if (!force && issuesLoadedKey.value === loadKey) return;
+  const options = { ...issueListOptions.value, labels: [...(issueListOptions.value.labels ?? [])] };
   githubError.value = null;
-  issuesLoadState = issueState.value;
-  issuesLoadPromise = (async () => {
+  await issuesLoader.run(loadKey, async (runId) => {
     try {
       const nextIssues = force
-        ? await listGitHubIssues(repoFullName, issueState.value, { forceRefresh: true })
-        : await listGitHubIssues(repoFullName, issueState.value);
-      if (runId !== issueLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+        ? await listGitHubIssues(repoFullName, options, { forceRefresh: true })
+        : await listGitHubIssues(repoFullName, options);
+      if (!issuesLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       issues.value = nextIssues;
-      issuesLoadedState.value = issueState.value;
+      issuesLoadedKey.value = loadKey;
       syncEditingIssue();
     } catch (err) {
       githubError.value = String(err);
-    } finally {
-      issuesLoadPromise = null;
-      issuesLoadState = null;
     }
-  })();
-  await issuesLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadPullRequests(force = false) {
-  const runId = ++pullLoadRunId;
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.pulls.available) {
     clearBlockedGitHubState();
     return;
   }
   if (!repoFullName || remoteDeleted.value) return;
-  if (!force && pullsLoadedState.value === pullState.value) return;
-  if (!force && pullsLoadPromise && pullsLoadState === pullState.value) {
-    await pullsLoadPromise;
-    return;
-  }
+  const loadKey = pullListKey.value;
+  if (!force && pullsLoadedKey.value === loadKey) return;
+  const options = { ...pullListOptions.value, labels: [...(pullListOptions.value.labels ?? [])] };
   githubError.value = null;
   pullsLoading.value = true;
-  pullsLoadState = pullState.value;
-  pullsLoadPromise = (async () => {
+  await pullsLoader.run(loadKey, async (runId) => {
     try {
       const nextPulls = force
-        ? await listGitHubPullRequests(repoFullName, pullState.value, { forceRefresh: true })
-        : await listGitHubPullRequests(repoFullName, pullState.value);
-      if (runId !== pullLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+        ? await listGitHubPullRequests(repoFullName, options, { forceRefresh: true })
+        : await listGitHubPullRequests(repoFullName, options);
+      if (!pullsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       pulls.value = nextPulls;
-      pullsLoadedState.value = pullState.value;
+      pullsLoadedKey.value = loadKey;
       const current = focusedPullRequestNumber.value;
       if (current && nextPulls.some((pull) => pull.number === current)) {
         await loadPullRequestChecks(current, force);
@@ -814,42 +1441,41 @@ async function loadPullRequests(force = false) {
     } catch (err) {
       githubError.value = String(err);
     } finally {
-      pullsLoading.value = false;
-      pullsLoadPromise = null;
-      pullsLoadState = null;
+      if (pullsLoader.isCurrent(runId)) {
+        pullsLoading.value = false;
+      }
     }
-  })();
-  await pullsLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function loadPullRequestChecks(pullNumber: number, force = false) {
-  const runId = ++pullChecksRunId;
   const repoFullName = props.repoFullName;
   if (!repoFullName || remoteDeleted.value) return;
   if (!force && pullChecks.value[pullNumber]) return;
   pullChecksLoading.value = true;
-  try {
-    const checks = force
-      ? await listGitHubPullRequestChecks(repoFullName, pullNumber, { forceRefresh: true })
-      : await listGitHubPullRequestChecks(repoFullName, pullNumber);
-    if (runId !== pullChecksRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-    pullChecks.value = {
-      ...pullChecks.value,
-      [pullNumber]: checks,
-    };
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    if (runId === pullChecksRunId) {
-      pullChecksLoading.value = false;
+  await pullChecksLoader.run(pullNumber, async (runId) => {
+    try {
+      const checks = force
+        ? await listGitHubPullRequestChecks(repoFullName, pullNumber, { forceRefresh: true })
+        : await listGitHubPullRequestChecks(repoFullName, pullNumber);
+      if (!pullChecksLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      pullChecks.value = {
+        ...pullChecks.value,
+        [pullNumber]: checks,
+      };
+    } catch (err) {
+      githubError.value = String(err);
+    } finally {
+      if (pullChecksLoader.isCurrent(runId)) {
+        pullChecksLoading.value = false;
+      }
     }
-  }
+  });
 }
 
 async function loadActions(force = false) {
-  const runId = ++actionsLoadRunId;
   const repoFullName = props.repoFullName;
-  if (isSystemGitBlocked.value) {
+  if (!resolvedRepoContext.value.capabilities.actions.available) {
     clearBlockedGitHubState();
     actionsLoading.value = false;
     return;
@@ -860,41 +1486,46 @@ async function loadActions(force = false) {
     return;
   }
   if (!force && actionsLoaded.value) return;
-  if (!force && actionsLoadPromise) {
-    await actionsLoadPromise;
-    return;
-  }
-  actionsLoadPromise = (async () => {
+  await actionsLoader.run(null, async (runId) => {
     actionsLoading.value = true;
     actionsError.value = null;
     try {
       const nextRuns = force
         ? await listGitHubWorkflowRuns(repoFullName, 20, { forceRefresh: true })
         : await listGitHubWorkflowRuns(repoFullName, 20);
-      if (runId !== actionsLoadRunId || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      if (!actionsLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
       workflowRuns.value = nextRuns;
       actionsLoaded.value = true;
     } catch (err) {
       actionsError.value = String(err);
     } finally {
-      actionsLoading.value = false;
-      actionsLoadPromise = null;
+      if (actionsLoader.isCurrent(runId)) {
+        actionsLoading.value = false;
+      }
     }
-  })();
-  await actionsLoadPromise;
+  }, { reusePending: !force });
 }
 
 async function ensureSectionData(section: ProjectContentMode) {
   if (section === "readme") {
-    await Promise.all([loadReadme(), props.repoFullName ? loadSettings() : Promise.resolve()]);
+    await Promise.all([
+      loadReadme(),
+      resolvedRepoContext.value.capabilities.settings.available ? loadSettings() : Promise.resolve(),
+    ]);
     return;
   }
   if (section === "issues") {
-    await loadIssues();
+    await Promise.all([
+      loadIssues(),
+      loadIssueFilterMetadata(),
+    ]);
     return;
   }
   if (section === "pulls") {
-    await loadPullRequests();
+    await Promise.all([
+      loadPullRequests(),
+      loadIssueFilterMetadata(),
+    ]);
     return;
   }
   if (section === "actions") {
@@ -911,17 +1542,25 @@ async function refreshLoadedSectionData() {
     if (readmeLoaded.value || settingsLoaded.value) {
       await Promise.all([
         readmeLoaded.value ? loadReadme(true) : Promise.resolve(),
-        props.repoFullName && settingsLoaded.value ? loadSettings(true) : Promise.resolve(),
+        resolvedRepoContext.value.capabilities.settings.available && settingsLoaded.value
+          ? loadSettings(true)
+          : Promise.resolve(),
       ]);
     }
     return;
   }
-  if (activeSection.value === "issues" && issuesLoadedState.value) {
-    await loadIssues(true);
+  if (activeSection.value === "issues" && issuesLoadedKey.value) {
+    await Promise.all([
+      loadIssues(true),
+      issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
+    ]);
     return;
   }
-  if (activeSection.value === "pulls" && pullsLoadedState.value) {
-    await loadPullRequests(true);
+  if (activeSection.value === "pulls" && pullsLoadedKey.value) {
+    await Promise.all([
+      loadPullRequests(true),
+      issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
+    ]);
     return;
   }
   if (activeSection.value === "actions" && actionsLoaded.value) {
@@ -968,75 +1607,130 @@ function clearBlockedGitHubState() {
 
 function resetProjectSectionState() {
   activeSection.value = routeTabToSection(props.activeGitTab);
+  readmeLoader.invalidate();
+  invalidateRepoMutations();
   readmePreview.value = null;
   readmeLoaded.value = false;
   readmeLoading.value = false;
   readmeError.value = null;
-  readmeLoadPromise = null;
   resetGitHubSectionState();
 }
 
 function resetGitHubSectionState() {
+  settingsLoader.invalidate();
+  issuesLoader.invalidate();
+  pullsLoader.invalidate();
+  pullChecksLoader.invalidate();
+  actionsLoader.invalidate();
+  invalidateGitHubMutations();
   settings.value = null;
   settingsLoaded.value = false;
   issues.value = [];
-  issuesLoadedState.value = null;
+  issuesLoadedKey.value = null;
+  issueState.value = issueStateFromRoute();
+  issuePanelFilters.value = issuePanelFiltersFromRoute();
+  issueFilterMetadata.value = emptyIssueFilterMetadata();
+  issueFilterMetadataLoading.value = false;
+  issueFilterMetadataLoadedRepo.value = null;
   pulls.value = [];
   pullChecks.value = {};
-  pullsLoadedState.value = null;
+  pullsLoadedKey.value = null;
+  pullState.value = pullRequestStateFromRoute();
+  pullRequestPanelFilters.value = pullRequestPanelFiltersFromRoute();
   pullsLoading.value = false;
   pullChecksLoading.value = false;
   focusedPullRequestNumber.value = null;
-  creatingPullRequest.value = false;
-  updatingPullRequest.value = false;
   pullRequestTitle.value = "";
   pullRequestBody.value = "";
   pullRequestBase.value = "";
   pullRequestHead.value = "";
   pullRequestDraft.value = false;
+  pullCreateView.value = false;
+  pullRequestTemplates.value = [];
+  pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+  pullRequestTemplatesLoading.value = false;
+  pullRequestTemplatesLoadedRepo.value = null;
   pullRequestMergeMethod.value = "merge";
   workflowRuns.value = [];
   actionsLoaded.value = false;
   githubError.value = null;
   actionsError.value = null;
-  settingsLoadPromise = null;
-  issuesLoadPromise = null;
-  issuesLoadState = null;
-  pullsLoadPromise = null;
-  pullsLoadState = null;
-  actionsLoadPromise = null;
   aboutEditing.value = false;
   aboutTopicDraft.value = "";
   settingsTopicDraft.value = "";
   cancelEditIssue();
+  closeIssueCreateView(false);
+  remoteIssueLabels.value = [];
+  remoteIssueAssignees.value = [];
+  issueMetadataLoading.value = false;
+  issueMetadataLoadedRepo.value = null;
   focusedIssueNumber.value = null;
   focusedRunId.value = null;
+  focusedJobId.value = null;
+}
+
+function invalidateGitHubMutations() {
+  githubMutationGeneration += 1;
+  settingsSaveTracker.reset();
+  issueCreateTracker.reset();
+  issueUpdateTracker.reset();
+  pullCreateTracker.reset();
+  pullUpdateTracker.reset();
+  remoteDeleteTracker.reset();
+}
+
+function invalidateRepoMutations() {
+  repoMutationGeneration += 1;
+  localDeleteTracker.reset();
+}
+
+function isGitHubMutationCurrent(generation: number, repoFullName: string) {
+  return generation === githubMutationGeneration && props.repoFullName === repoFullName && !remoteDeleted.value;
+}
+
+function isRepoMutationCurrent(generation: number, repoId: string) {
+  return generation === repoMutationGeneration && props.repoId === repoId;
+}
+
+async function runGitHubMutation<T>(
+  repoFullName: string,
+  tracker: PendingTaskTracker,
+  task: () => Promise<T>,
+): Promise<GitHubMutationResult<T>> {
+  const generation = githubMutationGeneration;
+  githubError.value = null;
+  try {
+    const value = await tracker.run(task);
+    if (!isGitHubMutationCurrent(generation, repoFullName)) return { ok: false };
+    return { ok: true, value };
+  } catch (err) {
+    if (isGitHubMutationCurrent(generation, repoFullName)) {
+      githubError.value = String(err);
+    }
+    return { ok: false };
+  }
 }
 
 async function saveSettings(closeAboutOnSuccess = false) {
-  if (!props.repoFullName || !settings.value) return;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || !settings.value) return;
   const request = changedSettingsRequest(settings.value);
   if (!Object.keys(request).length) {
     if (closeAboutOnSuccess) aboutEditing.value = false;
     return true;
   }
-  savingSettings.value = true;
-  githubError.value = null;
-  try {
-    const next = await updateGitHubRepoSettings(props.repoFullName, request);
-    settings.value = next;
-    applySettingsForm(next);
-    aboutTopicDraft.value = "";
-    settingsTopicDraft.value = "";
-    if (closeAboutOnSuccess) aboutEditing.value = false;
-    clearHomeGitHubOverviewSnapshot();
-    return true;
-  } catch (err) {
-    githubError.value = String(err);
-    return false;
-  } finally {
-    savingSettings.value = false;
-  }
+  const result = await runGitHubMutation(repoFullName, settingsSaveTracker, () =>
+    updateGitHubRepoSettings(repoFullName, request)
+  );
+  if (!result.ok) return false;
+  const next = result.value;
+  settings.value = next;
+  applySettingsForm(next);
+  aboutTopicDraft.value = "";
+  settingsTopicDraft.value = "";
+  if (closeAboutOnSuccess) aboutEditing.value = false;
+  clearHomeGitHubOverviewSnapshot();
+  return true;
 }
 
 function normalizedExternalUrl(value: string) {
@@ -1051,8 +1745,8 @@ function sameStringList(left: readonly string[], right: readonly string[]) {
 }
 
 function openDeleteDialog(target: DeleteTarget) {
-  if (target === "remote" && (!props.repoFullName || deletingRepo.value)) return;
-  if (target === "local" && (props.remoteOnly || !props.repoPath || deletingLocalRepo.value)) return;
+  if (target === "remote" && (!canDeleteRemote.value || !props.repoFullName || deletingRepo.value)) return;
+  if (target === "local" && (!canDeleteLocal.value || !props.repoPath || deletingLocalRepo.value)) return;
   deleteDialogTarget.value = target;
   deleteConfirmInput.value = "";
   deleteError.value = null;
@@ -1074,30 +1768,36 @@ async function confirmDeleteDialog() {
 }
 
 async function confirmDeleteLocalRepo() {
-  if (props.remoteOnly || !deleteConfirmMatches.value || deletingLocalRepo.value) return;
-  deletingLocalRepo.value = true;
+  const repoId = props.repoId;
+  if (!repoId || !canDeleteLocal.value || !deleteConfirmMatches.value || deletingLocalRepo.value) return;
+  const generation = repoMutationGeneration;
   deleteError.value = null;
   try {
-    await workspace.deleteLocalRepo(props.repoId);
+    await localDeleteTracker.run(() => workspace.deleteLocalRepo(repoId));
+    if (!isRepoMutationCurrent(generation, repoId)) return;
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
     workspace.refreshRepoStatusList();
     await router.push("/");
   } catch (err) {
-    deleteError.value = String(err);
-  } finally {
-    deletingLocalRepo.value = false;
+    if (isRepoMutationCurrent(generation, repoId)) {
+      deleteError.value = String(err);
+    }
   }
 }
 
 async function confirmDeleteRepo() {
-  if (!props.repoFullName || !deleteConfirmMatches.value || deletingRepo.value) return;
-  deletingRepo.value = true;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || !canDeleteRemote.value || !deleteConfirmMatches.value || deletingRepo.value) return;
+  const generation = githubMutationGeneration;
   deleteError.value = null;
   githubError.value = null;
   try {
-    await deleteGitHubRepo(props.repoFullName);
-    await workspace.forgetRemoteRepo(props.repoFullName);
+    await remoteDeleteTracker.run(async () => {
+      await deleteGitHubRepo(repoFullName);
+      await workspace.forgetRemoteRepo(repoFullName);
+    });
+    if (!isGitHubMutationCurrent(generation, repoFullName)) return;
     clearHomeGitHubOverviewSnapshot();
     workspace.refreshRepoStatusList();
     remoteDeleted.value = true;
@@ -1106,19 +1806,19 @@ async function confirmDeleteRepo() {
     workflowRuns.value = [];
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
-    const targetRoute = remoteRepoRoute(props.repoFullName);
+    const targetRoute = remoteRepoRoute(repoFullName);
     const currentRemoteFullName = parseRemoteRepoId(String(route.params.repoId ?? ""));
     if (
-      props.remoteOnly &&
-      currentRemoteFullName && props.repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
+      hasRepoTag(resolvedRepoContext.value, "github-remote") &&
+      currentRemoteFullName && repoFullName.toLowerCase() === currentRemoteFullName.toLowerCase()
       && route.fullPath.startsWith(targetRoute)
     ) {
       await router.push("/");
     }
   } catch (err) {
-    deleteError.value = String(err);
-  } finally {
-    deletingRepo.value = false;
+    if (isGitHubMutationCurrent(generation, repoFullName)) {
+      deleteError.value = String(err);
+    }
   }
 }
 
@@ -1126,8 +1826,204 @@ function splitList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function isEditingIssue(issueNumber: number) {
-  return editingIssueNumber.value === issueNumber;
+function uniqueSorted(values: readonly string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function stringOptions(values: readonly string[]) {
+  return values.map((value) => ({ value, label: value }));
+}
+
+function multiSelectSummary(values: readonly string[], emptyText: string) {
+  if (!values.length) return emptyText;
+  if (values.length <= 2) return values.join(", ");
+  return `${values.slice(0, 2).join(", ")} +${values.length - 2}`;
+}
+
+function targetValue(event: Event) {
+  const target = event.target;
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement
+    ? target.value
+    : "";
+}
+
+function targetChecked(event: Event) {
+  const target = event.target;
+  return target instanceof HTMLInputElement ? target.checked : false;
+}
+
+function dropdownOptions(options: readonly string[]) {
+  return [
+    { value: "", label: "Select an option" },
+    ...options.map((option) => ({ value: option, label: option })),
+  ];
+}
+
+async function openIssueCreateView() {
+  issueCreateView.value = true;
+  cancelEditIssue();
+  applyIssueTemplate(selectedIssueTemplate.value);
+  await Promise.all([
+    loadIssueTemplates(),
+    loadIssueMetadata(),
+  ]);
+}
+
+function closeIssueCreateView(resetDraft = true) {
+  issueCreateView.value = false;
+  if (!resetDraft) return;
+  issueTitle.value = "";
+  issueBody.value = "";
+  issueLabels.value = [];
+  issueAssignees.value = [];
+  issueTemplateKey.value = blankIssueTemplate().key;
+  issueTemplateAnswers.value = {};
+}
+
+async function loadIssueTemplates(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || issueTemplatesLoading.value) return;
+  if (!force && issueTemplatesLoadedRepo.value === repoFullName) return;
+  issueTemplatesLoading.value = true;
+  try {
+    const nextTemplates = await loadGitHubIssueTemplates(repoFullName);
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    issueTemplates.value = nextTemplates;
+    issueTemplatesLoadedRepo.value = repoFullName;
+    if (!displayedIssueTemplates.value.some((template) => template.key === issueTemplateKey.value)) {
+      issueTemplateKey.value = blankIssueTemplate().key;
+      applyIssueTemplate(selectedIssueTemplate.value);
+    }
+  } finally {
+    if (repoFullName === props.repoFullName) issueTemplatesLoading.value = false;
+  }
+}
+
+function selectIssueTemplate(key: string) {
+  issueTemplateKey.value = key;
+  applyIssueTemplate(selectedIssueTemplate.value);
+}
+
+function applyIssueTemplate(template: GitHubIssueTemplate) {
+  issueTitle.value = template.titlePrefix;
+  issueBody.value = template.body;
+  issueLabels.value = [...template.labels];
+  issueAssignees.value = [...template.assignees];
+  issueTemplateAnswers.value = createIssueTemplateAnswers(template);
+}
+
+async function loadIssueMetadata(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || issueMetadataLoading.value) return;
+  if (!force && issueMetadataLoadedRepo.value === repoFullName) return;
+  issueMetadataLoading.value = true;
+  try {
+    const [labelsResult, assigneesResult] = await Promise.allSettled([
+      listGitHubIssueLabels(repoFullName, { forceRefresh: force }),
+      listGitHubIssueAssignees(repoFullName, { forceRefresh: force }),
+    ]);
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    remoteIssueLabels.value = labelsResult.status === "fulfilled" ? labelsResult.value : [];
+    remoteIssueAssignees.value = assigneesResult.status === "fulfilled" ? assigneesResult.value : [];
+    issueMetadataLoadedRepo.value = repoFullName;
+  } finally {
+    if (repoFullName === props.repoFullName) issueMetadataLoading.value = false;
+  }
+}
+
+async function loadIssueFilterMetadata(force = false, reportError = true) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || issueFilterMetadataLoading.value) return;
+  if (!force && issueFilterMetadataLoadedRepo.value === repoFullName) return;
+  issueFilterMetadataLoading.value = true;
+  try {
+    const metadata = await getGitHubIssueFilterMetadata(repoFullName, { forceRefresh: force });
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    issueFilterMetadata.value = metadata;
+    issueFilterMetadataLoadedRepo.value = repoFullName;
+  } catch (err) {
+    if (reportError && repoFullName === props.repoFullName) githubError.value = String(err);
+  } finally {
+    if (repoFullName === props.repoFullName) issueFilterMetadataLoading.value = false;
+  }
+}
+
+function issueFieldValue(field: GitHubIssueTemplateField) {
+  const value = issueTemplateAnswers.value[field.id];
+  return Array.isArray(value) ? value.join(", ") : value ?? "";
+}
+
+function setIssueFieldValue(fieldId: string, value: string) {
+  issueTemplateAnswers.value = {
+    ...issueTemplateAnswers.value,
+    [fieldId]: value,
+  };
+}
+
+function issueCheckboxChecked(fieldId: string, optionLabel: string) {
+  const value = issueTemplateAnswers.value[fieldId];
+  return Array.isArray(value) && value.includes(optionLabel);
+}
+
+function toggleIssueCheckbox(fieldId: string, optionLabel: string, checked: boolean) {
+  const current = issueTemplateAnswers.value[fieldId];
+  const values = Array.isArray(current) ? current : [];
+  issueTemplateAnswers.value = {
+    ...issueTemplateAnswers.value,
+    [fieldId]: checked
+      ? [...new Set([...values, optionLabel])]
+      : values.filter((item) => item !== optionLabel),
+  };
+}
+
+async function openPullRequestCreateView() {
+  pullCreateView.value = true;
+  preparePullRequestDefaults();
+  await Promise.all([
+    settingsLoaded.value ? Promise.resolve() : loadSettings(),
+    loadPullRequestTemplates(),
+  ]);
+  preparePullRequestDefaults();
+}
+
+function closePullRequestCreateView(resetDraft = true) {
+  pullCreateView.value = false;
+  if (!resetDraft) return;
+  pullRequestTitle.value = "";
+  pullRequestBody.value = "";
+  pullRequestBase.value = "";
+  pullRequestHead.value = "";
+  pullRequestDraft.value = false;
+  pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+}
+
+async function loadPullRequestTemplates(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || pullRequestTemplatesLoading.value) return;
+  if (!force && pullRequestTemplatesLoadedRepo.value === repoFullName) return;
+  pullRequestTemplatesLoading.value = true;
+  try {
+    const nextTemplates = await loadGitHubPullRequestTemplates(repoFullName);
+    if (repoFullName !== props.repoFullName || remoteDeleted.value) return;
+    pullRequestTemplates.value = nextTemplates;
+    pullRequestTemplatesLoadedRepo.value = repoFullName;
+    if (!displayedPullRequestTemplates.value.some((template) => template.key === pullRequestTemplateKey.value)) {
+      pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+      applyPullRequestTemplate(selectedPullRequestTemplate.value);
+    }
+  } finally {
+    if (repoFullName === props.repoFullName) pullRequestTemplatesLoading.value = false;
+  }
+}
+
+function selectPullRequestTemplate(key: string) {
+  pullRequestTemplateKey.value = key;
+  applyPullRequestTemplate(selectedPullRequestTemplate.value);
+}
+
+function applyPullRequestTemplate(template: GitHubPullRequestTemplate) {
+  pullRequestBody.value = template.body;
 }
 
 function syncEditingIssue() {
@@ -1153,61 +2049,63 @@ function cancelEditIssue() {
 }
 
 async function saveIssueEdit(issue: GitHubIssue) {
-  if (!props.repoFullName || updatingIssue.value) return;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || updatingIssue.value) return;
   const nextTitle = editingIssueTitle.value.trim();
   if (!nextTitle) return;
-  updatingIssue.value = true;
-  githubError.value = null;
-  try {
-    const updated = await updateGitHubIssue(props.repoFullName, issue.number, {
-      title: nextTitle,
-      body: editingIssueBody.value,
-      labels: splitList(editingIssueLabels.value),
-      assignees: splitList(editingIssueAssignees.value),
-    });
-    issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
-    cancelEditIssue();
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    updatingIssue.value = false;
-  }
+  const request = {
+    title: nextTitle,
+    body: editingIssueBody.value,
+    labels: splitList(editingIssueLabels.value),
+    assignees: splitList(editingIssueAssignees.value),
+  };
+  const result = await runGitHubMutation(repoFullName, issueUpdateTracker, () =>
+    updateGitHubIssue(repoFullName, issue.number, request)
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
+  cancelEditIssue();
 }
 
 async function createIssue() {
-  if (!props.repoFullName) return;
-  creatingIssue.value = true;
-  githubError.value = null;
-  try {
-    const issue = await createGitHubIssue(props.repoFullName, {
-      title: issueTitle.value,
-      body: issueBody.value,
-      labels: splitList(issueLabels.value),
-      assignees: splitList(issueAssignees.value),
-    });
-    issues.value = [issue, ...issues.value];
-    issueTitle.value = "";
-    issueBody.value = "";
-    issueLabels.value = "";
-    issueAssignees.value = "";
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    creatingIssue.value = false;
-  }
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || creatingIssue.value) return;
+  const title = issueTitle.value.trim();
+  if (!title || !issueTemplateRequiredFieldsSatisfied(selectedIssueTemplate.value, issueTemplateAnswers.value)) return;
+  const body = buildIssueTemplateBody(selectedIssueTemplate.value, issueTemplateAnswers.value, issueBody.value);
+  const request = {
+    title,
+    body,
+    labels: [...issueLabels.value],
+    assignees: [...issueAssignees.value],
+  };
+  const result = await runGitHubMutation(repoFullName, issueCreateTracker, () =>
+    createGitHubIssue(repoFullName, request)
+  );
+  if (!result.ok) return;
+  const issue = result.value;
+  issues.value = [issue, ...issues.value];
+  issueTitle.value = "";
+  issueBody.value = "";
+  issueLabels.value = [];
+  issueAssignees.value = [];
+  issueTemplateAnswers.value = {};
+  issueTemplateKey.value = blankIssueTemplate().key;
+  issueCreateView.value = false;
 }
 
 async function toggleIssue(issue: GitHubIssue) {
-  if (!props.repoFullName) return;
-  githubError.value = null;
-  try {
-    const updated = await updateGitHubIssue(props.repoFullName, issue.number, {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName) return;
+  const result = await runGitHubMutation(repoFullName, issueUpdateTracker, () =>
+    updateGitHubIssue(repoFullName, issue.number, {
       state: issue.state === "open" ? "closed" : "open",
-    });
-    issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
-  } catch (err) {
-    githubError.value = String(err);
-  }
+    })
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  issues.value = issues.value.map((item) => item.number === updated.number ? updated : item);
 }
 
 function preparePullRequestDefaults() {
@@ -1220,68 +2118,63 @@ function preparePullRequestDefaults() {
 }
 
 async function createPullRequest() {
-  if (!props.repoFullName || creatingPullRequest.value) return;
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || creatingPullRequest.value) return;
   preparePullRequestDefaults();
   const title = pullRequestTitle.value.trim();
   const head = pullRequestHead.value.trim();
   const base = pullRequestBase.value.trim();
   if (!title || !head || !base) return;
-  creatingPullRequest.value = true;
-  githubError.value = null;
-  try {
-    const pull = await createGitHubPullRequest(props.repoFullName, {
-      title,
-      body: pullRequestBody.value,
-      head,
-      base,
-      draft: pullRequestDraft.value,
-    });
-    pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pull.number)];
-    focusedPullRequestNumber.value = pull.number;
-    pullRequestTitle.value = "";
-    pullRequestBody.value = "";
-    pullRequestDraft.value = false;
-    pullState.value = "open";
-    await loadPullRequestChecks(pull.number, true);
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    creatingPullRequest.value = false;
-  }
+  const request = {
+    title,
+    body: pullRequestBody.value,
+    head,
+    base,
+    draft: pullRequestDraft.value,
+  };
+  const result = await runGitHubMutation(repoFullName, pullCreateTracker, () =>
+    createGitHubPullRequest(repoFullName, request)
+  );
+  if (!result.ok) return;
+  const pull = result.value;
+  pulls.value = [pull, ...pulls.value.filter((item) => item.number !== pull.number)];
+  focusedPullRequestNumber.value = pull.number;
+  pullRequestTitle.value = "";
+  pullRequestBody.value = "";
+  pullRequestDraft.value = false;
+  pullRequestTemplateKey.value = blankPullRequestTemplate().key;
+  pullCreateView.value = false;
+  pullState.value = "open";
+  await loadPullRequestChecks(pull.number, true);
 }
 
 async function togglePullRequestState(pull: GitHubPullRequest) {
-  if (!props.repoFullName || updatingPullRequest.value) return;
-  updatingPullRequest.value = true;
-  githubError.value = null;
-  try {
-    const updated = await updateGitHubPullRequest(props.repoFullName, pull.number, {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || updatingPullRequest.value) return;
+  const result = await runGitHubMutation(repoFullName, pullUpdateTracker, () =>
+    updateGitHubPullRequest(repoFullName, pull.number, {
       state: pull.state === "open" ? "closed" : "open",
-    });
-    pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    updatingPullRequest.value = false;
-  }
+    })
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
 }
 
 async function mergePullRequest(pull: GitHubPullRequest) {
-  if (!props.repoFullName || updatingPullRequest.value) return;
-  updatingPullRequest.value = true;
-  githubError.value = null;
-  try {
-    const updated = await mergeGitHubPullRequest(props.repoFullName, pull.number, {
-      method: pullRequestMergeMethod.value,
-    });
-    pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
-    focusedPullRequestNumber.value = updated.number;
-    await loadPullRequestChecks(updated.number, true);
-  } catch (err) {
-    githubError.value = String(err);
-  } finally {
-    updatingPullRequest.value = false;
-  }
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || updatingPullRequest.value) return;
+  const method = pullRequestMergeMethod.value;
+  const result = await runGitHubMutation(repoFullName, pullUpdateTracker, () =>
+    mergeGitHubPullRequest(repoFullName, pull.number, {
+      method,
+    })
+  );
+  if (!result.ok) return;
+  const updated = result.value;
+  pulls.value = pulls.value.map((item) => item.number === updated.number ? updated : item);
+  focusedPullRequestNumber.value = updated.number;
+  await loadPullRequestChecks(updated.number, true);
 }
 
 async function focusPullRequestRow(pull: GitHubPullRequest) {
@@ -1327,16 +2220,28 @@ async function scrollTerminalToEnd() {
   body.scrollTop = body.scrollHeight;
 }
 
-function activateProjectTab(tab: ProjectTab) {
+async function activateProjectTab(tab: ProjectTab) {
   activeSection.value = tab;
   if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
     emit("hideTerminal");
   }
-  void ensureSectionData(tab);
+  await pushProjectTabRoute(tab);
+  await ensureSectionData(tab);
 }
 
 function activateProjectSection(tab: ProjectSectionConfig["key"]) {
-  activateProjectTab(tab);
+  void activateProjectTab(tab);
+}
+
+function focusActionRun(runId: number | null) {
+  focusedRunId.value = runId;
+  focusedJobId.value = null;
+  if (activeSection.value === "actions") void pushProjectTabRoute("actions");
+}
+
+function focusActionJob(jobId: number | null) {
+  focusedJobId.value = jobId;
+  if (activeSection.value === "actions") void pushProjectTabRoute("actions");
 }
 
 </script>
@@ -1360,7 +2265,7 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
         </section>
 
         <RepoChangesPanel
-          v-else-if="!remoteOnly && activeSection === 'changes'"
+          v-else-if="canShowChanges && activeSection === 'changes'"
           :commit-message="commitMessage"
           :changes="changes"
           :has-conflicts="hasConflicts"
@@ -1376,10 +2281,11 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
         />
 
         <RepoHistoryPanel
-          v-else-if="!remoteOnly && activeSection === 'history'"
+          v-else-if="activeSection === 'history'"
           :commits="statusCommits"
           :commit-meta-title="commitMetaTitle"
           :selected-commit-hash="selectedCommitHash"
+          :read-only="historyReadOnly"
           @open-commit="emit('openCommit', $event)"
           @cherry-pick-commit="emit('cherryPickCommit', $event)"
           @revert-commit="emit('revertCommit', $event)"
@@ -1392,8 +2298,7 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
         </section>
 
         <section v-else-if="activeSection === 'readme'" class="project-readme-card">
-          <p v-if="readmeError" class="error-line">{{ readmeError }}</p>
-          <p v-else-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
+          <p v-if="readmeLoading" class="muted repo-empty project-empty">正在读取 README。</p>
           <p v-else-if="!readmePreview" class="muted repo-empty project-empty">
             当前仓库没有 README.md。
           </p>
@@ -1414,27 +2319,6 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
         </section>
 
         <section v-else-if="activeSection === 'issues'" class="project-section project-github-section">
-          <div class="project-section__head project-section__head--compact">
-            <div class="project-section__title">
-              <h3>Issues</h3>
-              <span>{{ issues.length }} items</span>
-            </div>
-            <div class="project-toolbar" aria-label="Issue filters">
-              <ListFilter :size="14" aria-hidden="true" />
-              <div class="ui-segmented project-segmented" role="group" aria-label="Issue 状态">
-                <button
-                  v-for="filter in githubStateFilters"
-                  :key="filter.value"
-                  type="button"
-                  :class="{ 'is-active': issueState === filter.value }"
-                  :aria-pressed="issueState === filter.value"
-                  @click="issueState = filter.value"
-                >
-                  {{ filter.label }}
-                </button>
-              </div>
-            </div>
-          </div>
           <RepoGitHubUnavailableNotice
             v-if="issuesAccessUnavailable"
             :title="issuesAccessUnavailable.title"
@@ -1442,116 +2326,158 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
-          <form v-if="!issuesAccessUnavailable" class="project-compact-form" @submit.prevent="createIssue">
-            <div class="project-compact-form__line">
-              <input v-model="issueTitle" class="project-compact-form__title" type="text" placeholder="Issue 标题" />
-              <input v-model="issueLabels" type="text" placeholder="labels" />
-              <input v-model="issueAssignees" type="text" placeholder="assignees" />
-              <button
-                type="submit"
-                class="primary project-icon-action project-icon-action--primary"
-                :disabled="creatingIssue || !issueTitle.trim()"
-                aria-label="新建 Issue"
-                title="新建 Issue"
-              >
-                <LoaderCircle v-if="creatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
-                <Plus v-else :size="14" aria-hidden="true" />
+          <form
+            v-if="!issuesAccessUnavailable && issueCreateView"
+            class="project-create-form"
+            aria-label="新建 Issue"
+            @submit.prevent="createIssue"
+          >
+            <div class="project-create-form__head">
+              <button type="button" class="ghost project-create-back" @click="() => closeIssueCreateView()">
+                <ArrowLeft :size="14" aria-hidden="true" />
+                Issues
               </button>
-            </div>
-            <textarea v-model="issueBody" rows="2" placeholder="Issue 内容"></textarea>
-          </form>
-          <div v-if="!issuesAccessUnavailable" class="project-list project-dense-list">
-            <div
-              v-for="issue in issues"
-              :key="issue.number"
-              class="project-row project-row--issue"
-              :class="{ 'is-target': isIssueRowFocused(issue.number) }"
-              :data-issue-number="issue.number"
-            >
-              <template v-if="!isEditingIssue(issue.number)">
-                <span class="project-row__status" :class="{ 'is-closed': issue.state !== 'open' }" :title="issue.state">
-                  <CircleDot v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-                  <CircleOff v-else :size="14" aria-hidden="true" />
-                </span>
-                <div class="project-row__content">
-                  <strong>#{{ issue.number }} {{ issue.title }}</strong>
-                  <span>{{ issue.labels.join(", ") || "无标签" }} · {{ issue.assignees.join(", ") || "未分配" }}</span>
-                </div>
-                <div class="project-row__actions">
-                  <button
-                    type="button"
-                    class="ghost project-icon-action"
-                    aria-label="编辑"
-                    title="编辑"
-                    @click="startEditIssue(issue)"
-                  >
-                    <Pencil :size="14" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    class="ghost project-icon-action"
-                    :aria-label="issue.state === 'open' ? '关闭' : '重开'"
-                    :title="issue.state === 'open' ? '关闭' : '重开'"
-                    @click="toggleIssue(issue)"
-                  >
-                    <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
-                    <RotateCcw v-else :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-              </template>
-              <form
-                v-else
-                class="project-issue-edit-form project-compact-form"
-                @submit.prevent="saveIssueEdit(issue)"
-              >
-                <div class="project-compact-form__line">
-                  <input v-model="editingIssueTitle" class="project-compact-form__title" type="text" placeholder="Issue 标题" />
-                  <input v-model="editingIssueLabels" type="text" placeholder="labels, comma separated" />
-                  <input v-model="editingIssueAssignees" type="text" placeholder="assignees" />
-                  <button
-                    type="submit"
-                    class="primary project-icon-action project-icon-action--primary"
-                    :disabled="updatingIssue || !editingIssueTitle.trim()"
-                    aria-label="保存"
-                    title="保存"
-                  >
-                    <LoaderCircle v-if="updatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
-                    <Check v-else :size="14" aria-hidden="true" />
-                  </button>
-                  <button type="button" class="ghost project-icon-action" aria-label="取消" title="取消" @click="cancelEditIssue">
-                    <X :size="14" aria-hidden="true" />
-                  </button>
-                </div>
-                <textarea v-model="editingIssueBody" rows="2" placeholder="Issue 内容"></textarea>
-              </form>
-            </div>
-            <p v-if="!issues.length && !githubLoading" class="muted repo-empty">没有匹配的 Issue。</p>
-          </div>
-        </section>
-
-        <section v-else-if="activeSection === 'pulls'" class="project-section project-github-section">
-          <div class="project-section__head project-section__head--compact">
-            <div class="project-section__title">
-              <h3>Pull Requests</h3>
-              <span>{{ pulls.length }} items</span>
-            </div>
-            <div class="project-toolbar" aria-label="Pull Request filters">
-              <ListFilter :size="14" aria-hidden="true" />
-              <div class="ui-segmented project-segmented" role="group" aria-label="Pull Request 状态">
-                <button
-                  v-for="filter in githubStateFilters"
-                  :key="filter.value"
-                  type="button"
-                  :class="{ 'is-active': pullState === filter.value }"
-                  :aria-pressed="pullState === filter.value"
-                  @click="pullState = filter.value"
-                >
-                  {{ filter.label }}
+              <div class="project-create-form__actions">
+                <button type="button" class="ghost" :disabled="creatingIssue" @click="() => closeIssueCreateView()">取消</button>
+                <button type="submit" class="primary" :disabled="!canSubmitIssueCreate">
+                  <LoaderCircle v-if="creatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
+                  <Plus v-else :size="14" aria-hidden="true" />
+                  创建 Issue
                 </button>
               </div>
             </div>
-          </div>
+            <div class="project-template-picker">
+              <div class="project-template-picker__control">
+                <span>模板</span>
+                <Dropdown
+                  :model-value="issueTemplateKey"
+                  :options="issueTemplateOptions"
+                  :disabled="issueTemplatesLoading"
+                  button-class="project-template-dropdown"
+                  menu-width="260px"
+                  menu-label="Issue 模板"
+                  placement="bottom"
+                  @update:model-value="selectIssueTemplate"
+                />
+              </div>
+              <p class="muted">
+                {{ issueTemplatesLoading ? "正在读取模板..." : selectedIssueTemplate.description }}
+              </p>
+            </div>
+            <div class="project-create-grid">
+              <label class="project-create-field project-create-field--wide">
+                <span>标题</span>
+                <input v-model="issueTitle" type="text" placeholder="Issue 标题" />
+              </label>
+              <div class="project-create-field">
+                <span>标签</span>
+                <Dropdown
+                  v-model="issueLabels"
+                  multiple
+                  :options="issueLabelDropdownOptions"
+                  :display-label="issueLabelSummary"
+                  :placeholder="issueMetadataLoading ? '正在读取标签...' : '无标签'"
+                  button-class="project-template-dropdown"
+                  menu-width="220px"
+                  menu-label="标签"
+                  placement="bottom"
+                  :disabled="issueMetadataLoading && !issueLabelOptions.length"
+                />
+              </div>
+              <div class="project-create-field">
+                <span>负责人</span>
+                <Dropdown
+                  v-model="issueAssignees"
+                  multiple
+                  :options="issueAssigneeDropdownOptions"
+                  :display-label="issueAssigneeSummary"
+                  :placeholder="issueMetadataLoading ? '正在读取负责人...' : '未分配'"
+                  button-class="project-template-dropdown"
+                  menu-width="220px"
+                  menu-label="负责人"
+                  placement="bottom"
+                  :disabled="issueMetadataLoading && !issueAssigneeOptions.length"
+                />
+              </div>
+            </div>
+            <div v-if="selectedIssueTemplate.kind === 'form'" class="project-template-fields">
+              <p v-for="field in issueTemplateMarkdownFields" :key="field.id" class="project-template-note">
+                {{ field.value }}
+              </p>
+              <label
+                v-for="field in issueTemplateFields"
+                :key="field.id"
+                class="project-create-field project-create-field--wide"
+              >
+                <span>{{ field.label }}<em v-if="'required' in field && field.required">*</em></span>
+                <small v-if="'description' in field && field.description">{{ field.description }}</small>
+                <textarea
+                  v-if="field.type === 'textarea'"
+                  :value="issueFieldValue(field)"
+                  rows="5"
+                  :placeholder="field.placeholder"
+                  @input="setIssueFieldValue(field.id, targetValue($event))"
+                ></textarea>
+                <Dropdown
+                  v-else-if="field.type === 'dropdown'"
+                  :model-value="issueFieldValue(field)"
+                  :options="dropdownOptions(field.options)"
+                  button-class="project-template-dropdown"
+                  menu-width="220px"
+                  :menu-label="field.label"
+                  placement="bottom"
+                  @update:model-value="(value) => setIssueFieldValue(field.id, value)"
+                />
+                <div v-else-if="field.type === 'checkboxes'" class="project-checkbox-list">
+                  <label v-for="option in field.options" :key="option.label" class="project-check">
+                    <input
+                      type="checkbox"
+                      :checked="issueCheckboxChecked(field.id, option.label)"
+                      @change="toggleIssueCheckbox(field.id, option.label, targetChecked($event))"
+                    />
+                    <span>{{ option.label }}<em v-if="option.required">*</em></span>
+                  </label>
+                </div>
+                <input
+                  v-else
+                  type="text"
+                  :value="issueFieldValue(field)"
+                  :placeholder="field.placeholder"
+                  @input="setIssueFieldValue(field.id, targetValue($event))"
+                />
+              </label>
+            </div>
+            <label v-else class="project-create-field project-create-field--wide">
+              <span>内容</span>
+              <textarea v-model="issueBody" rows="7" placeholder="填写 Issue 内容"></textarea>
+            </label>
+          </form>
+          <RepoIssuesPanel
+            v-if="!issuesAccessUnavailable && !issueCreateView"
+            :issues="issues"
+            :state="issueState"
+            :filters="issuePanelFilters"
+            :metadata="issueFilterMetadata"
+            :metadata-loading="issueFilterMetadataLoading"
+            :loading="githubLoading"
+            :updating="updatingIssue"
+            :editing-issue-number="editingIssueNumber"
+            v-model:editing-title="editingIssueTitle"
+            v-model:editing-labels="editingIssueLabels"
+            v-model:editing-assignees="editingIssueAssignees"
+            v-model:editing-body="editingIssueBody"
+            :is-focused="isIssueRowFocused"
+            @update:state="setIssueState"
+            @update:filters="setIssuePanelFilters"
+            @create="openIssueCreateView"
+            @edit="startEditIssue"
+            @cancel-edit="cancelEditIssue"
+            @save-edit="saveIssueEdit"
+            @toggle="toggleIssue"
+          />
+        </section>
+
+        <section v-else-if="activeSection === 'pulls'" class="project-section project-github-section">
           <RepoGitHubUnavailableNotice
             v-if="pullsAccessUnavailable"
             :title="pullsAccessUnavailable.title"
@@ -1559,132 +2485,97 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
-          <form v-if="!pullsAccessUnavailable" class="project-compact-form" @submit.prevent="createPullRequest">
-            <div class="project-compact-form__line">
-              <input v-model="pullRequestTitle" class="project-compact-form__title" type="text" placeholder="PR 标题" />
-              <input v-model="pullRequestHead" type="text" placeholder="head 分支" />
-              <input v-model="pullRequestBase" type="text" placeholder="base 分支" />
-              <label class="project-check project-check--inline">
-                <input v-model="pullRequestDraft" type="checkbox" />
-                <span>Draft</span>
-              </label>
-              <button
-                type="submit"
-                class="primary project-icon-action project-icon-action--primary"
-                :disabled="creatingPullRequest || !pullRequestTitle.trim() || !pullRequestHead.trim() || !pullRequestBase.trim()"
-                aria-label="新建 PR"
-                title="新建 PR"
-              >
-                <LoaderCircle v-if="creatingPullRequest" :size="14" aria-hidden="true" class="sb-spin" />
-                <GitPullRequest v-else :size="14" aria-hidden="true" />
+          <form
+            v-if="!pullsAccessUnavailable && pullCreateView"
+            class="project-create-form"
+            aria-label="新建 PR"
+            @submit.prevent="createPullRequest"
+          >
+            <div class="project-create-form__head">
+              <button type="button" class="ghost project-create-back" @click="() => closePullRequestCreateView()">
+                <ArrowLeft :size="14" aria-hidden="true" />
+                Pull Requests
               </button>
+              <div class="project-create-form__actions">
+                <button type="button" class="ghost" :disabled="creatingPullRequest" @click="() => closePullRequestCreateView()">
+                  取消
+                </button>
+                <button type="submit" class="primary" :disabled="!canSubmitPullRequestCreate">
+                  <LoaderCircle v-if="creatingPullRequest" :size="14" aria-hidden="true" class="sb-spin" />
+                  <GitPullRequest v-else :size="14" aria-hidden="true" />
+                  创建 PR
+                </button>
+              </div>
             </div>
-            <textarea v-model="pullRequestBody" rows="2" placeholder="PR 描述"></textarea>
-          </form>
-          <p v-if="!pullsAccessUnavailable && pullsLoading && !pulls.length" class="muted repo-empty">正在读取 Pull Requests。</p>
-          <div v-if="!pullsAccessUnavailable" class="project-list project-dense-list">
-            <div
-              v-for="pull in pulls"
-              :key="pull.number"
-              class="project-row project-row--pull"
-              :class="{ 'is-target': isPullRequestRowFocused(pull.number) }"
-              :data-pull-number="pull.number"
-              @click="focusPullRequestRow(pull)"
-            >
-              <span class="project-row__status" :class="{ 'is-closed': pull.state !== 'open' || pull.merged }" :title="pull.merged ? 'merged' : pull.state">
-                <GitMerge v-if="pull.merged" :size="14" aria-hidden="true" />
-                <GitPullRequest v-else-if="pull.state === 'open'" :size="14" aria-hidden="true" />
-                <CircleOff v-else :size="14" aria-hidden="true" />
-              </span>
-              <div class="project-row__content">
-                <strong>#{{ pull.number }} {{ pull.title }}</strong>
-                <span>
-                  {{ pull.author }} · {{ pull.headBranch }} -> {{ pull.baseBranch }} ·
-                  {{ pull.merged ? "merged" : pull.state }}
-                  <template v-if="pull.draft"> · draft</template>
-                  <template v-if="pull.mergeableState"> · {{ pull.mergeableState }}</template>
+            <div class="project-template-picker">
+              <div class="project-template-picker__control">
+                <span>模板</span>
+                <Dropdown
+                  :model-value="pullRequestTemplateKey"
+                  :options="pullRequestTemplateOptions"
+                  :disabled="pullRequestTemplatesLoading"
+                  button-class="project-template-dropdown"
+                  menu-width="260px"
+                  menu-label="PR 模板"
+                  placement="bottom"
+                  @update:model-value="selectPullRequestTemplate"
+                />
+              </div>
+              <p class="muted">
+                {{ pullRequestTemplatesLoading ? "正在读取模板..." : selectedPullRequestTemplate.description }}
+              </p>
+            </div>
+            <div class="project-create-grid">
+              <label class="project-create-field project-create-field--wide">
+                <span>标题</span>
+                <input v-model="pullRequestTitle" type="text" placeholder="PR 标题" />
+              </label>
+              <label class="project-create-field">
+                <span>来源分支</span>
+                <input v-model="pullRequestHead" type="text" placeholder="feature/my-change" />
+              </label>
+              <label class="project-create-field">
+                <span>目标分支</span>
+                <input v-model="pullRequestBase" type="text" placeholder="main" />
+              </label>
+              <label class="project-create-switch ui-switch">
+                <span class="project-create-switch__content">
+                  <strong>草稿</strong>
                 </span>
-                <div v-if="focusedPullRequest?.number === pull.number" class="project-pull-checks">
-                  <p class="muted">
-                    {{
-                      pullChecksLoading
-                        ? "正在读取 checks..."
-                        : focusedPullChecks.length
-                          ? `${focusedPullChecks.length} 个 checks`
-                          : "没有 checks"
-                    }}
-                  </p>
-                  <ul v-if="focusedPullChecks.length" class="project-pull-check-list">
-                    <li v-for="check in focusedPullChecks" :key="check.id">
-                      <span>{{ check.name }}</span>
-                      <em>{{ check.conclusion ?? check.status }}</em>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-              <div class="project-row__actions project-row__actions--pull">
-                <div class="ui-segmented project-segmented project-segmented--merge" role="group" aria-label="合并方式">
-                  <button
-                    v-for="method in mergeMethodOptions"
-                    :key="method.value"
-                    type="button"
-                    :class="{ 'is-active': pullRequestMergeMethod === method.value }"
-                    :aria-pressed="pullRequestMergeMethod === method.value"
-                    @click.stop="pullRequestMergeMethod = method.value"
-                  >
-                    {{ method.label }}
-                  </button>
-                </div>
-                <button type="button" class="ghost project-icon-action" aria-label="打开" title="打开" @click.stop="openUrl(pull.htmlUrl)">
-                  <ExternalLink :size="14" aria-hidden="true" />
-                </button>
-                <button
-                  v-if="pull.state === 'open' && !pull.merged"
-                  type="button"
-                  class="ghost project-icon-action"
-                  :disabled="updatingPullRequest"
-                  aria-label="关闭"
-                  title="关闭"
-                  @click.stop="togglePullRequestState(pull)"
-                >
-                  <CircleOff :size="14" aria-hidden="true" />
-                </button>
-                <button
-                  v-if="pull.state === 'open' && !pull.merged"
-                  type="button"
-                  class="primary project-icon-action project-icon-action--primary"
-                  :disabled="updatingPullRequest"
-                  aria-label="合并"
-                  title="合并"
-                  @click.stop="mergePullRequest(pull)"
-                >
-                  <GitMerge :size="14" aria-hidden="true" />
-                </button>
-                <button
-                  v-else-if="pull.state === 'closed' && !pull.merged"
-                  type="button"
-                  class="ghost project-icon-action"
-                  :disabled="updatingPullRequest"
-                  aria-label="重开"
-                  title="重开"
-                  @click.stop="togglePullRequestState(pull)"
-                >
-                  <RotateCcw :size="14" aria-hidden="true" />
-                </button>
-              </div>
+                <input v-model="pullRequestDraft" class="ui-switch__input" type="checkbox" />
+                <span class="ui-switch__track" aria-hidden="true"></span>
+              </label>
             </div>
-            <p v-if="!pulls.length && !pullsLoading" class="muted repo-empty">没有匹配的 Pull Request。</p>
-          </div>
+            <label class="project-create-field project-create-field--wide">
+              <span>描述</span>
+              <textarea v-model="pullRequestBody" rows="7" placeholder="描述本次变更"></textarea>
+            </label>
+          </form>
+          <RepoPullRequestsPanel
+            v-if="!pullsAccessUnavailable && !pullCreateView"
+            :pulls="pulls"
+            :state="pullState"
+            :filters="pullRequestPanelFilters"
+            :metadata="issueFilterMetadata"
+            :metadata-loading="issueFilterMetadataLoading"
+            :loading="pullsLoading"
+            :checks-loading="pullChecksLoading"
+            :updating="updatingPullRequest"
+            :focused-pull-request-number="focusedPullRequestNumber"
+            :pull-checks="pullChecks"
+            v-model:merge-method="pullRequestMergeMethod"
+            :is-focused="isPullRequestRowFocused"
+            @update:state="setPullRequestState"
+            @update:filters="setPullRequestPanelFilters"
+            @create="openPullRequestCreateView"
+            @focus="focusPullRequestRow"
+            @open="(pull) => openUrl(pull.htmlUrl)"
+            @toggle="togglePullRequestState"
+            @merge="mergePullRequest"
+          />
         </section>
 
         <section v-else-if="activeSection === 'actions'" class="project-section project-github-section">
-          <div class="project-section__head project-section__head--compact">
-            <div class="project-section__title">
-              <h3>Actions</h3>
-              <span>{{ workflowRuns.length }} runs</span>
-            </div>
-          </div>
           <RepoGitHubUnavailableNotice
             v-if="actionsAccessUnavailable"
             :title="actionsAccessUnavailable.title"
@@ -1692,35 +2583,17 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="actionsError" class="error-line">{{ actionsError }}</p>
-          <p v-else-if="actionsLoading" class="muted repo-empty">正在读取 GitHub Actions。</p>
-          <div v-if="!actionsAccessUnavailable" class="project-list project-dense-list">
-            <div
-              v-for="run in workflowRuns"
-              :key="run.id"
-              class="project-row project-row--action"
-              :class="{ 'is-target': isRunRowFocused(run.id) }"
-              :data-run-id="run.id"
-            >
-              <span
-                class="project-action-status"
-                :class="`project-action-status--${workflowRunStatusTone(run)}`"
-                :title="workflowRunStatusText(run)"
-                :aria-label="workflowRunStatusText(run)"
-              >
-                <X v-if="isWorkflowRunFailure(run)" :size="14" aria-hidden="true" />
-                <CircleDot v-else :size="14" aria-hidden="true" />
-              </span>
-              <div class="project-row__content">
-                <strong>{{ run.displayTitle }}</strong>
-                <span>{{ run.name }} · {{ run.branch }} · {{ run.event }}</span>
-              </div>
-              <button type="button" class="ghost project-icon-action" aria-label="打开" title="打开" @click="openUrl(run.htmlUrl)">
-                <ExternalLink :size="14" aria-hidden="true" />
-              </button>
-            </div>
-            <p v-if="!workflowRuns.length && !actionsLoading" class="muted repo-empty">没有 GitHub Actions 运行记录。</p>
-          </div>
+          <RepoActionsPanel
+            v-else-if="repoFullName"
+            :repo-full-name="repoFullName"
+            :runs="workflowRuns"
+            :loading="actionsLoading"
+            :focused-run-id="focusedRunId"
+            :focused-job-id="focusedJobId"
+            @focus-run="focusActionRun"
+            @focus-job="focusActionJob"
+            @refresh="loadActions(true)"
+          />
         </section>
 
         <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" @submit.prevent="saveSettings()">
@@ -1752,7 +2625,6 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <p v-else-if="githubError" class="error-line">{{ githubError }}</p>
           <template v-if="settings">
             <section class="project-settings-group" aria-labelledby="project-settings-general-title">
               <div class="project-settings-group__head">
@@ -1812,8 +2684,8 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
               </div>
             </section>
           </template>
-          <div v-if="(!remoteOnly && repoPath) || settings" class="project-settings-danger-list">
-            <section v-if="!remoteOnly && repoPath" class="project-danger-zone" aria-label="本地危险操作">
+          <div v-if="(canDeleteLocal && repoPath) || (canDeleteRemote && settings)" class="project-settings-danger-list">
+            <section v-if="canDeleteLocal && repoPath" class="project-danger-zone" aria-label="本地危险操作">
               <div>
                 <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
                 <span>
@@ -1836,7 +2708,7 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
                 <Trash2 v-else :size="14" aria-hidden="true" />
               </button>
             </section>
-            <section v-if="settings" class="project-danger-zone" aria-label="远端危险操作">
+            <section v-if="canDeleteRemote && settings" class="project-danger-zone" aria-label="远端危险操作">
               <div>
                 <strong>删除 GitHub 远端仓库</strong>
                 <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
@@ -1844,7 +2716,7 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
               <button
                 type="button"
                 class="ghost danger project-icon-action"
-                :disabled="deletingRepo || githubLoading || !settings || !repoFullName"
+                :disabled="deletingRepo || githubLoading || !settings || !repoFullName || !canDeleteRemote"
                 aria-label="删除仓库"
                 title="删除仓库"
                 @click="openDeleteDialog('remote')"
@@ -1927,7 +2799,37 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
       />
 
       <aside v-if="showProjectSidebar" class="project-sidebar">
-        <section v-if="repoFullName" class="project-about-card" aria-label="仓库描述">
+        <section
+          v-if="hasProjectSidebarErrors"
+          class="project-sidebar-error-card"
+          aria-label="仓库错误"
+        >
+          <div
+            v-for="error in projectSidebarErrors"
+            :key="error.key"
+            class="project-sidebar-error-card__item"
+          >
+            <AlertCircle :size="15" aria-hidden="true" />
+            <div>
+              <strong>{{ error.title }}</strong>
+              <p>{{ error.message }}</p>
+            </div>
+            <button
+              v-if="error.retry === 'sync'"
+              type="button"
+              class="ghost project-icon-action project-sidebar-error-card__retry"
+              :disabled="error.retrying || actionRunning"
+              aria-label="重试"
+              title="重试"
+              @click="emit('retrySync')"
+            >
+              <LoaderCircle v-if="error.retrying" :size="14" aria-hidden="true" class="sb-spin" />
+              <RotateCw v-else :size="14" aria-hidden="true" />
+            </button>
+          </div>
+        </section>
+
+        <section v-if="repoFullName && !hasProjectSidebarErrors" class="project-about-card" aria-label="仓库描述">
           <button
             v-if="!aboutEditing"
             type="button"
@@ -1944,7 +2846,6 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
             <textarea v-model="settingsForm.description" rows="3" placeholder="Description"></textarea>
             <input v-model="settingsForm.homepage" type="url" placeholder="Homepage" />
             <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="aboutTopicDraft" />
-            <p v-if="githubError" class="error-line">{{ githubError }}</p>
             <div class="project-about-form__actions">
               <button type="button" class="ghost project-icon-action" :disabled="savingSettings" aria-label="取消" title="取消" @click="cancelEditAbout">
                 <X :size="14" aria-hidden="true" />
@@ -1957,15 +2858,37 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
           </form>
           <div v-else class="project-about-summary">
             <p v-if="githubLoading && !settings" class="muted">正在读取仓库描述。</p>
-            <p v-else-if="githubError && !settings" class="error-line">{{ githubError }}</p>
             <template v-else>
               <p :class="{ 'is-empty': !aboutDescription }">{{ aboutDescription || "No description provided." }}</p>
               <a v-if="aboutHomepage" :href="aboutHomepageHref" target="_blank" rel="noreferrer">
                 <ExternalLink :size="13" aria-hidden="true" />
                 <span>{{ aboutHomepage }}</span>
               </a>
-              <div v-if="aboutTopics.length" class="project-topic-list" aria-label="Topics">
-                <span v-for="topic in aboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
+              <div v-if="aboutTopics.length" class="project-topic-block">
+                <div
+                  ref="aboutTopicList"
+                  class="project-topic-list"
+                  :class="{ 'is-collapsed': aboutTopicsOverflowing && !aboutTopicsExpanded }"
+                  aria-label="Topics"
+                >
+                  <span v-for="topic in displayedAboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
+                  <button
+                    v-if="aboutTopicsOverflowing"
+                    type="button"
+                    class="project-topic-toggle"
+                    :aria-expanded="aboutTopicsExpanded"
+                    @click="toggleAboutTopicsExpanded"
+                  >
+                    {{ aboutTopicsExpanded ? "收起" : "展开" }}
+                  </button>
+                </div>
+                <div
+                  ref="aboutTopicMeasureList"
+                  class="project-topic-list project-topic-list--measure"
+                  aria-hidden="true"
+                >
+                  <span v-for="topic in aboutTopics" :key="topic" class="project-topic-pill">{{ topic }}</span>
+                </div>
               </div>
               <div
                 v-if="aboutLicenseText || aboutStats.length"
@@ -2010,6 +2933,12 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
             <span class="sb-tree__name">{{ tab.label }}</span>
           </button>
         </div>
+
+        <RepoLanguageStatsCard
+          :repo="repoSummary ?? null"
+          :show-line-counts="resolvedRepoContext.capabilities.open.available"
+          :loading="languageStatsLoading"
+        />
 
       </aside>
     </div>
@@ -2117,6 +3046,10 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
+}
+
+.project-main :deep(.error-line) {
+  display: none;
 }
 
 .project-commit-detail-card {
@@ -2237,6 +3170,60 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   align-self: start;
 }
 
+.project-sidebar-error-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--err-soft);
+  border-radius: var(--radius-md);
+  background: var(--err-soft);
+}
+
+.project-sidebar-error-card__item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  color: var(--err);
+}
+
+.project-sidebar-error-card__item > div {
+  min-width: 0;
+}
+
+.project-sidebar-error-card__item strong,
+.project-sidebar-error-card__item p {
+  display: block;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-sidebar-error-card__item strong {
+  color: var(--err);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.project-sidebar-error-card__item p {
+  margin-top: 3px;
+  color: var(--err);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.project-sidebar-error-card__retry {
+  color: var(--err);
+}
+
+.project-sidebar-error-card__retry:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 16%, transparent);
+}
+
 .project-about-card {
   position: relative;
   display: grid;
@@ -2293,21 +3280,11 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
 .project-about-stat {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   gap: 8px;
-  width: 100%;
-  height: auto;
   min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-weight: 400;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.25;
-  text-align: left;
-  filter: none;
 }
 
 .project-about-stat span {
@@ -2352,6 +3329,13 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   gap: 6px;
 }
 
+.project-topic-block {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .project-topic-list {
   display: flex;
   flex-wrap: wrap;
@@ -2359,6 +3343,19 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   gap: 6px;
   min-width: 0;
   margin-top: 1px;
+}
+
+.project-topic-list.is-collapsed {
+  max-height: 46px;
+  overflow: hidden;
+}
+
+.project-topic-list--measure {
+  position: absolute;
+  inset: 0 0 auto;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
 }
 
 .project-topic-pill {
@@ -2373,6 +3370,26 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   font-weight: 600;
   line-height: 1;
   padding: 0 7px;
+}
+
+.project-topic-toggle {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.project-topic-toggle:hover,
+.project-topic-toggle:focus-visible {
+  background: var(--accent-soft);
 }
 
 .project-layout--with-commit-detail .project-sidebar {
@@ -2421,10 +3438,6 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   font-size: 12px;
 }
 
-.project-segmented--merge button {
-  min-width: 52px;
-}
-
 .project-compact-form {
   display: grid;
   gap: 8px;
@@ -2448,6 +3461,204 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
 .project-compact-form textarea {
   min-height: 54px;
   resize: vertical;
+}
+
+.project-create-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.project-create-form {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 0 10px;
+}
+
+.project-create-form__head,
+.project-create-form__actions,
+.project-create-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-create-form__head {
+  justify-content: space-between;
+}
+
+.project-create-form__actions button,
+.project-create-back {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.project-create-form__actions .primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.project-template-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.project-template-picker__control {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.project-template-picker__control > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-template-picker p {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.project-template-picker :deep(.dd),
+.project-create-field :deep(.dd) {
+  width: 100%;
+}
+
+.project-template-picker :deep(.project-template-dropdown),
+.project-create-field :deep(.project-template-dropdown) {
+  width: 100%;
+  height: 30px;
+  justify-content: space-between;
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.project-template-picker :deep(.project-template-dropdown .chat-chip__label),
+.project-create-field :deep(.project-template-dropdown .chat-chip__label) {
+  max-width: none;
+}
+
+.project-create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 180px) minmax(140px, 180px);
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-create-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.project-create-field--wide {
+  grid-column: 1 / -1;
+}
+
+.project-create-field span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-create-field em {
+  color: var(--err);
+  font-style: normal;
+}
+
+.project-create-field small {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.project-create-field textarea {
+  min-height: 112px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  resize: vertical;
+}
+
+.project-create-field textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  background: var(--bg);
+}
+
+.project-create-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  align-self: end;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.project-create-switch__content {
+  min-width: 0;
+}
+
+.project-create-switch__content strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-template-fields {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.project-template-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.project-checkbox-list {
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
 }
 
 .project-check {
@@ -2498,8 +3709,7 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   background: var(--bg-hover);
 }
 
-.project-row__status,
-.project-action-status {
+.project-row__status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2550,10 +3760,6 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   min-width: 0;
 }
 
-.project-row__actions--pull {
-  gap: 6px;
-}
-
 .project-icon-action {
   width: 28px;
   min-width: 28px;
@@ -2586,56 +3792,9 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   background: transparent;
 }
 
-.project-row--action {
-  grid-template-columns: 22px minmax(0, 1fr) auto;
-}
-
-.project-row--pull {
-  align-items: start;
-}
-
-.project-pull-checks {
-  display: grid;
-  flex: 0 0 100%;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.project-pull-check-list {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.project-pull-check-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
 .project-row.is-target {
   box-shadow: inset 3px 0 0 var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
-}
-
-.project-action-status--error {
-  color: var(--err);
-}
-
-.project-action-status--warn {
-  color: var(--warn);
-}
-
-.project-action-status--ok {
-  color: var(--ok);
-}
-
-.project-action-status--muted {
-  color: var(--text-muted);
 }
 
 .project-settings-group {
@@ -2884,13 +4043,14 @@ function activateProjectSection(tab: ProjectSectionConfig["key"]) {
   }
 
   .project-compact-form__line,
+  .project-template-picker,
+  .project-create-grid,
   .project-settings-fields,
   .project-row {
     grid-template-columns: 1fr;
   }
 
-  .project-row__status,
-  .project-action-status {
+  .project-row__status {
     display: none;
   }
 

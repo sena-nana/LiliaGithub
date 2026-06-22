@@ -39,6 +39,7 @@ function renderHistoryPanel(props: {
   commits: CommitSummary[];
   commitMetaTitle?: (commit: CommitSummary) => string;
   selectedCommitHash?: string | null;
+  readOnly?: boolean;
 }) {
   const handlers = {
     openCommit: vi.fn(),
@@ -172,5 +173,18 @@ describe("RepoHistoryPanel", () => {
     await fireEvent.contextMenu(row);
     await fireEvent.click(await screen.findByRole("menuitem", { name: "基于此新建分支" }));
     expect(view.handlers.createBranchFromCommit).toHaveBeenCalledWith(commits[0].hash);
+  });
+
+  it("hides local commit actions in read-only history", async () => {
+    const commits = [commit("1234567890abcdef")];
+    const view = renderHistoryPanel({ commits, readOnly: true });
+    const row = view.getByRole("button", { name: /1234567890abcdef/ });
+
+    await fireEvent.contextMenu(row);
+
+    expect(screen.queryByRole("menuitem", { name: "拣选提交" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "还原提交" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "重置到此提交" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "基于此新建分支" })).toBeNull();
   });
 });

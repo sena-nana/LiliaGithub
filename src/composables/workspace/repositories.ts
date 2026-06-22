@@ -1,7 +1,10 @@
 import {
   beginRecentSyncRetry,
+  beginRepoSync,
   clearRepoActionError,
   finishRecentSyncRetry,
+  finishRepoSync,
+  rememberRecentSync,
   state,
   replaceRepos,
   setRepoDetail,
@@ -9,12 +12,15 @@ import {
   upsertRepo,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
+import { repoAutoSyncEnabled } from "../../config/repoSettingsManifest";
 import type {
   GitHubContributionDay,
   GitHubContributionMeta,
   RemoteRepoShortcut,
   RepoConflictChoice,
   RepoSummary,
+  BulkSyncPreview,
+  BulkSyncResult,
 } from "../../services/workspace";
 import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
 
@@ -26,6 +32,10 @@ let contributionRefreshGeneration = 0;
 let contributionRefreshPendingCount = 0;
 let contributionRefreshSeenFullNames = new Set<string>();
 let contributionRefreshSampledCount = 0;
+let contributionRefreshDays: GitHubContributionDay[] = [];
+let workspaceTaskRefreshGeneration = 0;
+let languageStatsLoadingGenerations = new Map<string, number>();
+const autoSyncRunningRepoIds = new Set<string>();
 
 async function applyRepoMutation(
   repoId: string,
@@ -54,6 +64,110 @@ async function applyRepoOperationWithLanguageStats(
   await loadRepoDetail(repoId);
   await refreshRepoLanguageStats(repoId, { silent: true });
   return result;
+}
+
+function repoNeedsSync(summary: RepoSummary) {
+  return summary.ahead > 0 || summary.behind > 0;
+}
+
+function repoDirtyCount(summary: RepoSummary) {
+  return summary.stagedCount + summary.unstagedCount + summary.untrackedCount;
+}
+
+function autoSyncBlockReason(summary: RepoSummary) {
+  if (!summary.remoteUrl) return "没有 origin remote，已跳过自动同步";
+  if (!summary.currentBranch) return "当前不是命名分支，已跳过自动同步";
+  if (summary.conflictCount > 0) return "已有冲突需要先处理，已跳过自动同步";
+  if (repoDirtyCount(summary) > 0) return "存在未提交变更，已跳过自动同步";
+  return null;
+}
+
+function autoSyncReason(summary: RepoSummary) {
+  if (summary.ahead > 0 && summary.behind > 0) return "需先拉取合并后推送";
+  if (summary.behind > 0) return "可拉取远端更新";
+  return "有本地提交待推送";
+}
+
+function autoSyncPreview(summary: RepoSummary): BulkSyncPreview {
+  return {
+    operation: "sync",
+    eligible: [{ repo: { ...summary }, reason: autoSyncReason(summary) }],
+    blocked: [],
+    warnings: [],
+  };
+}
+
+function rememberAutoSyncFailure(summary: RepoSummary, result: BulkSyncResult) {
+  rememberRecentSync(autoSyncPreview(summary), [result]);
+}
+
+function applyAutoSyncResult(result: BulkSyncResult) {
+  if (result.summary) {
+    upsertRepo(result.summary);
+  }
+  if (result.status === "success") {
+    clearRepoActionError(result.repoId);
+  } else {
+    setRepoActionError(result.repoId, result.message);
+  }
+}
+
+export async function autoSyncRepoIfNeeded(
+  repoId: string,
+  options: { summary?: RepoSummary; refreshDetail?: boolean; throwOnError?: boolean } = {},
+) {
+  const summary = options.summary ?? state.repos.find((repo) => repo.id === repoId) ?? null;
+  if (!summary) return null;
+  const autoSyncEnabled = repoAutoSyncEnabled(state.settings, summary.id);
+  if (!autoSyncEnabled) return null;
+  if (!repoNeedsSync(summary)) {
+    clearRepoActionError(summary.id);
+    return null;
+  }
+  if (autoSyncRunningRepoIds.has(summary.id)) return null;
+
+  const blockReason = autoSyncBlockReason(summary);
+  if (blockReason) {
+    setRepoActionError(summary.id, blockReason);
+    return null;
+  }
+
+  autoSyncRunningRepoIds.add(summary.id);
+  beginRepoSync(summary.id);
+  try {
+    let result: BulkSyncResult | undefined;
+    try {
+      const service = await loadWorkspaceService();
+      [result] = await service.bulkSyncExecute("sync", [summary.id]);
+    } catch (err) {
+      const failedResult: BulkSyncResult = {
+        repoId: summary.id,
+        status: "error",
+        message: String(err),
+        summary: null,
+      };
+      rememberAutoSyncFailure(summary, failedResult);
+      setRepoActionError(summary.id, failedResult.message);
+      if (options.throwOnError) throw err;
+      return null;
+    }
+    if (!result) return null;
+    applyAutoSyncResult(result);
+    if (result.status !== "success") {
+      rememberAutoSyncFailure(summary, result);
+      if (options.throwOnError) throw new Error(result.message);
+      return result;
+    }
+    const syncedRepoId = result.summary?.id ?? summary.id;
+    if (options.refreshDetail || state.repoDetails[syncedRepoId]) {
+      await loadRepoDetail(syncedRepoId).catch(() => undefined);
+    }
+    void refreshRepoLanguageStats(syncedRepoId, { silent: true });
+    return result;
+  } finally {
+    autoSyncRunningRepoIds.delete(summary.id);
+    finishRepoSync(summary.id);
+  }
 }
 
 export async function refreshRepos() {
@@ -122,9 +236,11 @@ async function refreshManagedRepoSummaries(
         if (generation !== repositoryRuntimeGeneration) return;
         upsertRepo(summary);
         refreshedRepoIds.push(summary.id);
+        await autoSyncRepoIfNeeded(summary.id, { summary });
       } catch {
         // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
       } finally {
+        if (generation !== repositoryRuntimeGeneration) return;
         state.refreshingRepoIds = state.refreshingRepoIds.filter((id) => id !== repoId);
         void refreshWorkspaceTasks();
       }
@@ -193,17 +309,22 @@ function beginContributionRefresh() {
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;
+  contributionRefreshDays = emptyContributionDays(refreshedAt);
+  if (!state.githubContributions.days.length) {
+    state.githubContributions.days = contributionRefreshDays;
+  }
   state.githubContributions.loading = false;
   state.githubContributions.error = null;
-  state.githubContributions.days = emptyContributionDays(refreshedAt);
-  state.githubContributions.meta = {
-    repoCount: 0,
-    requestedRepoCount: 0,
-    repoLimit: CONTRIBUTION_REPO_LIMIT,
-    truncated: false,
-    skippedRepoCount: 0,
-    refreshedAt,
-  };
+  if (!state.githubContributions.meta) {
+    state.githubContributions.meta = {
+      repoCount: 0,
+      requestedRepoCount: 0,
+      repoLimit: CONTRIBUTION_REPO_LIMIT,
+      truncated: false,
+      skippedRepoCount: 0,
+      refreshedAt,
+    };
+  }
   return generation;
 }
 
@@ -229,7 +350,8 @@ async function refreshSingleRepoContribution(scope: string, generation: number) 
     const service = await loadWorkspaceService();
     const result = await service.listRepoContribution(scope);
     if (generation !== contributionRefreshGeneration) return;
-    state.githubContributions.days = mergeContributionDays(state.githubContributions.days, result.days);
+    contributionRefreshDays = mergeContributionDays(contributionRefreshDays, result.days);
+    state.githubContributions.days = contributionRefreshDays;
     updateContributionMeta({
       repoCount: (state.githubContributions.meta?.repoCount ?? 0) + (result.meta.repoCount ?? 1),
       requestedRepoCount: contributionRefreshSeenFullNames.size,
@@ -248,6 +370,23 @@ function finishRepoContributionRefresh(generation: number) {
   if (generation !== contributionRefreshGeneration) return;
   contributionRefreshPendingCount = Math.max(0, contributionRefreshPendingCount - 1);
   state.githubContributions.loading = contributionRefreshPendingCount > 0;
+  if (contributionRefreshPendingCount === 0 && state.githubContributions.meta) {
+    void persistStartupContributions();
+  }
+}
+
+async function persistStartupContributions() {
+  const meta = state.githubContributions.meta;
+  if (!meta) return;
+  try {
+    const service = await loadWorkspaceService();
+    await service.writeStartupContributions({
+      days: state.githubContributions.days,
+      meta,
+    });
+  } catch {
+    // Startup cache persistence is an optimization; visible refresh state is already updated.
+  }
 }
 
 function emptyContributionDays(now = Date.now()) {
@@ -288,8 +427,11 @@ function updateContributionMeta(update: Partial<GitHubContributionMeta> & {
 }
 
 export async function refreshWorkspaceTasks() {
+  const generation = ++workspaceTaskRefreshGeneration;
   const service = await loadWorkspaceService();
-  state.tasks = await service.listWorkspaceTasks();
+  const tasks = await service.listWorkspaceTasks();
+  if (generation !== workspaceTaskRefreshGeneration) return;
+  state.tasks = tasks;
 }
 
 export async function cancelWorkspaceTask(taskId: string) {
@@ -339,8 +481,11 @@ export async function refreshRepoLanguageStats(
   options: { silent?: boolean } = {},
 ) {
   const generation = repositoryRuntimeGeneration;
-  if (state.languageStatsLoadingRepoIds.includes(repoId)) return null;
-  state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
+  if (languageStatsLoadingGenerations.get(repoId) === generation) return null;
+  languageStatsLoadingGenerations.set(repoId, generation);
+  if (!state.languageStatsLoadingRepoIds.includes(repoId)) {
+    state.languageStatsLoadingRepoIds = [...state.languageStatsLoadingRepoIds, repoId];
+  }
   try {
     const service = await loadWorkspaceService();
     const summary = await service.refreshRepoLanguageStats(repoId);
@@ -360,17 +505,23 @@ export async function refreshRepoLanguageStats(
     if (options.silent) return null;
     throw err;
   } finally {
-    state.languageStatsLoadingRepoIds = state.languageStatsLoadingRepoIds.filter((id) => id !== repoId);
-    void refreshWorkspaceTasks();
+    if (languageStatsLoadingGenerations.get(repoId) === generation) {
+      languageStatsLoadingGenerations.delete(repoId);
+      state.languageStatsLoadingRepoIds = state.languageStatsLoadingRepoIds.filter((id) => id !== repoId);
+      void refreshWorkspaceTasks();
+    }
   }
 }
 
 export function resetRepositoryRuntimeForTests() {
   repositoryRuntimeGeneration += 1;
   contributionRefreshGeneration += 1;
+  languageStatsLoadingGenerations = new Map();
+  autoSyncRunningRepoIds.clear();
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;
+  contributionRefreshDays = [];
 }
 
 export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {
@@ -431,6 +582,13 @@ function removeLocalRepoState(repoId: string) {
 export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
   const service = await loadWorkspaceService();
   state.settings = await service.rememberRemoteRepo(repo);
+  return state.settings;
+}
+
+export async function setRepoAutoSync(repoId: string, autoSync: boolean) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.setRepoAutoSync(repoId, autoSync);
+  clearRepoActionError(repoId);
   return state.settings;
 }
 

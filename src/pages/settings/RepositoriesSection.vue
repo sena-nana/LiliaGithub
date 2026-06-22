@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { FolderGit2, GitBranchPlus, KeyRound, LoaderCircle, Radar, RotateCcw, ShieldCheck, X } from "@lucide/vue";
+import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
 import {
   createGitHubRepo,
@@ -27,6 +28,10 @@ const error = ref<string | null>(null);
 const createError = ref<string | null>(null);
 const cancellingTaskIds = ref<string[]>([]);
 const taskCancelErrors = ref<Record<string, string | undefined>>({});
+const hiddenReposLoader = createLatestAsyncLoader();
+const repoOwnersLoader = createLatestAsyncLoader();
+const createRepoLoader = createLatestAsyncLoader();
+const cloneCreatedRepoLoader = createLatestAsyncLoader();
 const createForm = ref({
   owner: "",
   ownerKind: "user",
@@ -81,27 +86,39 @@ function taskMessage(task: WorkspaceTask) {
 }
 
 async function loadHiddenRepos() {
-  loading.value = true;
-  error.value = null;
-  try {
-    hiddenRepos.value = await workspace.listHiddenRepos();
-  } catch (err) {
-    error.value = String(err);
-  } finally {
-    loading.value = false;
-  }
+  await hiddenReposLoader.run("hidden-repos", async (runId) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const repos = await workspace.listHiddenRepos();
+      if (!hiddenReposLoader.isCurrent(runId)) return;
+      hiddenRepos.value = repos;
+    } catch (err) {
+      if (!hiddenReposLoader.isCurrent(runId)) return;
+      error.value = String(err);
+    } finally {
+      if (hiddenReposLoader.isCurrent(runId)) {
+        loading.value = false;
+      }
+    }
+  });
 }
 
 async function loadRepoOwners() {
-  try {
-    repoOwners.value = await listGitHubRepoOwners();
-    if (!createForm.value.owner && repoOwners.value.length) {
-      createForm.value.owner = repoOwners.value[0].login;
-      createForm.value.ownerKind = repoOwners.value[0].kind;
+  await repoOwnersLoader.run("repo-owners", async (runId) => {
+    try {
+      const owners = await listGitHubRepoOwners();
+      if (!repoOwnersLoader.isCurrent(runId)) return;
+      repoOwners.value = owners;
+      if (!createForm.value.owner && repoOwners.value.length) {
+        createForm.value.owner = repoOwners.value[0].login;
+        createForm.value.ownerKind = repoOwners.value[0].kind;
+      }
+    } catch {
+      if (!repoOwnersLoader.isCurrent(runId)) return;
+      repoOwners.value = [];
     }
-  } catch {
-    repoOwners.value = [];
-  }
+  });
 }
 
 async function restoreRepo(repoId: string) {
@@ -154,14 +171,22 @@ async function discoverRepos() {
 }
 
 function openCreateDialog() {
+  createRepoLoader.invalidate();
+  cloneCreatedRepoLoader.invalidate();
   createDialogOpen.value = true;
+  creatingRepo.value = false;
+  cloningCreatedRepo.value = false;
   createdRepo.value = null;
   createError.value = null;
   void loadRepoOwners();
 }
 
 function closeCreateDialog() {
+  createRepoLoader.invalidate();
+  cloneCreatedRepoLoader.invalidate();
   createDialogOpen.value = false;
+  creatingRepo.value = false;
+  cloningCreatedRepo.value = false;
   createdRepo.value = null;
   createError.value = null;
 }
@@ -172,37 +197,54 @@ function syncOwnerKind() {
 }
 
 async function submitCreateRepo() {
-  creatingRepo.value = true;
-  createError.value = null;
-  createdRepo.value = null;
-  syncOwnerKind();
-  try {
-    createdRepo.value = await createGitHubRepo({
-      ...createForm.value,
-      description: createForm.value.description || null,
-      gitignoreTemplate: createForm.value.gitignoreTemplate || null,
-      licenseTemplate: createForm.value.licenseTemplate || null,
-    });
-  } catch (err) {
-    createError.value = String(err);
-  } finally {
-    creatingRepo.value = false;
-  }
+  if (!createDialogOpen.value || creatingRepo.value) return;
+  await createRepoLoader.run("create-repo", async (runId) => {
+    creatingRepo.value = true;
+    createError.value = null;
+    createdRepo.value = null;
+    syncOwnerKind();
+    try {
+      const repo = await createGitHubRepo({
+        ...createForm.value,
+        description: createForm.value.description || null,
+        gitignoreTemplate: createForm.value.gitignoreTemplate || null,
+        licenseTemplate: createForm.value.licenseTemplate || null,
+      });
+      if (!createRepoLoader.isCurrent(runId) || !createDialogOpen.value) return;
+      createdRepo.value = repo;
+    } catch (err) {
+      if (!createRepoLoader.isCurrent(runId) || !createDialogOpen.value) return;
+      createError.value = String(err);
+    } finally {
+      if (createRepoLoader.isCurrent(runId)) {
+        creatingRepo.value = false;
+      }
+    }
+  });
 }
 
 async function cloneCreatedRepo() {
   if (!createdRepo.value) return;
-  cloningCreatedRepo.value = true;
-  createError.value = null;
-  try {
-    await workspace.cloneRepo(createdRepo.value.cloneUrl, createdRepo.value.name);
-    await workspace.refreshRepos();
-    closeCreateDialog();
-  } catch (err) {
-    createError.value = String(err);
-  } finally {
-    cloningCreatedRepo.value = false;
-  }
+  await cloneCreatedRepoLoader.run("clone-created-repo", async (runId) => {
+    const repo = createdRepo.value;
+    if (!repo) return;
+    cloningCreatedRepo.value = true;
+    createError.value = null;
+    try {
+      await workspace.cloneRepo(repo.cloneUrl, repo.name);
+      if (!cloneCreatedRepoLoader.isCurrent(runId) || !createDialogOpen.value) return;
+      await workspace.refreshRepos();
+      if (!cloneCreatedRepoLoader.isCurrent(runId) || !createDialogOpen.value) return;
+      closeCreateDialog();
+    } catch (err) {
+      if (!cloneCreatedRepoLoader.isCurrent(runId) || !createDialogOpen.value) return;
+      createError.value = String(err);
+    } finally {
+      if (cloneCreatedRepoLoader.isCurrent(runId)) {
+        cloningCreatedRepo.value = false;
+      }
+    }
+  });
 }
 
 async function cancelTask(taskId: string) {
@@ -222,6 +264,13 @@ async function cancelTask(taskId: string) {
 onMounted(() => {
   void loadHiddenRepos();
   void loadRepoOwners();
+});
+
+onUnmounted(() => {
+  hiddenReposLoader.invalidate();
+  repoOwnersLoader.invalidate();
+  createRepoLoader.invalidate();
+  cloneCreatedRepoLoader.invalidate();
 });
 </script>
 

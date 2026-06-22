@@ -1,4 +1,5 @@
 use super::bulk::*;
+use super::github::*;
 use super::launch::*;
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -48,7 +49,9 @@ fn repo_discards_tracked_worktree_changes() {
     discard_repo_files(&path, vec!["app.ts".to_string()]).unwrap();
 
     assert_eq!(
-        fs::read_to_string(path.join("app.ts")).unwrap().replace("\r\n", "\n"),
+        fs::read_to_string(path.join("app.ts"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "before\n"
     );
     assert!(repo_status_entries(&path).is_empty());
@@ -81,10 +84,7 @@ fn repo_adds_untracked_files_to_gitignore_once() {
 
     add_repo_files_to_gitignore(
         &path,
-        vec![
-            "logs/output.log".to_string(),
-            "logs/output.log".to_string(),
-        ],
+        vec!["logs/output.log".to_string(), "logs/output.log".to_string()],
     )
     .unwrap();
 
@@ -92,6 +92,33 @@ fn repo_adds_untracked_files_to_gitignore_once() {
         fs::read_to_string(path.join(".gitignore")).unwrap(),
         "logs/output.log\n"
     );
+}
+
+#[test]
+fn repo_changes_include_untracked_file_diff() {
+    let path = temp_dir("untracked-diff");
+    init_git_repo(&path);
+    fs::write(path.join("tracked.ts"), "tracked\n").unwrap();
+    run_git(&path, &["add", "tracked.ts"]);
+    run_git(&path, &["commit", "-m", "initial"]);
+    fs::create_dir_all(path.join("src")).unwrap();
+    fs::write(
+        path.join("src").join("new.ts"),
+        "export const added = true;\n",
+    )
+    .unwrap();
+
+    let changes = repo_changes(&path);
+    let change = changes
+        .iter()
+        .find(|change| change.path == "src/new.ts")
+        .expect("untracked file should be listed");
+
+    assert!(change.untracked);
+    assert!(change.diff.contains("diff --git a/src/new.ts b/src/new.ts"));
+    assert!(change.diff.contains("--- /dev/null"));
+    assert!(change.diff.contains("+++ b/src/new.ts"));
+    assert!(change.diff.contains("+export const added = true;"));
 }
 
 fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
@@ -277,6 +304,10 @@ fn test_github_issue(number: u64, state: &str) -> GitHubIssue {
         body: None,
         labels: Vec::new(),
         assignees: Vec::new(),
+        author: Some("sena".to_string()),
+        milestone: None,
+        comments: 0,
+        project_items: Vec::new(),
         html_url: format!("https://github.com/a/repo/issues/{number}"),
         updated_at: "2026-06-18T08:00:00Z".to_string(),
         created_at: "2026-06-18T08:00:00Z".to_string(),
@@ -294,6 +325,11 @@ fn test_github_pull_request(number: u64, state: &str) -> GitHubPullRequest {
         updated_at: "2026-06-18T08:00:00Z".to_string(),
         created_at: "2026-06-18T08:00:00Z".to_string(),
         author: "sena".to_string(),
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        milestone: None,
+        comments: 0,
+        project_items: Vec::new(),
         base_branch: "main".to_string(),
         head_branch: "feature/cache".to_string(),
         merged: false,
@@ -302,24 +338,148 @@ fn test_github_pull_request(number: u64, state: &str) -> GitHubPullRequest {
     }
 }
 
+fn test_github_pull_request_cache_key(state: Option<&str>) -> String {
+    github_pull_request_cache_key(
+        state, None, None, None, None, None, None, None, None, None, None,
+    )
+}
+
 #[test]
 fn github_project_cache_keys_are_normalized_and_parameterized() {
     assert_eq!(
         github_project_cache_repo_key("https://github.com/Sena-Nana/Remote.git").unwrap(),
         "sena-nana/remote"
     );
+    let labels = vec!["bug".to_string(), "docs".to_string()];
+    let key: serde_json::Value = serde_json::from_str(&github_issue_cache_key(
+        Some("closed"),
+        Some(200),
+        Some("updated"),
+        Some("asc"),
+        Some(" 2026-01-01T00:00:00Z "),
+        Some("sena"),
+        Some("mika"),
+        Some(&labels),
+        Some("1"),
+        Some("PVT_roadmap"),
+        Some(" roadmap "),
+    ))
+    .unwrap();
     assert_eq!(
-        github_issue_cache_key(Some("closed"), Some(200), Some("updated"), Some("asc"), Some(" 2026-01-01T00:00:00Z ")),
-        "closed|100|updated|asc|2026-01-01T00:00:00Z"
+        key,
+        serde_json::json!({
+            "state": "closed",
+            "perPage": 100,
+            "sort": "updated",
+            "direction": "asc",
+            "since": "2026-01-01T00:00:00Z",
+            "creator": "sena",
+            "assignee": "mika",
+            "labels": ["bug", "docs"],
+            "milestone": "1",
+            "project": "PVT_roadmap",
+            "query": "roadmap",
+        })
     );
+    let fallback_key: serde_json::Value = serde_json::from_str(&github_issue_cache_key(
+        None,
+        None,
+        Some("invalid"),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(fallback_key["state"], "open");
+    assert_eq!(fallback_key["sort"], "created");
+    assert_eq!(fallback_key["direction"], "desc");
+    let pull_key: serde_json::Value = serde_json::from_str(&github_pull_request_cache_key(
+        Some("merged"),
+        Some(250),
+        Some("comments"),
+        Some("asc"),
+        Some("sena"),
+        Some("none"),
+        Some(&labels),
+        Some("2"),
+        Some("PVT_prs"),
+        Some("approved"),
+        Some(" docs "),
+    ))
+    .unwrap();
     assert_eq!(
-        github_issue_cache_key(None, None, Some("invalid"), None, None),
-        "open|100|created|desc|"
+        pull_key,
+        serde_json::json!({
+            "state": "merged",
+            "perPage": 100,
+            "sort": "comments",
+            "direction": "asc",
+            "creator": "sena",
+            "assignee": "none",
+            "labels": ["bug", "docs"],
+            "milestone": "2",
+            "project": "PVT_prs",
+            "review": "approved",
+            "query": "docs",
+        })
     );
-    assert_eq!(github_pull_request_cache_key(Some("all")), "all");
-    assert_eq!(github_pull_request_cache_key(Some("invalid")), "open");
+    let fallback_pull_key: serde_json::Value = serde_json::from_str(
+        &github_pull_request_cache_key(
+            Some("invalid"),
+            None,
+            Some("invalid"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+    )
+    .unwrap();
+    assert_eq!(fallback_pull_key["state"], "open");
+    assert_eq!(fallback_pull_key["sort"], "updated");
+    assert_eq!(fallback_pull_key["direction"], "desc");
     assert_eq!(github_workflow_runs_cache_key(Some(0)), "1");
     assert_eq!(github_workflow_runs_cache_key(Some(200)), "100");
+}
+
+#[test]
+fn github_pull_request_search_query_includes_pr_review_and_merge_qualifiers() {
+    let labels = vec!["needs triage".to_string(), "bug".to_string()];
+    let query = github_pull_request_search_query(
+        "Sena-Nana/Remote",
+        "merged",
+        "dashboard",
+        Some("sena"),
+        Some("none"),
+        Some(&labels),
+        Some("v1"),
+        Some("approved"),
+    );
+
+    assert!(query.contains("repo:Sena-Nana/Remote"));
+    assert!(query.contains("is:pr"));
+    assert!(query.contains("is:merged"));
+    assert!(query.contains("dashboard"));
+    assert!(query.contains("author:sena"));
+    assert!(query.contains("no:assignee"));
+    assert!(query.contains("label:\"needs triage\""));
+    assert!(query.contains("label:bug"));
+    assert!(query.contains("milestone:v1"));
+    assert!(query.contains("review:approved"));
+
+    let closed_query =
+        github_pull_request_search_query("a/repo", "closed", "", None, None, None, None, None);
+    assert!(closed_query.contains("state:closed"));
+    assert!(closed_query.contains("-is:merged"));
 }
 
 #[test]
@@ -330,19 +490,43 @@ fn github_project_cache_serializes_distinct_query_buckets() {
         .entry("sena-nana/remote".to_string())
         .or_default();
     repo_cache.issues.insert(
-        github_issue_cache_key(Some("open"), None, None, None, None),
+        github_issue_cache_key(
+            Some("open"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         vec![test_github_issue(1, "open")],
     );
     repo_cache.issues.insert(
-        github_issue_cache_key(Some("closed"), None, None, None, None),
+        github_issue_cache_key(
+            Some("closed"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         vec![test_github_issue(2, "closed")],
     );
     repo_cache.pull_requests.insert(
-        github_pull_request_cache_key(Some("open")),
+        test_github_pull_request_cache_key(Some("open")),
         vec![test_github_pull_request(3, "open")],
     );
     repo_cache.pull_requests.insert(
-        github_pull_request_cache_key(Some("all")),
+        test_github_pull_request_cache_key(Some("all")),
         vec![test_github_pull_request(4, "closed")],
     );
 
@@ -351,19 +535,45 @@ fn github_project_cache_serializes_distinct_query_buckets() {
     let restored_repo = restored.repos.get("sena-nana/remote").unwrap();
 
     assert_eq!(
-        restored_repo.issues[&github_issue_cache_key(Some("open"), None, None, None, None)][0].number,
+        restored_repo.issues[&github_issue_cache_key(
+            Some("open"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )][0]
+            .number,
         1
     );
     assert_eq!(
-        restored_repo.issues[&github_issue_cache_key(Some("closed"), None, None, None, None)][0].number,
+        restored_repo.issues[&github_issue_cache_key(
+            Some("closed"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )][0]
+            .number,
         2
     );
     assert_eq!(
-        restored_repo.pull_requests[&github_pull_request_cache_key(Some("open"))][0].number,
+        restored_repo.pull_requests[&test_github_pull_request_cache_key(Some("open"))][0].number,
         3
     );
     assert_eq!(
-        restored_repo.pull_requests[&github_pull_request_cache_key(Some("all"))][0].number,
+        restored_repo.pull_requests[&test_github_pull_request_cache_key(Some("all"))][0].number,
         4
     );
 }
@@ -442,10 +652,12 @@ fn aggregates_language_stats_from_head_tree() {
             LanguageStat {
                 language: "TypeScript".to_string(),
                 bytes: 27,
+                lines: 1,
             },
             LanguageStat {
                 language: "Vue".to_string(),
                 bytes: 25,
+                lines: 1,
             },
         ]
     );
@@ -484,10 +696,12 @@ fn aggregates_language_stats_from_working_tree() {
             LanguageStat {
                 language: "TypeScript".to_string(),
                 bytes: 27,
+                lines: 1,
             },
             LanguageStat {
                 language: "Vue".to_string(),
                 bytes: 25,
+                lines: 1,
             },
         ]
     );
@@ -497,10 +711,12 @@ fn aggregates_language_stats_from_working_tree() {
             LanguageStat {
                 language: "Rust".to_string(),
                 bytes: 13,
+                lines: 1,
             },
             LanguageStat {
                 language: "TypeScript".to_string(),
                 bytes: 8,
+                lines: 1,
             },
         ]
     );
@@ -552,7 +768,7 @@ fn local_contribution_cache_reads_writes_and_removes_repo_days() {
 
 #[test]
 fn converts_civil_dates_for_github_contributions() {
-    let day = days_from_civil(2026, 6, 11);
+    let day = shared::days_from_civil(2026, 6, 11);
     assert_eq!(format_day_index(day), "2026-06-11");
 }
 
@@ -942,14 +1158,20 @@ fn repo_branches_marks_origin_short_refs_as_remote() {
     let path = temp_dir("branches-origin-short-clone");
     run_git(
         &std::env::temp_dir(),
-        &["clone", remote.to_string_lossy().as_ref(), path.to_string_lossy().as_ref()],
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            path.to_string_lossy().as_ref(),
+        ],
     );
     run_git(&path, &["config", "user.email", "test@example.com"]);
     run_git(&path, &["config", "user.name", "Test User"]);
 
     let branches = repo_branches(&path);
 
-    assert!(branches.iter().any(|branch| branch.remote && branch.name == "origin/main"));
+    assert!(branches
+        .iter()
+        .any(|branch| branch.remote && branch.name == "origin/main"));
     assert!(branches
         .iter()
         .any(|branch| branch.remote && branch.name == "origin/feature/notice-update"));
@@ -975,20 +1197,50 @@ fn repo_branches_reports_checked_out_worktrees() {
     let linked = temp_dir("linked-worktree");
     run_git(
         &path,
-        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/worktree",
+        ],
     );
 
     let branches = repo_branches(&path);
-    let main = branches.iter().find(|branch| branch.name == "main").unwrap();
+    let main = branches
+        .iter()
+        .find(|branch| branch.name == "main")
+        .unwrap();
     let feature = branches
         .iter()
         .find(|branch| branch.name == "feature/worktree")
         .unwrap();
+    let normalize_display_path = |value: String| {
+        value
+            .strip_prefix(r"\\?\")
+            .unwrap_or(value.as_str())
+            .to_string()
+    };
 
-    assert_eq!(main.checked_out_worktree_paths, vec![path.to_string_lossy().to_string()]);
     assert_eq!(
-        feature.checked_out_worktree_paths,
-        vec![linked.to_string_lossy().to_string()]
+        main.checked_out_worktree_paths
+            .iter()
+            .cloned()
+            .map(normalize_display_path)
+            .collect::<Vec<_>>(),
+        vec![normalize_display_path(
+            canonical_repo_path(&path).to_string_lossy().to_string()
+        )]
+    );
+    assert_eq!(
+        feature
+            .checked_out_worktree_paths
+            .iter()
+            .cloned()
+            .map(normalize_display_path)
+            .collect::<Vec<_>>(),
+        vec![normalize_display_path(
+            canonical_repo_path(&linked).to_string_lossy().to_string()
+        )]
     );
 }
 
@@ -1016,7 +1268,12 @@ fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
     let linked = root.join("linked-worktree");
     run_git(
         &main,
-        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/worktree",
+        ],
     );
 
     let standalone_worktree = resolve_repo_worktree(&root, &standalone);
@@ -1028,10 +1285,16 @@ fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
     assert!(!standalone_worktree.summary.shared_repo_key.is_empty());
 
     assert_eq!(main_worktree.summary.role, "main");
-    assert_eq!(main_worktree.summary.main_repo_id.as_deref(), Some("main-repo"));
+    assert_eq!(
+        main_worktree.summary.main_repo_id.as_deref(),
+        Some("main-repo")
+    );
 
     assert_eq!(linked_worktree.summary.role, "linked");
-    assert_eq!(linked_worktree.summary.main_repo_id.as_deref(), Some("main-repo"));
+    assert_eq!(
+        linked_worktree.summary.main_repo_id.as_deref(),
+        Some("main-repo")
+    );
     assert_eq!(
         linked_worktree.summary.shared_repo_key,
         main_worktree.summary.shared_repo_key
@@ -1056,7 +1319,12 @@ fn remove_managed_repo_path_removes_linked_worktree_directory() {
     let linked = root.join("linked-worktree");
     run_git(
         &main,
-        &["worktree", "add", linked.to_string_lossy().as_ref(), "feature/worktree"],
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/worktree",
+        ],
     );
     let worktree = resolve_repo_worktree(&root, &linked);
 
@@ -1082,7 +1350,10 @@ fn delete_branch_blocks_current_branch_and_safely_deletes_merged_branch() {
     run_git(&path, &["add", "feature.txt"]);
     run_git(&path, &["commit", "-m", "feature"]);
     run_git(&path, &["checkout", "main"]);
-    run_git(&path, &["merge", "--no-ff", "feature", "-m", "merge feature"]);
+    run_git(
+        &path,
+        &["merge", "--no-ff", "feature", "-m", "merge feature"],
+    );
 
     assert_eq!(
         delete_branch_at(&path, &path, "main").unwrap_err(),
@@ -1113,7 +1384,11 @@ fn checkout_remote_branch_creates_tracking_local_branch() {
     let path = temp_dir("checkout-remote-branch");
     run_git(
         &std::env::temp_dir(),
-        &["clone", remote.to_string_lossy().as_ref(), path.to_string_lossy().as_ref()],
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            path.to_string_lossy().as_ref(),
+        ],
     );
     run_git(&path, &["config", "user.email", "test@example.com"]);
     run_git(&path, &["config", "user.name", "Test User"]);
@@ -1368,12 +1643,53 @@ rename to src/renamed.ts";
     assert_eq!(files[0].hunks[0].lines[0].kind, "deleted");
     assert_eq!(files[1].status, "added");
     assert_eq!((files[1].additions, files[1].deletions), (3, 0));
+    assert!(files[1].patch.contains("--- /dev/null"));
+    assert_eq!(files[1].hunks[0].lines[0].kind, "added");
+    assert_eq!(files[1].hunks[0].lines[0].content, "created()");
     assert_eq!(files[2].status, "deleted");
     assert_eq!((files[2].additions, files[2].deletions), (0, 2));
+    assert!(files[2].patch.contains("+++ /dev/null"));
+    assert_eq!(files[2].hunks[0].lines[0].kind, "deleted");
+    assert_eq!(files[2].hunks[0].lines[0].content, "removed()");
     assert_eq!(files[3].status, "renamed");
     assert_eq!(files[3].old_path.as_deref(), Some("src/name.ts"));
     assert_eq!(files[3].path, "src/renamed.ts");
     assert!(files[3].patch.contains("rename to src/renamed.ts"));
+}
+
+#[test]
+fn github_commit_file_changes_wrap_added_and_removed_patch_headers() {
+    let files = vec![
+        GitHubCommitFileResponse {
+            filename: "src/new.ts".to_string(),
+            status: "added".to_string(),
+            previous_filename: None,
+            additions: 1,
+            deletions: 0,
+            patch: Some("@@ -0,0 +1 @@\n+created()".to_string()),
+        },
+        GitHubCommitFileResponse {
+            filename: "src/old.ts".to_string(),
+            status: "removed".to_string(),
+            previous_filename: None,
+            additions: 0,
+            deletions: 1,
+            patch: Some("@@ -1 +0,0 @@\n-removed()".to_string()),
+        },
+    ];
+
+    let changes = github_commit_file_changes(files);
+
+    assert_eq!(changes[0].status, "added");
+    assert!(changes[0].patch.contains("--- /dev/null"));
+    assert!(changes[0].patch.contains("+++ b/src/new.ts"));
+    assert_eq!(changes[0].hunks[0].lines[0].kind, "added");
+    assert_eq!(changes[0].hunks[0].lines[0].content, "created()");
+    assert_eq!(changes[1].status, "deleted");
+    assert!(changes[1].patch.contains("--- a/src/old.ts"));
+    assert!(changes[1].patch.contains("+++ /dev/null"));
+    assert_eq!(changes[1].hunks[0].lines[0].kind, "deleted");
+    assert_eq!(changes[1].hunks[0].lines[0].content, "removed()");
 }
 
 #[test]
@@ -1679,6 +1995,41 @@ fn github_delete_repo_requires_delete_repo_scope() {
 }
 
 #[test]
+fn github_oauth_scope_requests_project_read_access() {
+    let scopes = normalize_scope_list(Some(GITHUB_SCOPE));
+
+    assert!(scopes
+        .iter()
+        .any(|scope| scope == GITHUB_READ_PROJECT_SCOPE));
+}
+
+#[test]
+fn detects_github_read_project_scope_graphql_errors() {
+    let project_scope_errors = vec![
+        GitHubGraphQlError {
+            message: "Your token has not been granted the required scopes to execute this query. The 'id' field requires one of the following scopes: ['read:project']".to_string(),
+        },
+        GitHubGraphQlError {
+            message: "Your token has not been granted the required scopes to execute this query. The 'title' field requires one of the following scopes: ['read:project']".to_string(),
+        },
+    ];
+    let mixed_errors = vec![
+        GitHubGraphQlError {
+            message: "Your token has not been granted the required scopes to execute this query. The 'id' field requires one of the following scopes: ['read:project']".to_string(),
+        },
+        GitHubGraphQlError {
+            message: "Something else failed".to_string(),
+        },
+    ];
+
+    assert!(github_graphql_errors_require_read_project(
+        &project_scope_errors
+    ));
+    assert!(!github_graphql_errors_require_read_project(&mixed_errors));
+    assert!(!github_graphql_errors_require_read_project(&[]));
+}
+
+#[test]
 fn workspace_task_priority_orders_high_before_low() {
     assert!(task_priority_rank("high") < task_priority_rank("normal"));
     assert!(task_priority_rank("normal") < task_priority_rank("low"));
@@ -1789,6 +2140,15 @@ fn filters_pull_requests_from_github_issues() {
         html_url: "https://github.com/a/repo/issues/1".to_string(),
         updated_at: "2026-06-11T00:00:00Z".to_string(),
         created_at: "2026-06-11T00:00:00Z".to_string(),
+        user: Some(GitHubAssigneeResponse {
+            login: "sena".to_string(),
+        }),
+        milestone: Some(GitHubIssueMilestoneResponse {
+            number: 7,
+            title: "v1".to_string(),
+            state: Some("open".to_string()),
+        }),
+        comments: 4,
         labels: vec![GitHubLabelResponse {
             name: "bug".to_string(),
         }],
@@ -1808,6 +2168,9 @@ fn filters_pull_requests_from_github_issues() {
         html_url: "https://github.com/a/repo/pull/2".to_string(),
         updated_at: "2026-06-11T00:00:00Z".to_string(),
         created_at: "2026-06-11T00:00:00Z".to_string(),
+        user: None,
+        milestone: None,
+        comments: 0,
         labels: Vec::new(),
         assignees: Vec::new(),
     };
@@ -1815,7 +2178,48 @@ fn filters_pull_requests_from_github_issues() {
     let mapped = github_issue_from_response(issue).unwrap();
     assert_eq!(mapped.labels, vec!["bug"]);
     assert_eq!(mapped.assignees, vec!["octo"]);
+    assert_eq!(mapped.author.as_deref(), Some("sena"));
+    assert_eq!(
+        mapped
+            .milestone
+            .as_ref()
+            .map(|milestone| milestone.title.as_str()),
+        Some("v1")
+    );
+    assert_eq!(mapped.comments, 4);
     assert!(github_issue_from_response(pr).is_none());
+}
+
+#[test]
+fn maps_github_issue_project_items_from_graphql() {
+    let data: GitHubIssueProjectsGraphQlData = serde_json::from_value(serde_json::json!({
+        "repository": {
+            "issues": {
+                "nodes": [
+                    {
+                        "number": 12,
+                        "projectItems": {
+                            "nodes": [
+                                {
+                                    "id": "PVTI_item",
+                                    "project": {
+                                        "id": "PVT_roadmap",
+                                        "title": "Roadmap"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+
+    let mapped = github_issue_project_items_from_graphql(data);
+
+    assert_eq!(mapped[&12][0].id, "PVT_roadmap");
+    assert_eq!(mapped[&12][0].title, "Roadmap");
 }
 
 #[test]
@@ -1831,6 +2235,14 @@ fn maps_github_workflow_runs_with_defaults() {
         html_url: "https://github.com/a/repo/actions/runs/42".to_string(),
         created_at: "2026-06-12T10:00:00Z".to_string(),
         updated_at: "2026-06-12T10:05:00Z".to_string(),
+        actor: Some(GitHubWorkflowActorResponse {
+            login: "sena".to_string(),
+        }),
+        head_sha: Some("abc123".to_string()),
+        run_number: Some(7),
+        run_attempt: Some(1),
+        workflow_id: Some(99),
+        run_started_at: Some("2026-06-12T10:01:00Z".to_string()),
     });
 
     assert_eq!(mapped.id, 42);
@@ -1840,6 +2252,142 @@ fn maps_github_workflow_runs_with_defaults() {
     assert_eq!(mapped.conclusion.as_deref(), Some("success"));
     assert_eq!(mapped.branch, "main");
     assert_eq!(mapped.event, "push");
+    assert_eq!(mapped.actor.as_deref(), Some("sena"));
+    assert_eq!(mapped.head_sha.as_deref(), Some("abc123"));
+    assert_eq!(mapped.run_number, Some(7));
+    assert_eq!(mapped.run_attempt, Some(1));
+    assert_eq!(mapped.workflow_id, Some(99));
+    assert_eq!(mapped.run_started_at.as_deref(), Some("2026-06-12T10:01:00Z"));
+}
+
+#[test]
+fn maps_github_workflow_jobs_and_artifacts_with_defaults() {
+    let job = github_workflow_job_from_response(GitHubWorkflowJobResponse {
+        id: 77,
+        name: Some("build".to_string()),
+        status: Some("completed".to_string()),
+        conclusion: Some("success".to_string()),
+        started_at: Some("2026-06-12T10:00:00Z".to_string()),
+        completed_at: Some("2026-06-12T10:02:00Z".to_string()),
+        html_url: Some("https://github.com/a/repo/actions/runs/42/job/77".to_string()),
+        runner_name: Some("GitHub Actions".to_string()),
+        steps: vec![
+            GitHubWorkflowJobStepResponse {
+                name: Some("Set up job".to_string()),
+                status: Some("completed".to_string()),
+                conclusion: Some("success".to_string()),
+                number: Some(1),
+                started_at: None,
+                completed_at: None,
+            },
+            GitHubWorkflowJobStepResponse {
+                name: None,
+                status: None,
+                conclusion: None,
+                number: None,
+                started_at: None,
+                completed_at: None,
+            },
+        ],
+    });
+    let artifact = github_workflow_artifact_from_response(GitHubWorkflowArtifactResponse {
+        id: 88,
+        name: Some("dist".to_string()),
+        size_in_bytes: Some(2048),
+        expired: false,
+        created_at: "2026-06-12T10:03:00Z".to_string(),
+        expires_at: Some("2026-07-12T10:03:00Z".to_string()),
+    });
+
+    assert_eq!(job.name, "build");
+    assert_eq!(job.steps[0].name, "Set up job");
+    assert_eq!(job.steps[1].name, "Step 2");
+    assert_eq!(job.steps[1].status, "unknown");
+    assert_eq!(artifact.name, "dist");
+    assert_eq!(artifact.size_in_bytes, 2048);
+}
+
+#[test]
+fn maps_github_workflow_definition_from_content_file() {
+    let definition = github_workflow_definition_from_file(
+        GitHubWorkflowResponse {
+            id: 99,
+            path: Some(".github/workflows/ci.yml".to_string()),
+        },
+        "abc123".to_string(),
+        GitHubContentFileResponse {
+            name: "ci.yml".to_string(),
+            path: ".github/workflows/ci.yml".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some("bmFtZTogQ0kK".to_string()),
+            size: Some(9),
+        },
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(definition.id, 99);
+    assert_eq!(definition.path, ".github/workflows/ci.yml");
+    assert_eq!(definition.ref_name, "abc123");
+    assert_eq!(definition.content, "name: CI\n");
+}
+
+#[test]
+fn ignores_github_workflow_definition_without_path() {
+    let definition = github_workflow_definition_from_file(
+        GitHubWorkflowResponse { id: 99, path: None },
+        "abc123".to_string(),
+        GitHubContentFileResponse {
+            name: "ci.yml".to_string(),
+            path: ".github/workflows/ci.yml".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some("bmFtZTogQ0kK".to_string()),
+            size: Some(9),
+        },
+    )
+    .unwrap();
+
+    assert!(definition.is_none());
+}
+
+#[test]
+fn previews_github_artifact_files_by_kind() {
+    let text = github_artifact_preview_from_bytes(
+        "logs/build.log".to_string(),
+        5,
+        b"hello".to_vec(),
+    );
+    let markdown = github_artifact_preview_from_bytes(
+        "README.md".to_string(),
+        7,
+        b"# title".to_vec(),
+    );
+    let image = github_artifact_preview_from_bytes(
+        "image.png".to_string(),
+        4,
+        vec![1, 2, 3, 4],
+    );
+    let large = github_artifact_preview_from_bytes(
+        "large.log".to_string(),
+        super::file_browser::MAX_FILE_PREVIEW_BYTES + 1,
+        Vec::new(),
+    );
+
+    assert_eq!(text.preview_kind, "text");
+    assert_eq!(text.content.as_deref(), Some("hello"));
+    assert_eq!(markdown.preview_kind, "markdown");
+    assert_eq!(image.preview_kind, "image");
+    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQIDBA=="));
+    assert_eq!(large.preview_kind, "tooLarge");
+}
+
+#[test]
+fn rejects_empty_github_artifact_entry_paths() {
+    assert!(github_artifact_entry_path(Path::new("")).is_err());
+    assert_eq!(
+        github_artifact_entry_path(Path::new("logs/build.log")).unwrap(),
+        "logs/build.log"
+    );
 }
 
 #[test]
@@ -1941,11 +2489,7 @@ fn repo_file_preview_returns_text_markdown_image_binary_and_too_large() {
         "![icon](../assets/icon.png)\n\n# Guide\n",
     )
     .unwrap();
-    fs::write(
-        repo.join("large.log"),
-        vec![b'a'; (1024 * 1024) + 1],
-    )
-    .unwrap();
+    fs::write(repo.join("large.log"), vec![b'a'; (1024 * 1024) + 1]).unwrap();
 
     let text = repo_file_preview(&repo, "plain.txt").unwrap();
     assert_eq!(text.preview_kind, "text");
@@ -1956,14 +2500,20 @@ fn repo_file_preview_returns_text_markdown_image_binary_and_too_large() {
     assert_eq!(markdown.preview_kind, "markdown");
     assert_eq!(markdown.mime_type.as_deref(), Some("text/markdown"));
     assert_eq!(
-        markdown.images.get("../assets/icon.png").map(String::as_str),
+        markdown
+            .images
+            .get("../assets/icon.png")
+            .map(String::as_str),
         Some("data:image/png;base64,AQID")
     );
 
     let image = repo_file_preview(&repo, "assets/icon.png").unwrap();
     assert_eq!(image.preview_kind, "image");
     assert_eq!(image.mime_type.as_deref(), Some("image/png"));
-    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQID"));
+    assert_eq!(
+        image.data_url.as_deref(),
+        Some("data:image/png;base64,AQID")
+    );
 
     let binary = repo_file_preview(&repo, "binary.bin").unwrap();
     assert_eq!(binary.preview_kind, "binary");
@@ -1972,6 +2522,83 @@ fn repo_file_preview_returns_text_markdown_image_binary_and_too_large() {
     let too_large = repo_file_preview(&repo, "large.log").unwrap();
     assert_eq!(too_large.preview_kind, "tooLarge");
     assert_eq!(too_large.size, (1024 * 1024) + 1);
+}
+
+#[test]
+fn github_content_files_map_to_repo_tree_and_preview_kinds() {
+    let entries = github_content_items_to_file_entries(vec![
+        GitHubContentListItem {
+            name: "README.md".to_string(),
+            path: "README.md".to_string(),
+            kind: "file".to_string(),
+        },
+        GitHubContentListItem {
+            name: "src".to_string(),
+            path: "src".to_string(),
+            kind: "dir".to_string(),
+        },
+        GitHubContentListItem {
+            name: "ignored".to_string(),
+            path: "ignored".to_string(),
+            kind: "submodule".to_string(),
+        },
+    ]);
+
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.kind.as_str(), entry.has_children))
+            .collect::<Vec<_>>(),
+        vec![("src", "dir", true), ("README.md", "file", false)]
+    );
+    assert_eq!(
+        normalize_github_content_path(Some("../README.md")).unwrap_err(),
+        "GitHub 文件路径不能包含 . 或 .."
+    );
+
+    let markdown = github_file_preview_from_content(
+        "读取 GitHub 文件预览失败",
+        GitHubContentFileResponse {
+            name: "README.md".to_string(),
+            path: "README.md".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some(STANDARD.encode("# Title\n")),
+            size: Some(8),
+        },
+    )
+    .unwrap();
+    assert_eq!(markdown.preview_kind, "markdown");
+    assert_eq!(markdown.content.as_deref(), Some("# Title\n"));
+
+    let image = github_file_preview_from_content(
+        "读取 GitHub 文件预览失败",
+        GitHubContentFileResponse {
+            name: "icon.png".to_string(),
+            path: "assets/icon.png".to_string(),
+            encoding: Some("base64".to_string()),
+            content: Some(STANDARD.encode([1_u8, 2, 3])),
+            size: Some(3),
+        },
+    )
+    .unwrap();
+    assert_eq!(image.preview_kind, "image");
+    assert_eq!(
+        image.data_url.as_deref(),
+        Some("data:image/png;base64,AQID")
+    );
+
+    let too_large = github_file_preview_from_content(
+        "读取 GitHub 文件预览失败",
+        GitHubContentFileResponse {
+            name: "large.log".to_string(),
+            path: "large.log".to_string(),
+            encoding: Some("none".to_string()),
+            content: None,
+            size: Some((1024 * 1024) + 1),
+        },
+    )
+    .unwrap();
+    assert_eq!(too_large.preview_kind, "tooLarge");
 }
 
 #[test]
@@ -2109,6 +2736,62 @@ fn lightweight_managed_repos_returns_visible_repo_list_without_git_metadata() {
     assert_eq!(repos[0].last_commit_at, None);
     assert_eq!(repos[0].last_commit_message, None);
     assert_eq!(repos[0].worktree.role, "standalone");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_managed_repos_merges_cached_metadata_with_current_repo_identity() {
+    let root = temp_dir("cached-managed-repos");
+    let visible = root.join("visible");
+    fs::create_dir_all(visible.join(".git")).unwrap();
+    let settings = WorkspaceSettings {
+        workspace_root: Some(root.to_string_lossy().to_string()),
+        managed_repo_ids: vec!["visible".to_string()],
+        ..WorkspaceSettings::default()
+    };
+    let mut cached = test_repo_summary(|summary| {
+        summary.id = "visible".to_string();
+        summary.name = "old-name".to_string();
+        summary.path = "C:/old/path".to_string();
+        summary.relative_path = "old/relative".to_string();
+        summary.current_branch = Some("cached-main".to_string());
+        summary.github_full_name = Some("cached/repo".to_string());
+        summary.ahead = 2;
+        summary.language_stats = vec![LanguageStat {
+            language: "Rust".to_string(),
+            bytes: 100,
+            lines: 10,
+        }];
+    });
+    cached.worktree = RepoWorktree {
+        role: "old".to_string(),
+        shared_repo_key: "old".to_string(),
+        main_repo_id: Some("old-main".to_string()),
+    };
+    let cache = WorkspaceStartupCache {
+        workspace_root: settings.workspace_root.clone(),
+        repos_by_id: HashMap::from([(
+            "visible".to_string(),
+            CachedRepoSummary {
+                summary: cached,
+                cached_at: 1,
+            },
+        )]),
+        ..WorkspaceStartupCache::default()
+    };
+
+    let repos = cached_managed_repos(&root, &settings, &cache);
+
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].id, "visible");
+    assert_eq!(repos[0].name, "visible");
+    assert_eq!(repos[0].path, visible.to_string_lossy().to_string());
+    assert_eq!(repos[0].relative_path, "visible");
+    assert_eq!(repos[0].worktree.role, "standalone");
+    assert_eq!(repos[0].current_branch.as_deref(), Some("cached-main"));
+    assert_eq!(repos[0].github_full_name.as_deref(), Some("cached/repo"));
+    assert_eq!(repos[0].ahead, 2);
+    assert_eq!(repos[0].language_stats[0].language, "Rust");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2378,8 +3061,12 @@ fn infers_all_root_package_scripts_in_priority_order() {
             "yarn verify"
         ]
     );
-    assert!(candidates.iter().any(|candidate| candidate.label == "verify"));
-    assert!(candidates.iter().all(|candidate| candidate.kind == "package"));
+    assert!(candidates
+        .iter()
+        .any(|candidate| candidate.label == "verify"));
+    assert!(candidates
+        .iter()
+        .all(|candidate| candidate.kind == "package"));
     fs::remove_dir_all(path).unwrap();
 }
 
