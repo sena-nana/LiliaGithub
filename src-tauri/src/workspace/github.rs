@@ -186,6 +186,28 @@ pub(super) struct GitHubIssueSearchResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueTimelineResponse {
+    #[serde(default)]
+    pub(super) id: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(super) node_id: Option<String>,
+    #[serde(default)]
+    pub(super) event: Option<String>,
+    #[serde(default)]
+    pub(super) actor: Option<GitHubAssigneeResponse>,
+    #[serde(default)]
+    pub(super) user: Option<GitHubAssigneeResponse>,
+    #[serde(default)]
+    pub(super) body: Option<String>,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
+    #[serde(default)]
+    pub(super) created_at: Option<String>,
+    #[serde(default)]
+    pub(super) updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubGraphQlResponse<T> {
     pub(super) data: Option<T>,
     #[serde(default)]
@@ -281,6 +303,44 @@ pub(super) struct GitHubPullRequestResponse {
 pub(super) struct GitHubPullRequestCheckRunsResponse {
     #[serde(default)]
     pub(super) check_runs: Vec<GitHubPullRequestCheckRunResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubPullRequestReviewResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) user: Option<GitHubPullRequestUserResponse>,
+    #[serde(default)]
+    pub(super) body: Option<String>,
+    pub(super) state: String,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
+    #[serde(default)]
+    pub(super) submitted_at: Option<String>,
+    #[serde(default)]
+    pub(super) commit_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubPullRequestReviewCommentResponse {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) user: Option<GitHubPullRequestUserResponse>,
+    #[serde(default)]
+    pub(super) body: Option<String>,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
+    #[serde(default)]
+    pub(super) path: Option<String>,
+    #[serde(default)]
+    pub(super) line: Option<u64>,
+    #[serde(default)]
+    pub(super) original_line: Option<u64>,
+    #[serde(default)]
+    pub(super) commit_id: Option<String>,
+    pub(super) created_at: String,
+    #[serde(default)]
+    pub(super) updated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -682,6 +742,7 @@ pub(super) fn clear_github_project_issue_cache(
 ) -> Result<(), String> {
     update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
         repo_cache.issues.clear();
+        repo_cache.issue_discussions.clear();
         repo_cache.issue_filter_metadata = None;
     })
 }
@@ -692,6 +753,7 @@ pub(super) fn clear_github_project_pull_request_cache(
 ) -> Result<(), String> {
     update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
         repo_cache.pull_requests.clear();
+        repo_cache.pull_request_discussions.clear();
         repo_cache.pull_request_checks.clear();
     })
 }
@@ -1263,6 +1325,68 @@ pub(super) fn github_fetch_pull_request_response(
     github_json::<GitHubPullRequestResponse>(prefix, response)
 }
 
+pub(super) fn github_fetch_issue_response(
+    app: &AppHandle,
+    repo_full_name: &str,
+    issue_number: u64,
+    token: &str,
+    prefix: &str,
+) -> Result<GitHubIssueResponse, String> {
+    let client = build_client()?;
+    let response = github_send(
+        app,
+        prefix,
+        github_headers(
+            client.get(format!(
+                "{}/issues/{issue_number}",
+                github_repo_api_url(repo_full_name)?
+            )),
+            Some(token),
+        ),
+    )?;
+    github_json::<GitHubIssueResponse>(prefix, response)
+}
+
+pub(super) fn github_fetch_paginated<T>(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    url: String,
+    prefix: &str,
+) -> Result<Vec<T>, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut page = 1_u32;
+    let mut items = Vec::new();
+    loop {
+        let page_string = page.to_string();
+        let response = github_send(
+            app,
+            prefix,
+            github_headers(
+                client
+                    .get(&url)
+                    .query(&[("per_page", "100"), ("page", page_string.as_str())]),
+                Some(token),
+            ),
+        )?;
+        let next_page = parse_next_page(
+            response
+                .headers()
+                .get(LINK)
+                .and_then(|value| value.to_str().ok()),
+        );
+        items.extend(github_json::<Vec<T>>(prefix, response)?);
+        if let Some(next) = next_page {
+            page = next;
+        } else {
+            break;
+        }
+    }
+    Ok(items)
+}
+
 pub(super) fn github_update_repo_settings_payload(
     request: &GitHubUpdateRepoSettingsRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -1433,6 +1557,167 @@ pub(super) fn github_pull_request_check_from_response(
         started_at: normalize_optional_string(check.started_at),
         completed_at: normalize_optional_string(check.completed_at),
     }
+}
+
+fn github_json_id(value: Option<serde_json::Value>, fallback: &str) -> String {
+    match value {
+        Some(serde_json::Value::Number(number)) => number.to_string(),
+        Some(serde_json::Value::String(value)) if !value.trim().is_empty() => value,
+        _ => fallback.to_string(),
+    }
+}
+
+fn github_timeline_item_from_issue(issue: &GitHubIssue) -> GitHubDiscussionTimelineItem {
+    GitHubDiscussionTimelineItem {
+        id: format!("issue-{}-body", issue.number),
+        kind: "body".to_string(),
+        actor: issue.author.clone(),
+        body: issue.body.clone(),
+        url: Some(issue.html_url.clone()),
+        event: None,
+        state: None,
+        title: None,
+        path: None,
+        line: None,
+        original_line: None,
+        commit_id: None,
+        created_at: issue.created_at.clone(),
+        updated_at: Some(issue.updated_at.clone()),
+    }
+}
+
+fn github_timeline_item_from_pull_request(
+    pull_request: &GitHubPullRequest,
+) -> GitHubDiscussionTimelineItem {
+    GitHubDiscussionTimelineItem {
+        id: format!("pull-{}-body", pull_request.number),
+        kind: "body".to_string(),
+        actor: Some(pull_request.author.clone()),
+        body: pull_request.body.clone(),
+        url: Some(pull_request.html_url.clone()),
+        event: None,
+        state: None,
+        title: None,
+        path: None,
+        line: None,
+        original_line: None,
+        commit_id: None,
+        created_at: pull_request.created_at.clone(),
+        updated_at: Some(pull_request.updated_at.clone()),
+    }
+}
+
+pub(super) fn github_timeline_item_from_response(
+    item: GitHubIssueTimelineResponse,
+) -> GitHubDiscussionTimelineItem {
+    let is_comment = item
+        .body
+        .as_ref()
+        .is_some_and(|body| !body.trim().is_empty());
+    let event = normalize_optional_string(item.event);
+    let id = item
+        .node_id
+        .clone()
+        .unwrap_or_else(|| github_json_id(item.id, event.as_deref().unwrap_or("timeline")));
+    let actor = item.actor.or(item.user).map(|user| user.login);
+    let created_at = item
+        .created_at
+        .clone()
+        .or_else(|| item.updated_at.clone())
+        .unwrap_or_default();
+    GitHubDiscussionTimelineItem {
+        id,
+        kind: if is_comment { "comment" } else { "event" }.to_string(),
+        actor,
+        body: normalize_optional_string(item.body),
+        url: normalize_optional_string(item.html_url),
+        event: event.clone(),
+        state: None,
+        title: event.map(|value| github_timeline_event_title(&value)),
+        path: None,
+        line: None,
+        original_line: None,
+        commit_id: None,
+        created_at,
+        updated_at: normalize_optional_string(item.updated_at),
+    }
+}
+
+pub(super) fn github_review_timeline_item_from_response(
+    review: GitHubPullRequestReviewResponse,
+) -> GitHubDiscussionTimelineItem {
+    let created_at = review.submitted_at.clone().unwrap_or_default();
+    GitHubDiscussionTimelineItem {
+        id: format!("review-{}", review.id),
+        kind: "review".to_string(),
+        actor: review.user.map(|user| user.login),
+        body: normalize_optional_string(review.body),
+        url: normalize_optional_string(review.html_url),
+        event: None,
+        state: Some(review.state),
+        title: None,
+        path: None,
+        line: None,
+        original_line: None,
+        commit_id: normalize_optional_string(review.commit_id),
+        created_at,
+        updated_at: review.submitted_at,
+    }
+}
+
+pub(super) fn github_review_comment_timeline_item_from_response(
+    comment: GitHubPullRequestReviewCommentResponse,
+) -> GitHubDiscussionTimelineItem {
+    GitHubDiscussionTimelineItem {
+        id: format!("review-comment-{}", comment.id),
+        kind: "reviewComment".to_string(),
+        actor: comment.user.map(|user| user.login),
+        body: normalize_optional_string(comment.body),
+        url: normalize_optional_string(comment.html_url),
+        event: None,
+        state: None,
+        title: None,
+        path: normalize_optional_string(comment.path),
+        line: comment.line,
+        original_line: comment.original_line,
+        commit_id: normalize_optional_string(comment.commit_id),
+        created_at: comment.created_at,
+        updated_at: normalize_optional_string(comment.updated_at),
+    }
+}
+
+fn github_timeline_event_title(event: &str) -> String {
+    let title = match event {
+        "closed" => "关闭了讨论",
+        "reopened" => "重新打开讨论",
+        "merged" => "合并了 Pull Request",
+        "labeled" => "添加了标签",
+        "unlabeled" => "移除了标签",
+        "assigned" => "分配了负责人",
+        "unassigned" => "移除了负责人",
+        "milestoned" => "设置了里程碑",
+        "demilestoned" => "移除了里程碑",
+        "renamed" => "修改了标题",
+        "review_requested" => "请求了 Review",
+        "review_request_removed" => "移除了 Review 请求",
+        "ready_for_review" => "标记为 ready for review",
+        "converted_to_draft" => "转换为草稿",
+        "referenced" => "引用了该讨论",
+        "cross-referenced" => "交叉引用了该讨论",
+        "commented" => "发表了评论",
+        value => return value.replace('_', " ").replace('-', " "),
+    };
+    title.to_string()
+}
+
+pub(super) fn sort_github_discussion_timeline(items: &mut [GitHubDiscussionTimelineItem]) {
+    items.sort_by(|left, right| {
+        let left_time = parse_github_datetime(&left.created_at).unwrap_or(0);
+        let right_time = parse_github_datetime(&right.created_at).unwrap_or(0);
+        left_time
+            .cmp(&right_time)
+            .then_with(|| left.id.cmp(&right.id))
+    });
 }
 
 pub(super) fn github_issue_labels_param(labels: Option<Vec<String>>) -> Option<String> {
@@ -2011,7 +2296,10 @@ pub(super) fn github_artifact_preview_from_bytes(
             name,
             preview_kind: "image".to_string(),
             content: None,
-            data_url: Some(format!("data:{image_mime};base64,{}", STANDARD.encode(bytes))),
+            data_url: Some(format!(
+                "data:{image_mime};base64,{}",
+                STANDARD.encode(bytes)
+            )),
             images: HashMap::new(),
             size,
             mime_type: Some(image_mime.to_string()),
@@ -2924,6 +3212,106 @@ pub async fn github_get_pull_request(
 }
 
 #[tauri::command]
+pub async fn github_get_pull_request_discussion(
+    app: AppHandle,
+    repo_full_name: String,
+    pull_number: u64,
+    force_refresh: Option<bool>,
+) -> Result<GitHubPullRequestDiscussion, String> {
+    run_blocking("读取 GitHub Pull Request 讨论", move || {
+        if pull_number == 0 {
+            return Err("Pull Request 编号不合法".to_string());
+        }
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        let discussion_key = pull_number.to_string();
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| {
+                    repo_cache
+                        .pull_request_discussions
+                        .get(&discussion_key)
+                        .cloned()
+                })
+            {
+                return Ok(cached);
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let pull_request_response = github_fetch_pull_request_response(
+            &app,
+            &repo_full_name,
+            pull_number,
+            &token,
+            "读取 GitHub Pull Request 失败",
+        )?;
+        let pull_request_issue = github_fetch_issue_response(
+            &app,
+            &repo_full_name,
+            pull_number,
+            &token,
+            "读取 GitHub Pull Request 元数据失败",
+        )?;
+        let issue_metadata = github_pull_request_issue_from_response(pull_request_issue);
+        let mut pull_request = github_pull_request_from_response(pull_request_response);
+        if let Some(issue) = issue_metadata {
+            pull_request = github_pull_request_with_issue_metadata(pull_request, issue);
+        }
+        let client = build_client()?;
+        let repo_url = github_repo_api_url(&repo_full_name)?;
+        let mut timeline = vec![github_timeline_item_from_pull_request(&pull_request)];
+        timeline.extend(
+            github_fetch_paginated::<GitHubIssueTimelineResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/issues/{pull_number}/timeline"),
+                "读取 GitHub Pull Request 时间线失败",
+            )?
+            .into_iter()
+            .map(github_timeline_item_from_response),
+        );
+        timeline.extend(
+            github_fetch_paginated::<GitHubPullRequestReviewResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/pulls/{pull_number}/reviews"),
+                "读取 GitHub Pull Request Reviews 失败",
+            )?
+            .into_iter()
+            .map(github_review_timeline_item_from_response),
+        );
+        timeline.extend(
+            github_fetch_paginated::<GitHubPullRequestReviewCommentResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/pulls/{pull_number}/comments"),
+                "读取 GitHub Pull Request Review Comments 失败",
+            )?
+            .into_iter()
+            .map(github_review_comment_timeline_item_from_response),
+        );
+        let mut seen = HashSet::new();
+        timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
+        sort_github_discussion_timeline(&mut timeline);
+        let discussion = GitHubPullRequestDiscussion {
+            pull_request,
+            timeline,
+        };
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache
+                .pull_request_discussions
+                .insert(discussion_key, discussion.clone());
+        })?;
+        Ok(discussion)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn github_create_pull_request(
     app: AppHandle,
     repo_full_name: String,
@@ -3293,6 +3681,66 @@ pub async fn github_list_issues(
             repo_cache.issues.insert(issue_key, issues.clone());
         })?;
         Ok(issues)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_get_issue_discussion(
+    app: AppHandle,
+    repo_full_name: String,
+    issue_number: u64,
+    force_refresh: Option<bool>,
+) -> Result<GitHubIssueDiscussion, String> {
+    run_blocking("读取 GitHub Issue 讨论", move || {
+        if issue_number == 0 {
+            return Err("Issue 编号不合法".to_string());
+        }
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        let discussion_key = issue_number.to_string();
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.issue_discussions.get(&discussion_key).cloned())
+            {
+                return Ok(cached);
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let issue_response = github_fetch_issue_response(
+            &app,
+            &repo_full_name,
+            issue_number,
+            &token,
+            "读取 GitHub Issue 失败",
+        )?;
+        let issue = github_issue_from_response(issue_response)
+            .ok_or_else(|| format!("#{issue_number} 是 Pull Request，不是 Issue"))?;
+        let client = build_client()?;
+        let repo_url = github_repo_api_url(&repo_full_name)?;
+        let mut timeline = vec![github_timeline_item_from_issue(&issue)];
+        timeline.extend(
+            github_fetch_paginated::<GitHubIssueTimelineResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/issues/{issue_number}/timeline"),
+                "读取 GitHub Issue 时间线失败",
+            )?
+            .into_iter()
+            .map(github_timeline_item_from_response),
+        );
+        let mut seen = HashSet::new();
+        timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
+        sort_github_discussion_timeline(&mut timeline);
+        let discussion = GitHubIssueDiscussion { issue, timeline };
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache
+                .issue_discussions
+                .insert(discussion_key, discussion.clone());
+        })?;
+        Ok(discussion)
     })
     .await
 }
@@ -3799,7 +4247,11 @@ pub async fn github_list_workflow_artifact_files(
         entries.sort_by(|left, right| {
             (right.kind == "dir")
                 .cmp(&(left.kind == "dir"))
-                .then_with(|| left.path.to_ascii_lowercase().cmp(&right.path.to_ascii_lowercase()))
+                .then_with(|| {
+                    left.path
+                        .to_ascii_lowercase()
+                        .cmp(&right.path.to_ascii_lowercase())
+                })
                 .then_with(|| left.path.cmp(&right.path))
         });
         Ok(entries)
@@ -3817,9 +4269,12 @@ pub async fn github_get_workflow_artifact_file_preview(
     run_blocking("预览 GitHub Actions artifact 文件", move || {
         let requested_path = path.trim().trim_matches('/').replace('\\', "/");
         if requested_path.is_empty()
-            || Path::new(&requested_path)
-                .components()
-                .any(|component| matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)))
+            || Path::new(&requested_path).components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
         {
             return Err("artifact 文件路径无效".to_string());
         }
@@ -3844,12 +4299,18 @@ pub async fn github_get_workflow_artifact_file_preview(
             }
             let size = file.size();
             if size > super::file_browser::MAX_FILE_PREVIEW_BYTES {
-                return Ok(github_artifact_preview_from_bytes(entry_path, size, Vec::new()));
+                return Ok(github_artifact_preview_from_bytes(
+                    entry_path,
+                    size,
+                    Vec::new(),
+                ));
             }
             let mut file_bytes = Vec::with_capacity(size as usize);
             file.read_to_end(&mut file_bytes)
                 .map_err(|e| format!("读取 artifact 文件失败：{e}"))?;
-            return Ok(github_artifact_preview_from_bytes(entry_path, size, file_bytes));
+            return Ok(github_artifact_preview_from_bytes(
+                entry_path, size, file_bytes,
+            ));
         }
         Err("artifact 文件不存在".to_string())
     })

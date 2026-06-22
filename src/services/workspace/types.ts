@@ -241,6 +241,35 @@ export interface GitHubIssue {
   createdAt: string;
 }
 
+export type GitHubDiscussionTimelineItemKind = "body" | "comment" | "event" | "review" | "reviewComment";
+
+export interface GitHubDiscussionTimelineItem {
+  id: string;
+  kind: GitHubDiscussionTimelineItemKind;
+  actor?: string | null;
+  body?: string | null;
+  url?: string | null;
+  event?: string | null;
+  state?: string | null;
+  title?: string | null;
+  path?: string | null;
+  line?: number | null;
+  originalLine?: number | null;
+  commitId?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+}
+
+export interface GitHubIssueDiscussion {
+  issue: GitHubIssue;
+  timeline: GitHubDiscussionTimelineItem[];
+}
+
+export interface GitHubPullRequestDiscussion {
+  pullRequest: GitHubPullRequest;
+  timeline: GitHubDiscussionTimelineItem[];
+}
+
 export interface GitHubIssueMilestone {
   number: number;
   title: string;

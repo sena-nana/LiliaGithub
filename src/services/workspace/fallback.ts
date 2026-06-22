@@ -16,13 +16,16 @@ import type {
   GitHubCreateRepoRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
+  GitHubDiscussionTimelineItem,
   GitHubIssue,
+  GitHubIssueDiscussion,
   GitHubIssueFilterMetadata,
   GitHubIssueMilestone,
   GitHubIssueListOptions,
   GitHubMergePullRequestRequest,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubPullRequestDiscussion,
   GitHubPullRequestListOptions,
   GitHubRepoManagement,
   GitHubRepoOwner,
@@ -506,6 +509,24 @@ function cloneIssue(issue: GitHubIssue): GitHubIssue {
     assignees: [...issue.assignees],
     milestone: issue.milestone ? { ...issue.milestone } : null,
     projectItems: issue.projectItems?.map((project) => ({ ...project })) ?? [],
+  };
+}
+
+function cloneDiscussionTimelineItem(item: GitHubDiscussionTimelineItem): GitHubDiscussionTimelineItem {
+  return { ...item };
+}
+
+function cloneIssueDiscussion(discussion: GitHubIssueDiscussion): GitHubIssueDiscussion {
+  return {
+    issue: cloneIssue(discussion.issue),
+    timeline: discussion.timeline.map(cloneDiscussionTimelineItem),
+  };
+}
+
+function clonePullRequestDiscussion(discussion: GitHubPullRequestDiscussion): GitHubPullRequestDiscussion {
+  return {
+    pullRequest: clonePullRequest(discussion.pullRequest),
+    timeline: discussion.timeline.map(cloneDiscussionTimelineItem),
   };
 }
 
@@ -1799,10 +1820,119 @@ function createFallbackGitHubRepoFilePreviews(): Record<string, Record<string, R
   );
 }
 
+function discussionBodyItem(
+  id: string,
+  actor: string | null | undefined,
+  body: string | null | undefined,
+  url: string,
+  createdAt: string,
+  updatedAt: string,
+): GitHubDiscussionTimelineItem {
+  return {
+    id,
+    kind: "body",
+    actor,
+    body: body ?? "",
+    url,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function sortDiscussionTimeline(items: GitHubDiscussionTimelineItem[]) {
+  return items.sort((left, right) => {
+    const leftTime = Date.parse(left.createdAt);
+    const rightTime = Date.parse(right.createdAt);
+    return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0);
+  });
+}
+
+function fallbackIssueDiscussion(issue: GitHubIssue): GitHubIssueDiscussion {
+  return {
+    issue: cloneIssue(issue),
+    timeline: sortDiscussionTimeline([
+      discussionBodyItem(
+        `issue-${issue.number}-body`,
+        issue.author ?? "lilia-user",
+        issue.body,
+        issue.htmlUrl,
+        issue.createdAt,
+        issue.updatedAt,
+      ),
+      {
+        id: `issue-${issue.number}-comment-1`,
+        kind: "comment",
+        actor: "sena-nana",
+        body: "已确认，需要展示 **Markdown** 评论和状态事件。",
+        url: `${issue.htmlUrl}#issuecomment-1`,
+        createdAt: issue.updatedAt,
+        updatedAt: issue.updatedAt,
+      },
+      {
+        id: `issue-${issue.number}-event-1`,
+        kind: "event",
+        actor: issue.author ?? "lilia-user",
+        event: issue.state === "closed" ? "closed" : "labeled",
+        title: issue.state === "closed" ? "关闭了 Issue" : "添加了标签",
+        createdAt: issue.updatedAt,
+      },
+    ]),
+  };
+}
+
+function fallbackPullRequestDiscussion(pullRequest: GitHubPullRequest): GitHubPullRequestDiscussion {
+  return {
+    pullRequest: clonePullRequest(pullRequest),
+    timeline: sortDiscussionTimeline([
+      discussionBodyItem(
+        `pull-${pullRequest.number}-body`,
+        pullRequest.author,
+        pullRequest.body,
+        pullRequest.htmlUrl,
+        pullRequest.createdAt,
+        pullRequest.updatedAt,
+      ),
+      {
+        id: `pull-${pullRequest.number}-review-1`,
+        kind: "review",
+        actor: "sena-nana",
+        state: pullRequest.merged ? "APPROVED" : "COMMENTED",
+        body: "整体方向可以，注意保留现有列表筛选行为。",
+        url: `${pullRequest.htmlUrl}#pullrequestreview-1`,
+        createdAt: pullRequest.updatedAt,
+        updatedAt: pullRequest.updatedAt,
+      },
+      {
+        id: `pull-${pullRequest.number}-review-comment-1`,
+        kind: "reviewComment",
+        actor: "sena-nana",
+        body: "这里需要用共享 timeline 组件渲染。",
+        url: `${pullRequest.htmlUrl}#discussion_r1`,
+        path: "src/components/repo/RepoProjectPanel.vue",
+        line: 128,
+        originalLine: 128,
+        commitId: "abcdef1234567890",
+        createdAt: pullRequest.updatedAt,
+        updatedAt: pullRequest.updatedAt,
+      },
+      {
+        id: `pull-${pullRequest.number}-event-1`,
+        kind: "event",
+        actor: pullRequest.author,
+        event: pullRequest.merged ? "merged" : "ready_for_review",
+        title: pullRequest.merged ? "合并了 Pull Request" : "标记为 ready for review",
+        createdAt: pullRequest.updatedAt,
+      },
+    ]),
+  };
+}
+
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
+let fallbackGitHubIssueDiscussions: Record<string, Record<number, GitHubIssueDiscussion>> = {};
+let fallbackGitHubPullRequestDiscussions: Record<string, Record<number, GitHubPullRequestDiscussion>> = {};
 let fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
 let fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
@@ -1971,6 +2101,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
+  fallbackGitHubIssueDiscussions = {};
+  fallbackGitHubPullRequestDiscussions = {};
   fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
@@ -2166,6 +2298,38 @@ export function setFallbackGitHubPullRequestsForTests(pullRequestsByRepo: Record
     Object.entries(pullRequestsByRepo).map(([repoFullName, pullRequests]) => [
       repoFullName,
       pullRequests.map(clonePullRequest),
+    ]),
+  );
+}
+
+export function setFallbackGitHubIssueDiscussionsForTests(
+  discussionsByRepo: Record<string, Record<number, GitHubIssueDiscussion>>,
+) {
+  fallbackGitHubIssueDiscussions = Object.fromEntries(
+    Object.entries(discussionsByRepo).map(([repoFullName, discussions]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(discussions).map(([issueNumber, discussion]) => [
+          Number(issueNumber),
+          cloneIssueDiscussion(discussion),
+        ]),
+      ),
+    ]),
+  );
+}
+
+export function setFallbackGitHubPullRequestDiscussionsForTests(
+  discussionsByRepo: Record<string, Record<number, GitHubPullRequestDiscussion>>,
+) {
+  fallbackGitHubPullRequestDiscussions = Object.fromEntries(
+    Object.entries(discussionsByRepo).map(([repoFullName, discussions]) => [
+      repoFullName,
+      Object.fromEntries(
+        Object.entries(discussions).map(([pullNumber, discussion]) => [
+          Number(pullNumber),
+          clonePullRequestDiscussion(discussion),
+        ]),
+      ),
     ]),
   );
 }
@@ -3148,6 +3312,8 @@ export function deleteGitHubRepo(repoFullName: string): Promise<void> {
     delete fallbackGitHubRepoManagement[normalized];
     delete fallbackGitHubIssues[normalized];
     delete fallbackGitHubPullRequests[normalized];
+    delete fallbackGitHubIssueDiscussions[normalized];
+    delete fallbackGitHubPullRequestDiscussions[normalized];
     delete fallbackGitHubPullRequestChecks[normalized];
     delete fallbackGitHubWorkflowRuns[normalized];
     delete fallbackGitHubBranches[normalized];
@@ -3329,6 +3495,20 @@ export function getGitHubPullRequest(repoFullName: string, pullNumber: number): 
   });
 }
 
+export function getGitHubPullRequestDiscussion(
+  repoFullName: string,
+  pullNumber: number,
+): Promise<GitHubPullRequestDiscussion> {
+  return call("github_get_pull_request_discussion", { repoFullName, pullNumber }, () => {
+    const current = fallbackGitHubPullRequestDiscussions[repoFullName]?.[pullNumber];
+    if (current) return clonePullRequestDiscussion(current);
+    const pullRequest = (fallbackGitHubPullRequests[repoFullName] ?? [])
+      .find((item) => item.number === pullNumber);
+    if (!pullRequest) throw new Error(`未找到 Pull Request #${pullNumber}`);
+    return fallbackPullRequestDiscussion(pullRequest);
+  });
+}
+
 export function createGitHubPullRequest(
   repoFullName: string,
   request: GitHubCreatePullRequestRequest,
@@ -3486,6 +3666,19 @@ export function listGitHubIssues(
     return sorted
       .slice(0, perPage ?? sorted.length)
       .map(cloneIssue);
+  });
+}
+
+export function getGitHubIssueDiscussion(
+  repoFullName: string,
+  issueNumber: number,
+): Promise<GitHubIssueDiscussion> {
+  return call("github_get_issue_discussion", { repoFullName, issueNumber }, () => {
+    const current = fallbackGitHubIssueDiscussions[repoFullName]?.[issueNumber];
+    if (current) return cloneIssueDiscussion(current);
+    const issue = (fallbackGitHubIssues[repoFullName] ?? []).find((item) => item.number === issueNumber);
+    if (!issue) throw new Error(`未找到 Issue #${issueNumber}`);
+    return fallbackIssueDiscussion(issue);
   });
 }
 

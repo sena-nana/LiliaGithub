@@ -266,7 +266,9 @@ fn github_repo_management_maps_license() {
             updated_at: "2026-06-18T08:00:00Z".to_string(),
             clone_url: "https://github.com/a/repo.git".to_string(),
             html_url: "https://github.com/a/repo".to_string(),
-            owner: GitHubRepoOwnerResponse { login: "a".to_string() },
+            owner: GitHubRepoOwnerResponse {
+                login: "a".to_string(),
+            },
             homepage: None,
             has_issues: true,
             has_wiki: false,
@@ -292,7 +294,157 @@ fn github_repo_management_maps_license() {
         vec!["tauri".to_string()],
     );
 
-    assert_eq!(management.license.unwrap().spdx_id.as_deref(), Some("BSD-3-Clause"));
+    assert_eq!(
+        management.license.unwrap().spdx_id.as_deref(),
+        Some("BSD-3-Clause")
+    );
+}
+
+#[test]
+fn maps_github_discussion_timeline_items() {
+    let comment = github_timeline_item_from_response(GitHubIssueTimelineResponse {
+        id: Some(serde_json::json!(42)),
+        node_id: None,
+        event: Some("commented".to_string()),
+        actor: None,
+        user: Some(GitHubAssigneeResponse {
+            login: "mika".to_string(),
+        }),
+        body: Some("**Confirmed**".to_string()),
+        html_url: Some("https://github.com/a/repo/issues/1#issuecomment-42".to_string()),
+        created_at: Some("2026-06-18T08:01:00Z".to_string()),
+        updated_at: Some("2026-06-18T08:02:00Z".to_string()),
+    });
+    assert_eq!(comment.kind, "comment");
+    assert_eq!(comment.id, "42");
+    assert_eq!(comment.actor.as_deref(), Some("mika"));
+    assert_eq!(comment.body.as_deref(), Some("**Confirmed**"));
+
+    let event = github_timeline_item_from_response(GitHubIssueTimelineResponse {
+        id: None,
+        node_id: Some("E_closed".to_string()),
+        event: Some("closed".to_string()),
+        actor: Some(GitHubAssigneeResponse {
+            login: "sena".to_string(),
+        }),
+        user: None,
+        body: None,
+        html_url: None,
+        created_at: Some("2026-06-18T08:03:00Z".to_string()),
+        updated_at: None,
+    });
+    assert_eq!(event.kind, "event");
+    assert_eq!(event.title.as_deref(), Some("关闭了讨论"));
+    assert_eq!(event.event.as_deref(), Some("closed"));
+
+    let unknown = github_timeline_item_from_response(GitHubIssueTimelineResponse {
+        id: Some(serde_json::json!("custom-id")),
+        node_id: None,
+        event: Some("custom_event".to_string()),
+        actor: None,
+        user: None,
+        body: None,
+        html_url: None,
+        created_at: Some("2026-06-18T08:04:00Z".to_string()),
+        updated_at: None,
+    });
+    assert_eq!(unknown.kind, "event");
+    assert_eq!(unknown.title.as_deref(), Some("custom event"));
+
+    let review = github_review_timeline_item_from_response(GitHubPullRequestReviewResponse {
+        id: 7,
+        user: Some(GitHubPullRequestUserResponse {
+            login: "reviewer".to_string(),
+        }),
+        body: Some("LGTM".to_string()),
+        state: "APPROVED".to_string(),
+        html_url: Some("https://github.com/a/repo/pull/1#pullrequestreview-7".to_string()),
+        submitted_at: Some("2026-06-18T08:05:00Z".to_string()),
+        commit_id: Some("abc123".to_string()),
+    });
+    assert_eq!(review.kind, "review");
+    assert_eq!(review.state.as_deref(), Some("APPROVED"));
+    assert_eq!(review.commit_id.as_deref(), Some("abc123"));
+
+    let review_comment =
+        github_review_comment_timeline_item_from_response(GitHubPullRequestReviewCommentResponse {
+            id: 8,
+            user: Some(GitHubPullRequestUserResponse {
+                login: "reviewer".to_string(),
+            }),
+            body: Some("Inline note".to_string()),
+            html_url: Some("https://github.com/a/repo/pull/1#discussion_r8".to_string()),
+            path: Some("src/lib.rs".to_string()),
+            line: Some(12),
+            original_line: Some(10),
+            commit_id: Some("def456".to_string()),
+            created_at: "2026-06-18T08:06:00Z".to_string(),
+            updated_at: Some("2026-06-18T08:07:00Z".to_string()),
+        });
+    assert_eq!(review_comment.kind, "reviewComment");
+    assert_eq!(review_comment.path.as_deref(), Some("src/lib.rs"));
+    assert_eq!(review_comment.line, Some(12));
+}
+
+#[test]
+fn sorts_github_discussion_timeline_by_time_then_id() {
+    let mut items = vec![
+        GitHubDiscussionTimelineItem {
+            id: "b".to_string(),
+            kind: "event".to_string(),
+            actor: None,
+            body: None,
+            url: None,
+            event: Some("closed".to_string()),
+            state: None,
+            title: None,
+            path: None,
+            line: None,
+            original_line: None,
+            commit_id: None,
+            created_at: "2026-06-18T08:02:00Z".to_string(),
+            updated_at: None,
+        },
+        GitHubDiscussionTimelineItem {
+            id: "a".to_string(),
+            kind: "comment".to_string(),
+            actor: None,
+            body: Some("same time".to_string()),
+            url: None,
+            event: None,
+            state: None,
+            title: None,
+            path: None,
+            line: None,
+            original_line: None,
+            commit_id: None,
+            created_at: "2026-06-18T08:02:00Z".to_string(),
+            updated_at: None,
+        },
+        GitHubDiscussionTimelineItem {
+            id: "body".to_string(),
+            kind: "body".to_string(),
+            actor: None,
+            body: Some("first".to_string()),
+            url: None,
+            event: None,
+            state: None,
+            title: None,
+            path: None,
+            line: None,
+            original_line: None,
+            commit_id: None,
+            created_at: "2026-06-18T08:00:00Z".to_string(),
+            updated_at: None,
+        },
+    ];
+
+    sort_github_discussion_timeline(&mut items);
+
+    assert_eq!(
+        items.into_iter().map(|item| item.id).collect::<Vec<_>>(),
+        vec!["body", "a", "b"]
+    );
 }
 
 fn test_github_issue(number: u64, state: &str) -> GitHubIssue {
@@ -427,8 +579,8 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
             "query": "docs",
         })
     );
-    let fallback_pull_key: serde_json::Value = serde_json::from_str(
-        &github_pull_request_cache_key(
+    let fallback_pull_key: serde_json::Value =
+        serde_json::from_str(&github_pull_request_cache_key(
             Some("invalid"),
             None,
             Some("invalid"),
@@ -440,9 +592,8 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
             None,
             None,
             None,
-        ),
-    )
-    .unwrap();
+        ))
+        .unwrap();
     assert_eq!(fallback_pull_key["state"], "open");
     assert_eq!(fallback_pull_key["sort"], "updated");
     assert_eq!(fallback_pull_key["direction"], "desc");
@@ -2197,7 +2348,10 @@ fn maps_github_workflow_runs_with_defaults() {
     assert_eq!(mapped.run_number, Some(7));
     assert_eq!(mapped.run_attempt, Some(1));
     assert_eq!(mapped.workflow_id, Some(99));
-    assert_eq!(mapped.run_started_at.as_deref(), Some("2026-06-12T10:01:00Z"));
+    assert_eq!(
+        mapped.run_started_at.as_deref(),
+        Some("2026-06-12T10:01:00Z")
+    );
 }
 
 #[test]
@@ -2292,21 +2446,11 @@ fn ignores_github_workflow_definition_without_path() {
 
 #[test]
 fn previews_github_artifact_files_by_kind() {
-    let text = github_artifact_preview_from_bytes(
-        "logs/build.log".to_string(),
-        5,
-        b"hello".to_vec(),
-    );
-    let markdown = github_artifact_preview_from_bytes(
-        "README.md".to_string(),
-        7,
-        b"# title".to_vec(),
-    );
-    let image = github_artifact_preview_from_bytes(
-        "image.png".to_string(),
-        4,
-        vec![1, 2, 3, 4],
-    );
+    let text =
+        github_artifact_preview_from_bytes("logs/build.log".to_string(), 5, b"hello".to_vec());
+    let markdown =
+        github_artifact_preview_from_bytes("README.md".to_string(), 7, b"# title".to_vec());
+    let image = github_artifact_preview_from_bytes("image.png".to_string(), 4, vec![1, 2, 3, 4]);
     let large = github_artifact_preview_from_bytes(
         "large.log".to_string(),
         super::file_browser::MAX_FILE_PREVIEW_BYTES + 1,
@@ -2317,7 +2461,10 @@ fn previews_github_artifact_files_by_kind() {
     assert_eq!(text.content.as_deref(), Some("hello"));
     assert_eq!(markdown.preview_kind, "markdown");
     assert_eq!(image.preview_kind, "image");
-    assert_eq!(image.data_url.as_deref(), Some("data:image/png;base64,AQIDBA=="));
+    assert_eq!(
+        image.data_url.as_deref(),
+        Some("data:image/png;base64,AQIDBA==")
+    );
     assert_eq!(large.preview_kind, "tooLarge");
 }
 

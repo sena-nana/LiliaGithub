@@ -724,6 +724,43 @@ pub struct GitHubIssueFilterMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct GitHubDiscussionTimelineItem {
+    pub id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub event: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub line: Option<u64>,
+    #[serde(default)]
+    pub original_line: Option<u64>,
+    #[serde(default)]
+    pub commit_id: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubIssueDiscussion {
+    pub issue: GitHubIssue,
+    pub timeline: Vec<GitHubDiscussionTimelineItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubPullRequest {
     pub number: u64,
     pub title: String,
@@ -770,6 +807,13 @@ pub struct GitHubPullRequestCheck {
     pub started_at: Option<String>,
     #[serde(default)]
     pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestDiscussion {
+    pub pull_request: GitHubPullRequest,
+    pub timeline: Vec<GitHubDiscussionTimelineItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -896,7 +940,11 @@ pub struct GitHubProjectRepoCache {
     #[serde(default)]
     pub issues: HashMap<String, Vec<GitHubIssue>>,
     #[serde(default)]
+    pub issue_discussions: HashMap<String, GitHubIssueDiscussion>,
+    #[serde(default)]
     pub pull_requests: HashMap<String, Vec<GitHubPullRequest>>,
+    #[serde(default)]
+    pub pull_request_discussions: HashMap<String, GitHubPullRequestDiscussion>,
     #[serde(default)]
     pub pull_request_checks: HashMap<String, Vec<GitHubPullRequestCheck>>,
     #[serde(default)]

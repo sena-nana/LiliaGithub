@@ -14,9 +14,11 @@ import {
 import { computed, ref } from "vue";
 import Dropdown from "../Dropdown.vue";
 import type {
+  GitHubDiscussionTimelineItem,
   GitHubIssue,
   GitHubIssueFilterMetadata,
 } from "../../services/workspace/types";
+import RepoIssueDetail from "./RepoIssueDetail.vue";
 
 type IssueState = "open" | "closed" | "all";
 type IssueSort = "created" | "updated" | "comments";
@@ -45,6 +47,11 @@ const props = defineProps<{
   editingLabels: string;
   editingAssignees: string;
   editingBody: string;
+  focusedIssueNumber: number | null;
+  issueTimeline: readonly GitHubDiscussionTimelineItem[];
+  issueDiscussionLoading: boolean;
+  issueDiscussionError: string | null;
+  repoFullName: string;
   isFocused: (issueNumber: number) => boolean;
 }>();
 
@@ -57,12 +64,20 @@ const emit = defineEmits<{
   "update:editingBody": [value: string];
   create: [];
   edit: [issue: GitHubIssue];
+  focus: [issue: GitHubIssue];
+  back: [];
+  open: [issue: GitHubIssue];
   "cancel-edit": [];
   "save-edit": [issue: GitHubIssue];
   toggle: [issue: GitHubIssue];
 }>();
 
 const filtersOpen = ref(false);
+const focusedIssue = computed(() =>
+  props.focusedIssueNumber == null
+    ? null
+    : props.issues.find((issue) => issue.number === props.focusedIssueNumber) ?? null
+);
 
 const stateFilters: readonly { value: IssueState; label: string }[] = [
   { value: "open", label: "Open" },
@@ -157,6 +172,21 @@ function issueMetaText(issue: GitHubIssue) {
 
 <template>
   <div class="issues-panel">
+    <RepoIssueDetail
+      v-if="focusedIssue"
+      :issue="focusedIssue"
+      :timeline="issueTimeline"
+      :discussion-loading="issueDiscussionLoading"
+      :discussion-error="issueDiscussionError"
+      :updating="updating"
+      :repo-full-name="repoFullName"
+      @back="emit('back')"
+      @open="emit('open', $event)"
+      @edit="emit('edit', $event)"
+      @toggle="emit('toggle', $event)"
+    />
+
+    <template v-else>
     <h3 class="issues-panel__sr-title">Issues</h3>
     <div class="issues-panel__toolbar">
       <div class="issues-panel__states" role="group" aria-label="Issue 状态">
@@ -300,13 +330,13 @@ function issueMetaText(issue: GitHubIssue) {
             <CircleOff v-else :size="15" aria-hidden="true" />
           </span>
           <div class="issues-list__content">
-            <strong class="issues-list__title">
+            <button type="button" class="issues-list__title" @click="emit('focus', issue)">
               #{{ issue.number }} {{ issue.title }}
-            </strong>
+            </button>
             <span class="issues-list__meta">{{ issueMetaText(issue) }}</span>
           </div>
           <div class="issues-list__actions">
-            <button type="button" class="ghost project-icon-action" aria-label="编辑" title="编辑" @click="emit('edit', issue)">
+            <button type="button" class="ghost project-icon-action" aria-label="编辑" title="编辑" @click.stop="emit('edit', issue)">
               <Pencil :size="14" aria-hidden="true" />
             </button>
             <button
@@ -314,7 +344,7 @@ function issueMetaText(issue: GitHubIssue) {
               class="ghost project-icon-action"
               :aria-label="issue.state === 'open' ? '关闭' : '重开'"
               :title="issue.state === 'open' ? '关闭' : '重开'"
-              @click="emit('toggle', issue)"
+              @click.stop="emit('toggle', issue)"
             >
               <CircleOff v-if="issue.state === 'open'" :size="14" aria-hidden="true" />
               <RotateCcw v-else :size="14" aria-hidden="true" />
@@ -373,6 +403,7 @@ function issueMetaText(issue: GitHubIssue) {
         正在读取 Issues。
       </p>
     </div>
+    </template>
   </div>
 </template>
 
@@ -566,9 +597,15 @@ function issueMetaText(issue: GitHubIssue) {
 }
 
 .issues-list__title {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text);
   font-size: 13px;
   font-weight: 700;
+  text-align: left;
+  cursor: pointer;
 }
 
 .issues-list__meta {

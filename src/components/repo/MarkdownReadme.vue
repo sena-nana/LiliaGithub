@@ -9,6 +9,7 @@ const props = defineProps<{
   repoRootPath?: string | null;
   currentReadmePath?: string | null;
   readmePaths?: readonly string[];
+  linkBaseUrl?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -25,7 +26,7 @@ const toolbarTarget = computed(() => resolveReadmeLink({
   repoRootPath: props.repoRootPath,
   currentReadmePath: props.currentReadmePath,
   readmePaths: props.readmePaths,
-}));
+}) ?? resolveMarkdownBaseLink(toolbarHref.value));
 const toolbarCanOpen = computed(() => Boolean(toolbarTarget.value));
 
 const allowedTags = new Set([
@@ -347,6 +348,19 @@ function resolveImageSrc(value: string): string {
   }
 
   return props.images?.[trimmed] ?? props.images?.[trimmed.replace(/\\/g, "/")] ?? value;
+}
+
+function resolveMarkdownBaseLink(href: string): ReadmeLinkTarget | null {
+  const baseUrl = props.linkBaseUrl?.trim().replace(/\/+$/, "");
+  const trimmed = href.trim();
+  if (!baseUrl || !trimmed || /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith("//")) return null;
+  if (trimmed.startsWith("#")) return { kind: "anchor", hash: trimmed.slice(1) };
+  const [pathPart, hashPart] = trimmed.split("#", 2);
+  const normalizedPath = pathPart.replace(/^\/+/, "");
+  return {
+    kind: "external",
+    href: `${baseUrl}/${normalizedPath}${hashPart ? `#${hashPart}` : ""}`,
+  };
 }
 
 function escapeHtml(value: string): string {

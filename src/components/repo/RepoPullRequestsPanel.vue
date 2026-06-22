@@ -11,6 +11,7 @@ import {
 } from "@lucide/vue";
 import Dropdown from "../Dropdown.vue";
 import type {
+  GitHubDiscussionTimelineItem,
   GitHubIssueFilterMetadata,
   GitHubPullRequest,
   GitHubPullRequestCheck,
@@ -31,10 +32,15 @@ const props = defineProps<{
   metadataLoading: boolean;
   loading: boolean;
   checksLoading: boolean;
+  discussionLoading: boolean;
+  discussionError: string | null;
+  discussionTimeline: readonly GitHubDiscussionTimelineItem[];
   updating: boolean;
   focusedPullRequestNumber: number | null;
+  focusedPullRequestDetail: GitHubPullRequest | null;
   pullChecks: Record<number, GitHubPullRequestCheck[]>;
   mergeMethod: "merge" | "squash" | "rebase";
+  repoFullName: string;
   isFocused: (pullNumber: number) => boolean;
 }>();
 
@@ -78,11 +84,12 @@ const pullLabels = computed(() => props.pulls.flatMap((pull) => pull.labels ?? [
 const pullAssignees = computed(() => props.pulls.flatMap((pull) => pull.assignees ?? []));
 const pullMilestones = computed(() => props.pulls.flatMap((pull) => pull.milestone ? [pull.milestone] : []));
 const pullProjects = computed(() => props.pulls.flatMap((pull) => pull.projectItems ?? []));
-const focusedPullRequest = computed(() =>
-  props.focusedPullRequestNumber == null
-    ? null
-    : props.pulls.find((pull) => pull.number === props.focusedPullRequestNumber) ?? null
-);
+const focusedPullRequest = computed(() => {
+  const pullNumber = props.focusedPullRequestNumber;
+  if (pullNumber == null) return null;
+  if (props.focusedPullRequestDetail?.number === pullNumber) return props.focusedPullRequestDetail;
+  return props.pulls.find((pull) => pull.number === pullNumber) ?? null;
+});
 
 const authorOptions = computed(() => [
   { value: "", label: "任意作者" },
@@ -208,8 +215,12 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
       :pull="focusedPullRequest"
       :checks="checksFor(focusedPullRequest.number)"
       :checks-loading="checksLoading"
+      :discussion-timeline="discussionTimeline"
+      :discussion-loading="discussionLoading"
+      :discussion-error="discussionError"
       :updating="updating"
       :merge-method="mergeMethod"
+      :repo-full-name="repoFullName"
       @back="emit('back')"
       @open="emit('open', $event)"
       @toggle="emit('toggle', $event)"
