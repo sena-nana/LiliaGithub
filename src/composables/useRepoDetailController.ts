@@ -23,7 +23,7 @@ import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "settings";
-type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history" | "stash">;
+type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
 type HistoryCommit = {
   readonly hash: string;
@@ -268,6 +268,7 @@ export function useRepoDetailController() {
   const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
     [
       { key: "repo", title: "项目" },
+      canLoadFiles.value ? { key: "files", title: "文件树" } : null,
       canShowChanges.value ? { key: "changes", title: "变更" } : null,
       { key: "history", title: "历史" },
       repoContext.value.capabilities.stash.available ? { key: "stash", title: "Stash" } : null,

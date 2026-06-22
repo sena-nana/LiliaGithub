@@ -24,6 +24,7 @@ type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForT
 let workspaceFallback: WorkspaceFallbackForTests;
 
 async function renderAt(path: string) {
+  cleanup();
   installContextMenu();
   const router = createLiliaGithubRouter(createMemoryHistory());
   await router.push(path);

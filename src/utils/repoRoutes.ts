@@ -24,12 +24,15 @@ export function repoProjectRoute(
   return `${repoRoute(repoId)}?${query.toString()}`;
 }
 
-export function repoRouteTabFromRoute(route: Pick<RouteLocationNormalizedLoaded, "meta" | "query">): RepoRouteTab {
+export function repoRouteTabFromRoute(route: Pick<RouteLocationNormalizedLoaded, "meta" | "path" | "query">): RepoRouteTab {
   const metaTab = route.meta.repoTab;
   if (isRepoRouteTab(metaTab)) return metaTab;
 
   const queryTab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab;
   if (queryTab === "changes" || queryTab === "history") return queryTab;
+  const pathSegments = route.path.split("?")[0]?.split("/").filter(Boolean) ?? [];
+  const pathTab = pathSegments[pathSegments.length - 1];
+  if (isRepoRouteTab(pathTab) && pathTab !== "repo") return pathTab;
   return "repo";
 }
 
