@@ -18,7 +18,6 @@ export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): R
     lastCommitAt: null,
     lastCommitMessage: null,
     languageStats: [],
-    workingTreeLanguageStats: [],
     languageStatsUpdatedAt: 0,
     worktree: {
       role: "standalone",

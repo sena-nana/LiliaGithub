@@ -290,12 +290,17 @@ describe("基础路由", () => {
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
     expect(await screen.findByLabelText("编程语言占比图")).toBeInTheDocument();
     expect(screen.queryByText(/HEAD 已提交文件/)).toBeNull();
+    expect(screen.getByRole("button", { name: "按编程语言" })).toHaveClass("is-active");
+    expect(screen.getByRole("button", { name: "按项目" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "含改动" })).toBeNull();
     expect(await screen.findByText("TypeScript")).toBeInTheDocument();
     expect(await screen.findByText("50%")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新语言" })).toBeNull();
-    await fireEvent.click(screen.getByRole("button", { name: "含改动" }));
-    expect(screen.queryByText(/包含未提交改动/)).toBeNull();
-    expect(await screen.findByText("49%")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "按项目" }));
+    expect(screen.getByRole("button", { name: "按项目" })).toHaveClass("is-active");
+    const languageChart = screen.getByLabelText("编程语言占比图");
+    expect(within(languageChart).getByText("LiliaGithub")).toBeInTheDocument();
+    expect(within(languageChart).getByText("63%")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "GitHub 时间线" })).toBeInTheDocument();
     const githubTimelineList = screen.getByLabelText("GitHub 时间线列表");
     expect(await within(githubTimelineList).findByText("Issue #12")).toBeInTheDocument();
@@ -318,6 +323,32 @@ describe("基础路由", () => {
     expect(screen.getByRole("link", { name: "打开 sena-nana/LiliaGithub" })).toBeInTheDocument();
     expect(screen.getByLabelText("项目总览操作")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "一键同步" })).toHaveLength(1);
+  });
+
+  it("总览页项目代码占比展示本地项目占比", async () => {
+    const service = await import("../src/services/workspace");
+    const repos = [
+      ["LiliaGithub", 1000],
+      ["Lilia", 900],
+      ["RepoC", 800],
+      ["RepoD", 700],
+    ] as const;
+    for (const [repoId] of repos.slice(2)) {
+      await service.cloneRepo(`https://github.com/sena-nana/${repoId}.git`, repoId);
+    }
+    workspaceFallback.setFallbackRepoOverridesForTests(Object.fromEntries(
+      repos.map(([repoId, bytes]) => [repoId, repoSummary(repoId, {
+        languageStats: [{ language: "TypeScript", bytes, lines: Math.round(bytes / 10) }],
+      })]),
+    ));
+
+    await renderAt("/");
+    await fireEvent.click(await screen.findByRole("button", { name: "按项目" }));
+
+    const chart = await screen.findByLabelText("编程语言占比图");
+    expect(within(chart).getByText("LiliaGithub")).toBeInTheDocument();
+    expect(within(chart).getByText("RepoD")).toBeInTheDocument();
+    expect(within(chart).queryByText("Other")).toBeNull();
   });
 
   it("总览页未 clone 的 GitHub 项目可进入远程详情并屏蔽本地 Git 功能", async () => {
@@ -1385,6 +1416,18 @@ describe("基础路由", () => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
     });
     expect((await screen.findAllByRole("heading", { level: 1, name: "LiliaGithub" })).length).toBeGreaterThanOrEqual(1);
+
+    await router.push("/");
+    await fireEvent.click(await screen.findByRole("button", { name: "按项目" }));
+    const projectChart = await screen.findByLabelText("编程语言占比图");
+    const projectName = await within(projectChart).findByText("LiliaGithub", { selector: ".language-list__link .language-name" });
+    const projectLink = projectName.closest("a");
+    expect(projectLink).toBeInTheDocument();
+    await fireEvent.click(projectLink as Element);
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
   });
 
   it("首页本地提交贡献图支持空状态和错误重试", async () => {

@@ -1,8 +1,6 @@
 import type { LanguageStat, RepoSummary } from "../services/workspace";
 import { githubLanguageColor } from "./githubLanguageColors";
 
-export type LanguageScope = "head" | "workingTree";
-
 export type LanguageSlice = {
   language: string;
   bytes: number;
@@ -20,6 +18,23 @@ export type LanguageOverview = {
   slices: LanguageSlice[];
 };
 
+type ProjectCodeSlice = {
+  repoId: string | null;
+  repoName: string;
+  bytes: number;
+  lines: number;
+  percent: number;
+  color: string;
+  offset: number;
+  title: string;
+};
+
+type ProjectCodeOverview = {
+  totalBytes: number;
+  totalLines: number;
+  slices: ProjectCodeSlice[];
+};
+
 type LanguageTotal = {
   language: string;
   bytes: number;
@@ -27,17 +42,32 @@ type LanguageTotal = {
   repoBytes: Map<string, number>;
 };
 
+type ProjectCodeTotal = {
+  repoId: string | null;
+  repoName: string;
+  bytes: number;
+  lines: number;
+};
+
 const DEFAULT_LANGUAGE_SLICE_LIMIT = 6;
+const DEFAULT_PROJECT_SLICE_LIMIT = 6;
+const PROJECT_CODE_COLORS = [
+  "#61a8fa",
+  "#48be88",
+  "#ce9676",
+  "#ba89f6",
+  "#b8a700",
+  "#69be27",
+] as const;
+const OTHER_COLOR = "#9ca6b0";
 
 export function buildLanguageOverviewFromRepos(
   repos: readonly RepoSummary[],
-  scope: LanguageScope,
   sliceLimit = DEFAULT_LANGUAGE_SLICE_LIMIT,
 ): LanguageOverview {
   const totals = new Map<string, Omit<LanguageTotal, "language">>();
   for (const repo of repos) {
-    const stats = scope === "workingTree" ? repo.workingTreeLanguageStats : repo.languageStats;
-    for (const stat of stats) {
+    for (const stat of repo.languageStats) {
       const total = totals.get(stat.language) ?? { bytes: 0, lines: 0, repoBytes: new Map<string, number>() };
       total.bytes += stat.bytes;
       total.lines += stat.lines;
@@ -49,6 +79,59 @@ export function buildLanguageOverviewFromRepos(
     [...totals.entries()].map(([language, value]) => ({ language, ...value })),
     sliceLimit,
   );
+}
+
+export function buildProjectCodeOverviewFromRepos(
+  repos: readonly RepoSummary[],
+  sliceLimit = DEFAULT_PROJECT_SLICE_LIMIT,
+): ProjectCodeOverview {
+  const sorted = repos
+    .map((repo) => {
+      const totals = repo.languageStats.reduce(
+        (total, stat) => ({
+          bytes: total.bytes + stat.bytes,
+          lines: total.lines + stat.lines,
+        }),
+        { bytes: 0, lines: 0 },
+      );
+      return {
+        repoId: repo.id,
+        repoName: repo.name || repo.relativePath || repo.id,
+        bytes: totals.bytes,
+        lines: totals.lines,
+      };
+    })
+    .filter((item) => item.bytes > 0)
+    .sort((a, b) => b.bytes - a.bytes || a.repoName.localeCompare(b.repoName) || a.repoId.localeCompare(b.repoId));
+  const remainder = sorted.slice(sliceLimit);
+  const items: ProjectCodeTotal[] = sorted.slice(0, sliceLimit);
+  if (remainder.length) {
+    items.push({
+      repoId: null,
+      repoName: "Other",
+      bytes: remainder.reduce((total, item) => total + item.bytes, 0),
+      lines: remainder.reduce((total, item) => total + item.lines, 0),
+    });
+  }
+  const totalBytes = items.reduce((total, item) => total + item.bytes, 0);
+  const totalLines = items.reduce((total, item) => total + item.lines, 0);
+  let offset = 0;
+  const slices = items.map((item, index) => {
+    const percent = totalBytes > 0 ? item.bytes / totalBytes * 100 : 0;
+    const slice = {
+      repoId: item.repoId,
+      repoName: item.repoName,
+      bytes: item.bytes,
+      lines: item.lines,
+      percent,
+      color: item.repoId ? PROJECT_CODE_COLORS[index % PROJECT_CODE_COLORS.length] : OTHER_COLOR,
+      offset,
+      title: `${item.repoName}：${formatPercent(percent)}，${formatBytes(item.bytes)}`,
+    };
+    offset += percent;
+    return slice;
+  });
+  return { totalBytes, totalLines, slices };
 }
 
 export function buildLanguageOverviewFromStats(

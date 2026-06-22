@@ -104,7 +104,6 @@ describe("workspace focus refresh", () => {
     service.bulkSyncExecute.mockResolvedValue([]);
     service.refreshRepoLanguageStats.mockResolvedValue(repoSummary("LiliaGithub", {
       languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
-      workingTreeLanguageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: Date.now(),
     }));
   });
@@ -119,7 +118,6 @@ describe("workspace focus refresh", () => {
     const initial = repoSummary("LiliaGithub", {
       behind: 0,
       languageStats: [{ language: "Vue", bytes: 10, lines: 10 }],
-      workingTreeLanguageStats: [{ language: "Vue", bytes: 10, lines: 10 }],
       languageStatsUpdatedAt: 1,
     });
     const refreshed = repoSummary("LiliaGithub", { behind: 2 });
@@ -143,7 +141,6 @@ describe("workspace focus refresh", () => {
     expect(service.listWorkspaceTasks).toHaveBeenCalledTimes(1);
     expect(state.repos[0].behind).toBe(2);
     expect(state.repos[0].languageStats).toEqual(initial.languageStats);
-    expect(state.repos[0].workingTreeLanguageStats).toEqual(initial.workingTreeLanguageStats);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(1);
   });
 

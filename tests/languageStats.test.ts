@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLanguageOverviewFromStats,
+  buildProjectCodeOverviewFromRepos,
   formatBytes,
   formatLines,
   formatPercent,
 } from "../src/utils/languageStats";
 import { githubLanguageColor } from "../src/utils/githubLanguageColors";
+import { repoSummary } from "./fixtures/workspace";
 
 describe("languageStats", () => {
   it("builds top language slices and merges the remainder", () => {
@@ -44,6 +46,44 @@ describe("languageStats", () => {
       "#ba89f6",
       "#9ca6b0",
     ]);
+  });
+
+  it("builds top project code slices and merges the remainder", () => {
+    const overview = buildProjectCodeOverviewFromRepos([
+      repoSummary("RepoA", { languageStats: [{ language: "TypeScript", bytes: 1000, lines: 10 }] }),
+      repoSummary("RepoB", { languageStats: [{ language: "Vue", bytes: 900, lines: 9 }] }),
+      repoSummary("RepoC", { languageStats: [{ language: "Rust", bytes: 800, lines: 8 }] }),
+      repoSummary("RepoD", { languageStats: [{ language: "CSS", bytes: 700, lines: 7 }] }),
+      repoSummary("RepoE", { languageStats: [{ language: "Go", bytes: 600, lines: 6 }] }),
+      repoSummary("RepoF", { languageStats: [{ language: "Python", bytes: 500, lines: 5 }] }),
+      repoSummary("RepoG", { languageStats: [{ language: "Shell", bytes: 400, lines: 4 }] }),
+      repoSummary("RepoZero", { languageStats: [{ language: "Markdown", bytes: 0, lines: 100 }] }),
+    ]);
+
+    expect(overview.totalBytes).toBe(4900);
+    expect(overview.totalLines).toBe(49);
+    expect(overview.slices.map((slice) => slice.repoName)).toEqual([
+      "RepoA",
+      "RepoB",
+      "RepoC",
+      "RepoD",
+      "RepoE",
+      "RepoF",
+      "Other",
+    ]);
+    expect(overview.slices[0]).toMatchObject({
+      repoId: "RepoA",
+      bytes: 1000,
+      lines: 10,
+      color: "#61a8fa",
+    });
+    expect(overview.slices[0].percent).toBeCloseTo(1000 / 4900 * 100);
+    expect(overview.slices[6]).toMatchObject({
+      repoId: null,
+      bytes: 400,
+      lines: 4,
+      color: "#9ca6b0",
+    });
   });
 
   it("unifies language colors to the same OKLCH lightness", () => {

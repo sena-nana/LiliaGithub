@@ -121,12 +121,6 @@ let fallbackRepos: RepoSummary[] = [
       { language: "Rust", bytes: 54_000, lines: 1280 },
       { language: "CSS", bytes: 18_000, lines: 640 },
     ],
-    workingTreeLanguageStats: [
-      { language: "TypeScript", bytes: 120_000, lines: 3180 },
-      { language: "Vue", bytes: 88_000, lines: 1960 },
-      { language: "Rust", bytes: 54_000, lines: 1280 },
-      { language: "CSS", bytes: 19_000, lines: 670 },
-    ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
       role: "standalone",
@@ -151,12 +145,6 @@ let fallbackRepos: RepoSummary[] = [
     lastCommitAt: 1_781_930_000,
     lastCommitMessage: "整理 Codex 运行时边界",
     languageStats: [
-      { language: "TypeScript", bytes: 184_000, lines: 5200 },
-      { language: "Vue", bytes: 132_000, lines: 2900 },
-      { language: "Rust", bytes: 88_000, lines: 2140 },
-      { language: "CSS", bytes: 32_000, lines: 980 },
-    ],
-    workingTreeLanguageStats: [
       { language: "TypeScript", bytes: 184_000, lines: 5200 },
       { language: "Vue", bytes: 132_000, lines: 2900 },
       { language: "Rust", bytes: 88_000, lines: 2140 },
@@ -190,11 +178,6 @@ let fallbackRepos: RepoSummary[] = [
       { language: "Vue", bytes: 22_000, lines: 480 },
       { language: "CSS", bytes: 8_000, lines: 210 },
     ],
-    workingTreeLanguageStats: [
-      { language: "Markdown", bytes: 78_000, lines: 1780 },
-      { language: "Vue", bytes: 22_000, lines: 480 },
-      { language: "CSS", bytes: 8_000, lines: 210 },
-    ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
       role: "standalone",
@@ -223,11 +206,6 @@ let fallbackRepos: RepoSummary[] = [
       { language: "TypeScript", bytes: 24_000, lines: 620 },
       { language: "TOML", bytes: 4_000, lines: 120 },
     ],
-    workingTreeLanguageStats: [
-      { language: "Rust", bytes: 150_000, lines: 4160 },
-      { language: "TypeScript", bytes: 24_000, lines: 620 },
-      { language: "TOML", bytes: 4_000, lines: 120 },
-    ],
     languageStatsUpdatedAt: Date.now(),
     worktree: {
       role: "standalone",
@@ -252,11 +230,6 @@ let fallbackRepos: RepoSummary[] = [
     lastCommitAt: 1_781_560_000,
     lastCommitMessage: "拆分日历和 WebDAV 清理提交",
     languageStats: [
-      { language: "TypeScript", bytes: 98_000, lines: 2600 },
-      { language: "Vue", bytes: 54_000, lines: 1180 },
-      { language: "CSS", bytes: 12_000, lines: 340 },
-    ],
-    workingTreeLanguageStats: [
       { language: "TypeScript", bytes: 98_000, lines: 2600 },
       { language: "Vue", bytes: 54_000, lines: 1180 },
       { language: "CSS", bytes: 12_000, lines: 340 },
@@ -298,12 +271,6 @@ function createDefaultFallbackRepos(): RepoSummary[] {
         { language: "Rust", bytes: 32_000, lines: 760 },
         { language: "CSS", bytes: 10_000, lines: 360 },
       ],
-      workingTreeLanguageStats: [
-        { language: "TypeScript", bytes: 68_000, lines: 1850 },
-        { language: "Vue", bytes: 42_000, lines: 920 },
-        { language: "Rust", bytes: 35_000, lines: 820 },
-        { language: "CSS", bytes: 10_000, lines: 360 },
-      ],
       languageStatsUpdatedAt: Date.now(),
       worktree: {
         role: "standalone",
@@ -328,11 +295,6 @@ function createDefaultFallbackRepos(): RepoSummary[] {
       lastCommitAt: 1_784_990_000,
       lastCommitMessage: "完善 GitHub 授权",
       languageStats: [
-        { language: "TypeScript", bytes: 52_000, lines: 1420 },
-        { language: "Vue", bytes: 28_000, lines: 610 },
-        { language: "CSS", bytes: 8_000, lines: 250 },
-      ],
-      workingTreeLanguageStats: [
         { language: "TypeScript", bytes: 52_000, lines: 1420 },
         { language: "Vue", bytes: 28_000, lines: 610 },
         { language: "CSS", bytes: 8_000, lines: 250 },
@@ -493,7 +455,6 @@ function cloneRepoSummary(repo: RepoSummary): RepoSummary {
   return {
     ...repo,
     languageStats: repo.languageStats.map((stat) => ({ ...stat })),
-    workingTreeLanguageStats: repo.workingTreeLanguageStats.map((stat) => ({ ...stat })),
     worktree: { ...repo.worktree },
   };
 }
@@ -2669,7 +2630,6 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
       lastCommitAt: null,
       lastCommitMessage: null,
       languageStats: [],
-      workingTreeLanguageStats: [],
       languageStatsUpdatedAt: Date.now(),
       worktree: {
         role: "standalone",
@@ -2746,7 +2706,6 @@ function lightweightRepoSummary(repo: RepoSummary): RepoSummary {
     lastCommitAt: null,
     lastCommitMessage: null,
     languageStats: [],
-    workingTreeLanguageStats: [],
     languageStatsUpdatedAt: 0,
     worktree: { ...repo.worktree },
   };
@@ -4176,9 +4135,6 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
     return updateFallbackRepo({
       ...repo,
       languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000, lines: 40 }],
-      workingTreeLanguageStats: repo.workingTreeLanguageStats.length
-        ? repo.workingTreeLanguageStats
-        : [{ language: "TypeScript", bytes: 1200, lines: 48 }],
       languageStatsUpdatedAt: Date.now(),
     });
   });

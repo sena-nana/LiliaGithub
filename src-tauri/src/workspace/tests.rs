@@ -139,7 +139,6 @@ fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         last_commit_at: None,
         last_commit_message: None,
         language_stats: Vec::new(),
-        working_tree_language_stats: Vec::new(),
         language_stats_updated_at: 0,
         worktree: RepoWorktree {
             role: "standalone".to_string(),
@@ -657,65 +656,6 @@ fn aggregates_language_stats_from_head_tree() {
             LanguageStat {
                 language: "Vue".to_string(),
                 bytes: 25,
-                lines: 1,
-            },
-        ]
-    );
-    fs::remove_dir_all(path).unwrap();
-}
-
-#[test]
-fn aggregates_language_stats_from_working_tree() {
-    let path = temp_dir("language-stats-working-tree");
-    run_git(&path, &["init"]);
-    run_git(&path, &["config", "user.email", "test@example.com"]);
-    run_git(&path, &["config", "user.name", "Test User"]);
-    fs::create_dir_all(path.join("src")).unwrap();
-    fs::write(
-        path.join("src").join("app.ts"),
-        "console.log('typescript');\n",
-    )
-    .unwrap();
-    fs::write(
-        path.join("src").join("view.vue"),
-        "<template>Vue</template>\n",
-    )
-    .unwrap();
-    run_git(&path, &["add", "src/app.ts", "src/view.vue"]);
-    run_git(&path, &["commit", "-m", "initial"]);
-    fs::write(path.join("src").join("app.ts"), "changed\n").unwrap();
-    fs::remove_file(path.join("src").join("view.vue")).unwrap();
-    fs::write(path.join("src").join("panel.rs"), "fn main() {}\n").unwrap();
-
-    let head_stats = repo_head_language_stats(&path);
-    let working_tree_stats = repo_working_tree_language_stats(&path);
-
-    assert_eq!(
-        head_stats,
-        vec![
-            LanguageStat {
-                language: "TypeScript".to_string(),
-                bytes: 27,
-                lines: 1,
-            },
-            LanguageStat {
-                language: "Vue".to_string(),
-                bytes: 25,
-                lines: 1,
-            },
-        ]
-    );
-    assert_eq!(
-        working_tree_stats,
-        vec![
-            LanguageStat {
-                language: "Rust".to_string(),
-                bytes: 13,
-                lines: 1,
-            },
-            LanguageStat {
-                language: "TypeScript".to_string(),
-                bytes: 8,
                 lines: 1,
             },
         ]

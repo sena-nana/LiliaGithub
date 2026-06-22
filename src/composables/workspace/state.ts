@@ -209,11 +209,10 @@ function mergeRepoSummary(current: RepoSummary, next: RepoSummary) {
       worktree: next.worktree,
     }
     : next;
-  const hasLanguageStats = next.languageStatsUpdatedAt > 0 || next.languageStats.length > 0 || next.workingTreeLanguageStats.length > 0;
+  const hasLanguageStats = next.languageStatsUpdatedAt > 0 || next.languageStats.length > 0;
   return {
     ...base,
     languageStats: hasLanguageStats ? next.languageStats : current.languageStats,
-    workingTreeLanguageStats: hasLanguageStats ? next.workingTreeLanguageStats : current.workingTreeLanguageStats,
     languageStatsUpdatedAt: hasLanguageStats ? next.languageStatsUpdatedAt : current.languageStatsUpdatedAt,
   };
 }

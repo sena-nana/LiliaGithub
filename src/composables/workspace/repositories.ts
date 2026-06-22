@@ -495,7 +495,6 @@ export async function refreshRepoLanguageStats(
       ? {
         ...current,
         languageStats: summary.languageStats,
-        workingTreeLanguageStats: summary.workingTreeLanguageStats,
         languageStatsUpdatedAt: summary.languageStatsUpdatedAt,
       }
       : summary;
