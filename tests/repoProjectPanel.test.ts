@@ -926,7 +926,11 @@ describe("RepoProjectPanel", () => {
     expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("open");
     expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("1");
     const issueDate = new Date(githubIssues[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    expect(view.container.querySelector(".issues-list__meta")).toHaveTextContent(`sena · bug · sena · Roadmap · v1 · ${issueDate}`);
+    const issueRow = view.container.querySelector(".project-row--issue[data-issue-number=\"12\"]");
+    expect(issueRow).toHaveClass("repo-list-row", "repo-list-row--with-actions");
+    expect(issueRow?.querySelector(".repo-list-row__title")).toHaveTextContent("#12 修复懒加载");
+    expect(issueRow?.querySelector(".issues-list__meta")).toHaveClass("repo-list-row__meta");
+    expect(issueRow?.querySelector(".issues-list__meta")).toHaveTextContent(`sena · bug · sena · Roadmap · v1 · ${issueDate}`);
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
     expect(getGitHubIssueFilterMetadata).toHaveBeenCalledTimes(1);
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
@@ -1106,10 +1110,17 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
     const pullDate = new Date(githubPullRequests[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    expect(view.getByText("feature/pr-flow -> main")).toBeInTheDocument();
-    expect(view.getByText(`更新于 ${pullDate}`)).toBeInTheDocument();
-    expect(view.getByText("bug")).toBeInTheDocument();
-    expect(view.getByText("Roadmap")).toBeInTheDocument();
+    const pullRow = view.container.querySelector(".project-row--pull[data-pull-number=\"52\"]");
+    expect(pullRow).toHaveClass("repo-list-row", "repo-list-row--with-actions");
+    expect(pullRow?.querySelector(".repo-list-row__title")).toHaveTextContent("#52 接入 Pull Request 工作流");
+    const pullByline = pullRow?.querySelector(".pulls-list__byline") as HTMLElement;
+    expect(within(pullByline).getByText("sena")).toBeInTheDocument();
+    expect(within(pullByline).getByText("feature/pr-flow -> main")).toBeInTheDocument();
+    const pullSide = pullRow?.querySelector(".pulls-list__side") as HTMLElement;
+    expect(pullSide).toHaveClass("repo-list-row__meta");
+    expect(within(pullSide).getByText(`更新于 ${pullDate}`)).toBeInTheDocument();
+    expect(within(pullSide).getByText("bug")).toBeInTheDocument();
+    expect(within(pullSide).getByText("Roadmap")).toBeInTheDocument();
     expect(view.queryByRole("button", { name: "合并" })).toBeNull();
     expect(view.queryByRole("button", { name: "关闭" })).toBeNull();
     expect(listGitHubPullRequests).toHaveBeenCalledWith(
@@ -1137,6 +1148,29 @@ describe("RepoProjectPanel", () => {
       expect(view.router.currentRoute.value.query.pr).toBeUndefined();
     });
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+  });
+
+  it("Pull Requests 空元信息行使用共享列表布局并显示空态", async () => {
+    vi.mocked(listGitHubPullRequests).mockResolvedValue([{
+      ...githubPullRequests[0],
+      number: 55,
+      title: "无元数据 PR",
+      labels: [],
+      assignees: [],
+      milestone: null,
+      projectItems: [],
+      htmlUrl: "https://github.com/sena-nana/remote-repo/pull/55",
+    }]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
+    expect(await view.findByText("#55 无元数据 PR")).toBeInTheDocument();
+    const pullRow = view.container.querySelector(".project-row--pull[data-pull-number=\"55\"]");
+    expect(pullRow).toHaveClass("repo-list-row", "repo-list-row--with-actions");
+    const pullSide = pullRow?.querySelector(".pulls-list__side") as HTMLElement;
+    expect(within(pullSide).getByText("无标签 · 未分配 · 无项目")).toBeInTheDocument();
   });
 
   it("Pull Requests 状态切换按 Open、Closed、Merged 刷新", async () => {

@@ -325,6 +325,84 @@ button.primary:hover {
   color: var(--accent);
 }
 
+.repo-list-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.repo-list-row--with-actions {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+}
+
+.repo-list-row:hover {
+  background: var(--bg-hover);
+}
+
+.repo-list-row.is-active,
+.repo-list-row.is-target {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
+  background: var(--accent-soft);
+}
+
+.repo-list-row__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.repo-list-row__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.repo-list-row__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-list-row__meta {
+  justify-self: end;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 820px) {
+  .repo-list-row__body {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 2px;
+  }
+
+  .repo-list-row__meta {
+    justify-self: start;
+    text-align: left;
+    white-space: normal;
+  }
+}
+
 button.ghost.danger {
   color: var(--err);
 }
