@@ -249,7 +249,7 @@ const githubPullRequests: GitHubPullRequest[] = [{
   title: "接入 Pull Request 工作流",
   state: "open",
   draft: false,
-  body: null,
+  body: "## Summary\n\n接入 PR 工作流。",
   labels: ["bug"],
   assignees: ["sena"],
   milestone: { number: 1, title: "v1", state: "open" },
@@ -427,6 +427,7 @@ async function renderProjectPanel(
     actionRunning: false,
     launchRunning: false,
     activeGitTab: "repo",
+    canLoadFiles: true,
     changes: [],
     previewChange: null,
     commitMessage: "",
@@ -734,6 +735,9 @@ describe("RepoProjectPanel", () => {
     expect(getRepoFilePreview).toHaveBeenCalledWith("local-repo", "README.md");
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
     expect(await view.findByText("Project README")).toBeInTheDocument();
+    expect(view.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
+    expect(view.getByRole("tab", { name: "文件树" })).toBeInTheDocument();
+    expect(view.getByRole("tab", { name: "Pull Requests" })).toBeInTheDocument();
     expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
     const topics = view.getByLabelText("Topics");
     expect(within(topics).getByText("vue")).toBeInTheDocument();
@@ -744,6 +748,7 @@ describe("RepoProjectPanel", () => {
     expect(licenseRow).toBeInTheDocument();
     expect(view.queryByRole("button", { name: "Readme" })).toBeNull();
     expect(view.queryByRole("tab", { name: /README\.md/ })).toBeNull();
+    expect(view.container.querySelector(".project-sidebar__card")).toBeNull();
     expect(starsStat).toBeInTheDocument();
     expect(view.getByLabelText("9 watching")).toBeInTheDocument();
     expect(view.getByLabelText("14 forks")).toBeInTheDocument();
@@ -752,6 +757,13 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+
+    await fireEvent.click(view.getByRole("tab", { name: "文件树" }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local-repo/files");
+    });
+    expect(await view.findByLabelText("仓库文件树")).toBeInTheDocument();
+    expect(view.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
   });
 
   it("仓库设置读取失败时只显示右侧错误卡并隐藏描述卡片", async () => {
@@ -855,12 +867,16 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
     expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
+    expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
+    expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("main");
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("open");
+    expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("1");
     const issueDate = new Date(githubIssues[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
     expect(view.container.querySelector(".issues-list__meta")).toHaveTextContent(`sena · bug · sena · Roadmap · v1 · ${issueDate}`);
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
@@ -869,6 +885,8 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
     expect(await view.findByRole("button", { name: /release pipeline/ }, { timeout: 5000 })).toBeInTheDocument();
+    expect(view.getByLabelText("Actions 摘要")).toHaveTextContent("1");
+    expect(view.getByLabelText("Actions 摘要")).toHaveTextContent("已同步");
     expect(listGitHubWorkflowRuns).toHaveBeenCalledTimes(1);
     expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
   });
@@ -974,7 +992,7 @@ describe("RepoProjectPanel", () => {
     expect(startAuthFlow).toHaveBeenCalledTimes(1);
   });
 
-  it("Pull Requests 分区按需加载列表、checks，并支持合并", async () => {
+  it("Pull Requests 分区按需加载列表，点击后进入详情并支持合并", async () => {
     vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
     vi.mocked(listGitHubPullRequestChecks).mockResolvedValue(githubPullRequestChecks);
     const view = await renderProjectPanel({
@@ -984,21 +1002,36 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
     const pullDate = new Date(githubPullRequests[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    expect(view.container.querySelector(".pulls-list__meta")).toHaveTextContent(
-      `sena · feature/pr-flow -> main · bug · sena · Roadmap · v1 · ${pullDate}`,
-    );
-    expect(await view.findByText("1 个 checks")).toBeInTheDocument();
-    expect(view.getByText("ci / build")).toBeInTheDocument();
+    expect(view.getByText("feature/pr-flow -> main")).toBeInTheDocument();
+    expect(view.getByText(`更新于 ${pullDate}`)).toBeInTheDocument();
+    expect(view.getByText("bug")).toBeInTheDocument();
+    expect(view.getByText("Roadmap")).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "合并" })).toBeNull();
+    expect(view.queryByRole("button", { name: "关闭" })).toBeNull();
     expect(listGitHubPullRequests).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
       expect.objectContaining({ state: "open", sort: "updated", direction: "desc" }),
     );
-    expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
+    expect(listGitHubPullRequestChecks).not.toHaveBeenCalled();
 
+    await fireEvent.click(view.getByText("#52 接入 Pull Request 工作流"));
+    expect(await view.findByRole("heading", { level: 3, name: "#52 接入 Pull Request 工作流" })).toBeInTheDocument();
+    expect(await view.findByText("1 个 checks")).toBeInTheDocument();
+    expect(view.getByText("ci / build")).toBeInTheDocument();
+    expect(view.getByText("接入 PR 工作流。")).toBeInTheDocument();
+    expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });
+    });
     await fireEvent.click(view.getByRole("button", { name: "合并" }));
     await waitFor(() => {
       expect(mergeGitHubPullRequest).toHaveBeenCalledWith("sena-nana/remote-repo", 52, { method: "merge" });
     });
+    await fireEvent.click(view.getByRole("button", { name: "Pull Requests" }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query.pr).toBeUndefined();
+    });
+    expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
   });
 
   it("Pull Requests 状态切换按 Open、Closed、Merged 刷新", async () => {
@@ -1617,7 +1650,7 @@ describe("RepoProjectPanel", () => {
       projectTab: "settings",
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
+    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
 
     await fireEvent.click(view.getByRole("checkbox", { name: /Wiki/ }));
     await fireEvent.click(view.getByRole("button", { name: "保存" }));
@@ -1630,7 +1663,7 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/next-repo",
       projectTab: "settings",
     });
-    expect(await view.findByText("Next repository tools")).toBeInTheDocument();
+    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
 
     saveResult.resolve({
       ...githubSettings,
@@ -1639,7 +1672,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await waitFor(() => {
-      expect(view.getByText("Next repository tools")).toBeInTheDocument();
+      expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
     });
     expect(view.queryByText("Old saved description")).toBeNull();
   });
@@ -1663,7 +1696,7 @@ describe("RepoProjectPanel", () => {
       projectTab: "settings",
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
+    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
 
     await fireEvent.click(view.getByRole("button", { name: "删除仓库" }));
     const dialog = await view.findByRole("dialog", { name: "删除 GitHub 仓库" });
@@ -1675,12 +1708,12 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/next-repo",
       projectTab: "settings",
     });
-    expect(await view.findByText("Next repository tools")).toBeInTheDocument();
+    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
 
     deleteResult.resolve();
 
     await waitFor(() => {
-      expect(view.getByText("Next repository tools")).toBeInTheDocument();
+      expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
     });
     expect(view.queryByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeNull();
   });

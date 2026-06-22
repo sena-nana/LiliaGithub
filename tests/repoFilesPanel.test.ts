@@ -138,7 +138,7 @@ describe("RepoFilesPanel", () => {
     });
 
     expect(await screen.findByRole("button", { name: /docs/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector("strong")).not.toHaveClass("diff-code__token--keyword");
+    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".sb-tree__name")).not.toHaveClass("diff-code__token--keyword");
     expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".files-tree__badge")).toHaveTextContent("M");
     expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".files-tree__badge")).toHaveClass("change-badge--accent");
     expect(screen.getByRole("button", { name: /App\.vue/ }).querySelector(".files-tree__badge")).toHaveTextContent("W");

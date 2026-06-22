@@ -1,0 +1,205 @@
+<script setup lang="ts">
+import {
+  ChevronDown,
+  ChevronRight,
+  FileImage,
+  FileText,
+  Folder,
+  FolderOpen,
+} from "@lucide/vue";
+import type { RepoFileBrowser } from "./useRepoFileBrowser";
+
+const props = defineProps<{
+  browser: RepoFileBrowser;
+}>();
+
+const {
+  isDirectoryExpanded,
+  isDirectoryLoading,
+  isTreeItemActive,
+  repoLocationLabel,
+  selectFile,
+  toggleDirectory,
+  treeError,
+  treeLoading,
+  visibleEntries,
+} = props.browser;
+</script>
+
+<template>
+  <aside class="files-sidebar" aria-label="仓库文件树">
+    <div class="files-sidebar__card">
+      <div class="files-sidebar__head">
+        <strong>文件树</strong>
+        <span v-if="repoLocationLabel" :title="repoLocationLabel">{{ repoLocationLabel }}</span>
+      </div>
+      <p v-if="treeError" class="error-line files-sidebar__empty">{{ treeError }}</p>
+      <p v-else-if="treeLoading" class="muted files-sidebar__empty">正在读取文件树。</p>
+      <p v-else-if="!visibleEntries.length" class="muted files-sidebar__empty">当前仓库没有可浏览文件。</p>
+      <div v-else class="files-tree" role="tree">
+        <button
+          v-for="{ entry, depth, badge } in visibleEntries"
+          :key="entry.path"
+          type="button"
+          class="files-tree__item sb-tree__row sb-tree__row--project"
+          :class="{ 'is-active': isTreeItemActive(entry) }"
+          :style="{ '--tree-indent': `${depth * 10}px` }"
+          :aria-expanded="entry.kind === 'dir' ? isDirectoryExpanded(entry.path) : undefined"
+          :aria-selected="isTreeItemActive(entry)"
+          @click="entry.kind === 'dir' ? toggleDirectory(entry) : selectFile(entry.path)"
+        >
+          <span class="files-tree__toggle" aria-hidden="true">
+            <ChevronDown
+              v-if="entry.kind === 'dir' && isDirectoryExpanded(entry.path)"
+              :size="12"
+            />
+            <ChevronRight
+              v-else-if="entry.kind === 'dir' && entry.hasChildren"
+              :size="12"
+            />
+          </span>
+          <FolderOpen
+            v-if="entry.kind === 'dir' && isDirectoryExpanded(entry.path)"
+            :size="12"
+            aria-hidden="true"
+          />
+          <Folder v-else-if="entry.kind === 'dir'" :size="12" aria-hidden="true" />
+          <FileImage
+            v-else-if="/\.(png|jpe?g|gif|webp|svg)$/i.test(entry.name)"
+            :size="12"
+            aria-hidden="true"
+          />
+          <FileText v-else :size="12" aria-hidden="true" />
+          <span class="sb-tree__name">{{ entry.name }}</span>
+          <span v-if="badge" class="files-tree__badge" :class="badge.className" :title="badge.label" aria-hidden="true">{{ badge.letter }}</span>
+          <span v-if="entry.kind === 'dir' && isDirectoryLoading(entry.path)" class="files-tree__meta">加载中</span>
+        </button>
+      </div>
+    </div>
+  </aside>
+</template>
+
+<style scoped>
+.files-sidebar {
+  min-width: 0;
+  min-height: 0;
+}
+
+.files-sidebar__card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+}
+
+.files-sidebar__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.files-sidebar__head strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.files-sidebar__head span {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-sidebar__empty {
+  margin: 0;
+  padding: 14px;
+}
+
+.files-tree {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+}
+
+.files-tree__item {
+  padding-left: calc(10px + var(--tree-indent, 0px));
+}
+
+.files-tree__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 12px;
+  width: 12px;
+  min-width: 0;
+}
+
+.files-tree__item > svg {
+  flex: 0 0 12px;
+}
+
+.files-tree__meta,
+.files-tree__badge {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-tree__meta {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.files-tree__badge {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.files-tree__badge.change-badge--err {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  color: var(--err);
+}
+
+.files-tree__badge.change-badge--warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+}
+
+.files-tree__badge.change-badge--accent {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.files-tree__badge.change-badge--ok {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+}
+
+.files-tree__badge.change-badge--muted {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+</style>

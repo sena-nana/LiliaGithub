@@ -581,6 +581,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
         watchersCount: 9,
         forksCount: 14,
         htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+        license: null,
       },
       "sena-nana/Lilia": {
         fullName: "sena-nana/Lilia",
@@ -605,6 +606,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
         watchersCount: 7,
         forksCount: 6,
         htmlUrl: "https://github.com/sena-nana/Lilia",
+        license: null,
       },
     };
   }
@@ -632,6 +634,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 9,
       forksCount: 14,
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+      license: null,
     },
     "sena-nana/LiliaCode": {
       fullName: "sena-nana/LiliaCode",
@@ -656,6 +659,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 7,
       forksCount: 6,
       htmlUrl: "https://github.com/sena-nana/LiliaCode",
+      license: null,
     },
     "sena-nana/LiliaDocs": {
       fullName: "sena-nana/LiliaDocs",
@@ -680,6 +684,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 5,
       forksCount: 8,
       htmlUrl: "https://github.com/sena-nana/LiliaDocs",
+      license: null,
     },
     "sena-nana/Mutsuki": {
       fullName: "sena-nana/Mutsuki",
@@ -704,6 +709,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 4,
       forksCount: 3,
       htmlUrl: "https://github.com/sena-nana/Mutsuki",
+      license: null,
     },
     "sena-nana/LiliaTodo": {
       fullName: "sena-nana/LiliaTodo",
@@ -728,6 +734,7 @@ function createFallbackGitHubRepoManagement(): Record<string, GitHubRepoManageme
       watchersCount: 6,
       forksCount: 10,
       htmlUrl: "https://github.com/sena-nana/LiliaTodo",
+      license: null,
     },
   };
 }
@@ -3027,6 +3034,7 @@ function fallbackRepoManagement(repoFullName: string): GitHubRepoManagement {
     watchersCount: 0,
     forksCount: 0,
     htmlUrl: repo.htmlUrl,
+    license: null,
   };
   fallbackGitHubRepoManagement[repoFullName] = management;
   return cloneGitHubRepoManagement(management);
@@ -3091,6 +3099,7 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       watchersCount: 0,
       forksCount: 0,
       htmlUrl: repo.htmlUrl,
+      license: null,
     };
     fallbackGitHubIssues[fullName] = [];
     fallbackGitHubPullRequests[fullName] = [];
