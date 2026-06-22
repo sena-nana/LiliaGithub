@@ -11,6 +11,7 @@ import {
   XCircle,
 } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import {
   getGitHubWorkflowArtifactFilePreview,
@@ -62,8 +63,9 @@ const artifactErrors = ref<Record<number, string | undefined>>({});
 const artifactPreview = ref<RepoFilePreview | null>(null);
 const artifactPreviewLoading = ref(false);
 const artifactPreviewError = ref<string | null>(null);
-const detailLoader = createLatestAsyncLoader();
-const artifactPreviewLoader = createLatestAsyncLoader();
+const componentEpoch = useComponentEpoch();
+const detailLoader = createLatestAsyncLoader({ componentEpoch });
+const artifactPreviewLoader = createLatestAsyncLoader({ componentEpoch });
 
 const selectedRun = computed(() =>
   props.runs.find((run) => run.id === selectedRunId.value) ?? null,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createComponentEpoch } from "../src/composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../src/composables/useLatestAsyncLoader";
 
 function deferred() {
@@ -80,6 +81,26 @@ describe("createLatestAsyncLoader", () => {
       throw new Error("boom");
     })).rejects.toThrow("boom");
 
+    expect(loader.isPending()).toBe(false);
+  });
+
+  it("绑定 componentEpoch 后组件失活会让当前任务不可更新", async () => {
+    const componentEpoch = createComponentEpoch();
+    const loader = createLatestAsyncLoader({ componentEpoch });
+    const first = deferred();
+    let currentAfterDispose = true;
+
+    const running = loader.run("repo", async (runId) => {
+      await first.promise;
+      currentAfterDispose = loader.isCurrent(runId);
+    });
+
+    expect(loader.isPending("repo")).toBe(true);
+    componentEpoch.dispose();
+    first.resolve();
+    await running;
+
+    expect(currentAfterDispose).toBe(false);
     expect(loader.isPending()).toBe(false);
   });
 });

@@ -41,6 +41,7 @@ import {
   type PullRequestPanelFilters,
   type PullRequestState,
 } from "./pullRequestPanelTypes";
+import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
@@ -410,14 +411,15 @@ const focusedRunId = ref<number | null>(null);
 const focusedJobId = ref<number | null>(null);
 let suppressIssueStateReload = false;
 let suppressPullStateReload = false;
-const readmeLoader = createLatestAsyncLoader();
-const settingsLoader = createLatestAsyncLoader();
-const issuesLoader = createLatestAsyncLoader();
-const issueDiscussionLoader = createLatestAsyncLoader();
-const pullsLoader = createLatestAsyncLoader();
-const pullRequestDiscussionLoader = createLatestAsyncLoader();
-const pullChecksLoader = createLatestAsyncLoader();
-const actionsLoader = createLatestAsyncLoader();
+const componentEpoch = useComponentEpoch();
+const readmeLoader = createLatestAsyncLoader({ componentEpoch });
+const settingsLoader = createLatestAsyncLoader({ componentEpoch });
+const issuesLoader = createLatestAsyncLoader({ componentEpoch });
+const issueDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
+const pullsLoader = createLatestAsyncLoader({ componentEpoch });
+const pullRequestDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
+const pullChecksLoader = createLatestAsyncLoader({ componentEpoch });
+const actionsLoader = createLatestAsyncLoader({ componentEpoch });
 const settingsSaveTracker = createPendingTaskTracker();
 const issueCreateTracker = createPendingTaskTracker();
 const issueUpdateTracker = createPendingTaskTracker();

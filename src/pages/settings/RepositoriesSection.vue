@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { FolderGit2, GitBranchPlus, KeyRound, LoaderCircle, Radar, RotateCcw, ShieldCheck, X } from "@lucide/vue";
+import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
 import {
@@ -28,10 +29,11 @@ const error = ref<string | null>(null);
 const createError = ref<string | null>(null);
 const cancellingTaskIds = ref<string[]>([]);
 const taskCancelErrors = ref<Record<string, string | undefined>>({});
-const hiddenReposLoader = createLatestAsyncLoader();
-const repoOwnersLoader = createLatestAsyncLoader();
-const createRepoLoader = createLatestAsyncLoader();
-const cloneCreatedRepoLoader = createLatestAsyncLoader();
+const componentEpoch = useComponentEpoch();
+const hiddenReposLoader = createLatestAsyncLoader({ componentEpoch });
+const repoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
+const createRepoLoader = createLatestAsyncLoader({ componentEpoch });
+const cloneCreatedRepoLoader = createLatestAsyncLoader({ componentEpoch });
 const createForm = ref({
   owner: "",
   ownerKind: "user",
@@ -126,11 +128,13 @@ async function restoreRepo(repoId: string) {
   error.value = null;
   try {
     await workspace.unhideRepo(repoId);
+    if (!componentEpoch.assertAlive()) return;
     await loadHiddenRepos();
   } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
   } finally {
-    restoringRepoId.value = null;
+    if (componentEpoch.assertAlive()) restoringRepoId.value = null;
   }
 }
 
@@ -140,9 +144,10 @@ async function useDefaultTokenAuth(repoId: string) {
   try {
     await workspace.useDefaultTokenAuthForRepo(repoId);
   } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
   } finally {
-    resettingSystemGitRepoId.value = null;
+    if (componentEpoch.assertAlive()) resettingSystemGitRepoId.value = null;
   }
 }
 
@@ -152,9 +157,10 @@ async function addLocalRepo() {
   try {
     await workspace.addLocalRepo();
   } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
   } finally {
-    addingRepo.value = false;
+    if (componentEpoch.assertAlive()) addingRepo.value = false;
   }
 }
 
@@ -164,9 +170,10 @@ async function discoverRepos() {
   try {
     await workspace.discoverRepos();
   } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
   } finally {
-    discovering.value = false;
+    if (componentEpoch.assertAlive()) discovering.value = false;
   }
 }
 
@@ -254,8 +261,10 @@ async function cancelTask(taskId: string) {
   try {
     await workspace.cancelWorkspaceTask(taskId);
   } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
     taskCancelErrors.value[taskId] = String(err);
   } finally {
+    if (!componentEpoch.assertAlive()) return;
     const index = cancellingTaskIds.value.indexOf(taskId);
     if (index >= 0) cancellingTaskIds.value.splice(index, 1);
   }

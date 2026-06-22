@@ -22,6 +22,7 @@ import {
   X,
 } from "@lucide/vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
+import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
@@ -224,10 +225,11 @@ const cloneRepoLoadError = ref<string | null>(null);
 const cloneNextRepoPage = ref<number | null>(null);
 const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
-const githubRepoStatusLoader = createLatestAsyncLoader();
-const githubRepoMoreLoader = createLatestAsyncLoader();
-const cloneBindingLoader = createLatestAsyncLoader();
-const cloneRepoPageLoader = createLatestAsyncLoader();
+const componentEpoch = useComponentEpoch();
+const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
+const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
+const cloneBindingLoader = createLatestAsyncLoader({ componentEpoch });
+const cloneRepoPageLoader = createLatestAsyncLoader({ componentEpoch });
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
