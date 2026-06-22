@@ -36,6 +36,14 @@ type SidebarSection = {
 };
 
 type SidebarSectionOptions = Pick<SidebarSection, "emptyText" | "chips" | "inline">;
+const reviewerStateLabels: Record<string, string> = {
+  requested: "待审阅",
+  approved: "已通过",
+  changes_requested: "需修改",
+  commented: "已评论",
+  dismissed: "已撤销",
+  pending: "待提交",
+};
 
 const headerText = computed(() => {
   if (props.issue) return `Issue #${props.issue.number}`;
@@ -59,8 +67,8 @@ function sidebarSection(
   return { key, title, items: normalizeValues(items), ...options };
 }
 
-function normalizeValues(values: readonly string[] | null | undefined) {
-  return (values ?? []).map((value) => value.trim()).filter(Boolean);
+function normalizeValues(values: readonly (string | null | undefined)[] | null | undefined) {
+  return (values ?? []).map((value) => value?.trim() ?? "").filter(Boolean);
 }
 
 function projectItems(items: readonly { title: string }[] | null | undefined) {
@@ -80,6 +88,40 @@ function uniqueSorted(values: readonly string[]) {
 
 function participants(author: string | null | undefined, assignees: readonly string[]) {
   return uniqueSorted([author ?? "", ...assignees]);
+}
+
+function developmentItemLabels(items: readonly { label: string }[] | null | undefined) {
+  return normalizeValues((items ?? []).map((item) => item.label));
+}
+
+function reviewerStateText(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return "";
+  return reviewerStateLabels[normalized] ?? value?.trim() ?? "";
+}
+
+function reviewerItems(pull: GitHubPullRequest) {
+  return normalizeValues((pull.reviewers ?? []).map((reviewer) => {
+    const parts = [reviewer.login];
+    if (reviewer.kind === "team") parts.push("团队");
+    const state = reviewerStateText(reviewer.state);
+    if (state) parts.push(state);
+    return parts.join(" · ");
+  }));
+}
+
+function commitCountText(count: number | null | undefined) {
+  if (typeof count !== "number" || !Number.isFinite(count)) return null;
+  return `${count} 个 commits`;
+}
+
+function pullDevelopmentItems(pull: GitHubPullRequest) {
+  return normalizeValues([
+    `${pull.headBranch} -> ${pull.baseBranch}`,
+    pullMergeableText(pull),
+    commitCountText(pull.commitCount),
+    ...developmentItemLabels(pull.developmentItems),
+  ]);
 }
 
 function issueStatusText(issue: GitHubIssue) {
@@ -126,7 +168,10 @@ function issueSections(issue: GitHubIssue): SidebarSection[] {
       inline: true,
       emptyText: "无里程碑",
     }),
-    sidebarSection("development", "开发", [], { inline: true, emptyText: "暂无关联开发项" }),
+    sidebarSection("development", "开发", developmentItemLabels(issue.developmentItems), {
+      chips: true,
+      emptyText: "暂无关联开发项",
+    }),
     sidebarSection("participants", "参与者", participants(issue.author, issue.assignees), {
       chips: true,
       emptyText: "暂无参与者",
@@ -138,7 +183,7 @@ function issueSections(issue: GitHubIssue): SidebarSection[] {
 function pullSections(pull: GitHubPullRequest): SidebarSection[] {
   return [
     sidebarSection("status", "状态", [pullStatusText(pull)], { chips: true, inline: true }),
-    sidebarSection("reviewers", "审阅人", [], { inline: true, emptyText: "暂无审阅人" }),
+    sidebarSection("reviewers", "审阅人", reviewerItems(pull), { chips: true, emptyText: "暂无审阅人" }),
     sidebarSection("author", "作者", [pull.author || "未知作者"], { chips: true, inline: true }),
     sidebarSection("assignees", "负责人", pull.assignees, { chips: true, emptyText: "未分配" }),
     sidebarSection("labels", "标签", pull.labels, { chips: true, emptyText: "无标签" }),
@@ -148,7 +193,7 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
       inline: true,
       emptyText: "无里程碑",
     }),
-    sidebarSection("development", "开发", [`${pull.headBranch} -> ${pull.baseBranch}`, pullMergeableText(pull)], {
+    sidebarSection("development", "开发", pullDevelopmentItems(pull), {
       chips: true,
     }),
     sidebarSection("participants", "参与者", participants(pull.author, pull.assignees), {

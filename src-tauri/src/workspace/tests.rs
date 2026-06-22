@@ -314,6 +314,8 @@ fn maps_github_discussion_timeline_items() {
         html_url: Some("https://github.com/a/repo/issues/1#issuecomment-42".to_string()),
         created_at: Some("2026-06-18T08:01:00Z".to_string()),
         updated_at: Some("2026-06-18T08:02:00Z".to_string()),
+        source: None,
+        commit_id: None,
     });
     assert_eq!(comment.kind, "comment");
     assert_eq!(comment.id, "42");
@@ -332,6 +334,8 @@ fn maps_github_discussion_timeline_items() {
         html_url: None,
         created_at: Some("2026-06-18T08:03:00Z".to_string()),
         updated_at: None,
+        source: None,
+        commit_id: None,
     });
     assert_eq!(event.kind, "event");
     assert_eq!(event.title.as_deref(), Some("关闭了讨论"));
@@ -347,6 +351,8 @@ fn maps_github_discussion_timeline_items() {
         html_url: None,
         created_at: Some("2026-06-18T08:04:00Z".to_string()),
         updated_at: None,
+        source: None,
+        commit_id: None,
     });
     assert_eq!(unknown.kind, "event");
     assert_eq!(unknown.title.as_deref(), Some("custom event"));
@@ -384,6 +390,94 @@ fn maps_github_discussion_timeline_items() {
     assert_eq!(review_comment.kind, "reviewComment");
     assert_eq!(review_comment.path.as_deref(), Some("src/lib.rs"));
     assert_eq!(review_comment.line, Some(12));
+}
+
+#[test]
+fn maps_github_development_items_from_timeline() {
+    let items = github_development_items_from_timeline(
+        "sena-nana/remote-repo",
+        &[
+            GitHubIssueTimelineResponse {
+                id: Some(serde_json::json!(1)),
+                node_id: None,
+                event: Some("cross-referenced".to_string()),
+                actor: None,
+                user: None,
+                body: None,
+                html_url: None,
+                created_at: Some("2026-06-18T08:00:00Z".to_string()),
+                updated_at: None,
+                source: Some(GitHubIssueTimelineSourceResponse {
+                    issue: Some(GitHubIssueTimelineSourceIssueResponse {
+                        number: 12,
+                        title: "关联问题".to_string(),
+                        state: "open".to_string(),
+                        html_url: "https://github.com/sena-nana/remote-repo/issues/12".to_string(),
+                        pull_request: None,
+                    }),
+                }),
+                commit_id: None,
+            },
+            GitHubIssueTimelineResponse {
+                id: Some(serde_json::json!(2)),
+                node_id: None,
+                event: Some("referenced".to_string()),
+                actor: None,
+                user: None,
+                body: None,
+                html_url: None,
+                created_at: Some("2026-06-18T08:01:00Z".to_string()),
+                updated_at: None,
+                source: None,
+                commit_id: Some("abcdef1234567890".to_string()),
+            },
+        ],
+    );
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].kind, "issue");
+    assert_eq!(items[0].label, "Issue #12 关联问题");
+    assert_eq!(
+        items[0].repository_full_name.as_deref(),
+        Some("sena-nana/remote-repo")
+    );
+    assert_eq!(items[1].kind, "commit");
+    assert_eq!(items[1].sha.as_deref(), Some("abcdef1234567890"));
+}
+
+#[test]
+fn maps_github_pull_request_reviewers() {
+    let mut reviewers =
+        github_pull_request_reviewers_from_requested(GitHubRequestedReviewersResponse {
+            users: vec![GitHubPullRequestUserResponse {
+                login: "mika".to_string(),
+            }],
+            teams: vec![GitHubTeamResponse {
+                slug: Some("core".to_string()),
+                name: Some("Core".to_string()),
+            }],
+        });
+    add_pull_request_reviewers_from_reviews(
+        &mut reviewers,
+        &[GitHubPullRequestReviewResponse {
+            id: 42,
+            user: Some(GitHubPullRequestUserResponse {
+                login: "mika".to_string(),
+            }),
+            body: None,
+            state: "APPROVED".to_string(),
+            html_url: None,
+            submitted_at: Some("2026-06-18T08:00:00Z".to_string()),
+            commit_id: None,
+        }],
+    );
+
+    assert_eq!(reviewers.len(), 2);
+    assert_eq!(reviewers[0].login, "mika");
+    assert_eq!(reviewers[0].state, "APPROVED");
+    assert_eq!(reviewers[1].login, "core");
+    assert_eq!(reviewers[1].kind, "team");
+    assert_eq!(reviewers[1].state, "requested");
 }
 
 #[test]
@@ -459,6 +553,7 @@ fn test_github_issue(number: u64, state: &str) -> GitHubIssue {
         milestone: None,
         comments: 0,
         project_items: Vec::new(),
+        development_items: Vec::new(),
         html_url: format!("https://github.com/a/repo/issues/{number}"),
         updated_at: "2026-06-18T08:00:00Z".to_string(),
         created_at: "2026-06-18T08:00:00Z".to_string(),
@@ -481,6 +576,9 @@ fn test_github_pull_request(number: u64, state: &str) -> GitHubPullRequest {
         milestone: None,
         comments: 0,
         project_items: Vec::new(),
+        reviewers: Vec::new(),
+        development_items: Vec::new(),
+        commit_count: None,
         base_branch: "main".to_string(),
         head_branch: "feature/cache".to_string(),
         merged: false,

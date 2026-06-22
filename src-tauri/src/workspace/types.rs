@@ -686,6 +686,8 @@ pub struct GitHubIssue {
     pub comments: u64,
     #[serde(default)]
     pub project_items: Vec<GitHubIssueProjectItem>,
+    #[serde(default)]
+    pub development_items: Vec<GitHubDevelopmentItem>,
     pub html_url: String,
     pub updated_at: String,
     pub created_at: String,
@@ -705,6 +707,26 @@ pub struct GitHubIssueMilestone {
 pub struct GitHubIssueProjectItem {
     pub id: String,
     pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubDevelopmentItem {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub number: Option<u64>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub repository_full_name: Option<String>,
+    #[serde(default)]
+    pub ref_name: Option<String>,
+    #[serde(default)]
+    pub sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -778,6 +800,12 @@ pub struct GitHubPullRequest {
     pub comments: u64,
     #[serde(default)]
     pub project_items: Vec<GitHubIssueProjectItem>,
+    #[serde(default)]
+    pub reviewers: Vec<GitHubPullRequestReviewer>,
+    #[serde(default)]
+    pub development_items: Vec<GitHubDevelopmentItem>,
+    #[serde(default)]
+    pub commit_count: Option<u64>,
     pub html_url: String,
     pub updated_at: String,
     pub created_at: String,
@@ -789,6 +817,14 @@ pub struct GitHubPullRequest {
     pub mergeable: Option<bool>,
     #[serde(default)]
     pub mergeable_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestReviewer {
+    pub login: String,
+    pub kind: String,
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

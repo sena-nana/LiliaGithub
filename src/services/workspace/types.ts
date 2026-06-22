@@ -236,6 +236,7 @@ export interface GitHubIssue {
   milestone?: GitHubIssueMilestone | null;
   comments?: number;
   projectItems?: GitHubIssueProjectItem[];
+  developmentItems?: GitHubDevelopmentItem[];
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
@@ -281,12 +282,30 @@ export interface GitHubIssueProjectItem {
   title: string;
 }
 
+export interface GitHubDevelopmentItem {
+  id: string;
+  kind: "issue" | "pullRequest" | "branch" | "commit" | string;
+  label: string;
+  url?: string | null;
+  number?: number | null;
+  state?: string | null;
+  repositoryFullName?: string | null;
+  refName?: string | null;
+  sha?: string | null;
+}
+
 export interface GitHubIssueFilterMetadata {
   authors: string[];
   labels: string[];
   assignees: string[];
   milestones: GitHubIssueMilestone[];
   projects: GitHubIssueProjectItem[];
+}
+
+export interface GitHubPullRequestReviewer {
+  login: string;
+  kind: "user" | "team" | string;
+  state: string;
 }
 
 export interface GitHubPullRequest {
@@ -300,6 +319,9 @@ export interface GitHubPullRequest {
   milestone?: GitHubIssueMilestone | null;
   comments?: number;
   projectItems?: GitHubIssueProjectItem[];
+  reviewers?: GitHubPullRequestReviewer[];
+  developmentItems?: GitHubDevelopmentItem[];
+  commitCount?: number | null;
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;

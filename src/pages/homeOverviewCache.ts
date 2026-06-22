@@ -28,6 +28,21 @@ function cloneIssue(issue: GitHubIssue): GitHubIssue {
     ...issue,
     labels: [...issue.labels],
     assignees: [...issue.assignees],
+    milestone: issue.milestone ? { ...issue.milestone } : null,
+    projectItems: issue.projectItems?.map((project) => ({ ...project })) ?? [],
+    developmentItems: issue.developmentItems?.map((item) => ({ ...item })) ?? [],
+  };
+}
+
+function clonePullRequest(pullRequest: GitHubPullRequest): GitHubPullRequest {
+  return {
+    ...pullRequest,
+    labels: [...pullRequest.labels],
+    assignees: [...pullRequest.assignees],
+    milestone: pullRequest.milestone ? { ...pullRequest.milestone } : null,
+    projectItems: pullRequest.projectItems?.map((project) => ({ ...project })) ?? [],
+    reviewers: pullRequest.reviewers?.map((reviewer) => ({ ...reviewer })) ?? [],
+    developmentItems: pullRequest.developmentItems?.map((item) => ({ ...item })) ?? [],
   };
 }
 
@@ -75,7 +90,7 @@ function cloneSnapshot(snapshot: HomeGitHubOverviewSnapshot): HomeGitHubOverview
     repos: snapshot.repos.map((repo) => ({ ...repo })),
     nextPage: snapshot.nextPage,
     issuesByRepo: cloneListByRepo(snapshot.issuesByRepo, cloneIssue),
-    pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, cloneShallow),
+    pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, clonePullRequest),
     pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
     workflowRunsByRepo: cloneListByRepo(snapshot.workflowRunsByRepo, cloneShallow),
   };
@@ -153,7 +168,7 @@ function parseSnapshot(value: unknown): HomeGitHubOverviewSnapshot | null {
     repos: snapshot.repos.map((repo) => ({ ...repo })),
     nextPage: typeof snapshot.nextPage === "number" ? snapshot.nextPage : null,
     issuesByRepo: cloneListByRepo(snapshot.issuesByRepo, cloneIssue),
-    pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, cloneShallow),
+    pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, clonePullRequest),
     pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
     workflowRunsByRepo: cloneListByRepo(snapshot.workflowRunsByRepo, cloneShallow),
   };

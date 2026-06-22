@@ -259,6 +259,30 @@ const githubPullRequests: GitHubPullRequest[] = [{
   milestone: { number: 1, title: "v1", state: "open" },
   comments: 2,
   projectItems: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
+  reviewers: [
+    { login: "mika", kind: "user", state: "requested" },
+    { login: "core", kind: "team", state: "APPROVED" },
+  ],
+  developmentItems: [
+    {
+      id: "issue:sena-nana/remote-repo:12",
+      kind: "issue",
+      label: "Issue #12 修复懒加载",
+      url: "https://github.com/sena-nana/remote-repo/issues/12",
+      number: 12,
+      state: "open",
+      repositoryFullName: "sena-nana/remote-repo",
+    },
+    {
+      id: "commit:sena-nana/remote-repo:abcdef1234567890",
+      kind: "commit",
+      label: "abcdef1 接入 PR 详情侧栏",
+      url: "https://github.com/sena-nana/remote-repo/commit/abcdef1234567890",
+      sha: "abcdef1234567890",
+      repositoryFullName: "sena-nana/remote-repo",
+    },
+  ],
+  commitCount: 2,
   htmlUrl: "https://github.com/sena-nana/remote-repo/pull/52",
   updatedAt: "2026-06-18T08:00:00Z",
   createdAt: "2026-06-18T08:00:00Z",
@@ -947,6 +971,15 @@ describe("RepoProjectPanel", () => {
     const issueWithBody: GitHubIssue = {
       ...githubIssues[0],
       body: "## 复现步骤\n\n- 打开 <script>alert(1)</script> [文档](docs/guide.md)",
+      developmentItems: [{
+        id: "pull:sena-nana/remote-repo:52",
+        kind: "pullRequest",
+        label: "PR #52 接入 Pull Request 工作流",
+        url: "https://github.com/sena-nana/remote-repo/pull/52",
+        number: 52,
+        state: "open",
+        repositoryFullName: "sena-nana/remote-repo",
+      }],
     };
     vi.mocked(listGitHubIssues).mockResolvedValue([issueWithBody]);
     vi.mocked(getGitHubIssueDiscussion).mockResolvedValue({
@@ -1003,7 +1036,16 @@ describe("RepoProjectPanel", () => {
     expect(issueSidebar).toHaveTextContent("bug");
     expect(issueSidebar).toHaveTextContent("Roadmap");
     expect(issueSidebar).toHaveTextContent("v1");
-    expect(issueSidebarChips).toEqual(expect.arrayContaining(["打开", "sena", "bug", "Roadmap", "v1"]));
+    expect(issueSidebar).toHaveTextContent("PR #52 接入 Pull Request 工作流");
+    expect(issueSidebar).not.toHaveTextContent("暂无关联开发项");
+    expect(issueSidebarChips).toEqual(expect.arrayContaining([
+      "打开",
+      "sena",
+      "bug",
+      "Roadmap",
+      "v1",
+      "PR #52 接入 Pull Request 工作流",
+    ]));
     expect(view.container.querySelector("script")).toBeNull();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "issues", issue: "12" });
@@ -1151,21 +1193,31 @@ describe("RepoProjectPanel", () => {
       .map((chip) => chip.textContent ?? "");
     expect(pullSidebar).toHaveTextContent("PR #52");
     expect(pullSidebar).toHaveTextContent("打开");
-    expect(pullSidebar).toHaveTextContent("暂无审阅人");
+    expect(pullSidebar).toHaveTextContent("mika · 待审阅");
+    expect(pullSidebar).toHaveTextContent("core · 团队 · 已通过");
     expect(pullSidebar).toHaveTextContent("sena");
     expect(pullSidebar).toHaveTextContent("bug");
     expect(pullSidebar).toHaveTextContent("Roadmap");
     expect(pullSidebar).toHaveTextContent("v1");
     expect(pullSidebar).toHaveTextContent("feature/pr-flow -> main");
     expect(pullSidebar).toHaveTextContent("可合并");
+    expect(pullSidebar).toHaveTextContent("2 个 commits");
+    expect(pullSidebar).toHaveTextContent("Issue #12 修复懒加载");
+    expect(pullSidebar).toHaveTextContent("abcdef1 接入 PR 详情侧栏");
+    expect(pullSidebar).not.toHaveTextContent("暂无审阅人");
     expect(pullSidebarChips).toEqual(expect.arrayContaining([
       "打开",
+      "mika · 待审阅",
+      "core · 团队 · 已通过",
       "sena",
       "bug",
       "Roadmap",
       "v1",
       "feature/pr-flow -> main",
       "可合并",
+      "2 个 commits",
+      "Issue #12 修复懒加载",
+      "abcdef1 接入 PR 详情侧栏",
     ]));
     expect(getGitHubPullRequestDiscussion).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
