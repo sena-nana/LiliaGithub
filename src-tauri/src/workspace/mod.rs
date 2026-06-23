@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring_core::{Entry, Error as KeyringError};
 use reqwest::blocking::{Client, RequestBuilder, Response};
-use reqwest::header::{ACCEPT, LINK, USER_AGENT};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, LINK, USER_AGENT};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -39,9 +39,9 @@ mod types;
 
 pub use types::*;
 
-use github::*;
 #[cfg(test)]
 use file_browser::*;
+use github::*;
 use readme::*;
 use repos::*;
 use settings::*;

@@ -1,16 +1,29 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearGitHubRepoCache,
+  createGitHubRelease,
+  deleteGitHubRelease,
+  deleteGitHubReleaseAsset,
   getRepoFilePreview,
   getGitHubRepoCommitDetail,
   listRepoFiles,
   listGitHubRepoCommits,
   listGitHubIssues,
   listGitHubPullRequests,
+  listGitHubReleases,
   updateGitHubIssue,
+  updateGitHubRelease,
+  uploadGitHubReleaseAsset,
   workspaceFallbackForTests,
 } from "../src/services/workspace/client";
-import type { CommitDetail, CommitSummary, GitHubIssue, GitHubPullRequest } from "../src/services/workspace/types";
+import type {
+  CommitDetail,
+  CommitSummary,
+  GitHubIssue,
+  GitHubPullRequest,
+  GitHubRelease,
+  GitHubReleaseAsset,
+} from "../src/services/workspace/types";
 
 const repoFullName = "sena-nana/remote-repo";
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
@@ -81,6 +94,44 @@ function commitDetail(commit: CommitSummary, overrides: Partial<CommitDetail> = 
   };
 }
 
+function releaseAsset(overrides: Partial<GitHubReleaseAsset> = {}): GitHubReleaseAsset {
+  return {
+    id: 9001,
+    name: "lilia-windows.zip",
+    label: null,
+    contentType: "application/zip",
+    size: 2048,
+    downloadCount: 3,
+    state: "uploaded",
+    browserDownloadUrl: "https://github.com/sena-nana/remote-repo/releases/download/v1.0.0/lilia-windows.zip",
+    createdAt: "2026-06-18T08:10:00Z",
+    updatedAt: "2026-06-18T08:10:00Z",
+    ...overrides,
+  };
+}
+
+function release(overrides: Partial<GitHubRelease> = {}): GitHubRelease {
+  return {
+    id: 8001,
+    tagName: "v1.0.0",
+    targetCommitish: "main",
+    name: "缓存前 Release",
+    body: "缓存前说明",
+    draft: false,
+    prerelease: false,
+    makeLatest: "true",
+    author: "sena",
+    htmlUrl: "https://github.com/sena-nana/remote-repo/releases/tag/v1.0.0",
+    uploadUrl: "https://uploads.github.com/repos/sena-nana/remote-repo/releases/8001/assets{?name,label}",
+    tarballUrl: null,
+    zipballUrl: null,
+    createdAt: "2026-06-18T08:00:00Z",
+    publishedAt: "2026-06-18T08:05:00Z",
+    assets: [releaseAsset()],
+    ...overrides,
+  };
+}
+
 describe("workspace GitHub project cache", () => {
   beforeEach(async () => {
     workspaceFallback = await workspaceFallbackForTests();
@@ -103,6 +154,22 @@ describe("workspace GitHub project cache", () => {
     const refreshed = await listGitHubIssues(repoFullName, "open", { forceRefresh: true });
     expect(refreshed[0]?.title).toBe("远端新 Issue");
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(2);
+  });
+
+  it("同 key GitHub 读取 pending 时只发起一笔请求并返回隔离副本", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({ [repoFullName]: [issue()] });
+
+    const firstLoad = listGitHubIssues(repoFullName, "open");
+    const secondLoad = listGitHubIssues(repoFullName, "open");
+
+    const [first, second] = await Promise.all([firstLoad, secondLoad]);
+
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+    first[0].title = "外部污染";
+    const cached = await listGitHubIssues(repoFullName, "open");
+    expect(cached[0]?.title).toBe("缓存前 Issue");
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
   });
 
   it("Issue 缓存按筛选和排序参数分桶", async () => {
@@ -285,6 +352,58 @@ describe("workspace GitHub project cache", () => {
     const refreshed = await getGitHubRepoCommitDetail(repoFullName, firstCommit.hash, { forceRefresh: true });
     expect(refreshed.body).toBe("远端新详情");
     expect(workspaceFallback.getFallbackGitHubCommitDetailCallsForTests()).toHaveLength(2);
+  });
+
+  it("缓存 releases，forceRefresh 才重新读取，并返回隔离副本", async () => {
+    workspaceFallback.setFallbackGitHubReleasesForTests({ [repoFullName]: [release()] });
+
+    const first = await listGitHubReleases(repoFullName);
+    expect(first[0]?.name).toBe("缓存前 Release");
+    expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests()).toHaveLength(1);
+
+    first[0].name = "外部污染";
+    workspaceFallback.setFallbackGitHubReleasesForTests({ [repoFullName]: [release({ name: "远端新 Release" })] });
+    const cached = await listGitHubReleases(repoFullName);
+    expect(cached[0]?.name).toBe("缓存前 Release");
+    expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests()).toHaveLength(1);
+
+    const refreshed = await listGitHubReleases(repoFullName, { forceRefresh: true });
+    expect(refreshed[0]?.name).toBe("远端新 Release");
+    expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests()).toHaveLength(2);
+  });
+
+  it("Release mutation 后同步或清理项目页 releases 缓存", async () => {
+    workspaceFallback.setFallbackGitHubReleasesForTests({ [repoFullName]: [release()] });
+    await listGitHubReleases(repoFullName);
+
+    await createGitHubRelease(repoFullName, {
+      tagName: "v1.1.0",
+      targetCommitish: "main",
+      name: "新 Release",
+      body: "新说明",
+      draft: false,
+      prerelease: false,
+      generateReleaseNotes: false,
+    });
+    const afterCreate = await listGitHubReleases(repoFullName);
+    expect(afterCreate.map((item) => item.tagName)).toEqual(["v1.1.0", "v1.0.0"]);
+    expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests()).toHaveLength(1);
+
+    await updateGitHubRelease(repoFullName, 8001, { name: "缓存内已编辑" });
+    const afterUpdate = await listGitHubReleases(repoFullName);
+    expect(afterUpdate.find((item) => item.id === 8001)?.name).toBe("缓存内已编辑");
+
+    const asset = await uploadGitHubReleaseAsset(repoFullName, 8001, "C:\\Files\\release\\setup.exe");
+    const afterUpload = await listGitHubReleases(repoFullName);
+    expect(afterUpload.find((item) => item.id === 8001)?.assets[0]?.id).toBe(asset.id);
+
+    await deleteGitHubReleaseAsset(repoFullName, 8001, asset.id);
+    const afterDeleteAsset = await listGitHubReleases(repoFullName);
+    expect(afterDeleteAsset.find((item) => item.id === 8001)?.assets.some((item) => item.id === asset.id)).toBe(false);
+
+    await deleteGitHubRelease(repoFullName, 8001);
+    const afterDeleteRelease = await listGitHubReleases(repoFullName);
+    expect(afterDeleteRelease.some((item) => item.id === 8001)).toBe(false);
   });
 
   it("github repoId 文件树和预览按远程仓库与 ref 分派", async () => {

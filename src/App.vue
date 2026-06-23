@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from "vue";
 import { RouterView } from "vue-router";
+import { createCachedAsyncComponent } from "./utils/asyncComponent";
 
-const ContextMenuHost = defineAsyncComponent(() => import("./components/ContextMenuHost.vue"));
+const contextMenuHostModule = createCachedAsyncComponent(() => import("./components/ContextMenuHost.vue"));
+const ContextMenuHost = contextMenuHostModule.component;
 </script>
 
 <template>

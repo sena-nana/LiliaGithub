@@ -18,6 +18,7 @@ import { parseRepoDiffHunks, type RepoDiffWorkspaceFile, type RepoDiffWorkspaceM
 
 const props = defineProps<{
   changes: readonly RepoChange[];
+  discardingChangePaths: readonly string[];
   hasConflicts: boolean;
   canCommit: boolean;
   actionRunning: boolean;
@@ -51,6 +52,7 @@ const diffMode = ref<RepoDiffWorkspaceMode>("hunks");
 const selectedChangePaths = ref<Set<string>>(new Set());
 const selectedChangeGroup = ref<ChangeGroupKey | null>(null);
 const selectionAnchor = ref<{ group: ChangeGroupKey; path: string } | null>(null);
+const discardingChangePathSet = computed(() => new Set(props.discardingChangePaths));
 
 function changeKey(change: RepoChange, group: "staged" | "unstaged") {
   return `${group}:${change.oldPath ?? ""}:${change.path}`;
@@ -126,6 +128,10 @@ function isSelectedChange(change: RepoChange, group: ChangeGroupKey) {
   return selectedChangeGroup.value === group && selectedChangePaths.value.has(change.path);
 }
 
+function isDiscardingChange(change: RepoChange, group: ChangeGroupKey) {
+  return group === "unstaged" && discardingChangePathSet.value.has(change.path);
+}
+
 function selectedGroupChanges(group: ChangeGroupBase) {
   if (selectedChangeGroup.value !== group.key) return [];
   return group.changes.filter((change) => selectedChangePaths.value.has(change.path));
@@ -159,6 +165,7 @@ function toggleSelectedPath(group: ChangeGroupKey, path: string) {
 }
 
 function selectChange(change: RepoChange, group: ChangeGroupBase, event: MouseEvent) {
+  if (isDiscardingChange(change, group.key)) return;
   emit("focusChange", change.path);
 
   if (event.shiftKey && selectionAnchor.value?.group === group.key) {
@@ -182,6 +189,7 @@ function selectChange(change: RepoChange, group: ChangeGroupBase, event: MouseEv
 }
 
 function changeContextMenu(change: RepoChange, group: ChangeGroupBase): ContextMenuItem[] {
+  if (isDiscardingChange(change, group.key)) return [];
   const mutationDisabled = props.actionRunning;
   const staged = group.key === "staged";
   const targets = isSelectedChange(change, group.key) ? selectedGroupChanges(group) : [];
@@ -292,7 +300,13 @@ function submitCommit(pushAfter: boolean) {
                 :key="changeKey(change, group.key)"
                 type="button"
                 class="changes-group__item"
-                :class="{ 'is-active': previewChange?.path === change.path, 'is-selected': isSelectedChange(change, group.key) }"
+                :class="{
+                  'is-active': previewChange?.path === change.path,
+                  'is-selected': isSelectedChange(change, group.key),
+                  'is-discarding': isDiscardingChange(change, group.key),
+                }"
+                :disabled="isDiscardingChange(change, group.key)"
+                :aria-busy="isDiscardingChange(change, group.key) || undefined"
                 :aria-pressed="isSelectedChange(change, group.key)"
                 :title="changeTitle(change)"
                 v-context-menu="changeContextMenu(change, group)"
@@ -478,6 +492,21 @@ function submitCommit(pushAfter: boolean) {
 
 .changes-group__item.is-active {
   background: var(--bg-active);
+}
+
+.changes-group__item.is-discarding,
+.changes-group__item.is-discarding:hover,
+.changes-group__item.is-discarding.is-active,
+.changes-group__item.is-discarding.is-selected {
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.changes-group__item.is-discarding .changes-group__status {
+  color: var(--text-muted);
+  background: var(--bg-subtle);
 }
 
 .changes-group__item:focus-visible,

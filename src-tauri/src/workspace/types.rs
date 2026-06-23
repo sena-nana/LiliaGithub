@@ -566,6 +566,20 @@ pub struct GitHubRepoOwner {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceCreateLocalRepoRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub add_readme: bool,
+    #[serde(default)]
+    pub gitignore_template: Option<String>,
+    #[serde(default)]
+    pub license_template: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubCreateRepoRequest {
     pub owner: String,
     pub owner_kind: String,
@@ -584,6 +598,10 @@ pub struct GitHubCreateRepoRequest {
     pub has_issues: bool,
     #[serde(default = "default_true")]
     pub has_wiki: bool,
+    #[serde(default)]
+    pub template_full_name: Option<String>,
+    #[serde(default)]
+    pub include_all_branches: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -686,6 +704,8 @@ pub struct GitHubIssue {
     pub comments: u64,
     #[serde(default)]
     pub project_items: Vec<GitHubIssueProjectItem>,
+    #[serde(default)]
+    pub development_items: Vec<GitHubDevelopmentItem>,
     pub html_url: String,
     pub updated_at: String,
     pub created_at: String,
@@ -705,6 +725,26 @@ pub struct GitHubIssueMilestone {
 pub struct GitHubIssueProjectItem {
     pub id: String,
     pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubDevelopmentItem {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub number: Option<u64>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub repository_full_name: Option<String>,
+    #[serde(default)]
+    pub ref_name: Option<String>,
+    #[serde(default)]
+    pub sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -778,6 +818,12 @@ pub struct GitHubPullRequest {
     pub comments: u64,
     #[serde(default)]
     pub project_items: Vec<GitHubIssueProjectItem>,
+    #[serde(default)]
+    pub reviewers: Vec<GitHubPullRequestReviewer>,
+    #[serde(default)]
+    pub development_items: Vec<GitHubDevelopmentItem>,
+    #[serde(default)]
+    pub commit_count: Option<u64>,
     pub html_url: String,
     pub updated_at: String,
     pub created_at: String,
@@ -789,6 +835,14 @@ pub struct GitHubPullRequest {
     pub mergeable: Option<bool>,
     #[serde(default)]
     pub mergeable_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPullRequestReviewer {
+    pub login: String,
+    pub kind: String,
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -925,6 +979,93 @@ pub struct GitHubWorkflowArtifactEntry {
     pub size: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubReleaseAsset {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    pub content_type: String,
+    pub size: u64,
+    pub download_count: u64,
+    pub state: String,
+    pub browser_download_url: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub uploader: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRelease {
+    pub id: u64,
+    pub tag_name: String,
+    pub target_commitish: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    pub draft: bool,
+    pub prerelease: bool,
+    pub immutable: bool,
+    #[serde(default)]
+    pub make_latest: Option<String>,
+    pub html_url: String,
+    pub upload_url: String,
+    #[serde(default)]
+    pub tarball_url: Option<String>,
+    #[serde(default)]
+    pub zipball_url: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub assets: Vec<GitHubReleaseAsset>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubCreateReleaseRequest {
+    pub tag_name: String,
+    #[serde(default)]
+    pub target_commitish: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub draft: Option<bool>,
+    #[serde(default)]
+    pub prerelease: Option<bool>,
+    #[serde(default)]
+    pub generate_release_notes: Option<bool>,
+    #[serde(default)]
+    pub make_latest: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubUpdateReleaseRequest {
+    #[serde(default)]
+    pub tag_name: Option<String>,
+    #[serde(default)]
+    pub target_commitish: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub draft: Option<bool>,
+    #[serde(default)]
+    pub prerelease: Option<bool>,
+    #[serde(default)]
+    pub make_latest: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubProjectCache {
@@ -949,6 +1090,8 @@ pub struct GitHubProjectRepoCache {
     pub pull_request_checks: HashMap<String, Vec<GitHubPullRequestCheck>>,
     #[serde(default)]
     pub workflow_runs: HashMap<String, Vec<GitHubWorkflowRun>>,
+    #[serde(default)]
+    pub releases: Option<Vec<GitHubRelease>>,
     #[serde(default)]
     pub commits: HashMap<String, Vec<CommitSummary>>,
     #[serde(default)]

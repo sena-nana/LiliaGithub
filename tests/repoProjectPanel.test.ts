@@ -9,7 +9,10 @@ import { vContextMenu } from "../src/directives/contextMenu";
 import {
   createGitHubPullRequest,
   createGitHubIssue,
+  createGitHubRelease,
   deleteGitHubRepo,
+  deleteGitHubRelease,
+  deleteGitHubReleaseAsset,
   getGitHubIssueDiscussion,
   getGitHubIssueFilterMetadata,
   getGitHubRepoFilePreview,
@@ -27,9 +30,13 @@ import {
   listGitHubIssueLabels,
   listGitHubRepoFiles,
   listGitHubWorkflowRuns,
+  listGitHubReleases,
   listRepoFiles,
   mergeGitHubPullRequest,
+  pickFiles,
+  updateGitHubRelease,
   updateGitHubRepoSettings,
+  uploadGitHubReleaseAsset,
 } from "../src/services/workspace/client";
 import type {
   CommitDetail,
@@ -39,6 +46,8 @@ import type {
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
+  GitHubRelease,
+  GitHubReleaseAsset,
   GitHubRepoManagement,
   GitHubWorkflowRun,
   GitHubWorkflowRunDetail,
@@ -259,6 +268,30 @@ const githubPullRequests: GitHubPullRequest[] = [{
   milestone: { number: 1, title: "v1", state: "open" },
   comments: 2,
   projectItems: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
+  reviewers: [
+    { login: "mika", kind: "user", state: "requested" },
+    { login: "core", kind: "team", state: "APPROVED" },
+  ],
+  developmentItems: [
+    {
+      id: "issue:sena-nana/remote-repo:12",
+      kind: "issue",
+      label: "Issue #12 修复懒加载",
+      url: "https://github.com/sena-nana/remote-repo/issues/12",
+      number: 12,
+      state: "open",
+      repositoryFullName: "sena-nana/remote-repo",
+    },
+    {
+      id: "commit:sena-nana/remote-repo:abcdef1234567890",
+      kind: "commit",
+      label: "abcdef1 接入 PR 详情侧栏",
+      url: "https://github.com/sena-nana/remote-repo/commit/abcdef1234567890",
+      sha: "abcdef1234567890",
+      repositoryFullName: "sena-nana/remote-repo",
+    },
+  ],
+  commitCount: 2,
   htmlUrl: "https://github.com/sena-nana/remote-repo/pull/52",
   updatedAt: "2026-06-18T08:00:00Z",
   createdAt: "2026-06-18T08:00:00Z",
@@ -280,6 +313,61 @@ const githubPullRequestChecks: GitHubPullRequestCheck[] = [{
   startedAt: "2026-06-18T08:00:00Z",
   completedAt: "2026-06-18T08:05:00Z",
 }];
+
+function releaseAsset(overrides: Partial<GitHubReleaseAsset> = {}): GitHubReleaseAsset {
+  return {
+    id: 9001,
+    name: "lilia-windows.zip",
+    label: "Windows",
+    contentType: "application/zip",
+    size: 2_048,
+    downloadCount: 7,
+    state: "uploaded",
+    browserDownloadUrl: "https://github.com/sena-nana/remote-repo/releases/download/v1.0.0/lilia-windows.zip",
+    createdAt: "2026-06-18T08:10:00Z",
+    updatedAt: "2026-06-18T08:10:00Z",
+    ...overrides,
+  };
+}
+
+const githubReleases: GitHubRelease[] = [
+  {
+    id: 8001,
+    tagName: "v1.0.0",
+    targetCommitish: "main",
+    name: "Lilia v1.0.0",
+    body: "## Summary\n\n正式发布。",
+    draft: false,
+    prerelease: false,
+    makeLatest: "true",
+    author: "sena",
+    htmlUrl: "https://github.com/sena-nana/remote-repo/releases/tag/v1.0.0",
+    uploadUrl: "https://uploads.github.com/repos/sena-nana/remote-repo/releases/8001/assets{?name,label}",
+    tarballUrl: "https://api.github.com/repos/sena-nana/remote-repo/tarball/v1.0.0",
+    zipballUrl: "https://api.github.com/repos/sena-nana/remote-repo/zipball/v1.0.0",
+    createdAt: "2026-06-18T08:00:00Z",
+    publishedAt: "2026-06-18T08:05:00Z",
+    assets: [releaseAsset()],
+  },
+  {
+    id: 8002,
+    tagName: "v1.1.0-beta.1",
+    targetCommitish: "develop",
+    name: "Lilia v1.1 beta",
+    body: null,
+    draft: false,
+    prerelease: true,
+    makeLatest: "false",
+    author: "mika",
+    htmlUrl: "https://github.com/sena-nana/remote-repo/releases/tag/v1.1.0-beta.1",
+    uploadUrl: "https://uploads.github.com/repos/sena-nana/remote-repo/releases/8002/assets{?name,label}",
+    tarballUrl: null,
+    zipballUrl: null,
+    createdAt: "2026-06-19T08:00:00Z",
+    publishedAt: "2026-06-19T08:05:00Z",
+    assets: [],
+  },
+];
 
 function issueDiscussion(issue: GitHubIssue): GitHubIssueDiscussion {
   return {
@@ -374,7 +462,10 @@ function filePreview(path: string, content: string, overrides: Partial<RepoFileP
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
+  createGitHubRelease: vi.fn(),
   deleteGitHubRepo: vi.fn(),
+  deleteGitHubRelease: vi.fn(),
+  deleteGitHubReleaseAsset: vi.fn(),
   getGitHubIssueDiscussion: vi.fn(),
   getGitHubRepoFilePreview: vi.fn(),
   getGitHubIssueFilterMetadata: vi.fn(),
@@ -389,6 +480,7 @@ vi.mock("../src/services/workspace/client", () => ({
   listGitHubIssueLabels: vi.fn(),
   listGitHubRepoFiles: vi.fn(),
   listGitHubWorkflowRuns: vi.fn(),
+  listGitHubReleases: vi.fn(),
   getGitHubWorkflowRunDetail: vi.fn(),
   getGitHubWorkflowJobLog: vi.fn(),
   listGitHubWorkflowArtifactFiles: vi.fn(),
@@ -401,10 +493,12 @@ vi.mock("../src/services/workspace/client", () => ({
       message.toLowerCase().includes("bad credentials");
   },
   mergeGitHubPullRequest: vi.fn(),
+  pickFiles: vi.fn(),
   listRepoFiles: vi.fn(async () => []),
   openPath: vi.fn(),
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
+  updateGitHubRelease: vi.fn(),
   updateGitHubRepoSettings: vi.fn(async (_repoFullName: string, request: Partial<GitHubRepoManagement>) => ({
     ...githubSettings,
     ...request,
@@ -412,6 +506,7 @@ vi.mock("../src/services/workspace/client", () => ({
     homepage: request.homepage ?? githubSettings.homepage,
     topics: request.topics ? [...request.topics] : [...githubSettings.topics],
   })),
+  uploadGitHubReleaseAsset: vi.fn(),
 }));
 
 vi.mock("../src/composables/workspace/auth", async (importOriginal) => {
@@ -535,7 +630,10 @@ describe("RepoProjectPanel", () => {
     vi.clearAllMocks();
     vi.mocked(createGitHubPullRequest).mockReset();
     vi.mocked(createGitHubIssue).mockReset();
+    vi.mocked(createGitHubRelease).mockReset();
     vi.mocked(deleteGitHubRepo).mockReset();
+    vi.mocked(deleteGitHubRelease).mockReset();
+    vi.mocked(deleteGitHubReleaseAsset).mockReset();
     vi.mocked(getGitHubIssueDiscussion).mockReset();
     vi.mocked(getGitHubPullRequestDiscussion).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
@@ -545,8 +643,12 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubIssueAssignees).mockReset();
     vi.mocked(listGitHubIssueLabels).mockReset();
     vi.mocked(listGitHubRepoFiles).mockReset();
+    vi.mocked(listGitHubReleases).mockReset();
     vi.mocked(listRepoFiles).mockReset();
+    vi.mocked(pickFiles).mockReset();
+    vi.mocked(updateGitHubRelease).mockReset();
     vi.mocked(updateGitHubRepoSettings).mockReset();
+    vi.mocked(uploadGitHubReleaseAsset).mockReset();
     vi.mocked(createGitHubIssue).mockImplementation(async (_repoFullName, request) => ({
       number: 99,
       title: request.title,
@@ -583,6 +685,36 @@ describe("RepoProjectPanel", () => {
       mergeable: null,
       mergeableState: null,
     }));
+    vi.mocked(createGitHubRelease).mockImplementation(async (_repoFullName, request) => ({
+      ...githubReleases[0],
+      id: 8100,
+      tagName: request.tagName,
+      targetCommitish: request.targetCommitish ?? "main",
+      name: request.name,
+      body: request.body,
+      draft: request.draft ?? false,
+      prerelease: request.prerelease ?? false,
+      makeLatest: "false",
+      assets: [],
+    }));
+    vi.mocked(updateGitHubRelease).mockImplementation(async (_repoFullName, releaseId, request) => {
+      const current = githubReleases.find((release) => release.id === releaseId) ?? githubReleases[0];
+      return {
+        ...current,
+        tagName: request.tagName ?? current.tagName,
+        targetCommitish: request.targetCommitish ?? current.targetCommitish,
+        name: request.name ?? current.name,
+        body: request.body ?? current.body,
+        draft: request.draft ?? current.draft,
+        prerelease: request.prerelease ?? current.prerelease,
+      };
+    });
+    vi.mocked(deleteGitHubRelease).mockResolvedValue(undefined);
+    vi.mocked(pickFiles).mockResolvedValue(["C:\\Files\\release\\lilia.zip"]);
+    vi.mocked(uploadGitHubReleaseAsset).mockImplementation(async (_repoFullName, releaseId, filePath) => (
+      releaseAsset({ id: 9100, name: filePath.split("\\").pop() ?? filePath, label: null })
+    ));
+    vi.mocked(deleteGitHubReleaseAsset).mockResolvedValue(undefined);
     vi.mocked(listGitHubRepoFiles).mockResolvedValue([]);
     vi.mocked(listRepoFiles).mockResolvedValue(localRootFiles);
     vi.mocked(getRepoFilePreview).mockResolvedValue(localReadmePreview);
@@ -613,6 +745,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubPullRequestChecks).mockResolvedValue([]);
     vi.mocked(mergeGitHubPullRequest).mockImplementation(async () => ({ ...githubPullRequests[0], merged: true, state: "closed" }));
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
+    vi.mocked(listGitHubReleases).mockResolvedValue([]);
     vi.mocked(getGitHubIssueDiscussion).mockImplementation(async (_repoFullName, issueNumber) => {
       const issue = githubIssues.find((item) => item.number === issueNumber) ?? closedGitHubIssues.find((item) => item.number === issueNumber);
       if (!issue) throw new Error(`missing issue ${issueNumber}`);
@@ -784,7 +917,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
     expect(await view.findByText("Project README")).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
-    expect(view.getByRole("tab", { name: "文件树" })).toBeInTheDocument();
+    expect(view.queryByRole("tab", { name: "文件树" })).toBeNull();
     expect(view.getByRole("tab", { name: "Pull Requests" })).toBeInTheDocument();
     expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
     const topics = view.getByLabelText("Topics");
@@ -805,13 +938,6 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
-
-    await fireEvent.click(view.getByRole("tab", { name: "文件树" }));
-    await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local-repo/files");
-    });
-    expect(await view.findByLabelText("仓库文件树")).toBeInTheDocument();
-    expect(view.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
   });
 
   it("仓库设置读取失败时只显示右侧错误卡并隐藏描述卡片", async () => {
@@ -914,7 +1040,7 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
     expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
     expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("main");
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
@@ -943,10 +1069,139 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
   });
 
+  it("Release 二级 Tab 读取 releases，并在右侧 tag 列表跳转和刷新", async () => {
+    vi.mocked(listGitHubReleases).mockResolvedValue(githubReleases);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Release" }));
+
+    expect(await view.findByRole("heading", { level: 3, name: "Release" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" })).toBeInTheDocument();
+    expect(view.getByText("lilia-windows.zip")).toBeInTheDocument();
+    expect(listGitHubReleases).toHaveBeenCalledWith("sena-nana/remote-repo");
+    expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "release" });
+
+    const tagSidebar = view.getByRole("region", { name: "Release tags" });
+    await fireEvent.click(within(tagSidebar).getByRole("button", { name: /v1\.0\.0/ }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({
+        projectTab: "release",
+        releaseTag: "v1.0.0",
+      });
+    });
+    expect(view.container.querySelector(".release-card.is-focused[data-release-tag=\"v1.0.0\"]")).toBeInstanceOf(HTMLElement);
+
+    await fireEvent.click(within(tagSidebar).getByRole("button", { name: "刷新 Release" }));
+    expect(listGitHubReleases).toHaveBeenLastCalledWith("sena-nana/remote-repo", { forceRefresh: true });
+  });
+
+  it("Release Tab 支持创建、编辑、删除 release 与上传、删除资产", async () => {
+    vi.mocked(listGitHubReleases).mockResolvedValue([githubReleases[0]]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Release" }));
+    await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" });
+
+    await fireEvent.click(view.getByRole("button", { name: "新建 Release" }));
+    const createForm = await view.findByRole("form", { name: "Release 表单" });
+    await fireEvent.update(within(createForm).getByLabelText("Tag"), "v1.1.0");
+    await fireEvent.update(within(createForm).getByLabelText("Target"), "main");
+    await fireEvent.update(within(createForm).getByLabelText("Title"), "Lilia v1.1.0");
+    await fireEvent.update(within(createForm).getByLabelText("Notes"), "新增 release 管理。");
+    await fireEvent.click(within(createForm).getByLabelText("Generate notes"));
+    await fireEvent.click(within(createForm).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(createGitHubRelease).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        tagName: "v1.1.0",
+        targetCommitish: "main",
+        name: "Lilia v1.1.0",
+        body: "新增 release 管理。",
+        draft: false,
+        prerelease: false,
+        generateReleaseNotes: true,
+      });
+    });
+
+    const releaseCard = view.container.querySelector(".release-card[data-release-tag=\"v1.0.0\"]") as HTMLElement;
+    expect(releaseCard).toBeInstanceOf(HTMLElement);
+
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "上传" }));
+    await waitFor(() => {
+      expect(pickFiles).toHaveBeenCalledTimes(1);
+      expect(uploadGitHubReleaseAsset).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        8001,
+        "C:\\Files\\release\\lilia.zip",
+      );
+    });
+
+    const originalAssetRow = within(releaseCard).getByText("lilia-windows.zip").closest(".release-asset") as HTMLElement;
+    await fireEvent.click(within(originalAssetRow).getByRole("button", { name: "删除资产" }));
+    await fireEvent.click(within(originalAssetRow).getByRole("button", { name: "确认删除资产" }));
+    await waitFor(() => {
+      expect(deleteGitHubReleaseAsset).toHaveBeenCalledWith("sena-nana/remote-repo", 8001, 9001);
+    });
+
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "编辑 Release" }));
+    const editForm = await view.findByRole("form", { name: "Release 表单" });
+    await fireEvent.update(within(editForm).getByLabelText("Title"), "Lilia v1.0.1");
+    await fireEvent.click(within(editForm).getByRole("button", { name: "保存" }));
+    await waitFor(() => {
+      expect(updateGitHubRelease).toHaveBeenCalledWith("sena-nana/remote-repo", 8001, expect.objectContaining({
+        tagName: "v1.0.0",
+        name: "Lilia v1.0.1",
+      }));
+    });
+
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "删除 Release" }));
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "确认删除 Release" }));
+    await waitFor(() => {
+      expect(deleteGitHubRelease).toHaveBeenCalledWith("sena-nana/remote-repo", 8001);
+    });
+  });
+
+  it("Release Tab 显示空态和 GitHub 不可用态", async () => {
+    const emptyView = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(emptyView.getByRole("tab", { name: "Release" }));
+
+    expect(await emptyView.findByText("暂无 releases。")).toBeInTheDocument();
+    expect(emptyView.getByText("暂无 release tag。")).toBeInTheDocument();
+    emptyView.unmount();
+
+    vi.mocked(listGitHubReleases).mockRejectedValue(new Error("GitHub 绑定已失效，请重新绑定"));
+    const unavailableView = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(unavailableView.getByRole("tab", { name: "Release" }));
+
+    expect(await unavailableView.findByText("Release 暂不可用")).toBeInTheDocument();
+    expect(unavailableView.getAllByText(/GitHub 绑定已失效/).length).toBeGreaterThan(0);
+    expect(unavailableView.queryByRole("button", { name: "新建 Release" })).toBeNull();
+  });
+
   it("点击 Issue 行进入详情并渲染 Markdown 正文、评论和事件", async () => {
     const issueWithBody: GitHubIssue = {
       ...githubIssues[0],
       body: "## 复现步骤\n\n- 打开 <script>alert(1)</script> [文档](docs/guide.md)",
+      developmentItems: [{
+        id: "pull:sena-nana/remote-repo:52",
+        kind: "pullRequest",
+        label: "PR #52 接入 Pull Request 工作流",
+        url: "https://github.com/sena-nana/remote-repo/pull/52",
+        number: 52,
+        state: "open",
+        repositoryFullName: "sena-nana/remote-repo",
+      }],
     };
     vi.mocked(listGitHubIssues).mockResolvedValue([issueWithBody]);
     vi.mocked(getGitHubIssueDiscussion).mockResolvedValue({
@@ -995,12 +1250,24 @@ describe("RepoProjectPanel", () => {
     expect(view.getAllByText("关闭了讨论")).toHaveLength(2);
     expect(view.container.querySelector(".issue-detail__summary")).toBeNull();
     const issueSidebar = view.getByLabelText("Issue 详情侧栏");
+    const issueSidebarChips = Array.from(issueSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
+      .map((chip) => chip.textContent ?? "");
     expect(issueSidebar).toHaveTextContent("Issue #12");
-    expect(issueSidebar).toHaveTextContent("Open");
+    expect(issueSidebar).toHaveTextContent("打开");
     expect(issueSidebar).toHaveTextContent("sena");
     expect(issueSidebar).toHaveTextContent("bug");
     expect(issueSidebar).toHaveTextContent("Roadmap");
     expect(issueSidebar).toHaveTextContent("v1");
+    expect(issueSidebar).toHaveTextContent("PR #52 接入 Pull Request 工作流");
+    expect(issueSidebar).not.toHaveTextContent("暂无关联开发项");
+    expect(issueSidebarChips).toEqual(expect.arrayContaining([
+      "打开",
+      "sena",
+      "bug",
+      "Roadmap",
+      "v1",
+      "PR #52 接入 Pull Request 工作流",
+    ]));
     expect(view.container.querySelector("script")).toBeNull();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "issues", issue: "12" });
@@ -1124,7 +1391,7 @@ describe("RepoProjectPanel", () => {
         .mockRejectedValueOnce(new Error("HTTP 403 Resource not accessible by integration")),
       title: "Settings 暂不可用",
       reason: "当前 GitHub 授权权限不足，无法访问该仓库的 Settings。请重新绑定 GitHub 并授予所需权限。",
-      hiddenText: "基础设置",
+      hiddenText: "功能开关",
     },
   ])("$tabName 因 GitHub 授权不可用时提供重新绑定入口", async ({ tabName, fail, title, reason, hiddenText }) => {
     fail();
@@ -1178,15 +1445,36 @@ describe("RepoProjectPanel", () => {
     expect(view.getByText("接入 PR 工作流。")).toBeInTheDocument();
     expect(view.container.querySelector(".pull-detail__summary")).toBeNull();
     const pullSidebar = view.getByLabelText("Pull Requests 详情侧栏");
+    const pullSidebarChips = Array.from(pullSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
+      .map((chip) => chip.textContent ?? "");
     expect(pullSidebar).toHaveTextContent("PR #52");
-    expect(pullSidebar).toHaveTextContent("Open");
-    expect(pullSidebar).toHaveTextContent("No reviewers");
+    expect(pullSidebar).toHaveTextContent("打开");
+    expect(pullSidebar).toHaveTextContent("mika · 待审阅");
+    expect(pullSidebar).toHaveTextContent("core · 团队 · 已通过");
     expect(pullSidebar).toHaveTextContent("sena");
     expect(pullSidebar).toHaveTextContent("bug");
     expect(pullSidebar).toHaveTextContent("Roadmap");
     expect(pullSidebar).toHaveTextContent("v1");
     expect(pullSidebar).toHaveTextContent("feature/pr-flow -> main");
-    expect(pullSidebar).toHaveTextContent("clean");
+    expect(pullSidebar).toHaveTextContent("可合并");
+    expect(pullSidebar).toHaveTextContent("2 个 commits");
+    expect(pullSidebar).toHaveTextContent("Issue #12 修复懒加载");
+    expect(pullSidebar).toHaveTextContent("abcdef1 接入 PR 详情侧栏");
+    expect(pullSidebar).not.toHaveTextContent("暂无审阅人");
+    expect(pullSidebarChips).toEqual(expect.arrayContaining([
+      "打开",
+      "mika · 待审阅",
+      "core · 团队 · 已通过",
+      "sena",
+      "bug",
+      "Roadmap",
+      "v1",
+      "feature/pr-flow -> main",
+      "可合并",
+      "2 个 commits",
+      "Issue #12 修复懒加载",
+      "abcdef1 接入 PR 详情侧栏",
+    ]));
     expect(getGitHubPullRequestDiscussion).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     await waitFor(() => {
@@ -1803,8 +2091,7 @@ describe("RepoProjectPanel", () => {
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
 
-    expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
-    expect(view.getByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
     expect(view.getByRole("heading", { level: 4, name: "Pull Request / Merge" })).toBeInTheDocument();
     expect(view.getByLabelText("本地危险操作")).toBeInTheDocument();
     expect(view.getByLabelText("远端危险操作")).toBeInTheDocument();

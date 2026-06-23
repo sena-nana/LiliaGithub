@@ -1,15 +1,31 @@
 export type DiffCodeLanguage =
+  | "c"
+  | "cpp"
+  | "csharp"
   | "css"
+  | "dart"
+  | "go"
   | "html"
+  | "java"
   | "javascript"
   | "json"
+  | "kotlin"
   | "markdown"
+  | "php"
+  | "powershell"
   | "python"
+  | "ruby"
   | "rust"
+  | "scss"
   | "shell"
+  | "sql"
+  | "swift"
   | "text"
+  | "toml"
   | "typescript"
-  | "vue";
+  | "vue"
+  | "xml"
+  | "yaml";
 
 export type DiffCodeTokenType =
   | "comment"
@@ -28,22 +44,73 @@ export interface DiffCodeToken {
 
 const LANGUAGE_BY_EXTENSION: Record<string, DiffCodeLanguage> = {
   bash: "shell",
+  c: "c",
+  cc: "cpp",
   cjs: "javascript",
+  cmake: "shell",
+  cpp: "cpp",
+  cs: "csharp",
   css: "css",
+  dart: "dart",
+  go: "go",
+  h: "c",
+  hpp: "cpp",
   htm: "html",
   html: "html",
+  java: "java",
   js: "javascript",
   json: "json",
   jsx: "javascript",
+  kt: "kotlin",
+  kts: "kotlin",
   md: "markdown",
   mjs: "javascript",
+  php: "php",
+  ps1: "powershell",
+  psm1: "powershell",
   py: "python",
   pyw: "python",
+  rb: "ruby",
   rs: "rust",
+  scss: "scss",
   sh: "shell",
+  sql: "sql",
+  swift: "swift",
+  toml: "toml",
   ts: "typescript",
   tsx: "typescript",
   vue: "vue",
+  xml: "xml",
+  yaml: "yaml",
+  yml: "yaml",
+};
+
+const LANGUAGE_BY_FILENAME: Record<string, DiffCodeLanguage> = {
+  cmakelists: "shell",
+  "cmakelists.txt": "shell",
+  dockerfile: "shell",
+  gemfile: "ruby",
+  makefile: "shell",
+  procfile: "shell",
+  rakefile: "ruby",
+};
+
+const SPECIAL_LANGUAGE_LABELS: Partial<Record<DiffCodeLanguage, string>> = {
+  c: "C",
+  cpp: "C++",
+  csharp: "C#",
+  css: "CSS",
+  html: "HTML",
+  javascript: "JavaScript",
+  json: "JSON",
+  php: "PHP",
+  powershell: "PowerShell",
+  scss: "SCSS",
+  sql: "SQL",
+  toml: "TOML",
+  typescript: "TypeScript",
+  xml: "XML",
+  yaml: "YAML",
 };
 
 const KEYWORDS = new Set([
@@ -121,13 +188,25 @@ const KEYWORDS = new Set([
 ]);
 
 export function inferDiffCodeLanguage(filePath: string): DiffCodeLanguage {
-  const extension = filePath.split(/[\\/]/).pop()?.split(".").pop()?.toLowerCase();
+  const fileName = filePath.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  const filenameLanguage = LANGUAGE_BY_FILENAME[fileName];
+  if (filenameLanguage) return filenameLanguage;
+  const extension = fileName.split(".").pop();
   return extension ? LANGUAGE_BY_EXTENSION[extension] ?? "text" : "text";
+}
+
+export function isDiffCodeLanguage(language: DiffCodeLanguage): boolean {
+  return language !== "text" && language !== "markdown";
+}
+
+export function diffCodeLanguageLabel(language: DiffCodeLanguage): string {
+  return SPECIAL_LANGUAGE_LABELS[language] ?? `${language[0].toUpperCase()}${language.slice(1)}`;
 }
 
 export function tokenizeDiffCodeLines(content: string, language: DiffCodeLanguage) {
   return content.split("\n").map((line, index) => ({
     index,
+    lineNumber: index + 1,
     tokens: tokenizeDiffCodeLine(line, language),
   }));
 }
@@ -136,7 +215,11 @@ export function tokenizeDiffCodeLine(line: string, language: DiffCodeLanguage): 
   if (!line) return [{ type: "plain", text: "" }];
   if (language === "text") return [{ type: "plain", text: line }];
   if (language === "markdown") return tokenizeMarkdown(line);
-  if (language === "html" || (language === "vue" && /^\s*<\/?[A-Za-z][\w:-]*/.test(line))) {
+  if (
+    language === "html" ||
+    language === "xml" ||
+    (language === "vue" && /^\s*<\/?[A-Za-z][\w:-]*/.test(line))
+  ) {
     return tokenizeMarkup(line);
   }
   return tokenizeGeneric(line, language);
@@ -240,8 +323,12 @@ function tokenizeByPattern(
 }
 
 function matchComment(text: string, language: DiffCodeLanguage): string | null {
-  if (language === "python" || language === "shell") return /^#.*/.exec(text)?.[0] ?? null;
-  if (language === "css") return /^\/\*.*?\*\//.exec(text)?.[0] ?? null;
+  if (["python", "ruby", "shell", "powershell", "yaml", "toml"].includes(language)) {
+    return /^#.*/.exec(text)?.[0] ?? null;
+  }
+  if (language === "css" || language === "scss") return /^\/\*.*?\*\//.exec(text)?.[0] ?? null;
+  if (language === "html" || language === "xml" || language === "vue") return /^<!--.*?-->/.exec(text)?.[0] ?? null;
+  if (language === "sql") return /^(--.*|\/\*.*?\*\/)/.exec(text)?.[0] ?? null;
   return /^(\/\/.*|\/\*.*?\*\/)/.exec(text)?.[0] ?? null;
 }
 

@@ -15,16 +15,18 @@ import {
   SquareTerminal,
   TriangleAlert,
 } from "@lucide/vue";
-import { defineAsyncComponent } from "vue";
 import Dropdown from "../components/Dropdown.vue";
 import RepoBranchPicker from "../components/repo/RepoBranchPicker.vue";
 import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
+import { createCachedAsyncComponent } from "../utils/asyncComponent";
 import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
-const RepoStashPanel = defineAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
-const RepoToolbarSettingsMenu = defineAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
+const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
+const repoToolbarSettingsMenuModule = createCachedAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
+const RepoStashPanel = repoStashPanelModule.component;
+const RepoToolbarSettingsMenu = repoToolbarSettingsMenuModule.component;
 
 const {
   activeTab,
@@ -41,6 +43,7 @@ const {
   summary,
   repoTitle,
   changes,
+  discardingChangePaths,
   conflictOperationActive,
   supportedConflictOperation,
   previewChange,
@@ -152,6 +155,7 @@ const {
                 :aria-label="tab.title"
               >
                 <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
+                <FolderOpen v-else-if="tab.key === 'files'" :size="17" aria-hidden="true" />
                 <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
                 <History v-else-if="tab.key === 'history'" :size="17" aria-hidden="true" />
                 <Archive v-else :size="17" aria-hidden="true" />
@@ -332,6 +336,7 @@ const {
           :repo-summary="summary"
           :active-git-tab="activeTab"
           :changes="changes"
+          :discarding-change-paths="discardingChangePaths"
           :preview-change="previewChange"
           :commit-message="commitMessage"
           :has-conflicts="hasConflicts"

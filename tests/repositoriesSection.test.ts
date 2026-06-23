@@ -58,6 +58,8 @@ const workspace = vi.hoisted(() => ({
     authNotice: null,
     tasks: [],
   },
+  workspaceRoot: { value: "C:\\\\Files\\\\workspace" },
+  isAuthorized: { value: true },
   githubBinding: { value: null },
   authBindingStatusText: { value: "尚未绑定 GitHub" },
   deviceFlow: { value: null },
@@ -256,5 +258,52 @@ describe("RepositoriesSection", () => {
     expect(screen.queryByText("sena-nana/new-repo")).not.toBeInTheDocument();
     expect(workspace.cloneRepo).not.toHaveBeenCalled();
     expect(workspace.refreshRepos).not.toHaveBeenCalled();
+  });
+
+  it("创建 GitHub 仓库时传递模板仓库字段并自动克隆", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(createGitHubRepo).mockResolvedValue({
+      id: 2,
+      name: "from-template",
+      fullName: "sena-nana/from-template",
+      ownerLogin: "sena-nana",
+      private: true,
+      disabled: false,
+      archived: false,
+      description: "template repo",
+      defaultBranch: "main",
+      createdAt: "2026-06-20T00:00:00Z",
+      updatedAt: "2026-06-20T00:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/from-template.git",
+      htmlUrl: "https://github.com/sena-nana/from-template",
+    });
+    workspace.cloneRepo.mockResolvedValue(repoSummary("from-template"));
+
+    render(RepositoriesSection);
+
+    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
+    await screen.findByRole("option", { name: "sena-nana · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "from-template");
+    await fireEvent.update(within(dialog).getByLabelText("描述"), "template repo");
+    await fireEvent.click(within(dialog).getByLabelText("Private"));
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/template");
+    await fireEvent.click(within(dialog).getByLabelText("包含所有分支"));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
+        owner: "sena-nana",
+        name: "from-template",
+        description: "template repo",
+        private: true,
+        autoInit: false,
+        templateFullName: "sena-nana/template",
+        includeAllBranches: true,
+      }));
+      expect(workspace.cloneRepo).toHaveBeenCalledWith("https://github.com/sena-nana/from-template.git", "from-template");
+      expect(workspace.refreshRepos).toHaveBeenCalled();
+    });
   });
 });

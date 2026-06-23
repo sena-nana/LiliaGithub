@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
+import { createComponentEpoch } from "../src/composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../src/composables/useLatestAsyncLoader";
 
 function deferred() {
@@ -80,6 +82,66 @@ describe("createLatestAsyncLoader", () => {
       throw new Error("boom");
     })).rejects.toThrow("boom");
 
+    expect(loader.isPending()).toBe(false);
+  });
+
+  it("绑定 componentEpoch 后组件失活会让当前任务不可更新", async () => {
+    const componentEpoch = createComponentEpoch();
+    const loader = createLatestAsyncLoader({ componentEpoch });
+    const first = deferred();
+    let currentAfterDispose = true;
+
+    const running = loader.run("repo", async (runId) => {
+      await first.promise;
+      currentAfterDispose = loader.isCurrent(runId);
+    });
+
+    expect(loader.isPending("repo")).toBe(true);
+    componentEpoch.dispose();
+    first.resolve();
+    await running;
+
+    expect(currentAfterDispose).toBe(false);
+    expect(loader.isPending()).toBe(false);
+  });
+
+  it("会话上下文失效后当前任务不可更新", async () => {
+    resetSessionContextForTests();
+    const loader = createLatestAsyncLoader();
+    const first = deferred();
+    let currentAfterInvalidation = true;
+
+    const running = loader.run("repo", async (runId) => {
+      await first.promise;
+      currentAfterInvalidation = loader.isCurrent(runId);
+    });
+
+    expect(loader.isPending("repo")).toBe(true);
+    invalidateSessionContextSnapshot();
+    first.resolve();
+    await running;
+
+    expect(currentAfterInvalidation).toBe(false);
+    expect(loader.isPending()).toBe(false);
+  });
+
+  it("关闭会话上下文跟踪后当前任务不受会话失效影响", async () => {
+    resetSessionContextForTests();
+    const loader = createLatestAsyncLoader({ trackSessionContext: false });
+    const first = deferred();
+    let currentAfterInvalidation = false;
+
+    const running = loader.run("repo", async (runId) => {
+      await first.promise;
+      currentAfterInvalidation = loader.isCurrent(runId);
+    });
+
+    expect(loader.isPending("repo")).toBe(true);
+    invalidateSessionContextSnapshot();
+    first.resolve();
+    await running;
+
+    expect(currentAfterInvalidation).toBe(true);
     expect(loader.isPending()).toBe(false);
   });
 });

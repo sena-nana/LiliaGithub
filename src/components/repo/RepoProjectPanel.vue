@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { AnsiUp } from "ansi_up";
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch, type Component } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch, type Component } from "vue";
 import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 import {
   AlertCircle,
@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   LoaderCircle,
   Monitor,
+  Package,
   Pencil,
   Play,
   Plus,
@@ -42,6 +43,8 @@ import {
   type PullRequestPanelFilters,
   type PullRequestState,
 } from "./pullRequestPanelTypes";
+import { useComponentEpoch } from "../../composables/useComponentEpoch";
+import { invalidateSessionContextSnapshot } from "../../composables/sessionContext";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
@@ -49,6 +52,9 @@ import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
   createGitHubPullRequest,
+  createGitHubRelease,
+  deleteGitHubRelease,
+  deleteGitHubReleaseAsset,
   getGitHubIssueDiscussion,
   getRepoFilePreview,
   getGitHubIssueFilterMetadata,
@@ -56,15 +62,19 @@ import {
   getGitHubRepoManagement,
   listRepoFiles,
   listGitHubIssues,
+  listGitHubReleases,
   listGitHubPullRequestChecks,
   listGitHubPullRequests,
   listGitHubWorkflowRuns,
   listGitHubIssueAssignees,
   listGitHubIssueLabels,
   mergeGitHubPullRequest,
+  pickFiles,
   updateGitHubIssue,
   updateGitHubPullRequest,
+  updateGitHubRelease,
   updateGitHubRepoSettings,
+  uploadGitHubReleaseAsset,
   deleteGitHubRepo,
   openUrl,
   isGitHubBindingExpiredError,
@@ -79,7 +89,11 @@ import type {
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
   GitHubPullRequestListOptions,
+  GitHubCreateReleaseRequest,
+  GitHubRelease,
+  GitHubReleaseAsset,
   GitHubRepoManagement,
+  GitHubUpdateReleaseRequest,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
   ProjectLaunchConfig,
@@ -98,6 +112,7 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { repoRoute, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
+import { createCachedAsyncComponent } from "../../utils/asyncComponent";
 import {
   blankIssueTemplate,
   blankPullRequestTemplate,
@@ -124,15 +139,16 @@ type ProjectSectionConfig = {
   icon: Component;
 };
 type ProjectSidebarMode = "repo" | "files" | Exclude<ProjectTab, "readme">;
+type ProjectSidebarButtonMode = "repo" | Exclude<ProjectTab, "readme">;
 type ProjectSidebarButtonConfig = {
-  key: ProjectSidebarMode;
+  key: ProjectSidebarButtonMode;
   label: string;
   icon: Component;
   disabled?: boolean;
 };
 type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
 type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
-type GitHubAccessSection = "Issues" | "Pull Requests" | "Projects" | "Actions" | "Settings";
+type GitHubAccessSection = "Issues" | "Pull Requests" | "Projects" | "Actions" | "Release" | "Settings";
 type GitHubAccessUnavailable = {
   title: string;
   reason: string;
@@ -224,10 +240,16 @@ const blankIssuePanelFilters = (): IssuePanelFilters => ({
 
 const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const README_PATH = "README.md";
-const RepoLanguageStatsCard = defineAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
-const RepoActionsPanel = defineAsyncComponent(() => import("./RepoActionsPanel.vue"));
-const RepoProjectsBoard = defineAsyncComponent(() => import("./RepoProjectsBoard.vue"));
-const RepoPullRequestsPanel = defineAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
+const repoLanguageStatsCardModule = createCachedAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
+const repoActionsPanelModule = createCachedAsyncComponent(() => import("./RepoActionsPanel.vue"));
+const repoProjectsBoardModule = createCachedAsyncComponent(() => import("./RepoProjectsBoard.vue"));
+const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
+const repoReleasesPanelModule = createCachedAsyncComponent(() => import("./RepoReleasesPanel.vue"));
+const RepoLanguageStatsCard = repoLanguageStatsCardModule.component;
+const RepoActionsPanel = repoActionsPanelModule.component;
+const RepoProjectsBoard = repoProjectsBoardModule.component;
+const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
+const RepoReleasesPanel = repoReleasesPanelModule.component;
 
 const props = defineProps<{
   repoId: string;
@@ -247,6 +269,7 @@ const props = defineProps<{
   launchRunning: boolean;
   activeGitTab: RepoRouteTab;
   changes: readonly RepoChange[];
+  discardingChangePaths: readonly string[];
   previewChange: RepoChange | null;
   commitMessage: string;
   hasConflicts: boolean;
@@ -378,13 +401,17 @@ const issueDiscussionError = ref<string | null>(null);
 const issuesLoadedKey = ref<string | null>(null);
 const workflowRuns = ref<GitHubWorkflowRun[]>([]);
 const actionsLoaded = ref(false);
+const releases = ref<GitHubRelease[]>([]);
+const releasesLoading = ref(false);
+const releasesLoaded = ref(false);
+const releasesError = ref<string | null>(null);
+const focusedReleaseTag = ref<string | null>(null);
 const aboutEditing = ref(false);
 const aboutTopicDraft = ref("");
 const aboutTopicList = ref<HTMLElement | null>(null);
 const aboutTopicMeasureList = ref<HTMLElement | null>(null);
 const aboutTopicsExpanded = ref(false);
 const collapsedAboutTopicCount = ref(0);
-const settingsTopicDraft = ref("");
 const issueState = ref<IssueState>(issueStateFromRoute());
 const issueTitle = ref("");
 const issueBody = ref("");
@@ -416,20 +443,27 @@ const focusedRunId = ref<number | null>(null);
 const focusedJobId = ref<number | null>(null);
 let suppressIssueStateReload = false;
 let suppressPullStateReload = false;
-const readmeLoader = createLatestAsyncLoader();
-const settingsLoader = createLatestAsyncLoader();
-const issuesLoader = createLatestAsyncLoader();
-const boardLoader = createLatestAsyncLoader();
-const issueDiscussionLoader = createLatestAsyncLoader();
-const pullsLoader = createLatestAsyncLoader();
-const pullRequestDiscussionLoader = createLatestAsyncLoader();
-const pullChecksLoader = createLatestAsyncLoader();
-const actionsLoader = createLatestAsyncLoader();
+const componentEpoch = useComponentEpoch();
+const readmeLoader = createLatestAsyncLoader({ componentEpoch });
+const settingsLoader = createLatestAsyncLoader({ componentEpoch });
+const issuesLoader = createLatestAsyncLoader({ componentEpoch });
+const boardLoader = createLatestAsyncLoader({ componentEpoch });
+const issueDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
+const pullsLoader = createLatestAsyncLoader({ componentEpoch });
+const pullRequestDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
+const pullChecksLoader = createLatestAsyncLoader({ componentEpoch });
+const actionsLoader = createLatestAsyncLoader({ componentEpoch });
+const releasesLoader = createLatestAsyncLoader({ componentEpoch });
 const settingsSaveTracker = createPendingTaskTracker();
 const issueCreateTracker = createPendingTaskTracker();
 const issueUpdateTracker = createPendingTaskTracker();
 const pullCreateTracker = createPendingTaskTracker();
 const pullUpdateTracker = createPendingTaskTracker();
+const releaseCreateTracker = createPendingTaskTracker();
+const releaseUpdateTracker = createPendingTaskTracker();
+const releaseDeleteTracker = createPendingTaskTracker();
+const releaseAssetUploadTracker = createPendingTaskTracker();
+const releaseAssetDeleteTracker = createPendingTaskTracker();
 const remoteDeleteTracker = createPendingTaskTracker();
 const localDeleteTracker = createPendingTaskTracker();
 const savingSettings = settingsSaveTracker.running;
@@ -437,6 +471,13 @@ const creatingIssue = issueCreateTracker.running;
 const updatingIssue = issueUpdateTracker.running;
 const creatingPullRequest = pullCreateTracker.running;
 const updatingPullRequest = pullUpdateTracker.running;
+const releaseMutating = computed(() =>
+  releaseCreateTracker.running.value ||
+  releaseUpdateTracker.running.value ||
+  releaseDeleteTracker.running.value ||
+  releaseAssetUploadTracker.running.value ||
+  releaseAssetDeleteTracker.running.value
+);
 const deletingRepo = remoteDeleteTracker.running;
 const deletingLocalRepo = localDeleteTracker.running;
 let repoMutationGeneration = 0;
@@ -515,6 +556,9 @@ const projectsAccessUnavailable = computed(() =>
 const actionsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Actions", actionsError.value, resolvedRepoContext.value.capabilities.actions)
 );
+const releasesAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Release", releasesError.value, resolvedRepoContext.value.capabilities.issues)
+);
 const settingsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Settings", githubError.value, resolvedRepoContext.value.capabilities.settings)
 );
@@ -576,16 +620,11 @@ const projectSections: readonly ProjectSectionConfig[] = [
   { key: "issues", label: "Issues", icon: CircleDot },
   { key: "pulls", label: "Pull Requests", icon: GitPullRequest },
   { key: "actions", label: "Actions", icon: Play },
+  { key: "release", label: "Release", icon: Package },
   { key: "settings", label: "Settings", icon: Settings2 },
 ];
 const projectSidebarButtons = computed<ProjectSidebarButtonConfig[]>(() => [
   { key: "repo", label: "Repo", icon: Monitor },
-  {
-    key: "files",
-    label: "文件树",
-    icon: FolderTree,
-    disabled: !canBrowseFiles.value,
-  },
   ...projectSections.map((section) => ({
     key: section.key,
     label: section.label,
@@ -616,6 +655,7 @@ const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
   if (readmeError.value) errors.push({ key: "readme", title: "README 读取失败", message: readmeError.value });
   if (githubError.value) errors.push({ key: "github", title: "GitHub 请求失败", message: githubError.value });
   if (actionsError.value) errors.push({ key: "actions", title: "Actions 读取失败", message: actionsError.value });
+  if (releasesError.value) errors.push({ key: "releases", title: "Releases 读取失败", message: releasesError.value });
   return errors;
 });
 const hasProjectSidebarErrors = computed(() => projectSidebarErrors.value.length > 0);
@@ -627,6 +667,7 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "issues" ||
   activeSection.value === "pulls" ||
   activeSection.value === "actions" ||
+  activeSection.value === "release" ||
   activeSection.value === "settings",
 );
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
@@ -742,6 +783,7 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
     activeSection.value === "issues" ||
     activeSection.value === "pulls" ||
     activeSection.value === "actions" ||
+    activeSection.value === "release" ||
     activeSection.value === "settings"
   ) {
     return activeSection.value;
@@ -750,6 +792,7 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
 });
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
+const routedReleaseTag = computed(() => routeStringValue(route.query.releaseTag));
 const routedProjectIssue = computed(() => normalizePositiveNumber(route.query.issue));
 const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
 const routedIssueFilterState = computed(() => JSON.stringify({
@@ -845,7 +888,7 @@ watch([routedIssueFilterState, routedPullRequestFilterState], () => {
 });
 
 watch(
-  [routedProjectTab, routedProjectIssue, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId, () => props.projectJobId],
+    [routedProjectTab, routedReleaseTag, routedProjectIssue, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId, () => props.projectJobId],
   () => {
     void applyProjectRouteState();
   },
@@ -869,6 +912,7 @@ function normalizeProjectTab(value: unknown): ProjectTab | null {
     value === "issues" ||
     value === "pulls" ||
     value === "actions" ||
+    value === "release" ||
     value === "settings"
   ) return value;
   return null;
@@ -948,7 +992,12 @@ function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
 }
 
 function isGitHubProjectSection(section: ProjectContentMode) {
-  return section === "board" || section === "issues" || section === "pulls" || section === "actions" || section === "settings";
+  return section === "board" ||
+    section === "issues" ||
+    section === "pulls" ||
+    section === "actions" ||
+    section === "release" ||
+    section === "settings";
 }
 
 function hasIssue(issueNumber: number) {
@@ -1057,6 +1106,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   delete query.pr;
   delete query.run;
   delete query.job;
+  delete query.releaseTag;
   clearRouteFilters(query, issueRouteKeys);
   clearRouteFilters(query, pullRequestRouteKeys);
 
@@ -1082,6 +1132,8 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   } else if (tab === "actions") {
     if (focusedRunId.value) query.run = String(focusedRunId.value);
     if (focusedJobId.value) query.job = String(focusedJobId.value);
+  } else if (tab === "release") {
+    if (focusedReleaseTag.value) query.releaseTag = focusedReleaseTag.value;
   }
   return query;
 }
@@ -1158,6 +1210,17 @@ function hasRun(runId: number) {
   return workflowRuns.value.some((run) => run.id === runId);
 }
 
+function hasReleaseTag(tag: string) {
+  return releases.value.some((release) => release.tagName === tag);
+}
+
+function releaseTagSelector(tag: string) {
+  const escaped = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+    ? CSS.escape(tag)
+    : tag.replace(/["\\]/g, "\\$&");
+  return `.release-card[data-release-tag="${escaped}"]`;
+}
+
 function clearProjectTargets() {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
@@ -1167,6 +1230,7 @@ function clearProjectTargets() {
   pullRequestDiscussionError.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
+  focusedReleaseTag.value = null;
   cancelEditIssue();
   closeIssueCreateView(false);
   closePullRequestCreateView(false);
@@ -1273,6 +1337,7 @@ async function focusIssue(issueNumber: number | null | undefined) {
   pullRequestDiscussion.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
+  focusedReleaseTag.value = null;
   if (!issueNumber) {
     issueDiscussion.value = null;
     issueDiscussionError.value = null;
@@ -1303,6 +1368,7 @@ async function focusRun(runId: number | null | undefined) {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
   focusedJobId.value = props.projectJobId ?? null;
+  focusedReleaseTag.value = null;
   if (!runId) {
     clearProjectTargets();
     await loadActions();
@@ -1328,6 +1394,7 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
   issueDiscussion.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
+  focusedReleaseTag.value = null;
   if (!pullNumber) {
     await loadPullRequests();
     focusedPullRequestNumber.value = null;
@@ -1361,6 +1428,21 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
   row?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
 }
 
+async function focusReleaseTag(tag: string | null | undefined, updateRoute = false) {
+  focusedIssueNumber.value = null;
+  focusedPullRequestNumber.value = null;
+  focusedRunId.value = null;
+  focusedJobId.value = null;
+  await loadReleases();
+  const normalized = tag?.trim() || null;
+  focusedReleaseTag.value = normalized && hasReleaseTag(normalized) ? normalized : null;
+  if (updateRoute && activeSection.value === "release") void pushProjectTabRoute("release");
+  if (!focusedReleaseTag.value) return;
+  await nextTick();
+  const row = projectMainRef.value?.querySelector<HTMLElement>(releaseTagSelector(focusedReleaseTag.value));
+  row?.scrollIntoView?.({ block: "start", inline: "nearest", behavior: "smooth" });
+}
+
 function isIssueRowFocused(issueNumber: number) {
   return focusedIssueNumber.value === issueNumber && activeSection.value === "issues";
 }
@@ -1389,6 +1471,10 @@ async function applyProjectRouteState() {
   }
   if (targetTab === "actions") {
     await focusRun(props.projectRunId);
+    return;
+  }
+  if (targetTab === "release") {
+    await focusReleaseTag(routedReleaseTag.value);
     return;
   }
   await ensureSectionData(targetTab);
@@ -1722,6 +1808,38 @@ async function loadActions(force = false) {
   }, { reusePending: !force });
 }
 
+async function loadReleases(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!resolvedRepoContext.value.capabilities.issues.available) {
+    clearBlockedGitHubState();
+    releasesLoading.value = false;
+    return;
+  }
+  if (!repoFullName || remoteDeleted.value) {
+    releases.value = [];
+    releasesError.value = null;
+    return;
+  }
+  if (!force && releasesLoaded.value) return;
+  await releasesLoader.run(null, async (runId) => {
+    releasesLoading.value = true;
+    releasesError.value = null;
+    try {
+      const nextReleases = force
+        ? await listGitHubReleases(repoFullName, { forceRefresh: true })
+        : await listGitHubReleases(repoFullName);
+      if (!releasesLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      releases.value = nextReleases;
+      releasesLoaded.value = true;
+      if (focusedReleaseTag.value && !hasReleaseTag(focusedReleaseTag.value)) focusedReleaseTag.value = null;
+    } catch (err) {
+      releasesError.value = String(err);
+    } finally {
+      if (releasesLoader.isCurrent(runId)) releasesLoading.value = false;
+    }
+  }, { reusePending: !force });
+}
+
 async function ensureSectionData(section: ProjectContentMode) {
   if (section === "readme") {
     await Promise.all([
@@ -1753,6 +1871,10 @@ async function ensureSectionData(section: ProjectContentMode) {
   }
   if (section === "actions") {
     await loadActions();
+    return;
+  }
+  if (section === "release") {
+    await loadReleases();
     return;
   }
   if (section === "settings") {
@@ -1799,6 +1921,10 @@ async function refreshLoadedSectionData() {
     await loadActions(true);
     return;
   }
+  if (activeSection.value === "release" && releasesLoaded.value) {
+    await loadReleases(true);
+    return;
+  }
   if (activeSection.value === "settings" && settingsLoaded.value) {
     await loadSettings(true);
   }
@@ -1835,6 +1961,7 @@ function clearBlockedGitHubState() {
   resetGitHubSectionState();
   githubLoading.value = false;
   actionsLoading.value = false;
+  releasesLoading.value = false;
 }
 
 function resetProjectSectionState() {
@@ -1857,6 +1984,7 @@ function resetGitHubSectionState() {
   pullRequestDiscussionLoader.invalidate();
   pullChecksLoader.invalidate();
   actionsLoader.invalidate();
+  releasesLoader.invalidate();
   invalidateGitHubMutations();
   settings.value = null;
   settingsLoaded.value = false;
@@ -1898,11 +2026,15 @@ function resetGitHubSectionState() {
   pullRequestMergeMethod.value = "merge";
   workflowRuns.value = [];
   actionsLoaded.value = false;
+  releases.value = [];
+  releasesLoading.value = false;
+  releasesLoaded.value = false;
+  releasesError.value = null;
+  focusedReleaseTag.value = null;
   githubError.value = null;
   actionsError.value = null;
   aboutEditing.value = false;
   aboutTopicDraft.value = "";
-  settingsTopicDraft.value = "";
   cancelEditIssue();
   closeIssueCreateView(false);
   remoteIssueLabels.value = [];
@@ -1921,6 +2053,11 @@ function invalidateGitHubMutations() {
   issueUpdateTracker.reset();
   pullCreateTracker.reset();
   pullUpdateTracker.reset();
+  releaseCreateTracker.reset();
+  releaseUpdateTracker.reset();
+  releaseDeleteTracker.reset();
+  releaseAssetUploadTracker.reset();
+  releaseAssetDeleteTracker.reset();
   remoteDeleteTracker.reset();
 }
 
@@ -1972,7 +2109,6 @@ async function saveSettings(closeAboutOnSuccess = false) {
   settings.value = next;
   applySettingsForm(next);
   aboutTopicDraft.value = "";
-  settingsTopicDraft.value = "";
   if (closeAboutOnSuccess) aboutEditing.value = false;
   clearHomeGitHubOverviewSnapshot();
   return true;
@@ -1999,6 +2135,7 @@ function openDeleteDialog(target: DeleteTarget) {
 
 function closeDeleteDialog() {
   if (deletingAnything.value) return;
+  if (deleteDialogTarget.value) invalidateSessionContextSnapshot();
   deleteDialogTarget.value = null;
   deleteConfirmInput.value = "";
   deleteError.value = null;
@@ -2116,6 +2253,7 @@ async function openIssueCreateView() {
 }
 
 function closeIssueCreateView(resetDraft = true) {
+  if (issueCreateView.value) invalidateSessionContextSnapshot();
   issueCreateView.value = false;
   if (!resetDraft) return;
   issueTitle.value = "";
@@ -2233,6 +2371,7 @@ async function openPullRequestCreateView() {
 }
 
 function closePullRequestCreateView(resetDraft = true) {
+  if (pullCreateView.value) invalidateSessionContextSnapshot();
   pullCreateView.value = false;
   if (!resetDraft) return;
   pullRequestTitle.value = "";
@@ -2452,6 +2591,7 @@ async function openIssueFromBoard(issue: GitHubIssue) {
 }
 
 function closeIssueDetail() {
+  if (focusedIssueNumber.value || issueDiscussion.value) invalidateSessionContextSnapshot();
   focusedIssueNumber.value = null;
   issueDiscussion.value = null;
   issueDiscussionError.value = null;
@@ -2478,6 +2618,7 @@ async function openPullRequestFromBoard(pull: GitHubPullRequest) {
 }
 
 function closePullRequestDetail() {
+  if (focusedPullRequestNumber.value || pullRequestDiscussion.value) invalidateSessionContextSnapshot();
   focusedPullRequestNumber.value = null;
   pullRequestDiscussion.value = null;
   pullRequestDiscussionError.value = null;
@@ -2531,18 +2672,9 @@ async function activateProjectTab(tab: ProjectTab) {
   await ensureSectionData(tab);
 }
 
-async function activateProjectSidebarButton(tab: ProjectSidebarMode) {
+async function activateProjectSidebarButton(tab: ProjectSidebarButtonMode) {
   if (tab === "repo") {
     await activateProjectTab("readme");
-    return;
-  }
-  if (tab === "files") {
-    if (!canBrowseFiles.value) return;
-    activeSection.value = "files";
-    if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
-      emit("hideTerminal");
-    }
-    await router.push(repoRoute(props.repoId, "files"));
     return;
   }
   await activateProjectTab(tab);
@@ -2557,6 +2689,86 @@ function focusActionRun(runId: number | null) {
 function focusActionJob(jobId: number | null) {
   focusedJobId.value = jobId;
   if (activeSection.value === "actions") void pushProjectTabRoute("actions");
+}
+
+function focusReleaseFromPanel(tagName: string | null) {
+  void focusReleaseTag(tagName, true);
+}
+
+function upsertReleaseInView(release: GitHubRelease) {
+  releases.value = [
+    release,
+    ...releases.value.filter((item) => item.id !== release.id),
+  ].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function updateReleaseAssetsInView(releaseId: number, update: (assets: GitHubReleaseAsset[]) => GitHubReleaseAsset[]) {
+  releases.value = releases.value.map((release) =>
+    release.id === releaseId ? { ...release, assets: update(release.assets) } : release
+  );
+}
+
+async function createRelease(request: GitHubCreateReleaseRequest) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || releaseCreateTracker.running.value) return;
+  const result = await runGitHubMutation(repoFullName, releaseCreateTracker, () =>
+    createGitHubRelease(repoFullName, request)
+  );
+  if (!result.ok) return;
+  upsertReleaseInView(result.value);
+  releasesLoaded.value = true;
+  await focusReleaseTag(result.value.tagName, true);
+  clearHomeGitHubOverviewSnapshot();
+}
+
+async function updateRelease(releaseId: number, request: GitHubUpdateReleaseRequest) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || releaseUpdateTracker.running.value) return;
+  const result = await runGitHubMutation(repoFullName, releaseUpdateTracker, () =>
+    updateGitHubRelease(repoFullName, releaseId, request)
+  );
+  if (!result.ok) return;
+  upsertReleaseInView(result.value);
+  await focusReleaseTag(result.value.tagName, true);
+  clearHomeGitHubOverviewSnapshot();
+}
+
+async function removeRelease(release: GitHubRelease) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || releaseDeleteTracker.running.value) return;
+  const result = await runGitHubMutation(repoFullName, releaseDeleteTracker, () =>
+    deleteGitHubRelease(repoFullName, release.id)
+  );
+  if (!result.ok) return;
+  releases.value = releases.value.filter((item) => item.id !== release.id);
+  if (focusedReleaseTag.value === release.tagName) focusedReleaseTag.value = null;
+  clearHomeGitHubOverviewSnapshot();
+}
+
+async function uploadReleaseAssets(release: GitHubRelease) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || releaseAssetUploadTracker.running.value) return;
+  const paths = await pickFiles();
+  for (const filePath of paths) {
+    const result = await runGitHubMutation(repoFullName, releaseAssetUploadTracker, () =>
+      uploadGitHubReleaseAsset(repoFullName, release.id, filePath)
+    );
+    if (!result.ok) return;
+    updateReleaseAssetsInView(release.id, (assets) => [
+      result.value,
+      ...assets.filter((asset) => asset.id !== result.value.id),
+    ]);
+  }
+}
+
+async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAsset) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || releaseAssetDeleteTracker.running.value) return;
+  const result = await runGitHubMutation(repoFullName, releaseAssetDeleteTracker, () =>
+    deleteGitHubReleaseAsset(repoFullName, release.id, asset.id)
+  );
+  if (!result.ok) return;
+  updateReleaseAssetsInView(release.id, (assets) => assets.filter((candidate) => candidate.id !== asset.id));
 }
 
 </script>
@@ -2587,6 +2799,7 @@ function focusActionJob(jobId: number | null) {
           v-else-if="canShowChanges && activeSection === 'changes'"
           :commit-message="commitMessage"
           :changes="changes"
+          :discarding-change-paths="discardingChangePaths"
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
           :action-running="actionRunning"
@@ -2956,6 +3169,32 @@ function focusActionJob(jobId: number | null) {
           />
         </section>
 
+        <section v-else-if="activeSection === 'release'" class="project-section project-github-section">
+          <RepoGitHubUnavailableNotice
+            v-if="releasesAccessUnavailable"
+            :title="releasesAccessUnavailable.title"
+            :reason="releasesAccessUnavailable.reason"
+            :loading="githubAuthLoading"
+            @rebind="rebindGitHub"
+          />
+          <RepoReleasesPanel
+            v-else-if="repoFullName"
+            :repo-full-name="repoFullName"
+            :releases="releases"
+            :loading="releasesLoading"
+            :mutating="releaseMutating"
+            :focused-tag="focusedReleaseTag"
+            @refresh="loadReleases(true)"
+            @focus-tag="focusReleaseFromPanel"
+            @create="createRelease"
+            @update="updateRelease"
+            @delete="removeRelease"
+            @upload-assets="uploadReleaseAssets"
+            @delete-asset="removeReleaseAsset"
+            @open-url="openUrl"
+          />
+        </section>
+
         <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" @submit.prevent="saveSettings()">
           <div class="project-section__head project-section__head--compact">
             <div class="project-section__title">
@@ -2986,25 +3225,6 @@ function focusActionJob(jobId: number | null) {
             @rebind="rebindGitHub"
           />
           <template v-if="settings">
-            <section class="project-settings-group" aria-labelledby="project-settings-general-title">
-              <div class="project-settings-group__head">
-                <h4 id="project-settings-general-title">基础设置</h4>
-              </div>
-              <div class="project-settings-fields">
-                <label class="project-settings-field">
-                  <span>描述</span>
-                  <input v-model="settingsForm.description" type="text" />
-                </label>
-                <label class="project-settings-field">
-                  <span>Homepage</span>
-                  <input v-model="settingsForm.homepage" type="url" />
-                </label>
-                <label class="project-settings-field project-settings-field--topics">
-                  <span>Topics</span>
-                  <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="settingsTopicDraft" />
-                </label>
-              </div>
-            </section>
             <section class="project-settings-group" aria-labelledby="project-settings-features-title">
               <div class="project-settings-group__head">
                 <h4 id="project-settings-features-title">功能开关</h4>
@@ -3163,7 +3383,12 @@ function focusActionJob(jobId: number | null) {
         class="project-sidebar"
         :class="{ 'project-sidebar--fill': projectSidebarMode === 'files' && !hasProjectSidebarErrors }"
       >
-        <div class="project-sidebar-switcher" role="tablist" aria-label="右侧面板">
+        <div
+          v-if="projectSidebarMode !== 'files'"
+          class="project-sidebar-switcher"
+          role="tablist"
+          aria-label="右侧面板"
+        >
           <button
             v-for="tab in projectSidebarButtons"
             :key="tab.key"
@@ -3486,6 +3711,42 @@ function focusActionJob(jobId: number | null) {
         </section>
 
         <section
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'release'"
+          class="project-sidebar-summary-card project-release-tags-card"
+          aria-label="Release tags"
+        >
+          <div class="project-sidebar-summary-card__head">
+            <Package :size="14" aria-hidden="true" />
+            <strong>Release tags</strong>
+          </div>
+          <p v-if="releasesLoading" class="project-sidebar-note">正在读取 releases。</p>
+          <p v-else-if="!releases.length" class="project-sidebar-note">暂无 release tag。</p>
+          <nav v-else class="project-release-tag-list" aria-label="Release tag 跳转">
+            <button
+              v-for="release in releases"
+              :key="release.id"
+              type="button"
+              class="project-release-tag"
+              :class="{ 'is-active': focusedReleaseTag === release.tagName }"
+              @click="focusReleaseTag(release.tagName, true)"
+            >
+              <span>{{ release.tagName }}</span>
+              <em v-if="release.draft">Draft</em>
+              <em v-else-if="release.prerelease">Pre</em>
+            </button>
+          </nav>
+          <button
+            type="button"
+            class="ghost project-sidebar-summary-card__action"
+            :disabled="releasesLoading || !!releasesAccessUnavailable"
+            @click="loadReleases(true)"
+          >
+            <RotateCw :size="14" aria-hidden="true" />
+            刷新 Release
+          </button>
+        </section>
+
+        <section
           v-if="!hasProjectSidebarErrors && projectSidebarMode === 'settings'"
           class="project-sidebar-summary-card"
           aria-label="Settings 摘要"
@@ -3754,7 +4015,7 @@ function focusActionJob(jobId: number | null) {
 }
 
 .project-sidebar--fill {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   align-content: stretch;
   align-self: stretch;
   height: 100%;
@@ -4106,6 +4367,52 @@ function focusActionJob(jobId: number | null) {
   height: 28px;
   padding: 0 9px;
   font-size: 12px;
+}
+
+.project-release-tag-list {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.project-release-tag {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.project-release-tag:hover,
+.project-release-tag:focus-visible,
+.project-release-tag.is-active {
+  border-color: var(--border);
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.project-release-tag span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.project-release-tag em {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .project-section label {

@@ -1,16 +1,31 @@
+import type { ComponentEpoch } from "./useComponentEpoch";
+import { getSessionContextVersion, isSessionContextVersionCurrent } from "./sessionContext";
+
 export type AsyncLoaderKey = string | number | null | undefined;
 
 export interface LatestAsyncLoaderRunOptions {
   reusePending?: boolean;
 }
 
-export function createLatestAsyncLoader() {
+export interface LatestAsyncLoaderOptions {
+  componentEpoch?: Pick<ComponentEpoch, "assertAlive">;
+  trackSessionContext?: boolean;
+}
+
+export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) {
   let currentRunId = 0;
   let pendingKey: AsyncLoaderKey = null;
   let pending: Promise<void> | null = null;
+  let currentRunSessionContextVersion = getSessionContextVersion();
+
+  function isLatestRun(runId: number) {
+    return runId === currentRunId;
+  }
 
   function isCurrent(runId: number) {
-    return runId === currentRunId;
+    return isLatestRun(runId) &&
+      (options.componentEpoch?.assertAlive() ?? true) &&
+      (options.trackSessionContext === false || isSessionContextVersionCurrent(currentRunSessionContextVersion));
   }
 
   function isPending(key?: AsyncLoaderKey) {
@@ -35,6 +50,7 @@ export function createLatestAsyncLoader() {
       return;
     }
     const runId = ++currentRunId;
+    currentRunSessionContextVersion = getSessionContextVersion();
     pendingKey = key;
     let taskResult: Promise<void>;
     try {
@@ -43,7 +59,7 @@ export function createLatestAsyncLoader() {
       taskResult = Promise.reject(err);
     }
     const next = taskResult.finally(() => {
-      if (isCurrent(runId)) {
+      if (isLatestRun(runId)) {
         pending = null;
         pendingKey = null;
       }
@@ -56,6 +72,7 @@ export function createLatestAsyncLoader() {
     currentRunId += 1;
     pending = null;
     pendingKey = null;
+    currentRunSessionContextVersion = getSessionContextVersion();
   }
 
   return {

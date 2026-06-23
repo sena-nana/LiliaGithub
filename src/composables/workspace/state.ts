@@ -222,6 +222,17 @@ export function setRepoDetail(detail: RepoDetail) {
   upsertRepo(detail.summary);
 }
 
+export function setWorkspaceTasks(tasks: WorkspaceTask[]) {
+  const latestById = new Map<string, WorkspaceTask>();
+  for (const task of tasks) {
+    const current = latestById.get(task.id);
+    if (!current || task.updatedAt >= current.updatedAt) {
+      latestById.set(task.id, task);
+    }
+  }
+  state.tasks = [...latestById.values()].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
 export function repoById(repoId: string) {
   return state.repos.find((repo) => repo.id === repoId) ?? null;
 }

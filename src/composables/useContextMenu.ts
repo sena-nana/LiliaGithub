@@ -88,6 +88,31 @@ export function closeContextMenu() {
   state.open = false;
 }
 
+function onContextMenu(event: MouseEvent) {
+  event.preventDefault();
+  const items = collectItemsFor(event);
+  if (items.length) openMenu(event.clientX, event.clientY, items);
+  else closeContextMenu();
+}
+
+function onPointerDown(event: PointerEvent) {
+  if (!state.open) return;
+  const target = event.target as Element | null;
+  if (target?.closest?.(".ctx-menu")) return;
+  closeContextMenu();
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && state.open) {
+    closeContextMenu();
+    event.stopPropagation();
+  }
+}
+
+function onScroll() {
+  if (state.open) closeContextMenu();
+}
+
 export function finalizeClosedContextMenu() {
   if (state.open) return;
   state.items = [];
@@ -117,43 +142,29 @@ export async function selectContextMenuItem(item: ContextMenuItem) {
 }
 
 export function installContextMenu() {
-  if (installed || typeof window === "undefined") return;
+  if (installed || typeof window === "undefined") return uninstallContextMenu;
   installed = true;
 
-  window.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    const items = collectItemsFor(event);
-    if (items.length) openMenu(event.clientX, event.clientY, items);
-    else closeContextMenu();
-  });
-
-  window.addEventListener(
-    "pointerdown",
-    (event) => {
-      if (!state.open) return;
-      const target = event.target as Element | null;
-      if (target?.closest?.(".ctx-menu")) return;
-      closeContextMenu();
-    },
-    true,
-  );
-
-  window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && state.open) {
-      closeContextMenu();
-      event.stopPropagation();
-    }
-  });
-
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (state.open) closeContextMenu();
-    },
-    true,
-  );
+  window.addEventListener("contextmenu", onContextMenu);
+  window.addEventListener("pointerdown", onPointerDown, true);
+  window.addEventListener("keydown", onKeydown);
+  window.addEventListener("scroll", onScroll, true);
   window.addEventListener("resize", closeContextMenu);
   window.addEventListener("blur", closeContextMenu);
+  return uninstallContextMenu;
+}
+
+export function uninstallContextMenu() {
+  if (!installed || typeof window === "undefined") return;
+  installed = false;
+  window.removeEventListener("contextmenu", onContextMenu);
+  window.removeEventListener("pointerdown", onPointerDown, true);
+  window.removeEventListener("keydown", onKeydown);
+  window.removeEventListener("scroll", onScroll, true);
+  window.removeEventListener("resize", closeContextMenu);
+  window.removeEventListener("blur", closeContextMenu);
+  closeContextMenu();
+  finalizeClosedContextMenu();
 }
 
 export function useContextMenu() {

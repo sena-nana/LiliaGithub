@@ -8,6 +8,7 @@ import {
   state,
   replaceRepos,
   setRepoDetail,
+  setWorkspaceTasks,
   setRepoActionError,
   upsertRepo,
 } from "./state";
@@ -19,6 +20,7 @@ import type {
   RemoteRepoShortcut,
   RepoConflictChoice,
   RepoSummary,
+  WorkspaceCreateLocalRepoRequest,
   BulkSyncPreview,
   BulkSyncResult,
 } from "../../services/workspace";
@@ -431,7 +433,7 @@ export async function refreshWorkspaceTasks() {
   const service = await loadWorkspaceService();
   const tasks = await service.listWorkspaceTasks();
   if (generation !== workspaceTaskRefreshGeneration) return;
-  state.tasks = tasks;
+  setWorkspaceTasks(tasks);
 }
 
 export async function cancelWorkspaceTask(taskId: string) {
@@ -527,6 +529,14 @@ export async function cloneRepo(remoteUrl: string, directoryName?: string | null
   state.error = null;
   const service = await loadWorkspaceService();
   const summary = await service.cloneRepo(remoteUrl, directoryName);
+  upsertRepo(summary);
+  return summary;
+}
+
+export async function createLocalRepo(request: WorkspaceCreateLocalRepoRequest) {
+  state.error = null;
+  const service = await loadWorkspaceService();
+  const summary = await service.createLocalRepo(request);
   upsertRepo(summary);
   return summary;
 }
