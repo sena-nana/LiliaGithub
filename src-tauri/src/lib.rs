@@ -55,6 +55,7 @@ pub fn run() {
             workspace::repos::workspace_scan_repos,
             workspace::repos::workspace_discover_repos,
             workspace::repos::workspace_add_repo,
+            workspace::repos::workspace_create_local_repo,
             workspace::repos::workspace_clone_repo,
             workspace::settings::workspace_hide_repo,
             workspace::settings::workspace_create_repo_group,

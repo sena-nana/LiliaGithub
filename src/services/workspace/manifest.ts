@@ -22,6 +22,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "workspace_scan_repos",
     "workspace_discover_repos",
     "workspace_add_repo",
+    "workspace_create_local_repo",
     "workspace_clone_repo",
     "workspace_hide_repo",
     "workspace_create_repo_group",

@@ -62,6 +62,7 @@ import type {
   WorkspaceSettings,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
+  WorkspaceCreateLocalRepoRequest,
 } from "./types";
 
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
@@ -446,6 +447,10 @@ export function discoverRepos(): Promise<RepoSummary[]> {
 
 export function addRepo(repoPath: string): Promise<RepoSummary> {
   return call("workspace_add_repo", { repoPath }, () => workspaceFallback().addRepo(repoPath));
+}
+
+export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promise<RepoSummary> {
+  return call("workspace_create_local_repo", { request }, () => workspaceFallback().createLocalRepo(request));
 }
 
 export function cloneRepo(remoteUrl: string, directoryName?: string | null): Promise<RepoSummary> {

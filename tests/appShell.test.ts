@@ -241,6 +241,51 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("侧边栏分组入口可创建本地仓库并打开", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "在 未分组仓库 创建仓库" }));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "创建本地仓库" }));
+    const dialog = await view.findByRole("dialog", { name: "新建本地仓库" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "local-new");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local-new");
+      expect(sidebarRowForText(view.container, "local-new")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 3)).toBeInTheDocument();
+    });
+  });
+
+  it("侧边栏分组入口可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
+    });
+
+    await createSidebarRepoGroup(view, "前端");
+    await fireEvent.click(view.getByRole("button", { name: "在 前端 创建仓库" }));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "创建远程仓库" }));
+    const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
+    await view.findByRole("option", { name: "lilia-user · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "template-made");
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/template-made");
+      expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
+    });
+    await toggleSidebarRepoGroup(view, "前端");
+    expect(sidebarRowForText(view.container, "template-made")).toBeInTheDocument();
+  });
+
   it("删除非空分组后仓库回到未分组", async () => {
     const view = await renderAppShell("/");
 

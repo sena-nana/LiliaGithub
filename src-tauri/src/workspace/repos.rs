@@ -1104,6 +1104,89 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
     .await
 }
 
+fn normalize_local_repo_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn local_gitignore_template_content(template: &str) -> String {
+    match template.trim().to_ascii_lowercase().as_str() {
+        "node" | "nodejs" => "node_modules/\ndist/\n.env\n".to_string(),
+        "rust" => "target/\nCargo.lock\n".to_string(),
+        "tauri" => "node_modules/\ndist/\nsrc-tauri/target/\n.env\n".to_string(),
+        value => format!("# {value}\n"),
+    }
+}
+
+fn local_license_template_content(template: &str, repo_name: &str) -> String {
+    match template.trim().to_ascii_lowercase().as_str() {
+        "mit" => format!("MIT License\n\nCopyright (c) {repo_name}\n"),
+        "apache-2.0" | "apache" => "Apache License\nVersion 2.0\n".to_string(),
+        value => format!("{value}\n"),
+    }
+}
+
+#[tauri::command]
+pub async fn workspace_create_local_repo(
+    app: AppHandle,
+    request: WorkspaceCreateLocalRepoRequest,
+) -> Result<RepoSummary, String> {
+    run_blocking("创建本地仓库", move || {
+        let root = workspace_root(&app)?;
+        let name = request.name.trim().to_string();
+        validate_clone_directory_name(&name)?;
+        let target = root.join(&name);
+        if target.exists() {
+            return Err(format!("目标目录已存在：{}", target.display()));
+        }
+        if target.parent() != Some(root.as_path()) {
+            return Err("目标目录必须位于工作区内".to_string());
+        }
+
+        let task = record_workspace_task(
+            "repoStatus",
+            "high",
+            Some(name.clone()),
+            "running",
+            Some("创建本地仓库".to_string()),
+        );
+        fs::create_dir(&target).map_err(|e| format!("创建仓库目录失败：{e}"))?;
+        if request.add_readme {
+            let description = normalize_local_repo_optional_string(request.description);
+            let body = description
+                .as_ref()
+                .map(|value| format!("# {name}\n\n{value}\n"))
+                .unwrap_or_else(|| format!("# {name}\n"));
+            fs::write(target.join("README.md"), body)
+                .map_err(|e| format!("写入 README 失败：{e}"))?;
+        }
+        if let Some(template) = normalize_local_repo_optional_string(request.gitignore_template) {
+            fs::write(target.join(".gitignore"), local_gitignore_template_content(&template))
+                .map_err(|e| format!("写入 .gitignore 失败：{e}"))?;
+        }
+        if let Some(template) = normalize_local_repo_optional_string(request.license_template) {
+            fs::write(
+                target.join("LICENSE"),
+                local_license_template_content(&template, &name),
+            )
+            .map_err(|e| format!("写入 LICENSE 失败：{e}"))?;
+        }
+        git_command(&target, &["init"], None)?;
+
+        let repo_id = repo_id(&root, &target);
+        let mut settings = load_settings(&app);
+        add_managed_repo_id(&mut settings, repo_id.clone());
+        settings.hidden_repo_ids.retain(|id| id != &repo_id);
+        save_settings(&app, &settings)?;
+        let summary = summarize_repo(&root, &target);
+        let _ = write_startup_repo_summary(&app, &settings, &summary);
+        update_workspace_task(&task.id, "success", Some("已创建本地仓库".to_string()));
+        Ok(summary)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn workspace_clone_repo(
     app: AppHandle,

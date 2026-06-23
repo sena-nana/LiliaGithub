@@ -566,6 +566,20 @@ pub struct GitHubRepoOwner {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkspaceCreateLocalRepoRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub add_readme: bool,
+    #[serde(default)]
+    pub gitignore_template: Option<String>,
+    #[serde(default)]
+    pub license_template: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubCreateRepoRequest {
     pub owner: String,
     pub owner_kind: String,
@@ -584,6 +598,10 @@ pub struct GitHubCreateRepoRequest {
     pub has_issues: bool,
     #[serde(default = "default_true")]
     pub has_wiki: bool,
+    #[serde(default)]
+    pub template_full_name: Option<String>,
+    #[serde(default)]
+    pub include_all_branches: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

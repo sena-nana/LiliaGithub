@@ -3100,6 +3100,35 @@ pub async fn github_create_repo(
         if owner.is_empty() || name.is_empty() {
             return Err("owner 和仓库名不能为空".to_string());
         }
+        let template = normalize_optional_string(request.template_full_name.clone())
+            .map(|value| normalize_github_repo_input(&value))
+            .transpose()?;
+        if let Some(template) = template {
+            let mut payload = serde_json::json!({
+                "owner": owner,
+                "name": name,
+                "private": request.private,
+                "include_all_branches": request.include_all_branches,
+            });
+            if let Some(map) = payload.as_object_mut() {
+                if let Some(value) = normalize_optional_string(request.description) {
+                    map.insert("description".to_string(), serde_json::Value::String(value));
+                }
+            }
+            let client = build_client()?;
+            let url = format!(
+                "https://api.github.com/repos/{}/{}/generate",
+                url_encode_path_segment(&template.owner),
+                url_encode_path_segment(&template.name)
+            );
+            let response = github_send(
+                &app,
+                "从模板创建 GitHub 仓库失败",
+                github_headers(client.post(url).json(&payload), Some(&token)),
+            )?;
+            let repo = github_json::<GitHubRepoResponse>("从模板创建 GitHub 仓库失败", response)?;
+            return Ok(github_repo_summary_from_response(repo));
+        }
         let mut payload = serde_json::json!({
             "name": name,
             "private": request.private,
