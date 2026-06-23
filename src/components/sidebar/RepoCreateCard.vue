@@ -227,10 +227,16 @@ onUnmounted(() => {
 
 <template>
   <div v-if="open" class="repo-create-backdrop" role="presentation" @click.self="closeCard">
-    <form class="repo-create-card" role="dialog" :aria-label="dialogTitle" @submit.prevent="submitCreateRepo">
+    <form
+      class="repo-create-card"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="dialogTitle"
+      @submit.prevent="submitCreateRepo"
+    >
       <div class="repo-create-card__head">
         <h3>{{ dialogTitle }}</h3>
-        <button type="button" class="ghost" aria-label="关闭" @click="closeCard">
+        <button type="button" class="ghost repo-create-card__close" aria-label="关闭" @click="closeCard">
           <X :size="14" aria-hidden="true" />
         </button>
       </div>
@@ -320,11 +326,11 @@ onUnmounted(() => {
 .repo-create-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: 1800;
   display: grid;
   place-items: start center;
   padding: 96px 16px 24px;
-  background: color-mix(in srgb, var(--bg) 54%, transparent);
+  background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(2px);
 }
 
@@ -335,9 +341,9 @@ onUnmounted(() => {
   display: grid;
   gap: 12px;
   padding: 14px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: var(--bg-elevated);
+  background: var(--bg-elev);
   box-shadow: var(--shadow-lg);
 }
 
@@ -352,6 +358,14 @@ onUnmounted(() => {
 .repo-create-card__head h3 {
   margin: 0;
   font-size: 15px;
+}
+
+.repo-create-card__close {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: 0 0 auto;
 }
 
 .repo-create-card label {
@@ -372,6 +386,15 @@ onUnmounted(() => {
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
   color: var(--text);
+}
+
+.repo-create-card input[type="checkbox"] {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
 }
 
 .repo-create-grid {
@@ -419,11 +442,16 @@ onUnmounted(() => {
   justify-content: flex-end;
 }
 
-.repo-create-card .ghost,
-.repo-create-actions .primary {
+.repo-create-actions button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  height: 32px;
+  min-width: 64px;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .sb-spin {
