@@ -78,6 +78,7 @@ const {
 .files-sidebar {
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .files-sidebar__card {

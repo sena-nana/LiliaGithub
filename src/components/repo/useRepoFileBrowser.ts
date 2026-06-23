@@ -40,8 +40,8 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
   const previewLoading = ref(false);
   const previewError = ref<string | null>(null);
   const componentEpoch = useComponentEpoch();
-  const panelLoader = createLatestAsyncLoader({ componentEpoch });
-  const previewLoader = createLatestAsyncLoader({ componentEpoch });
+  const panelLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
+  const previewLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
   let directoryLoadPromises = new Map<string, Promise<RepoFileTreeEntry[]>>();
 
   const repoPath = computed(() => input.repoPath.value ?? null);
@@ -138,12 +138,15 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       try {
         const rootEntries = await loadDirectory(null, { force: true, repoId, repoRef });
         if (!panelLoader.isCurrent(runId) || !isCurrentRepoRequest(repoId, repoRef)) return;
+        treeLoading.value = false;
         if (input.targetPath.value) {
           await selectFile(input.targetPath.value, input.targetHash.value);
         } else {
-          const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md");
-          if (readme) {
-            await selectFile(readme.path);
+          const defaultFile =
+            rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md") ??
+            rootEntries.find((entry) => entry.kind === "file");
+          if (defaultFile) {
+            await selectFile(defaultFile.path);
           }
         }
       } catch (err) {
@@ -154,7 +157,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
           treeLoading.value = false;
         }
       }
-    });
+    }, { reusePending: true });
   }
 
   function flattenEntries(

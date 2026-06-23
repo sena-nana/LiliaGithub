@@ -808,7 +808,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
     expect(await view.findByText("Project README")).toBeInTheDocument();
     expect(view.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
-    expect(view.getByRole("tab", { name: "文件树" })).toBeInTheDocument();
+    expect(view.queryByRole("tab", { name: "文件树" })).toBeNull();
     expect(view.getByRole("tab", { name: "Pull Requests" })).toBeInTheDocument();
     expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
     const topics = view.getByLabelText("Topics");
@@ -829,13 +829,6 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
-
-    await fireEvent.click(view.getByRole("tab", { name: "文件树" }));
-    await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/local-repo/files");
-    });
-    expect(await view.findByLabelText("仓库文件树")).toBeInTheDocument();
-    expect(view.getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
   });
 
   it("仓库设置读取失败时只显示右侧错误卡并隐藏描述卡片", async () => {
@@ -1835,7 +1828,7 @@ describe("RepoProjectPanel", () => {
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
 
-    expect(view.getByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
     expect(view.getByRole("heading", { level: 4, name: "Pull Request / Merge" })).toBeInTheDocument();
     expect(view.getByLabelText("本地危险操作")).toBeInTheDocument();
     expect(view.getByLabelText("远端危险操作")).toBeInTheDocument();

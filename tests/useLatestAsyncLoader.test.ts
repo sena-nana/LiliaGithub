@@ -124,4 +124,24 @@ describe("createLatestAsyncLoader", () => {
     expect(currentAfterInvalidation).toBe(false);
     expect(loader.isPending()).toBe(false);
   });
+
+  it("关闭会话上下文跟踪后当前任务不受会话失效影响", async () => {
+    resetSessionContextForTests();
+    const loader = createLatestAsyncLoader({ trackSessionContext: false });
+    const first = deferred();
+    let currentAfterInvalidation = false;
+
+    const running = loader.run("repo", async (runId) => {
+      await first.promise;
+      currentAfterInvalidation = loader.isCurrent(runId);
+    });
+
+    expect(loader.isPending("repo")).toBe(true);
+    invalidateSessionContextSnapshot();
+    first.resolve();
+    await running;
+
+    expect(currentAfterInvalidation).toBe(true);
+    expect(loader.isPending()).toBe(false);
+  });
 });

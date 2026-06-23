@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { createMemoryHistory } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
+import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
 import { installContextMenu } from "../src/composables/useContextMenu";
 import { vContextMenu } from "../src/directives/contextMenu";
 import { createLiliaGithubRouter } from "../src/router";
@@ -264,6 +265,7 @@ describe("基础路由", () => {
   beforeEach(async () => {
     workspaceFallback = await workspaceFallbackForTests();
     workspaceFallback.resetWorkspaceFallbacksForTests();
+    resetSessionContextForTests();
   });
 
   afterEach(async () => {
@@ -462,7 +464,46 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "Files View" })).toBeInTheDocument();
-    expect(screen.getAllByRole("tab", { name: "文件树" }).some((tab) => tab.classList.contains("is-active"))).toBe(true);
+    expect(within(screen.getByRole("tablist", { name: "仓库页面" })).getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(screen.queryByRole("tablist", { name: "右侧面板" })).toBeNull();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
+  });
+
+  it("文件页根目录请求期间会话上下文失效后仍显示文件树", async () => {
+    const rootEntries = deferred([
+      { path: "README.md", name: "README.md", kind: "file" as const, hasChildren: false },
+    ]);
+    workspaceFallback.setFallbackRepoFilesOverrideForTests((repoId, parentPath) => {
+      if (repoId === "LiliaGithub" && parentPath === null) return rootEntries.promise;
+      return [];
+    });
+    workspaceFallback.setFallbackRepoFilePreviewsForTests({
+      LiliaGithub: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Files View\n",
+          dataUrl: null,
+          images: {},
+          size: 13,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+
+    const { router } = await renderAt("/repos/LiliaGithub/files");
+    expect(await screen.findByText("正在读取文件树。")).toBeInTheDocument();
+
+    invalidateSessionContextSnapshot();
+    rootEntries.resolve([
+      { path: "README.md", name: "README.md", kind: "file", hasChildren: false },
+    ]);
+
+    expect(await screen.findByRole("button", { name: /README\.md/ })).toBeInTheDocument();
+    expect(screen.queryByText("正在读取文件树。")).toBeNull();
+    expect(await screen.findByRole("heading", { level: 1, name: "Files View" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
   });
 
@@ -801,14 +842,15 @@ describe("基础路由", () => {
     });
   });
 
-  it("远端仓库显示文件树一级 tab，直接访问 /files 保留文件页", async () => {
+  it("远端仓库直接访问 /files 保留文件页", async () => {
     const { router } = await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
     await waitFor(() => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FEmptyRemote/files");
     });
-    expect(screen.getAllByRole("tab", { name: "文件树" }).some((tab) => tab.classList.contains("is-active"))).toBe(true);
+    expect(screen.queryByRole("tab", { name: "文件树" })).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "右侧面板" })).toBeNull();
   });
 
   it("总览页隐藏禁用的 GitHub 项目", async () => {
@@ -2049,8 +2091,12 @@ describe("基础路由", () => {
     expect(screen.queryByRole("tab", { name: "README.txt" })).toBeNull();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
     await fireEvent.click(screen.getByRole("link", { name: "中文" }));
-    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    const readmeToolbar = await screen.findByRole("toolbar", { name: "链接操作" });
+    const readmeOpenButton = within(readmeToolbar).getByRole("button", { name: "打开" });
+    await waitFor(() => {
+      expect(readmeOpenButton).not.toBeDisabled();
+    });
+    await fireEvent.click(readmeOpenButton);
     await waitFor(() => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files?file=README.txt&hash=local-doc");
     });
@@ -2059,8 +2105,12 @@ describe("基础路由", () => {
     await router.push("/repos/LiliaGithub");
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
     await fireEvent.click(screen.getByRole("link", { name: "开发指南" }));
-    expect(await screen.findByRole("toolbar", { name: "链接操作" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "打开" }));
+    const guideToolbar = await screen.findByRole("toolbar", { name: "链接操作" });
+    const guideOpenButton = within(guideToolbar).getByRole("button", { name: "打开" });
+    await waitFor(() => {
+      expect(guideOpenButton).not.toBeDisabled();
+    });
+    await fireEvent.click(guideOpenButton);
     await waitFor(() => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files?file=docs/guide.md");
     });
@@ -2085,14 +2135,17 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByDisplayValue("Local GitHub workspace manager")).toBeInTheDocument();
-    });
-    await fireEvent.update(screen.getByDisplayValue("Local GitHub workspace manager"), "Updated description");
+    const wikiSwitch = await screen.findByRole("checkbox", { name: /Wiki/ });
+    expect(wikiSwitch).not.toBeChecked();
+    await fireEvent.click(wikiSwitch);
     await fireEvent.click(screen.getByRole("button", { name: "保存" }));
-
     await waitFor(() => {
-      expect(screen.getByDisplayValue("Updated description")).toBeInTheDocument();
+      expect(wikiSwitch).toBeChecked();
+    });
+    await waitFor(async () => {
+      await expect(service.getGitHubRepoManagement("sena-nana/LiliaGithub")).resolves.toMatchObject({
+        hasWiki: true,
+      });
     });
   });
 

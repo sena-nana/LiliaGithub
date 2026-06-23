@@ -2007,6 +2007,12 @@ let fallbackRepoFiles = createFallbackRepoFiles();
 let fallbackGitHubRepoFiles = createFallbackGitHubRepoFiles();
 let fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
 let fallbackGitHubRepoFilePreviews = createFallbackGitHubRepoFilePreviews();
+type FallbackRepoFilesOverride = (
+  repoId: string,
+  parentPath: string | null,
+  repoRef: string | null,
+) => Promise<RepoFileTreeEntry[]> | RepoFileTreeEntry[];
+let fallbackRepoFilesOverride: FallbackRepoFilesOverride | null = null;
 
 type FallbackGitHubIssueListCall = {
   repoFullName: string;
@@ -2174,6 +2180,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoRemotes = createFallbackRepoRemotes();
   fallbackRepoBranches = createFallbackRepoBranches();
   fallbackRepoFiles = createFallbackRepoFiles();
+  fallbackRepoFilesOverride = null;
   fallbackGitHubRepoFiles = createFallbackGitHubRepoFiles();
   fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
   fallbackGitHubRepoFilePreviews = createFallbackGitHubRepoFilePreviews();
@@ -2600,6 +2607,12 @@ export function setFallbackRepoFilesForTests(filesByRepo: Record<string, Record<
       ),
     ]),
   );
+}
+
+export function setFallbackRepoFilesOverrideForTests(
+  override: FallbackRepoFilesOverride | null,
+) {
+  fallbackRepoFilesOverride = override;
 }
 
 export function setFallbackGitHubRepoFilesForTests(filesByRepo: Record<string, Record<string, RepoFileTreeEntry[]>>) {
@@ -4184,8 +4197,9 @@ export function getGitHubRepoFilePreview(
   });
 }
 
-export function listRepoFiles(repoId: string, parentPath?: string | null, _repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
+export function listRepoFiles(repoId: string, parentPath?: string | null, repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
   return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () =>
+    fallbackRepoFilesOverride?.(repoId, parentPath ?? null, repoRef ?? null) ??
     (fallbackRepoFiles[repoId]?.[parentPath ?? ""] ?? []).map(cloneRepoFileTreeEntry),
   );
 }
