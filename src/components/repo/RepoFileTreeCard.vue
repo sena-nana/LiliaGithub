@@ -17,6 +17,7 @@ const {
   isDirectoryExpanded,
   isDirectoryLoading,
   isTreeItemActive,
+  repoLocationLabel,
   selectFile,
   toggleDirectory,
   treeError,
@@ -28,6 +29,7 @@ const {
 <template>
   <aside class="files-sidebar" aria-label="仓库文件树">
     <div class="files-sidebar__card">
+      <div v-if="repoLocationLabel" class="files-sidebar__head" :title="repoLocationLabel">{{ repoLocationLabel }}</div>
       <p v-if="treeError" class="error-line files-sidebar__empty">{{ treeError }}</p>
       <p v-else-if="treeLoading" class="muted files-sidebar__empty">正在读取文件树。</p>
       <p v-else-if="!visibleEntries.length" class="muted files-sidebar__empty">当前仓库没有可浏览文件。</p>
@@ -83,6 +85,7 @@ const {
 
 .files-sidebar__card {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -92,12 +95,26 @@ const {
   background: var(--bg-elev);
 }
 
+.files-sidebar__head {
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .files-sidebar__empty {
+  grid-row: 2;
   margin: 0;
   padding: 14px;
 }
 
 .files-tree {
+  grid-row: 2;
   display: grid;
   align-content: start;
   min-height: 0;
