@@ -29,10 +29,7 @@ const {
 <template>
   <aside class="files-sidebar" aria-label="仓库文件树">
     <div class="files-sidebar__card">
-      <div class="files-sidebar__head">
-        <strong>文件树</strong>
-        <span v-if="repoLocationLabel" :title="repoLocationLabel">{{ repoLocationLabel }}</span>
-      </div>
+      <div v-if="repoLocationLabel" class="files-sidebar__head" :title="repoLocationLabel">{{ repoLocationLabel }}</div>
       <p v-if="treeError" class="error-line files-sidebar__empty">{{ treeError }}</p>
       <p v-else-if="treeLoading" class="muted files-sidebar__empty">正在读取文件树。</p>
       <p v-else-if="!visibleEntries.length" class="muted files-sidebar__empty">当前仓库没有可浏览文件。</p>
@@ -83,6 +80,7 @@ const {
 .files-sidebar {
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .files-sidebar__card {
@@ -98,37 +96,25 @@ const {
 }
 
 .files-sidebar__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border-soft);
-}
-
-.files-sidebar__head strong {
-  display: block;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.files-sidebar__head span {
-  margin: 3px 0 0;
   color: var(--text-muted);
   font-size: 12px;
-  max-width: 180px;
-  overflow: hidden;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .files-sidebar__empty {
+  grid-row: 2;
   margin: 0;
   padding: 14px;
 }
 
 .files-tree {
+  grid-row: 2;
   display: grid;
   align-content: start;
   min-height: 0;

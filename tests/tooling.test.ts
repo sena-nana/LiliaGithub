@@ -176,6 +176,18 @@ describe("单应用模板工具链", () => {
     expect(scrollbars).toContain("export function uninstallGlobalScrollbarVisibility()");
   });
 
+  it("源码不引用未定义的背景色变量", () => {
+    const files = [
+      "src/components/sidebar/RepoCreateCard.vue",
+      "src/layouts/SecondaryPanel.vue",
+      "src/styles.css",
+    ];
+    const combined = files.map((file) => readFileSync(resolve(file), "utf-8")).join("\n");
+
+    expect(combined).toContain("--bg-elev");
+    expect(combined).not.toContain("--bg-elevated");
+  });
+
   it("主界面高度由 CSS 网格约束，不依赖加载后测量卡片高度", () => {
     const home = readFileSync(resolve("src/pages/Home.vue"), "utf-8").replace(/\r\n/g, "\n");
 

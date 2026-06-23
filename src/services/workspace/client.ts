@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createCachedAsyncModule } from "../../utils/asyncModule";
 import { parseRemoteRepoId } from "../../utils/remoteRepo";
+import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";
+import { WORKSPACE_COMMAND_MANIFEST } from "./manifest";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -12,6 +15,7 @@ import type {
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreateRepoRequest,
+  GitHubCreateReleaseRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssueDiscussion,
@@ -23,6 +27,8 @@ import type {
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
   GitHubPullRequestListOptions,
+  GitHubRelease,
+  GitHubReleaseAsset,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -33,6 +39,7 @@ import type {
   GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
+  GitHubUpdateReleaseRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
@@ -59,6 +66,7 @@ import type {
   WorkspaceSettings,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
+  WorkspaceCreateLocalRepoRequest,
 } from "./types";
 
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
@@ -89,6 +97,7 @@ type GitHubProjectRepoClientCache = {
   workflowJobLogs: Record<number, GitHubWorkflowJobLog | undefined>;
   workflowArtifactEntries: Record<number, GitHubWorkflowArtifactEntry[] | undefined>;
   workflowArtifactPreviews: Record<string, RepoFilePreview | undefined>;
+  releases?: GitHubRelease[];
 };
 
 let githubRepoCache: {
@@ -98,7 +107,8 @@ let githubRepoCache: {
 } | null = null;
 let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
 const githubProjectCache = new Map<string, GitHubProjectRepoClientCache>();
-let workspaceFallbackPromise: Promise<WorkspaceFallback> | null = null;
+const pendingWorkspaceReads = new Map<string, Promise<unknown>>();
+const workspaceFallbackModuleLoader = createCachedAsyncModule(() => import("./fallback"));
 let workspaceFallbackModule: WorkspaceFallback | null = null;
 
 export function resolveWorkspaceRuntimeForTests(probe: {
@@ -114,11 +124,9 @@ export function resolveWorkspaceRuntimeForTests(probe: {
 
 async function loadWorkspaceFallback() {
   if (isDev || isTest) {
-    workspaceFallbackPromise ??= import("./fallback").then((module) => {
-      workspaceFallbackModule = module;
-      return module;
-    });
-    return workspaceFallbackPromise;
+    const module = await workspaceFallbackModuleLoader.load();
+    workspaceFallbackModule = module;
+    return module;
   }
   throw new Error("Workspace mock data is only available in development and test mode.");
 }
@@ -141,11 +149,15 @@ export async function resetWorkspaceFallbacksForTests(): Promise<void> {
   if (!isTest) {
     throw new Error("Workspace fallback test helpers are only available in test mode.");
   }
-  const fallback = workspaceFallbackModule ?? (workspaceFallbackPromise ? await workspaceFallbackPromise : null);
-  fallback?.resetWorkspaceFallbacksForTests();
+  workspaceFallbackModule?.resetWorkspaceFallbacksForTests();
 }
 
-async function call<T>(command: string, args: Record<string, unknown> | undefined, fallbackCall: () => Promise<T>): Promise<T> {
+async function call<TCommand extends WorkspaceCommandName>(
+  command: TCommand,
+  args: WorkspaceCommandArgs<TCommand>,
+  fallbackCall: () => Promise<WorkspaceCommandResult<TCommand>>,
+): Promise<WorkspaceCommandResult<TCommand>> {
+  const commandEntry = WORKSPACE_COMMAND_MANIFEST[command];
   const hasWindow = typeof window !== "undefined";
   const runtime = resolveWorkspaceRuntimeForTests({
     hasWindow,
@@ -154,14 +166,14 @@ async function call<T>(command: string, args: Record<string, unknown> | undefine
     isTest,
   });
   if (runtime === "tauri") {
-    return invoke<T>(command, args);
+    return invoke<WorkspaceCommandResult<TCommand>>(commandEntry.command, args);
   }
   if (runtime === "mock") {
     await loadWorkspaceFallback();
     return fallbackCall();
   }
   throw new Error(
-    `Tauri command ${command} is unavailable outside Tauri. Use yarn tauri:dev, or yarn dev for the development mock mode.`,
+    `Tauri command ${commandEntry.command} is unavailable outside Tauri. Use yarn tauri:dev, or yarn dev for the development mock mode.`,
   );
 }
 
@@ -217,6 +229,34 @@ function githubProjectRepoKey(repoFullName: string) {
   return repoFullName.trim().toLowerCase();
 }
 
+function workspaceReadCacheKey(command: string, args: unknown) {
+  return `${command}:${JSON.stringify(args)}`;
+}
+
+function cachedWorkspaceRead<T>(
+  command: string,
+  args: unknown,
+  request: () => Promise<T>,
+): Promise<T> {
+  const key = workspaceReadCacheKey(command, args);
+  const pending = pendingWorkspaceReads.get(key);
+  if (pending) return pending as Promise<T>;
+  const next = request().finally(() => {
+    if (pendingWorkspaceReads.get(key) === next) pendingWorkspaceReads.delete(key);
+  });
+  pendingWorkspaceReads.set(key, next);
+  return next;
+}
+
+function cachedCall<TCommand extends WorkspaceCommandName>(
+  command: TCommand,
+  args: WorkspaceCommandArgs<TCommand>,
+  fallback: () => Promise<WorkspaceCommandResult<TCommand>>,
+  cacheArgs: unknown = args,
+): Promise<WorkspaceCommandResult<TCommand>> {
+  return cachedWorkspaceRead(command, cacheArgs, () => call(command, args, fallback));
+}
+
 function githubProjectRepoCache(repoFullName: string) {
   const key = githubProjectRepoKey(repoFullName);
   let cache = githubProjectCache.get(key);
@@ -236,6 +276,7 @@ function githubProjectRepoCache(repoFullName: string) {
       workflowJobLogs: {},
       workflowArtifactEntries: {},
       workflowArtifactPreviews: {},
+      releases: undefined,
     };
     githubProjectCache.set(key, cache);
   }
@@ -350,6 +391,45 @@ function clearGitHubProjectPullRequestChecks(repoFullName: string, pullNumber?: 
   else delete cache.pullRequestChecks[pullNumber];
 }
 
+function upsertGitHubRelease(repoFullName: string, release: GitHubRelease) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  const withoutRelease = cache.releases.filter((item) => item.id !== release.id);
+  cache.releases = [cloneProjectData(release), ...cloneProjectList(withoutRelease)]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function upsertGitHubReleaseAsset(repoFullName: string, releaseId: number, asset: GitHubReleaseAsset) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  cache.releases = cache.releases.map((release) => {
+    if (release.id !== releaseId) return cloneProjectData(release);
+    const assets = [
+      cloneProjectData(asset),
+      ...release.assets.filter((item) => item.id !== asset.id).map((item) => cloneProjectData(item)),
+    ];
+    return { ...cloneProjectData(release), assets };
+  });
+}
+
+function removeGitHubRelease(repoFullName: string, releaseId: number) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  cache.releases = cache.releases.filter((release) => release.id !== releaseId).map((release) => cloneProjectData(release));
+}
+
+function removeGitHubReleaseAsset(repoFullName: string, releaseId: number, assetId: number) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  cache.releases = cache.releases.map((release) => {
+    if (release.id !== releaseId) return cloneProjectData(release);
+    return {
+      ...cloneProjectData(release),
+      assets: release.assets.filter((asset) => asset.id !== assetId).map((asset) => cloneProjectData(asset)),
+    };
+  });
+}
+
 function writeGitHubRepoCache(page: GitHubRepoPage) {
   githubRepoCache = {
     items: page.items.map((repo) => ({ ...repo })),
@@ -367,6 +447,7 @@ export function clearGitHubRepoCache() {
   githubRepoCache = null;
   githubRepoPreloadPromise = null;
   githubProjectCache.clear();
+  pendingWorkspaceReads.clear();
 }
 
 export function isGitHubBindingExpiredError(err: unknown): boolean {
@@ -397,6 +478,10 @@ export function pickRepo(): Promise<string | null> {
   return call("workspace_pick_repo", undefined, () => workspaceFallback().pickRepo());
 }
 
+export function pickFiles(): Promise<string[]> {
+  return call("workspace_pick_files", undefined, () => workspaceFallback().pickFiles());
+}
+
 export function refreshRepos(): Promise<RepoSummary[]> {
   return call("workspace_refresh_repos", undefined, () => workspaceFallback().refreshRepos());
 }
@@ -411,6 +496,10 @@ export function discoverRepos(): Promise<RepoSummary[]> {
 
 export function addRepo(repoPath: string): Promise<RepoSummary> {
   return call("workspace_add_repo", { repoPath }, () => workspaceFallback().addRepo(repoPath));
+}
+
+export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promise<RepoSummary> {
+  return call("workspace_create_local_repo", { request }, () => workspaceFallback().createLocalRepo(request));
 }
 
 export function cloneRepo(remoteUrl: string, directoryName?: string | null): Promise<RepoSummary> {
@@ -505,7 +594,7 @@ export function listRepoContribution(repoScope: string): Promise<GitHubContribut
 
 export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
   const pageNo = page ?? null;
-  const result = await call("github_list_repos", { page: pageNo }, () =>
+  const result = await cachedCall("github_list_repos", { page: pageNo }, () =>
     workspaceFallback().listGitHubRepos(pageNo),
   ).catch((err) => {
     if (isGitHubBindingExpiredError(err)) clearGitHubRepoCache();
@@ -533,10 +622,11 @@ export function getGitHubRepoManagement(
   if (!options.forceRefresh && cache.management) {
     return Promise.resolve(cloneProjectData(cache.management));
   }
-  return call("github_get_repo_management", {
+  const args = {
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubRepoManagement(repoFullName))
+  };
+  return cachedCall("github_get_repo_management", args, () => workspaceFallback().getGitHubRepoManagement(repoFullName))
     .then((repo) => {
       cache.management = cloneProjectData(repo);
       return cloneProjectData(repo);
@@ -581,7 +671,7 @@ export function listGitHubPullRequests(
   const key = githubPullRequestCacheKey(options);
   const cached = cache.pullRequests[key];
   if (!fetchOptions.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
-  return call("github_list_pull_requests", {
+  const args = {
     repoFullName,
     state: options.state ?? null,
     perPage: options.perPage ?? null,
@@ -595,7 +685,8 @@ export function listGitHubPullRequests(
     review: options.review ?? null,
     query: options.query ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
-  }, () => workspaceFallback().listGitHubPullRequests(repoFullName, options))
+  };
+  return cachedCall("github_list_pull_requests", args, () => workspaceFallback().listGitHubPullRequests(repoFullName, options))
     .then((pulls) => {
       cache.pullRequests[key] = cloneProjectList(pulls);
       return cloneProjectList(pulls);
@@ -616,11 +707,14 @@ export function getGitHubPullRequestDiscussion(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache.pullRequestDiscussions[pullNumber];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
-  return call("github_get_pull_request_discussion", {
+  const args = {
     repoFullName,
     pullNumber,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubPullRequestDiscussion(repoFullName, pullNumber))
+  };
+  return cachedCall("github_get_pull_request_discussion", args, () =>
+    workspaceFallback().getGitHubPullRequestDiscussion(repoFullName, pullNumber)
+  )
     .then((discussion) => {
       cache.pullRequestDiscussions[pullNumber] = cloneProjectData(discussion);
       upsertGitHubPullRequest(repoFullName, discussion.pullRequest);
@@ -677,11 +771,14 @@ export function listGitHubPullRequestChecks(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache.pullRequestChecks[pullNumber];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
-  return call("github_list_pull_request_checks", {
+  const args = {
     repoFullName,
     pullNumber,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().listGitHubPullRequestChecks(repoFullName, pullNumber))
+  };
+  return cachedCall("github_list_pull_request_checks", args, () =>
+    workspaceFallback().listGitHubPullRequestChecks(repoFullName, pullNumber)
+  )
     .then((checks) => {
       cache.pullRequestChecks[pullNumber] = cloneProjectList(checks);
       return cloneProjectList(checks);
@@ -700,7 +797,7 @@ export function listGitHubIssues(
   const key = githubIssueCacheKey(options);
   const cached = cache.issues[key];
   if (!fetchOptions.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
-  return call("github_list_issues", {
+  const args = {
     repoFullName,
     state: options.state ?? null,
     perPage: options.perPage ?? null,
@@ -714,7 +811,8 @@ export function listGitHubIssues(
     project: options.project ?? null,
     query: options.query ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
-  }, () => workspaceFallback().listGitHubIssues(repoFullName, options))
+  };
+  return cachedCall("github_list_issues", args, () => workspaceFallback().listGitHubIssues(repoFullName, options))
     .then((issues) => {
       cache.issues[key] = cloneProjectList(issues);
       return cloneProjectList(issues);
@@ -729,11 +827,14 @@ export function getGitHubIssueDiscussion(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache.issueDiscussions[issueNumber];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
-  return call("github_get_issue_discussion", {
+  const args = {
     repoFullName,
     issueNumber,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubIssueDiscussion(repoFullName, issueNumber))
+  };
+  return cachedCall("github_get_issue_discussion", args, () =>
+    workspaceFallback().getGitHubIssueDiscussion(repoFullName, issueNumber)
+  )
     .then((discussion) => {
       cache.issueDiscussions[issueNumber] = cloneProjectData(discussion);
       upsertGitHubIssue(repoFullName, discussion.issue);
@@ -749,10 +850,13 @@ export function getGitHubIssueFilterMetadata(
   if (!options.forceRefresh && cache.issueFilterMetadata) {
     return Promise.resolve(cloneProjectData(cache.issueFilterMetadata));
   }
-  return call("github_get_issue_filter_metadata", {
+  const args = {
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubIssueFilterMetadata(repoFullName))
+  };
+  return cachedCall("github_get_issue_filter_metadata", args, () =>
+    workspaceFallback().getGitHubIssueFilterMetadata(repoFullName)
+  )
     .then((metadata) => {
       cache.issueFilterMetadata = cloneProjectData(metadata);
       return cloneProjectData(metadata);
@@ -769,10 +873,11 @@ function listGitHubIssueValues(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache[cacheKey];
   if (!options.forceRefresh && cached) return Promise.resolve([...cached]);
-  return call(command, {
+  const args = {
     repoFullName,
     forceRefresh: options.forceRefresh ?? null,
-  }, fallbackCall)
+  };
+  return cachedCall(command, args, fallbackCall)
     .then((values) => {
       cache[cacheKey] = [...values];
       return [...values];
@@ -831,11 +936,14 @@ export function listGitHubWorkflowRuns(
   const key = githubWorkflowRunsCacheKey(perPage);
   const cached = cache.workflowRuns[key];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
-  return call("github_list_workflow_runs", {
+  const args = {
     repoFullName,
     perPage: perPage ?? null,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().listGitHubWorkflowRuns(repoFullName, perPage))
+  };
+  return cachedCall("github_list_workflow_runs", args, () =>
+    workspaceFallback().listGitHubWorkflowRuns(repoFullName, perPage)
+  )
     .then((runs) => {
       cache.workflowRuns[key] = cloneProjectList(runs);
       return cloneProjectList(runs);
@@ -850,11 +958,14 @@ export function getGitHubWorkflowRunDetail(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache.workflowRunDetails[runId];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
-  return call("github_get_workflow_run_detail", {
+  const args = {
     repoFullName,
     runId,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubWorkflowRunDetail(repoFullName, runId))
+  };
+  return cachedCall("github_get_workflow_run_detail", args, () =>
+    workspaceFallback().getGitHubWorkflowRunDetail(repoFullName, runId)
+  )
     .then((detail) => {
       cache.workflowRunDetails[runId] = cloneProjectData(detail);
       return cloneProjectData(detail);
@@ -869,11 +980,14 @@ export function getGitHubWorkflowJobLog(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache.workflowJobLogs[jobId];
   if (!options.forceRefresh && cached) return Promise.resolve({ ...cached });
-  return call("github_get_workflow_job_log", {
+  const args = {
     repoFullName,
     jobId,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubWorkflowJobLog(repoFullName, jobId))
+  };
+  return cachedCall("github_get_workflow_job_log", args, () =>
+    workspaceFallback().getGitHubWorkflowJobLog(repoFullName, jobId)
+  )
     .then((log) => {
       cache.workflowJobLogs[jobId] = { ...log };
       return { ...log };
@@ -888,10 +1002,13 @@ export function listGitHubWorkflowArtifactFiles(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache.workflowArtifactEntries[artifactId];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
-  return call("github_list_workflow_artifact_files", {
+  const args = {
     repoFullName,
     artifactId,
-  }, () => workspaceFallback().listGitHubWorkflowArtifactFiles(repoFullName, artifactId))
+  };
+  return cachedCall("github_list_workflow_artifact_files", args, () =>
+    workspaceFallback().listGitHubWorkflowArtifactFiles(repoFullName, artifactId)
+  )
     .then((entries) => {
       cache.workflowArtifactEntries[artifactId] = cloneProjectList(entries);
       return cloneProjectList(entries);
@@ -908,11 +1025,14 @@ export function getGitHubWorkflowArtifactFilePreview(
   const key = `${artifactId}:${path}`;
   const cached = cache.workflowArtifactPreviews[key];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
-  return call("github_get_workflow_artifact_file_preview", {
+  const args = {
     repoFullName,
     artifactId,
     path,
-  }, () => workspaceFallback().getGitHubWorkflowArtifactFilePreview(repoFullName, artifactId, path))
+  };
+  return cachedCall("github_get_workflow_artifact_file_preview", args, () =>
+    workspaceFallback().getGitHubWorkflowArtifactFilePreview(repoFullName, artifactId, path)
+  )
     .then((preview) => {
       cache.workflowArtifactPreviews[key] = cloneProjectData(preview);
       return cloneProjectData(preview);
@@ -928,12 +1048,15 @@ export function listGitHubRepoCommits(
   const key = githubCommitListCacheKey(options);
   const cached = cache.commits[key];
   if (!fetchOptions.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
-  return call("github_list_repo_commits", {
+  const args = {
     repoFullName,
     perPage: options.perPage ?? null,
     sha: options.sha ?? null,
     forceRefresh: fetchOptions.forceRefresh ?? null,
-  }, () => workspaceFallback().listGitHubRepoCommits(repoFullName, options))
+  };
+  return cachedCall("github_list_repo_commits", args, () =>
+    workspaceFallback().listGitHubRepoCommits(repoFullName, options)
+  )
     .then((commits) => {
       cache.commits[key] = cloneProjectList(commits);
       return cloneProjectList(commits);
@@ -949,11 +1072,14 @@ export function getGitHubRepoCommitDetail(
   const cache = githubProjectRepoCache(repoFullName);
   const cached = cache.commitDetails[normalizedHash];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
-  return call("github_get_repo_commit_detail", {
+  const args = {
     repoFullName,
     hash: normalizedHash,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubRepoCommitDetail(repoFullName, normalizedHash))
+  };
+  return cachedCall("github_get_repo_commit_detail", args, () =>
+    workspaceFallback().getGitHubRepoCommitDetail(repoFullName, normalizedHash)
+  )
     .then((detail) => {
       cache.commitDetails[detail.hash] = cloneProjectData(detail);
       if (normalizedHash && normalizedHash !== detail.hash) {
@@ -963,8 +1089,82 @@ export function getGitHubRepoCommitDetail(
     });
 }
 
+export function listGitHubReleases(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubRelease[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!options.forceRefresh && cache.releases) return Promise.resolve(cloneProjectList(cache.releases));
+  const args = {
+    repoFullName,
+    forceRefresh: options.forceRefresh ?? null,
+  };
+  return cachedCall("github_list_releases", args, () => workspaceFallback().listGitHubReleases(repoFullName))
+    .then((releases) => {
+      cache.releases = cloneProjectList(releases);
+      return cloneProjectList(releases);
+    });
+}
+
+export function createGitHubRelease(
+  repoFullName: string,
+  request: GitHubCreateReleaseRequest,
+): Promise<GitHubRelease> {
+  return call("github_create_release", { repoFullName, request }, () =>
+    workspaceFallback().createGitHubRelease(repoFullName, request)
+  ).then((release) => {
+    upsertGitHubRelease(repoFullName, release);
+    return cloneProjectData(release);
+  });
+}
+
+export function updateGitHubRelease(
+  repoFullName: string,
+  releaseId: number,
+  request: GitHubUpdateReleaseRequest,
+): Promise<GitHubRelease> {
+  return call("github_update_release", { repoFullName, releaseId, request }, () =>
+    workspaceFallback().updateGitHubRelease(repoFullName, releaseId, request)
+  ).then((release) => {
+    upsertGitHubRelease(repoFullName, release);
+    return cloneProjectData(release);
+  });
+}
+
+export async function deleteGitHubRelease(repoFullName: string, releaseId: number): Promise<void> {
+  await call("github_delete_release", { repoFullName, releaseId }, () =>
+    workspaceFallback().deleteGitHubRelease(repoFullName, releaseId)
+  );
+  removeGitHubRelease(repoFullName, releaseId);
+}
+
+export function uploadGitHubReleaseAsset(
+  repoFullName: string,
+  releaseId: number,
+  filePath: string,
+  label?: string | null,
+): Promise<GitHubReleaseAsset> {
+  return call("github_upload_release_asset", { repoFullName, releaseId, filePath, label: label ?? null }, () =>
+    workspaceFallback().uploadGitHubReleaseAsset(repoFullName, releaseId, filePath, label)
+  ).then((asset) => {
+    upsertGitHubReleaseAsset(repoFullName, releaseId, asset);
+    return cloneProjectData(asset);
+  });
+}
+
+export async function deleteGitHubReleaseAsset(
+  repoFullName: string,
+  releaseId: number,
+  assetId: number,
+): Promise<void> {
+  await call("github_delete_release_asset", { repoFullName, releaseId, assetId }, () =>
+    workspaceFallback().deleteGitHubReleaseAsset(repoFullName, releaseId, assetId)
+  );
+  removeGitHubReleaseAsset(repoFullName, releaseId, assetId);
+}
+
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
-  return call("repo_get_detail", { repoId }, () => workspaceFallback().getRepoDetail(repoId));
+  return cachedCall("repo_get_detail", { repoId }, () => workspaceFallback().getRepoDetail(repoId));
 }
 
 export function listGitHubRepoFiles(
@@ -977,12 +1177,15 @@ export function listGitHubRepoFiles(
   const key = githubFileListCacheKey(parentPath, refName);
   const cached = cache.files[key];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectList(cached));
-  return call("github_list_repo_files", {
+  const args = {
     repoFullName,
     parentPath: parentPath ?? null,
     refName: refName ?? null,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().listGitHubRepoFiles(repoFullName, parentPath, refName))
+  };
+  return cachedCall("github_list_repo_files", args, () =>
+    workspaceFallback().listGitHubRepoFiles(repoFullName, parentPath, refName)
+  )
     .then((entries) => {
       cache.files[key] = cloneProjectList(entries);
       return cloneProjectList(entries);
@@ -1000,12 +1203,15 @@ export function getGitHubRepoFilePreview(
   const key = githubFilePreviewCacheKey(normalizedPath, refName);
   const cached = cache.filePreviews[key];
   if (!options.forceRefresh && cached) return Promise.resolve(cloneProjectData(cached));
-  return call("github_get_repo_file_preview", {
+  const args = {
     repoFullName,
     path: normalizedPath,
     refName: refName ?? null,
     forceRefresh: options.forceRefresh ?? null,
-  }, () => workspaceFallback().getGitHubRepoFilePreview(repoFullName, normalizedPath, refName))
+  };
+  return cachedCall("github_get_repo_file_preview", args, () =>
+    workspaceFallback().getGitHubRepoFilePreview(repoFullName, normalizedPath, refName)
+  )
     .then((preview) => {
       cache.filePreviews[key] = cloneProjectData(preview);
       return cloneProjectData(preview);
@@ -1015,13 +1221,23 @@ export function getGitHubRepoFilePreview(
 export function listRepoFiles(repoId: string, parentPath?: string | null, repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
   const remoteFullName = parseRemoteRepoId(repoId);
   if (remoteFullName) return listGitHubRepoFiles(remoteFullName, parentPath, repoRef);
-  return call("repo_list_files", { repoId, parentPath: parentPath ?? null }, () => workspaceFallback().listRepoFiles(repoId, parentPath, repoRef));
+  const args = { repoId, parentPath: parentPath ?? null };
+  const cacheArgs = { ...args, repoRef: repoRef ?? null };
+  return cachedCall("repo_list_files", args, () =>
+    workspaceFallback().listRepoFiles(repoId, parentPath, repoRef),
+    cacheArgs,
+  );
 }
 
 export function getRepoFilePreview(repoId: string, path: string, repoRef?: string | null): Promise<RepoFilePreview> {
   const remoteFullName = parseRemoteRepoId(repoId);
   if (remoteFullName) return getGitHubRepoFilePreview(remoteFullName, path, repoRef);
-  return call("repo_get_file_preview", { repoId, path }, () => workspaceFallback().getRepoFilePreview(repoId, path, repoRef));
+  const args = { repoId, path };
+  const cacheArgs = { ...args, repoRef: repoRef ?? null };
+  return cachedCall("repo_get_file_preview", args, () =>
+    workspaceFallback().getRepoFilePreview(repoId, path, repoRef),
+    cacheArgs,
+  );
 }
 
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
@@ -1031,7 +1247,9 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
 export function getRepoCommitDetail(repoId: string, hash: string): Promise<CommitDetail> {
   const remoteFullName = parseRemoteRepoId(repoId);
   if (remoteFullName) return getGitHubRepoCommitDetail(remoteFullName, hash);
-  return call("repo_get_commit_detail", { repoId, hash }, () => workspaceFallback().getRepoCommitDetail(repoId, hash));
+  return cachedCall("repo_get_commit_detail", { repoId, hash }, () =>
+    workspaceFallback().getRepoCommitDetail(repoId, hash)
+  );
 }
 
 export function getRepoLaunchConfig(repoId: string): Promise<ProjectLaunchConfig | null> {

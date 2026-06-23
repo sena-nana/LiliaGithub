@@ -2,6 +2,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { repoAutoSyncEnabled } from "../config/repoSettingsManifest";
 import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches, listGitHubRepoCommits } from "../services/workspace";
+import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
 import { useWorkspace } from "./useWorkspace";
@@ -22,7 +23,7 @@ import { hasRepoTag, resolveRepoContext } from "../utils/repoContext";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
 import { repoRoute, repoRouteTabFromRoute, type RepoProjectTab, type RepoRouteTab } from "../utils/repoRoutes";
 
-type RepoToolbarTab = Extract<RepoRouteTab, "repo" | "changes" | "history" | "stash">;
+type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
 type HistoryCommit = {
   readonly hash: string;
@@ -80,11 +81,13 @@ export function useRepoDetailController() {
   const githubBranchLoading = ref(false);
   const deletingRemoteBranchName = ref<string | null>(null);
   const deletedRemoteBranchNames = ref<string[]>([]);
+  const discardingChangePaths = ref<string[]>([]);
   const projectRefreshToken = ref(0);
-  const repoDetailLoader = createLatestAsyncLoader();
-  const githubBranchesLoader = createLatestAsyncLoader();
-  const githubCommitsLoader = createLatestAsyncLoader();
-  const launchRefreshLoader = createLatestAsyncLoader();
+  const componentEpoch = useComponentEpoch();
+  const repoDetailLoader = createLatestAsyncLoader({ componentEpoch });
+  const githubBranchesLoader = createLatestAsyncLoader({ componentEpoch });
+  const githubCommitsLoader = createLatestAsyncLoader({ componentEpoch });
+  const launchRefreshLoader = createLatestAsyncLoader({ componentEpoch });
   const actionTracker = createPendingTaskTracker();
   const actionRunning = actionTracker.running;
   let launchPollTimer: number | null = null;
@@ -267,6 +270,7 @@ export function useRepoDetailController() {
   const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
     [
       { key: "repo", title: "项目" },
+      canLoadFiles.value ? { key: "files", title: "文件树" } : null,
       canShowChanges.value ? { key: "changes", title: "变更" } : null,
       { key: "history", title: "历史" },
       repoContext.value.capabilities.stash.available ? { key: "stash", title: "Stash" } : null,
@@ -419,6 +423,7 @@ export function useRepoDetailController() {
     githubBranchLoading.value = false;
     deletingRemoteBranchName.value = null;
     deletedRemoteBranchNames.value = [];
+    discardingChangePaths.value = [];
     void load();
   });
 
@@ -459,6 +464,7 @@ export function useRepoDetailController() {
       value === "issues" ||
       value === "pulls" ||
       value === "actions" ||
+      value === "release" ||
       value === "settings"
     ) return value;
     return null;
@@ -762,13 +768,29 @@ export function useRepoDetailController() {
     paths?: string[],
   ) {
     const files = paths?.length ? paths : [change.path];
+    if (action === "discard") {
+      setDiscardingChangePaths(files, true);
+      void runAction(() => workspace.discardChanges(repoId.value, files))
+        .finally(() => setDiscardingChangePaths(files, false));
+      return;
+    }
+
     void runAction(() => {
       if (action === "stage") return workspace.stage(repoId.value, files);
       if (action === "unstage") return workspace.unstage(repoId.value, files);
-      if (action === "discard") return workspace.discardChanges(repoId.value, files);
       if (action === "gitignore") return workspace.addFilesToGitignore(repoId.value, files);
       return workspace.copyText(change.path);
     });
+  }
+
+  function setDiscardingChangePaths(paths: readonly string[], pending: boolean) {
+    if (!paths.length) return;
+    const next = new Set(discardingChangePaths.value);
+    for (const path of paths) {
+      if (pending) next.add(path);
+      else next.delete(path);
+    }
+    discardingChangePaths.value = [...next];
   }
 
   function commitSelected(pushAfter: boolean) {
@@ -1114,6 +1136,7 @@ export function useRepoDetailController() {
       repoTitle,
       repoMetaItems,
       changes,
+      discardingChangePaths,
       conflicts,
       conflictOperationActive,
       supportedConflictOperation,

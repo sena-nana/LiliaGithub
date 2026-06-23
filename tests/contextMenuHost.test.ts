@@ -7,6 +7,7 @@ import {
   installContextMenu,
   openContextMenuAt,
   type ContextMenuItem,
+  uninstallContextMenu,
 } from "../src/composables/useContextMenu";
 import { SB_MENU_POP_TRANSITION_MS } from "../src/composables/menuMotion";
 import { vContextMenu } from "../src/directives/contextMenu";
@@ -46,6 +47,7 @@ describe("ContextMenuHost", () => {
 
   afterEach(() => {
     closeContextMenu();
+    uninstallContextMenu();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -62,6 +64,21 @@ describe("ContextMenuHost", () => {
     document.body.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("卸载后移除全局右键菜单监听", () => {
+    render(ContextMenuHost);
+    uninstallContextMenu();
+
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24,
+    });
+    document.body.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it("provider 返回空数组时继续向祖先查找菜单项", async () => {

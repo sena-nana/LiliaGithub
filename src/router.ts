@@ -3,15 +3,22 @@ import {
   createWebHistory,
   type RouterHistory,
 } from "vue-router";
+import { invalidateSessionContextSnapshot } from "./composables/sessionContext";
 import AppShell from "./layouts/AppShell.vue";
+import { createCachedAsyncModule } from "./utils/asyncModule";
 
-const HomePage = () => import("./pages/Home.vue");
-const SettingsPage = () => import("./pages/Settings.vue");
-const RepoPage = () => import("./pages/RepoDetail.vue");
-const CommitDetailPage = () => import("./pages/CommitDetail.vue");
+const homePageModule = createCachedAsyncModule(() => import("./pages/Home.vue"));
+const settingsPageModule = createCachedAsyncModule(() => import("./pages/Settings.vue"));
+const repoPageModule = createCachedAsyncModule(() => import("./pages/RepoDetail.vue"));
+const commitDetailPageModule = createCachedAsyncModule(() => import("./pages/CommitDetail.vue"));
+
+const HomePage = () => homePageModule.load();
+const SettingsPage = () => settingsPageModule.load();
+const RepoPage = () => repoPageModule.load();
+const CommitDetailPage = () => commitDetailPageModule.load();
 
 export function createLiliaGithubRouter(history: RouterHistory = createWebHistory()) {
-  return createRouter({
+  const router = createRouter({
     history,
     routes: [
       {
@@ -20,7 +27,7 @@ export function createLiliaGithubRouter(history: RouterHistory = createWebHistor
         children: [
           { path: "", component: HomePage },
           { path: "repos/:repoId(.*)/commits/:hash", component: CommitDetailPage },
-          { path: "repos/:repoId(.*)/files", component: RepoPage, meta: { repoTab: "repo" } },
+          { path: "repos/:repoId(.*)/files", component: RepoPage, meta: { repoTab: "files" } },
           { path: "repos/:repoId(.*)/changes", component: RepoPage, meta: { repoTab: "changes" } },
           { path: "repos/:repoId(.*)/history", component: RepoPage, meta: { repoTab: "history" } },
           { path: "repos/:repoId(.*)/stash", component: RepoPage, meta: { repoTab: "stash" } },
@@ -37,6 +44,11 @@ export function createLiliaGithubRouter(history: RouterHistory = createWebHistor
       { path: "/:pathMatch(.*)*", redirect: "/" },
     ],
   });
+  router.beforeEach((to, from) => {
+    if (to.fullPath !== from.fullPath) invalidateSessionContextSnapshot();
+    return true;
+  });
+  return router;
 }
 
 export const router = createLiliaGithubRouter();

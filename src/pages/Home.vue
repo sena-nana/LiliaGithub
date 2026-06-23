@@ -5,7 +5,6 @@ import {
   AlertCircle,
   CheckCircle2,
   CircleDot,
-  FilePlus2,
   FolderOpen,
   FolderGit2,
   GitCommitHorizontal,
@@ -21,7 +20,7 @@ import {
   ShieldCheck,
   X,
 } from "@lucide/vue";
-import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
+import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
@@ -33,7 +32,6 @@ import {
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import {
-  getGitHubBindingStatus,
   isGitHubBindingExpiredError,
   listGitHubRepos,
   listGitHubIssues,
@@ -41,8 +39,6 @@ import {
   listGitHubPullRequestChecks,
   listGitHubWorkflowRuns,
   preloadGitHubRepos,
-  readCachedGitHubRepos,
-  type GitHubBindingStatus,
   type GitHubContributionDay,
   type GitHubIssue,
   type GitHubPullRequest,
@@ -97,6 +93,8 @@ type RepoStatusRow = {
   workflowRun: WorkflowRunOverview | null;
 };
 
+type GitHubTimelineRepoSource = Pick<RepoStatusRow, "githubRepo" | "localRepo">;
+
 type GitHubTimelineEvent = {
   id: string;
   kind: "repo" | "operation" | "commit" | "issue" | "pull" | "workflow";
@@ -148,6 +146,7 @@ type HomeCodeOverview = {
 };
 
 type ProjectTabRef = "issues" | "pulls" | "actions";
+const REPO_STATUS_RENDER_PAGE_SIZE = 60;
 const GITHUB_TIMELINE_EVENT_LIMIT = 12;
 const GITHUB_TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 const GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -206,24 +205,10 @@ const githubWorkflowRunsLoading = ref(false);
 const githubTimelineCard = ref<HTMLElement | null>(null);
 const githubTimelineActivated = ref(false);
 const cloningFullName = ref<string | null>(null);
-const cloneOpen = ref(false);
-const cloneRemoteUrl = ref("");
-const cloneDirectoryName = ref("");
-const cloneTouchedDirectory = ref(false);
-const cloneBusy = ref(false);
-const cloneError = ref<string | null>(null);
-const cloneBindingStatus = ref<GitHubBindingStatus | null>(null);
-const cloneRepoItems = ref<GitHubRepoSummary[]>([]);
-const cloneRepoDropdownOpen = ref(false);
-const cloneRepoLoading = ref(false);
-const cloneRepoLoadingMore = ref(false);
-const cloneRepoLoadError = ref<string | null>(null);
-const cloneNextRepoPage = ref<number | null>(null);
-const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
-const githubRepoStatusLoader = createLatestAsyncLoader();
-const githubRepoMoreLoader = createLatestAsyncLoader();
-const cloneBindingLoader = createLatestAsyncLoader();
-const cloneRepoPageLoader = createLatestAsyncLoader();
+const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
+const componentEpoch = useComponentEpoch();
+const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
+const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
@@ -238,21 +223,6 @@ const hasContributionDays = computed(() => workspace.state.githubContributions.d
 const skippedContributionRepoCount = computed(() =>
   workspace.state.githubContributions.meta?.skippedRepoCount ?? 0,
 );
-const canSubmitClone = computed(() => cloneRemoteUrl.value.trim().length > 0 && !cloneBusy.value);
-const cloneGitHubBound = computed(() => cloneBindingStatus.value?.state === "bound");
-const cloneQueryTrimmed = computed(() => cloneRemoteUrl.value.trim());
-const cloneBindingExpired = computed(() => cloneError.value?.includes("GitHub 绑定已失效") === true);
-const cloneDirectGitHubRepo = computed(() => normalizeGitHubInput(cloneQueryTrimmed.value));
-const filteredCloneRepos = computed(() => {
-  const text = cloneQueryTrimmed.value.toLowerCase();
-  if (!text) return cloneRepoItems.value;
-  return cloneRepoItems.value.filter((repo) =>
-    repo.fullName.toLowerCase().includes(text) ||
-    repo.name.toLowerCase().includes(text) ||
-    (repo.description ?? "").toLowerCase().includes(text),
-  );
-});
-
 const languageOverview = computed<HomeCodeOverview>(() => {
   const overview = buildLanguageOverviewFromRepos(
     representativeReposBySharedGroup(workspace.state.repos),
@@ -305,9 +275,21 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
   }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived)),
 );
 
+const visibleRepoStatusRows = computed(() =>
+  repoStatusRows.value.slice(0, repoStatusVisibleCount.value),
+);
+const hiddenRepoStatusRowCount = computed(() =>
+  Math.max(0, repoStatusRows.value.length - visibleRepoStatusRows.value.length),
+);
+const githubTimelineRepoSources = computed<GitHubTimelineRepoSource[]>(() =>
+  githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => ({
+    githubRepo,
+    localRepo: localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null,
+  })),
+);
 const githubTimelineNodes = computed<TimelineDisplayNode[]>(() =>
-  repoStatusRows.value
-    .flatMap((row) => buildGitHubTimelineEvents(row))
+  githubTimelineRepoSources.value
+    .flatMap((source) => buildGitHubTimelineEvents(source))
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, GITHUB_TIMELINE_EVENT_LIMIT)
     .map(toGitHubTimelineDisplayNode),
@@ -363,12 +345,19 @@ const githubTimelineWorkflowTasks = createConcurrentTaskQueue<GitHubTimelineWork
   worker: processGitHubTimelineWorkflowTask,
 });
 
+watch(
+  () => repoStatusRows.value.length,
+  (length, previousLength) => {
+    if (length < previousLength) {
+      repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
+    }
+  },
+);
+
 onUnmounted(() => {
   githubTimelineGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
-  cloneBindingLoader.invalidate();
-  cloneRepoPageLoader.invalidate();
   clearGitHubTimelineActivationHooks();
   resetGitHubTimelineQueues();
 });
@@ -394,11 +383,6 @@ watch(
   },
   { immediate: true },
 );
-
-watch(cloneRemoteUrl, (value) => {
-  if (cloneTouchedDirectory.value) return;
-  cloneDirectoryName.value = cloneSelectedRepo.value?.name ?? inferCloneDirectoryName(value);
-});
 
 function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
   return tab === "conflicts" ? repoRoute(repo.id, "changes") : repoRoute(repo.id);
@@ -963,6 +947,10 @@ async function loadMoreGitHubRepos() {
   });
 }
 
+function showMoreRepoStatusRows() {
+  repoStatusVisibleCount.value += REPO_STATUS_RENDER_PAGE_SIZE;
+}
+
 function repoAction(repo: RepoSummary): RepoAction | null {
   if (repo.conflictCount > 0) {
     return {
@@ -1033,7 +1021,7 @@ function formatCheckNames(checks: readonly GitHubPullRequestCheck[]) {
   return `${names.join("、") || `${checks.length} 项`}${suffix}`;
 }
 
-function buildGitHubTimelineEvents(row: RepoStatusRow): GitHubTimelineEvent[] {
+function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelineEvent[] {
   const { githubRepo, localRepo } = row;
   const events: GitHubTimelineEvent[] = [];
   addTimelineEvent(events, {
@@ -1268,217 +1256,6 @@ function formatTimelineTime(timestamp: number) {
   }).format(new Date(timestamp));
 }
 
-function normalizeGitHubInput(input: string): string | null {
-  const trimmed = input.trim().replace(/\/+$/, "");
-  if (!trimmed) return null;
-  const matched = trimmed.match(/^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i);
-  if (matched) return `${matched[1]}/${matched[2]}`;
-  if (/^[^/\s]+\/[^/\s]+$/.test(trimmed)) return trimmed.replace(/\.git$/i, "");
-  return null;
-}
-
-function dedupeCloneRepos(items: GitHubRepoSummary[]) {
-  const seen = new Set<string>();
-  const next: GitHubRepoSummary[] = [];
-  for (const item of items) {
-    if (seen.has(item.fullName)) continue;
-    seen.add(item.fullName);
-    next.push(item);
-  }
-  return next;
-}
-
-function applyCloneRepoPage(result: { items: GitHubRepoSummary[]; nextPage: number | null }, append = false) {
-  cloneRepoLoadError.value = null;
-  cloneNextRepoPage.value = result.nextPage;
-  cloneRepoItems.value = append
-    ? dedupeCloneRepos([...cloneRepoItems.value, ...result.items])
-    : result.items;
-}
-
-function showCloneRepoLoadError(err: unknown) {
-  const expired = isGitHubBindingExpiredError(err);
-  cloneRepoLoadError.value = expired
-    ? "GitHub 绑定已失效，请重新绑定后再加载账号仓库。"
-    : `仓库列表加载失败：${String(err)}`;
-  if (expired) {
-    cloneError.value = "GitHub 绑定已失效，请重新绑定。";
-  }
-  cloneRepoItems.value = [];
-  cloneNextRepoPage.value = null;
-  cloneSelectedRepo.value = null;
-}
-
-async function loadCloneRepoPage(
-  page = 1,
-  append = false,
-  options: { force?: boolean; showLoading?: boolean } = {},
-) {
-  if (!cloneGitHubBound.value) return;
-  const key = `${append ? "append" : "replace"}:${page}:${options.force ? "force" : "cache"}`;
-  await cloneRepoPageLoader.run(key, async (runId) => {
-    const showLoading = options.showLoading ?? !append;
-    if (append) {
-      cloneRepoLoadingMore.value = true;
-    } else if (showLoading) {
-      cloneRepoLoading.value = true;
-    }
-    try {
-      const result = page === 1
-        ? await preloadGitHubRepos({ force: options.force })
-        : await listGitHubRepos(page);
-      if (!cloneRepoPageLoader.isCurrent(runId) || !cloneOpen.value || !cloneGitHubBound.value) return;
-      applyCloneRepoPage(result, append);
-    } catch (err) {
-      if (!cloneRepoPageLoader.isCurrent(runId) || !cloneOpen.value) return;
-      showCloneRepoLoadError(err);
-    } finally {
-      if (!cloneRepoPageLoader.isCurrent(runId)) return;
-      if (showLoading) {
-        cloneRepoLoading.value = false;
-      }
-      cloneRepoLoadingMore.value = false;
-    }
-  });
-}
-
-function startCloneReposLoad() {
-  if (!cloneGitHubBound.value || cloneRepoLoading.value || cloneRepoItems.value.length > 0) return;
-  void loadCloneRepoPage(1).catch(() => undefined);
-}
-
-async function maybeLoadMoreCloneRepos() {
-  if (!cloneGitHubBound.value || !cloneNextRepoPage.value || cloneRepoLoadingMore.value) return;
-  if (filteredCloneRepos.value.length > 0 && cloneQueryTrimmed.value) return;
-  await loadCloneRepoPage(cloneNextRepoPage.value, true);
-}
-
-async function openCloneDialog() {
-  cloneBindingLoader.invalidate();
-  cloneRepoPageLoader.invalidate();
-  cloneOpen.value = true;
-  cloneRemoteUrl.value = "";
-  cloneDirectoryName.value = "";
-  cloneTouchedDirectory.value = false;
-  cloneError.value = null;
-  cloneBindingStatus.value = null;
-  cloneRepoItems.value = [];
-  cloneRepoDropdownOpen.value = false;
-  cloneRepoLoading.value = false;
-  cloneRepoLoadingMore.value = false;
-  cloneRepoLoadError.value = null;
-  cloneNextRepoPage.value = null;
-  cloneSelectedRepo.value = null;
-  await cloneBindingLoader.run("clone-binding", async (runId) => {
-    try {
-      const status = await getGitHubBindingStatus();
-      if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
-      cloneBindingStatus.value = status;
-      if (cloneGitHubBound.value) {
-        const cached = readCachedGitHubRepos();
-        if (cached) {
-          applyCloneRepoPage(cached);
-        }
-        void loadCloneRepoPage(1, false, {
-          force: Boolean(cached),
-          showLoading: !cached,
-        }).catch(() => undefined);
-      }
-    } catch (err) {
-      if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
-      cloneError.value = String(err);
-    }
-  });
-}
-
-function closeCloneDialog() {
-  if (cloneBusy.value) return;
-  cloneBindingLoader.invalidate();
-  cloneRepoPageLoader.invalidate();
-  cloneOpen.value = false;
-  cloneError.value = null;
-  cloneRepoLoading.value = false;
-  cloneRepoLoadingMore.value = false;
-}
-
-function inferCloneDirectoryName(remoteUrl: string) {
-  const input = normalizeGitHubInput(remoteUrl) ?? remoteUrl.trim();
-  const trimmed = input.replace(/\/+$/, "").replace(/\.git$/i, "");
-  const scpPath = trimmed.match(/^[\w.-]+@[^:]+:(.+)$/)?.[1];
-  const source = scpPath ?? trimmed;
-  const parts = source.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] ?? "";
-}
-
-async function submitClone() {
-  if (!canSubmitClone.value) return;
-  cloneBusy.value = true;
-  cloneError.value = null;
-  try {
-    const selected = cloneSelectedRepo.value;
-    const remote = selected?.cloneUrl ?? cloneDirectGitHubRepo.value ?? cloneRemoteUrl.value.trim();
-    const summary = await workspace.cloneRepo(
-      remote,
-      cloneDirectoryName.value.trim() || selected?.name || null,
-    );
-    cloneBindingLoader.invalidate();
-    cloneRepoPageLoader.invalidate();
-    cloneOpen.value = false;
-    await router.push(repoRoute(summary.id));
-  } catch (err) {
-    if (isGitHubBindingExpiredError(err)) {
-      showCloneRepoLoadError(err);
-    } else {
-      cloneError.value = String(err);
-    }
-  } finally {
-    cloneBusy.value = false;
-  }
-}
-
-function selectCloneRepo(repo: GitHubRepoSummary) {
-  cloneSelectedRepo.value = repo;
-  cloneRemoteUrl.value = repo.fullName;
-  if (!cloneTouchedDirectory.value) {
-    cloneDirectoryName.value = repo.name;
-  }
-  cloneRepoDropdownOpen.value = false;
-}
-
-function clearSelectedCloneRepoIfNeeded() {
-  if (cloneSelectedRepo.value && cloneSelectedRepo.value.fullName !== cloneQueryTrimmed.value) {
-    cloneSelectedRepo.value = null;
-  }
-}
-
-function useDirectCloneTarget() {
-  cloneSelectedRepo.value = null;
-  cloneRepoDropdownOpen.value = false;
-}
-
-function openCloneRepoDropdown() {
-  cloneRepoDropdownOpen.value = true;
-  startCloneReposLoad();
-}
-
-function handleCloneRepoInput() {
-  clearSelectedCloneRepoIfNeeded();
-  cloneRepoDropdownOpen.value = true;
-  startCloneReposLoad();
-  if (cloneQueryTrimmed.value) {
-    void maybeLoadMoreCloneRepos();
-  }
-}
-
-async function openGitHubBindingSettings() {
-  cloneBindingLoader.invalidate();
-  cloneRepoPageLoader.invalidate();
-  cloneOpen.value = false;
-  cloneRepoLoading.value = false;
-  cloneRepoLoadingMore.value = false;
-  await router.push({ path: "/settings", query: { tab: "repositories" } });
-}
-
 function toggleSearch() {
   void shellActions?.toggleSearch();
 }
@@ -1656,16 +1433,6 @@ function bulkOperationDescription(operation: BulkOperation) {
           </div>
         </div>
         <div class="overview-actions" aria-label="项目总览操作">
-          <button
-            type="button"
-            class="overview-actions__btn"
-            title="克隆仓库"
-            aria-label="克隆仓库"
-            :disabled="!workspace.workspaceRoot.value"
-            @click="openCloneDialog"
-          >
-            <FilePlus2 :size="17" aria-hidden="true" />
-          </button>
           <button
             type="button"
             class="overview-actions__btn"
@@ -1950,7 +1717,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             <div class="repo-status-list" aria-label="仓库状态列表">
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
-                v-for="{ githubRepo, localRepo, action, syncIssue, workflowRun } in repoStatusRows"
+                v-for="{ githubRepo, localRepo, action, syncIssue, workflowRun } in visibleRepoStatusRows"
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
@@ -2054,7 +1821,15 @@ function bulkOperationDescription(operation: BulkOperation) {
                 </span>
               </div>
               <button
-                v-if="githubReposNextPage"
+                v-if="hiddenRepoStatusRowCount > 0"
+                type="button"
+                class="repo-status-more"
+                @click="showMoreRepoStatusRows"
+              >
+                显示更多 {{ hiddenRepoStatusRowCount }} 个
+              </button>
+              <button
+                v-else-if="githubReposNextPage"
                 type="button"
                 class="repo-status-more"
                 :disabled="githubReposLoadingMore"
@@ -2068,37 +1843,6 @@ function bulkOperationDescription(operation: BulkOperation) {
         </div>
       </div>
     </template>
-
-    <HomeCloneDialog
-      v-if="cloneOpen"
-      :busy="cloneBusy"
-      :can-submit="canSubmitClone"
-      :error="cloneError"
-      :binding-expired="cloneBindingExpired"
-      :git-hub-bound="cloneGitHubBound"
-      :binding-status="cloneBindingStatus"
-      :remote-url="cloneRemoteUrl"
-      :directory-name="cloneDirectoryName"
-      :repo-dropdown-open="cloneRepoDropdownOpen"
-      :filtered-repos="filteredCloneRepos"
-      :repo-loading="cloneRepoLoading"
-      :repo-loading-more="cloneRepoLoadingMore"
-      :repo-load-error="cloneRepoLoadError"
-      :next-repo-page="cloneNextRepoPage"
-      :selected-repo="cloneSelectedRepo"
-      :direct-repo="cloneDirectGitHubRepo"
-      @close="closeCloneDialog"
-      @submit="submitClone"
-      @open-settings="openGitHubBindingSettings"
-      @load-more="maybeLoadMoreCloneRepos"
-      @open-repo-dropdown="openCloneRepoDropdown"
-      @handle-repo-input="handleCloneRepoInput"
-      @select-repo="selectCloneRepo"
-      @update-remote-url="cloneRemoteUrl = $event"
-      @update-directory-name="cloneDirectoryName = $event"
-      @mark-directory-touched="cloneTouchedDirectory = true"
-      @clear-selected-repo="useDirectCloneTarget"
-    />
 
     <div
       v-if="workspace.state.bulkPreview && workspace.state.bulkPreview.operation !== 'sync'"

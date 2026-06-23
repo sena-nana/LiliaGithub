@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   ArrowRight,
   CircleOff,
@@ -44,6 +44,19 @@ const props = defineProps<{
   isFocused: (pullNumber: number) => boolean;
 }>();
 
+type PullRequestChip = {
+  key: string;
+  text: string;
+};
+
+type PullRequestDisplayRow = {
+  pull: GitHubPullRequest;
+  statusText: string;
+  updatedText: string;
+  chips: PullRequestChip[];
+  closed: boolean;
+};
+
 const emit = defineEmits<{
   "update:state": [value: PullRequestState];
   "update:filters": [value: PullRequestPanelFilters];
@@ -57,6 +70,8 @@ const emit = defineEmits<{
 }>();
 
 const filtersOpen = ref(false);
+const PULL_RENDER_PAGE_SIZE = 50;
+const visiblePullCount = ref(PULL_RENDER_PAGE_SIZE);
 
 const stateFilters: readonly { value: PullRequestState; label: string }[] = [
   { value: "open", label: "Open" },
@@ -139,6 +154,37 @@ const activeFilterCount = computed(() =>
     props.filters.labels.length ? "labels" : null,
   ].filter(Boolean).length
 );
+const visiblePulls = computed(() => props.pulls.slice(0, visiblePullCount.value));
+const visiblePullRows = computed<PullRequestDisplayRow[]>(() =>
+  visiblePulls.value.map((pull) => ({
+    pull,
+    statusText: pullStatusText(pull),
+    updatedText: pullUpdatedText(pull),
+    chips: pullChips(pull),
+    closed: pull.state !== "open" || pull.merged,
+  })),
+);
+const hiddenPullCount = computed(() =>
+  Math.max(0, props.pulls.length - visiblePullRows.value.length),
+);
+
+watch(
+  () => [
+    props.state,
+    props.filters.query,
+    props.filters.creator,
+    props.filters.assignee,
+    props.filters.milestone,
+    props.filters.project,
+    props.filters.review,
+    props.filters.sort,
+    props.filters.direction,
+    props.filters.labels.join("\0"),
+  ] as const,
+  () => {
+    visiblePullCount.value = PULL_RENDER_PAGE_SIZE;
+  },
+);
 
 function updateFilters(next: Partial<PullRequestPanelFilters>) {
   emit("update:filters", {
@@ -151,6 +197,10 @@ function updateFilters(next: Partial<PullRequestPanelFilters>) {
 function updateSort(value: string) {
   const [sort, direction] = value.split("-") as [PullRequestSort, PullRequestDirection];
   updateFilters({ sort, direction });
+}
+
+function showMorePulls() {
+  visiblePullCount.value += PULL_RENDER_PAGE_SIZE;
 }
 
 function checksFor(pullNumber: number) {
@@ -361,31 +411,31 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
 
     <div class="pulls-list" role="list" aria-label="Pull Requests">
       <div
-        v-for="pull in pulls"
-        :key="pull.number"
+        v-for="row in visiblePullRows"
+        :key="row.pull.number"
         class="pulls-list__item project-row--pull repo-list-row repo-list-row--with-actions"
-        :class="{ 'is-target': isFocused(pull.number) }"
-        :data-pull-number="pull.number"
+        :class="{ 'is-target': isFocused(row.pull.number) }"
+        :data-pull-number="row.pull.number"
         role="listitem"
-        @click="emit('focus', pull)"
+        @click="emit('focus', row.pull)"
       >
-        <span class="pulls-list__status repo-list-row__status" :class="{ 'is-closed': pull.state !== 'open' || pull.merged }" :title="pullStatusText(pull)">
-          <GitMerge v-if="pull.merged" :size="15" aria-hidden="true" />
-          <GitPullRequest v-else-if="pull.state === 'open'" :size="15" aria-hidden="true" />
+        <span class="pulls-list__status repo-list-row__status" :class="{ 'is-closed': row.closed }" :title="row.statusText">
+          <GitMerge v-if="row.pull.merged" :size="15" aria-hidden="true" />
+          <GitPullRequest v-else-if="row.pull.state === 'open'" :size="15" aria-hidden="true" />
           <CircleOff v-else :size="15" aria-hidden="true" />
         </span>
         <div class="pulls-list__content repo-list-row__body">
           <div class="pulls-list__main">
-            <strong class="pulls-list__title repo-list-row__title">#{{ pull.number }} {{ pull.title }}</strong>
+            <strong class="pulls-list__title repo-list-row__title">#{{ row.pull.number }} {{ row.pull.title }}</strong>
             <div class="pulls-list__byline">
-              <span>{{ pull.author || "未知作者" }}</span>
-              <span>{{ pull.headBranch }} -> {{ pull.baseBranch }}</span>
+              <span>{{ row.pull.author || "未知作者" }}</span>
+              <span>{{ row.pull.headBranch }} -> {{ row.pull.baseBranch }}</span>
             </div>
           </div>
           <div class="pulls-list__side repo-list-row__meta">
-            <span class="pulls-list__updated">{{ pullUpdatedText(pull) }}</span>
-            <div v-if="pullChips(pull).length" class="pulls-list__chips" aria-label="Pull Request 元数据">
-              <span v-for="chip in pullChips(pull)" :key="chip.key">{{ chip.text }}</span>
+            <span class="pulls-list__updated">{{ row.updatedText }}</span>
+            <div v-if="row.chips.length" class="pulls-list__chips" aria-label="Pull Request 元数据">
+              <span v-for="chip in row.chips" :key="chip.key">{{ chip.text }}</span>
             </div>
             <span v-else class="pulls-list__empty-meta">无标签 · 未分配 · 无项目</span>
           </div>
@@ -399,6 +449,14 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
       <p v-else-if="loading && !pulls.length" class="muted repo-empty pulls-list__empty">
         正在读取 Pull Requests。
       </p>
+      <button
+        v-if="hiddenPullCount > 0"
+        type="button"
+        class="pulls-list__more"
+        @click="showMorePulls"
+      >
+        显示更多 {{ hiddenPullCount }} 个
+      </button>
     </div>
     </template>
   </div>
@@ -647,6 +705,24 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
 
 .pulls-list__empty {
   margin: 18px 0 0;
+}
+
+.pulls-list__more {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pulls-list__more:hover,
+.pulls-list__more:focus-visible {
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 
 @media (max-width: 900px) {

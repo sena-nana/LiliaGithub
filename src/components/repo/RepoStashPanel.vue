@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { Archive, ArchiveRestore, LoaderCircle, Plus, Trash2 } from "@lucide/vue";
+import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
@@ -26,8 +27,9 @@ const detailLoading = ref(false);
 const error = ref<string | null>(null);
 const diffMode = ref<RepoDiffWorkspaceMode>("hunks");
 const dropConfirmStashId = ref<string | null>(null);
-const stashesLoader = createLatestAsyncLoader();
-const stashDetailLoader = createLatestAsyncLoader();
+const componentEpoch = useComponentEpoch();
+const stashesLoader = createLatestAsyncLoader({ componentEpoch });
+const stashDetailLoader = createLatestAsyncLoader({ componentEpoch });
 const actionTracker = createPendingTaskTracker();
 const actionRunning = actionTracker.running;
 let actionGeneration = 0;

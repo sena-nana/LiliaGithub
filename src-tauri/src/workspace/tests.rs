@@ -314,6 +314,8 @@ fn maps_github_discussion_timeline_items() {
         html_url: Some("https://github.com/a/repo/issues/1#issuecomment-42".to_string()),
         created_at: Some("2026-06-18T08:01:00Z".to_string()),
         updated_at: Some("2026-06-18T08:02:00Z".to_string()),
+        source: None,
+        commit_id: None,
     });
     assert_eq!(comment.kind, "comment");
     assert_eq!(comment.id, "42");
@@ -332,6 +334,8 @@ fn maps_github_discussion_timeline_items() {
         html_url: None,
         created_at: Some("2026-06-18T08:03:00Z".to_string()),
         updated_at: None,
+        source: None,
+        commit_id: None,
     });
     assert_eq!(event.kind, "event");
     assert_eq!(event.title.as_deref(), Some("关闭了讨论"));
@@ -347,6 +351,8 @@ fn maps_github_discussion_timeline_items() {
         html_url: None,
         created_at: Some("2026-06-18T08:04:00Z".to_string()),
         updated_at: None,
+        source: None,
+        commit_id: None,
     });
     assert_eq!(unknown.kind, "event");
     assert_eq!(unknown.title.as_deref(), Some("custom event"));
@@ -384,6 +390,94 @@ fn maps_github_discussion_timeline_items() {
     assert_eq!(review_comment.kind, "reviewComment");
     assert_eq!(review_comment.path.as_deref(), Some("src/lib.rs"));
     assert_eq!(review_comment.line, Some(12));
+}
+
+#[test]
+fn maps_github_development_items_from_timeline() {
+    let items = github_development_items_from_timeline(
+        "sena-nana/remote-repo",
+        &[
+            GitHubIssueTimelineResponse {
+                id: Some(serde_json::json!(1)),
+                node_id: None,
+                event: Some("cross-referenced".to_string()),
+                actor: None,
+                user: None,
+                body: None,
+                html_url: None,
+                created_at: Some("2026-06-18T08:00:00Z".to_string()),
+                updated_at: None,
+                source: Some(GitHubIssueTimelineSourceResponse {
+                    issue: Some(GitHubIssueTimelineSourceIssueResponse {
+                        number: 12,
+                        title: "关联问题".to_string(),
+                        state: "open".to_string(),
+                        html_url: "https://github.com/sena-nana/remote-repo/issues/12".to_string(),
+                        pull_request: None,
+                    }),
+                }),
+                commit_id: None,
+            },
+            GitHubIssueTimelineResponse {
+                id: Some(serde_json::json!(2)),
+                node_id: None,
+                event: Some("referenced".to_string()),
+                actor: None,
+                user: None,
+                body: None,
+                html_url: None,
+                created_at: Some("2026-06-18T08:01:00Z".to_string()),
+                updated_at: None,
+                source: None,
+                commit_id: Some("abcdef1234567890".to_string()),
+            },
+        ],
+    );
+
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].kind, "issue");
+    assert_eq!(items[0].label, "Issue #12 关联问题");
+    assert_eq!(
+        items[0].repository_full_name.as_deref(),
+        Some("sena-nana/remote-repo")
+    );
+    assert_eq!(items[1].kind, "commit");
+    assert_eq!(items[1].sha.as_deref(), Some("abcdef1234567890"));
+}
+
+#[test]
+fn maps_github_pull_request_reviewers() {
+    let mut reviewers =
+        github_pull_request_reviewers_from_requested(GitHubRequestedReviewersResponse {
+            users: vec![GitHubPullRequestUserResponse {
+                login: "mika".to_string(),
+            }],
+            teams: vec![GitHubTeamResponse {
+                slug: Some("core".to_string()),
+                name: Some("Core".to_string()),
+            }],
+        });
+    add_pull_request_reviewers_from_reviews(
+        &mut reviewers,
+        &[GitHubPullRequestReviewResponse {
+            id: 42,
+            user: Some(GitHubPullRequestUserResponse {
+                login: "mika".to_string(),
+            }),
+            body: None,
+            state: "APPROVED".to_string(),
+            html_url: None,
+            submitted_at: Some("2026-06-18T08:00:00Z".to_string()),
+            commit_id: None,
+        }],
+    );
+
+    assert_eq!(reviewers.len(), 2);
+    assert_eq!(reviewers[0].login, "mika");
+    assert_eq!(reviewers[0].state, "APPROVED");
+    assert_eq!(reviewers[1].login, "core");
+    assert_eq!(reviewers[1].kind, "team");
+    assert_eq!(reviewers[1].state, "requested");
 }
 
 #[test]
@@ -459,6 +553,7 @@ fn test_github_issue(number: u64, state: &str) -> GitHubIssue {
         milestone: None,
         comments: 0,
         project_items: Vec::new(),
+        development_items: Vec::new(),
         html_url: format!("https://github.com/a/repo/issues/{number}"),
         updated_at: "2026-06-18T08:00:00Z".to_string(),
         created_at: "2026-06-18T08:00:00Z".to_string(),
@@ -481,6 +576,9 @@ fn test_github_pull_request(number: u64, state: &str) -> GitHubPullRequest {
         milestone: None,
         comments: 0,
         project_items: Vec::new(),
+        reviewers: Vec::new(),
+        development_items: Vec::new(),
+        commit_count: None,
         base_branch: "main".to_string(),
         head_branch: "feature/cache".to_string(),
         merged: false,
@@ -493,6 +591,44 @@ fn test_github_pull_request_cache_key(state: Option<&str>) -> String {
     github_pull_request_cache_key(
         state, None, None, None, None, None, None, None, None, None, None,
     )
+}
+
+fn test_github_release(id: u64, tag_name: &str) -> GitHubRelease {
+    GitHubRelease {
+        id,
+        tag_name: tag_name.to_string(),
+        target_commitish: "main".to_string(),
+        name: Some(format!("Release {tag_name}")),
+        body: Some("Release notes".to_string()),
+        draft: false,
+        prerelease: false,
+        immutable: false,
+        make_latest: Some("true".to_string()),
+        html_url: format!("https://github.com/sena-nana/remote/releases/tag/{tag_name}"),
+        upload_url: format!(
+            "https://uploads.github.com/repos/sena-nana/remote/releases/{id}/assets{{?name,label}}"
+        ),
+        tarball_url: None,
+        zipball_url: None,
+        created_at: "2026-06-18T08:00:00Z".to_string(),
+        published_at: Some("2026-06-18T08:05:00Z".to_string()),
+        author: Some("sena".to_string()),
+        assets: vec![GitHubReleaseAsset {
+            id: id + 1000,
+            name: "lilia-windows.zip".to_string(),
+            label: Some("Windows".to_string()),
+            content_type: "application/zip".to_string(),
+            size: 2048,
+            download_count: 3,
+            state: "uploaded".to_string(),
+            browser_download_url: format!(
+                "https://github.com/sena-nana/remote/releases/download/{tag_name}/lilia-windows.zip"
+            ),
+            created_at: "2026-06-18T08:10:00Z".to_string(),
+            updated_at: "2026-06-18T08:10:00Z".to_string(),
+            uploader: Some("mika".to_string()),
+        }],
+    }
 }
 
 #[test]
@@ -602,6 +738,94 @@ fn github_project_cache_keys_are_normalized_and_parameterized() {
 }
 
 #[test]
+fn github_release_response_maps_release_and_assets() {
+    let release = github_release_from_response(GitHubReleaseResponse {
+        id: 8001,
+        tag_name: "v1.0.0".to_string(),
+        target_commitish: Some(" main ".to_string()),
+        name: Some(" Lilia v1.0.0 ".to_string()),
+        body: Some(" Release notes ".to_string()),
+        draft: false,
+        prerelease: false,
+        immutable: true,
+        make_latest: Some("true".to_string()),
+        html_url: "https://github.com/sena-nana/remote/releases/tag/v1.0.0".to_string(),
+        upload_url:
+            "https://uploads.github.com/repos/sena-nana/remote/releases/8001/assets{?name,label}"
+                .to_string(),
+        tarball_url: Some(" ".to_string()),
+        zipball_url: Some(
+            "https://api.github.com/repos/sena-nana/remote/zipball/v1.0.0".to_string(),
+        ),
+        created_at: "2026-06-18T08:00:00Z".to_string(),
+        published_at: Some("2026-06-18T08:05:00Z".to_string()),
+        author: Some(GitHubReleaseUserResponse {
+            login: "sena".to_string(),
+        }),
+        assets: vec![GitHubReleaseAssetResponse {
+            id: 9001,
+            name: "lilia-windows.zip".to_string(),
+            label: Some(" Windows ".to_string()),
+            content_type: Some(" ".to_string()),
+            size: 2048,
+            download_count: 7,
+            state: Some(" ".to_string()),
+            browser_download_url:
+                "https://github.com/sena-nana/remote/releases/download/v1.0.0/lilia-windows.zip"
+                    .to_string(),
+            created_at: "2026-06-18T08:10:00Z".to_string(),
+            updated_at: "2026-06-18T08:11:00Z".to_string(),
+            uploader: Some(GitHubReleaseUserResponse {
+                login: "mika".to_string(),
+            }),
+        }],
+    });
+
+    assert_eq!(release.tag_name, "v1.0.0");
+    assert_eq!(release.target_commitish, "main");
+    assert_eq!(release.name.as_deref(), Some("Lilia v1.0.0"));
+    assert_eq!(release.body.as_deref(), Some("Release notes"));
+    assert!(release.immutable);
+    assert_eq!(release.make_latest.as_deref(), Some("true"));
+    assert_eq!(release.tarball_url, None);
+    assert_eq!(release.author.as_deref(), Some("sena"));
+    assert_eq!(release.assets[0].content_type, "application/octet-stream");
+    assert_eq!(release.assets[0].state, "uploaded");
+    assert_eq!(release.assets[0].uploader.as_deref(), Some("mika"));
+}
+
+#[test]
+fn github_release_asset_upload_helpers_validate_paths_and_size() {
+    assert_eq!(
+        github_release_upload_base_url(
+            "https://uploads.github.com/repos/sena-nana/remote/releases/8001/assets{?name,label}"
+        )
+        .unwrap(),
+        "https://uploads.github.com/repos/sena-nana/remote/releases/8001/assets"
+    );
+    assert!(github_release_upload_base_url("  ").is_err());
+
+    let asset_path = Path::new("release").join("lilia.zip");
+    assert_eq!(
+        github_release_asset_name(&asset_path.to_string_lossy()).unwrap(),
+        "lilia.zip"
+    );
+    assert!(github_release_asset_name("").is_err());
+    assert!(github_release_validate_asset_file_size(GITHUB_RELEASE_ASSET_MAX_BYTES).is_ok());
+    assert!(github_release_validate_asset_file_size(GITHUB_RELEASE_ASSET_MAX_BYTES + 1).is_err());
+
+    let dir = temp_dir("github-release-asset-bytes");
+    assert!(github_release_asset_bytes(&dir.to_string_lossy()).is_err());
+    let file = dir.join("asset.bin");
+    fs::write(&file, b"asset").unwrap();
+    assert_eq!(
+        github_release_asset_bytes(&file.to_string_lossy()).unwrap(),
+        b"asset"
+    );
+    assert!(github_release_asset_bytes(&dir.join("missing.bin").to_string_lossy()).is_err());
+}
+
+#[test]
 fn github_pull_request_search_query_includes_pr_review_and_merge_qualifiers() {
     let labels = vec!["needs triage".to_string(), "bug".to_string()];
     let query = github_pull_request_search_query(
@@ -679,6 +903,7 @@ fn github_project_cache_serializes_distinct_query_buckets() {
         test_github_pull_request_cache_key(Some("all")),
         vec![test_github_pull_request(4, "closed")],
     );
+    repo_cache.releases = Some(vec![test_github_release(5, "v1.0.0")]);
 
     let value = serde_json::to_value(&cache).unwrap();
     let restored: GitHubProjectCache = serde_json::from_value(value).unwrap();
@@ -725,6 +950,10 @@ fn github_project_cache_serializes_distinct_query_buckets() {
     assert_eq!(
         restored_repo.pull_requests[&test_github_pull_request_cache_key(Some("all"))][0].number,
         4
+    );
+    assert_eq!(
+        restored_repo.releases.as_ref().unwrap()[0].tag_name,
+        "v1.0.0"
     );
 }
 

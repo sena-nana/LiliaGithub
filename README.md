@@ -61,7 +61,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It keeps 
 
 ## Feature Status
 
-The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked. Last checked: 2026-06-22.
+The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked. Last checked: 2026-06-23.
 
 ### Local Git And Repository Management
 
@@ -74,22 +74,25 @@ The list below tracks the current real integration surface. Only capabilities th
 
 ### GitHub Project And Collaboration View
 
-- [x] GitHub repository metadata, stars, forks, topics, default branch state, and repository settings.
-- [x] Issue browsing, filtering, detail timeline, template-assisted creation, and repository project fields.
-- [x] Pull request browsing, filtering, detail timeline, checks, create flow, and merge action.
-- [x] Repository Projects board view from linked issues and pull requests.
-- [x] Actions run list, run detail, job graph, job logs, and artifact preview.
+- [x] GitHub repository metadata, stars, forks, topics, releases, default branch state, and repository settings.
+- [x] Issue browsing, filtering, detail timeline, template-assisted creation, route-persisted filters, and repository project fields.
+- [x] Pull request browsing, filtering, detail timeline, checks, create flow, merge action, and route-persisted filters.
+- [x] Discussion Markdown timeline rendering inside issue and pull request details.
+- [x] Repository Projects metadata loading and board view from linked issues and pull requests.
+- [x] Actions run list, run detail, job graph, job logs, workflow node graph, and artifact preview.
 - [x] Home GitHub timeline for recent issues, pull requests, workflow runs, pushes, and sync events.
+- [x] Release list and status management.
 - [ ] GitHub Discussions browsing and creation.
-- [ ] Release list/status management outside workflow-run visibility.
 - [ ] Notification inbox with repository, issue, pull request, and review filters.
+- [ ] Broader failed workflow visibility.
 
 ### Personal Workspace
 
 - [x] Signed-in GitHub account connection.
 - [x] Local workspace preferences and theme persistence.
+- [x] Account repository list access with a sidebar create-repository entry.
+- [x] GitHub repository creation and clone-to-workspace flow.
 - [ ] Personal home view for assigned work, recently touched repositories, and saved workspaces.
-- [x] Account-level repository list, GitHub repository creation, and clone-to-workspace flow.
 - [ ] Watched repositories and notification preferences.
 - [ ] Local organization of favorite repositories and common workspaces.
 
@@ -168,7 +171,17 @@ If `yarn --version` still reports `1.x` after enabling Corepack, run commands th
 
 ## First Release Packaging
 
-Release packaging is driven by the GitHub Actions release workflow. The root `package.json` may use prerelease names such as `0.1.0-alpha.1`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
+Release packaging is driven by the GitHub Actions release workflow. The root `package.json` may use prerelease names such as `0.1.0-alpha.2`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
+
+### `v0.1.0-alpha.2` Notes
+
+This prerelease includes the GitHub work landed from 2026-06-21 through 2026-06-23 after `v0.1.0-alpha.1`:
+
+- Issues and pull requests now have denser filtered lists, route-persisted filter state, template-backed creation entry points, and detail sidebars.
+- Actions now has in-app run details, job logs, cleaner run lists, and a workflow node graph.
+- Issue and pull request details can render discussion Markdown timelines.
+- GitHub Projects metadata now degrades gracefully when `read:project` permission is unavailable instead of blocking repository collaboration views.
+- The sidebar now exposes the create-repository entry, with the repository creation form split out from settings.
 
 Pushing a `v*` tag runs verification and builds the Windows Tauri bundle for the draft release. Before publishing a release, download the artifact and manually verify install, launch, basic window behavior, repository scanning, and uninstall. Current release artifacts are Windows-first, unsigned, and do not include the Tauri updater.
 

@@ -2,10 +2,12 @@
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
 import {
+  CloudDownload,
   ChevronRight,
   EyeOff,
   FolderGit2,
   FolderInput,
+  GitBranchPlus,
   GitPullRequestArrow,
   Pencil,
   Plus,
@@ -14,7 +16,9 @@ import {
   X,
 } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
+import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import { useWorkspace } from "../composables/useWorkspace";
+import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import {
   bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
   repoSyncIssueForRepo,
@@ -22,8 +26,9 @@ import {
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
+import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
-import type { ContextMenuItem } from "../composables/useContextMenu";
+import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
 import type { RepoSummary } from "../services/workspace";
 import { repoDisplayName } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
@@ -40,7 +45,15 @@ const editingGroupName = ref("");
 const editingGroupError = ref<string | null>(null);
 const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
+const createRepoCardOpen = ref(false);
+const createRepoCardMode = ref<"local" | "remote">("local");
+const createRepoTargetGroupId = ref<string | null>(null);
+const cloneRepoTargetGroupId = ref<string | null>(null);
 const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
+const SIDEBAR_LIST_RENDER_PAGE_SIZE = 80;
+const searchResultVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
+const remoteRepoVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
+const sectionVisibleCounts = ref<Record<string, number>>({});
 
 const props = defineProps<{
   searchOpen: boolean;
@@ -55,6 +68,9 @@ const emit = defineEmits<{
 const searchQueryModel = computed({
   get: () => props.searchQuery,
   set: (value: string) => emit("update:searchQuery", value),
+});
+const cloneDialog = useCloneRepoDialog({
+  onCloned: placeClonedRepo,
 });
 
 const footerStatus = computed(() => {
@@ -114,6 +130,8 @@ interface RepoSection {
   id: string;
   name: string;
   items: RepoItem[];
+  visibleItems: RepoItem[];
+  hiddenItemCount: number;
   collapsed: boolean;
   group: RepoGroupRef | null;
 }
@@ -156,8 +174,15 @@ const filteredRepoItems = computed(() => {
   const query = searchQueryModel.value.trim().toLocaleLowerCase();
   return repoItems.value.filter(({ repo }) => repoMatchesQuery(repo, query));
 });
+const visibleFilteredRepoItems = computed(() =>
+  filteredRepoItems.value.slice(0, searchResultVisibleCount.value),
+);
+const hiddenFilteredRepoItemCount = computed(() =>
+  Math.max(0, filteredRepoItems.value.length - visibleFilteredRepoItems.value.length),
+);
 
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
+const repoGroupIds = computed(() => repoGroups.value.map((group) => group.id));
 
 const repoItemById = computed(() => new Map(repoItems.value.map((item) => [item.repo.id, item])));
 
@@ -173,37 +198,51 @@ const ungroupedRepoItems = computed(() =>
   repoItems.value.filter(({ repo }) => !groupedRepoIds.value.has(repo.id)),
 );
 
-const localRepoSections = computed<RepoSection[]>(() => [
-  {
-    id: UNGROUPED_REPO_GROUP_ID,
-    name: "未分组仓库",
-    items: ungroupedRepoItems.value,
-    collapsed: collapsedGroupIds.value.has(UNGROUPED_REPO_GROUP_ID),
-    group: null,
-  },
-  ...repoGroups.value.map((group) => ({
-    id: group.id,
-    name: group.name,
-    items: group.repoIds
-      .map((repoId) => repoItemById.value.get(repoId))
-      .filter((item): item is RepoItem => Boolean(item)),
-    collapsed: collapsedGroupIds.value.has(group.id),
+function sectionVisibleLimit(sectionId: string) {
+  return sectionVisibleCounts.value[sectionId] ?? SIDEBAR_LIST_RENDER_PAGE_SIZE;
+}
+
+function repoSection(id: string, name: string, items: RepoItem[], group: RepoGroupRef | null): RepoSection {
+  const visibleItems = items.slice(0, sectionVisibleLimit(id));
+  return {
+    id,
+    name,
+    items,
+    visibleItems,
+    hiddenItemCount: Math.max(0, items.length - visibleItems.length),
+    collapsed: collapsedGroupIds.value.has(id),
     group,
-  })),
+  };
+}
+
+const localRepoSections = computed<RepoSection[]>(() => [
+  repoSection(UNGROUPED_REPO_GROUP_ID, "未分组仓库", ungroupedRepoItems.value, null),
+  ...repoGroups.value.map((group) =>
+    repoSection(
+      group.id,
+      group.name,
+      group.repoIds
+        .map((repoId) => repoItemById.value.get(repoId))
+        .filter((item): item is RepoItem => Boolean(item)),
+      group,
+    )
+  ),
 ]);
 
 watch(
-  repoGroups,
-  (groups) => {
-    const groupIds = new Set([UNGROUPED_REPO_GROUP_ID, ...groups.map((group) => group.id)]);
+  repoGroupIds,
+  (ids) => {
+    const groupIds = new Set([UNGROUPED_REPO_GROUP_ID, ...ids]);
     collapsedGroupIds.value = new Set([...collapsedGroupIds.value].filter((id) => groupIds.has(id)));
+    sectionVisibleCounts.value = Object.fromEntries(
+      Object.entries(sectionVisibleCounts.value).filter(([id]) => groupIds.has(id)),
+    );
     if (editingGroupId.value && !groupIds.has(editingGroupId.value)) {
       editingGroupId.value = null;
       editingGroupName.value = "";
       editingGroupError.value = null;
     }
   },
-  { deep: true },
 );
 
 const localRepoFullNames = computed(() =>
@@ -219,6 +258,12 @@ const remoteRepoItems = computed(() =>
     .filter((repo) => !localRepoFullNames.value.has(repo.fullName))
     .sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
 );
+const visibleRemoteRepoItems = computed(() =>
+  remoteRepoItems.value.slice(0, remoteRepoVisibleCount.value),
+);
+const hiddenRemoteRepoItemCount = computed(() =>
+  Math.max(0, remoteRepoItems.value.length - visibleRemoteRepoItems.value.length),
+);
 
 const activeRemoteFullName = computed(() =>
   parseRemoteRepoId(String(route.params.repoId ?? "")),
@@ -231,9 +276,31 @@ watch(
   },
 );
 
+watch(
+  () => props.searchQuery,
+  () => {
+    searchResultVisibleCount.value = SIDEBAR_LIST_RENDER_PAGE_SIZE;
+  },
+);
+
 function closeSearch() {
   emit("update:searchOpen", false);
   emit("update:searchQuery", "");
+}
+
+function showMoreSearchResults() {
+  searchResultVisibleCount.value += SIDEBAR_LIST_RENDER_PAGE_SIZE;
+}
+
+function showMoreRepoSection(sectionId: string) {
+  sectionVisibleCounts.value = {
+    ...sectionVisibleCounts.value,
+    [sectionId]: sectionVisibleLimit(sectionId) + SIDEBAR_LIST_RENDER_PAGE_SIZE,
+  };
+}
+
+function showMoreRemoteRepos() {
+  remoteRepoVisibleCount.value += SIDEBAR_LIST_RENDER_PAGE_SIZE;
 }
 
 async function openFirstSearchResult() {
@@ -373,6 +440,73 @@ async function createGroup() {
   }
 }
 
+function openCreateRepoCard(mode: "local" | "remote", groupId: string | null) {
+  createRepoCardMode.value = mode;
+  createRepoTargetGroupId.value = groupId;
+  createRepoCardOpen.value = true;
+}
+
+function openCloneRepoDialog(groupId: string | null) {
+  cloneRepoTargetGroupId.value = groupId;
+  void cloneDialog.openDialog();
+}
+
+function closeCreateRepoCard() {
+  createRepoCardOpen.value = false;
+}
+
+function createRepoMenuItems(groupId: string | null): ContextMenuItem[] {
+  return [
+    {
+      id: `clone-repo-${groupId ?? "ungrouped"}`,
+      label: "克隆仓库",
+      icon: CloudDownload,
+      disabled: !workspace.workspaceRoot.value,
+      onSelect: () => openCloneRepoDialog(groupId),
+    },
+    {
+      id: `create-local-repo-${groupId ?? "ungrouped"}`,
+      label: "创建本地仓库",
+      icon: FolderGit2,
+      disabled: !workspace.workspaceRoot.value,
+      onSelect: () => openCreateRepoCard("local", groupId),
+    },
+    {
+      id: `create-remote-repo-${groupId ?? "ungrouped"}`,
+      label: "创建远程仓库",
+      icon: GitBranchPlus,
+      disabled: !workspace.workspaceRoot.value || !workspace.isAuthorized.value,
+      onSelect: () => openCreateRepoCard("remote", groupId),
+    },
+  ];
+}
+
+function openCreateRepoMenu(section: RepoSection, event: MouseEvent) {
+  const button = event.currentTarget as HTMLElement | null;
+  const rect = button?.getBoundingClientRect();
+  openContextMenuAt(
+    rect?.left ?? event.clientX,
+    (rect?.bottom ?? event.clientY) + 4,
+    createRepoMenuItems(section.group?.id ?? null),
+  );
+}
+
+async function placeCreatedRepo(repo: RepoSummary) {
+  const groupId = createRepoTargetGroupId.value;
+  if (groupId) {
+    await workspace.moveRepoToGroup(repo.id, groupId);
+  }
+  await router.push(repoRoute(repo.id));
+}
+
+async function placeClonedRepo(repo: RepoSummary) {
+  const groupId = cloneRepoTargetGroupId.value;
+  if (groupId) {
+    await workspace.moveRepoToGroup(repo.id, groupId);
+  }
+  await router.push(repoRoute(repo.id));
+}
+
 function toggleGroupCollapsed(groupId: string, event?: MouseEvent) {
   const next = new Set(collapsedGroupIds.value);
   if (next.has(groupId)) {
@@ -475,10 +609,18 @@ async function deleteGroup(group: { id: string }) {
       </div>
       <div class="sb-tree">
         <RepoSidebarRow
-          v-for="item in filteredRepoItems"
+          v-for="item in visibleFilteredRepoItems"
           :key="item.repo.id"
           v-bind="repoRowProps(item)"
         />
+        <button
+          v-if="hiddenFilteredRepoItemCount > 0"
+          type="button"
+          class="sb-tree__more"
+          @click="showMoreSearchResults"
+        >
+          显示更多 {{ hiddenFilteredRepoItemCount }} 个
+        </button>
         <p v-if="!filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
       </div>
     </div>
@@ -520,6 +662,16 @@ async function deleteGroup(group: { id: string }) {
             />
             <p v-if="editingGroupError" class="sb-group-edit__error">{{ editingGroupError }}</p>
           </div>
+          <button
+            v-if="editingGroupId !== section.id"
+            type="button"
+            class="sb-icon-btn sb-section__hover-action"
+            :aria-label="`在 ${section.name} 创建仓库`"
+            title="创建仓库"
+            @click.stop="openCreateRepoMenu(section, $event)"
+          >
+            <GitBranchPlus :size="13" aria-hidden="true" />
+          </button>
           <template v-if="section.group">
             <button
               type="button"
@@ -555,10 +707,18 @@ async function deleteGroup(group: { id: string }) {
         </div>
         <div v-if="!section.collapsed" class="sb-tree">
           <RepoSidebarRow
-            v-for="item in section.items"
+            v-for="item in section.visibleItems"
             :key="item.repo.id"
             v-bind="repoRowProps(item)"
           />
+          <button
+            v-if="section.hiddenItemCount > 0"
+            type="button"
+            class="sb-tree__more"
+            @click="showMoreRepoSection(section.id)"
+          >
+            显示更多 {{ section.hiddenItemCount }} 个
+          </button>
           <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
           <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
         </div>
@@ -571,7 +731,7 @@ async function deleteGroup(group: { id: string }) {
       </div>
       <div class="sb-tree">
         <div
-          v-for="repo in remoteRepoItems"
+          v-for="repo in visibleRemoteRepoItems"
           :key="repo.fullName"
           class="sb-tree__row sb-tree__row--project sb-tree__row--remote"
           :class="{ 'is-active': activeRemoteFullName === repo.fullName }"
@@ -597,11 +757,33 @@ async function deleteGroup(group: { id: string }) {
             <X :size="13" aria-hidden="true" />
           </button>
         </div>
+        <button
+          v-if="hiddenRemoteRepoItemCount > 0"
+          type="button"
+          class="sb-tree__more"
+          @click="showMoreRemoteRepos"
+        >
+          显示更多 {{ hiddenRemoteRepoItemCount }} 个
+        </button>
       </div>
     </div>
 
     <SidebarFooter
       :status="footerStatus"
+    />
+    <RepoCreateCard
+      :open="createRepoCardOpen"
+      :mode="createRepoCardMode"
+      :workspace-ready="Boolean(workspace.workspaceRoot.value)"
+      :github-ready="workspace.isAuthorized.value"
+      @close="closeCreateRepoCard"
+      @local-created="placeCreatedRepo"
+      @remote-cloned="placeCreatedRepo"
+    />
+    <HomeCloneDialog
+      v-if="cloneDialog.open"
+      v-bind="cloneDialog.props"
+      v-on="cloneDialog.events"
     />
   </aside>
 </template>
@@ -704,6 +886,24 @@ async function deleteGroup(group: { id: string }) {
   margin: 6px 8px;
   color: var(--text-faint);
   font-size: 12px;
+}
+
+.sb-tree__more {
+  width: 100%;
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sb-tree__more:hover,
+.sb-tree__more:focus-visible {
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 
 .sb-tree__row:hover .sb-tree__hover-tools,
@@ -811,7 +1011,7 @@ async function deleteGroup(group: { id: string }) {
   margin: 0;
   padding: 2px 4px;
   border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
+  background: var(--bg-elev);
   color: var(--err);
   font-size: 12px;
   white-space: nowrap;

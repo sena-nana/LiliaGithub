@@ -177,6 +177,14 @@ export interface GitHubRepoOwner {
   kind: "user" | "org" | string;
 }
 
+export interface WorkspaceCreateLocalRepoRequest {
+  name: string;
+  description?: string | null;
+  addReadme: boolean;
+  gitignoreTemplate?: string | null;
+  licenseTemplate?: string | null;
+}
+
 export interface GitHubCreateRepoRequest {
   owner: string;
   ownerKind: "user" | "org" | string;
@@ -188,6 +196,8 @@ export interface GitHubCreateRepoRequest {
   licenseTemplate?: string | null;
   hasIssues: boolean;
   hasWiki: boolean;
+  templateFullName?: string | null;
+  includeAllBranches?: boolean;
 }
 
 export interface GitHubRepoLicense {
@@ -236,6 +246,7 @@ export interface GitHubIssue {
   milestone?: GitHubIssueMilestone | null;
   comments?: number;
   projectItems?: GitHubIssueProjectItem[];
+  developmentItems?: GitHubDevelopmentItem[];
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
@@ -281,12 +292,30 @@ export interface GitHubIssueProjectItem {
   title: string;
 }
 
+export interface GitHubDevelopmentItem {
+  id: string;
+  kind: "issue" | "pullRequest" | "branch" | "commit" | string;
+  label: string;
+  url?: string | null;
+  number?: number | null;
+  state?: string | null;
+  repositoryFullName?: string | null;
+  refName?: string | null;
+  sha?: string | null;
+}
+
 export interface GitHubIssueFilterMetadata {
   authors: string[];
   labels: string[];
   assignees: string[];
   milestones: GitHubIssueMilestone[];
   projects: GitHubIssueProjectItem[];
+}
+
+export interface GitHubPullRequestReviewer {
+  login: string;
+  kind: "user" | "team" | string;
+  state: string;
 }
 
 export interface GitHubPullRequest {
@@ -300,6 +329,9 @@ export interface GitHubPullRequest {
   milestone?: GitHubIssueMilestone | null;
   comments?: number;
   projectItems?: GitHubIssueProjectItem[];
+  reviewers?: GitHubPullRequestReviewer[];
+  developmentItems?: GitHubDevelopmentItem[];
+  commitCount?: number | null;
   htmlUrl: string;
   updatedAt: string;
   createdAt: string;
@@ -417,6 +449,61 @@ export interface GitHubWorkflowArtifactEntry {
   name: string;
   kind: "dir" | "file" | string;
   size: number;
+}
+
+export interface GitHubReleaseAsset {
+  id: number;
+  name: string;
+  label: string | null;
+  contentType: string;
+  size: number;
+  downloadCount: number;
+  state: string;
+  browserDownloadUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  uploader: string | null;
+}
+
+export interface GitHubRelease {
+  id: number;
+  tagName: string;
+  targetCommitish: string;
+  name: string | null;
+  body: string | null;
+  draft: boolean;
+  prerelease: boolean;
+  immutable: boolean;
+  makeLatest: string | null;
+  htmlUrl: string;
+  uploadUrl: string;
+  tarballUrl: string | null;
+  zipballUrl: string | null;
+  createdAt: string;
+  publishedAt: string | null;
+  author: string | null;
+  assets: GitHubReleaseAsset[];
+}
+
+export interface GitHubCreateReleaseRequest {
+  tagName: string;
+  targetCommitish?: string | null;
+  name?: string | null;
+  body?: string | null;
+  draft?: boolean | null;
+  prerelease?: boolean | null;
+  generateReleaseNotes?: boolean | null;
+  makeLatest?: string | null;
+}
+
+export interface GitHubUpdateReleaseRequest {
+  tagName?: string | null;
+  targetCommitish?: string | null;
+  name?: string | null;
+  body?: string | null;
+  draft?: boolean | null;
+  prerelease?: boolean | null;
+  makeLatest?: string | null;
 }
 
 export interface GitHubIssueListOptions {
