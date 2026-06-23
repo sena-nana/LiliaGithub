@@ -979,7 +979,7 @@ async function deleteGroup(group: { id: string }) {
   margin: 0;
   padding: 2px 4px;
   border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
+  background: var(--bg-elev);
   color: var(--err);
   font-size: 12px;
   white-space: nowrap;
