@@ -2,6 +2,7 @@
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
 import {
+  CloudDownload,
   ChevronRight,
   EyeOff,
   FolderGit2,
@@ -15,7 +16,9 @@ import {
   X,
 } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
+import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import { useWorkspace } from "../composables/useWorkspace";
+import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import {
   bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
   repoSyncIssueForRepo,
@@ -45,6 +48,7 @@ const pendingDeleteGroupId = ref<string | null>(null);
 const createRepoCardOpen = ref(false);
 const createRepoCardMode = ref<"local" | "remote">("local");
 const createRepoTargetGroupId = ref<string | null>(null);
+const cloneRepoTargetGroupId = ref<string | null>(null);
 const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
 const SIDEBAR_LIST_RENDER_PAGE_SIZE = 80;
 const searchResultVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
@@ -64,6 +68,9 @@ const emit = defineEmits<{
 const searchQueryModel = computed({
   get: () => props.searchQuery,
   set: (value: string) => emit("update:searchQuery", value),
+});
+const cloneDialog = useCloneRepoDialog({
+  onCloned: placeClonedRepo,
 });
 
 const footerStatus = computed(() => {
@@ -439,12 +446,24 @@ function openCreateRepoCard(mode: "local" | "remote", groupId: string | null) {
   createRepoCardOpen.value = true;
 }
 
+function openCloneRepoDialog(groupId: string | null) {
+  cloneRepoTargetGroupId.value = groupId;
+  void cloneDialog.openDialog();
+}
+
 function closeCreateRepoCard() {
   createRepoCardOpen.value = false;
 }
 
 function createRepoMenuItems(groupId: string | null): ContextMenuItem[] {
   return [
+    {
+      id: `clone-repo-${groupId ?? "ungrouped"}`,
+      label: "克隆仓库",
+      icon: CloudDownload,
+      disabled: !workspace.workspaceRoot.value,
+      onSelect: () => openCloneRepoDialog(groupId),
+    },
     {
       id: `create-local-repo-${groupId ?? "ungrouped"}`,
       label: "创建本地仓库",
@@ -474,6 +493,14 @@ function openCreateRepoMenu(section: RepoSection, event: MouseEvent) {
 
 async function placeCreatedRepo(repo: RepoSummary) {
   const groupId = createRepoTargetGroupId.value;
+  if (groupId) {
+    await workspace.moveRepoToGroup(repo.id, groupId);
+  }
+  await router.push(repoRoute(repo.id));
+}
+
+async function placeClonedRepo(repo: RepoSummary) {
+  const groupId = cloneRepoTargetGroupId.value;
   if (groupId) {
     await workspace.moveRepoToGroup(repo.id, groupId);
   }
@@ -752,6 +779,11 @@ async function deleteGroup(group: { id: string }) {
       @close="closeCreateRepoCard"
       @local-created="placeCreatedRepo"
       @remote-cloned="placeCreatedRepo"
+    />
+    <HomeCloneDialog
+      v-if="cloneDialog.open"
+      v-bind="cloneDialog.props"
+      v-on="cloneDialog.events"
     />
   </aside>
 </template>
