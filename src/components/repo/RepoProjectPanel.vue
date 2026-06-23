@@ -266,6 +266,7 @@ const props = defineProps<{
   launchRunning: boolean;
   activeGitTab: RepoRouteTab;
   changes: readonly RepoChange[];
+  discardingChangePaths: readonly string[];
   previewChange: RepoChange | null;
   commitMessage: string;
   hasConflicts: boolean;
@@ -2686,6 +2687,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           v-else-if="canShowChanges && activeSection === 'changes'"
           :commit-message="commitMessage"
           :changes="changes"
+          :discarding-change-paths="discardingChangePaths"
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
           :action-running="actionRunning"
