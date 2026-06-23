@@ -85,6 +85,7 @@ describe("RepoFilesPanel", () => {
 
     await renderFilesPanel();
 
+    expect(screen.getByText("C:\\Files\\workspace\\LiliaGithub")).toBeInTheDocument();
     expect(await screen.findByText("当前仓库没有可浏览文件。")).toBeInTheDocument();
     expect(screen.getByText("选择一个文件查看内容。")).toBeInTheDocument();
   });
