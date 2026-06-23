@@ -384,7 +384,6 @@ const aboutTopicList = ref<HTMLElement | null>(null);
 const aboutTopicMeasureList = ref<HTMLElement | null>(null);
 const aboutTopicsExpanded = ref(false);
 const collapsedAboutTopicCount = ref(0);
-const settingsTopicDraft = ref("");
 const issueState = ref<IssueState>(issueStateFromRoute());
 const issueTitle = ref("");
 const issueBody = ref("");
@@ -1819,7 +1818,6 @@ function resetGitHubSectionState() {
   actionsError.value = null;
   aboutEditing.value = false;
   aboutTopicDraft.value = "";
-  settingsTopicDraft.value = "";
   cancelEditIssue();
   closeIssueCreateView(false);
   remoteIssueLabels.value = [];
@@ -1889,7 +1887,6 @@ async function saveSettings(closeAboutOnSuccess = false) {
   settings.value = next;
   applySettingsForm(next);
   aboutTopicDraft.value = "";
-  settingsTopicDraft.value = "";
   if (closeAboutOnSuccess) aboutEditing.value = false;
   clearHomeGitHubOverviewSnapshot();
   return true;
@@ -2867,25 +2864,6 @@ function focusActionJob(jobId: number | null) {
             @rebind="rebindGitHub"
           />
           <template v-if="settings">
-            <section class="project-settings-group" aria-labelledby="project-settings-general-title">
-              <div class="project-settings-group__head">
-                <h4 id="project-settings-general-title">基础设置</h4>
-              </div>
-              <div class="project-settings-fields">
-                <label class="project-settings-field">
-                  <span>描述</span>
-                  <input v-model="settingsForm.description" type="text" />
-                </label>
-                <label class="project-settings-field">
-                  <span>Homepage</span>
-                  <input v-model="settingsForm.homepage" type="url" />
-                </label>
-                <label class="project-settings-field project-settings-field--topics">
-                  <span>Topics</span>
-                  <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="settingsTopicDraft" />
-                </label>
-              </div>
-            </section>
             <section class="project-settings-group" aria-labelledby="project-settings-features-title">
               <div class="project-settings-group__head">
                 <h4 id="project-settings-features-title">功能开关</h4>
