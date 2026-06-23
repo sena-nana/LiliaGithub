@@ -177,6 +177,14 @@ export interface GitHubRepoOwner {
   kind: "user" | "org" | string;
 }
 
+export interface WorkspaceCreateLocalRepoRequest {
+  name: string;
+  description?: string | null;
+  addReadme: boolean;
+  gitignoreTemplate?: string | null;
+  licenseTemplate?: string | null;
+}
+
 export interface GitHubCreateRepoRequest {
   owner: string;
   ownerKind: "user" | "org" | string;
@@ -188,6 +196,8 @@ export interface GitHubCreateRepoRequest {
   licenseTemplate?: string | null;
   hasIssues: boolean;
   hasWiki: boolean;
+  templateFullName?: string | null;
+  includeAllBranches?: boolean;
 }
 
 export interface GitHubRepoLicense {

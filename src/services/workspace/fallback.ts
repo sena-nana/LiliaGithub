@@ -64,6 +64,7 @@ import type {
   WorkspaceRepoGroup,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
+  WorkspaceCreateLocalRepoRequest,
 } from "./types";
 
 const ROOT_SCRIPT_PRIORITY = ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"] as const;
@@ -2830,6 +2831,53 @@ export function addRepo(repoPath: string): Promise<RepoSummary> {
   });
 }
 
+export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promise<RepoSummary> {
+  return call("workspace_create_local_repo", { request }, () => {
+    const name = request.name.trim();
+    if (!name) throw new Error("仓库名不能为空");
+    if (name.includes("/") || name.includes("\\") || name === "..") {
+      throw new Error("仓库名只能是单层目录名");
+    }
+    if (allFallbackRepos().some((repo) => repo.id === name || repo.name === name)) {
+      throw new Error(`目标目录已存在：C:\\Files\\workspace\\${name}`);
+    }
+    const now = Date.now();
+    const repo: RepoSummary = {
+      id: name,
+      name,
+      path: `C:\\Files\\workspace\\${name}`,
+      relativePath: name,
+      currentBranch: "main",
+      remoteUrl: null,
+      githubFullName: null,
+      ahead: 0,
+      behind: 0,
+      stagedCount: 0,
+      unstagedCount: request.addReadme || request.gitignoreTemplate || request.licenseTemplate ? 1 : 0,
+      untrackedCount: 0,
+      conflictCount: 0,
+      lastCommitAt: null,
+      lastCommitMessage: null,
+      languageStats: [],
+      languageStatsUpdatedAt: now,
+      worktree: {
+        role: "standalone",
+        sharedRepoKey: `repo:${name}`,
+        mainRepoId: null,
+      },
+    };
+    fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
+    fallbackSettings = {
+      ...fallbackSettings,
+      hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repo.id),
+      managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, repo.id])).sort(),
+    };
+    recordFallbackTask("repoStatus", "high", repo.id, "success", "已创建本地仓库");
+    writeFallbackStartupRepoSummary(repo);
+    return cloneRepoSummary(repo);
+  });
+}
+
 function inferRepoDirectoryName(remoteUrl: string) {
   const trimmed = remoteUrl.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
   const [, scpPath] = trimmed.match(/^[\w.-]+@[^:]+:(.+)$/) ?? [];
@@ -3279,6 +3327,10 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
     const owner = request.owner.trim();
     const name = request.name.trim();
     if (!owner || !name) throw new Error("owner 和仓库名不能为空");
+    const templateFullName = request.templateFullName?.trim() || null;
+    if (templateFullName && templateFullName.split("/").filter(Boolean).length !== 2) {
+      throw new Error("模板仓库请输入 owner/repo");
+    }
     const fullName = `${owner}/${name}`;
     const now = new Date().toISOString();
     const repo: GitHubRepoSummary = {
@@ -3290,7 +3342,7 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       disabled: false,
       archived: false,
       description: request.description?.trim() || null,
-      defaultBranch: request.autoInit ? "main" : null,
+      defaultBranch: request.autoInit || templateFullName ? "main" : null,
       createdAt: now,
       updatedAt: now,
       cloneUrl: `https://github.com/${fullName}.git`,

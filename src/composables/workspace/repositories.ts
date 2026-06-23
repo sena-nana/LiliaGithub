@@ -20,6 +20,7 @@ import type {
   RemoteRepoShortcut,
   RepoConflictChoice,
   RepoSummary,
+  WorkspaceCreateLocalRepoRequest,
   BulkSyncPreview,
   BulkSyncResult,
 } from "../../services/workspace";
@@ -528,6 +529,14 @@ export async function cloneRepo(remoteUrl: string, directoryName?: string | null
   state.error = null;
   const service = await loadWorkspaceService();
   const summary = await service.cloneRepo(remoteUrl, directoryName);
+  upsertRepo(summary);
+  return summary;
+}
+
+export async function createLocalRepo(request: WorkspaceCreateLocalRepoRequest) {
+  state.error = null;
+  const service = await loadWorkspaceService();
+  const summary = await service.createLocalRepo(request);
   upsertRepo(summary);
   return summary;
 }
