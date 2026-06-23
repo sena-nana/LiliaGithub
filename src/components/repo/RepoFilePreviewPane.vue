@@ -9,6 +9,7 @@ const props = defineProps<{
 
 const {
   absolutePreviewPath,
+  isCodePreview,
   knownMarkdownPaths,
   markdownReadme,
   openPreviewFile,
@@ -49,16 +50,24 @@ function bindMarkdownReadme(value: unknown) {
     <p v-if="previewError" class="error-line files-main__empty">{{ previewError }}</p>
     <p v-else-if="previewLoading" class="muted files-main__empty">正在读取文件内容。</p>
     <p v-else-if="!preview" class="muted files-main__empty">选择一个文件查看内容。</p>
-    <pre v-else-if="preview.previewKind === 'text'" class="files-main__code"><code><span
+    <pre
+      v-else-if="preview.previewKind === 'text'"
+      class="files-main__code"
+      :class="isCodePreview ? 'files-main__code--numbered' : 'files-main__code--plain'"
+    ><code><span
       v-for="line in textPreviewLines"
       :key="`${preview.path}:${line.index}`"
       class="files-main__code-line"
+      :class="{ 'files-main__code-line--numbered': isCodePreview }"
+    ><span v-if="isCodePreview" class="files-main__line-number" aria-hidden="true">{{ line.lineNumber }}</span><span
+      class="files-main__code-content"
+      :class="{ 'files-main__code-content--numbered': isCodePreview }"
     ><span
         v-for="(token, tokenIndex) in line.tokens"
         :key="`${line.index}:${tokenIndex}:${token.type}:${token.text}`"
         class="diff-code__token"
         :class="`diff-code__token--${token.type}`"
-      >{{ token.text }}</span>{{ line.index < textPreviewLines.length - 1 ? "\n" : "" }}</span></code></pre>
+      >{{ token.text }}</span></span>{{ !isCodePreview && line.index < textPreviewLines.length - 1 ? "\n" : "" }}</span></code></pre>
     <MarkdownReadme
       v-else-if="preview.previewKind === 'markdown' && preview.content"
       :ref="bindMarkdownReadme"
@@ -153,23 +162,61 @@ function bindMarkdownReadme(value: unknown) {
 
 .files-main__code {
   margin: 0;
-  padding: 16px;
   overflow: auto;
   color: var(--text);
   font-size: 12px;
   line-height: 1.6;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .files-main__code code {
   font: inherit;
 }
 
+.files-main__code--plain {
+  padding: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.files-main__code--numbered {
+  padding: 12px 0;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.files-main__code--numbered code {
+  display: block;
+  min-width: max-content;
+}
+
 .files-main__code-line {
   display: block;
   min-width: 0;
+}
+
+.files-main__code-line--numbered {
+  display: flex;
+  min-width: max-content;
+}
+
+.files-main__line-number {
+  position: sticky;
+  left: 0;
+  flex: 0 0 44px;
+  padding: 0 10px 0 12px;
+  border-right: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.files-main__code-content--numbered {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0 16px 0 12px;
 }
 
 .files-main :deep(.readme-render) {

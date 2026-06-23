@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/vue";
 import RepoDiffWorkspace from "../src/components/repo/RepoDiffWorkspace.vue";
 import { parseRepoDiffHunks } from "../src/components/repo/repoDiffWorkspace";
-import { inferDiffCodeLanguage, tokenizeDiffCodeLine } from "../src/utils/diffCode";
+import {
+  diffCodeLanguageLabel,
+  inferDiffCodeLanguage,
+  isDiffCodeLanguage,
+  tokenizeDiffCodeLine,
+} from "../src/utils/diffCode";
 
 describe("diff code rendering helpers", () => {
   it("infers common diff languages from file paths", () => {
@@ -11,7 +16,21 @@ describe("diff code rendering helpers", () => {
     expect(inferDiffCodeLanguage("package.json")).toBe("json");
     expect(inferDiffCodeLanguage("README.md")).toBe("markdown");
     expect(inferDiffCodeLanguage("scripts/check.py")).toBe("python");
+    expect(inferDiffCodeLanguage("pnpm-workspace.yaml")).toBe("yaml");
+    expect(inferDiffCodeLanguage("Cargo.toml")).toBe("toml");
+    expect(inferDiffCodeLanguage("src/main.go")).toBe("go");
+    expect(inferDiffCodeLanguage("src/App.kt")).toBe("kotlin");
+    expect(inferDiffCodeLanguage("src/schema.sql")).toBe("sql");
+    expect(inferDiffCodeLanguage("include/app.hpp")).toBe("cpp");
+    expect(inferDiffCodeLanguage("CMakeLists.txt")).toBe("shell");
     expect(inferDiffCodeLanguage("README.unknown")).toBe("text");
+  });
+
+  it("labels code languages for file previews", () => {
+    expect(isDiffCodeLanguage(inferDiffCodeLanguage("src/main.ts"))).toBe(true);
+    expect(diffCodeLanguageLabel(inferDiffCodeLanguage("src/main.ts"))).toBe("TypeScript");
+    expect(diffCodeLanguageLabel(inferDiffCodeLanguage("pnpm-workspace.yaml"))).toBe("YAML");
+    expect(isDiffCodeLanguage(inferDiffCodeLanguage("notes.txt"))).toBe(false);
   });
 
   it("tokenizes markup without changing the rendered text", () => {

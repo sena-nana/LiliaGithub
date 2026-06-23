@@ -181,7 +181,9 @@ describe("RepoFilesPanel", () => {
 
     expect(await screen.findByRole("button", { name: /package\.json/ })).toBeInTheDocument();
     await waitFor(() => {
-      expect(document.querySelector(".files-main__code")?.textContent).toBe("{\"name\":\"demo\"}");
+      expect(screen.getByText("代码 · JSON · 15 B")).toBeInTheDocument();
+      expect(document.querySelector(".files-main__code-content")?.textContent).toBe("{\"name\":\"demo\"}");
+      expect(document.querySelector(".files-main__line-number")).toHaveTextContent("1");
     });
     expect(getRepoFilePreview).toHaveBeenCalledWith("LiliaGithub", "package.json");
   });
@@ -246,6 +248,8 @@ describe("RepoFilesPanel", () => {
     await waitFor(() => {
       expect(document.querySelector(".files-main__code")?.textContent).toBe("line 1\nline 2");
     });
+    expect(screen.getByText("文本 · 12 B")).toBeInTheDocument();
+    expect(document.querySelector(".files-main__line-number")).toBeNull();
   });
 
   it("快速切换文件时只显示最后选中的预览", async () => {
@@ -355,7 +359,7 @@ describe("RepoFilesPanel", () => {
       path: "main.ts",
       name: "main.ts",
       previewKind: "text",
-      content: "export const title = \"Lilia\";",
+      content: "export const title = \"Lilia\";\nconst count = 1;",
       size: 29,
     }));
 
@@ -363,9 +367,31 @@ describe("RepoFilesPanel", () => {
     expect(await screen.findByRole("button", { name: /main\.ts/ })).toBeInTheDocument();
 
     await waitFor(() => {
+      expect(screen.getByText("代码 · TypeScript · 29 B")).toBeInTheDocument();
       expect(document.querySelector(".files-main__code .diff-code__token--keyword")).toHaveTextContent("export");
       expect(document.querySelector(".files-main__code .diff-code__token--string")).toHaveTextContent("\"Lilia\"");
     });
+    expect([...document.querySelectorAll(".files-main__line-number")].map((node) => node.textContent)).toEqual(["1", "2"]);
+  });
+
+  it("YAML 文本预览显示代码类型和行号", async () => {
+    listRepoFiles.mockResolvedValueOnce([file("pnpm-workspace.yaml")]);
+    getRepoFilePreview.mockResolvedValueOnce(preview({
+      path: "pnpm-workspace.yaml",
+      name: "pnpm-workspace.yaml",
+      previewKind: "text",
+      content: "packages:\n  - apps/*",
+      size: 20,
+    }));
+
+    await renderFilesPanel();
+
+    expect(await screen.findByRole("button", { name: /pnpm-workspace\.yaml/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("代码 · YAML · 20 B")).toBeInTheDocument();
+      expect(document.querySelector(".files-main__code-content")).toHaveTextContent("packages:");
+    });
+    expect([...document.querySelectorAll(".files-main__line-number")].map((node) => node.textContent)).toEqual(["1", "2"]);
   });
 
   it("Markdown 文件使用富文本渲染", async () => {
