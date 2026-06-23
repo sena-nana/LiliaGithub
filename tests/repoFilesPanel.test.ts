@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
 import RepoFilesPanel from "../src/components/repo/RepoFilesPanel.vue";
 import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../src/services/workspace/types";
 
@@ -75,7 +76,8 @@ function change(overrides: Partial<RepoChange> & Pick<RepoChange, "path">): Repo
 
 describe("RepoFilesPanel", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    resetSessionContextForTests();
   });
 
   it("根目录为空时显示空状态", async () => {
@@ -101,6 +103,86 @@ describe("RepoFilesPanel", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Guide" })).toBeInTheDocument();
     expect(getRepoFilePreview).toHaveBeenCalledWith("LiliaGithub", "README.md");
+  });
+
+  it("根目录加载完成后不等待自动预览即可显示文件树", async () => {
+    const readmePreview = deferred<RepoFilePreview>();
+    listRepoFiles.mockResolvedValueOnce([file("README.md")]);
+    getRepoFilePreview.mockReturnValueOnce(readmePreview.promise);
+
+    await renderFilesPanel();
+
+    expect(await screen.findByRole("button", { name: /README\.md/ })).toBeInTheDocument();
+    expect(screen.queryByText("正在读取文件树。")).toBeNull();
+    expect(screen.getByText("正在读取文件内容。")).toBeInTheDocument();
+    expect(screen.queryByText("选择一个文件查看内容。")).toBeNull();
+
+    readmePreview.resolve(preview({
+      path: "README.md",
+      name: "README.md",
+      previewKind: "markdown",
+      content: "# Ready",
+      size: 7,
+    }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Ready" })).toBeInTheDocument();
+  });
+
+  it("等价仓库初始化重复触发时复用根目录请求", async () => {
+    const rootEntries = deferred<RepoFileTreeEntry[]>();
+    const readmePreview = deferred<RepoFilePreview>();
+    listRepoFiles.mockReturnValueOnce(rootEntries.promise);
+    getRepoFilePreview.mockReturnValueOnce(readmePreview.promise);
+
+    const view = await renderFilesPanel();
+    await view.rerender({
+      repoId: "LiliaGithub",
+      repoPath: "C:\\Files\\workspace\\LiliaGithub",
+      repoRef: null,
+    });
+    rootEntries.resolve([file("README.md")]);
+
+    expect(await screen.findByRole("button", { name: /README\.md/ })).toBeInTheDocument();
+    expect(screen.queryByText("正在读取文件树。")).toBeNull();
+    expect(screen.getByText("正在读取文件内容。")).toBeInTheDocument();
+    expect(listRepoFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it("文件树请求期间会话上下文失效后仍能显示根目录", async () => {
+    const rootEntries = deferred<RepoFileTreeEntry[]>();
+    const readmePreview = deferred<RepoFilePreview>();
+    listRepoFiles.mockReturnValueOnce(rootEntries.promise);
+    getRepoFilePreview.mockReturnValueOnce(readmePreview.promise);
+
+    await renderFilesPanel();
+    invalidateSessionContextSnapshot();
+    rootEntries.resolve([file("README.md")]);
+
+    expect(await screen.findByRole("button", { name: /README\.md/ })).toBeInTheDocument();
+    expect(screen.queryByText("正在读取文件树。")).toBeNull();
+    expect(screen.getByText("正在读取文件内容。")).toBeInTheDocument();
+  });
+
+  it("根目录没有 README 时自动选择第一个文件预览", async () => {
+    listRepoFiles.mockResolvedValueOnce([
+      dir("src"),
+      file("package.json", "package.json"),
+      file("notes.txt", "notes.txt"),
+    ]);
+    getRepoFilePreview.mockResolvedValueOnce(preview({
+      path: "package.json",
+      name: "package.json",
+      previewKind: "text",
+      content: "{\"name\":\"demo\"}",
+      size: 15,
+    }));
+
+    await renderFilesPanel();
+
+    expect(await screen.findByRole("button", { name: /package\.json/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.querySelector(".files-main__code")?.textContent).toBe("{\"name\":\"demo\"}");
+    });
+    expect(getRepoFilePreview).toHaveBeenCalledWith("LiliaGithub", "package.json");
   });
 
   it("目录展开和收起只在首次展开时加载子项", async () => {
@@ -148,7 +230,7 @@ describe("RepoFilesPanel", () => {
     expect(screen.getByRole("button", { name: /pnpm-workspace\.yaml/ }).querySelector(".files-tree__badge")).toBeNull();
   });
 
-  it("点击文本文件时显示原始文本预览", async () => {
+  it("文本文件显示原始文本预览", async () => {
     listRepoFiles.mockResolvedValueOnce([file("notes.txt")]);
     getRepoFilePreview.mockResolvedValueOnce(preview({
       path: "notes.txt",
@@ -159,7 +241,6 @@ describe("RepoFilesPanel", () => {
     }));
 
     await renderFilesPanel();
-    await fireEvent.click(await screen.findByRole("button", { name: /notes\.txt/ }));
 
     await waitFor(() => {
       expect(document.querySelector(".files-main__code")?.textContent).toBe("line 1\nline 2");
@@ -176,8 +257,7 @@ describe("RepoFilesPanel", () => {
 
     await renderFilesPanel();
 
-    await fireEvent.click(await screen.findByRole("button", { name: /first\.txt/ }));
-    await fireEvent.click(screen.getByRole("button", { name: /second\.txt/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: /second\.txt/ }));
     secondPreview.resolve(preview({
       path: "second.txt",
       name: "second.txt",
@@ -269,9 +349,9 @@ describe("RepoFilesPanel", () => {
   });
 
   it("代码文本预览复用 diff token 高亮", async () => {
-    listRepoFiles.mockResolvedValueOnce([file("src/main.ts", "main.ts")]);
+    listRepoFiles.mockResolvedValueOnce([file("main.ts")]);
     getRepoFilePreview.mockResolvedValueOnce(preview({
-      path: "src/main.ts",
+      path: "main.ts",
       name: "main.ts",
       previewKind: "text",
       content: "export const title = \"Lilia\";",
@@ -279,7 +359,7 @@ describe("RepoFilesPanel", () => {
     }));
 
     await renderFilesPanel();
-    await fireEvent.click(await screen.findByRole("button", { name: /main\.ts/ }));
+    expect(await screen.findByRole("button", { name: /main\.ts/ })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(document.querySelector(".files-main__code .diff-code__token--keyword")).toHaveTextContent("export");
@@ -298,7 +378,6 @@ describe("RepoFilesPanel", () => {
     }));
 
     await renderFilesPanel();
-    await fireEvent.click(await screen.findByRole("button", { name: /guide\.md/ }));
 
     expect(await screen.findByRole("heading", { level: 1, name: "Guide" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "官网" })).toBeInTheDocument();
@@ -315,7 +394,6 @@ describe("RepoFilesPanel", () => {
     }));
 
     await renderFilesPanel();
-    await fireEvent.click(await screen.findByRole("button", { name: /cover\.png/ }));
 
     const image = await screen.findByRole("img", { name: "cover.png" });
     expect(image).toHaveAttribute("src", "data:image/png;base64,AQID");
@@ -339,7 +417,6 @@ describe("RepoFilesPanel", () => {
 
     await renderFilesPanel();
 
-    await fireEvent.click(await screen.findByRole("button", { name: /archive\.bin/ }));
     expect(await screen.findByText("暂不支持预览")).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /huge\.log/ }));

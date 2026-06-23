@@ -9,6 +9,7 @@ export interface LatestAsyncLoaderRunOptions {
 
 export interface LatestAsyncLoaderOptions {
   componentEpoch?: Pick<ComponentEpoch, "assertAlive">;
+  trackSessionContext?: boolean;
 }
 
 export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) {
@@ -24,7 +25,7 @@ export function createLatestAsyncLoader(options: LatestAsyncLoaderOptions = {}) 
   function isCurrent(runId: number) {
     return isLatestRun(runId) &&
       (options.componentEpoch?.assertAlive() ?? true) &&
-      isSessionContextVersionCurrent(currentRunSessionContextVersion);
+      (options.trackSessionContext === false || isSessionContextVersionCurrent(currentRunSessionContextVersion));
   }
 
   function isPending(key?: AsyncLoaderKey) {

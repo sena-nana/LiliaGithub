@@ -126,8 +126,9 @@ type ProjectSectionConfig = {
   icon: Component;
 };
 type ProjectSidebarMode = "repo" | "files" | Exclude<ProjectTab, "readme">;
+type ProjectSidebarButtonMode = "repo" | Exclude<ProjectTab, "readme">;
 type ProjectSidebarButtonConfig = {
-  key: ProjectSidebarMode;
+  key: ProjectSidebarButtonMode;
   label: string;
   icon: Component;
   disabled?: boolean;
@@ -575,12 +576,6 @@ const projectSections: readonly ProjectSectionConfig[] = [
 ];
 const projectSidebarButtons = computed<ProjectSidebarButtonConfig[]>(() => [
   { key: "repo", label: "Repo", icon: Monitor },
-  {
-    key: "files",
-    label: "文件树",
-    icon: FolderTree,
-    disabled: !canBrowseFiles.value,
-  },
   ...projectSections.map((section) => ({
     key: section.key,
     label: section.label,
@@ -2430,18 +2425,9 @@ async function activateProjectTab(tab: ProjectTab) {
   await ensureSectionData(tab);
 }
 
-async function activateProjectSidebarButton(tab: ProjectSidebarMode) {
+async function activateProjectSidebarButton(tab: ProjectSidebarButtonMode) {
   if (tab === "repo") {
     await activateProjectTab("readme");
-    return;
-  }
-  if (tab === "files") {
-    if (!canBrowseFiles.value) return;
-    activeSection.value = "files";
-    if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
-      emit("hideTerminal");
-    }
-    await router.push(repoRoute(props.repoId, "files"));
     return;
   }
   await activateProjectTab(tab);
@@ -3022,7 +3008,12 @@ function focusActionJob(jobId: number | null) {
         class="project-sidebar"
         :class="{ 'project-sidebar--fill': projectSidebarMode === 'files' && !hasProjectSidebarErrors }"
       >
-        <div class="project-sidebar-switcher" role="tablist" aria-label="右侧面板">
+        <div
+          v-if="projectSidebarMode !== 'files'"
+          class="project-sidebar-switcher"
+          role="tablist"
+          aria-label="右侧面板"
+        >
           <button
             v-for="tab in projectSidebarButtons"
             :key="tab.key"
@@ -3575,7 +3566,7 @@ function focusActionJob(jobId: number | null) {
 }
 
 .project-sidebar--fill {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   align-content: stretch;
   align-self: stretch;
   height: 100%;
