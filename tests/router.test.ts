@@ -2759,12 +2759,10 @@ describe("基础路由", () => {
     await fireEvent.update(screen.getByPlaceholderText("Node"), "Node");
     await fireEvent.click(screen.getByRole("button", { name: "创建" }));
 
-    expect(await screen.findByText("lilia-user/NewRepo")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "克隆到工作区" }));
-
     await waitFor(async () => {
       expect((await service.refreshRepos()).some((repo) => repo.id === "NewRepo")).toBe(true);
     });
+    expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
   });
 
   it("未知路由回到首页", async () => {
