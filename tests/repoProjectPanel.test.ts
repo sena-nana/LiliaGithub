@@ -938,7 +938,7 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
     expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
     expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("main");
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
@@ -1135,7 +1135,7 @@ describe("RepoProjectPanel", () => {
         .mockRejectedValueOnce(new Error("HTTP 403 Resource not accessible by integration")),
       title: "Settings 暂不可用",
       reason: "当前 GitHub 授权权限不足，无法访问该仓库的 Settings。请重新绑定 GitHub 并授予所需权限。",
-      hiddenText: "基础设置",
+      hiddenText: "功能开关",
     },
   ])("$tabName 因 GitHub 授权不可用时提供重新绑定入口", async ({ tabName, fail, title, reason, hiddenText }) => {
     fail();
@@ -1835,7 +1835,6 @@ describe("RepoProjectPanel", () => {
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
 
-    expect(await view.findByRole("heading", { level: 4, name: "基础设置" })).toBeInTheDocument();
     expect(view.getByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
     expect(view.getByRole("heading", { level: 4, name: "Pull Request / Merge" })).toBeInTheDocument();
     expect(view.getByLabelText("本地危险操作")).toBeInTheDocument();
