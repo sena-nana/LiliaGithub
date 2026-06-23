@@ -8,7 +8,12 @@ import {
   openUrl,
 } from "../../services/workspace/client";
 import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../../services/workspace/types";
-import { inferDiffCodeLanguage, tokenizeDiffCodeLines } from "../../utils/diffCode";
+import {
+  diffCodeLanguageLabel,
+  inferDiffCodeLanguage,
+  isDiffCodeLanguage,
+  tokenizeDiffCodeLines,
+} from "../../utils/diffCode";
 import { changeStatusLetter, changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 
@@ -59,6 +64,9 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
   const textPreviewLanguage = computed(() =>
     preview.value?.previewKind === "text" ? inferDiffCodeLanguage(preview.value.path) : "text",
   );
+  const isCodePreview = computed(() =>
+    preview.value?.previewKind === "text" && isDiffCodeLanguage(textPreviewLanguage.value),
+  );
   const textPreviewLines = computed(() =>
     preview.value?.previewKind === "text"
       ? tokenizeDiffCodeLines(preview.value.content ?? "", textPreviewLanguage.value)
@@ -86,6 +94,13 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     if (!preview.value) return "";
     if (preview.value.previewKind === "tooLarge") return `文件过大，${formatFileSize(preview.value.size)}，无法预览`;
     if (preview.value.previewKind === "binary") return `二进制文件，${formatFileSize(preview.value.size)}，无法预览`;
+    if (preview.value.previewKind === "text") {
+      return isCodePreview.value
+        ? `代码 · ${diffCodeLanguageLabel(textPreviewLanguage.value)} · ${formatFileSize(preview.value.size)}`
+        : `文本 · ${formatFileSize(preview.value.size)}`;
+    }
+    if (preview.value.previewKind === "markdown") return `Markdown · ${formatFileSize(preview.value.size)}`;
+    if (preview.value.previewKind === "image") return `图片 · ${formatFileSize(preview.value.size)}`;
     return `${preview.value.previewKind} · ${formatFileSize(preview.value.size)}`;
   });
   const absolutePreviewPath = computed(() => {
@@ -330,6 +345,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
   return {
     absolutePreviewPath,
     knownMarkdownPaths,
+    isCodePreview,
     markdownReadme,
     preview,
     previewDescription,
