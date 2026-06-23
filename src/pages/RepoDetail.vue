@@ -43,6 +43,7 @@ const {
   summary,
   repoTitle,
   changes,
+  discardingChangePaths,
   conflictOperationActive,
   supportedConflictOperation,
   previewChange,
@@ -335,6 +336,7 @@ const {
           :repo-summary="summary"
           :active-git-tab="activeTab"
           :changes="changes"
+          :discarding-change-paths="discardingChangePaths"
           :preview-change="previewChange"
           :commit-message="commitMessage"
           :has-conflicts="hasConflicts"

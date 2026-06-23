@@ -81,6 +81,7 @@ export function useRepoDetailController() {
   const githubBranchLoading = ref(false);
   const deletingRemoteBranchName = ref<string | null>(null);
   const deletedRemoteBranchNames = ref<string[]>([]);
+  const discardingChangePaths = ref<string[]>([]);
   const projectRefreshToken = ref(0);
   const componentEpoch = useComponentEpoch();
   const repoDetailLoader = createLatestAsyncLoader({ componentEpoch });
@@ -422,6 +423,7 @@ export function useRepoDetailController() {
     githubBranchLoading.value = false;
     deletingRemoteBranchName.value = null;
     deletedRemoteBranchNames.value = [];
+    discardingChangePaths.value = [];
     void load();
   });
 
@@ -765,13 +767,29 @@ export function useRepoDetailController() {
     paths?: string[],
   ) {
     const files = paths?.length ? paths : [change.path];
+    if (action === "discard") {
+      setDiscardingChangePaths(files, true);
+      void runAction(() => workspace.discardChanges(repoId.value, files))
+        .finally(() => setDiscardingChangePaths(files, false));
+      return;
+    }
+
     void runAction(() => {
       if (action === "stage") return workspace.stage(repoId.value, files);
       if (action === "unstage") return workspace.unstage(repoId.value, files);
-      if (action === "discard") return workspace.discardChanges(repoId.value, files);
       if (action === "gitignore") return workspace.addFilesToGitignore(repoId.value, files);
       return workspace.copyText(change.path);
     });
+  }
+
+  function setDiscardingChangePaths(paths: readonly string[], pending: boolean) {
+    if (!paths.length) return;
+    const next = new Set(discardingChangePaths.value);
+    for (const path of paths) {
+      if (pending) next.add(path);
+      else next.delete(path);
+    }
+    discardingChangePaths.value = [...next];
   }
 
   function commitSelected(pushAfter: boolean) {
@@ -1117,6 +1135,7 @@ export function useRepoDetailController() {
       repoTitle,
       repoMetaItems,
       changes,
+      discardingChangePaths,
       conflicts,
       conflictOperationActive,
       supportedConflictOperation,
