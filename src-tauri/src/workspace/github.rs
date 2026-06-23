@@ -14,6 +14,7 @@ pub(super) const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 pub(super) const GITHUB_CONTRIBUTION_DAYS: usize = 371;
 pub(super) const GITHUB_PROJECT_CACHE_KEY: &str = "workspace.githubProjectCache";
 pub(super) const GITHUB_ACTIONS_ARTIFACT_MAX_BYTES: u64 = 200 * 1024 * 1024;
+pub(super) const GITHUB_RELEASE_ASSET_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -511,6 +512,65 @@ pub(super) struct GitHubWorkflowArtifactResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct GitHubReleaseUserResponse {
+    pub(super) login: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubReleaseAssetResponse {
+    pub(super) id: u64,
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) label: Option<String>,
+    #[serde(default)]
+    pub(super) content_type: Option<String>,
+    #[serde(default)]
+    pub(super) size: u64,
+    #[serde(default)]
+    pub(super) download_count: u64,
+    #[serde(default)]
+    pub(super) state: Option<String>,
+    pub(super) browser_download_url: String,
+    pub(super) created_at: String,
+    pub(super) updated_at: String,
+    #[serde(default)]
+    pub(super) uploader: Option<GitHubReleaseUserResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubReleaseResponse {
+    pub(super) id: u64,
+    pub(super) tag_name: String,
+    #[serde(default)]
+    pub(super) target_commitish: Option<String>,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) body: Option<String>,
+    #[serde(default)]
+    pub(super) draft: bool,
+    #[serde(default)]
+    pub(super) prerelease: bool,
+    #[serde(default)]
+    pub(super) immutable: bool,
+    #[serde(default)]
+    pub(super) make_latest: Option<String>,
+    pub(super) html_url: String,
+    pub(super) upload_url: String,
+    #[serde(default)]
+    pub(super) tarball_url: Option<String>,
+    #[serde(default)]
+    pub(super) zipball_url: Option<String>,
+    pub(super) created_at: String,
+    #[serde(default)]
+    pub(super) published_at: Option<String>,
+    #[serde(default)]
+    pub(super) author: Option<GitHubReleaseUserResponse>,
+    #[serde(default)]
+    pub(super) assets: Vec<GitHubReleaseAssetResponse>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct GitHubCommitUserResponse {
     #[serde(default)]
     pub(super) name: Option<String>,
@@ -793,6 +853,15 @@ pub(super) fn clear_github_project_pull_request_cache(
         repo_cache.pull_requests.clear();
         repo_cache.pull_request_discussions.clear();
         repo_cache.pull_request_checks.clear();
+    })
+}
+
+pub(super) fn clear_github_project_release_cache(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<(), String> {
+    update_github_project_repo_cache(app, repo_full_name, |repo_cache| {
+        repo_cache.releases = None;
     })
 }
 
@@ -2401,6 +2470,117 @@ pub(super) fn github_workflow_artifact_from_response(
         expired: artifact.expired,
         created_at: artifact.created_at,
         expires_at: normalize_optional_string(artifact.expires_at),
+    }
+}
+
+pub(super) fn github_release_asset_from_response(
+    asset: GitHubReleaseAssetResponse,
+) -> GitHubReleaseAsset {
+    GitHubReleaseAsset {
+        id: asset.id,
+        name: asset.name,
+        label: normalize_optional_string(asset.label),
+        content_type: normalize_optional_string(asset.content_type)
+            .unwrap_or_else(|| "application/octet-stream".to_string()),
+        size: asset.size,
+        download_count: asset.download_count,
+        state: normalize_optional_string(asset.state).unwrap_or_else(|| "uploaded".to_string()),
+        browser_download_url: asset.browser_download_url,
+        created_at: asset.created_at,
+        updated_at: asset.updated_at,
+        uploader: asset.uploader.map(|uploader| uploader.login),
+    }
+}
+
+pub(super) fn github_release_from_response(release: GitHubReleaseResponse) -> GitHubRelease {
+    GitHubRelease {
+        id: release.id,
+        tag_name: release.tag_name,
+        target_commitish: normalize_optional_string(release.target_commitish)
+            .unwrap_or_else(|| "main".to_string()),
+        name: normalize_optional_string(release.name),
+        body: normalize_optional_string(release.body),
+        draft: release.draft,
+        prerelease: release.prerelease,
+        immutable: release.immutable,
+        make_latest: normalize_optional_string(release.make_latest),
+        html_url: release.html_url,
+        upload_url: release.upload_url,
+        tarball_url: normalize_optional_string(release.tarball_url),
+        zipball_url: normalize_optional_string(release.zipball_url),
+        created_at: release.created_at,
+        published_at: normalize_optional_string(release.published_at),
+        author: release.author.map(|author| author.login),
+        assets: release
+            .assets
+            .into_iter()
+            .map(github_release_asset_from_response)
+            .collect(),
+    }
+}
+
+pub(super) fn github_release_upload_base_url(upload_url: &str) -> Result<String, String> {
+    let normalized = upload_url
+        .split('{')
+        .next()
+        .unwrap_or(upload_url)
+        .trim()
+        .to_string();
+    if normalized.is_empty() {
+        return Err("Release upload URL 为空".to_string());
+    }
+    Ok(normalized)
+}
+
+pub(super) fn github_release_asset_name(file_path: &str) -> Result<String, String> {
+    let path = Path::new(file_path);
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Err("Release asset 文件名不能为空".to_string());
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Release asset 文件名不能为空".to_string());
+    }
+    Ok(name.to_string())
+}
+
+pub(super) fn github_release_validate_asset_file_size(size: u64) -> Result<(), String> {
+    if size > GITHUB_RELEASE_ASSET_MAX_BYTES {
+        return Err(format!(
+            "Release asset 文件过大：最大支持 {} MB",
+            GITHUB_RELEASE_ASSET_MAX_BYTES / 1024 / 1024
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn github_release_asset_bytes(file_path: &str) -> Result<Vec<u8>, String> {
+    let metadata =
+        fs::metadata(file_path).map_err(|e| format!("读取 Release asset 文件失败：{e}"))?;
+    if !metadata.is_file() {
+        return Err("Release asset 必须是文件".to_string());
+    }
+    github_release_validate_asset_file_size(metadata.len())?;
+    fs::read(file_path).map_err(|e| format!("读取 Release asset 文件失败：{e}"))
+}
+
+fn insert_optional_release_string(
+    payload: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(value) = normalize_optional_string(value) {
+        payload.insert(key.to_string(), serde_json::Value::String(value));
+    }
+}
+
+fn insert_optional_release_bool(
+    payload: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<bool>,
+) {
+    if let Some(value) = value {
+        payload.insert(key.to_string(), serde_json::Value::Bool(value));
     }
 }
 
@@ -4762,6 +4942,280 @@ pub async fn github_get_repo_commit_detail(
                 .insert(detail.short_hash.clone(), detail.clone());
         })?;
         Ok(detail)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_releases(
+    app: AppHandle,
+    repo_full_name: String,
+    force_refresh: Option<bool>,
+) -> Result<Vec<GitHubRelease>, String> {
+    run_blocking("读取 GitHub Releases", move || {
+        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+        if github_project_cache_enabled(force_refresh) {
+            if let Some(cached) = load_github_project_cache(&app)
+                .repos
+                .get(&cache_key)
+                .and_then(|repo_cache| repo_cache.releases.clone())
+            {
+                return Ok(cached);
+            }
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Releases 失败",
+            github_headers(
+                client
+                    .get(format!(
+                        "{}/releases",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
+                    .query(&[("per_page", "100")]),
+                Some(&token),
+            ),
+        )?;
+        let releases =
+            github_json::<Vec<GitHubReleaseResponse>>("读取 GitHub Releases 失败", response)?
+                .into_iter()
+                .map(github_release_from_response)
+                .collect::<Vec<_>>();
+        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+            repo_cache.releases = Some(releases.clone());
+        })?;
+        Ok(releases)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_create_release(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubCreateReleaseRequest,
+) -> Result<GitHubRelease, String> {
+    run_blocking("创建 GitHub Release", move || {
+        let tag_name = request.tag_name.trim().to_string();
+        if tag_name.is_empty() {
+            return Err("Release tag 不能为空".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let mut payload = serde_json::Map::new();
+        payload.insert("tag_name".to_string(), serde_json::Value::String(tag_name));
+        payload.insert(
+            "draft".to_string(),
+            serde_json::Value::Bool(request.draft.unwrap_or(false)),
+        );
+        payload.insert(
+            "prerelease".to_string(),
+            serde_json::Value::Bool(request.prerelease.unwrap_or(false)),
+        );
+        payload.insert(
+            "generate_release_notes".to_string(),
+            serde_json::Value::Bool(request.generate_release_notes.unwrap_or(false)),
+        );
+        insert_optional_release_string(&mut payload, "target_commitish", request.target_commitish);
+        insert_optional_release_string(&mut payload, "name", request.name);
+        insert_optional_release_string(&mut payload, "body", request.body);
+        insert_optional_release_string(&mut payload, "make_latest", request.make_latest);
+        let response = github_send(
+            &app,
+            "创建 GitHub Release 失败",
+            github_headers(
+                client
+                    .post(format!(
+                        "{}/releases",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        let release = github_release_from_response(github_json::<GitHubReleaseResponse>(
+            "创建 GitHub Release 失败",
+            response,
+        )?);
+        clear_github_project_release_cache(&app, &repo_full_name)?;
+        Ok(release)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_update_release(
+    app: AppHandle,
+    repo_full_name: String,
+    release_id: u64,
+    request: GitHubUpdateReleaseRequest,
+) -> Result<GitHubRelease, String> {
+    run_blocking("更新 GitHub Release", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let mut payload = serde_json::Map::new();
+        insert_optional_release_string(&mut payload, "tag_name", request.tag_name);
+        insert_optional_release_string(&mut payload, "target_commitish", request.target_commitish);
+        insert_optional_release_string(&mut payload, "name", request.name);
+        insert_optional_release_string(&mut payload, "body", request.body);
+        insert_optional_release_bool(&mut payload, "draft", request.draft);
+        insert_optional_release_bool(&mut payload, "prerelease", request.prerelease);
+        insert_optional_release_string(&mut payload, "make_latest", request.make_latest);
+        let response = github_send(
+            &app,
+            "更新 GitHub Release 失败",
+            github_headers(
+                client
+                    .patch(format!(
+                        "{}/releases/{release_id}",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
+                    .json(&payload),
+                Some(&token),
+            ),
+        )?;
+        let release = github_release_from_response(github_json::<GitHubReleaseResponse>(
+            "更新 GitHub Release 失败",
+            response,
+        )?);
+        clear_github_project_release_cache(&app, &repo_full_name)?;
+        Ok(release)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_delete_release(
+    app: AppHandle,
+    repo_full_name: String,
+    release_id: u64,
+) -> Result<(), String> {
+    run_blocking("删除 GitHub Release", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "删除 GitHub Release 失败",
+            github_headers(
+                client.delete(format!(
+                    "{}/releases/{release_id}",
+                    github_repo_api_url(&repo_full_name)?
+                )),
+                Some(&token),
+            ),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error("删除 GitHub Release 失败", response));
+        }
+        clear_github_project_release_cache(&app, &repo_full_name)?;
+        Ok(())
+    })
+    .await
+}
+
+fn github_release_for_asset_upload(
+    app: &AppHandle,
+    client: &Client,
+    repo_full_name: &str,
+    release_id: u64,
+    token: &str,
+) -> Result<GitHubRelease, String> {
+    let response = github_send(
+        app,
+        "读取 GitHub Release 失败",
+        github_headers(
+            client.get(format!(
+                "{}/releases/{release_id}",
+                github_repo_api_url(repo_full_name)?
+            )),
+            Some(token),
+        ),
+    )?;
+    Ok(github_release_from_response(github_json::<
+        GitHubReleaseResponse,
+    >(
+        "读取 GitHub Release 失败",
+        response,
+    )?))
+}
+
+#[tauri::command]
+pub async fn github_upload_release_asset(
+    app: AppHandle,
+    repo_full_name: String,
+    release_id: u64,
+    file_path: String,
+    label: Option<String>,
+) -> Result<GitHubReleaseAsset, String> {
+    run_blocking("上传 GitHub Release asset", move || {
+        let asset_name = github_release_asset_name(&file_path)?;
+        let bytes = github_release_asset_bytes(&file_path)?;
+        if bytes.is_empty() {
+            return Err("Release asset 文件不能为空".to_string());
+        }
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let release =
+            github_release_for_asset_upload(&app, &client, &repo_full_name, release_id, &token)?;
+        if release.assets.iter().any(|asset| asset.name == asset_name) {
+            return Err("Release asset 已存在，请先删除旧文件后再上传".to_string());
+        }
+        let upload_url = github_release_upload_base_url(&release.upload_url)?;
+        let mut request = client
+            .post(upload_url)
+            .query(&[("name", asset_name.as_str())])
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(bytes);
+        if let Some(label) = normalize_optional_string(label) {
+            request = request.query(&[("label", label.as_str())]);
+        }
+        let response = github_send(
+            &app,
+            "上传 GitHub Release asset 失败",
+            github_headers(request, Some(&token)),
+        )?;
+        let asset = github_release_asset_from_response(github_json::<GitHubReleaseAssetResponse>(
+            "上传 GitHub Release asset 失败",
+            response,
+        )?);
+        clear_github_project_release_cache(&app, &repo_full_name)?;
+        Ok(asset)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_delete_release_asset(
+    app: AppHandle,
+    repo_full_name: String,
+    release_id: u64,
+    asset_id: u64,
+) -> Result<(), String> {
+    run_blocking("删除 GitHub Release asset", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "删除 GitHub Release asset 失败",
+            github_headers(
+                client.delete(format!(
+                    "{}/releases/assets/{asset_id}",
+                    github_repo_api_url(&repo_full_name)?
+                )),
+                Some(&token),
+            ),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error(
+                "删除 GitHub Release asset 失败",
+                response,
+            ));
+        }
+        let _ = release_id;
+        clear_github_project_release_cache(&app, &repo_full_name)?;
+        Ok(())
     })
     .await
 }

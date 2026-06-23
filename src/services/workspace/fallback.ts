@@ -14,6 +14,7 @@ import type {
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreateRepoRequest,
+  GitHubCreateReleaseRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubDiscussionTimelineItem,
@@ -27,6 +28,8 @@ import type {
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
   GitHubPullRequestListOptions,
+  GitHubRelease,
+  GitHubReleaseAsset,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -37,6 +40,7 @@ import type {
   GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
+  GitHubUpdateReleaseRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
@@ -1074,6 +1078,106 @@ function createFallbackGitHubPullRequestChecks(): Record<string, Record<number, 
   };
 }
 
+function releaseAsset(
+  id: number,
+  repoFullName: string,
+  tagName: string,
+  name: string,
+  size: number,
+  overrides: Partial<GitHubReleaseAsset> = {},
+): GitHubReleaseAsset {
+  return {
+    id,
+    name,
+    label: null,
+    contentType: "application/octet-stream",
+    size,
+    downloadCount: 0,
+    state: "uploaded",
+    browserDownloadUrl: `https://github.com/${repoFullName}/releases/download/${encodeURIComponent(tagName)}/${encodeURIComponent(name)}`,
+    createdAt: "2026-06-21T09:20:00Z",
+    updatedAt: "2026-06-21T09:20:00Z",
+    uploader: "sena-nana",
+    ...overrides,
+  };
+}
+
+function createFallbackGitHubReleases(): Record<string, GitHubRelease[]> {
+  const repoFullName = "sena-nana/LiliaGithub";
+  return {
+    [repoFullName]: [
+      {
+        id: 501,
+        tagName: "v0.1.0-alpha.2",
+        targetCommitish: "main",
+        name: "LiliaGithub v0.1.0-alpha.2",
+        body: "更新项目页 GitHub 能力和桌面端验证流程。",
+        draft: false,
+        prerelease: true,
+        immutable: false,
+        makeLatest: "legacy",
+        htmlUrl: `https://github.com/${repoFullName}/releases/tag/v0.1.0-alpha.2`,
+        uploadUrl: `https://uploads.github.com/repos/${repoFullName}/releases/501/assets{?name,label}`,
+        tarballUrl: `https://api.github.com/repos/${repoFullName}/tarball/v0.1.0-alpha.2`,
+        zipballUrl: `https://api.github.com/repos/${repoFullName}/zipball/v0.1.0-alpha.2`,
+        createdAt: "2026-06-21T09:12:00Z",
+        publishedAt: "2026-06-21T09:24:00Z",
+        author: "sena-nana",
+        assets: [
+          releaseAsset(8001, repoFullName, "v0.1.0-alpha.2", "LiliaGithub_0.1.0-alpha.2_x64-setup.exe", 42_820_000, {
+            contentType: "application/vnd.microsoft.portable-executable",
+            downloadCount: 28,
+          }),
+          releaseAsset(8002, repoFullName, "v0.1.0-alpha.2", "LiliaGithub_0.1.0-alpha.2_x64.dmg", 45_360_000, {
+            contentType: "application/x-apple-diskimage",
+            downloadCount: 9,
+          }),
+        ],
+      },
+      {
+        id: 500,
+        tagName: "v0.1.0-alpha.1",
+        targetCommitish: "main",
+        name: "LiliaGithub first alpha",
+        body: "首个 alpha，包含仓库扫描、Issues、Pull Requests 和 Actions 视图。",
+        draft: false,
+        prerelease: true,
+        immutable: false,
+        makeLatest: "legacy",
+        htmlUrl: `https://github.com/${repoFullName}/releases/tag/v0.1.0-alpha.1`,
+        uploadUrl: `https://uploads.github.com/repos/${repoFullName}/releases/500/assets{?name,label}`,
+        tarballUrl: `https://api.github.com/repos/${repoFullName}/tarball/v0.1.0-alpha.1`,
+        zipballUrl: `https://api.github.com/repos/${repoFullName}/zipball/v0.1.0-alpha.1`,
+        createdAt: "2026-06-18T12:00:00Z",
+        publishedAt: "2026-06-18T12:30:00Z",
+        author: "lilia-user",
+        assets: [],
+      },
+    ],
+    "sena-nana/LiliaDocs": [
+      {
+        id: 601,
+        tagName: "docs-v1",
+        targetCommitish: "main",
+        name: "Documentation v1",
+        body: "发布文档站第一版。",
+        draft: false,
+        prerelease: false,
+        immutable: false,
+        makeLatest: "true",
+        htmlUrl: "https://github.com/sena-nana/LiliaDocs/releases/tag/docs-v1",
+        uploadUrl: "https://uploads.github.com/repos/sena-nana/LiliaDocs/releases/601/assets{?name,label}",
+        tarballUrl: null,
+        zipballUrl: null,
+        createdAt: "2026-06-20T15:31:00Z",
+        publishedAt: "2026-06-20T15:35:00Z",
+        author: "sena-nana",
+        assets: [],
+      },
+    ],
+  };
+}
+
 function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]> {
   if (useDefaultFallback) {
     return {
@@ -1992,6 +2096,7 @@ let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
 let fallbackGitHubIssueDiscussions: Record<string, Record<number, GitHubIssueDiscussion>> = {};
 let fallbackGitHubPullRequestDiscussions: Record<string, Record<number, GitHubPullRequestDiscussion>> = {};
 let fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
+let fallbackGitHubReleases = createFallbackGitHubReleases();
 let fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
 let fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
 let fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs();
@@ -2124,6 +2229,8 @@ let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackGitHubPullRequestListCalls: FallbackGitHubPullRequestListCall[] = [];
 let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListCall[] = [];
+let fallbackGitHubReleaseListCalls: Array<{ repoFullName: string }> = [];
+let fallbackPickFilesResult: string[] = [];
 let fallbackGitHubWorkflowRunListCalls: Array<{ repoFullName: string; perPage: number | null }> = [];
 let fallbackGitHubWorkflowRunDetailCalls: Array<{ repoFullName: string; runId: number }> = [];
 let fallbackGitHubWorkflowJobLogCalls: Array<{ repoFullName: string; jobId: number }> = [];
@@ -2168,6 +2275,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubIssueDiscussions = {};
   fallbackGitHubPullRequestDiscussions = {};
   fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
+  fallbackGitHubReleases = createFallbackGitHubReleases();
   fallbackGitHubWorkflowRuns = createFallbackGitHubWorkflowRuns();
   fallbackGitHubWorkflowRunDetails = createFallbackGitHubWorkflowRunDetails();
   fallbackGitHubWorkflowJobLogs = createFallbackGitHubWorkflowJobLogs();
@@ -2187,6 +2295,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubIssueListCalls = [];
   fallbackGitHubPullRequestListCalls = [];
   fallbackGitHubPullRequestCheckListCalls = [];
+  fallbackGitHubReleaseListCalls = [];
+  fallbackPickFilesResult = [];
   fallbackGitHubWorkflowRunListCalls = [];
   fallbackGitHubWorkflowRunDetailCalls = [];
   fallbackGitHubWorkflowJobLogCalls = [];
@@ -2321,6 +2431,10 @@ export function getFallbackGitHubPullRequestCheckListCallsForTests(): FallbackGi
   return fallbackGitHubPullRequestCheckListCalls.map((call) => ({ ...call }));
 }
 
+export function getFallbackGitHubReleaseListCallsForTests() {
+  return fallbackGitHubReleaseListCalls.map((call) => ({ ...call }));
+}
+
 export function getFallbackGitHubWorkflowRunListCallsForTests() {
   return fallbackGitHubWorkflowRunListCalls.map((call) => ({ ...call }));
 }
@@ -2365,6 +2479,19 @@ export function setFallbackGitHubPullRequestsForTests(pullRequestsByRepo: Record
       pullRequests.map(clonePullRequest),
     ]),
   );
+}
+
+export function setFallbackGitHubReleasesForTests(releasesByRepo: Record<string, GitHubRelease[]>) {
+  fallbackGitHubReleases = Object.fromEntries(
+    Object.entries(releasesByRepo).map(([repoFullName, releases]) => [
+      repoFullName,
+      releases.map(cloneRelease),
+    ]),
+  );
+}
+
+export function setFallbackPickFilesResultForTests(paths: string[]) {
+  fallbackPickFilesResult = [...paths];
 }
 
 export function setFallbackGitHubIssueDiscussionsForTests(
@@ -2533,6 +2660,17 @@ function cloneWorkflowRunDetail(detail: GitHubWorkflowRunDetail): GitHubWorkflow
     })),
     artifacts: detail.artifacts.map((artifact) => ({ ...artifact })),
     workflow: detail.workflow ? { ...detail.workflow } : null,
+  };
+}
+
+function cloneReleaseAsset(asset: GitHubReleaseAsset): GitHubReleaseAsset {
+  return { ...asset };
+}
+
+function cloneRelease(release: GitHubRelease): GitHubRelease {
+  return {
+    ...release,
+    assets: release.assets.map(cloneReleaseAsset),
   };
 }
 
@@ -2777,6 +2915,10 @@ export function pickWorkspaceRoot(): Promise<string | null> {
 
 export function pickRepo(): Promise<string | null> {
   return call("workspace_pick_repo", undefined, () => allFallbackRepos()[0]?.path ?? null);
+}
+
+export function pickFiles(): Promise<string[]> {
+  return call("workspace_pick_files", undefined, () => [...fallbackPickFilesResult]);
 }
 
 export function refreshRepos(): Promise<RepoSummary[]> {
@@ -3977,6 +4119,128 @@ export function updateGitHubIssue(
     };
     fallbackGitHubIssues[repoFullName] = issues.map((issue) => issue.number === issueNumber ? updated : issue);
     return cloneIssue(updated);
+  });
+}
+
+function fallbackRelease(repoFullName: string, releaseId: number) {
+  const release = (fallbackGitHubReleases[repoFullName] ?? []).find((item) => item.id === releaseId);
+  if (!release) throw new Error(`未找到 Release #${releaseId}`);
+  return release;
+}
+
+function replaceFallbackRelease(repoFullName: string, release: GitHubRelease) {
+  fallbackGitHubReleases[repoFullName] = (fallbackGitHubReleases[repoFullName] ?? [])
+    .map((item) => item.id === release.id ? release : item);
+}
+
+export function listGitHubReleases(repoFullName: string): Promise<GitHubRelease[]> {
+  fallbackGitHubReleaseListCalls.push({ repoFullName });
+  return call("github_list_releases", { repoFullName }, () =>
+    [...(fallbackGitHubReleases[repoFullName] ?? [])]
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .map(cloneRelease),
+  );
+}
+
+export function createGitHubRelease(
+  repoFullName: string,
+  request: GitHubCreateReleaseRequest,
+): Promise<GitHubRelease> {
+  return call("github_create_release", { repoFullName, request }, () => {
+    const tagName = request.tagName.trim();
+    if (!tagName) throw new Error("Release tag 不能为空");
+    const releases = fallbackGitHubReleases[repoFullName] ?? [];
+    const releaseId = Math.max(0, ...releases.map((item) => item.id)) + 1;
+    const now = new Date().toISOString();
+    const release: GitHubRelease = {
+      id: releaseId,
+      tagName,
+      targetCommitish: request.targetCommitish?.trim() || "main",
+      name: request.name?.trim() || null,
+      body: request.body?.trim() || null,
+      draft: request.draft ?? false,
+      prerelease: request.prerelease ?? false,
+      immutable: false,
+      makeLatest: request.makeLatest ?? null,
+      htmlUrl: `https://github.com/${repoFullName}/releases/tag/${encodeURIComponent(tagName)}`,
+      uploadUrl: `https://uploads.github.com/repos/${repoFullName}/releases/${releaseId}/assets{?name,label}`,
+      tarballUrl: `https://api.github.com/repos/${repoFullName}/tarball/${encodeURIComponent(tagName)}`,
+      zipballUrl: `https://api.github.com/repos/${repoFullName}/zipball/${encodeURIComponent(tagName)}`,
+      createdAt: now,
+      publishedAt: request.draft ? null : now,
+      author: fallbackBinding.binding?.login ?? "lilia-user",
+      assets: [],
+    };
+    fallbackGitHubReleases[repoFullName] = [release, ...releases];
+    return cloneRelease(release);
+  });
+}
+
+export function updateGitHubRelease(
+  repoFullName: string,
+  releaseId: number,
+  request: GitHubUpdateReleaseRequest,
+): Promise<GitHubRelease> {
+  return call("github_update_release", { repoFullName, releaseId, request }, () => {
+    const current = fallbackRelease(repoFullName, releaseId);
+    const now = new Date().toISOString();
+    const updated: GitHubRelease = {
+      ...current,
+      tagName: request.tagName?.trim() || current.tagName,
+      targetCommitish: request.targetCommitish?.trim() || current.targetCommitish,
+      name: request.name === undefined ? current.name : request.name?.trim() || null,
+      body: request.body === undefined ? current.body : request.body?.trim() || null,
+      draft: request.draft ?? current.draft,
+      prerelease: request.prerelease ?? current.prerelease,
+      makeLatest: request.makeLatest === undefined ? current.makeLatest : request.makeLatest,
+      publishedAt: request.draft === false && !current.publishedAt ? now : current.publishedAt,
+    };
+    replaceFallbackRelease(repoFullName, updated);
+    return cloneRelease(updated);
+  });
+}
+
+export function deleteGitHubRelease(repoFullName: string, releaseId: number): Promise<void> {
+  return call("github_delete_release", { repoFullName, releaseId }, () => {
+    fallbackRelease(repoFullName, releaseId);
+    fallbackGitHubReleases[repoFullName] = (fallbackGitHubReleases[repoFullName] ?? [])
+      .filter((release) => release.id !== releaseId);
+  });
+}
+
+export function uploadGitHubReleaseAsset(
+  repoFullName: string,
+  releaseId: number,
+  filePath: string,
+  label?: string | null,
+): Promise<GitHubReleaseAsset> {
+  return call("github_upload_release_asset", { repoFullName, releaseId, filePath, label: label ?? null }, () => {
+    const current = fallbackRelease(repoFullName, releaseId);
+    const name = filePath.split(/[\\/]/).pop()?.trim();
+    if (!name) throw new Error("Release asset 文件名不能为空");
+    if (current.assets.some((asset) => asset.name === name)) {
+      throw new Error("Release asset 已存在，请先删除旧文件后再上传");
+    }
+    const now = new Date().toISOString();
+    const asset = releaseAsset(Math.max(0, ...current.assets.map((item) => item.id)) + 1, repoFullName, current.tagName, name, 1024, {
+      label: label?.trim() || null,
+      createdAt: now,
+      updatedAt: now,
+      uploader: fallbackBinding.binding?.login ?? "lilia-user",
+    });
+    const updated = { ...current, assets: [asset, ...current.assets] };
+    replaceFallbackRelease(repoFullName, updated);
+    return cloneReleaseAsset(asset);
+  });
+}
+
+export function deleteGitHubReleaseAsset(repoFullName: string, releaseId: number, assetId: number): Promise<void> {
+  return call("github_delete_release_asset", { repoFullName, releaseId, assetId }, () => {
+    const current = fallbackRelease(repoFullName, releaseId);
+    const nextAssets = current.assets.filter((asset) => asset.id !== assetId);
+    if (nextAssets.length === current.assets.length) throw new Error(`未找到 Release asset #${assetId}`);
+    const updated = { ...current, assets: nextAssets };
+    replaceFallbackRelease(repoFullName, updated);
   });
 }
 

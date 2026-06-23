@@ -15,6 +15,7 @@ import type {
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreateRepoRequest,
+  GitHubCreateReleaseRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
   GitHubIssueDiscussion,
@@ -26,6 +27,8 @@ import type {
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
   GitHubPullRequestListOptions,
+  GitHubRelease,
+  GitHubReleaseAsset,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -36,6 +39,7 @@ import type {
   GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
+  GitHubUpdateReleaseRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
@@ -93,6 +97,7 @@ type GitHubProjectRepoClientCache = {
   workflowJobLogs: Record<number, GitHubWorkflowJobLog | undefined>;
   workflowArtifactEntries: Record<number, GitHubWorkflowArtifactEntry[] | undefined>;
   workflowArtifactPreviews: Record<string, RepoFilePreview | undefined>;
+  releases?: GitHubRelease[];
 };
 
 let githubRepoCache: {
@@ -271,6 +276,7 @@ function githubProjectRepoCache(repoFullName: string) {
       workflowJobLogs: {},
       workflowArtifactEntries: {},
       workflowArtifactPreviews: {},
+      releases: undefined,
     };
     githubProjectCache.set(key, cache);
   }
@@ -385,6 +391,45 @@ function clearGitHubProjectPullRequestChecks(repoFullName: string, pullNumber?: 
   else delete cache.pullRequestChecks[pullNumber];
 }
 
+function upsertGitHubRelease(repoFullName: string, release: GitHubRelease) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  const withoutRelease = cache.releases.filter((item) => item.id !== release.id);
+  cache.releases = [cloneProjectData(release), ...cloneProjectList(withoutRelease)]
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function upsertGitHubReleaseAsset(repoFullName: string, releaseId: number, asset: GitHubReleaseAsset) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  cache.releases = cache.releases.map((release) => {
+    if (release.id !== releaseId) return cloneProjectData(release);
+    const assets = [
+      cloneProjectData(asset),
+      ...release.assets.filter((item) => item.id !== asset.id).map((item) => cloneProjectData(item)),
+    ];
+    return { ...cloneProjectData(release), assets };
+  });
+}
+
+function removeGitHubRelease(repoFullName: string, releaseId: number) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  cache.releases = cache.releases.filter((release) => release.id !== releaseId).map((release) => cloneProjectData(release));
+}
+
+function removeGitHubReleaseAsset(repoFullName: string, releaseId: number, assetId: number) {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!cache.releases) return;
+  cache.releases = cache.releases.map((release) => {
+    if (release.id !== releaseId) return cloneProjectData(release);
+    return {
+      ...cloneProjectData(release),
+      assets: release.assets.filter((asset) => asset.id !== assetId).map((asset) => cloneProjectData(asset)),
+    };
+  });
+}
+
 function writeGitHubRepoCache(page: GitHubRepoPage) {
   githubRepoCache = {
     items: page.items.map((repo) => ({ ...repo })),
@@ -431,6 +476,10 @@ export function preloadGitHubRepos(opts: { force?: boolean } = {}): Promise<GitH
 
 export function pickRepo(): Promise<string | null> {
   return call("workspace_pick_repo", undefined, () => workspaceFallback().pickRepo());
+}
+
+export function pickFiles(): Promise<string[]> {
+  return call("workspace_pick_files", undefined, () => workspaceFallback().pickFiles());
 }
 
 export function refreshRepos(): Promise<RepoSummary[]> {
@@ -1038,6 +1087,80 @@ export function getGitHubRepoCommitDetail(
       }
       return cloneProjectData(detail);
     });
+}
+
+export function listGitHubReleases(
+  repoFullName: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<GitHubRelease[]> {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!options.forceRefresh && cache.releases) return Promise.resolve(cloneProjectList(cache.releases));
+  const args = {
+    repoFullName,
+    forceRefresh: options.forceRefresh ?? null,
+  };
+  return cachedCall("github_list_releases", args, () => workspaceFallback().listGitHubReleases(repoFullName))
+    .then((releases) => {
+      cache.releases = cloneProjectList(releases);
+      return cloneProjectList(releases);
+    });
+}
+
+export function createGitHubRelease(
+  repoFullName: string,
+  request: GitHubCreateReleaseRequest,
+): Promise<GitHubRelease> {
+  return call("github_create_release", { repoFullName, request }, () =>
+    workspaceFallback().createGitHubRelease(repoFullName, request)
+  ).then((release) => {
+    upsertGitHubRelease(repoFullName, release);
+    return cloneProjectData(release);
+  });
+}
+
+export function updateGitHubRelease(
+  repoFullName: string,
+  releaseId: number,
+  request: GitHubUpdateReleaseRequest,
+): Promise<GitHubRelease> {
+  return call("github_update_release", { repoFullName, releaseId, request }, () =>
+    workspaceFallback().updateGitHubRelease(repoFullName, releaseId, request)
+  ).then((release) => {
+    upsertGitHubRelease(repoFullName, release);
+    return cloneProjectData(release);
+  });
+}
+
+export async function deleteGitHubRelease(repoFullName: string, releaseId: number): Promise<void> {
+  await call("github_delete_release", { repoFullName, releaseId }, () =>
+    workspaceFallback().deleteGitHubRelease(repoFullName, releaseId)
+  );
+  removeGitHubRelease(repoFullName, releaseId);
+}
+
+export function uploadGitHubReleaseAsset(
+  repoFullName: string,
+  releaseId: number,
+  filePath: string,
+  label?: string | null,
+): Promise<GitHubReleaseAsset> {
+  return call("github_upload_release_asset", { repoFullName, releaseId, filePath, label: label ?? null }, () =>
+    workspaceFallback().uploadGitHubReleaseAsset(repoFullName, releaseId, filePath, label)
+  ).then((asset) => {
+    upsertGitHubReleaseAsset(repoFullName, releaseId, asset);
+    return cloneProjectData(asset);
+  });
+}
+
+export async function deleteGitHubReleaseAsset(
+  repoFullName: string,
+  releaseId: number,
+  assetId: number,
+): Promise<void> {
+  await call("github_delete_release_asset", { repoFullName, releaseId, assetId }, () =>
+    workspaceFallback().deleteGitHubReleaseAsset(repoFullName, releaseId, assetId)
+  );
+  removeGitHubReleaseAsset(repoFullName, releaseId, assetId);
 }
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
