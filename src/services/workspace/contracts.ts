@@ -9,6 +9,7 @@ import type {
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreatePullRequestRequest,
+  GitHubCreateReleaseRequest,
   GitHubCreateRepoRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStart,
@@ -19,12 +20,15 @@ import type {
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
+  GitHubRelease,
+  GitHubReleaseAsset,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSummary,
   GitHubUpdateIssueRequest,
   GitHubUpdatePullRequestRequest,
+  GitHubUpdateReleaseRequest,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
@@ -83,6 +87,7 @@ export interface WorkspaceCommandContracts {
   repo_set_auto_sync: CommandContract<{ repoId: string; autoSync: boolean }, WorkspaceSettings>;
   workspace_pick_root: CommandContract<NoArgs, Maybe<string>>;
   workspace_pick_repo: CommandContract<NoArgs, Maybe<string>>;
+  workspace_pick_files: CommandContract<NoArgs, string[]>;
   workspace_refresh_repos: CommandContract<NoArgs, RepoSummary[]>;
   workspace_list_managed_repos: CommandContract<NoArgs, RepoSummary[]>;
   workspace_scan_repos: CommandContract<NoArgs, RepoSummary[]>;
@@ -222,6 +227,18 @@ export interface WorkspaceCommandContracts {
     CommitSummary[]
   >;
   github_get_repo_commit_detail: CommandContract<RepoFullNameArg & CommitHashArg & ForceRefreshArg, CommitDetail>;
+  github_list_releases: CommandContract<RepoFullNameArg & ForceRefreshArg, GitHubRelease[]>;
+  github_create_release: CommandContract<RepoFullNameArg & { request: GitHubCreateReleaseRequest }, GitHubRelease>;
+  github_update_release: CommandContract<
+    RepoFullNameArg & { releaseId: number; request: GitHubUpdateReleaseRequest },
+    GitHubRelease
+  >;
+  github_delete_release: CommandContract<RepoFullNameArg & { releaseId: number }, void>;
+  github_upload_release_asset: CommandContract<
+    RepoFullNameArg & { releaseId: number; filePath: string; label: Maybe<string> },
+    GitHubReleaseAsset
+  >;
+  github_delete_release_asset: CommandContract<RepoFullNameArg & { releaseId: number; assetId: number }, void>;
 
   repo_get_summary: CommandContract<RepoArg, RepoSummary>;
   repo_refresh_summary: CommandContract<RepoArg & { options: RepoRefreshSummaryOptions }, RepoSummary>;

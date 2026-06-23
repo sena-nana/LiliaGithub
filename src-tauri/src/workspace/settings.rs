@@ -66,7 +66,10 @@ pub(super) fn startup_cache_matches_settings(
 fn startup_cache_shell(settings: &WorkspaceSettings) -> WorkspaceStartupCache {
     WorkspaceStartupCache {
         workspace_root: settings.workspace_root.clone(),
-        binding_login: settings.github_binding.as_ref().map(|binding| binding.login.clone()),
+        binding_login: settings
+            .github_binding
+            .as_ref()
+            .map(|binding| binding.login.clone()),
         ..WorkspaceStartupCache::default()
     }
 }
@@ -413,10 +416,9 @@ pub fn repo_set_auto_sync(
     }
     let mut settings = load_settings(&app);
     if auto_sync {
-        settings.repo_sync_preferences.insert(
-            normalized.to_string(),
-            RepoSyncPreference { auto_sync },
-        );
+        settings
+            .repo_sync_preferences
+            .insert(normalized.to_string(), RepoSyncPreference { auto_sync });
     } else {
         settings.repo_sync_preferences.remove(normalized);
     }
@@ -442,6 +444,20 @@ pub fn workspace_pick_repo(app: AppHandle) -> Result<Option<String>, String> {
         .set_title("选择 Git 仓库")
         .blocking_pick_folder();
     Ok(picked.map(|path| path.to_string()))
+}
+
+#[tauri::command]
+pub fn workspace_pick_files(app: AppHandle) -> Result<Vec<String>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("选择 Release 资源")
+        .blocking_pick_files();
+    Ok(picked
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| path.to_string())
+        .collect())
 }
 
 #[tauri::command]

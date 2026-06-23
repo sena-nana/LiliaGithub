@@ -9,7 +9,10 @@ import { vContextMenu } from "../src/directives/contextMenu";
 import {
   createGitHubPullRequest,
   createGitHubIssue,
+  createGitHubRelease,
   deleteGitHubRepo,
+  deleteGitHubRelease,
+  deleteGitHubReleaseAsset,
   getGitHubIssueDiscussion,
   getGitHubIssueFilterMetadata,
   getGitHubRepoFilePreview,
@@ -27,9 +30,13 @@ import {
   listGitHubIssueLabels,
   listGitHubRepoFiles,
   listGitHubWorkflowRuns,
+  listGitHubReleases,
   listRepoFiles,
   mergeGitHubPullRequest,
+  pickFiles,
+  updateGitHubRelease,
   updateGitHubRepoSettings,
+  uploadGitHubReleaseAsset,
 } from "../src/services/workspace/client";
 import type {
   CommitDetail,
@@ -39,6 +46,8 @@ import type {
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
+  GitHubRelease,
+  GitHubReleaseAsset,
   GitHubRepoManagement,
   GitHubWorkflowRun,
   GitHubWorkflowRunDetail,
@@ -305,6 +314,61 @@ const githubPullRequestChecks: GitHubPullRequestCheck[] = [{
   completedAt: "2026-06-18T08:05:00Z",
 }];
 
+function releaseAsset(overrides: Partial<GitHubReleaseAsset> = {}): GitHubReleaseAsset {
+  return {
+    id: 9001,
+    name: "lilia-windows.zip",
+    label: "Windows",
+    contentType: "application/zip",
+    size: 2_048,
+    downloadCount: 7,
+    state: "uploaded",
+    browserDownloadUrl: "https://github.com/sena-nana/remote-repo/releases/download/v1.0.0/lilia-windows.zip",
+    createdAt: "2026-06-18T08:10:00Z",
+    updatedAt: "2026-06-18T08:10:00Z",
+    ...overrides,
+  };
+}
+
+const githubReleases: GitHubRelease[] = [
+  {
+    id: 8001,
+    tagName: "v1.0.0",
+    targetCommitish: "main",
+    name: "Lilia v1.0.0",
+    body: "## Summary\n\n正式发布。",
+    draft: false,
+    prerelease: false,
+    makeLatest: "true",
+    author: "sena",
+    htmlUrl: "https://github.com/sena-nana/remote-repo/releases/tag/v1.0.0",
+    uploadUrl: "https://uploads.github.com/repos/sena-nana/remote-repo/releases/8001/assets{?name,label}",
+    tarballUrl: "https://api.github.com/repos/sena-nana/remote-repo/tarball/v1.0.0",
+    zipballUrl: "https://api.github.com/repos/sena-nana/remote-repo/zipball/v1.0.0",
+    createdAt: "2026-06-18T08:00:00Z",
+    publishedAt: "2026-06-18T08:05:00Z",
+    assets: [releaseAsset()],
+  },
+  {
+    id: 8002,
+    tagName: "v1.1.0-beta.1",
+    targetCommitish: "develop",
+    name: "Lilia v1.1 beta",
+    body: null,
+    draft: false,
+    prerelease: true,
+    makeLatest: "false",
+    author: "mika",
+    htmlUrl: "https://github.com/sena-nana/remote-repo/releases/tag/v1.1.0-beta.1",
+    uploadUrl: "https://uploads.github.com/repos/sena-nana/remote-repo/releases/8002/assets{?name,label}",
+    tarballUrl: null,
+    zipballUrl: null,
+    createdAt: "2026-06-19T08:00:00Z",
+    publishedAt: "2026-06-19T08:05:00Z",
+    assets: [],
+  },
+];
+
 function issueDiscussion(issue: GitHubIssue): GitHubIssueDiscussion {
   return {
     issue,
@@ -398,7 +462,10 @@ function filePreview(path: string, content: string, overrides: Partial<RepoFileP
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
+  createGitHubRelease: vi.fn(),
   deleteGitHubRepo: vi.fn(),
+  deleteGitHubRelease: vi.fn(),
+  deleteGitHubReleaseAsset: vi.fn(),
   getGitHubIssueDiscussion: vi.fn(),
   getGitHubRepoFilePreview: vi.fn(),
   getGitHubIssueFilterMetadata: vi.fn(),
@@ -413,6 +480,7 @@ vi.mock("../src/services/workspace/client", () => ({
   listGitHubIssueLabels: vi.fn(),
   listGitHubRepoFiles: vi.fn(),
   listGitHubWorkflowRuns: vi.fn(),
+  listGitHubReleases: vi.fn(),
   getGitHubWorkflowRunDetail: vi.fn(),
   getGitHubWorkflowJobLog: vi.fn(),
   listGitHubWorkflowArtifactFiles: vi.fn(),
@@ -425,10 +493,12 @@ vi.mock("../src/services/workspace/client", () => ({
       message.toLowerCase().includes("bad credentials");
   },
   mergeGitHubPullRequest: vi.fn(),
+  pickFiles: vi.fn(),
   listRepoFiles: vi.fn(async () => []),
   openPath: vi.fn(),
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
+  updateGitHubRelease: vi.fn(),
   updateGitHubRepoSettings: vi.fn(async (_repoFullName: string, request: Partial<GitHubRepoManagement>) => ({
     ...githubSettings,
     ...request,
@@ -436,6 +506,7 @@ vi.mock("../src/services/workspace/client", () => ({
     homepage: request.homepage ?? githubSettings.homepage,
     topics: request.topics ? [...request.topics] : [...githubSettings.topics],
   })),
+  uploadGitHubReleaseAsset: vi.fn(),
 }));
 
 vi.mock("../src/composables/workspace/auth", async (importOriginal) => {
@@ -559,7 +630,10 @@ describe("RepoProjectPanel", () => {
     vi.clearAllMocks();
     vi.mocked(createGitHubPullRequest).mockReset();
     vi.mocked(createGitHubIssue).mockReset();
+    vi.mocked(createGitHubRelease).mockReset();
     vi.mocked(deleteGitHubRepo).mockReset();
+    vi.mocked(deleteGitHubRelease).mockReset();
+    vi.mocked(deleteGitHubReleaseAsset).mockReset();
     vi.mocked(getGitHubIssueDiscussion).mockReset();
     vi.mocked(getGitHubPullRequestDiscussion).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
@@ -569,8 +643,12 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubIssueAssignees).mockReset();
     vi.mocked(listGitHubIssueLabels).mockReset();
     vi.mocked(listGitHubRepoFiles).mockReset();
+    vi.mocked(listGitHubReleases).mockReset();
     vi.mocked(listRepoFiles).mockReset();
+    vi.mocked(pickFiles).mockReset();
+    vi.mocked(updateGitHubRelease).mockReset();
     vi.mocked(updateGitHubRepoSettings).mockReset();
+    vi.mocked(uploadGitHubReleaseAsset).mockReset();
     vi.mocked(createGitHubIssue).mockImplementation(async (_repoFullName, request) => ({
       number: 99,
       title: request.title,
@@ -607,6 +685,36 @@ describe("RepoProjectPanel", () => {
       mergeable: null,
       mergeableState: null,
     }));
+    vi.mocked(createGitHubRelease).mockImplementation(async (_repoFullName, request) => ({
+      ...githubReleases[0],
+      id: 8100,
+      tagName: request.tagName,
+      targetCommitish: request.targetCommitish ?? "main",
+      name: request.name,
+      body: request.body,
+      draft: request.draft ?? false,
+      prerelease: request.prerelease ?? false,
+      makeLatest: "false",
+      assets: [],
+    }));
+    vi.mocked(updateGitHubRelease).mockImplementation(async (_repoFullName, releaseId, request) => {
+      const current = githubReleases.find((release) => release.id === releaseId) ?? githubReleases[0];
+      return {
+        ...current,
+        tagName: request.tagName ?? current.tagName,
+        targetCommitish: request.targetCommitish ?? current.targetCommitish,
+        name: request.name ?? current.name,
+        body: request.body ?? current.body,
+        draft: request.draft ?? current.draft,
+        prerelease: request.prerelease ?? current.prerelease,
+      };
+    });
+    vi.mocked(deleteGitHubRelease).mockResolvedValue(undefined);
+    vi.mocked(pickFiles).mockResolvedValue(["C:\\Files\\release\\lilia.zip"]);
+    vi.mocked(uploadGitHubReleaseAsset).mockImplementation(async (_repoFullName, releaseId, filePath) => (
+      releaseAsset({ id: 9100, name: filePath.split("\\").pop() ?? filePath, label: null })
+    ));
+    vi.mocked(deleteGitHubReleaseAsset).mockResolvedValue(undefined);
     vi.mocked(listGitHubRepoFiles).mockResolvedValue([]);
     vi.mocked(listRepoFiles).mockResolvedValue(localRootFiles);
     vi.mocked(getRepoFilePreview).mockResolvedValue(localReadmePreview);
@@ -637,6 +745,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubPullRequestChecks).mockResolvedValue([]);
     vi.mocked(mergeGitHubPullRequest).mockImplementation(async () => ({ ...githubPullRequests[0], merged: true, state: "closed" }));
     vi.mocked(listGitHubIssues).mockResolvedValue([]);
+    vi.mocked(listGitHubReleases).mockResolvedValue([]);
     vi.mocked(getGitHubIssueDiscussion).mockImplementation(async (_repoFullName, issueNumber) => {
       const issue = githubIssues.find((item) => item.number === issueNumber) ?? closedGitHubIssues.find((item) => item.number === issueNumber);
       if (!issue) throw new Error(`missing issue ${issueNumber}`);
@@ -958,6 +1067,126 @@ describe("RepoProjectPanel", () => {
     expect(view.getByLabelText("Actions 摘要")).toHaveTextContent("已同步");
     expect(listGitHubWorkflowRuns).toHaveBeenCalledTimes(1);
     expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
+  });
+
+  it("Release 二级 Tab 读取 releases，并在右侧 tag 列表跳转和刷新", async () => {
+    vi.mocked(listGitHubReleases).mockResolvedValue(githubReleases);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Release" }));
+
+    expect(await view.findByRole("heading", { level: 3, name: "Release" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" })).toBeInTheDocument();
+    expect(view.getByText("lilia-windows.zip")).toBeInTheDocument();
+    expect(listGitHubReleases).toHaveBeenCalledWith("sena-nana/remote-repo");
+    expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "release" });
+
+    const tagSidebar = view.getByRole("region", { name: "Release tags" });
+    await fireEvent.click(within(tagSidebar).getByRole("button", { name: /v1\.0\.0/ }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({
+        projectTab: "release",
+        releaseTag: "v1.0.0",
+      });
+    });
+    expect(view.container.querySelector(".release-card.is-focused[data-release-tag=\"v1.0.0\"]")).toBeInstanceOf(HTMLElement);
+
+    await fireEvent.click(within(tagSidebar).getByRole("button", { name: "刷新 Release" }));
+    expect(listGitHubReleases).toHaveBeenLastCalledWith("sena-nana/remote-repo", { forceRefresh: true });
+  });
+
+  it("Release Tab 支持创建、编辑、删除 release 与上传、删除资产", async () => {
+    vi.mocked(listGitHubReleases).mockResolvedValue([githubReleases[0]]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Release" }));
+    await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" });
+
+    await fireEvent.click(view.getByRole("button", { name: "新建 Release" }));
+    const createForm = await view.findByRole("form", { name: "Release 表单" });
+    await fireEvent.update(within(createForm).getByLabelText("Tag"), "v1.1.0");
+    await fireEvent.update(within(createForm).getByLabelText("Target"), "main");
+    await fireEvent.update(within(createForm).getByLabelText("Title"), "Lilia v1.1.0");
+    await fireEvent.update(within(createForm).getByLabelText("Notes"), "新增 release 管理。");
+    await fireEvent.click(within(createForm).getByLabelText("Generate notes"));
+    await fireEvent.click(within(createForm).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(createGitHubRelease).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        tagName: "v1.1.0",
+        targetCommitish: "main",
+        name: "Lilia v1.1.0",
+        body: "新增 release 管理。",
+        draft: false,
+        prerelease: false,
+        generateReleaseNotes: true,
+      });
+    });
+
+    const releaseCard = view.container.querySelector(".release-card[data-release-tag=\"v1.0.0\"]") as HTMLElement;
+    expect(releaseCard).toBeInstanceOf(HTMLElement);
+
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "上传" }));
+    await waitFor(() => {
+      expect(pickFiles).toHaveBeenCalledTimes(1);
+      expect(uploadGitHubReleaseAsset).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        8001,
+        "C:\\Files\\release\\lilia.zip",
+      );
+    });
+
+    const originalAssetRow = within(releaseCard).getByText("lilia-windows.zip").closest(".release-asset") as HTMLElement;
+    await fireEvent.click(within(originalAssetRow).getByRole("button", { name: "删除资产" }));
+    await fireEvent.click(within(originalAssetRow).getByRole("button", { name: "确认删除资产" }));
+    await waitFor(() => {
+      expect(deleteGitHubReleaseAsset).toHaveBeenCalledWith("sena-nana/remote-repo", 8001, 9001);
+    });
+
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "编辑 Release" }));
+    const editForm = await view.findByRole("form", { name: "Release 表单" });
+    await fireEvent.update(within(editForm).getByLabelText("Title"), "Lilia v1.0.1");
+    await fireEvent.click(within(editForm).getByRole("button", { name: "保存" }));
+    await waitFor(() => {
+      expect(updateGitHubRelease).toHaveBeenCalledWith("sena-nana/remote-repo", 8001, expect.objectContaining({
+        tagName: "v1.0.0",
+        name: "Lilia v1.0.1",
+      }));
+    });
+
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "删除 Release" }));
+    await fireEvent.click(within(releaseCard).getByRole("button", { name: "确认删除 Release" }));
+    await waitFor(() => {
+      expect(deleteGitHubRelease).toHaveBeenCalledWith("sena-nana/remote-repo", 8001);
+    });
+  });
+
+  it("Release Tab 显示空态和 GitHub 不可用态", async () => {
+    const emptyView = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(emptyView.getByRole("tab", { name: "Release" }));
+
+    expect(await emptyView.findByText("暂无 releases。")).toBeInTheDocument();
+    expect(emptyView.getByText("暂无 release tag。")).toBeInTheDocument();
+    emptyView.unmount();
+
+    vi.mocked(listGitHubReleases).mockRejectedValue(new Error("GitHub 绑定已失效，请重新绑定"));
+    const unavailableView = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(unavailableView.getByRole("tab", { name: "Release" }));
+
+    expect(await unavailableView.findByText("Release 暂不可用")).toBeInTheDocument();
+    expect(unavailableView.getAllByText(/GitHub 绑定已失效/).length).toBeGreaterThan(0);
+    expect(unavailableView.queryByRole("button", { name: "新建 Release" })).toBeNull();
   });
 
   it("点击 Issue 行进入详情并渲染 Markdown 正文、评论和事件", async () => {
