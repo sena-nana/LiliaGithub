@@ -857,6 +857,55 @@ fn github_pull_request_search_query_includes_pr_review_and_merge_qualifiers() {
 }
 
 #[test]
+fn github_pull_request_search_required_only_for_advanced_filters() {
+    assert!(!github_pull_request_search_required(
+        "all", "updated", None, None, None, None, None, None, None
+    ));
+    assert!(!github_pull_request_search_required(
+        "open",
+        "created",
+        Some("  "),
+        None,
+        Some(&[" ".to_string()]),
+        None,
+        None,
+        None,
+        None,
+    ));
+    assert!(github_pull_request_search_required(
+        "merged", "updated", None, None, None, None, None, None, None
+    ));
+    assert!(github_pull_request_search_required(
+        "closed", "updated", None, None, None, None, None, None, None
+    ));
+    assert!(github_pull_request_search_required(
+        "open", "comments", None, None, None, None, None, None, None,
+    ));
+    assert!(github_pull_request_search_required(
+        "open",
+        "updated",
+        None,
+        None,
+        Some(&["bug".to_string()]),
+        None,
+        None,
+        None,
+        None,
+    ));
+    assert!(github_pull_request_search_required(
+        "open",
+        "updated",
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("approved"),
+        None,
+    ));
+}
+
+#[test]
 fn github_project_cache_serializes_distinct_query_buckets() {
     let mut cache = GitHubProjectCache::default();
     let repo_cache = cache

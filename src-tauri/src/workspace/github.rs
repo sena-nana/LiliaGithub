@@ -305,6 +305,14 @@ pub(super) struct GitHubPullRequestResponse {
     pub(super) draft: bool,
     #[serde(default)]
     pub(super) body: Option<String>,
+    #[serde(default)]
+    pub(super) labels: Vec<GitHubLabelResponse>,
+    #[serde(default)]
+    pub(super) assignees: Vec<GitHubAssigneeResponse>,
+    #[serde(default)]
+    pub(super) milestone: Option<GitHubIssueMilestoneResponse>,
+    #[serde(default)]
+    pub(super) comments: u64,
     pub(super) html_url: String,
     pub(super) updated_at: String,
     pub(super) created_at: String,
@@ -1620,10 +1628,24 @@ pub(super) fn github_pull_request_from_response(
         state: pull_request.state,
         draft: pull_request.draft,
         body: pull_request.body,
-        labels: Vec::new(),
-        assignees: Vec::new(),
-        milestone: None,
-        comments: 0,
+        labels: pull_request
+            .labels
+            .into_iter()
+            .map(|label| label.name)
+            .collect(),
+        assignees: pull_request
+            .assignees
+            .into_iter()
+            .map(|assignee| assignee.login)
+            .collect(),
+        milestone: pull_request
+            .milestone
+            .map(|milestone| GitHubIssueMilestone {
+                number: milestone.number,
+                title: milestone.title,
+                state: normalize_optional_string(milestone.state),
+            }),
+        comments: pull_request.comments,
         project_items: Vec::new(),
         reviewers: Vec::new(),
         development_items: Vec::new(),
@@ -2094,6 +2116,29 @@ fn github_search_qualifier(name: &str, value: &str) -> String {
     } else {
         format!("{name}:{value}")
     }
+}
+
+pub(super) fn github_pull_request_search_required(
+    state: &str,
+    sort: &str,
+    creator: Option<&str>,
+    assignee: Option<&str>,
+    labels: Option<&[String]>,
+    milestone: Option<&str>,
+    project: Option<&str>,
+    review: Option<&str>,
+    query: Option<&str>,
+) -> bool {
+    let has_value = |value: Option<&str>| value.is_some_and(|value| !value.trim().is_empty());
+    matches!(state, "closed" | "merged")
+        || sort == "comments"
+        || [creator, assignee, milestone, project, review, query]
+            .into_iter()
+            .any(has_value)
+        || labels
+            .unwrap_or(&[])
+            .iter()
+            .any(|label| !label.trim().is_empty())
 }
 
 fn github_issue_search_query(
@@ -3610,7 +3655,51 @@ pub async fn github_list_pull_requests(
         let pull_creator = normalize_optional_string(creator);
         let pull_assignee = normalize_optional_string(assignee);
         let pull_review = normalize_optional_string(review);
+        let pull_project = normalize_optional_string(project);
         let client = build_client()?;
+        if !github_pull_request_search_required(
+            pull_state,
+            pull_sort,
+            pull_creator.as_deref(),
+            pull_assignee.as_deref(),
+            labels.as_deref(),
+            milestone_key.as_deref(),
+            pull_project.as_deref(),
+            pull_review.as_deref(),
+            search_query.as_deref(),
+        ) {
+            let repo_url = github_repo_api_url(&repo_full_name)?;
+            let response = github_send(
+                &app,
+                "读取 GitHub Pull Requests 失败",
+                github_headers(
+                    client.get(format!("{repo_url}/pulls")).query(&[
+                        ("state", pull_state),
+                        ("per_page", pull_per_page.as_str()),
+                        ("sort", pull_sort),
+                        ("direction", pull_direction),
+                    ]),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error(
+                    "读取 GitHub Pull Requests 失败",
+                    response,
+                ));
+            }
+            let pulls = github_json::<Vec<GitHubPullRequestResponse>>(
+                "读取 GitHub Pull Requests 失败",
+                response,
+            )?
+            .into_iter()
+            .map(github_pull_request_from_response)
+            .collect::<Vec<_>>();
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.pull_requests.insert(pull_key, pulls.clone());
+            })?;
+            return Ok(pulls);
+        }
         let search_q = github_pull_request_search_query(
             &repo_full_name,
             pull_state,
@@ -3644,7 +3733,7 @@ pub async fn github_list_pull_requests(
                 .filter_map(github_pull_request_issue_from_response)
                 .collect::<Vec<_>>();
         enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
-        if let Some(project_filter) = normalize_optional_string(project) {
+        if let Some(project_filter) = pull_project {
             issues.retain(|issue| {
                 issue
                     .project_items
