@@ -5,6 +5,7 @@ const BG: Color = Color(0x18, 0x18, 0x18, 0xFF);
 
 mod window_state;
 mod workspace;
+mod agent_debug;
 
 #[tauri::command]
 fn ping() -> &'static str {
@@ -42,6 +43,11 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            agent_debug::agent_debug_status,
+            agent_debug::agent_debug_logs,
+            agent_debug::agent_debug_runtime_snapshot,
+            agent_debug::agent_debug_record_action,
+            agent_debug::agent_debug_reset_state,
             ping,
             workspace::settings::workspace_get_settings,
             workspace::settings::workspace_read_startup_cache,

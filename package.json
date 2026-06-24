@@ -25,7 +25,8 @@
     "pretauri:build": "node scripts/check-package-manager.mjs",
     "tauri:build": "tauri build",
     "preverify": "node scripts/check-package-manager.mjs",
-    "verify": "yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml"
+    "verify": "yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml",
+    "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
   },
   "dependencies": {
     "@lucide/vue": "^1.21.0",

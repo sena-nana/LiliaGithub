@@ -133,6 +133,7 @@ function onTitlebarPointerDown(event: PointerEvent) {
 <template>
   <header
     class="titlebar"
+    data-agent-id="titlebar"
     @pointerdown="onTitlebarPointerDown"
     @pointermove="onTitlebarPointerMove"
     @pointerup="clearPendingDrag"
@@ -142,6 +143,7 @@ function onTitlebarPointerDown(event: PointerEvent) {
       <button
         type="button"
         class="titlebar__btn titlebar__left-sidebar-btn"
+        data-agent-id="titlebar.sidebar.toggle"
         :aria-label="leftSidebarCollapsed ? '展开左侧栏' : '折叠左侧栏'"
         :title="leftSidebarCollapsed ? '展开左侧栏' : '折叠左侧栏'"
         :aria-pressed="leftSidebarCollapsed"
@@ -165,6 +167,7 @@ function onTitlebarPointerDown(event: PointerEvent) {
       <button
         type="button"
         class="titlebar__btn"
+        data-agent-id="titlebar.window.minimize"
         aria-label="最小化"
         @click="onMinimize"
       >
@@ -173,6 +176,7 @@ function onTitlebarPointerDown(event: PointerEvent) {
       <button
         type="button"
         class="titlebar__btn"
+        data-agent-id="titlebar.window.maximize"
         :aria-label="isMaximized ? '还原' : '最大化'"
         @click="onToggleMaximize"
       >
@@ -182,6 +186,7 @@ function onTitlebarPointerDown(event: PointerEvent) {
       <button
         type="button"
         class="titlebar__btn titlebar__btn--danger"
+        data-agent-id="titlebar.window.close"
         aria-label="关闭"
         @click="onClose"
       >

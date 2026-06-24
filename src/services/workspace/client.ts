@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../tauri/runtime";
 import { createCachedAsyncModule } from "../../utils/asyncModule";
 import { parseRemoteRepoId } from "../../utils/remoteRepo";
 import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";

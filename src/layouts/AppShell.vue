@@ -62,6 +62,7 @@ provideShellRepoActions({
 <template>
   <div
     class="shell"
+    data-agent-id="app.shell"
     :class="{
       'is-resizing': sidebar.isResizing.value,
       'is-sidebar-collapsed': sidebar.effectiveCollapsed.value,
