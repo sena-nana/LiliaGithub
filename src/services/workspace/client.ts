@@ -11,6 +11,7 @@ import type {
   CommitDetail,
   CommitSummary,
   GitHubBindingStatus,
+  GitHubAttachWorkflowArtifactAssetRequest,
   GitHubCommitListOptions,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
@@ -1149,6 +1150,18 @@ export function uploadGitHubReleaseAsset(
     workspaceFallback().uploadGitHubReleaseAsset(repoFullName, releaseId, filePath, label)
   ).then((asset) => {
     upsertGitHubReleaseAsset(repoFullName, releaseId, asset);
+    return cloneProjectData(asset);
+  });
+}
+
+export function attachGitHubWorkflowArtifactAsset(
+  repoFullName: string,
+  request: GitHubAttachWorkflowArtifactAssetRequest,
+): Promise<GitHubReleaseAsset> {
+  return call("github_attach_workflow_artifact_asset", { repoFullName, request }, () =>
+    workspaceFallback().attachGitHubWorkflowArtifactAsset(repoFullName, request)
+  ).then((asset) => {
+    upsertGitHubReleaseAsset(repoFullName, request.releaseId, asset);
     return cloneProjectData(asset);
   });
 }

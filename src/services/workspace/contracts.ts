@@ -6,6 +6,7 @@ import type {
   CommitDetail,
   CommitSummary,
   GitHubBindingStatus,
+  GitHubAttachWorkflowArtifactAssetRequest,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreatePullRequestRequest,
@@ -237,6 +238,10 @@ export interface WorkspaceCommandContracts {
   github_delete_release: CommandContract<RepoFullNameArg & { releaseId: number }, void>;
   github_upload_release_asset: CommandContract<
     RepoFullNameArg & { releaseId: number; filePath: string; label: Maybe<string> },
+    GitHubReleaseAsset
+  >;
+  github_attach_workflow_artifact_asset: CommandContract<
+    RepoFullNameArg & { request: GitHubAttachWorkflowArtifactAssetRequest },
     GitHubReleaseAsset
   >;
   github_delete_release_asset: CommandContract<RepoFullNameArg & { releaseId: number; assetId: number }, void>;

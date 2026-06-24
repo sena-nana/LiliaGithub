@@ -506,6 +506,16 @@ export interface GitHubUpdateReleaseRequest {
   makeLatest?: string | null;
 }
 
+export interface GitHubAttachWorkflowArtifactAssetRequest {
+  runId: number;
+  artifactId: number;
+  artifactName?: string | null;
+  artifactPath: string;
+  releaseId: number;
+  expectedTagName: string;
+  label?: string | null;
+}
+
 export interface GitHubIssueListOptions {
   state?: "open" | "closed" | "all" | string | null;
   perPage?: number | null;

@@ -8,6 +8,7 @@ import type {
   CommitDetail,
   CommitFileChange,
   CommitSummary,
+  GitHubAttachWorkflowArtifactAssetRequest,
   GitHubBindingStatus,
   GitHubCommitListOptions,
   GitHubContributionMeta,
@@ -4229,6 +4230,48 @@ export function uploadGitHubReleaseAsset(
     const now = new Date().toISOString();
     const asset = releaseAsset(Math.max(0, ...current.assets.map((item) => item.id)) + 1, repoFullName, current.tagName, name, 1024, {
       label: label?.trim() || null,
+      createdAt: now,
+      updatedAt: now,
+      uploader: fallbackBinding.binding?.login ?? "lilia-user",
+    });
+    const updated = { ...current, assets: [asset, ...current.assets] };
+    replaceFallbackRelease(repoFullName, updated);
+    return cloneReleaseAsset(asset);
+  });
+}
+
+export function attachGitHubWorkflowArtifactAsset(
+  repoFullName: string,
+  request: GitHubAttachWorkflowArtifactAssetRequest,
+): Promise<GitHubReleaseAsset> {
+  return call("github_attach_workflow_artifact_asset", { repoFullName, request }, () => {
+    const current = fallbackRelease(repoFullName, request.releaseId);
+    const expectedTag = request.expectedTagName.trim();
+    if (!expectedTag) throw new Error("Release tag 不能为空");
+    if (current.tagName !== expectedTag) {
+      throw new Error(`Release tag 不匹配：artifact 期望 ${expectedTag}，当前 draft release 是 ${current.tagName}`);
+    }
+    if (!current.draft) throw new Error("只能把 Actions artifact 附加到 draft release");
+    const artifact = fallbackGitHubWorkflowRunDetails[repoFullName]?.[request.runId]?.artifacts
+      .find((item) => item.id === request.artifactId);
+    if (!artifact) throw new Error("artifact 不属于当前 Actions run");
+    if (artifact.expired) throw new Error("artifact 已过期，不能附加到 Release");
+    if (request.artifactName?.trim() && artifact.name !== request.artifactName.trim()) {
+      throw new Error(`artifact 名称不匹配：期望 ${request.artifactName.trim()}，当前是 ${artifact.name}`);
+    }
+    const normalizedPath = request.artifactPath.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    if (!normalizedPath || normalizedPath.split("/").includes("..")) throw new Error("artifact 文件路径无效");
+    const entry = fallbackGitHubWorkflowArtifactEntries[repoFullName]?.[request.artifactId]
+      ?.find((item) => item.path === normalizedPath && item.kind === "file");
+    if (!entry) throw new Error("artifact 文件不存在");
+    const name = entry.path.split("/").pop()?.trim();
+    if (!name) throw new Error("Release asset 文件名不能为空");
+    if (current.assets.some((asset) => asset.name === name)) {
+      throw new Error("Release asset 已存在，请先删除旧文件后再上传");
+    }
+    const now = new Date().toISOString();
+    const asset = releaseAsset(Math.max(0, ...current.assets.map((item) => item.id)) + 1, repoFullName, current.tagName, name, entry.size, {
+      label: request.label?.trim() || null,
       createdAt: now,
       updatedAt: now,
       uploader: fallbackBinding.binding?.login ?? "lilia-user",

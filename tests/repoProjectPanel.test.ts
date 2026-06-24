@@ -10,6 +10,7 @@ import {
   createGitHubPullRequest,
   createGitHubIssue,
   createGitHubRelease,
+  attachGitHubWorkflowArtifactAsset,
   deleteGitHubRepo,
   deleteGitHubRelease,
   deleteGitHubReleaseAsset,
@@ -464,6 +465,7 @@ vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
   createGitHubRelease: vi.fn(),
+  attachGitHubWorkflowArtifactAsset: vi.fn(),
   deleteGitHubRepo: vi.fn(),
   deleteGitHubRelease: vi.fn(),
   deleteGitHubReleaseAsset: vi.fn(),
@@ -633,6 +635,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(createGitHubPullRequest).mockReset();
     vi.mocked(createGitHubIssue).mockReset();
     vi.mocked(createGitHubRelease).mockReset();
+    vi.mocked(attachGitHubWorkflowArtifactAsset).mockReset();
     vi.mocked(deleteGitHubRepo).mockReset();
     vi.mocked(deleteGitHubRelease).mockReset();
     vi.mocked(deleteGitHubReleaseAsset).mockReset();
@@ -715,6 +718,14 @@ describe("RepoProjectPanel", () => {
     vi.mocked(pickFiles).mockResolvedValue(["C:\\Files\\release\\lilia.zip"]);
     vi.mocked(uploadGitHubReleaseAsset).mockImplementation(async (_repoFullName, releaseId, filePath) => (
       releaseAsset({ id: 9100, name: filePath.split("\\").pop() ?? filePath, label: null })
+    ));
+    vi.mocked(attachGitHubWorkflowArtifactAsset).mockImplementation(async (_repoFullName, request) => (
+      releaseAsset({
+        id: 9200,
+        name: request.artifactPath.split("/").pop() ?? request.artifactPath,
+        label: request.label ?? null,
+        size: 4096,
+      })
     ));
     vi.mocked(deleteGitHubReleaseAsset).mockResolvedValue(undefined);
     vi.mocked(listGitHubRepoFiles).mockResolvedValue([]);
@@ -1398,6 +1409,49 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(artifactFile);
     expect(await view.findByText("Artifact")).toBeInTheDocument();
     expect(getGitHubWorkflowArtifactFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", 131001, "README.md");
+  });
+
+  it("Actions artifact 中的 Windows 安装包可直接附加到对应 draft release", async () => {
+    const draftRelease: GitHubRelease = {
+      ...githubReleases[0],
+      id: 8003,
+      tagName: "v1.2.0",
+      name: "Lilia v1.2.0",
+      draft: true,
+      publishedAt: null,
+      assets: [],
+    };
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue(githubWorkflowRuns);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(githubWorkflowRunDetail);
+    vi.mocked(listGitHubReleases).mockResolvedValue([draftRelease]);
+    vi.mocked(listGitHubWorkflowArtifactFiles).mockResolvedValue([
+      { path: "packages/Lilia_1.2.0_x64.msi", name: "Lilia_1.2.0_x64.msi", kind: "file", size: 4096 },
+    ]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+      projectRunId: 1310,
+    });
+
+    expect(await view.findByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
+    await fireEvent.click(await view.findByRole("button", { name: /dist/ }));
+    const attachButton = await view.findByRole("button", { name: "附加 Lilia_1.2.0_x64.msi 到 draft release" });
+    await waitFor(() => {
+      expect(attachButton).not.toBeDisabled();
+    });
+    await fireEvent.click(attachButton);
+
+    await waitFor(() => {
+      expect(attachGitHubWorkflowArtifactAsset).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        runId: 1310,
+        artifactId: 131001,
+        artifactName: "dist",
+        artifactPath: "packages/Lilia_1.2.0_x64.msi",
+        releaseId: 8003,
+        expectedTagName: "v1.2.0",
+        label: "Windows",
+      });
+    });
   });
 
   it.each([

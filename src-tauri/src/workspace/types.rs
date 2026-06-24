@@ -1080,6 +1080,20 @@ pub struct GitHubUpdateReleaseRequest {
     pub make_latest: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAttachWorkflowArtifactAssetRequest {
+    pub run_id: u64,
+    pub artifact_id: u64,
+    #[serde(default)]
+    pub artifact_name: Option<String>,
+    pub artifact_path: String,
+    pub release_id: u64,
+    pub expected_tag_name: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubProjectCache {

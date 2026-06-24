@@ -2718,6 +2718,21 @@ pub(super) fn github_artifact_entry_path(path: &Path) -> Result<String, String> 
     Ok(normalized)
 }
 
+pub(super) fn github_artifact_requested_file_path(path: &str) -> Result<String, String> {
+    let requested_path = path.trim().replace('\\', "/").trim_matches('/').to_string();
+    if requested_path.is_empty()
+        || Path::new(&requested_path).components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("artifact 文件路径无效".to_string());
+    }
+    Ok(requested_path)
+}
+
 pub(super) fn github_artifact_entry_from_zip_file<R: Read>(
     file: &zip::read::ZipFile<'_, R>,
 ) -> Result<Option<GitHubWorkflowArtifactEntry>, String> {
@@ -2831,6 +2846,42 @@ pub(super) fn github_artifact_preview_from_bytes(
         mime_type: mime,
         truncated: false,
     }
+}
+
+pub(super) fn github_artifact_file_bytes_from_zip(
+    cache_path: &Path,
+    requested_path: &str,
+) -> Result<(String, Vec<u8>), String> {
+    let requested_path = github_artifact_requested_file_path(requested_path)?;
+    let bytes = fs::read(cache_path)
+        .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", cache_path.display()))?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
+        let Some(enclosed_name) = file.enclosed_name() else {
+            continue;
+        };
+        let entry_path = github_artifact_entry_path(&enclosed_name)?;
+        if entry_path != requested_path {
+            continue;
+        }
+        if file.is_dir() {
+            return Err("不能上传 artifact 目录".to_string());
+        }
+        let size = file.size();
+        github_release_validate_asset_file_size(size)?;
+        let mut file_bytes = Vec::with_capacity(size as usize);
+        file.read_to_end(&mut file_bytes)
+            .map_err(|e| format!("读取 artifact 文件失败：{e}"))?;
+        if file_bytes.is_empty() {
+            return Err("Release asset 文件不能为空".to_string());
+        }
+        return Ok((entry_path, file_bytes));
+    }
+    Err("artifact 文件不存在".to_string())
 }
 
 pub(super) fn github_commit_summary_from_response(commit: GitHubCommitResponse) -> CommitSummary {
@@ -4874,17 +4925,7 @@ pub async fn github_get_workflow_artifact_file_preview(
     path: String,
 ) -> Result<RepoFilePreview, String> {
     run_blocking("预览 GitHub Actions artifact 文件", move || {
-        let requested_path = path.trim().trim_matches('/').replace('\\', "/");
-        if requested_path.is_empty()
-            || Path::new(&requested_path).components().any(|component| {
-                matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
-        {
-            return Err("artifact 文件路径无效".to_string());
-        }
+        let requested_path = github_artifact_requested_file_path(&path)?;
         let cache_path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
         let bytes = fs::read(&cache_path)
             .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", cache_path.display()))?;
@@ -5230,6 +5271,109 @@ fn github_release_for_asset_upload(
     )?))
 }
 
+pub(super) fn github_validate_release_for_artifact_asset(
+    release: &GitHubRelease,
+    expected_tag_name: &str,
+    asset_name: &str,
+) -> Result<(), String> {
+    let expected_tag_name = expected_tag_name.trim();
+    if expected_tag_name.is_empty() {
+        return Err("Release tag 不能为空".to_string());
+    }
+    if release.tag_name != expected_tag_name {
+        return Err(format!(
+            "Release tag 不匹配：artifact 期望 {expected_tag_name}，当前 draft release 是 {}",
+            release.tag_name
+        ));
+    }
+    if !release.draft {
+        return Err("只能把 Actions artifact 附加到 draft release".to_string());
+    }
+    if release.assets.iter().any(|asset| asset.name == asset_name) {
+        return Err("Release asset 已存在，请先删除旧文件后再上传".to_string());
+    }
+    Ok(())
+}
+
+fn github_validate_artifact_for_run(
+    app: &AppHandle,
+    client: &Client,
+    repo_full_name: &str,
+    token: &str,
+    run_id: u64,
+    artifact_id: u64,
+    artifact_name: Option<String>,
+) -> Result<(), String> {
+    let response = github_send(
+        app,
+        "读取 GitHub Actions artifacts 失败",
+        github_headers(
+            client
+                .get(format!(
+                    "{}/actions/runs/{run_id}/artifacts",
+                    github_repo_api_url(repo_full_name)?
+                ))
+                .query(&[("per_page", "100")]),
+            Some(token),
+        ),
+    )?;
+    let artifacts = github_json::<GitHubWorkflowArtifactsResponse>(
+        "读取 GitHub Actions artifacts 失败",
+        response,
+    )?;
+    let Some(artifact) = artifacts
+        .artifacts
+        .into_iter()
+        .find(|artifact| artifact.id == artifact_id)
+    else {
+        return Err("artifact 不属于当前 Actions run".to_string());
+    };
+    if artifact.expired {
+        return Err("artifact 已过期，不能附加到 Release".to_string());
+    }
+    if let Some(expected_name) = normalize_optional_string(artifact_name) {
+        let actual_name = normalize_optional_string(artifact.name).unwrap_or_default();
+        if actual_name != expected_name {
+            return Err(format!(
+                "artifact 名称不匹配：期望 {expected_name}，当前是 {actual_name}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn github_upload_release_asset_bytes(
+    app: &AppHandle,
+    client: &Client,
+    repo_full_name: &str,
+    token: &str,
+    release: &GitHubRelease,
+    asset_name: &str,
+    bytes: Vec<u8>,
+    label: Option<String>,
+) -> Result<GitHubReleaseAsset, String> {
+    let upload_url = github_release_upload_base_url(&release.upload_url)?;
+    let mut request = client
+        .post(upload_url)
+        .query(&[("name", asset_name)])
+        .header(CONTENT_TYPE, "application/octet-stream")
+        .body(bytes);
+    if let Some(label) = normalize_optional_string(label) {
+        request = request.query(&[("label", label.as_str())]);
+    }
+    let response = github_send(
+        app,
+        "上传 GitHub Release asset 失败",
+        github_headers(request, Some(token)),
+    )?;
+    let asset = github_release_asset_from_response(github_json::<GitHubReleaseAssetResponse>(
+        "上传 GitHub Release asset 失败",
+        response,
+    )?);
+    clear_github_project_release_cache(app, repo_full_name)?;
+    Ok(asset)
+}
+
 #[tauri::command]
 pub async fn github_upload_release_asset(
     app: AppHandle,
@@ -5251,26 +5395,64 @@ pub async fn github_upload_release_asset(
         if release.assets.iter().any(|asset| asset.name == asset_name) {
             return Err("Release asset 已存在，请先删除旧文件后再上传".to_string());
         }
-        let upload_url = github_release_upload_base_url(&release.upload_url)?;
-        let mut request = client
-            .post(upload_url)
-            .query(&[("name", asset_name.as_str())])
-            .header(CONTENT_TYPE, "application/octet-stream")
-            .body(bytes);
-        if let Some(label) = normalize_optional_string(label) {
-            request = request.query(&[("label", label.as_str())]);
-        }
-        let response = github_send(
+        github_upload_release_asset_bytes(
             &app,
-            "上传 GitHub Release asset 失败",
-            github_headers(request, Some(&token)),
+            &client,
+            &repo_full_name,
+            &token,
+            &release,
+            &asset_name,
+            bytes,
+            label,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_attach_workflow_artifact_asset(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubAttachWorkflowArtifactAssetRequest,
+) -> Result<GitHubReleaseAsset, String> {
+    run_blocking("附加 GitHub Actions artifact 到 Release", move || {
+        let cache_path = ensure_github_artifact_zip(&app, &repo_full_name, request.artifact_id)?;
+        let (artifact_path, bytes) =
+            github_artifact_file_bytes_from_zip(&cache_path, &request.artifact_path)?;
+        let asset_name = github_release_asset_name(&artifact_path)?;
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        github_validate_artifact_for_run(
+            &app,
+            &client,
+            &repo_full_name,
+            &token,
+            request.run_id,
+            request.artifact_id,
+            request.artifact_name,
         )?;
-        let asset = github_release_asset_from_response(github_json::<GitHubReleaseAssetResponse>(
-            "上传 GitHub Release asset 失败",
-            response,
-        )?);
-        clear_github_project_release_cache(&app, &repo_full_name)?;
-        Ok(asset)
+        let release = github_release_for_asset_upload(
+            &app,
+            &client,
+            &repo_full_name,
+            request.release_id,
+            &token,
+        )?;
+        github_validate_release_for_artifact_asset(
+            &release,
+            &request.expected_tag_name,
+            &asset_name,
+        )?;
+        github_upload_release_asset_bytes(
+            &app,
+            &client,
+            &repo_full_name,
+            &token,
+            &release,
+            &asset_name,
+            bytes,
+            request.label,
+        )
     })
     .await
 }
