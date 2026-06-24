@@ -171,11 +171,11 @@ If `yarn --version` still reports `1.x` after enabling Corepack, run commands th
 
 ## First Release Packaging
 
-Release packaging is driven by the GitHub Actions release workflow. The root `package.json` may use prerelease names such as `0.1.0-alpha.2`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
+Release packaging is driven by the GitHub Actions release workflow. The root `package.json` may use prerelease names such as `1.0.0-beta`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
 
-### `v0.1.0-alpha.2` Notes
+### `v1.0.0-beta` Notes
 
-This prerelease includes the GitHub work landed from 2026-06-21 through 2026-06-23 after `v0.1.0-alpha.1`:
+This release documents the `v1.0.0-beta` milestone and version alignment update.
 
 - Issues and pull requests now have denser filtered lists, route-persisted filter state, template-backed creation entry points, and detail sidebars.
 - Actions now has in-app run details, job logs, cleaner run lists, and a workflow node graph.
