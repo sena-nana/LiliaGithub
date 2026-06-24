@@ -42,6 +42,7 @@ const props = defineProps<{
   mergeMethod: "merge" | "squash" | "rebase";
   repoFullName: string;
   isFocused: (pullNumber: number) => boolean;
+  timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
 
 type PullRequestChip = {
@@ -263,6 +264,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
       :updating="updating"
       :merge-method="mergeMethod"
       :repo-full-name="repoFullName"
+      :timeline-item-opener="props.timelineItemOpener"
       @back="emit('back')"
       @merge="emit('merge', $event)"
       @update:merge-method="emit('update:mergeMethod', $event)"
