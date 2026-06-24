@@ -6,8 +6,6 @@ import {
   LoaderCircle,
   Package,
   Pencil,
-  Plus,
-  RefreshCw,
   Save,
   Tag,
   Trash2,
@@ -32,7 +30,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  refresh: [];
   focusTag: [tagName: string | null];
   create: [request: GitHubCreateReleaseRequest];
   update: [releaseId: number, request: GitHubUpdateReleaseRequest];
@@ -165,27 +162,14 @@ function sizeText(size: number) {
 function openMarkdownLink(target: ReadmeLinkTarget) {
   if (target.kind === "external") emit("openUrl", target.href);
 }
+
+defineExpose({
+  openCreate,
+});
 </script>
 
 <template>
   <div class="repo-releases-panel">
-    <header class="repo-releases-panel__head">
-      <div>
-        <h3>Release</h3>
-        <span>{{ repoFullName }}</span>
-      </div>
-      <div class="repo-releases-panel__actions">
-        <button type="button" class="ghost project-icon-action" :disabled="loading" aria-label="刷新 Release" title="刷新" @click="emit('refresh')">
-          <LoaderCircle v-if="loading" :size="14" aria-hidden="true" class="sb-spin" />
-          <RefreshCw v-else :size="14" aria-hidden="true" />
-        </button>
-        <button type="button" class="primary" :disabled="mutating || createOpen" @click="openCreate">
-          <Plus :size="14" aria-hidden="true" />
-          新建 Release
-        </button>
-      </div>
-    </header>
-
     <form v-if="createOpen || editingReleaseId != null" class="release-form" aria-label="Release 表单" @submit.prevent="submitForm">
       <div class="release-form__head">
         <strong>{{ editingReleaseId == null ? "New release" : "Edit release" }}</strong>
@@ -229,18 +213,20 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
     <p v-if="loading && !releases.length" class="repo-empty muted">正在读取 releases。</p>
     <p v-else-if="!releases.length" class="repo-empty muted">暂无 releases。</p>
 
-    <section v-else class="release-list" aria-label="Release 列表">
-      <article
+    <ol v-else class="release-list release-timeline" aria-label="Release 列表">
+      <li
         v-for="release in sortedReleases"
         :key="release.id"
         class="release-card"
         :class="{ 'is-focused': focusedTag === release.tagName }"
         :data-release-tag="release.tagName"
       >
-        <div class="release-card__rail">
-          <Tag :size="16" aria-hidden="true" />
-        </div>
-        <div class="release-card__body">
+        <span class="release-card__rail" aria-hidden="true">
+          <span class="release-card__node">
+            <Tag :size="15" aria-hidden="true" />
+          </span>
+        </span>
+        <article class="release-card__body">
           <header class="release-card__head">
             <div class="release-card__title">
               <h4>{{ releaseTitle(release) }}</h4>
@@ -309,9 +295,9 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
               </div>
             </div>
           </section>
-        </div>
-      </article>
-    </section>
+        </article>
+      </li>
+    </ol>
   </div>
 </template>
 
@@ -325,8 +311,6 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
   min-width: 0;
 }
 
-.repo-releases-panel__head,
-.repo-releases-panel__actions,
 .release-card__head,
 .release-card__tools,
 .release-assets__head,
@@ -337,26 +321,16 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
   gap: 8px;
 }
 
-.repo-releases-panel__head {
-  justify-content: space-between;
-  min-width: 0;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.repo-releases-panel__head h3,
 .release-card__title h4 {
   margin: 0;
 }
 
-.repo-releases-panel__head span,
 .release-card__meta,
 .release-card__empty {
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.repo-releases-panel__actions,
 .release-card__tools {
   flex-shrink: 0;
 }
@@ -400,32 +374,74 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
   gap: 6px;
 }
 
-.release-card {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 12px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border-soft);
+.release-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.release-card:first-child {
-  padding-top: 4px;
+.release-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+  padding: 0;
+}
+
+.release-card__body {
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border-soft) 55%, transparent);
 }
 
 .release-card.is-focused .release-card__body {
-  outline: 1px solid var(--accent);
-  outline-offset: 8px;
-  border-radius: var(--radius-sm);
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent),
+    0 1px 0 color-mix(in srgb, var(--border-soft) 55%, transparent);
 }
 
 .release-card__rail {
-  display: grid;
-  place-items: center;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  min-height: 100%;
+  padding-top: 12px;
+}
+
+.release-card__rail::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  content: "";
+  background: color-mix(in srgb, var(--text-muted) 44%, transparent);
+}
+
+.release-card:first-child .release-card__rail::before {
+  top: 24px;
+}
+
+.release-card:last-child .release-card__rail::before {
+  bottom: calc(100% - 24px);
+}
+
+.release-card__node {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 28px;
   height: 28px;
   border: 1px solid var(--border);
   border-radius: 50%;
   color: var(--accent);
+  background: var(--bg-elev);
 }
 
 .release-card__head {
@@ -488,15 +504,15 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
 
 .release-assets {
   gap: 8px;
-  padding-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
 }
 
 .release-assets__head strong {
   font-size: 13px;
 }
 
-.release-assets__head .ghost,
-.repo-releases-panel__actions .primary {
+.release-assets__head .ghost {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -504,7 +520,9 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
 
 .release-assets__list {
   display: grid;
-  gap: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
 }
 
 .release-asset {
@@ -513,12 +531,15 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 7px 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg);
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.release-asset:last-child {
+  border-bottom: 0;
 }
 
 .release-asset__name {
@@ -542,13 +563,22 @@ function openMarkdownLink(target: ReadmeLinkTarget) {
 
 @media (max-width: 760px) {
   .release-form__grid,
-  .release-card,
   .release-asset {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .release-card {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 10px;
+  }
+
   .release-card__rail {
-    display: none;
+    padding-top: 10px;
+  }
+
+  .release-card__node {
+    width: 22px;
+    height: 22px;
   }
 
   .release-card__head {
