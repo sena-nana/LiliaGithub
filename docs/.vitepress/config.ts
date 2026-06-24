@@ -15,6 +15,10 @@ export default defineConfig({
         text: "指南",
         items: [{ text: "开发启动", link: "/guide/development" }],
       },
+      {
+        text: "设计",
+        items: [{ text: "Agent Debug Harness", link: "/design/agent-debug-harness" }],
+      },
     ],
     socialLinks: [],
   },
