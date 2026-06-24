@@ -1109,27 +1109,27 @@ function createFallbackGitHubReleases(): Record<string, GitHubRelease[]> {
     [repoFullName]: [
       {
         id: 501,
-        tagName: "v0.1.0-alpha.2",
+        tagName: "v1.0.0-beta",
         targetCommitish: "main",
-        name: "LiliaGithub v0.1.0-alpha.2",
-        body: "更新项目页 GitHub 能力和桌面端验证流程。",
+        name: "LiliaGithub v1.0.0-beta",
+        body: "版本更新到 v1.0.0-beta，并同步本地构建与发布配置。",
         draft: false,
         prerelease: true,
         immutable: false,
         makeLatest: "legacy",
-        htmlUrl: `https://github.com/${repoFullName}/releases/tag/v0.1.0-alpha.2`,
+        htmlUrl: `https://github.com/${repoFullName}/releases/tag/v1.0.0-beta`,
         uploadUrl: `https://uploads.github.com/repos/${repoFullName}/releases/501/assets{?name,label}`,
-        tarballUrl: `https://api.github.com/repos/${repoFullName}/tarball/v0.1.0-alpha.2`,
-        zipballUrl: `https://api.github.com/repos/${repoFullName}/zipball/v0.1.0-alpha.2`,
+        tarballUrl: `https://api.github.com/repos/${repoFullName}/tarball/v1.0.0-beta`,
+        zipballUrl: `https://api.github.com/repos/${repoFullName}/zipball/v1.0.0-beta`,
         createdAt: "2026-06-21T09:12:00Z",
         publishedAt: "2026-06-21T09:24:00Z",
         author: "sena-nana",
         assets: [
-          releaseAsset(8001, repoFullName, "v0.1.0-alpha.2", "LiliaGithub_0.1.0-alpha.2_x64-setup.exe", 42_820_000, {
+          releaseAsset(8001, repoFullName, "v1.0.0-beta", "LiliaGithub_1.0.0-beta_x64-setup.exe", 42_820_000, {
             contentType: "application/vnd.microsoft.portable-executable",
             downloadCount: 28,
           }),
-          releaseAsset(8002, repoFullName, "v0.1.0-alpha.2", "LiliaGithub_0.1.0-alpha.2_x64.dmg", 45_360_000, {
+          releaseAsset(8002, repoFullName, "v1.0.0-beta", "LiliaGithub_1.0.0-beta_x64.dmg", 45_360_000, {
             contentType: "application/x-apple-diskimage",
             downloadCount: 9,
           }),

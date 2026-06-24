@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "lilia_github"
-version = "0.1.0-alpha.2"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "keyring",
@@ -7789,3 +7789,4 @@ dependencies = [
  "syn 2.0.117",
  "winnow 1.0.3",
 ]
+
