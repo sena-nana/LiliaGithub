@@ -13,6 +13,7 @@ import type {
   GitHubIssue,
   GitHubPullRequest,
   GitHubPullRequestCheck,
+  GitHubRelease,
   GitHubRepoSummary,
   GitHubWorkflowRun,
   RepoChange,
@@ -204,6 +205,35 @@ function githubPullRequestCheck(
   };
 }
 
+function githubRelease(
+  repoFullName: string,
+  id: number,
+  tagName: string,
+  publishedAt: string,
+  overrides: Partial<GitHubRelease> = {},
+): GitHubRelease {
+  return {
+    id,
+    tagName,
+    targetCommitish: "main",
+    name: `${repoFullName} ${tagName}`,
+    body: null,
+    draft: false,
+    prerelease: false,
+    immutable: false,
+    makeLatest: null,
+    htmlUrl: `https://github.com/${repoFullName}/releases/tag/${tagName}`,
+    uploadUrl: `https://uploads.github.com/repos/${repoFullName}/releases/${id}/assets{?name,label}`,
+    tarballUrl: null,
+    zipballUrl: null,
+    createdAt: publishedAt,
+    publishedAt,
+    author: "lilia-user",
+    assets: [],
+    ...overrides,
+  };
+}
+
 function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChange {
   return {
     path,
@@ -276,6 +306,27 @@ describe("基础路由", () => {
   });
 
   it("默认首页显示 Git 项目总览", async () => {
+    workspaceFallback.setFallbackGitHubReleasesForTests({
+      "sena-nana/LiliaGithub": [
+        githubRelease("sena-nana/LiliaGithub", 801, "v1.2.0", "2026-06-18T08:00:00Z", {
+          name: "桌面端 v1.2.0",
+          assets: [{
+            id: 901,
+            name: "LiliaGithub_1.2.0_x64-setup.exe",
+            label: null,
+            contentType: "application/octet-stream",
+            size: 42_000_000,
+            downloadCount: 8,
+            state: "uploaded",
+            browserDownloadUrl: "https://github.com/sena-nana/LiliaGithub/releases/download/v1.2.0/LiliaGithub_1.2.0_x64-setup.exe",
+            createdAt: "2026-06-18T08:05:00Z",
+            updatedAt: "2026-06-18T08:05:00Z",
+            uploader: "lilia-user",
+          }],
+        }),
+      ],
+    });
+
     await renderAt("/");
 
     expect(
@@ -310,6 +361,12 @@ describe("基础路由", () => {
     expect(githubTimelineList).toHaveTextContent("补齐仓库管理入口");
     expect(await within(githubTimelineList).findByText("PR #7")).toBeInTheDocument();
     expect(githubTimelineList).toHaveTextContent("Checks 通过：1 项");
+    const releaseLink = await within(githubTimelineList).findByRole("link", { name: "Release v1.2.0" });
+    expect(releaseLink).toHaveAttribute("href", expect.stringContaining("projectTab=release"));
+    expect(releaseLink).toHaveAttribute("href", expect.stringContaining("releaseTag=v1.2.0"));
+    expect(githubTimelineList).toHaveTextContent("桌面端 v1.2.0");
+    expect(githubTimelineList).toHaveTextContent("正式发布");
+    expect(githubTimelineList).toHaveTextContent("1 个附件");
     expect(githubTimelineList).toHaveTextContent("提交");
     expect(githubTimelineList).toHaveTextContent("搭建 LiliaGithub MVP");
     expect(githubTimelineList).toHaveTextContent("创建仓库");

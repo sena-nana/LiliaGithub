@@ -18,6 +18,7 @@ import {
   RotateCw,
   Search,
   ShieldCheck,
+  Tag,
   X,
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
@@ -38,12 +39,14 @@ import {
   listGitHubIssues,
   listGitHubPullRequests,
   listGitHubPullRequestChecks,
+  listGitHubReleases,
   listGitHubWorkflowRuns,
   preloadGitHubRepos,
   type GitHubContributionDay,
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubPullRequestCheck,
+  type GitHubRelease,
   type GitHubRepoSummary,
   type GitHubWorkflowRun,
   type BulkOperation,
@@ -109,7 +112,7 @@ type GitHubTimelineRepoSource = Pick<RepoStatusRow, "githubRepo" | "localRepo">;
 
 type GitHubTimelineEvent = {
   id: string;
-  kind: "repo" | "operation" | "commit" | "issue" | "pull" | "workflow";
+  kind: "repo" | "operation" | "commit" | "issue" | "pull" | "workflow" | "release";
   title: string;
   detail: string;
   summary: string;
@@ -157,7 +160,7 @@ type HomeCodeOverview = {
   slices: HomeCodeSlice[];
 };
 
-type ProjectTabRef = "issues" | "pulls" | "actions";
+type ProjectTabRef = "issues" | "pulls" | "actions" | "release";
 const REPO_STATUS_RENDER_PAGE_SIZE = 60;
 const GITHUB_TIMELINE_EVENT_LIMIT = 12;
 const GITHUB_TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
@@ -200,6 +203,11 @@ type GitHubTimelineWorkflowTask = {
   generation: number;
 };
 
+type GitHubTimelineReleaseTask = {
+  repo: GitHubRepoSummary;
+  generation: number;
+};
+
 const languageChartMode = ref<LanguageChartMode>("language");
 const discovering = ref(false);
 const githubRepos = ref<GitHubRepoSummary[]>([]);
@@ -214,6 +222,8 @@ const githubPullRequestChecksByRepo = ref<Record<string, Record<number, GitHubPu
 const githubPullRequestsLoading = ref(false);
 const githubWorkflowRunsByRepo = ref<Record<string, GitHubWorkflowRun[] | undefined>>({});
 const githubWorkflowRunsLoading = ref(false);
+const githubReleasesByRepo = ref<Record<string, GitHubRelease[] | undefined>>({});
+const githubReleasesLoading = ref(false);
 const githubTimelineCard = ref<HTMLElement | null>(null);
 const githubTimelineActivated = ref(false);
 const cloningFullName = ref<string | null>(null);
@@ -310,7 +320,8 @@ const githubTimelineWaitingForActivation = computed(() =>
   !githubTimelineActivated.value && (
     githubIssuesPendingCount.value > 0 ||
     githubPullRequestsPendingCount.value > 0 ||
-    githubWorkflowRunsPendingCount.value > 0
+    githubWorkflowRunsPendingCount.value > 0 ||
+    githubReleasesPendingCount.value > 0
   ),
 );
 const githubTimelineBusy = computed(() =>
@@ -318,12 +329,14 @@ const githubTimelineBusy = computed(() =>
   githubIssuesLoading.value ||
   githubPullRequestsLoading.value ||
   githubWorkflowRunsLoading.value ||
+  githubReleasesLoading.value ||
   githubTimelineWaitingForActivation.value,
 );
 
 const githubIssuesPendingCount = ref(0);
 const githubPullRequestsPendingCount = ref(0);
 const githubWorkflowRunsPendingCount = ref(0);
+const githubReleasesPendingCount = ref(0);
 let githubTimelineGeneration = 0;
 let githubTimelineActivationQueued = false;
 let githubTimelineObserver: IntersectionObserver | null = null;
@@ -355,6 +368,15 @@ const githubTimelineWorkflowTasks = createConcurrentTaskQueue<GitHubTimelineWork
   canRun: () => githubTimelineActivated.value,
   isCurrent: (task) => task.generation === githubTimelineGeneration,
   worker: processGitHubTimelineWorkflowTask,
+});
+const githubTimelineReleaseTasks = createConcurrentTaskQueue<GitHubTimelineReleaseTask>({
+  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
+  key: (task) => task.repo.fullName,
+  loading: githubReleasesLoading,
+  pendingCount: githubReleasesPendingCount,
+  canRun: () => githubTimelineActivated.value,
+  isCurrent: (task) => task.generation === githubTimelineGeneration,
+  worker: processGitHubTimelineReleaseTask,
 });
 
 watch(
@@ -403,17 +425,19 @@ function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
 function repoProjectPath(
   repo: Pick<RepoSummary, "id">,
   tab: ProjectTabRef,
-  focusId: number,
+  focusId?: number | null,
+  releaseTag?: string | null,
 ) {
-  return repoProjectRoute(repo.id, tab, focusId);
+  return repoProjectRoute(repo.id, tab, focusId, null, releaseTag);
 }
 
 function remoteRepoProjectPath(
   repo: Pick<GitHubRepoSummary, "fullName">,
   tab: ProjectTabRef,
-  focusId: number,
+  focusId?: number | null,
+  releaseTag?: string | null,
 ) {
-  return repoProjectRoute(`github:${repo.fullName}`, tab, focusId);
+  return repoProjectRoute(`github:${repo.fullName}`, tab, focusId, null, releaseTag);
 }
 
 function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
@@ -460,6 +484,7 @@ function restoreGitHubOverviewSnapshot() {
   githubPullRequestsByRepo.value = snapshot.pullRequestsByRepo;
   githubPullRequestChecksByRepo.value = snapshot.pullRequestChecksByRepo;
   githubWorkflowRunsByRepo.value = snapshot.workflowRunsByRepo;
+  githubReleasesByRepo.value = snapshot.releasesByRepo;
   githubReposError.value = null;
   prepareGitHubTimeline(snapshot.repos);
   return snapshot;
@@ -467,7 +492,7 @@ function restoreGitHubOverviewSnapshot() {
 
 function writeGitHubOverviewSnapshot() {
   writeHomeGitHubOverviewSnapshot({
-    schemaVersion: 1,
+    schemaVersion: 2,
     accountLogin: currentGitHubAccountLogin(),
     cachedAt: Date.now(),
     repos: githubRepos.value,
@@ -476,6 +501,7 @@ function writeGitHubOverviewSnapshot() {
     pullRequestsByRepo: githubPullRequestsByRepo.value,
     pullRequestChecksByRepo: githubPullRequestChecksByRepo.value,
     workflowRunsByRepo: githubWorkflowRunsByRepo.value,
+    releasesByRepo: githubReleasesByRepo.value,
   });
 }
 
@@ -484,9 +510,38 @@ function githubRepoLoadErrorMessage(err: unknown) {
     clearGitHubTimelineIssueCache();
     clearGitHubTimelinePullRequests();
     clearGitHubTimelineWorkflowRuns();
+    clearGitHubTimelineReleases();
     return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
   }
   return `GitHub 仓库列表加载失败：${String(err)}`;
+}
+
+function loadGitHubTimelineReleases(
+  repos: GitHubRepoSummary[],
+  refresh = false,
+) {
+  let nextReleasesByRepo = { ...githubReleasesByRepo.value };
+  if (refresh) {
+    for (const repo of repos) {
+      delete nextReleasesByRepo[repo.fullName];
+    }
+  }
+  githubReleasesByRepo.value = nextReleasesByRepo;
+  writeGitHubOverviewSnapshot();
+  const missingRepos = repos.filter((repo) => nextReleasesByRepo[repo.fullName] == null);
+  enqueueGitHubTimelineReleaseRepos(missingRepos);
+}
+
+async function fetchGitHubTimelineReleases(
+  repo: GitHubRepoSummary,
+): Promise<readonly [string, GitHubRelease[]]> {
+  try {
+    const releases = await listGitHubReleases(repo.fullName);
+    return [repo.fullName, releases.map(cloneRelease)] as const;
+  } catch (err) {
+    if (isGitHubBindingExpiredError(err)) clearGitHubTimelineReleases();
+    return [repo.fullName, []] as const;
+  }
 }
 
 function loadGitHubTimelineWorkflowRuns(
@@ -640,6 +695,13 @@ function cloneWorkflowRun(run: GitHubWorkflowRun): GitHubWorkflowRun {
   return { ...run };
 }
 
+function cloneRelease(release: GitHubRelease): GitHubRelease {
+  return {
+    ...release,
+    assets: release.assets.map((asset) => ({ ...asset })),
+  };
+}
+
 function isGitHubTimelineIssueCacheFresh(entry: GitHubTimelineIssueCacheEntry, now: number) {
   return Number.isFinite(entry.fetchedAt) &&
     now - entry.fetchedAt >= 0 &&
@@ -759,10 +821,16 @@ function clearGitHubTimelineWorkflowRuns() {
   clearHomeGitHubOverviewSnapshot();
 }
 
+function clearGitHubTimelineReleases() {
+  githubReleasesByRepo.value = {};
+  clearHomeGitHubOverviewSnapshot();
+}
+
 function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   loadGitHubTimelineIssues(repos, refresh);
   loadGitHubTimelinePullRequests(repos, refresh);
   loadGitHubTimelineWorkflowRuns(repos, refresh);
+  loadGitHubTimelineReleases(repos, refresh);
   if (githubTimelineActivated.value) {
     drainGitHubTimelineQueues();
     return;
@@ -796,6 +864,13 @@ function enqueueGitHubTimelinePullRequestRepos(
 
 function enqueueGitHubTimelineWorkflowRepos(repos: GitHubRepoSummary[]) {
   githubTimelineWorkflowTasks.enqueue(repos.map((repo) => ({
+    repo,
+    generation: githubTimelineGeneration,
+  })));
+}
+
+function enqueueGitHubTimelineReleaseRepos(repos: GitHubRepoSummary[]) {
+  githubTimelineReleaseTasks.enqueue(repos.map((repo) => ({
     repo,
     generation: githubTimelineGeneration,
   })));
@@ -836,10 +911,21 @@ async function processGitHubTimelineWorkflowTask(task: GitHubTimelineWorkflowTas
   writeGitHubOverviewSnapshot();
 }
 
+async function processGitHubTimelineReleaseTask(task: GitHubTimelineReleaseTask) {
+  const [repoFullName, releases] = await fetchGitHubTimelineReleases(task.repo);
+  if (task.generation !== githubTimelineGeneration) return;
+  githubReleasesByRepo.value = {
+    ...githubReleasesByRepo.value,
+    [repoFullName]: releases,
+  };
+  writeGitHubOverviewSnapshot();
+}
+
 function drainGitHubTimelineQueues() {
   githubTimelineIssueTasks.drain();
   githubTimelinePullRequestTasks.drain();
   githubTimelineWorkflowTasks.drain();
+  githubTimelineReleaseTasks.drain();
 }
 
 function scheduleGitHubTimelineActivation() {
@@ -847,7 +933,8 @@ function scheduleGitHubTimelineActivation() {
   if (
     !githubIssuesPendingCount.value &&
     !githubPullRequestsPendingCount.value &&
-    !githubWorkflowRunsPendingCount.value
+    !githubWorkflowRunsPendingCount.value &&
+    !githubReleasesPendingCount.value
   ) return;
   githubTimelineActivationQueued = true;
   void nextTick(() => {
@@ -856,7 +943,8 @@ function scheduleGitHubTimelineActivation() {
     if (
       !githubIssuesPendingCount.value &&
       !githubPullRequestsPendingCount.value &&
-      !githubWorkflowRunsPendingCount.value
+      !githubWorkflowRunsPendingCount.value &&
+      !githubReleasesPendingCount.value
     ) return;
     if (typeof window === "undefined" || typeof document === "undefined") {
       activateGitHubTimeline();
@@ -912,6 +1000,7 @@ function resetGitHubTimelineQueues() {
   githubTimelineIssueTasks.reset();
   githubTimelinePullRequestTasks.reset();
   githubTimelineWorkflowTasks.reset();
+  githubTimelineReleaseTasks.reset();
 }
 
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
@@ -1033,6 +1122,18 @@ function formatCheckNames(checks: readonly GitHubPullRequestCheck[]) {
   return `${names.join("、") || `${checks.length} 项`}${suffix}`;
 }
 
+function releaseStatusText(release: GitHubRelease) {
+  if (release.draft) return "草稿";
+  if (release.prerelease) return "预发布";
+  return "正式发布";
+}
+
+function releaseSummary(repoFullName: string, release: GitHubRelease) {
+  const parts = [repoFullName, releaseStatusText(release)];
+  if (release.assets.length > 0) parts.push(`${release.assets.length} 个附件`);
+  return parts.join(" · ");
+}
+
 function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelineEvent[] {
   const { githubRepo, localRepo } = row;
   const events: GitHubTimelineEvent[] = [];
@@ -1147,6 +1248,21 @@ function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelin
     });
   }
 
+  for (const release of githubReleasesByRepo.value[githubRepo.fullName] ?? []) {
+    const href = localRepo
+      ? repoProjectPath(localRepo, "release", null, release.tagName)
+      : remoteRepoProjectPath(githubRepo, "release", null, release.tagName);
+    addTimelineEvent(events, {
+      id: `release:${githubRepo.fullName}:${release.id}`,
+      kind: "release",
+      title: `Release ${release.tagName}`,
+      detail: release.name?.trim() || release.tagName,
+      summary: releaseSummary(githubRepo.fullName, release),
+      timestamp: parseGitHubTime(release.publishedAt ?? release.createdAt),
+      href,
+    });
+  }
+
   return events;
 }
 
@@ -1174,6 +1290,7 @@ function gitHubTimelineEventIcon(kind: GitHubTimelineEvent["kind"]) {
   if (kind === "issue") return CircleDot;
   if (kind === "pull") return GitPullRequestArrow;
   if (kind === "workflow") return RotateCw;
+  if (kind === "release") return Tag;
   return RefreshCw;
 }
 
