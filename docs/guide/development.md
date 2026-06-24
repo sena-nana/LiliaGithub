@@ -13,7 +13,8 @@ LiliaGithub/
 │   └── styles.css
 ├── src-tauri/           # Tauri 2 Rust 端
 ├── tests/               # Vitest + Testing Library
-└── scripts/             # 本地开发脚本
+├── scripts/             # 本地开发脚本
+└── agent-debug/         # Agent 调试验证脚本
 ```
 
 ## 本地运行
@@ -32,6 +33,16 @@ yarn tauri:dev
 
 `yarn tauri:dev` 会自动寻找可用本地端口,再把对应 `devUrl` 传给 Tauri。此模式和生产包一样通过现有 Tauri command 访问真实工作区、Git 和 GitHub 能力。
 
+## Agent 调试
+
+开发态 Agent 调试层用于浏览器驱动 Agent 和本地 Tauri 冒烟验证:
+
+```bash
+yarn agent-debug:verify
+```
+
+该命令需要 `cargo`、`tauri-driver` 和匹配 Microsoft Edge 的 EdgeDriver,产物写入 `agent-debug-runs/<run-id>/`。详细接口、环境变量和产物说明见[Agent Debug Harness](../design/agent-debug-harness.md)。
+
 ## 验证
 
 ```bash
@@ -39,6 +50,7 @@ yarn test
 yarn build
 cargo check --manifest-path src-tauri/Cargo.toml
 yarn verify
+yarn agent-debug:verify
 ```
 
 按影响范围运行最小必要验证。涉及构建配置、壳层布局、路由或 Tauri 端改动时,优先运行 `yarn verify`。

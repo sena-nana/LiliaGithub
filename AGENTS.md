@@ -18,6 +18,12 @@
 - 不覆盖用户或其他 Agent 的已有改动。
 - 新增组件或功能单元时,优先解耦到独立文件/模块,并以异步懒加载方式接入;仅当任务明确是修改现有组件时,才在原组件内调整。
 
+## Agent 调试与迁移边界
+
+- 本仓库只迁移面向 Agent 友好的开发态调试结构、稳定 `data-agent-id` 和验证入口;不引入 Lilia 的 provider / agent runner 业务。
+- Agent 接手问题时,先查看 `docs/design/agent-debug-harness.md` 确认调试入口、环境变量和产物路径。
+- 涉及 Tauri command、窗口壳层、路由、工作区数据或 GitHub 数据契约时,先明确前端、Rust 端和测试边界;调试层只在开发态启用,不要变成生产功能。
+
 ## 样式
 
 - 保持工程工具气质:克制、清晰、可扫描。
@@ -29,4 +35,5 @@
 
 - 功能实现后根据任务风险和影响范围选择验证;可选验证包括定向测试、`yarn test`、`yarn build`、`cargo check --manifest-path src-tauri/Cargo.toml` 或 `yarn verify`。
 - 文档、注释、配置说明等低风险改动可不跑测试;涉及持久化、权限、构建配置或用户关键路径时,优先运行最小必要验证。
+- 涉及大型 UI、Tauri command、构建配置或用户关键路径时,优先运行 `yarn agent-debug:verify`;若阻塞,最终说明写清 blocker、`agent-debug-runs/` 产物路径和剩余风险。
 - 若未运行测试、构建或验证,在最终说明里写清楚原因;若验证无法运行,写清楚阻塞原因和剩余风险。
