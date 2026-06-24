@@ -1079,13 +1079,22 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Release" }));
 
-    expect(await view.findByRole("heading", { level: 3, name: "Release" })).toBeInTheDocument();
     expect(await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" })).toBeInTheDocument();
     expect(view.getByText("lilia-windows.zip")).toBeInTheDocument();
+    const releaseTimeline = view.getByRole("list", { name: "Release 列表" });
+    expect(releaseTimeline).toHaveClass("release-timeline");
+    expect(releaseTimeline.closest(".project-main")).toHaveClass("project-main--plain");
+    expect(releaseTimeline.closest(".project-section")).toHaveClass("project-section--flush");
+    const releaseCards = releaseTimeline.querySelectorAll(".release-card");
+    expect(releaseCards).toHaveLength(githubReleases.length);
+    expect(releaseCards[0]?.querySelector(".release-card__rail")).toBeInstanceOf(HTMLElement);
+    expect(releaseCards[0]?.querySelector(".release-card__body")).toBeInstanceOf(HTMLElement);
     expect(listGitHubReleases).toHaveBeenCalledWith("sena-nana/remote-repo");
     expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "release" });
 
     const tagSidebar = view.getByRole("region", { name: "Release tags" });
+    expect(within(tagSidebar).getByRole("button", { name: "新建 Release" })).toBeInTheDocument();
+    expect(within(tagSidebar).getByRole("button", { name: "刷新 Release" })).toBeInTheDocument();
     await fireEvent.click(within(tagSidebar).getByRole("button", { name: /v1\.0\.0/ }));
 
     await waitFor(() => {
@@ -1109,7 +1118,8 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Release" }));
     await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" });
 
-    await fireEvent.click(view.getByRole("button", { name: "新建 Release" }));
+    const tagSidebar = view.getByRole("region", { name: "Release tags" });
+    await fireEvent.click(within(tagSidebar).getByRole("button", { name: "新建 Release" }));
     const createForm = await view.findByRole("form", { name: "Release 表单" });
     await fireEvent.update(within(createForm).getByLabelText("Tag"), "v1.1.0");
     await fireEvent.update(within(createForm).getByLabelText("Target"), "main");
@@ -1177,6 +1187,7 @@ describe("RepoProjectPanel", () => {
 
     expect(await emptyView.findByText("暂无 releases。")).toBeInTheDocument();
     expect(emptyView.getByText("暂无 release tag。")).toBeInTheDocument();
+    expect(emptyView.container.querySelector(".release-timeline")).toBeNull();
     emptyView.unmount();
 
     vi.mocked(listGitHubReleases).mockRejectedValue(new Error("GitHub 绑定已失效，请重新绑定"));
@@ -1189,6 +1200,7 @@ describe("RepoProjectPanel", () => {
     expect(await unavailableView.findByText("Release 暂不可用")).toBeInTheDocument();
     expect(unavailableView.getAllByText(/GitHub 绑定已失效/).length).toBeGreaterThan(0);
     expect(unavailableView.queryByRole("button", { name: "新建 Release" })).toBeNull();
+    expect(unavailableView.container.querySelector(".release-timeline")).toBeNull();
   });
 
   it("点击 Issue 行进入详情并渲染 Markdown 正文、评论和事件", async () => {

@@ -411,6 +411,7 @@ const aboutEditing = ref(false);
 const aboutTopicDraft = ref("");
 const aboutTopicList = ref<HTMLElement | null>(null);
 const aboutTopicMeasureList = ref<HTMLElement | null>(null);
+const repoReleasesPanel = ref<{ openCreate: () => void } | null>(null);
 const aboutTopicsExpanded = ref(false);
 const collapsedAboutTopicCount = ref(0);
 const issueState = ref<IssueState>(issueStateFromRoute());
@@ -2812,7 +2813,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       <main
         ref="projectMainRef"
         class="project-main"
-        :class="{ 'project-main--plain': activeSection === 'files' }"
+        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'release' }"
       >
         <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
           <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
@@ -3198,7 +3199,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
         </section>
 
-        <section v-else-if="activeSection === 'release'" class="project-section project-github-section">
+        <section v-else-if="activeSection === 'release'" class="project-section project-github-section project-section--flush">
           <RepoGitHubUnavailableNotice
             v-if="releasesAccessUnavailable"
             :title="releasesAccessUnavailable.title"
@@ -3208,12 +3209,12 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
           <RepoReleasesPanel
             v-else-if="repoFullName"
+            ref="repoReleasesPanel"
             :repo-full-name="repoFullName"
             :releases="releases"
             :loading="releasesLoading"
             :mutating="releaseMutating"
             :focused-tag="focusedReleaseTag"
-            @refresh="loadReleases(true)"
             @focus-tag="focusReleaseFromPanel"
             @create="createRelease"
             @update="updateRelease"
@@ -3748,6 +3749,27 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <Package :size="14" aria-hidden="true" />
             <strong>Release tags</strong>
           </div>
+          <div class="project-sidebar-summary-card__actions">
+            <button
+              type="button"
+              class="primary project-sidebar-summary-card__action"
+              :disabled="releaseMutating || !!releasesAccessUnavailable"
+              @click="repoReleasesPanel?.openCreate()"
+            >
+              <Plus :size="14" aria-hidden="true" />
+              新建 Release
+            </button>
+            <button
+              type="button"
+              class="ghost project-sidebar-summary-card__action"
+              :disabled="releasesLoading || !!releasesAccessUnavailable"
+              @click="loadReleases(true)"
+            >
+              <LoaderCircle v-if="releasesLoading" :size="14" aria-hidden="true" class="sb-spin" />
+              <RotateCw v-else :size="14" aria-hidden="true" />
+              刷新 Release
+            </button>
+          </div>
           <p v-if="releasesLoading" class="project-sidebar-note">正在读取 releases。</p>
           <p v-else-if="!releases.length" class="project-sidebar-note">暂无 release tag。</p>
           <nav v-else class="project-release-tag-list" aria-label="Release tag 跳转">
@@ -3764,15 +3786,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               <em v-else-if="release.prerelease">Pre</em>
             </button>
           </nav>
-          <button
-            type="button"
-            class="ghost project-sidebar-summary-card__action"
-            :disabled="releasesLoading || !!releasesAccessUnavailable"
-            @click="loadReleases(true)"
-          >
-            <RotateCw :size="14" aria-hidden="true" />
-            刷新 Release
-          </button>
         </section>
 
         <section
@@ -3952,6 +3965,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.project-section--flush {
+  padding: 0;
 }
 
 .project-terminal-card {
@@ -4396,6 +4413,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   height: 28px;
   padding: 0 9px;
   font-size: 12px;
+}
+
+.project-sidebar-summary-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 
 .project-release-tag-list {
