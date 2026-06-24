@@ -13,6 +13,7 @@ defineProps<{
       :key="tool.key"
       type="button"
       class="sb-icon-btn"
+      :data-agent-id="`sidebar.tool.${tool.key}`"
       :title="tool.label"
       :aria-label="tool.label"
       :disabled="tool.disabled"

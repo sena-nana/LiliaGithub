@@ -567,7 +567,7 @@ async function deleteGroup(group: { id: string }) {
 </script>
 
 <template>
-  <aside class="secondary-panel">
+  <aside class="secondary-panel" data-agent-id="sidebar">
     <div class="sb-section">
       <div class="sb-section__header">
         <span class="sb-section__title">工作区</span>
@@ -578,6 +578,7 @@ async function deleteGroup(group: { id: string }) {
           :key="item.label"
           :to="item.to ?? '/'"
           class="sb-tree__row"
+          :data-agent-id="`sidebar.nav.${item.label}`"
           exact-active-class="is-active"
           :aria-disabled="item.disabled ? 'true' : undefined"
         >
@@ -598,12 +599,19 @@ async function deleteGroup(group: { id: string }) {
           ref="searchInput"
           v-model="searchQueryModel"
           type="search"
+          data-agent-id="sidebar.search.input"
           aria-label="搜索仓库"
           placeholder="搜索仓库"
           @keydown.enter.prevent="openFirstSearchResult"
           @keydown.esc.prevent="closeSearch"
         />
-        <button type="button" aria-label="关闭搜索" title="关闭搜索" @click="closeSearch">
+        <button
+          type="button"
+          data-agent-id="sidebar.search.close"
+          aria-label="关闭搜索"
+          title="关闭搜索"
+          @click="closeSearch"
+        >
           <X :size="13" aria-hidden="true" />
         </button>
       </div>
@@ -617,6 +625,7 @@ async function deleteGroup(group: { id: string }) {
           v-if="hiddenFilteredRepoItemCount > 0"
           type="button"
           class="sb-tree__more"
+          data-agent-id="sidebar.search.show-more"
           @click="showMoreSearchResults"
         >
           显示更多 {{ hiddenFilteredRepoItemCount }} 个
@@ -636,6 +645,7 @@ async function deleteGroup(group: { id: string }) {
             v-if="editingGroupId !== section.id"
             type="button"
             class="sb-group-toggle"
+            :data-agent-id="`sidebar.group.${section.id}.toggle`"
             :aria-label="sectionToggleLabel(section)"
             :aria-expanded="!section.collapsed"
             @click="toggleGroupCollapsed(section.id, $event)"
@@ -653,6 +663,7 @@ async function deleteGroup(group: { id: string }) {
             <input
               v-model="editingGroupName"
               type="text"
+              :data-agent-id="`sidebar.group.${section.id}.name`"
               aria-label="重命名分组"
               :data-repo-group-name-input="section.id"
               :disabled="renameGroupBusy"
@@ -666,6 +677,7 @@ async function deleteGroup(group: { id: string }) {
             v-if="editingGroupId !== section.id"
             type="button"
             class="sb-icon-btn sb-section__hover-action"
+            :data-agent-id="`sidebar.group.${section.id}.create-repo`"
             :aria-label="`在 ${section.name} 创建仓库`"
             title="创建仓库"
             @click.stop="openCreateRepoMenu(section, $event)"
@@ -676,6 +688,7 @@ async function deleteGroup(group: { id: string }) {
             <button
               type="button"
               class="sb-icon-btn sb-section__hover-action"
+              :data-agent-id="`sidebar.group.${section.id}.rename`"
               :aria-label="`重命名分组 ${section.name}`"
               title="重命名分组"
               @click="startRenameGroup(section.group)"
@@ -685,6 +698,7 @@ async function deleteGroup(group: { id: string }) {
             <button
               type="button"
               class="sb-icon-btn sb-section__hover-action"
+              :data-agent-id="`sidebar.group.${section.id}.delete`"
               :class="{ 'is-danger': pendingDeleteGroupId === section.id }"
               :aria-label="pendingDeleteGroupId === section.id ? `确认删除分组 ${section.name}` : `删除分组 ${section.name}`"
               :title="pendingDeleteGroupId === section.id ? '确认删除分组' : '删除分组'"
@@ -697,6 +711,7 @@ async function deleteGroup(group: { id: string }) {
             v-else
             type="button"
             class="sb-icon-btn sb-section__hover-action"
+            data-agent-id="sidebar.group.create"
             aria-label="创建仓库分组"
             title="创建仓库分组"
             :disabled="createGroupBusy"
@@ -715,6 +730,7 @@ async function deleteGroup(group: { id: string }) {
             v-if="section.hiddenItemCount > 0"
             type="button"
             class="sb-tree__more"
+            :data-agent-id="`sidebar.group.${section.id}.show-more`"
             @click="showMoreRepoSection(section.id)"
           >
             显示更多 {{ section.hiddenItemCount }} 个
@@ -737,6 +753,7 @@ async function deleteGroup(group: { id: string }) {
           :class="{ 'is-active': activeRemoteFullName === repo.fullName }"
           role="link"
           tabindex="0"
+          :data-agent-id="`sidebar.remote.${repo.fullName}`"
           :title="repo.fullName"
           :aria-label="`打开 ${repo.fullName}`"
           @click="openRemoteRepo(repo.fullName)"
@@ -750,6 +767,7 @@ async function deleteGroup(group: { id: string }) {
           <button
             type="button"
             class="sb-icon-btn sb-tree__remote-remove"
+            :data-agent-id="`sidebar.remote.${repo.fullName}.remove`"
             :aria-label="`移除 ${repo.fullName}`"
             title="从侧边栏移除"
             @click.stop="removeRemoteRepo(repo.fullName)"
@@ -761,6 +779,7 @@ async function deleteGroup(group: { id: string }) {
           v-if="hiddenRemoteRepoItemCount > 0"
           type="button"
           class="sb-tree__more"
+          data-agent-id="sidebar.remote.show-more"
           @click="showMoreRemoteRepos"
         >
           显示更多 {{ hiddenRemoteRepoItemCount }} 个

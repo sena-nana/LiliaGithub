@@ -306,6 +306,8 @@ describe("基础路由", () => {
   });
 
   it("默认首页显示 Git 项目总览", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     workspaceFallback.setFallbackGitHubReleasesForTests({
       "sena-nana/LiliaGithub": [
         githubRelease("sena-nana/LiliaGithub", 801, "v1.2.0", "2026-06-18T08:00:00Z", {
@@ -1145,6 +1147,8 @@ describe("基础路由", () => {
   });
 
   it("总览页 GitHub 时间线展示 Actions 运行并在仓库状态直达对应运行", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     const { setRepoActionError } = await import("../src/composables/workspace/state");
     const service = await import("../src/services/workspace");
     const repo = githubRepoSummary("sena-nana/LiliaGithub");
@@ -1238,6 +1242,8 @@ describe("基础路由", () => {
   });
 
   it("总览页 GitHub 时间线点击 Issue 事件进入仓库详情项目信息 Issues 并定位目标 issue", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     const { router } = await renderAt("/");
 
     const timeline = await screen.findByLabelText("GitHub 时间线列表");

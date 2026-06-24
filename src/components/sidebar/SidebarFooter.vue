@@ -13,6 +13,7 @@ defineProps<{
     <RouterLink
       to="/settings"
       class="sb-footer__btn"
+      data-agent-id="sidebar.footer.settings"
       active-class="is-active"
       title="设置"
       aria-label="设置"
@@ -23,6 +24,7 @@ defineProps<{
     <RouterLink
       :to="status.to"
       class="sb-conn"
+      data-agent-id="sidebar.footer.connection"
       :class="`sb-conn--${status.tone}`"
       :title="status.title"
       :aria-label="status.title"

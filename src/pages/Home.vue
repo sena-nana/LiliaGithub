@@ -1499,8 +1499,8 @@ function bulkOperationDescription(operation: BulkOperation) {
 </script>
 
 <template>
-  <section class="home-page" :class="{ 'setup-page': !workspace.isReady.value }">
-    <div v-if="!workspace.isReady.value" class="setup-screen">
+  <section class="home-page" data-agent-id="home.page" :class="{ 'setup-page': !workspace.isReady.value }">
+    <div v-if="!workspace.isReady.value" class="setup-screen" data-agent-id="setup.screen">
       <div class="page-header">
         <div>
           <h1>LiliaGithub 初始化</h1>
@@ -1520,7 +1520,12 @@ function bulkOperationDescription(operation: BulkOperation) {
             </p>
           </div>
           <div class="setup-step__action">
-            <button type="button" class="primary" @click="workspace.chooseWorkspaceRoot">
+            <button
+              type="button"
+              class="primary"
+              data-agent-id="setup.workspace.choose"
+              @click="workspace.chooseWorkspaceRoot"
+            >
               <FolderOpen :size="14" aria-hidden="true" />
               选择工作区
             </button>
@@ -1565,6 +1570,7 @@ function bulkOperationDescription(operation: BulkOperation) {
               <button
                 type="button"
                 class="primary"
+                data-agent-id="setup.github.bind"
                 :disabled="workspace.state.authLoading"
                 @click="workspace.startAuthFlow"
               >
@@ -1580,7 +1586,7 @@ function bulkOperationDescription(operation: BulkOperation) {
     </div>
 
     <template v-else>
-      <div class="page-header">
+      <div class="page-header" data-agent-id="home.overview.header">
         <div>
           <div class="overview-title">
             <h1>项目总览</h1>
@@ -1593,6 +1599,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           <button
             type="button"
             class="overview-actions__btn"
+            data-agent-id="home.overview.search"
             :class="{ 'is-active': searchOpen }"
             title="搜索"
             aria-label="搜索"
@@ -1604,6 +1611,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           <button
             type="button"
             class="overview-actions__btn"
+            data-agent-id="home.overview.discover"
             title="发现仓库"
             aria-label="发现仓库"
             :disabled="!workspace.workspaceRoot.value || discovering"
@@ -1615,6 +1623,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           <button
             type="button"
             class="overview-actions__btn"
+            data-agent-id="home.overview.refresh"
             title="刷新并抓取"
             aria-label="刷新并抓取"
             :disabled="!workspace.isReady.value || workspace.state.scanning || workspace.state.bulkRunning || githubReposLoading"
@@ -1625,6 +1634,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           <button
             type="button"
             class="overview-actions__btn"
+            data-agent-id="home.overview.bulk.pull"
             :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'pull' }"
             title="批量拉取"
             aria-label="批量拉取"
@@ -1642,6 +1652,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           <button
             type="button"
             class="overview-actions__btn"
+            data-agent-id="home.overview.bulk.push"
             :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'push' }"
             title="批量推送"
             aria-label="批量推送"
@@ -1659,6 +1670,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           <button
             type="button"
             class="overview-actions__btn overview-actions__btn--primary"
+            data-agent-id="home.overview.bulk.sync"
             :class="{ 'is-running': workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync' }"
             title="一键同步"
             aria-label="一键同步"
@@ -1775,6 +1787,7 @@ function bulkOperationDescription(operation: BulkOperation) {
               <div class="language-tabs" aria-label="代码占比模式">
                 <button
                   type="button"
+                  data-agent-id="home.language.mode.language"
                   :class="{ 'is-active': languageChartMode === 'language' }"
                   @click="languageChartMode = 'language'"
                 >
@@ -1782,6 +1795,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 </button>
                 <button
                   type="button"
+                  data-agent-id="home.language.mode.project"
                   :class="{ 'is-active': languageChartMode === 'project' }"
                   @click="languageChartMode = 'project'"
                 >

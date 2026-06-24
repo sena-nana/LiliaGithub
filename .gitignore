@@ -72,6 +72,7 @@ src-tauri/gen/schemas/
 .claude-flow/
 .mcp.json
 CLAUDE.md
+agent-debug-runs/
 
 # Temporary
 tmp/

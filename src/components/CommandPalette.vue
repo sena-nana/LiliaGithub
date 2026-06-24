@@ -194,11 +194,25 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="command-palette" role="dialog" aria-modal="true" aria-label="命令入口" @pointerdown.self="close">
-      <section class="command-palette__panel">
+    <div
+      v-if="open"
+      class="command-palette"
+      data-agent-id="command-palette"
+      role="dialog"
+      aria-modal="true"
+      aria-label="命令入口"
+      @pointerdown.self="close"
+    >
+      <section class="command-palette__panel" data-agent-id="command-palette.panel">
         <div class="command-palette__input">
           <Search :size="16" aria-hidden="true" />
-          <input ref="inputRef" v-model="query" type="text" placeholder="输入命令或 GitHub 操作" />
+          <input
+            ref="inputRef"
+            v-model="query"
+            type="text"
+            data-agent-id="command-palette.input"
+            placeholder="输入命令或 GitHub 操作"
+          />
         </div>
         <div class="command-palette__list" role="listbox" aria-label="命令列表">
           <button
@@ -207,6 +221,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             type="button"
             role="option"
             class="command-palette__item"
+            :data-agent-id="`command-palette.command.${command.id}`"
             :class="{ 'is-active': index === activeIndex }"
             :disabled="command.disabled"
             @mouseenter="activeIndex = index"
