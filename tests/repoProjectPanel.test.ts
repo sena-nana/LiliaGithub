@@ -2,7 +2,12 @@ import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
-import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
+import {
+  closeContextMenu,
+  installContextMenu,
+  selectContextMenuItem,
+  useContextMenu,
+} from "../src/composables/useContextMenu";
 import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
 import { vContextMenu } from "../src/directives/contextMenu";
@@ -338,7 +343,18 @@ const githubReleases: GitHubRelease[] = [
     tagName: "v1.0.0",
     targetCommitish: "main",
     name: "Lilia v1.0.0",
-    body: "## Summary\n\n正式发布。",
+    body: [
+      "## Summary",
+      "",
+      "正式发布。",
+      "",
+      "- 支持 release 时间线布局",
+      "- 支持资产紧凑列表",
+      "- 支持右侧筛选",
+      "- 支持 Markdown 渲染",
+      "- 优化提交者和时间显示",
+      "- 优化长内容折叠",
+    ].join("\n"),
     draft: false,
     prerelease: false,
     makeLatest: "true",
@@ -349,7 +365,25 @@ const githubReleases: GitHubRelease[] = [
     zipballUrl: "https://api.github.com/repos/sena-nana/remote-repo/zipball/v1.0.0",
     createdAt: "2026-06-18T08:00:00Z",
     publishedAt: "2026-06-18T08:05:00Z",
-    assets: [releaseAsset()],
+    assets: [
+      releaseAsset(),
+      releaseAsset({
+        id: 9002,
+        name: "lilia-macos.dmg",
+        label: "macOS",
+        size: 4_096,
+        downloadCount: 3,
+        browserDownloadUrl: "https://github.com/sena-nana/remote-repo/releases/download/v1.0.0/lilia-macos.dmg",
+      }),
+      releaseAsset({
+        id: 9003,
+        name: "lilia-linux.AppImage",
+        label: "Linux",
+        size: 8_192,
+        downloadCount: 1,
+        browserDownloadUrl: "https://github.com/sena-nana/remote-repo/releases/download/v1.0.0/lilia-linux.AppImage",
+      }),
+    ],
   },
   {
     id: 8002,
@@ -1099,15 +1133,54 @@ describe("RepoProjectPanel", () => {
     expect(releaseTimeline.closest(".project-section")).toHaveClass("project-section--flush");
     const releaseCards = releaseTimeline.querySelectorAll(".release-card");
     expect(releaseCards).toHaveLength(githubReleases.length);
-    expect(releaseCards[0]?.querySelector(".release-card__rail")).toBeInstanceOf(HTMLElement);
-    expect(releaseCards[0]?.querySelector(".release-card__body")).toBeInstanceOf(HTMLElement);
+    const latestReleaseCard = releaseTimeline.querySelector(".release-card[data-release-tag=\"v1.0.0\"]") as HTMLElement;
+    expect(latestReleaseCard).toBeInstanceOf(HTMLElement);
+    expect(latestReleaseCard.querySelector(".release-card__rail")).toBeInstanceOf(HTMLElement);
+    expect(latestReleaseCard.querySelector(".release-card__content")).toBeInstanceOf(HTMLElement);
+    expect(latestReleaseCard.querySelector(".release-card__rail-hit")).toHaveAttribute(
+      "data-tooltip",
+      "Latest · v1.0.0 · Target main",
+    );
+    expect(latestReleaseCard.querySelector(".release-card__title-line .release-card__tag")).toBeNull();
+    expect(latestReleaseCard.querySelector(".release-card__meta .release-card__tag")).toHaveTextContent("v1.0.0");
+    expect(within(latestReleaseCard).queryByText("Target main")).toBeNull();
+    expect(latestReleaseCard.querySelector(".release-card__body")).toBeNull();
+    expect(latestReleaseCard.querySelector(".release-assets-card")).toBeNull();
+    const releaseMarkdown = latestReleaseCard.querySelector(".release-card__markdown") as HTMLElement;
+    expect(releaseMarkdown).toBeInstanceOf(HTMLElement);
+    expect(releaseMarkdown).toHaveClass("is-collapsible", "is-collapsed");
+    expect(within(releaseMarkdown).getByRole("heading", { level: 2, name: "Summary" })).toBeInTheDocument();
+    const expandBodyButton = within(releaseMarkdown).getByRole("button", { name: "展开" });
+    expect(expandBodyButton).toHaveAttribute("aria-expanded", "false");
+    await fireEvent.click(expandBodyButton);
+    expect(releaseMarkdown).not.toHaveClass("is-collapsed");
+    expect(within(releaseMarkdown).getByRole("button", { name: "收起" })).toHaveAttribute("aria-expanded", "true");
+    expect(latestReleaseCard.querySelector(".release-assets__list")).toBeInstanceOf(HTMLElement);
+    expect(latestReleaseCard.querySelectorAll(".release-asset")).toHaveLength(2);
+    expect(within(latestReleaseCard).queryByText("lilia-linux.AppImage")).toBeNull();
+    await fireEvent.click(within(latestReleaseCard).getByRole("button", { name: "更多 1" }));
+    expect(within(latestReleaseCard).getByText("lilia-linux.AppImage")).toBeInTheDocument();
+    expect(latestReleaseCard.querySelectorAll(".release-asset")).toHaveLength(3);
+    const prereleaseCard = releaseTimeline.querySelector(".release-card[data-release-tag=\"v1.1.0-beta.1\"]") as HTMLElement;
+    expect(prereleaseCard).toBeInstanceOf(HTMLElement);
+    expect(within(prereleaseCard).queryByText("Pre-release")).toBeNull();
+    expect(prereleaseCard.querySelector(".release-card__rail-hit")).toHaveAttribute(
+      "aria-label",
+      "Pre-release · v1.1.0-beta.1 · Target develop",
+    );
+    expect(prereleaseCard.querySelector(".release-assets__list")).toBeNull();
+    expect(view.queryByText("No assets.")).toBeNull();
+    expect(latestReleaseCard).toHaveTextContent("sena");
+    expect(latestReleaseCard).toHaveClass("is-latest");
     expect(listGitHubReleases).toHaveBeenCalledWith("sena-nana/remote-repo");
     expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "release" });
 
-    const tagSidebar = view.getByRole("region", { name: "Release tags" });
-    expect(within(tagSidebar).getByRole("button", { name: "新建 Release" })).toBeInTheDocument();
-    expect(within(tagSidebar).getByRole("button", { name: "刷新 Release" })).toBeInTheDocument();
-    await fireEvent.click(within(tagSidebar).getByRole("button", { name: /v1\.0\.0/ }));
+    const filterSidebar = view.getByRole("region", { name: "Release 筛选" });
+    expect(within(filterSidebar).getByRole("button", { name: "新建 Release" })).toBeInTheDocument();
+    expect(within(filterSidebar).getByRole("button", { name: "刷新 Release" })).toBeInTheDocument();
+    expect(within(filterSidebar).getByRole("button", { name: "全部" })).toHaveClass("is-active");
+    expect(within(filterSidebar).getByRole("button", { name: "清除筛选" })).toBeDisabled();
+    await fireEvent.click(within(filterSidebar).getByRole("button", { name: /v1\.0\.0/ }));
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({
@@ -1116,8 +1189,25 @@ describe("RepoProjectPanel", () => {
       });
     });
     expect(view.container.querySelector(".release-card.is-focused[data-release-tag=\"v1.0.0\"]")).toBeInstanceOf(HTMLElement);
+    expect(releaseTimeline.querySelectorAll(".release-card")).toHaveLength(1);
 
-    await fireEvent.click(within(tagSidebar).getByRole("button", { name: "刷新 Release" }));
+    await fireEvent.click(within(filterSidebar).getByRole("button", { name: /清除筛选/ }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).not.toHaveProperty("releaseTag");
+    });
+    expect(releaseTimeline.querySelectorAll(".release-card")).toHaveLength(githubReleases.length);
+
+    await fireEvent.click(within(filterSidebar).getByRole("button", { name: "Pre-release" }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({
+        projectTab: "release",
+        releaseType: "prerelease",
+      });
+    });
+    expect(releaseTimeline.querySelectorAll(".release-card")).toHaveLength(1);
+    expect(view.container.querySelector(".release-card[data-release-tag=\"v1.1.0-beta.1\"]")).toBeInstanceOf(HTMLElement);
+
+    await fireEvent.click(within(filterSidebar).getByRole("button", { name: "刷新 Release" }));
     expect(listGitHubReleases).toHaveBeenLastCalledWith("sena-nana/remote-repo", { forceRefresh: true });
   });
 
@@ -1130,8 +1220,8 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Release" }));
     await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" });
 
-    const tagSidebar = view.getByRole("region", { name: "Release tags" });
-    await fireEvent.click(within(tagSidebar).getByRole("button", { name: "新建 Release" }));
+    const filterSidebar = view.getByRole("region", { name: "Release 筛选" });
+    await fireEvent.click(within(filterSidebar).getByRole("button", { name: "新建 Release" }));
     const createForm = await view.findByRole("form", { name: "Release 表单" });
     await fireEvent.update(within(createForm).getByLabelText("Tag"), "v1.1.0");
     await fireEvent.update(within(createForm).getByLabelText("Target"), "main");
@@ -1151,11 +1241,30 @@ describe("RepoProjectPanel", () => {
         generateReleaseNotes: true,
       });
     });
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({ releaseTag: "v1.1.0" });
+    });
+    await fireEvent.click(within(filterSidebar).getByRole("button", { name: /清除筛选/ }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).not.toHaveProperty("releaseTag");
+    });
 
-    const releaseCard = view.container.querySelector(".release-card[data-release-tag=\"v1.0.0\"]") as HTMLElement;
-    expect(releaseCard).toBeInstanceOf(HTMLElement);
+    let releaseCard: HTMLElement | null = null;
+    await waitFor(() => {
+      releaseCard = view.container.querySelector(".release-card[data-release-tag=\"v1.0.0\"]");
+      expect(releaseCard).toBeInstanceOf(HTMLElement);
+    });
+    const releaseCardElement = releaseCard as HTMLElement;
+    const releaseActionsButton = within(releaseCardElement).getByRole("button", { name: "编辑 Release 菜单" });
+    expect(within(releaseCardElement).queryByRole("button", { name: "打开 Release" })).toBeNull();
+    expect(within(releaseCardElement).queryByRole("button", { name: "上传资产" })).toBeNull();
+    expect(within(releaseCardElement).queryByRole("button", { name: "删除 Release" })).toBeNull();
 
-    await fireEvent.click(within(releaseCard).getByRole("button", { name: "上传" }));
+    const contextMenu = useContextMenu();
+    await fireEvent.click(releaseActionsButton);
+    const uploadItem = contextMenu.state.items.find((item) => item.label === "上传资产");
+    expect(uploadItem).toBeTruthy();
+    await selectContextMenuItem(uploadItem!);
     await waitFor(() => {
       expect(pickFiles).toHaveBeenCalledTimes(1);
       expect(uploadGitHubReleaseAsset).toHaveBeenCalledWith(
@@ -1165,14 +1274,28 @@ describe("RepoProjectPanel", () => {
       );
     });
 
-    const originalAssetRow = within(releaseCard).getByText("lilia-windows.zip").closest(".release-asset") as HTMLElement;
-    await fireEvent.click(within(originalAssetRow).getByRole("button", { name: "删除资产" }));
-    await fireEvent.click(within(originalAssetRow).getByRole("button", { name: "确认删除资产" }));
+    const originalAssetRow = within(releaseCardElement).getByText("lilia-windows.zip").closest(".release-asset") as HTMLElement;
+    expect(within(originalAssetRow).queryByRole("button", { name: "删除资产" })).toBeNull();
+    expect(originalAssetRow.querySelector(".release-asset__downloads")).toHaveTextContent("7");
+    const assetRowText = originalAssetRow.textContent ?? "";
+    expect(assetRowText.indexOf("7")).toBeLessThan(assetRowText.indexOf("2.0 KB"));
+    await fireEvent.click(releaseActionsButton);
+    const deleteAssetsItem = contextMenu.state.items.find((item) => item.label === "删除资产");
+    expect(deleteAssetsItem?.children).toHaveLength(3);
+    await selectContextMenuItem(deleteAssetsItem!);
+    const deleteAssetItem = contextMenu.state.items.find((item) => item.label === "lilia-windows.zip");
+    expect(deleteAssetItem).toBeTruthy();
+    await selectContextMenuItem(deleteAssetItem!);
+    expect(deleteGitHubReleaseAsset).not.toHaveBeenCalled();
+    await selectContextMenuItem(deleteAssetItem!);
     await waitFor(() => {
       expect(deleteGitHubReleaseAsset).toHaveBeenCalledWith("sena-nana/remote-repo", 8001, 9001);
     });
 
-    await fireEvent.click(within(releaseCard).getByRole("button", { name: "编辑 Release" }));
+    await fireEvent.click(releaseActionsButton);
+    const editItem = contextMenu.state.items.find((item) => item.label === "编辑 Release");
+    expect(editItem).toBeTruthy();
+    await selectContextMenuItem(editItem!);
     const editForm = await view.findByRole("form", { name: "Release 表单" });
     await fireEvent.update(within(editForm).getByLabelText("Title"), "Lilia v1.0.1");
     await fireEvent.click(within(editForm).getByRole("button", { name: "保存" }));
@@ -1183,8 +1306,12 @@ describe("RepoProjectPanel", () => {
       }));
     });
 
-    await fireEvent.click(within(releaseCard).getByRole("button", { name: "删除 Release" }));
-    await fireEvent.click(within(releaseCard).getByRole("button", { name: "确认删除 Release" }));
+    await fireEvent.click(releaseActionsButton);
+    const deleteItem = contextMenu.state.items.find((item) => item.label === "删除 Release");
+    expect(deleteItem).toBeTruthy();
+    await selectContextMenuItem(deleteItem!);
+    expect(deleteGitHubRelease).not.toHaveBeenCalled();
+    await selectContextMenuItem(deleteItem!);
     await waitFor(() => {
       expect(deleteGitHubRelease).toHaveBeenCalledWith("sena-nana/remote-repo", 8001);
     });

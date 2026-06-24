@@ -155,6 +155,7 @@ type ProjectSidebarButtonConfig = {
 type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
 type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
 type GitHubAccessSection = "Issues" | "Pull Requests" | "Projects" | "Actions" | "Release" | "Settings";
+type ReleaseTypeFilter = "all" | "stable" | "latest" | "prerelease" | "draft";
 type GitHubAccessUnavailable = {
   title: string;
   reason: string;
@@ -210,6 +211,13 @@ const pullRequestStates = ["open", "closed", "merged"] as const;
 const listSorts = ["created", "updated", "comments"] as const;
 const listDirections = ["asc", "desc"] as const;
 const pullRequestReviews = ["none", "required", "approved", "changes_requested"] as const;
+const releaseTypeFilters: readonly { value: ReleaseTypeFilter; label: string }[] = [
+  { value: "all", label: "全部" },
+  { value: "stable", label: "Stable" },
+  { value: "latest", label: "Latest" },
+  { value: "prerelease", label: "Pre-release" },
+  { value: "draft", label: "Draft" },
+];
 const issueRouteKeys: RouteFilterKeys = {
   state: "issueState",
   query: "issueQ",
@@ -414,6 +422,7 @@ const releasesLoading = ref(false);
 const releasesLoaded = ref(false);
 const releasesError = ref<string | null>(null);
 const focusedReleaseTag = ref<string | null>(null);
+const releaseTypeFilter = ref<ReleaseTypeFilter>("all");
 const aboutEditing = ref(false);
 const aboutTopicDraft = ref("");
 const aboutTopicList = ref<HTMLElement | null>(null);
@@ -488,6 +497,18 @@ const releaseMutating = computed(() =>
   releaseAssetDeleteTracker.running.value
 );
 const draftReleases = computed(() => releases.value.filter((release) => release.draft));
+const releaseFilterTags = computed(() =>
+  [...releases.value]
+    .sort((left, right) => releaseTimestamp(right) - releaseTimestamp(left))
+    .map((release) => ({
+      id: release.id,
+      tagName: release.tagName,
+      type: releaseTypeForFilter(release),
+    }))
+);
+const activeReleaseFilterCount = computed(() =>
+  (focusedReleaseTag.value ? 1 : 0) + (releaseTypeFilter.value !== "all" ? 1 : 0)
+);
 const deletingRepo = remoteDeleteTracker.running;
 const deletingLocalRepo = localDeleteTracker.running;
 let repoMutationGeneration = 0;
@@ -818,6 +839,7 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
 const routedReleaseTag = computed(() => routeStringValue(route.query.releaseTag));
+const routedReleaseType = computed(() => releaseTypeFilterFromRoute());
 const routedProjectIssue = computed(() => normalizePositiveNumber(route.query.issue));
 const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
 const routedIssueFilterState = computed(() => JSON.stringify({
@@ -913,7 +935,16 @@ watch([routedIssueFilterState, routedPullRequestFilterState], () => {
 });
 
 watch(
-    [routedProjectTab, routedReleaseTag, routedProjectIssue, () => props.projectIssueNumber, routedProjectPullRequest, () => props.projectRunId, () => props.projectJobId],
+    [
+      routedProjectTab,
+      routedReleaseTag,
+      routedReleaseType,
+      routedProjectIssue,
+      () => props.projectIssueNumber,
+      routedProjectPullRequest,
+      () => props.projectRunId,
+      () => props.projectJobId,
+    ],
   () => {
     void applyProjectRouteState();
   },
@@ -969,6 +1000,10 @@ function issueStateFromRoute(): IssueState {
 
 function pullRequestStateFromRoute(): PullRequestState {
   return routeEnum(route.query[pullRequestRouteKeys.state], pullRequestStates) ?? "open";
+}
+
+function releaseTypeFilterFromRoute(): ReleaseTypeFilter {
+  return routeEnum(route.query.releaseType, releaseTypeFilters.map((item) => item.value)) ?? "all";
 }
 
 function sharedPanelFiltersFromRoute<T extends SharedPanelFilters>(
@@ -1132,6 +1167,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   delete query.run;
   delete query.job;
   delete query.releaseTag;
+  delete query.releaseType;
   clearRouteFilters(query, issueRouteKeys);
   clearRouteFilters(query, pullRequestRouteKeys);
 
@@ -1159,6 +1195,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
     if (focusedJobId.value) query.job = String(focusedJobId.value);
   } else if (tab === "release") {
     if (focusedReleaseTag.value) query.releaseTag = focusedReleaseTag.value;
+    if (releaseTypeFilter.value !== "all") query.releaseType = releaseTypeFilter.value;
   }
   return query;
 }
@@ -1239,6 +1276,18 @@ function hasReleaseTag(tag: string) {
   return releases.value.some((release) => release.tagName === tag);
 }
 
+function releaseTimestamp(release: GitHubRelease) {
+  const parsed = Date.parse(release.publishedAt ?? release.createdAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function releaseTypeForFilter(release: GitHubRelease): Exclude<ReleaseTypeFilter, "all"> {
+  if (release.draft) return "draft";
+  if (release.prerelease) return "prerelease";
+  if (release.makeLatest === "true") return "latest";
+  return "stable";
+}
+
 function releaseTagSelector(tag: string) {
   const escaped = typeof CSS !== "undefined" && typeof CSS.escape === "function"
     ? CSS.escape(tag)
@@ -1256,6 +1305,7 @@ function clearProjectTargets() {
   focusedRunId.value = null;
   focusedJobId.value = null;
   focusedReleaseTag.value = null;
+  releaseTypeFilter.value = "all";
   cancelEditIssue();
   closeIssueCreateView(false);
   closePullRequestCreateView(false);
@@ -1465,11 +1515,24 @@ async function focusReleaseTag(tag: string | null | undefined, updateRoute = fal
   await loadReleases();
   const normalized = tag?.trim() || null;
   focusedReleaseTag.value = normalized && hasReleaseTag(normalized) ? normalized : null;
-  if (updateRoute && activeSection.value === "release") void pushProjectTabRoute("release");
+  if (updateRoute && activeSection.value === "release") await pushProjectTabRoute("release");
   if (!focusedReleaseTag.value) return;
   await nextTick();
   const row = projectMainRef.value?.querySelector<HTMLElement>(releaseTagSelector(focusedReleaseTag.value));
   row?.scrollIntoView?.({ block: "start", inline: "nearest", behavior: "smooth" });
+}
+
+function setReleaseTypeFilter(value: ReleaseTypeFilter) {
+  if (releaseTypeFilter.value === value) return;
+  releaseTypeFilter.value = value;
+  if (activeSection.value === "release") void pushProjectTabRoute("release");
+}
+
+function clearReleaseFilters() {
+  const hadFilters = Boolean(focusedReleaseTag.value) || releaseTypeFilter.value !== "all";
+  focusedReleaseTag.value = null;
+  releaseTypeFilter.value = "all";
+  if (hadFilters && activeSection.value === "release") void pushProjectTabRoute("release");
 }
 
 function isIssueRowFocused(issueNumber: number) {
@@ -1503,6 +1566,7 @@ async function applyProjectRouteState() {
     return;
   }
   if (targetTab === "release") {
+    releaseTypeFilter.value = routedReleaseType.value;
     await focusReleaseTag(routedReleaseTag.value);
     return;
   }
@@ -2073,6 +2137,7 @@ function resetGitHubSectionState() {
   releasesLoaded.value = false;
   releasesError.value = null;
   focusedReleaseTag.value = null;
+  releaseTypeFilter.value = "all";
   githubError.value = null;
   actionsError.value = null;
   aboutEditing.value = false;
@@ -2759,10 +2824,6 @@ function focusActionJob(jobId: number | null) {
   if (activeSection.value === "actions") void pushProjectTabRoute("actions");
 }
 
-function focusReleaseFromPanel(tagName: string | null) {
-  void focusReleaseTag(tagName, true);
-}
-
 function upsertReleaseInView(release: GitHubRelease) {
   releases.value = [
     release,
@@ -3294,7 +3355,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :loading="releasesLoading"
             :mutating="releaseMutating"
             :focused-tag="focusedReleaseTag"
-            @focus-tag="focusReleaseFromPanel"
+            :release-type-filter="releaseTypeFilter"
             @create="createRelease"
             @update="updateRelease"
             @delete="removeRelease"
@@ -3786,12 +3847,12 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
         <section
           v-if="!hasProjectSidebarErrors && projectSidebarMode === 'release'"
-          class="project-sidebar-summary-card project-release-tags-card"
-          aria-label="Release tags"
+          class="project-sidebar-summary-card project-release-filters-card"
+          aria-label="Release 筛选"
         >
           <div class="project-sidebar-summary-card__head">
             <Package :size="14" aria-hidden="true" />
-            <strong>Release tags</strong>
+            <strong>Release 筛选</strong>
           </div>
           <div class="project-sidebar-summary-card__actions">
             <button
@@ -3814,22 +3875,50 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               刷新 Release
             </button>
           </div>
+          <button
+            type="button"
+            class="ghost project-release-filter-clear"
+            :disabled="activeReleaseFilterCount === 0"
+            @click="clearReleaseFilters"
+          >
+            清除筛选
+            <span v-if="activeReleaseFilterCount">{{ activeReleaseFilterCount }}</span>
+          </button>
           <p v-if="releasesLoading" class="project-sidebar-note">正在读取 releases。</p>
-          <p v-else-if="!releases.length" class="project-sidebar-note">暂无 release tag。</p>
-          <nav v-else class="project-release-tag-list" aria-label="Release tag 跳转">
-            <button
-              v-for="release in releases"
-              :key="release.id"
-              type="button"
-              class="project-release-tag"
-              :class="{ 'is-active': focusedReleaseTag === release.tagName }"
-              @click="focusReleaseTag(release.tagName, true)"
-            >
-              <span>{{ release.tagName }}</span>
-              <em v-if="release.draft">Draft</em>
-              <em v-else-if="release.prerelease">Pre</em>
-            </button>
-          </nav>
+          <template v-else>
+            <div class="project-release-filter-group">
+              <h4>类型</h4>
+              <div class="project-release-type-list" aria-label="Release 类型筛选">
+                <button
+                  v-for="filter in releaseTypeFilters"
+                  :key="filter.value"
+                  type="button"
+                  class="project-release-type-filter"
+                  :class="{ 'is-active': releaseTypeFilter === filter.value }"
+                  @click="setReleaseTypeFilter(filter.value)"
+                >
+                  {{ filter.label }}
+                </button>
+              </div>
+            </div>
+            <div class="project-release-filter-group">
+              <h4>Tag</h4>
+              <p v-if="!releaseFilterTags.length" class="project-sidebar-note">暂无 release tag。</p>
+              <nav v-else class="project-release-tag-list" aria-label="Release tag 筛选">
+                <button
+                  v-for="release in releaseFilterTags"
+                  :key="release.id"
+                  type="button"
+                  class="project-release-tag"
+                  :class="[`is-${release.type}`, { 'is-active': focusedReleaseTag === release.tagName }]"
+                  @click="focusReleaseTag(release.tagName, true)"
+                >
+                  <span>{{ release.tagName }}</span>
+                  <em>{{ release.type === "prerelease" ? "Pre" : release.type }}</em>
+                </button>
+              </nav>
+            </div>
+          </template>
         </section>
 
         <section
@@ -4546,6 +4635,70 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   min-width: 0;
 }
 
+.project-release-filter-clear {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  padding: 0 8px;
+  border-color: var(--border-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-release-filter-clear span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.project-release-filter-group {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.project-release-filter-group h4 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-release-type-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-release-type-filter {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-release-type-filter:hover,
+.project-release-type-filter:focus-visible,
+.project-release-type-filter.is-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+  color: var(--accent);
+}
+
 .project-release-tag {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -4565,9 +4718,25 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-release-tag:hover,
 .project-release-tag:focus-visible,
 .project-release-tag.is-active {
-  border-color: var(--border);
+  border-color: color-mix(in srgb, var(--release-filter-color, var(--accent)) 45%, var(--border));
   background: var(--bg-hover);
   color: var(--text);
+}
+
+.project-release-tag.is-stable {
+  --release-filter-color: var(--ok);
+}
+
+.project-release-tag.is-latest {
+  --release-filter-color: var(--accent);
+}
+
+.project-release-tag.is-prerelease {
+  --release-filter-color: var(--warn);
+}
+
+.project-release-tag.is-draft {
+  --release-filter-color: var(--text-muted);
 }
 
 .project-release-tag span {

@@ -1,17 +1,15 @@
 <script setup lang="ts">
 import {
   Download,
-  ExternalLink,
   FileUp,
   LoaderCircle,
-  Package,
   Pencil,
   Save,
-  Tag,
   Trash2,
   X,
 } from "@lucide/vue";
 import { computed, reactive, ref, watch } from "vue";
+import { openContextMenuAt, type ContextMenuItem } from "../../composables/useContextMenu";
 import type {
   GitHubCreateReleaseRequest,
   GitHubRelease,
@@ -27,10 +25,10 @@ const props = defineProps<{
   loading: boolean;
   mutating: boolean;
   focusedTag?: string | null;
+  releaseTypeFilter?: ReleaseTypeFilter;
 }>();
 
 const emit = defineEmits<{
-  focusTag: [tagName: string | null];
   create: [request: GitHubCreateReleaseRequest];
   update: [releaseId: number, request: GitHubUpdateReleaseRequest];
   delete: [release: GitHubRelease];
@@ -49,20 +47,41 @@ type ReleaseForm = {
   generateReleaseNotes: boolean;
 };
 
+type ReleaseTypeFilter = "all" | "stable" | "latest" | "prerelease" | "draft";
+type ReleaseType = Exclude<ReleaseTypeFilter, "all">;
+
+const ASSET_PREVIEW_LIMIT = 2;
+const BODY_COLLAPSE_CHAR_LIMIT = 420;
+const BODY_COLLAPSE_LINE_LIMIT = 8;
+const RELEASE_TYPE_LABELS: Record<ReleaseType, string> = {
+  stable: "Stable",
+  latest: "Latest",
+  prerelease: "Pre-release",
+  draft: "Draft",
+};
+
 const createOpen = ref(false);
 const editingReleaseId = ref<number | null>(null);
-const deleteReleaseId = ref<number | null>(null);
-const deleteAssetId = ref<number | null>(null);
+const expandedAssetReleaseIds = ref<Set<number>>(new Set());
+const expandedBodyReleaseIds = ref<Set<number>>(new Set());
 const form = reactive<ReleaseForm>(blankForm());
 
 const sortedReleases = computed(() =>
   [...props.releases].sort((left, right) => releaseTimestamp(right) - releaseTimestamp(left)),
 );
+const filteredReleases = computed(() => {
+  const tag = props.focusedTag?.trim();
+  const type = props.releaseTypeFilter ?? "all";
+  return sortedReleases.value.filter((release) => {
+    if (tag && release.tagName !== tag) return false;
+    return type === "all" || releaseType(release) === type;
+  });
+});
 
 watch(() => props.repoFullName, () => {
   closeForm();
-  deleteReleaseId.value = null;
-  deleteAssetId.value = null;
+  expandedAssetReleaseIds.value = new Set();
+  expandedBodyReleaseIds.value = new Set();
 });
 
 function blankForm(): ReleaseForm {
@@ -98,6 +117,40 @@ function openEdit(release: GitHubRelease) {
   form.generateReleaseNotes = false;
   editingReleaseId.value = release.id;
   createOpen.value = false;
+}
+
+function openReleaseActions(release: GitHubRelease, event: MouseEvent) {
+  if (props.mutating) return;
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  const items: ContextMenuItem[] = [
+    { id: `edit-release:${release.id}`, label: "编辑 Release", icon: Pencil, onSelect: () => openEdit(release) },
+    { id: `upload-assets:${release.id}`, label: "上传资产", icon: FileUp, onSelect: () => emit("uploadAssets", release) },
+  ];
+  if (release.assets.length) {
+    items.push({
+      id: `delete-assets:${release.id}`,
+      label: "删除资产",
+      icon: Trash2,
+      danger: true,
+      children: release.assets.map((asset) => ({
+        id: `delete-asset:${release.id}:${asset.id}`,
+        label: asset.name,
+        icon: Trash2,
+        onSelect: () => emit("deleteAsset", release, asset),
+        danger: true,
+        confirmLabel: "确认删除资产",
+      })),
+    });
+  }
+  items.push({
+    id: `delete-release:${release.id}`,
+    label: "删除 Release",
+    icon: Trash2,
+    onSelect: () => emit("delete", release),
+    danger: true,
+    confirmLabel: "确认删除 Release",
+  });
+  openContextMenuAt(rect.right, rect.bottom + 4, items);
 }
 
 function closeForm() {
@@ -141,6 +194,23 @@ function releaseTitle(release: GitHubRelease) {
   return release.name?.trim() || release.tagName;
 }
 
+function releaseType(release: GitHubRelease): ReleaseType {
+  if (release.draft) return "draft";
+  if (release.prerelease) return "prerelease";
+  if (release.makeLatest === "true") return "latest";
+  return "stable";
+}
+
+function releaseTypeLabel(release: GitHubRelease) {
+  return RELEASE_TYPE_LABELS[releaseType(release)];
+}
+
+function releaseTimelineLabel(release: GitHubRelease) {
+  const details = [releaseTypeLabel(release), release.tagName];
+  if (release.targetCommitish) details.push(`Target ${release.targetCommitish}`);
+  return details.join(" · ");
+}
+
 function releaseDate(release: GitHubRelease) {
   const value = release.publishedAt ?? release.createdAt;
   const parsed = Date.parse(value);
@@ -157,6 +227,48 @@ function sizeText(size: number) {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${size} B`;
+}
+
+function isReleaseAssetsExpanded(release: GitHubRelease) {
+  return expandedAssetReleaseIds.value.has(release.id);
+}
+
+function visibleReleaseAssets(release: GitHubRelease) {
+  if (isReleaseAssetsExpanded(release)) return release.assets;
+  return release.assets.slice(0, ASSET_PREVIEW_LIMIT);
+}
+
+function releaseHiddenAssetCount(release: GitHubRelease) {
+  return Math.max(0, release.assets.length - ASSET_PREVIEW_LIMIT);
+}
+
+function toggleIdSet(current: Set<number>, id: number) {
+  const next = new Set(current);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+}
+
+function toggleReleaseAssets(release: GitHubRelease) {
+  expandedAssetReleaseIds.value = toggleIdSet(expandedAssetReleaseIds.value, release.id);
+}
+
+function isReleaseBodyLong(release: GitHubRelease) {
+  const body = release.body?.trim() ?? "";
+  if (!body) return false;
+  return body.length > BODY_COLLAPSE_CHAR_LIMIT || body.split(/\r\n?|\n/).length > BODY_COLLAPSE_LINE_LIMIT;
+}
+
+function isReleaseBodyExpanded(release: GitHubRelease) {
+  return expandedBodyReleaseIds.value.has(release.id);
+}
+
+function isReleaseBodyCollapsed(release: GitHubRelease) {
+  return isReleaseBodyLong(release) && !isReleaseBodyExpanded(release);
+}
+
+function toggleReleaseBody(release: GitHubRelease) {
+  expandedBodyReleaseIds.value = toggleIdSet(expandedBodyReleaseIds.value, release.id);
 }
 
 function openMarkdownLink(target: ReadmeLinkTarget) {
@@ -212,89 +324,99 @@ defineExpose({
 
     <p v-if="loading && !releases.length" class="repo-empty muted">正在读取 releases。</p>
     <p v-else-if="!releases.length" class="repo-empty muted">暂无 releases。</p>
+    <p v-else-if="!filteredReleases.length" class="repo-empty muted">没有匹配的 releases。</p>
 
     <ol v-else class="release-list release-timeline" aria-label="Release 列表">
       <li
-        v-for="release in sortedReleases"
+        v-for="release in filteredReleases"
         :key="release.id"
         class="release-card"
-        :class="{ 'is-focused': focusedTag === release.tagName }"
+        :class="[`is-${releaseType(release)}`, { 'is-focused': focusedTag === release.tagName }]"
         :data-release-tag="release.tagName"
       >
-        <span class="release-card__rail" aria-hidden="true">
-          <span class="release-card__node">
-            <Tag :size="15" aria-hidden="true" />
+        <span class="release-card__rail">
+          <span
+            class="release-card__rail-hit"
+            :aria-label="releaseTimelineLabel(release)"
+            :data-tooltip="releaseTimelineLabel(release)"
+            tabindex="0"
+          >
+            <span class="release-card__node"></span>
           </span>
         </span>
-        <article class="release-card__body">
-          <header class="release-card__head">
-            <div class="release-card__title">
-              <h4>{{ releaseTitle(release) }}</h4>
-              <button type="button" class="release-card__tag" @click="emit('focusTag', release.tagName)">
-                {{ release.tagName }}
-              </button>
-            </div>
-            <div class="release-card__tools">
-              <span v-if="release.makeLatest === 'true'" class="release-badge">Latest</span>
-              <span v-if="release.draft" class="release-badge">Draft</span>
-              <span v-else-if="release.prerelease" class="release-badge">Pre-release</span>
-              <button type="button" class="ghost project-icon-action" aria-label="打开 Release" title="打开" @click="emit('openUrl', release.htmlUrl)">
-                <ExternalLink :size="14" aria-hidden="true" />
-              </button>
-              <button type="button" class="ghost project-icon-action" :disabled="mutating" aria-label="编辑 Release" title="编辑" @click="openEdit(release)">
-                <Pencil :size="14" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="ghost danger project-icon-action"
-                :disabled="mutating"
-                :aria-label="deleteReleaseId === release.id ? '确认删除 Release' : '删除 Release'"
-                :title="deleteReleaseId === release.id ? '再次点击确认删除' : '删除'"
-                @click="deleteReleaseId === release.id ? emit('delete', release) : deleteReleaseId = release.id"
-              >
-                <Trash2 :size="14" aria-hidden="true" />
-              </button>
-            </div>
-          </header>
-          <p class="release-card__meta">
-            <Package :size="13" aria-hidden="true" />
-            <span>{{ release.author || "unknown" }} 发布于 {{ releaseDate(release) }}</span>
-            <span v-if="release.targetCommitish">Target {{ release.targetCommitish }}</span>
-          </p>
-          <div v-if="release.body" class="release-card__markdown">
-            <MarkdownReadme :content="release.body" :link-base-url="release.htmlUrl" @open-link="openMarkdownLink" />
-          </div>
-          <p v-else class="release-card__empty muted">No release notes.</p>
-          <section class="release-assets" aria-label="Release assets">
-            <div class="release-assets__head">
-              <strong>Assets</strong>
-              <button type="button" class="ghost" :disabled="mutating" @click="emit('uploadAssets', release)">
-                <FileUp :size="14" aria-hidden="true" />
-                上传
-              </button>
-            </div>
-            <p v-if="!release.assets.length" class="release-card__empty muted">No assets.</p>
-            <div v-else class="release-assets__list">
-              <div v-for="asset in release.assets" :key="asset.id" class="release-asset">
-                <button type="button" class="release-asset__name" @click="emit('openUrl', asset.browserDownloadUrl)">
-                  <Download :size="14" aria-hidden="true" />
-                  <span>{{ asset.name }}</span>
-                </button>
-                <span>{{ sizeText(asset.size) }}</span>
-                <span>{{ asset.downloadCount }} downloads</span>
+        <article class="release-card__content">
+          <div class="release-card__main">
+            <header class="release-card__head">
+              <div class="release-card__title">
+                <div class="release-card__title-line">
+                  <h4>{{ releaseTitle(release) }}</h4>
+                  <span v-if="releaseType(release) !== 'prerelease'" class="release-badge">{{ releaseTypeLabel(release) }}</span>
+                </div>
+                <p class="release-card__meta">
+                  <span class="release-card__tag">{{ release.tagName }}</span>
+                  <span>{{ release.author || "unknown" }}</span>
+                  <time :datetime="release.publishedAt ?? release.createdAt">{{ releaseDate(release) }}</time>
+                </p>
+              </div>
+              <div class="release-card__tools">
                 <button
                   type="button"
-                  class="ghost danger project-icon-action"
+                  class="ghost project-icon-action"
                   :disabled="mutating"
-                  :aria-label="deleteAssetId === asset.id ? '确认删除资产' : '删除资产'"
-                  :title="deleteAssetId === asset.id ? '再次点击确认删除' : '删除资产'"
-                  @click="deleteAssetId === asset.id ? emit('deleteAsset', release, asset) : deleteAssetId = asset.id"
+                  aria-label="编辑 Release 菜单"
+                  title="编辑 Release"
+                  aria-haspopup="menu"
+                  @click="openReleaseActions(release, $event)"
                 >
-                  <Trash2 :size="14" aria-hidden="true" />
+                  <Pencil :size="14" aria-hidden="true" />
                 </button>
               </div>
+            </header>
+            <div
+              v-if="release.body"
+              class="release-card__markdown"
+              :class="{
+                'is-collapsible': isReleaseBodyLong(release),
+                'is-collapsed': isReleaseBodyCollapsed(release),
+              }"
+            >
+              <div class="release-card__markdown-body">
+                <MarkdownReadme :content="release.body" :link-base-url="release.htmlUrl" @open-link="openMarkdownLink" />
+              </div>
+              <button
+                v-if="isReleaseBodyLong(release)"
+                type="button"
+                class="release-card__markdown-toggle"
+                :aria-expanded="isReleaseBodyExpanded(release)"
+                @click="toggleReleaseBody(release)"
+              >
+                {{ isReleaseBodyExpanded(release) ? "收起" : "展开" }}
+              </button>
             </div>
-          </section>
+            <p v-else class="release-card__empty muted">No release notes.</p>
+          </div>
+          <div v-if="release.assets.length" class="release-assets__list">
+            <div v-for="asset in visibleReleaseAssets(release)" :key="asset.id" class="release-asset">
+              <button type="button" class="release-asset__name" @click="emit('openUrl', asset.browserDownloadUrl)">
+                <span>{{ asset.name }}</span>
+              </button>
+              <span class="release-asset__meta">
+                <span class="release-asset__downloads">
+                  <Download :size="13" aria-hidden="true" />
+                  {{ asset.downloadCount }}
+                </span>
+                <span>{{ sizeText(asset.size) }}</span>
+              </span>
+            </div>
+            <button
+              v-if="releaseHiddenAssetCount(release)"
+              type="button"
+              class="release-assets__more"
+              @click="toggleReleaseAssets(release)"
+            >
+              {{ isReleaseAssetsExpanded(release) ? "收起" : `更多 ${releaseHiddenAssetCount(release)}` }}
+            </button>
+          </div>
         </article>
       </li>
     </ol>
@@ -304,8 +426,8 @@ defineExpose({
 <style scoped>
 .repo-releases-panel,
 .release-list,
-.release-card__body,
-.release-assets {
+.release-card__content,
+.release-card__main {
   display: grid;
   gap: 12px;
   min-width: 0;
@@ -313,7 +435,6 @@ defineExpose({
 
 .release-card__head,
 .release-card__tools,
-.release-assets__head,
 .release-form__head,
 .release-form__actions {
   display: flex;
@@ -332,6 +453,7 @@ defineExpose({
 }
 
 .release-card__tools {
+  justify-content: flex-end;
   flex-shrink: 0;
 }
 
@@ -345,8 +467,7 @@ defineExpose({
 }
 
 .release-form__head,
-.release-form__actions,
-.release-assets__head {
+.release-form__actions {
   justify-content: space-between;
 }
 
@@ -375,34 +496,41 @@ defineExpose({
 }
 
 .release-list {
+  gap: 0;
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.release-card {
-  position: relative;
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  gap: 14px;
-  min-width: 0;
-  padding: 0;
-}
-
-.release-card__body {
-  gap: 14px;
-  padding: 14px;
+  padding: 12px 14px;
+  overflow: visible;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--border-soft) 55%, transparent);
+  list-style: none;
 }
 
-.release-card.is-focused .release-card__body {
-  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 38%, transparent),
-    0 1px 0 color-mix(in srgb, var(--border-soft) 55%, transparent);
+.release-card {
+  --release-tone: var(--ok);
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+}
+
+.release-card.is-latest {
+  --release-tone: var(--accent);
+}
+
+.release-card.is-prerelease {
+  --release-tone: var(--warn);
+}
+
+.release-card.is-draft {
+  --release-tone: var(--text-muted);
+}
+
+.release-card.is-focused .release-card__content {
+  background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
 }
 
 .release-card__rail {
@@ -410,65 +538,116 @@ defineExpose({
   display: flex;
   justify-content: center;
   min-height: 100%;
-  padding-top: 12px;
+  padding-top: 18px;
 }
 
 .release-card__rail::before {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
+  width: 2px;
   content: "";
-  background: color-mix(in srgb, var(--text-muted) 44%, transparent);
+  background: color-mix(in srgb, var(--release-tone) 58%, transparent);
 }
 
 .release-card:first-child .release-card__rail::before {
-  top: 24px;
+  top: 20px;
 }
 
-.release-card:last-child .release-card__rail::before {
-  bottom: calc(100% - 24px);
+.release-card__rail-hit {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  outline: none;
+}
+
+.release-card__rail-hit:hover::after,
+.release-card__rail-hit:focus-visible::after {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 8px);
+  z-index: 5;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(320px, 52vw);
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--shadow, #000) 14%, transparent);
+  color: var(--text);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  transform: translateY(-50%);
+  white-space: normal;
+}
+
+.release-card__rail-hit:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--release-tone) 22%, transparent);
 }
 
 .release-card__node {
   position: relative;
   z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border);
+  display: block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--bg-elev);
   border-radius: 50%;
-  color: var(--accent);
-  background: var(--bg-elev);
+  background: var(--release-tone);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--release-tone) 22%, transparent);
+}
+
+.release-card__content {
+  gap: 10px;
+  padding: 14px 4px 18px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.release-card:last-child .release-card__content {
+  border-bottom: 0;
 }
 
 .release-card__head {
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: flex-start;
+  gap: 10px;
   min-width: 0;
 }
 
 .release-card__title {
   display: grid;
-  gap: 5px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.release-card__title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
 }
 
 .release-card__title h4 {
   overflow-wrap: anywhere;
-  font-size: 18px;
+  color: var(--text);
+  font-size: 15px;
   font-weight: 700;
+  line-height: 1.35;
 }
 
 .release-card__tag {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -477,45 +656,114 @@ defineExpose({
   align-items: center;
   min-height: 22px;
   padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-muted);
+  border: 1px solid color-mix(in srgb, var(--release-tone) 34%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--release-tone);
   font-size: 11px;
   font-weight: 700;
 }
 
 .release-card__meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
+  white-space: nowrap;
+}
+
+.release-card__meta span,
+.release-card__meta time {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.release-card__meta span::after {
+  margin-left: 6px;
+  content: "·";
+  color: var(--text-muted);
 }
 
 .release-card__markdown {
+  position: relative;
+  display: grid;
+  gap: 4px;
   min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.release-card__markdown-body {
+  position: relative;
+  min-width: 0;
+}
+
+.release-card__markdown.is-collapsed .release-card__markdown-body {
+  max-height: 128px;
+  overflow: hidden;
+}
+
+.release-card__markdown.is-collapsed .release-card__markdown-body::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 34px;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--bg-elev));
 }
 
 .release-card__markdown :deep(.markdown-readme) {
   padding: 0;
   border: 0;
+  color: var(--text-muted);
+  font-size: inherit;
+  line-height: inherit;
   background: transparent;
 }
 
-.release-assets {
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.release-assets__head strong {
+.release-card__markdown :deep(.markdown-readme h1),
+.release-card__markdown :deep(.markdown-readme h2),
+.release-card__markdown :deep(.markdown-readme h3),
+.release-card__markdown :deep(.markdown-readme h4),
+.release-card__markdown :deep(.markdown-readme h5),
+.release-card__markdown :deep(.markdown-readme h6) {
+  margin: 6px 0 4px;
+  color: var(--text-muted);
   font-size: 13px;
+  line-height: 1.35;
 }
 
-.release-assets__head .ghost {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.release-card__markdown :deep(.markdown-readme p),
+.release-card__markdown :deep(.markdown-readme ul),
+.release-card__markdown :deep(.markdown-readme ol),
+.release-card__markdown :deep(.markdown-readme blockquote),
+.release-card__markdown :deep(.markdown-readme pre) {
+  margin: 5px 0;
+}
+
+.release-card__markdown :deep(.markdown-readme li) {
+  margin: 2px 0;
+}
+
+.release-card__markdown :deep(.markdown-readme code) {
+  font-size: 11px;
+}
+
+.release-card__markdown-toggle {
+  justify-self: start;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.release-card__markdown-toggle:hover {
+  text-decoration: underline;
 }
 
 .release-assets__list {
@@ -523,19 +771,21 @@ defineExpose({
   overflow: hidden;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
 }
 
 .release-asset {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
-  padding: 8px 10px;
+  min-height: 24px;
+  padding: 3px 8px;
   border-bottom: 1px solid var(--border-soft);
-  background: var(--bg);
+  background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .release-asset:last-child {
@@ -545,13 +795,15 @@ defineExpose({
 .release-asset__name {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-self: start;
   min-width: 0;
+  max-width: 100%;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--accent);
   font-weight: 600;
+  text-align: left;
 }
 
 .release-asset__name span {
@@ -561,8 +813,42 @@ defineExpose({
   white-space: nowrap;
 }
 
+.release-assets__more {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.release-assets__more:hover {
+  background: var(--bg-hover);
+}
+
+.release-asset__meta,
+.release-asset__downloads {
+  display: inline-flex;
+  align-items: center;
+}
+
+.release-asset__meta {
+  justify-content: flex-end;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.release-asset__downloads {
+  gap: 4px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 760px) {
   .release-form__grid,
+  .release-card__head,
   .release-asset {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -573,16 +859,16 @@ defineExpose({
   }
 
   .release-card__rail {
-    padding-top: 10px;
+    padding-top: 18px;
   }
 
   .release-card__node {
-    width: 22px;
-    height: 22px;
+    width: 11px;
+    height: 11px;
   }
 
-  .release-card__head {
-    display: grid;
+  .release-card__tools {
+    justify-content: flex-start;
   }
 }
 </style>
