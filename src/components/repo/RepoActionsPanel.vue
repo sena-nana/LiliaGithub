@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   Package,
   RefreshCw,
+  Upload,
   XCircle,
 } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
@@ -21,9 +22,11 @@ import {
   openUrl,
 } from "../../services/workspace/client";
 import type {
+  GitHubAttachWorkflowArtifactAssetRequest,
   GitHubWorkflowArtifact,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJob,
+  GitHubRelease,
   GitHubWorkflowRun,
   GitHubWorkflowRunDetail,
   RepoFilePreview,
@@ -43,12 +46,15 @@ const props = defineProps<{
   loading: boolean;
   focusedRunId?: number | null;
   focusedJobId?: number | null;
+  draftReleases?: readonly GitHubRelease[];
+  attachAssetMutating?: boolean;
 }>();
 
 const emit = defineEmits<{
   focusRun: [runId: number | null];
   focusJob: [jobId: number | null];
   refresh: [];
+  attachArtifactAsset: [request: GitHubAttachWorkflowArtifactAssetRequest];
 }>();
 
 const selectedRunId = ref<number | null>(props.focusedRunId ?? null);
@@ -64,6 +70,7 @@ const artifactErrors = ref<Record<number, string | undefined>>({});
 const artifactPreview = ref<RepoFilePreview | null>(null);
 const artifactPreviewLoading = ref(false);
 const artifactPreviewError = ref<string | null>(null);
+const selectedDraftReleaseId = ref<number | null>(null);
 const componentEpoch = useComponentEpoch();
 const detailLoader = createLatestAsyncLoader({ componentEpoch });
 const artifactPreviewLoader = createLatestAsyncLoader({ componentEpoch });
@@ -82,12 +89,28 @@ const totalDuration = computed(() => durationText(detailRun.value?.runStartedAt 
 const totalArtifacts = computed(() => detail.value?.artifacts.length ?? 0);
 const activeJob = computed(() => detail.value?.jobs.find((job) => job.id === expandedJobId.value) ?? null);
 const workflowGraph = computed(() => buildWorkflowGraph(detail.value));
+const draftReleaseTargets = computed(() => props.draftReleases ?? []);
+const selectedDraftRelease = computed(() =>
+  draftReleaseTargets.value.find((release) => release.id === selectedDraftReleaseId.value) ??
+  draftReleaseTargets.value[0] ??
+  null,
+);
 watch(() => props.focusedRunId, (runId) => {
   if (runId == null) {
     clearRunDetail();
     return;
   }
   void selectRun(runId, { emitRoute: false, load: true });
+}, { immediate: true });
+
+watch(draftReleaseTargets, (targets) => {
+  if (!targets.length) {
+    selectedDraftReleaseId.value = null;
+    return;
+  }
+  if (!targets.some((release) => release.id === selectedDraftReleaseId.value)) {
+    selectedDraftReleaseId.value = targets[0].id;
+  }
 }, { immediate: true });
 
 watch(() => props.focusedJobId, (jobId) => {
@@ -307,6 +330,31 @@ function formatBytes(value: number) {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
+
+function isWindowsInstallerArtifact(entry: GitHubWorkflowArtifactEntry) {
+  return entry.kind === "file" && /\.(exe|msi|msix|msixbundle|appx|appxbundle|zip)$/i.test(entry.name || entry.path);
+}
+
+function hasAttachableArtifact(entries: readonly GitHubWorkflowArtifactEntry[]) {
+  return entries.some(isWindowsInstallerArtifact);
+}
+
+function releaseOptionLabel(release: GitHubRelease) {
+  return `${release.tagName}${release.name ? ` · ${release.name}` : ""}`;
+}
+
+function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
+  if (!detailRun.value || !selectedArtifact.value || !selectedDraftRelease.value) return;
+  emit("attachArtifactAsset", {
+    runId: detailRun.value.id,
+    artifactId: selectedArtifact.value.id,
+    artifactName: selectedArtifact.value.name,
+    artifactPath: entry.path,
+    releaseId: selectedDraftRelease.value.id,
+    expectedTagName: selectedDraftRelease.value.tagName,
+    label: "Windows",
+  });
+}
 </script>
 
 <template>
@@ -517,20 +565,46 @@ function formatBytes(value: number) {
               <p v-if="artifactErrors[selectedArtifact.id]" class="repo-error">{{ artifactErrors[selectedArtifact.id] }}</p>
               <div v-if="selectedArtifactEntries.length" class="actions-artifact-browser">
                 <div class="actions-artifact-files">
-                  <button
+                  <div
                     v-for="entry in selectedArtifactEntries"
                     :key="entry.path"
-                    type="button"
-                    :disabled="entry.kind !== 'file'"
+                    class="actions-artifact-file-row"
                     :class="{ 'is-active': selectedArtifactPath === entry.path }"
-                    @click="selectArtifactFile(entry)"
                   >
-                    <FileArchive :size="14" aria-hidden="true" />
-                    <span>{{ entry.path }}</span>
-                    <small>{{ entry.kind === "file" ? formatBytes(entry.size) : "目录" }}</small>
-                  </button>
+                    <button
+                      type="button"
+                      class="actions-artifact-file-select"
+                      :disabled="entry.kind !== 'file'"
+                      @click="selectArtifactFile(entry)"
+                    >
+                      <FileArchive :size="14" aria-hidden="true" />
+                      <span>{{ entry.path }}</span>
+                      <small>{{ entry.kind === "file" ? formatBytes(entry.size) : "目录" }}</small>
+                    </button>
+                    <button
+                      v-if="isWindowsInstallerArtifact(entry)"
+                      type="button"
+                      class="ghost actions-artifact-attach"
+                      :disabled="!selectedDraftRelease || attachAssetMutating"
+                      :aria-label="`附加 ${entry.name} 到 draft release`"
+                      :title="selectedDraftRelease ? `附加到 ${selectedDraftRelease.tagName}` : '没有 draft release'"
+                      @click="attachArtifactFile(entry)"
+                    >
+                      <Upload :size="13" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
                 <div class="actions-artifact-preview">
+                  <div v-if="hasAttachableArtifact(selectedArtifactEntries)" class="actions-artifact-release-target">
+                    <label>
+                      <span>Draft Release</span>
+                      <select v-model.number="selectedDraftReleaseId" :disabled="!draftReleaseTargets.length || attachAssetMutating">
+                        <option v-for="release in draftReleaseTargets" :key="release.id" :value="release.id">
+                          {{ releaseOptionLabel(release) }}
+                        </option>
+                      </select>
+                    </label>
+                  </div>
                   <p v-if="artifactPreviewLoading" class="muted actions-empty">正在预览文件。</p>
                   <p v-else-if="artifactPreviewError" class="repo-error">{{ artifactPreviewError }}</p>
                   <MarkdownReadme
@@ -614,7 +688,7 @@ function formatBytes(value: number) {
 .actions-step__head,
 .actions-job-node,
 .actions-artifact,
-.actions-artifact-files button {
+.actions-artifact-file-select {
   display: grid;
   align-items: center;
   gap: 8px;
@@ -634,14 +708,15 @@ function formatBytes(value: number) {
 
 .actions-job-node:hover,
 .actions-artifact:hover,
-.actions-artifact-files button:hover:not(:disabled) {
+.actions-artifact-file-select:hover:not(:disabled),
+.actions-artifact-attach:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 
 .actions-job__head.is-active,
 .actions-job-node.is-active,
 .actions-artifact.is-active,
-.actions-artifact-files button.is-active {
+.actions-artifact-file-row.is-active .actions-artifact-file-select {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
   background: var(--accent-soft);
 }
@@ -929,12 +1004,19 @@ function formatBytes(value: number) {
   overflow: auto;
 }
 
-.actions-artifact-files button {
+.actions-artifact-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.actions-artifact-file-select {
   grid-template-columns: 16px minmax(0, 1fr);
   padding: 7px;
 }
 
-.actions-artifact-files button:disabled {
+.actions-artifact-file-select:disabled {
   cursor: default;
   opacity: 0.58;
 }
@@ -951,6 +1033,39 @@ function formatBytes(value: number) {
 .actions-artifact-files small {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.actions-artifact-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.actions-artifact-release-target {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.actions-artifact-release-target label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.actions-artifact-release-target select {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-size: 12px;
 }
 
 .actions-artifact-preview {

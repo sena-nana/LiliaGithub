@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  attachGitHubWorkflowArtifactAsset,
   clearGitHubRepoCache,
   createGitHubRelease,
   deleteGitHubRelease,
@@ -23,6 +24,7 @@ import type {
   GitHubPullRequest,
   GitHubRelease,
   GitHubReleaseAsset,
+  GitHubWorkflowRunDetail,
 } from "../src/services/workspace/types";
 
 const repoFullName = "sena-nana/remote-repo";
@@ -129,6 +131,35 @@ function release(overrides: Partial<GitHubRelease> = {}): GitHubRelease {
     publishedAt: "2026-06-18T08:05:00Z",
     assets: [releaseAsset()],
     ...overrides,
+  };
+}
+
+function workflowRunDetail(): GitHubWorkflowRunDetail {
+  return {
+    run: {
+      id: 1310,
+      name: "Release",
+      displayTitle: "v1.1.0",
+      status: "completed",
+      conclusion: "success",
+      branch: "v1.1.0",
+      event: "release",
+      htmlUrl: "https://github.com/sena-nana/remote-repo/actions/runs/1310",
+      createdAt: "2026-06-18T08:00:00Z",
+      updatedAt: "2026-06-18T08:00:00Z",
+      headSha: "abc123",
+      workflowId: 99,
+    },
+    jobs: [],
+    artifacts: [{
+      id: 131001,
+      name: "windows-installer",
+      sizeInBytes: 4096,
+      expired: false,
+      createdAt: "2026-06-18T08:02:00Z",
+      expiresAt: "2026-07-18T08:02:00Z",
+    }],
+    workflow: null,
   };
 }
 
@@ -404,6 +435,51 @@ describe("workspace GitHub project cache", () => {
     await deleteGitHubRelease(repoFullName, 8001);
     const afterDeleteRelease = await listGitHubReleases(repoFullName);
     expect(afterDeleteRelease.some((item) => item.id === 8001)).toBe(false);
+  });
+
+  it("从 Actions artifact 附加 release asset 后同步 releases 缓存", async () => {
+    const draftRelease = release({
+      id: 8101,
+      tagName: "v1.1.0",
+      name: "Draft v1.1.0",
+      draft: true,
+      publishedAt: null,
+      assets: [],
+    });
+    workspaceFallback.setFallbackGitHubReleasesForTests({ [repoFullName]: [draftRelease] });
+    workspaceFallback.setFallbackGitHubWorkflowRunDetailsForTests({
+      [repoFullName]: {
+        1310: workflowRunDetail(),
+      },
+    });
+    workspaceFallback.setFallbackGitHubWorkflowArtifactEntriesForTests({
+      [repoFullName]: {
+        131001: [
+          { path: "packages/Lilia_1.1.0_x64.msi", name: "Lilia_1.1.0_x64.msi", kind: "file", size: 4096 },
+        ],
+      },
+    });
+
+    await listGitHubReleases(repoFullName);
+    const asset = await attachGitHubWorkflowArtifactAsset(repoFullName, {
+      runId: 1310,
+      artifactId: 131001,
+      artifactName: "windows-installer",
+      artifactPath: "packages/Lilia_1.1.0_x64.msi",
+      releaseId: 8101,
+      expectedTagName: "v1.1.0",
+      label: "Windows",
+    });
+    const cached = await listGitHubReleases(repoFullName);
+
+    expect(asset.name).toBe("Lilia_1.1.0_x64.msi");
+    expect(asset.label).toBe("Windows");
+    expect(cached.find((item) => item.id === 8101)?.assets[0]).toMatchObject({
+      id: asset.id,
+      name: "Lilia_1.1.0_x64.msi",
+      label: "Windows",
+    });
+    expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests()).toHaveLength(1);
   });
 
   it("github repoId 文件树和预览按远程仓库与 ref 分派", async () => {

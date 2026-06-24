@@ -111,6 +111,7 @@ pub fn run() {
             workspace::github::github_update_release,
             workspace::github::github_delete_release,
             workspace::github::github_upload_release_asset,
+            workspace::github::github_attach_workflow_artifact_asset,
             workspace::github::github_delete_release_asset,
             workspace::repos::repo_get_summary,
             workspace::repos::repo_refresh_summary,

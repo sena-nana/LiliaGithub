@@ -55,6 +55,7 @@ import {
   createGitHubRelease,
   deleteGitHubRelease,
   deleteGitHubReleaseAsset,
+  attachGitHubWorkflowArtifactAsset,
   getGitHubIssueDiscussion,
   getRepoFilePreview,
   getGitHubIssueFilterMetadata,
@@ -81,6 +82,7 @@ import {
 } from "../../services/workspace/client";
 import type {
   CommitSummary,
+  GitHubAttachWorkflowArtifactAssetRequest,
   GitHubDiscussionTimelineItem,
   GitHubIssue,
   GitHubIssueDiscussion,
@@ -480,6 +482,7 @@ const releaseMutating = computed(() =>
   releaseAssetUploadTracker.running.value ||
   releaseAssetDeleteTracker.running.value
 );
+const draftReleases = computed(() => releases.value.filter((release) => release.draft));
 const deletingRepo = remoteDeleteTracker.running;
 const deletingLocalRepo = localDeleteTracker.running;
 let repoMutationGeneration = 0;
@@ -1373,7 +1376,10 @@ async function focusRun(runId: number | null | undefined) {
   focusedReleaseTag.value = null;
   if (!runId) {
     clearProjectTargets();
-    await loadActions();
+    await Promise.all([
+      loadActions(),
+      loadReleases(),
+    ]);
     return;
   }
   if (!hasRun(runId)) {
@@ -1384,6 +1390,7 @@ async function focusRun(runId: number | null | undefined) {
     return;
   }
   focusedRunId.value = runId;
+  await loadReleases();
   await nextTick();
   const row = projectMainRef.value?.querySelector<HTMLElement>(
     `.actions-run[data-run-id="${runId}"]`,
@@ -1842,6 +1849,13 @@ async function loadReleases(force = false) {
   }, { reusePending: !force });
 }
 
+async function refreshActionsPanel() {
+  await Promise.all([
+    loadActions(true),
+    loadReleases(true),
+  ]);
+}
+
 async function ensureSectionData(section: ProjectContentMode) {
   if (section === "readme") {
     await Promise.all([
@@ -1872,7 +1886,10 @@ async function ensureSectionData(section: ProjectContentMode) {
     return;
   }
   if (section === "actions") {
-    await loadActions();
+    await Promise.all([
+      loadActions(),
+      loadReleases(),
+    ]);
     return;
   }
   if (section === "release") {
@@ -1920,7 +1937,10 @@ async function refreshLoadedSectionData() {
     return;
   }
   if (activeSection.value === "actions" && actionsLoaded.value) {
-    await loadActions(true);
+    await Promise.all([
+      loadActions(true),
+      releasesLoaded.value ? loadReleases(true) : Promise.resolve(),
+    ]);
     return;
   }
   if (activeSection.value === "release" && releasesLoaded.value) {
@@ -2789,6 +2809,20 @@ async function uploadReleaseAssets(release: GitHubRelease) {
   }
 }
 
+async function attachWorkflowArtifactAsset(request: GitHubAttachWorkflowArtifactAssetRequest) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || releaseAssetUploadTracker.running.value) return;
+  const result = await runGitHubMutation(repoFullName, releaseAssetUploadTracker, () =>
+    attachGitHubWorkflowArtifactAsset(repoFullName, request)
+  );
+  if (!result.ok) return;
+  updateReleaseAssetsInView(request.releaseId, (assets) => [
+    result.value,
+    ...assets.filter((asset) => asset.id !== result.value.id),
+  ]);
+  clearHomeGitHubOverviewSnapshot();
+}
+
 async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAsset) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || releaseAssetDeleteTracker.running.value) return;
@@ -3193,9 +3227,12 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :loading="actionsLoading"
             :focused-run-id="focusedRunId"
             :focused-job-id="focusedJobId"
+            :draft-releases="draftReleases"
+            :attach-asset-mutating="releaseAssetUploadTracker.running.value"
             @focus-run="focusActionRun"
             @focus-job="focusActionJob"
-            @refresh="loadActions(true)"
+            @refresh="refreshActionsPanel"
+            @attach-artifact-asset="attachWorkflowArtifactAsset"
           />
         </section>
 

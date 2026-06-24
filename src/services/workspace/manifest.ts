@@ -80,6 +80,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_update_release",
     "github_delete_release",
     "github_upload_release_asset",
+    "github_attach_workflow_artifact_asset",
     "github_delete_release_asset",
   ],
   repo: [

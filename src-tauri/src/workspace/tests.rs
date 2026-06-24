@@ -2,6 +2,7 @@ use super::bulk::*;
 use super::github::*;
 use super::launch::*;
 use super::*;
+use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex as TestMutex};
 use std::time::Duration as TestDuration;
@@ -889,6 +890,84 @@ fn github_release_asset_upload_helpers_validate_paths_and_size() {
         b"asset"
     );
     assert!(github_release_asset_bytes(&dir.join("missing.bin").to_string_lossy()).is_err());
+}
+
+#[test]
+fn github_artifact_release_asset_helpers_validate_zip_entry_and_release_target() {
+    let dir = temp_dir("github-artifact-release-asset");
+    let zip_path = dir.join("artifact.zip");
+    let file = fs::File::create(&zip_path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    zip.start_file("packages/Lilia_1.1.0_x64.msi", options)
+        .unwrap();
+    zip.write_all(b"installer").unwrap();
+    zip.add_directory("packages/empty/", options).unwrap();
+    zip.finish().unwrap();
+
+    let (entry_path, bytes) =
+        github_artifact_file_bytes_from_zip(&zip_path, "\\packages\\Lilia_1.1.0_x64.msi").unwrap();
+    assert_eq!(entry_path, "packages/Lilia_1.1.0_x64.msi");
+    assert_eq!(bytes.len(), 9);
+    assert_eq!(bytes, b"installer");
+    assert!(github_artifact_file_bytes_from_zip(&zip_path, "../secret.msi").is_err());
+    assert!(github_artifact_file_bytes_from_zip(&zip_path, "packages/empty").is_err());
+    assert!(github_artifact_file_bytes_from_zip(&zip_path, "missing.msi").is_err());
+
+    let mut release = GitHubRelease {
+        id: 8001,
+        tag_name: "v1.1.0".to_string(),
+        target_commitish: "main".to_string(),
+        name: Some("Draft".to_string()),
+        body: None,
+        draft: true,
+        prerelease: false,
+        immutable: false,
+        make_latest: None,
+        html_url: "https://github.com/sena-nana/remote/releases/tag/v1.1.0".to_string(),
+        upload_url:
+            "https://uploads.github.com/repos/sena-nana/remote/releases/8001/assets{?name,label}"
+                .to_string(),
+        tarball_url: None,
+        zipball_url: None,
+        created_at: "2026-06-18T08:00:00Z".to_string(),
+        published_at: None,
+        author: Some("sena".to_string()),
+        assets: vec![],
+    };
+    assert!(
+        github_validate_release_for_artifact_asset(&release, "v1.1.0", "Lilia_1.1.0_x64.msi")
+            .is_ok()
+    );
+    assert!(
+        github_validate_release_for_artifact_asset(&release, "v1.2.0", "Lilia_1.1.0_x64.msi")
+            .is_err()
+    );
+    release.draft = false;
+    assert!(
+        github_validate_release_for_artifact_asset(&release, "v1.1.0", "Lilia_1.1.0_x64.msi")
+            .is_err()
+    );
+    release.draft = true;
+    release.assets.push(GitHubReleaseAsset {
+        id: 9001,
+        name: "Lilia_1.1.0_x64.msi".to_string(),
+        label: Some("Windows".to_string()),
+        content_type: "application/octet-stream".to_string(),
+        size: 9,
+        download_count: 0,
+        state: "uploaded".to_string(),
+        browser_download_url:
+            "https://github.com/sena-nana/remote/releases/download/v1.1.0/Lilia_1.1.0_x64.msi"
+                .to_string(),
+        created_at: "2026-06-18T08:00:00Z".to_string(),
+        updated_at: "2026-06-18T08:00:00Z".to_string(),
+        uploader: Some("sena".to_string()),
+    });
+    assert!(
+        github_validate_release_for_artifact_asset(&release, "v1.1.0", "Lilia_1.1.0_x64.msi")
+            .is_err()
+    );
 }
 
 #[test]
