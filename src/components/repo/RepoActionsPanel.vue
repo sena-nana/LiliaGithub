@@ -17,6 +17,7 @@ import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import {
   getGitHubWorkflowArtifactFilePreview,
+  getGitHubWorkflowJobLog,
   getGitHubWorkflowRunDetail,
   listGitHubWorkflowArtifactFiles,
   openUrl,
@@ -38,7 +39,9 @@ import {
   type WorkflowRunTone,
 } from "../../utils/repoDisplay";
 import { buildWorkflowGraph } from "../../utils/workflowGraph";
+import { errorExcerptFromLog, workflowFailureSummary } from "../../utils/workflowDiagnostics";
 import MarkdownReadme from "./MarkdownReadme.vue";
+import { parseWorkflowJobLogSections } from "./workflowLogs";
 
 const props = defineProps<{
   repoFullName: string;
@@ -70,6 +73,9 @@ const artifactErrors = ref<Record<number, string | undefined>>({});
 const artifactPreview = ref<RepoFilePreview | null>(null);
 const artifactPreviewLoading = ref(false);
 const artifactPreviewError = ref<string | null>(null);
+const jobLogs = ref<Record<number, string | undefined>>({});
+const jobLogLoading = ref<Record<number, boolean | undefined>>({});
+const jobLogErrors = ref<Record<number, string | undefined>>({});
 const selectedDraftReleaseId = ref<number | null>(null);
 const componentEpoch = useComponentEpoch();
 const detailLoader = createLatestAsyncLoader({ componentEpoch });
@@ -89,6 +95,19 @@ const totalDuration = computed(() => durationText(detailRun.value?.runStartedAt 
 const totalArtifacts = computed(() => detail.value?.artifacts.length ?? 0);
 const activeJob = computed(() => detail.value?.jobs.find((job) => job.id === expandedJobId.value) ?? null);
 const workflowGraph = computed(() => buildWorkflowGraph(detail.value));
+const failureSummary = computed(() => workflowFailureSummary(detail.value?.jobs ?? []));
+const activeJobLogSections = computed(() => {
+  const job = activeJob.value;
+  if (!job) return [];
+  return parseWorkflowJobLogSections(job, jobLogs.value[job.id] ?? "");
+});
+const activeJobFailureExcerpt = computed(() => {
+  const job = activeJob.value;
+  if (!job) return "";
+  const failedStep = activeJobLogSections.value.find((section) => section.step.conclusion === "failure") ??
+    activeJobLogSections.value.find((section) => isWorkflowRunFailure(section.step));
+  return errorExcerptFromLog(failedStep?.content || jobLogs.value[job.id] || "");
+});
 const draftReleaseTargets = computed(() => props.draftReleases ?? []);
 const selectedDraftRelease = computed(() =>
   draftReleaseTargets.value.find((release) => release.id === selectedDraftReleaseId.value) ??
@@ -132,6 +151,9 @@ function clearRunDetail() {
   selectedArtifactId.value = null;
   selectedArtifactPath.value = null;
   artifactPreview.value = null;
+  jobLogs.value = {};
+  jobLogLoading.value = {};
+  jobLogErrors.value = {};
   detail.value = null;
   detailError.value = null;
   detailLoader.invalidate();
@@ -164,6 +186,10 @@ async function loadDetail(runId: number, force = false) {
       if (!detailLoader.isCurrent(loaderRunId) || selectedRunId.value !== runId) return;
       detail.value = nextDetail;
       expandedJobId.value = props.focusedJobId ?? null;
+      if (expandedJobId.value != null) {
+        const job = nextDetail.jobs.find((item) => item.id === expandedJobId.value);
+        if (job) void loadJobLog(job);
+      }
     } catch (err) {
       if (!detailLoader.isCurrent(loaderRunId)) return;
       detail.value = null;
@@ -177,11 +203,26 @@ async function loadDetail(runId: number, force = false) {
 function selectJob(job: GitHubWorkflowJob) {
   expandedJobId.value = job.id;
   emit("focusJob", expandedJobId.value);
+  void loadJobLog(job);
 }
 
 function closeJobDetail() {
   expandedJobId.value = null;
   emit("focusJob", null);
+}
+
+async function loadJobLog(job: GitHubWorkflowJob, force = false) {
+  if (!force && jobLogs.value[job.id] != null) return;
+  jobLogLoading.value = { ...jobLogLoading.value, [job.id]: true };
+  jobLogErrors.value = { ...jobLogErrors.value, [job.id]: undefined };
+  try {
+    const log = await getGitHubWorkflowJobLog(props.repoFullName, job.id);
+    jobLogs.value = { ...jobLogs.value, [job.id]: log.content };
+  } catch (err) {
+    jobLogErrors.value = { ...jobLogErrors.value, [job.id]: String(err) };
+  } finally {
+    jobLogLoading.value = { ...jobLogLoading.value, [job.id]: false };
+  }
 }
 
 async function selectArtifact(artifact: GitHubWorkflowArtifact) {
@@ -446,6 +487,33 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
           </div>
         </div>
 
+        <section
+          v-if="failureSummary.failedJobs.length || failureSummary.failedSteps.length"
+          class="actions-failure-panel"
+          aria-label="失败诊断"
+        >
+          <div class="actions-section-head">
+            <strong>失败诊断</strong>
+            <span>{{ failureSummary.failedJobs.length }} 个 job / {{ failureSummary.failedSteps.length }} 个 step</span>
+          </div>
+          <button
+            v-for="{ job, step } in failureSummary.failedSteps"
+            :key="`${job.id}:${step.number}`"
+            type="button"
+            class="actions-failure-row"
+            @click="selectJob(job)"
+          >
+            <XCircle :size="14" aria-hidden="true" />
+            <span>
+              <strong>{{ step.name }}</strong>
+              <small>{{ job.name }} · {{ statusLabel(step) }}</small>
+            </span>
+          </button>
+          <p v-if="!failureSummary.failedSteps.length" class="muted actions-empty">
+            失败集中在 job 级别，打开失败 job 查看日志。
+          </p>
+        </section>
+
         <p v-if="detailLoading" class="muted actions-empty">正在读取 run 详情。</p>
         <p v-if="detailError" class="repo-error">{{ detailError }}</p>
 
@@ -536,6 +604,16 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
                     <small>{{ durationText(step.startedAt, step.completedAt) }}</small>
                   </div>
                 </div>
+              </div>
+              <div class="actions-job-log-diagnostic">
+                <p v-if="jobLogLoading[activeJob.id]" class="muted actions-empty">正在读取 job 日志。</p>
+                <p v-else-if="jobLogErrors[activeJob.id]" class="repo-error">{{ jobLogErrors[activeJob.id] }}</p>
+                <template v-else-if="activeJobFailureExcerpt">
+                  <strong>错误片段</strong>
+                  <pre>{{ activeJobFailureExcerpt }}</pre>
+                </template>
+                <p v-else-if="jobLogs[activeJob.id]" class="muted actions-empty">日志已读取，未识别到明显错误片段。</p>
+                <button type="button" class="ghost" @click="loadJobLog(activeJob, true)">刷新日志</button>
               </div>
             </article>
           </section>
@@ -829,6 +907,67 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   min-height: 0;
+}
+
+.actions-failure-panel,
+.actions-job-log-diagnostic {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--err-soft);
+  border-radius: var(--radius-sm);
+  background: var(--err-soft);
+}
+
+.actions-failure-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--err);
+  text-align: left;
+}
+
+.actions-failure-row:hover,
+.actions-failure-row:focus-visible {
+  border-color: var(--err);
+}
+
+.actions-failure-row span,
+.actions-job-log-diagnostic {
+  min-width: 0;
+}
+
+.actions-failure-row strong,
+.actions-failure-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions-failure-row small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.actions-job-log-diagnostic strong {
+  color: var(--err);
+  font-size: 12px;
+}
+
+.actions-job-log-diagnostic pre {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  color: var(--text);
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .actions-jobs,

@@ -134,6 +134,26 @@ pub struct ProjectLaunchLog {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectLaunchHistoryEntry {
+    pub id: String,
+    pub repo_id: String,
+    pub command: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub started_at: i64,
+    #[serde(default)]
+    pub finished_at: Option<i64>,
+    pub state: String,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub last_output: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubBindingMetadata {
     pub login: String,
     pub avatar_url: Option<String>,

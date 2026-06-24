@@ -38,6 +38,7 @@ import type {
   HiddenRepo,
   ProjectLaunchCandidate,
   ProjectLaunchConfig,
+  ProjectLaunchHistoryEntry,
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RemoteRepoShortcut,
@@ -265,6 +266,7 @@ export interface WorkspaceCommandContracts {
   >;
   repo_get_launch_status: CommandContract<RepoArg, ProjectLaunchStatus>;
   repo_get_launch_logs: CommandContract<RepoArg & { since: Maybe<number> }, ProjectLaunchLog[]>;
+  repo_list_launch_history: CommandContract<RepoArg, ProjectLaunchHistoryEntry[]>;
   repo_start_launch: CommandContract<RepoArg, ProjectLaunchStatus>;
   repo_stop_launch: CommandContract<RepoArg, ProjectLaunchStatus>;
   repo_stage_files: CommandContract<RepoArg & { files: string[] }, void>;

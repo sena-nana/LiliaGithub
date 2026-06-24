@@ -82,6 +82,7 @@ import {
 import {
   loadLaunch,
   refreshLaunchLogs,
+  refreshLaunchHistory,
   refreshLaunchStatus,
   saveLaunchConfig,
   startLaunch,
@@ -143,6 +144,7 @@ export function useWorkspace() {
     saveLaunchConfig,
     refreshLaunchStatus,
     refreshLaunchLogs,
+    refreshLaunchHistory,
     startLaunch,
     stopLaunch,
     stage,

@@ -100,6 +100,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "repo_save_launch_config",
     "repo_get_launch_status",
     "repo_get_launch_logs",
+    "repo_list_launch_history",
     "repo_start_launch",
     "repo_stop_launch",
     "repo_stage_files",

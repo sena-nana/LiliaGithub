@@ -587,6 +587,7 @@ function removeLocalRepoState(repoId: string) {
   delete state.launchCandidates[repoId];
   delete state.launchStatuses[repoId];
   delete state.launchLogs[repoId];
+  delete state.launchHistory[repoId];
 }
 
 export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {

@@ -68,6 +68,7 @@ describe("单应用模板工具链", () => {
 
     expect(cargo).toContain('tauri-plugin-store = "2"');
     expect(cargo).toContain('tauri-plugin-dialog = "2"');
+    expect(cargo).toContain('tauri-plugin-updater = "2"');
     expect(cargo).toContain("reqwest");
     expect(cargo).toContain("keyring");
     expect(cargo).toContain("base64");
@@ -151,6 +152,10 @@ describe("单应用模板工具链", () => {
     expect(ci).toContain("corepack yarn docs:build");
     expect(ci).toContain("src-tauri/target");
     expect(release).toContain("projectPath: .");
+    expect(release).toContain("TAURI_SIGNING_PRIVATE_KEY");
+    expect(release).toContain("WINDOWS_CERTIFICATE_THUMBPRINT");
+    expect(release).toContain("createUpdaterArtifacts = $true");
+    expect(release).toContain("src-tauri/tauri.release.conf.json");
     expect(release).toContain("releaseName: LiliaGithub");
     expect(pages).toContain("docs/.vitepress/dist");
     expect(pages).not.toContain("enablement: true");

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { Check, TriangleAlert } from "@lucide/vue";
+import { computed } from "vue";
 import type { RepoConflictFile, RepoConflictState } from "../../services/workspace";
+import { conflictRecoveryGuidance } from "../../utils/recoveryGuidance";
 import { conflictStatusText, conflictStatusTone } from "../../utils/repoDisplay";
 
-defineProps<{
+const props = defineProps<{
   conflictOperationText: string;
   conflictSummaryText: string;
   conflictContinueText: string;
@@ -31,6 +33,8 @@ defineEmits<{
   markConflictResolved: [];
   openConflictFolder: [];
 }>();
+
+const guidance = computed(() => conflictRecoveryGuidance(props.conflictOperationText, props.conflictFiles.length > 0));
 </script>
 
 <template>
@@ -61,6 +65,15 @@ defineEmits<{
         </button>
       </div>
     </div>
+
+    <aside class="project-sidebar-error-card__item conflict-guidance" aria-label="冲突恢复指引">
+      <TriangleAlert :size="15" aria-hidden="true" />
+      <div>
+        <strong>{{ guidance.title }}</strong>
+        <p>{{ guidance.summary }}</p>
+        <p>{{ guidance.steps.join(" / ") }}</p>
+      </div>
+    </aside>
 
     <p v-if="!conflictFiles.length && conflictOperationActive" class="muted repo-empty">冲突文件已处理，可继续当前操作。</p>
     <p v-else-if="!conflictFiles.length" class="muted repo-empty">当前没有需要处理的冲突。</p>
@@ -166,3 +179,31 @@ defineEmits<{
     </div>
   </section>
 </template>
+
+<style scoped>
+.conflict-guidance {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.conflict-guidance strong,
+.conflict-guidance p {
+  margin: 0;
+}
+
+.conflict-guidance strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.conflict-guidance p {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+</style>

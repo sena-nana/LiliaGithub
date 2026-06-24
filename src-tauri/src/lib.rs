@@ -17,6 +17,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 let _ = window.set_background_color(Some(BG));
@@ -129,6 +130,7 @@ pub fn run() {
             workspace::launch::repo_save_launch_config,
             workspace::launch::repo_get_launch_status,
             workspace::launch::repo_get_launch_logs,
+            workspace::launch::repo_list_launch_history,
             workspace::launch::repo_start_launch,
             workspace::launch::repo_stop_launch,
             workspace::repos::repo_stage_files,

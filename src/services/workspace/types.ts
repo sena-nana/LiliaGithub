@@ -86,6 +86,19 @@ export interface ProjectLaunchLog {
   timestamp: number;
 }
 
+export interface ProjectLaunchHistoryEntry {
+  id: string;
+  repoId: string;
+  command: string;
+  cwd: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  state: ProjectLaunchState;
+  exitCode: number | null;
+  error: string | null;
+  lastOutput: string | null;
+}
+
 export interface GitHubBindingMetadata {
   login: string;
   avatarUrl: string | null;

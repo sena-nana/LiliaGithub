@@ -45,19 +45,21 @@ export async function loadLaunch(repoId: string) {
   const generation = currentLaunchGeneration(repoId);
   try {
     const service = await loadWorkspaceService();
-    const [config, candidates, status, logs] = await Promise.all([
+    const [config, candidates, status, logs, history] = await Promise.all([
       service.getRepoLaunchConfig(repoId),
       service.listRepoLaunchCandidates(repoId),
       service.getRepoLaunchStatus(repoId),
       service.getRepoLaunchLogs(repoId),
+      service.listRepoLaunchHistory(repoId),
     ]);
     if (isCurrentLaunchGeneration(repoId, generation)) {
       state.launchConfigs[repoId] = config;
       state.launchCandidates[repoId] = candidates;
       state.launchStatuses[repoId] = status;
       state.launchLogs[repoId] = logs;
+      state.launchHistory[repoId] = history;
     }
-    return { config, candidates, status, logs };
+    return { config, candidates, status, logs, history };
   } catch (err) {
     state.error = String(err);
     throw err;
@@ -107,6 +109,16 @@ export async function refreshLaunchLogs(repoId: string) {
   return state.launchLogs[repoId] ?? [];
 }
 
+export async function refreshLaunchHistory(repoId: string) {
+  const generation = currentLaunchGeneration(repoId);
+  const service = await loadWorkspaceService();
+  const history = await service.listRepoLaunchHistory(repoId);
+  if (isCurrentLaunchGeneration(repoId, generation)) {
+    state.launchHistory[repoId] = history;
+  }
+  return history;
+}
+
 export async function startLaunch(repoId: string) {
   const generation = bumpLaunchGeneration(repoId);
   const service = await loadWorkspaceService();
@@ -115,6 +127,7 @@ export async function startLaunch(repoId: string) {
   if (isCurrentLaunchGeneration(repoId, generation)) {
     state.launchStatuses[repoId] = status;
     await refreshLaunchLogs(repoId);
+    await refreshLaunchHistory(repoId);
   }
   return status;
 }
@@ -126,6 +139,7 @@ export async function stopLaunch(repoId: string) {
   if (isCurrentLaunchGeneration(repoId, generation)) {
     state.launchStatuses[repoId] = status;
     await refreshLaunchLogs(repoId);
+    await refreshLaunchHistory(repoId);
   }
   return status;
 }
