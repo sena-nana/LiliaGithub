@@ -55,6 +55,7 @@ import type {
   RepoFileTreeEntry,
   RepoMergePullResult,
   RepoOperationResult,
+  RepoPullLocalChangesMode,
   RepoRemote,
   RepoRefreshSummaryOptions,
   RepoResetMode,
@@ -2216,7 +2217,9 @@ function createFallbackSettings(): WorkspaceSettings {
 }
 
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
-let fallbackBulkExecuteOverride: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null = null;
+let fallbackBulkExecuteOverride:
+  | ((operation: BulkOperation, repoIds: string[], localChangesMode: RepoPullLocalChangesMode) => BulkSyncResult[])
+  | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
 let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContributionResult) | null = null;
 let fallbackGitHubWorkflowRunsOverride:
@@ -2326,7 +2329,9 @@ export function resetWorkspaceFallbacksForTests() {
 }
 
 export function setFallbackBulkExecuteOverrideForTests(
-  override: ((operation: BulkOperation, repoIds: string[]) => BulkSyncResult[]) | null,
+  override:
+    | ((operation: BulkOperation, repoIds: string[], localChangesMode: RepoPullLocalChangesMode) => BulkSyncResult[])
+    | null,
 ) {
   fallbackBulkExecuteOverride = override;
 }
@@ -4912,21 +4917,40 @@ export function commitRepo(
   });
 }
 
-export function pullRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_pull", { repoId }, () => {
+export function pullRepo(
+  repoId: string,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<RepoSummary> {
+  return call("repo_pull", { repoId, localChangesMode }, () => {
     const repo = fallbackRepo(repoId);
-    return { ...repo, behind: 0 };
+    return {
+      ...repo,
+      behind: 0,
+      stagedCount: localChangesMode === "discard" ? 0 : repo.stagedCount,
+      unstagedCount: localChangesMode === "discard" ? 0 : repo.unstagedCount,
+      untrackedCount: localChangesMode === "discard" ? 0 : repo.untrackedCount,
+    };
   });
 }
 
-export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
-  return call("repo_merge_pull", { repoId }, () => {
+export function mergePullRepo(
+  repoId: string,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<RepoMergePullResult> {
+  return call("repo_merge_pull", { repoId, localChangesMode }, () => {
     const repo = fallbackRepo(repoId);
     const conflicts = fallbackConflictState(repoId);
+    const discardCounts = localChangesMode === "discard" && !conflicts.files.length;
     return {
       status: conflicts.files.length ? "conflicts" : "success",
       message: conflicts.files.length ? "合并产生冲突，请处理后提交" : "合并完成",
-      summary: { ...repo, behind: conflicts.files.length ? repo.behind : 0 },
+      summary: {
+        ...repo,
+        behind: conflicts.files.length ? repo.behind : 0,
+        stagedCount: discardCounts ? 0 : repo.stagedCount,
+        unstagedCount: discardCounts ? 0 : repo.unstagedCount,
+        untrackedCount: discardCounts ? 0 : repo.untrackedCount,
+      },
       conflicts,
     };
   });
@@ -4967,9 +4991,17 @@ export function fetchRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_fetch", { repoId }, () => fallbackRepo(repoId));
 }
 
-export function startRebaseRepo(repoId: string, ontoRef?: string | null): Promise<RepoOperationResult> {
-  return call("repo_start_rebase", { repoId, ontoRef: ontoRef ?? null }, () =>
-    fallbackOperationResult(repoId, "rebase 完成"),
+export function startRebaseRepo(
+  repoId: string,
+  ontoRef?: string | null,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<RepoOperationResult> {
+  return call("repo_start_rebase", { repoId, ontoRef: ontoRef ?? null, localChangesMode }, () =>
+    fallbackOperationResult(
+      repoId,
+      "rebase 完成",
+      localChangesMode === "discard" ? { stagedCount: 0, unstagedCount: 0, untrackedCount: 0 } : undefined,
+    ),
   );
 }
 
@@ -5268,9 +5300,13 @@ export function continueConflictOperation(repoId: string): Promise<RepoSummary> 
   });
 }
 
-export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]): Promise<BulkSyncPreview> {
+export function bulkSyncPreview(
+  operation: BulkOperation,
+  repos: RepoSummary[],
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<BulkSyncPreview> {
   const reposToUse = repos.length ? repos : visibleFallbackRepos();
-  return call("bulk_sync_preview", { operation }, () => {
+  return call("bulk_sync_preview", { operation, localChangesMode }, () => {
     if (operation === "sync") {
       return {
         operation,
@@ -5278,14 +5314,19 @@ export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]):
           .filter((repo) => repo.remoteUrl && repo.currentBranch && repo.conflictCount <= 0)
           .filter((repo) => {
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
-            return (repo.behind > 0 && dirty === 0) || (repo.ahead > 0 && repo.behind === 0);
+            return (repo.behind > 0 && (dirty === 0 || localChangesMode !== "reject")) ||
+              (repo.ahead > 0 && repo.behind === 0);
           })
           .map((repo) => ({
             repo: { ...repo },
             reason: repo.ahead > 0 && repo.behind > 0
-              ? "需先拉取合并后推送"
+              ? repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0
+                ? "需处理本地修改，拉取合并后推送"
+                : "需先拉取合并后推送"
               : repo.behind > 0
-                ? "可拉取远端更新"
+                ? repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0
+                  ? "需处理本地修改后拉取远端更新"
+                  : "可拉取远端更新"
                 : "有本地提交待推送",
           })),
         blocked: reposToUse
@@ -5294,7 +5335,9 @@ export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]):
             if (!repo.remoteUrl) return [{ repo: { ...repo }, reason: "没有 origin remote" }];
             if (!repo.currentBranch) return [{ repo: { ...repo }, reason: "当前不是命名分支" }];
             if (repo.behind > 0 && repo.conflictCount > 0) return [{ repo: { ...repo }, reason: "已有冲突需要先处理" }];
-            if (repo.behind > 0 && dirty > 0) return [{ repo: { ...repo }, reason: "存在未提交变更" }];
+            if (repo.behind > 0 && dirty > 0 && localChangesMode === "reject") {
+              return [{ repo: { ...repo }, reason: "存在未提交变更" }];
+            }
             return [];
           }),
         warnings: reposToUse
@@ -5339,10 +5382,21 @@ export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]):
     return {
       operation,
       eligible: reposToUse
-        .filter((repo) => repo.behind > 0)
-        .map((repo) => ({ repo: { ...repo }, reason: "可拉取远端更新" })),
+        .filter((repo) =>
+          repo.behind > 0 &&
+          (localChangesMode !== "reject" || repo.stagedCount + repo.unstagedCount + repo.untrackedCount <= 0)
+        )
+        .map((repo) => ({
+          repo: { ...repo },
+          reason: repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0
+            ? "需处理本地修改后拉取远端更新"
+            : "可拉取远端更新",
+        })),
       blocked: reposToUse
-        .filter((repo) => repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0)
+        .filter((repo) =>
+          localChangesMode === "reject" &&
+          repo.stagedCount + repo.unstagedCount + repo.untrackedCount > 0
+        )
         .map((repo) => ({ repo: { ...repo }, reason: "存在未提交变更" })),
       warnings: reposToUse
         .filter((repo) => repo.behind <= 0)
@@ -5351,15 +5405,23 @@ export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]):
   });
 }
 
-export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {
-  return call("bulk_sync_execute", { operation, repoIds }, () =>
-    (fallbackBulkExecuteOverride?.(operation, repoIds) ?? repoIds.map((repoId) => {
+export function bulkSyncExecute(
+  operation: BulkOperation,
+  repoIds: string[],
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<BulkSyncResult[]> {
+  return call("bulk_sync_execute", { operation, repoIds, localChangesMode }, () =>
+    (fallbackBulkExecuteOverride?.(operation, repoIds, localChangesMode) ?? repoIds.map((repoId) => {
       const repo = fallbackRepo(repoId);
+      const discardCounts = localChangesMode === "discard" && (operation === "pull" || operation === "sync");
       return {
         summary: {
           ...repo,
           ahead: operation === "push" || operation === "sync" ? 0 : repo.ahead,
           behind: operation === "pull" || operation === "sync" ? 0 : repo.behind,
+          stagedCount: discardCounts ? 0 : repo.stagedCount,
+          unstagedCount: discardCounts ? 0 : repo.unstagedCount,
+          untrackedCount: discardCounts ? 0 : repo.untrackedCount,
         },
         repoId,
         status: "success",

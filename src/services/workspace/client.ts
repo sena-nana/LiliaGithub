@@ -54,6 +54,7 @@ import type {
   RepoFileTreeEntry,
   RepoMergePullResult,
   RepoOperationResult,
+  RepoPullLocalChangesMode,
   RepoRemote,
   RepoRefreshSummaryOptions,
   RepoResetMode,
@@ -1313,12 +1314,18 @@ export function commitRepo(
   );
 }
 
-export function pullRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_pull", { repoId }, () => workspaceFallback().pullRepo(repoId));
+export function pullRepo(
+  repoId: string,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<RepoSummary> {
+  return call("repo_pull", { repoId, localChangesMode }, () => workspaceFallback().pullRepo(repoId, localChangesMode));
 }
 
-export function mergePullRepo(repoId: string): Promise<RepoMergePullResult> {
-  return call("repo_merge_pull", { repoId }, () => workspaceFallback().mergePullRepo(repoId));
+export function mergePullRepo(
+  repoId: string,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<RepoMergePullResult> {
+  return call("repo_merge_pull", { repoId, localChangesMode }, () => workspaceFallback().mergePullRepo(repoId, localChangesMode));
 }
 
 export function fetchRepo(repoId: string): Promise<RepoSummary> {
@@ -1328,9 +1335,10 @@ export function fetchRepo(repoId: string): Promise<RepoSummary> {
 export function startRebaseRepo(
   repoId: string,
   ontoRef?: string | null,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
 ): Promise<RepoOperationResult> {
-  return call("repo_start_rebase", { repoId, ontoRef: ontoRef ?? null }, () =>
-    workspaceFallback().startRebaseRepo(repoId, ontoRef),
+  return call("repo_start_rebase", { repoId, ontoRef: ontoRef ?? null, localChangesMode }, () =>
+    workspaceFallback().startRebaseRepo(repoId, ontoRef, localChangesMode),
   );
 }
 
@@ -1483,12 +1491,24 @@ export function continueConflictOperation(repoId: string): Promise<RepoSummary> 
   return call("repo_continue_conflict_operation", { repoId }, () => workspaceFallback().continueConflictOperation(repoId));
 }
 
-export function bulkSyncPreview(operation: BulkOperation, repos: RepoSummary[]): Promise<BulkSyncPreview> {
-  return call("bulk_sync_preview", { operation, repos }, () => workspaceFallback().bulkSyncPreview(operation, repos));
+export function bulkSyncPreview(
+  operation: BulkOperation,
+  repos: RepoSummary[],
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<BulkSyncPreview> {
+  return call("bulk_sync_preview", { operation, repos, localChangesMode }, () =>
+    workspaceFallback().bulkSyncPreview(operation, repos, localChangesMode)
+  );
 }
 
-export function bulkSyncExecute(operation: BulkOperation, repoIds: string[]): Promise<BulkSyncResult[]> {
-  return call("bulk_sync_execute", { operation, repoIds }, () => workspaceFallback().bulkSyncExecute(operation, repoIds));
+export function bulkSyncExecute(
+  operation: BulkOperation,
+  repoIds: string[],
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+): Promise<BulkSyncResult[]> {
+  return call("bulk_sync_execute", { operation, repoIds, localChangesMode }, () =>
+    workspaceFallback().bulkSyncExecute(operation, repoIds, localChangesMode)
+  );
 }
 
 export function openPath(path: string): Promise<void> {

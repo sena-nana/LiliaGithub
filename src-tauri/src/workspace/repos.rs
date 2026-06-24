@@ -1,4 +1,4 @@
-use super::bulk::{merge_pull_block_reason, repo_dirty_count};
+use super::bulk::{merge_pull_block_reason_with_mode, repo_dirty_count};
 use super::*;
 
 pub(super) const MAX_REPO_REFRESH_CONCURRENCY: usize = 4;
@@ -1493,15 +1493,26 @@ pub async fn repo_commit(
 }
 
 #[tauri::command]
-pub async fn repo_pull(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+pub async fn repo_pull(
+    app: AppHandle,
+    repo_id: String,
+    local_changes_mode: Option<RepoPullLocalChangesMode>,
+) -> Result<RepoSummary, String> {
     run_blocking("拉取仓库", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
         let summary = summarize_repo(&root, &path);
-        if repo_dirty_count(&summary) > 0 {
-            return Err("存在未提交变更，已阻止 pull".to_string());
+        let local_changes =
+            prepare_pull_local_changes(&path, &summary, local_changes_mode, "pull")?;
+        if let Err(err) = run_pull(&app, &path) {
+            return Err(restore_pull_local_changes_after_error(&path, local_changes, err));
         }
-        run_pull(&app, &path)?;
+        if let Err(err) = restore_pull_local_changes(&path, local_changes) {
+            let conflicts = repo_conflicts(&path);
+            if conflicts.files.is_empty() {
+                return Err(err);
+            }
+        }
         Ok(summarize_repo(&root, &path))
     })
     .await
@@ -1511,20 +1522,35 @@ pub async fn repo_pull(app: AppHandle, repo_id: String) -> Result<RepoSummary, S
 pub async fn repo_merge_pull(
     app: AppHandle,
     repo_id: String,
+    local_changes_mode: Option<RepoPullLocalChangesMode>,
 ) -> Result<RepoMergePullResult, String> {
     run_blocking("合并拉取仓库", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
         let summary = summarize_repo(&root, &path);
-        if let Some(reason) =
-            merge_pull_block_reason(&summary, current_branch_upstream(&path).is_some())
-        {
+        let mode = local_changes_mode.unwrap_or_default();
+        if let Some(reason) = merge_pull_block_reason_with_mode(
+            &summary,
+            current_branch_upstream(&path).is_some(),
+            mode,
+        ) {
             return Err(reason);
         }
+        let local_changes = prepare_pull_local_changes(&path, &summary, Some(mode), "合并拉取")?;
 
-        run_fetch(&app, &path)?;
+        if let Err(err) = run_fetch(&app, &path) {
+            return Err(restore_pull_local_changes_after_error(&path, local_changes, err));
+        }
         match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
             Ok(_) => {
+                if let Some(result) = restore_pull_local_changes_for_merge_result(
+                    &root,
+                    &path,
+                    local_changes,
+                    "拉取完成，stash 还原产生冲突，请处理后提交",
+                )? {
+                    return Ok(result);
+                }
                 let summary = summarize_repo(&root, &path);
                 Ok(RepoMergePullResult {
                     status: "success".to_string(),
@@ -1537,7 +1563,7 @@ pub async fn repo_merge_pull(
                 let conflicts = repo_conflicts(&path);
                 let summary = summarize_repo(&root, &path);
                 if conflicts.files.is_empty() {
-                    Err(err)
+                    Err(restore_pull_local_changes_after_error(&path, local_changes, err))
                 } else {
                     Ok(RepoMergePullResult {
                         status: "conflicts".to_string(),
@@ -1568,23 +1594,41 @@ pub async fn repo_start_rebase(
     app: AppHandle,
     repo_id: String,
     onto_ref: Option<String>,
+    local_changes_mode: Option<RepoPullLocalChangesMode>,
 ) -> Result<RepoOperationResult, String> {
     run_blocking("执行 rebase", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
-        ensure_repo_ready_for_rewrite(&root, &path, "rebase")?;
+        ensure_repo_has_no_conflicts(&root, &path, "rebase")?;
+        let summary = summarize_repo(&root, &path);
+        let local_changes =
+            prepare_pull_local_changes(&path, &summary, local_changes_mode, "rebase")?;
         let target = normalize_rebase_target(&path, onto_ref)?;
         if target == "@{u}" || target.contains('/') {
-            run_fetch(&app, &path)?;
+            if let Err(err) = run_fetch(&app, &path) {
+                return Err(restore_pull_local_changes_after_error(&path, local_changes, err));
+            }
         }
-        run_repo_operation_with_conflicts(
+        let result = run_repo_operation_with_conflicts(
             &root,
             &path,
             &["rebase", target.as_str()],
             None,
             "rebase 完成",
             "rebase 产生冲突，请处理后继续",
-        )
+        )?;
+        if result.status == "conflicts" {
+            return Ok(result);
+        }
+        if let Some(result) = restore_pull_local_changes_for_operation_result(
+            &root,
+            &path,
+            local_changes,
+            "rebase 完成，stash 还原产生冲突，请处理后继续",
+        )? {
+            return Ok(result);
+        }
+        Ok(result)
     })
     .await
 }
@@ -2087,6 +2131,116 @@ pub(super) fn run_repo_operation_with_conflicts(
                     summary: summarize_repo(root, path),
                     conflicts,
                 })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct PullLocalChanges {
+    stash_ref: Option<String>,
+}
+
+pub(super) fn prepare_pull_local_changes(
+    path: &Path,
+    summary: &RepoSummary,
+    mode: Option<RepoPullLocalChangesMode>,
+    operation: &str,
+) -> Result<PullLocalChanges, String> {
+    let mode = mode.unwrap_or_default();
+    if repo_dirty_count(summary) == 0 {
+        return Ok(PullLocalChanges { stash_ref: None });
+    }
+
+    match mode {
+        RepoPullLocalChangesMode::Reject => {
+            Err(format!("存在未提交变更，已阻止 {operation}"))
+        }
+        RepoPullLocalChangesMode::Discard => {
+            discard_all_repo_local_changes(path)?;
+            Ok(PullLocalChanges { stash_ref: None })
+        }
+        RepoPullLocalChangesMode::Stash => {
+            git_command(path, &["stash", "push", "-u", "-m", "拉取前保存本地修改"], None)?;
+            Ok(PullLocalChanges {
+                stash_ref: Some("stash@{0}".to_string()),
+            })
+        }
+    }
+}
+
+pub(super) fn discard_all_repo_local_changes(path: &Path) -> Result<(), String> {
+    git_command(path, &["reset", "--hard", "HEAD"], None)?;
+    git_command(path, &["clean", "-fd"], None)?;
+    Ok(())
+}
+
+pub(super) fn restore_pull_local_changes(
+    path: &Path,
+    local_changes: PullLocalChanges,
+) -> Result<(), String> {
+    let Some(stash_ref) = local_changes.stash_ref else {
+        return Ok(());
+    };
+    git_command(path, &["stash", "pop", stash_ref.as_str()], None)
+        .map(|_| ())
+        .map_err(|err| format!("拉取完成，但还原本地修改失败：{err}"))
+}
+
+pub(super) fn restore_pull_local_changes_after_error(
+    path: &Path,
+    local_changes: PullLocalChanges,
+    err: String,
+) -> String {
+    match restore_pull_local_changes(path, local_changes) {
+        Ok(()) => err,
+        Err(restore_err) => format!("{err}\n\n{restore_err}"),
+    }
+}
+
+pub(super) fn restore_pull_local_changes_for_operation_result(
+    root: &Path,
+    path: &Path,
+    local_changes: PullLocalChanges,
+    conflict_message: &str,
+) -> Result<Option<RepoOperationResult>, String> {
+    match restore_pull_local_changes(path, local_changes) {
+        Ok(()) => Ok(None),
+        Err(err) => {
+            let conflicts = repo_conflicts(path);
+            if conflicts.files.is_empty() {
+                Err(err)
+            } else {
+                Ok(Some(RepoOperationResult {
+                    status: "conflicts".to_string(),
+                    message: conflict_message.to_string(),
+                    summary: summarize_repo(root, path),
+                    conflicts,
+                }))
+            }
+        }
+    }
+}
+
+pub(super) fn restore_pull_local_changes_for_merge_result(
+    root: &Path,
+    path: &Path,
+    local_changes: PullLocalChanges,
+    conflict_message: &str,
+) -> Result<Option<RepoMergePullResult>, String> {
+    match restore_pull_local_changes(path, local_changes) {
+        Ok(()) => Ok(None),
+        Err(err) => {
+            let conflicts = repo_conflicts(path);
+            if conflicts.files.is_empty() {
+                Err(err)
+            } else {
+                Ok(Some(RepoMergePullResult {
+                    status: "conflicts".to_string(),
+                    message: conflict_message.to_string(),
+                    summary: summarize_repo(root, path),
+                    conflicts,
+                }))
             }
         }
     }
@@ -3301,12 +3455,22 @@ pub(super) fn ensure_repo_ready_for_rewrite(
     path: &Path,
     operation: &str,
 ) -> Result<(), String> {
+    ensure_repo_has_no_conflicts(root, path, operation)?;
+    let summary = summarize_repo(root, path);
+    if repo_dirty_count(&summary) > 0 {
+        return Err(format!("存在未提交变更，已阻止 {operation}"));
+    }
+    Ok(())
+}
+
+pub(super) fn ensure_repo_has_no_conflicts(
+    root: &Path,
+    path: &Path,
+    operation: &str,
+) -> Result<(), String> {
     let summary = summarize_repo(root, path);
     if summary.conflict_count > 0 || !repo_conflicts(path).files.is_empty() {
         return Err(format!("当前仓库存在未处理冲突，已阻止 {operation}"));
-    }
-    if repo_dirty_count(&summary) > 0 {
-        return Err(format!("存在未提交变更，已阻止 {operation}"));
     }
     Ok(())
 }

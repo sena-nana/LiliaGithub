@@ -256,7 +256,7 @@ describe("workspace incremental refresh", () => {
 
     await refreshRepoSummaries();
 
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]);
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash");
     expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 0, behind: 0 });
     expect(repoActionErrorForRepo("Repo1")).toBeNull();
   });
@@ -287,6 +287,26 @@ describe("workspace incremental refresh", () => {
     expect(state.recentSync).toBeNull();
   });
 
+  it("自动刷新遇到本地修改且落后远端时使用 stash 策略同步", async () => {
+    const stale = repoSummary("Repo1", { behind: 1, unstagedCount: 1 });
+    const synced = repoSummary("Repo1", { behind: 0, unstagedCount: 1 });
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(stale);
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: "Repo1", status: "success", message: "完成", summary: synced },
+    ]);
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash");
+    expect(repoActionErrorForRepo("Repo1")).toBeNull();
+    expect(state.repos[0]).toMatchObject({ behind: 0, unstagedCount: 1 });
+  });
+
   it("自动刷新执行自动同步时暴露同步中状态并保存最近失败", async () => {
     const stale = repoSummary("Repo1", { ahead: 1 });
     const execution = deferred<typeof state.bulkResults>();
@@ -299,7 +319,7 @@ describe("workspace incremental refresh", () => {
     service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
 
     const refreshing = refreshRepoSummaries();
-    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]));
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash"));
 
     expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
 
@@ -327,7 +347,7 @@ describe("workspace incremental refresh", () => {
     service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
 
     const running = autoSyncRepoIfNeeded("Repo1");
-    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"]));
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash"));
     expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
 
     await autoSyncRepoIfNeeded("Repo1");
@@ -1050,7 +1070,7 @@ describe("workspace incremental refresh", () => {
     service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
 
     const running = executeBulk();
-    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [repo.id]));
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [repo.id], "reject"));
     state.bulkPreview = pullPreview;
 
     execution.resolve([
@@ -1115,8 +1135,8 @@ describe("workspace incremental refresh", () => {
 
     await syncAll();
 
-    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync", expect.any(Array));
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, both.id]);
+    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync", expect.any(Array), "reject");
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, both.id], "reject");
     expect(service.pushRepo).not.toHaveBeenCalled();
     expect(state.bulkPreview).toEqual(preview);
     expect(state.bulkResults).toEqual([
@@ -1219,7 +1239,7 @@ describe("workspace incremental refresh", () => {
     await previewBulk("push");
     await executeBulk();
 
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [first.id, second.id]);
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [first.id, second.id], "reject");
     expect(service.pushRepo).not.toHaveBeenCalled();
     expect(state.repos.find((repo) => repo.id === first.id)?.ahead).toBe(0);
     expect(state.repos.find((repo) => repo.id === second.id)?.ahead).toBe(0);
@@ -1248,9 +1268,9 @@ describe("workspace incremental refresh", () => {
 
     await syncAll();
 
-    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync", expect.any(Array));
+    expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync", expect.any(Array), "reject");
     expect(service.bulkSyncPreview.mock.calls[0][1].map((repo) => repo.id)).toEqual([first.id, second.id]);
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, second.id]);
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, second.id], "reject");
     expect(service.pushRepo).not.toHaveBeenCalled();
     expect(state.repos.map((repo) => [repo.id, repo.ahead])).toEqual([
       [first.id, 0],

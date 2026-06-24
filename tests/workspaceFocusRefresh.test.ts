@@ -166,7 +166,7 @@ describe("workspace focus refresh", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["LiliaGithub"]);
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["LiliaGithub"], "stash");
     expect(recentSyncErrorForRepo("LiliaGithub")).toEqual({ message: "认证失败", retrying: false });
   });
 
