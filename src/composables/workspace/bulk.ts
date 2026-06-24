@@ -1,4 +1,4 @@
-import type { BulkOperation } from "../../services/workspace";
+import type { BulkOperation, RepoPullLocalChangesMode } from "../../services/workspace";
 import { invalidateSessionContextSnapshot } from "../sessionContext";
 import { bulkSyncRepoIds, rememberRecentSync, state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
@@ -7,11 +7,14 @@ import { refreshLanguageStatsForRepos } from "./repositories";
 let bulkPreviewGeneration = 0;
 let bulkExecutionGeneration = 0;
 
-export async function previewBulk(operation: BulkOperation) {
+export async function previewBulk(
+  operation: BulkOperation,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+) {
   if (state.bulkRunning) return;
   const generation = ++bulkPreviewGeneration;
   const service = await loadWorkspaceService();
-  const preview = await service.bulkSyncPreview(operation, state.repos);
+  const preview = await service.bulkSyncPreview(operation, state.repos, localChangesMode);
   if (generation !== bulkPreviewGeneration) return;
   applyBulkPreview(preview);
 }
@@ -24,7 +27,10 @@ function bulkExecutionRepoIds(preview = state.bulkPreview) {
   return preview.eligible.map((item) => item.repo.id);
 }
 
-export async function executeBulk(repoIds?: string[]) {
+export async function executeBulk(
+  repoIds?: string[],
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+) {
   const preview = state.bulkPreview;
   const targetRepoIds = repoIds ?? bulkExecutionRepoIds(preview);
   if (!preview || !targetRepoIds || state.bulkRunning) return;
@@ -33,7 +39,7 @@ export async function executeBulk(repoIds?: string[]) {
   state.bulkRunning = true;
   try {
     const service = await loadWorkspaceService();
-    const results = await service.bulkSyncExecute(preview.operation, targetRepoIds);
+    const results = await service.bulkSyncExecute(preview.operation, targetRepoIds, localChangesMode);
     if (generation !== bulkExecutionGeneration) return;
     applyBulkResults(preview, results);
     if (preview.operation === "push" || preview.operation === "sync") {
@@ -46,17 +52,17 @@ export async function executeBulk(repoIds?: string[]) {
   }
 }
 
-export async function syncAll() {
+export async function syncAll(localChangesMode: RepoPullLocalChangesMode = "reject") {
   if (state.bulkRunning) return;
   bulkPreviewGeneration += 1;
   const generation = ++bulkExecutionGeneration;
   state.bulkRunning = true;
   try {
     const service = await loadWorkspaceService();
-    const preview = await service.bulkSyncPreview("sync", state.repos);
+    const preview = await service.bulkSyncPreview("sync", state.repos, localChangesMode);
     if (generation !== bulkExecutionGeneration) return;
     applyBulkPreview(preview);
-    const results = await service.bulkSyncExecute("sync", bulkExecutionRepoIds(preview) ?? []);
+    const results = await service.bulkSyncExecute("sync", bulkExecutionRepoIds(preview) ?? [], localChangesMode);
     if (generation !== bulkExecutionGeneration) return;
     applyBulkResults(preview, results);
     state.settings = await service.getWorkspaceSettings();

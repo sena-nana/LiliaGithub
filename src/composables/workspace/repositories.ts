@@ -19,6 +19,7 @@ import type {
   GitHubContributionMeta,
   RemoteRepoShortcut,
   RepoConflictChoice,
+  RepoPullLocalChangesMode,
   RepoSummary,
   WorkspaceCreateLocalRepoRequest,
   BulkSyncPreview,
@@ -80,7 +81,7 @@ function autoSyncBlockReason(summary: RepoSummary) {
   if (!summary.remoteUrl) return "没有 origin remote，已跳过自动同步";
   if (!summary.currentBranch) return "当前不是命名分支，已跳过自动同步";
   if (summary.conflictCount > 0) return "已有冲突需要先处理，已跳过自动同步";
-  if (repoDirtyCount(summary) > 0) return "存在未提交变更，已跳过自动同步";
+  if (repoDirtyCount(summary) > 0 && summary.behind <= 0) return "存在未提交变更，已跳过自动同步";
   return null;
 }
 
@@ -140,7 +141,7 @@ export async function autoSyncRepoIfNeeded(
     let result: BulkSyncResult | undefined;
     try {
       const service = await loadWorkspaceService();
-      [result] = await service.bulkSyncExecute("sync", [summary.id]);
+      [result] = await service.bulkSyncExecute("sync", [summary.id], "stash");
     } catch (err) {
       const failedResult: BulkSyncResult = {
         repoId: summary.id,
@@ -659,9 +660,9 @@ export async function commit(repoId: string, files: string[], message: string, p
   await applyRepoMutationWithLanguageStats(repoId, () => service.commitRepo(repoId, files, message, pushAfter));
 }
 
-export async function pull(repoId: string) {
+export async function pull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.pullRepo(repoId));
+  await applyRepoMutationWithLanguageStats(repoId, () => service.pullRepo(repoId, localChangesMode));
 }
 
 export async function fetch(repoId: string) {
@@ -669,12 +670,12 @@ export async function fetch(repoId: string) {
   await applyRepoMutationWithLanguageStats(repoId, () => service.fetchRepo(repoId));
 }
 
-export async function mergePull(repoId: string) {
+export async function mergePull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
   clearRepoActionError(repoId);
   try {
     await applyRepoMutation(repoId, async () => {
-      const result = await service.mergePullRepo(repoId);
+      const result = await service.mergePullRepo(repoId, localChangesMode);
       return result.summary;
     });
   } catch (err) {
@@ -697,9 +698,15 @@ export async function mergeBranch(repoId: string, branch: string) {
   }
 }
 
-export async function startRebase(repoId: string, ontoRef?: string | null) {
+export async function startRebase(
+  repoId: string,
+  ontoRef?: string | null,
+  localChangesMode: RepoPullLocalChangesMode = "reject",
+) {
   const service = await loadWorkspaceService();
-  return applyRepoOperationWithLanguageStats(repoId, () => service.startRebaseRepo(repoId, ontoRef));
+  return applyRepoOperationWithLanguageStats(repoId, () =>
+    service.startRebaseRepo(repoId, ontoRef, localChangesMode)
+  );
 }
 
 async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSummary>) {

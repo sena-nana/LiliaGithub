@@ -774,6 +774,7 @@ export interface HiddenRepo {
 
 export type RepoResetMode = "soft" | "mixed" | "hard";
 export type RepoPullStrategy = "pull" | "merge" | "rebase";
+export type RepoPullLocalChangesMode = "reject" | "stash" | "discard";
 export type WorkspaceTaskPriority = "high" | "normal" | "low";
 export type WorkspaceTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
 export type WorkspaceTaskKind = "repoStatus" | "repoDetail" | "discoverRepos" | "languageStats" | "contributions";

@@ -348,6 +348,20 @@ pub struct RepoMergePullResult {
     pub conflicts: RepoConflictState,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoPullLocalChangesMode {
+    Reject,
+    Stash,
+    Discard,
+}
+
+impl Default for RepoPullLocalChangesMode {
+    fn default() -> Self {
+        Self::Reject
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoOperationResult {

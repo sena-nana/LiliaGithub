@@ -48,6 +48,7 @@ import type {
   RepoFileTreeEntry,
   RepoMergePullResult,
   RepoOperationResult,
+  RepoPullLocalChangesMode,
   RepoRefreshSummaryOptions,
   RepoRemote,
   RepoResetMode,
@@ -269,10 +270,10 @@ export interface WorkspaceCommandContracts {
     RepoArg & { files: string[]; message: string; pushAfter: boolean },
     RepoSummary
   >;
-  repo_pull: CommandContract<RepoArg, RepoSummary>;
-  repo_merge_pull: CommandContract<RepoArg, RepoMergePullResult>;
+  repo_pull: CommandContract<RepoArg & { localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoSummary>;
+  repo_merge_pull: CommandContract<RepoArg & { localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoMergePullResult>;
   repo_fetch: CommandContract<RepoArg, RepoSummary>;
-  repo_start_rebase: CommandContract<RepoArg & { ontoRef: Maybe<string> }, RepoOperationResult>;
+  repo_start_rebase: CommandContract<RepoArg & { ontoRef: Maybe<string>; localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoOperationResult>;
   repo_push: CommandContract<RepoArg, RepoSummary>;
   repo_push_new_branch: CommandContract<
     RepoArg & { remoteName: Maybe<string>; branchName: Maybe<string> },
@@ -311,8 +312,8 @@ export interface WorkspaceCommandContracts {
   repo_abort_conflict_operation: CommandContract<RepoArg, RepoSummary>;
   repo_continue_conflict_operation: CommandContract<RepoArg, RepoSummary>;
 
-  bulk_sync_preview: CommandContract<{ operation: BulkOperation; repos: RepoSummary[] }, BulkSyncPreview>;
-  bulk_sync_execute: CommandContract<{ operation: BulkOperation; repoIds: string[] }, BulkSyncResult[]>;
+  bulk_sync_preview: CommandContract<{ operation: BulkOperation; repos: RepoSummary[]; localChangesMode: Maybe<RepoPullLocalChangesMode> }, BulkSyncPreview>;
+  bulk_sync_execute: CommandContract<{ operation: BulkOperation; repoIds: string[]; localChangesMode: Maybe<RepoPullLocalChangesMode> }, BulkSyncResult[]>;
   system_open_path: CommandContract<{ path: string }, void>;
   system_open_path_target: CommandContract<{ path: string; target: SystemOpenTarget }, void>;
   system_open_url: CommandContract<{ url: string }, void>;

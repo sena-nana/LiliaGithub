@@ -73,6 +73,72 @@ fn repo_discards_untracked_files() {
 }
 
 #[test]
+fn pull_local_changes_stash_cleans_and_restores_worktree() {
+    let path = temp_dir("pull-stash-local-changes");
+    init_git_repo(&path);
+    fs::write(path.join("tracked.ts"), "tracked\n").unwrap();
+    run_git(&path, &["add", "tracked.ts"]);
+    run_git(&path, &["commit", "-m", "initial"]);
+    fs::write(path.join("tracked.ts"), "changed\n").unwrap();
+    fs::write(path.join("scratch.ts"), "scratch\n").unwrap();
+
+    let summary = summarize_repo(&path, &path);
+    let local_changes = prepare_pull_local_changes(
+        &path,
+        &summary,
+        Some(RepoPullLocalChangesMode::Stash),
+        "pull",
+    )
+    .unwrap();
+
+    assert!(repo_status_entries(&path).is_empty());
+    restore_pull_local_changes(&path, local_changes).unwrap();
+    let entries = repo_status_entries(&path);
+    assert!(entries.iter().any(|entry| entry.path == "tracked.ts"));
+    assert!(entries.iter().any(|entry| entry.path == "scratch.ts"));
+    assert_eq!(
+        fs::read_to_string(path.join("tracked.ts"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "changed\n"
+    );
+}
+
+#[test]
+fn pull_local_changes_discard_removes_tracked_staged_and_untracked_but_keeps_ignored() {
+    let path = temp_dir("pull-discard-local-changes");
+    init_git_repo(&path);
+    fs::write(path.join(".gitignore"), "ignored.log\n").unwrap();
+    fs::write(path.join("tracked.ts"), "tracked\n").unwrap();
+    fs::write(path.join("staged.ts"), "staged\n").unwrap();
+    run_git(&path, &["add", ".gitignore", "tracked.ts", "staged.ts"]);
+    run_git(&path, &["commit", "-m", "initial"]);
+    fs::write(path.join("tracked.ts"), "changed\n").unwrap();
+    fs::write(path.join("staged.ts"), "changed staged\n").unwrap();
+    run_git(&path, &["add", "staged.ts"]);
+    fs::write(path.join("scratch.ts"), "scratch\n").unwrap();
+    fs::write(path.join("ignored.log"), "ignored\n").unwrap();
+
+    discard_all_repo_local_changes(&path).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(path.join("tracked.ts"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "tracked\n"
+    );
+    assert_eq!(
+        fs::read_to_string(path.join("staged.ts"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "staged\n"
+    );
+    assert!(!path.join("scratch.ts").exists());
+    assert!(path.join("ignored.log").exists());
+    assert!(repo_status_entries(&path).is_empty());
+}
+
+#[test]
 fn repo_adds_untracked_files_to_gitignore_once() {
     let path = temp_dir("gitignore-untracked");
     init_git_repo(&path);
@@ -2290,6 +2356,26 @@ fn sync_preview_blocks_unsafe_merge_states() {
     }));
     assert!(preview.blocked.iter().any(|item| {
         item.repo.id == "no-upstream" && item.reason == "当前分支没有 upstream"
+    }));
+}
+
+#[test]
+fn sync_preview_allows_dirty_pull_when_local_changes_mode_is_stash() {
+    let dirty = test_repo_summary(|summary| {
+        summary.id = "dirty".to_string();
+        summary.behind = 1;
+        summary.unstaged_count = 1;
+    });
+
+    let preview = build_bulk_sync_preview_with_lookup_and_mode(
+        vec![dirty],
+        |_| true,
+        RepoPullLocalChangesMode::Stash,
+    );
+
+    assert_eq!(preview.blocked.len(), 0);
+    assert!(preview.eligible.iter().any(|item| {
+        item.repo.id == "dirty" && item.reason == "需处理本地修改后拉取远端更新"
     }));
 }
 

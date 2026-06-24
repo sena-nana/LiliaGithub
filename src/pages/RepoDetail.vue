@@ -25,14 +25,17 @@ import "../styles/page.css";
 
 const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
 const repoToolbarSettingsMenuModule = createCachedAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
+const repoLocalChangesDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoLocalChangesDialog.vue"));
 const RepoStashPanel = repoStashPanelModule.component;
 const RepoToolbarSettingsMenu = repoToolbarSettingsMenuModule.component;
+const RepoLocalChangesDialog = repoLocalChangesDialogModule.component;
 
 const {
   activeTab,
   commitMessage,
   actionError,
   launchError,
+  pullLocalChangesDialog,
   actionRunning,
   conflictAcceptConfirm,
   launchTerminalVisible,
@@ -101,6 +104,8 @@ const {
   refreshAndFetchRepo,
   selectOpenTarget,
   selectPullStrategy,
+  selectPullLocalChangesMode,
+  cancelPullLocalChangesDialog,
   setAutoSync,
   runSelectedPullStrategy,
   push,
@@ -404,6 +409,14 @@ const {
         />
       </main>
     </div>
+    <RepoLocalChangesDialog
+      :open="Boolean(pullLocalChangesDialog)"
+      :title="pullLocalChangesDialog?.title ?? ''"
+      :repo-name="pullLocalChangesDialog?.repoName ?? ''"
+      :dirty-count="pullLocalChangesDialog?.dirtyCount ?? 0"
+      @select="selectPullLocalChangesMode"
+      @cancel="cancelPullLocalChangesDialog"
+    />
   </section>
 </template>
 

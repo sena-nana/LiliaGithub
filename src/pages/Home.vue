@@ -23,6 +23,7 @@ import {
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
+import { repoLocalDirtyCount, useRepoLocalChangesPrompt } from "../composables/useRepoLocalChangesPrompt";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -46,6 +47,7 @@ import {
   type GitHubRepoSummary,
   type GitHubWorkflowRun,
   type BulkOperation,
+  type RepoPullLocalChangesMode,
   type RepoSummary,
 } from "../services/workspace";
 import {
@@ -55,6 +57,7 @@ import {
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
+import { createCachedAsyncComponent } from "../utils/asyncComponent";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
 import { representativeReposByGitHubFullName, representativeReposBySharedGroup } from "../utils/repoWorktree";
 import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
@@ -70,8 +73,17 @@ import "../styles/page.css";
 const workspace = useWorkspace();
 const router = useRouter();
 const shellActions = useShellRepoActions();
+const repoLocalChangesDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoLocalChangesDialog.vue"));
+const RepoLocalChangesDialog = repoLocalChangesDialogModule.component;
+const {
+  dialog: pullLocalChangesDialog,
+  request: requestPullLocalChangesMode,
+  select: selectPullLocalChangesMode,
+  cancel: cancelPullLocalChangesDialog,
+} = useRepoLocalChangesPrompt();
 const syncErrorDetails = computed(() => syncErrorDetailsByRepoId());
 const syncingRepoId = ref<string | null>(null);
+const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("reject");
 
 type RepoAction = {
   label: string;
@@ -1299,11 +1311,17 @@ async function openGitHubRepo(githubRepo: GitHubRepoSummary, localRepo: RepoSumm
   await router.push(remoteRepoRoute(githubRepo.fullName));
 }
 
+function reposNeedingPullLocalChanges(repos = workspace.state.repos) {
+  return repos.filter((repo) => repo.behind > 0 && repoLocalDirtyCount(repo) > 0);
+}
+
 async function syncRepo(repo: RepoSummary) {
   if (syncingRepoId.value) return;
+  const localChangesMode = await requestPullLocalChangesMode("同步前处理本地修改", [repo]);
+  if (!localChangesMode) return;
   syncingRepoId.value = repo.id;
   try {
-    await workspace.mergePull(repo.id);
+    await workspace.mergePull(repo.id, localChangesMode);
   } catch {
     /* action error is surfaced by workspace state */
   } finally {
@@ -1323,8 +1341,30 @@ async function retryRepoPush(repo: RepoSummary) {
   }
 }
 
-function previewBulkOperation(operation: BulkOperation) {
-  void workspace.previewBulk(operation);
+async function previewBulkOperation(operation: BulkOperation) {
+  const localChangesMode = operation === "push"
+    ? "reject"
+    : await requestPullLocalChangesMode(
+        `${bulkOperationLabel(operation)}前处理本地修改`,
+        reposNeedingPullLocalChanges(),
+      );
+  if (!localChangesMode) return;
+  bulkLocalChangesMode.value = localChangesMode;
+  void workspace.previewBulk(operation, localChangesMode);
+}
+
+async function runSyncAll() {
+  const localChangesMode = await requestPullLocalChangesMode(
+    "同步前处理本地修改",
+    reposNeedingPullLocalChanges(),
+  );
+  if (!localChangesMode) return;
+  bulkLocalChangesMode.value = localChangesMode;
+  void workspace.syncAll(localChangesMode);
+}
+
+function executeBulkOperation() {
+  void workspace.executeBulk(undefined, bulkLocalChangesMode.value);
 }
 
 function bulkOperationLabel(operation: BulkOperation) {
@@ -1506,7 +1546,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             title="一键同步"
             aria-label="一键同步"
             :disabled="!workspace.isReady.value || workspace.state.bulkRunning"
-            @click="workspace.syncAll"
+            @click="runSyncAll"
           >
             <LoaderCircle
               v-if="workspace.state.bulkRunning && workspace.state.bulkPreview?.operation === 'sync'"
@@ -1919,7 +1959,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             type="button"
             class="primary"
             :disabled="workspace.state.bulkRunning || !workspace.state.bulkPreview.eligible.length"
-            @click="workspace.executeBulk()"
+            @click="executeBulkOperation"
           >
             确认执行
           </button>
@@ -1927,6 +1967,14 @@ function bulkOperationDescription(operation: BulkOperation) {
       </div>
     </div>
 
+    <RepoLocalChangesDialog
+      :open="Boolean(pullLocalChangesDialog)"
+      :title="pullLocalChangesDialog?.title ?? ''"
+      :repo-name="pullLocalChangesDialog?.repoName ?? ''"
+      :dirty-count="pullLocalChangesDialog?.dirtyCount ?? 0"
+      @select="selectPullLocalChangesMode"
+      @cancel="cancelPullLocalChangesDialog"
+    />
   </section>
 </template>
 
