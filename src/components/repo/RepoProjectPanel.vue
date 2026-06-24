@@ -3583,44 +3583,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         />
 
         <section
-          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'board'"
-          class="project-sidebar-summary-card"
-          aria-label="Board 摘要"
-        >
-          <div class="project-sidebar-summary-card__head">
-            <LayoutDashboard :size="14" aria-hidden="true" />
-            <strong>Board</strong>
-          </div>
-          <dl class="project-sidebar-summary-card__stats">
-            <div>
-              <dt>Projects</dt>
-              <dd>{{ issueFilterMetadata.projects.length }}</dd>
-            </div>
-            <div>
-              <dt>Issues</dt>
-              <dd>{{ boardIssues.length }}</dd>
-            </div>
-            <div>
-              <dt>Pull Requests</dt>
-              <dd>{{ boardPulls.length }}</dd>
-            </div>
-            <div>
-              <dt>状态</dt>
-              <dd>{{ boardLoading || issueFilterMetadataLoading ? "读取中" : "已同步" }}</dd>
-            </div>
-          </dl>
-          <button
-            type="button"
-            class="ghost project-sidebar-summary-card__action"
-            :disabled="boardLoading || issueFilterMetadataLoading || !!projectsAccessUnavailable"
-            @click="refreshLoadedSectionData"
-          >
-            <RotateCw :size="14" aria-hidden="true" />
-            刷新 Board
-          </button>
-        </section>
-
-        <section
           v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues'"
           class="project-sidebar-summary-card"
           aria-label="Issues 摘要"

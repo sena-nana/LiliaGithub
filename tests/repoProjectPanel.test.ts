@@ -1288,8 +1288,15 @@ describe("RepoProjectPanel", () => {
     });
   });
 
-  it("Board 分区复用 issue 和 PR 项目数据并打开详情", async () => {
-    vi.mocked(listGitHubIssues).mockResolvedValue(githubIssues);
+  it("Board 分区以列表主页展示项目事项并通过侧栏筛选和打开详情", async () => {
+    const unassignedIssue: GitHubIssue = {
+      ...githubIssues[0],
+      number: 66,
+      title: "整理文档",
+      projectItems: [],
+      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/66",
+    };
+    vi.mocked(listGitHubIssues).mockResolvedValue([githubIssues[0], unassignedIssue]);
     vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
     vi.mocked(listGitHubPullRequestChecks).mockResolvedValue(githubPullRequestChecks);
     const view = await renderProjectPanel({
@@ -1299,11 +1306,23 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Board" }));
 
     const board = await view.findByLabelText("Projects board", {}, { timeout: 5000 });
-    expect(within(board).getByText("Roadmap")).toBeInTheDocument();
+    const itemList = within(board).getByRole("list", { name: "Project items" });
+    const projectFilters = within(board).getByRole("navigation", { name: "Project filters" });
+    expect(board.querySelector(".projects-board__columns")).toBeNull();
+    expect(itemList).toHaveClass("projects-board__list");
+    expect(within(board).getByLabelText("Projects filters")).toBeInTheDocument();
+    expect(within(projectFilters).getByRole("button", { name: /All projects/ })).toBeInTheDocument();
+    expect(within(projectFilters).getByRole("button", { name: /Roadmap/ })).toBeInTheDocument();
+    expect(within(projectFilters).getByRole("button", { name: /No project/ })).toBeInTheDocument();
+    expect(within(board).getByRole("button", { name: "刷新 Projects" })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
-    expect(within(board).getByText("1 Issues")).toBeInTheDocument();
-    expect(within(board).getByText("1 PRs")).toBeInTheDocument();
+    expect(within(board).getByRole("button", { name: /#66 整理文档/ })).toBeInTheDocument();
+    const overview = within(board).getByLabelText("Projects 摘要");
+    expect(overview).toHaveTextContent("Items3");
+    expect(overview).toHaveTextContent("Issues2");
+    expect(overview).toHaveTextContent("PRs1");
+    expect(overview).toHaveTextContent("Projects1");
     expect(listGitHubIssues).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
       expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
@@ -1314,6 +1333,11 @@ describe("RepoProjectPanel", () => {
       expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
       { forceRefresh: false },
     );
+
+    await fireEvent.click(within(projectFilters).getByRole("button", { name: /Roadmap/ }));
+    expect(within(board).queryByRole("button", { name: /#66 整理文档/ })).toBeNull();
+    expect(within(board).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
+    expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
 
     await fireEvent.click(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ }));
     expect(await view.findByRole("heading", { level: 3, name: "#52 接入 Pull Request 工作流" })).toBeInTheDocument();
