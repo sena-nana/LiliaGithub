@@ -81,6 +81,7 @@ import {
 } from "../../services/workspace/client";
 import type {
   CommitSummary,
+  GitHubDiscussionTimelineItem,
   GitHubIssue,
   GitHubIssueDiscussion,
   GitHubIssueFilterMetadata,
@@ -2625,6 +2626,32 @@ function closePullRequestDetail() {
   if (activeSection.value === "pulls") void pushProjectTabRoute("pulls");
 }
 
+async function openDiscussionTimelineItem(item: GitHubDiscussionTimelineItem) {
+  const path = item.path?.trim();
+  const line = item.line ?? item.originalLine ?? null;
+  if (!path || !line || !canBrowseFiles.value) {
+    if (item.url) void openUrl(item.url);
+    return;
+  }
+
+  try {
+    const repoRef = props.fileRepoRef ?? null;
+    if (repoRef) await getRepoFilePreview(props.repoId, path, repoRef);
+    else await getRepoFilePreview(props.repoId, path);
+  } catch {
+    if (item.url) void openUrl(item.url);
+    return;
+  }
+
+  await router.push({
+    path: repoRoute(props.repoId, "files"),
+    query: {
+      file: path,
+      hash: `L${line}`,
+    },
+  });
+}
+
 async function openReadmeLink(target: ReadmeLinkTarget) {
   if (target.kind === "external") {
     void openUrl(target.href);
@@ -3034,6 +3061,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :issue-discussion-error="issueDiscussionError"
             :repo-full-name="repoFullName ?? ''"
             :is-focused="isIssueRowFocused"
+            :timeline-item-opener="openDiscussionTimelineItem"
             @update:state="setIssueState"
             @update:filters="setIssuePanelFilters"
             @create="openIssueCreateView"
@@ -3139,6 +3167,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :repo-full-name="repoFullName ?? ''"
             v-model:merge-method="pullRequestMergeMethod"
             :is-focused="isPullRequestRowFocused"
+            :timeline-item-opener="openDiscussionTimelineItem"
             @update:state="setPullRequestState"
             @update:filters="setPullRequestPanelFilters"
             @create="openPullRequestCreateView"

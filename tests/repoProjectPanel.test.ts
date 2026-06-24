@@ -33,6 +33,7 @@ import {
   listGitHubReleases,
   listRepoFiles,
   mergeGitHubPullRequest,
+  openUrl,
   pickFiles,
   updateGitHubRelease,
   updateGitHubRepoSettings,
@@ -560,6 +561,7 @@ async function renderProjectPanel(
     activeGitTab: "repo",
     canLoadFiles: true,
     changes: [],
+    discardingChangePaths: [],
     previewChange: null,
     commitMessage: "",
     hasConflicts: false,
@@ -1489,6 +1491,88 @@ describe("RepoProjectPanel", () => {
       expect(view.router.currentRoute.value.query.pr).toBeUndefined();
     });
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+  });
+
+  it("PR review comment 优先跳转仓库文件预览并在预览失败时打开外链", async () => {
+    const pullRequest = githubPullRequests[0];
+    const reviewCommentUrl = "https://github.com/sena-nana/remote-repo/pull/52#discussion_r1";
+    const reviewComment = {
+      id: "pull-52-review-comment-1",
+      kind: "reviewComment" as const,
+      actor: "mika",
+      body: "这里需要检查文件定位。",
+      url: reviewCommentUrl,
+      path: "src/components/repo/RepoProjectPanel.vue",
+      line: 128,
+      originalLine: 120,
+      commitId: "abcdef1234567890",
+      createdAt: "2026-06-18T08:01:00Z",
+      updatedAt: "2026-06-18T08:01:00Z",
+    };
+    vi.mocked(listGitHubPullRequests).mockResolvedValue([pullRequest]);
+    vi.mocked(getGitHubPullRequestDiscussion).mockResolvedValue({
+      pullRequest,
+      timeline: [
+        {
+          id: "pull-52-body",
+          kind: "body",
+          actor: pullRequest.author,
+          body: pullRequest.body,
+          url: pullRequest.htmlUrl,
+          createdAt: pullRequest.createdAt,
+          updatedAt: pullRequest.updatedAt,
+        },
+        reviewComment,
+      ],
+    });
+    vi.mocked(getRepoFilePreview).mockImplementation(async (_repoId, path) => (
+      filePreview(path, "one\ntwo\nthree\nfour")
+    ));
+
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
+    await fireEvent.click(await view.findByText("#52 接入 Pull Request 工作流"));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });
+    });
+    const reviewCommentMeta = await view.findByText(/src\/components\/repo\/RepoProjectPanel\.vue:128/);
+    const reviewCommentEntry = reviewCommentMeta.closest(".discussion-timeline__entry") as HTMLElement;
+    await fireEvent.click(within(reviewCommentEntry).getByRole("button", { name: "打开讨论项" }));
+    expect(getRepoFilePreview).toHaveBeenCalledWith(
+      "local-repo",
+      "src/components/repo/RepoProjectPanel.vue",
+    );
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe(
+        "/repos/local-repo/files?file=src/components/repo/RepoProjectPanel.vue&hash=L128",
+      );
+    });
+    expect(openUrl).not.toHaveBeenCalledWith(reviewCommentUrl);
+    view.unmount();
+
+    vi.mocked(openUrl).mockClear();
+    vi.mocked(getRepoFilePreview).mockRejectedValue(new Error("missing preview"));
+    const fallbackView = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(fallbackView.getByRole("tab", { name: "Pull Requests" }));
+    await fireEvent.click(await fallbackView.findByText("#52 接入 Pull Request 工作流"));
+    await waitFor(() => {
+      expect(fallbackView.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });
+    });
+    const fallbackMeta = await fallbackView.findByText(/src\/components\/repo\/RepoProjectPanel\.vue:128/);
+    const fallbackEntry = fallbackMeta.closest(".discussion-timeline__entry") as HTMLElement;
+    await fireEvent.click(within(fallbackEntry).getByRole("button", { name: "打开讨论项" }));
+
+    await waitFor(() => {
+      expect(openUrl).toHaveBeenCalledWith(reviewCommentUrl);
+    });
+    expect(fallbackView.router.currentRoute.value.fullPath).not.toContain("/files");
   });
 
   it("Pull Requests 空元信息行使用共享列表布局并显示空态", async () => {

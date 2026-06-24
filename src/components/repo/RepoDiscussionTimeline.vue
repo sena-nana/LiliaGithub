@@ -19,6 +19,7 @@ const props = defineProps<{
   error: string | null;
   linkBaseUrl?: string | null;
   emptyText?: string;
+  timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
 
 const sortedItems = computed(() => [...props.items].sort((left, right) => {
@@ -64,6 +65,10 @@ function hasMarkdownBody(item: GitHubDiscussionTimelineItem) {
 }
 
 function openItem(item: GitHubDiscussionTimelineItem) {
+  if (props.timelineItemOpener) {
+    props.timelineItemOpener(item);
+    return;
+  }
   if (item.url) void openUrl(item.url);
 }
 

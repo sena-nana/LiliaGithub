@@ -59,6 +59,7 @@ const props = defineProps<{
   issueDiscussionError: string | null;
   repoFullName: string;
   isFocused: (issueNumber: number) => boolean;
+  timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
 
 const emit = defineEmits<{
@@ -219,6 +220,7 @@ function issueMetaText(issue: GitHubIssue) {
       :discussion-loading="issueDiscussionLoading"
       :discussion-error="issueDiscussionError"
       :repo-full-name="repoFullName"
+      :timeline-item-opener="props.timelineItemOpener"
       @back="emit('back')"
     />
 

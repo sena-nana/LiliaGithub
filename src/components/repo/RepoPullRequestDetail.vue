@@ -25,6 +25,7 @@ const props = defineProps<{
   updating: boolean;
   mergeMethod: "merge" | "squash" | "rebase";
   repoFullName: string;
+  timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
 
 const emit = defineEmits<{
@@ -145,6 +146,7 @@ function openCheck(check: GitHubPullRequestCheck) {
         :loading="discussionLoading"
         :error="discussionError"
         :link-base-url="linkBaseUrl"
+        :timeline-item-opener="props.timelineItemOpener"
         empty-text="当前 Pull Request 没有讨论内容。"
       />
     </section>

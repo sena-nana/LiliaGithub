@@ -42,6 +42,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
   const treeError = ref<string | null>(null);
   const selectedPath = ref<string | null>(null);
   const preview = ref<RepoFilePreview | null>(null);
+  const textPreviewTargetLine = ref<number | null>(null);
   const previewLoading = ref(false);
   const previewError = ref<string | null>(null);
   const componentEpoch = useComponentEpoch();
@@ -147,6 +148,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       treeError.value = null;
       selectedPath.value = null;
       preview.value = null;
+      textPreviewTargetLine.value = null;
       previewLoading.value = false;
       previewError.value = null;
 
@@ -273,6 +275,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
           selectedPath.value !== path
         ) return;
         preview.value = nextPreview;
+        textPreviewTargetLine.value = nextPreview.previewKind === "text" ? lineHashNumber(hash) : null;
         if (hash && nextPreview.previewKind === "markdown") {
           await nextTick();
           if (previewLoader.isCurrent(runId)) {
@@ -282,6 +285,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       } catch (err) {
         if (!previewLoader.isCurrent(runId)) return;
         preview.value = null;
+        textPreviewTargetLine.value = null;
         previewError.value = String(err);
       } finally {
         if (previewLoader.isCurrent(runId)) {
@@ -356,6 +360,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     repoPath,
     selectedPath,
     textPreviewLines,
+    textPreviewTargetLine,
     treeError,
     treeLoading,
     visibleEntries,
@@ -375,4 +380,11 @@ function formatFileSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function lineHashNumber(hash?: string | null) {
+  const match = hash?.trim().match(/^L(\d+)$/i);
+  if (!match) return null;
+  const line = Number.parseInt(match[1], 10);
+  return Number.isFinite(line) && line > 0 ? line : null;
 }

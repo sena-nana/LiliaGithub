@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ExternalLink } from "@lucide/vue";
+import { nextTick, ref, watch } from "vue";
 import type { RepoFileBrowser } from "./useRepoFileBrowser";
 import MarkdownReadme from "./MarkdownReadme.vue";
 
@@ -21,10 +22,24 @@ const {
   previewTitle,
   repoPath,
   textPreviewLines,
+  textPreviewTargetLine,
 } = props.browser;
+const codeScroller = ref<HTMLElement | null>(null);
 
 function bindMarkdownReadme(value: unknown) {
   markdownReadme.value = value as typeof markdownReadme.value;
+}
+
+watch([textPreviewTargetLine, textPreviewLines], () => {
+  void scrollToTargetLine();
+}, { flush: "post" });
+
+async function scrollToTargetLine() {
+  const line = textPreviewTargetLine.value;
+  if (!line) return;
+  await nextTick();
+  const target = codeScroller.value?.querySelector<HTMLElement>(`[data-line="${line}"]`);
+  target?.scrollIntoView({ block: "center", inline: "nearest" });
 }
 </script>
 
@@ -52,6 +67,7 @@ function bindMarkdownReadme(value: unknown) {
     <p v-else-if="!preview" class="muted files-main__empty">选择一个文件查看内容。</p>
     <pre
       v-else-if="preview.previewKind === 'text'"
+      ref="codeScroller"
       class="files-main__code"
       :class="isCodePreview ? 'files-main__code--numbered' : 'files-main__code--plain'"
     ><code><span
@@ -59,6 +75,7 @@ function bindMarkdownReadme(value: unknown) {
       :key="`${preview.path}:${line.index}`"
       class="files-main__code-line"
       :class="{ 'files-main__code-line--numbered': isCodePreview }"
+      :data-line="line.lineNumber"
     ><span v-if="isCodePreview" class="files-main__line-number" aria-hidden="true">{{ line.lineNumber }}</span><span
       class="files-main__code-content"
       :class="{ 'files-main__code-content--numbered': isCodePreview }"

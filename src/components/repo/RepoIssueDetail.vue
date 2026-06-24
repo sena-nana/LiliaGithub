@@ -17,6 +17,7 @@ const props = defineProps<{
   discussionLoading: boolean;
   discussionError: string | null;
   repoFullName: string;
+  timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
 
 const emit = defineEmits<{
@@ -62,6 +63,7 @@ function formatDateTime(value: string) {
       :loading="discussionLoading"
       :error="discussionError"
       :link-base-url="linkBaseUrl"
+      :timeline-item-opener="props.timelineItemOpener"
       empty-text="当前 Issue 没有讨论内容。"
     />
   </article>
