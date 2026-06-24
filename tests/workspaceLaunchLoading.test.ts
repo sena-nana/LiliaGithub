@@ -17,6 +17,7 @@ const service = {
   listRepoLaunchCandidates: vi.fn(),
   getRepoLaunchStatus: vi.fn(),
   getRepoLaunchLogs: vi.fn(),
+  listRepoLaunchHistory: vi.fn(),
   startRepoLaunch: vi.fn(),
 };
 
@@ -38,6 +39,7 @@ beforeEach(() => {
     error: null,
   }));
   service.getRepoLaunchLogs.mockResolvedValue([]);
+  service.listRepoLaunchHistory.mockResolvedValue([]);
   service.startRepoLaunch.mockImplementation(async (repoId: string) => ({
     repoId,
     state: "running",

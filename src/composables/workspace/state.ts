@@ -8,6 +8,7 @@ import type {
   GitHubDeviceFlowStart,
   ProjectLaunchConfig,
   ProjectLaunchCandidate,
+  ProjectLaunchHistoryEntry,
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RepoDetail,
@@ -25,6 +26,7 @@ export interface WorkspaceState {
   launchCandidates: Record<string, ProjectLaunchCandidate[] | undefined>;
   launchStatuses: Record<string, ProjectLaunchStatus | undefined>;
   launchLogs: Record<string, ProjectLaunchLog[] | undefined>;
+  launchHistory: Record<string, ProjectLaunchHistoryEntry[] | undefined>;
   loading: boolean;
   scanning: boolean;
   authLoading: boolean;
@@ -82,6 +84,7 @@ export const state = reactive<WorkspaceState>({
   launchCandidates: {},
   launchStatuses: {},
   launchLogs: {},
+  launchHistory: {},
   loading: false,
   scanning: false,
   authLoading: false,
@@ -421,6 +424,7 @@ export function resetWorkspaceStateForTests() {
   state.launchCandidates = {};
   state.launchStatuses = {};
   state.launchLogs = {};
+  state.launchHistory = {};
   state.loading = false;
   state.scanning = false;
   state.authLoading = false;

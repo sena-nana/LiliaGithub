@@ -100,6 +100,7 @@ import type {
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
   ProjectLaunchConfig,
+  ProjectLaunchHistoryEntry,
   ProjectLaunchLog,
   RepoChange,
   RepoConflictFile,
@@ -114,6 +115,8 @@ import {
 } from "../../utils/repoContext";
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
+import { recoveryGuidanceForMessage, type RecoveryGuidance } from "../../utils/recoveryGuidance";
+import { launchDiagnostic, launchHistoryLabel } from "../../utils/launchDiagnostics";
 import { repoRoute, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
 import { createCachedAsyncComponent } from "../../utils/asyncComponent";
 import {
@@ -162,6 +165,7 @@ type ProjectSidebarError = {
   message: string;
   retry?: "sync";
   retrying?: boolean;
+  guidance: RecoveryGuidance;
 };
 type IssuePanelFilters = {
   creator: string | null;
@@ -263,6 +267,7 @@ const props = defineProps<{
   repoContext: RepoContext;
   launchConfig: ProjectLaunchConfig | null;
   launchLogs: readonly ProjectLaunchLog[];
+  launchHistory: readonly ProjectLaunchHistoryEntry[];
   launchError?: string | null;
   actionError?: string | null;
   repoActionError?: string | null;
@@ -646,21 +651,33 @@ const showCommitDetail = computed(() =>
 );
 const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
   const errors: ProjectSidebarError[] = [];
-  if (props.recentSyncError) {
+  const addError = (
+    key: string,
+    title: string,
+    message: string | null | undefined,
+    options: Pick<ProjectSidebarError, "retry" | "retrying"> = {},
+  ) => {
+    if (!message) return;
     errors.push({
-      key: "recent-sync",
-      title: "最近同步失败",
-      message: props.recentSyncError.message,
+      key,
+      title,
+      message,
+      ...options,
+      guidance: recoveryGuidanceForMessage(message),
+    });
+  };
+  if (props.recentSyncError) {
+    addError("recent-sync", "最近同步失败", props.recentSyncError.message, {
       retry: "sync",
       retrying: props.recentSyncError.retrying,
     });
   }
-  if (props.actionError) errors.push({ key: "action", title: "操作失败", message: props.actionError });
-  if (props.repoActionError) errors.push({ key: "repo-action", title: "仓库错误", message: props.repoActionError });
-  if (readmeError.value) errors.push({ key: "readme", title: "README 读取失败", message: readmeError.value });
-  if (githubError.value) errors.push({ key: "github", title: "GitHub 请求失败", message: githubError.value });
-  if (actionsError.value) errors.push({ key: "actions", title: "Actions 读取失败", message: actionsError.value });
-  if (releasesError.value) errors.push({ key: "releases", title: "Releases 读取失败", message: releasesError.value });
+  addError("action", "操作失败", props.actionError);
+  addError("repo-action", "仓库错误", props.repoActionError);
+  addError("readme", "README 读取失败", readmeError.value);
+  addError("github", "GitHub 请求失败", githubError.value);
+  addError("actions", "Actions 读取失败", actionsError.value);
+  addError("releases", "Releases 读取失败", releasesError.value);
   return errors;
 });
 const hasProjectSidebarErrors = computed(() => projectSidebarErrors.value.length > 0);
@@ -676,6 +693,9 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "settings",
 );
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
+const launchDiagnosticInfo = computed(() => {
+  return launchDiagnostic(null, props.launchLogs, props.launchHistory, props.launchError);
+});
 const displayedIssueTemplates = computed(() => [blankIssueTemplate(), ...issueTemplates.value]);
 const issueTemplateOptions = computed(() =>
   displayedIssueTemplates.value.map((template) => ({
@@ -2855,6 +2875,28 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <pre v-if="launchLogs.length" class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
             <div v-else class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
           </div>
+          <aside v-if="launchDiagnosticInfo || launchHistory.length" class="project-launch-diagnostics" aria-label="启动诊断">
+            <section v-if="launchDiagnosticInfo" class="project-launch-diagnostic-card">
+              <strong>{{ launchDiagnosticInfo.title }}</strong>
+              <p>{{ launchDiagnosticInfo.detail }}</p>
+              <p>{{ launchDiagnosticInfo.steps.join(" / ") }}</p>
+            </section>
+            <section v-if="launchHistory.length" class="project-launch-history">
+              <div class="project-launch-history__head">
+                <strong>启动历史</strong>
+                <span>{{ launchHistory.length }} 条</span>
+              </div>
+              <ol>
+                <li v-for="entry in launchHistory.slice(0, 5)" :key="entry.id">
+                  <span>
+                    <strong>{{ launchHistoryLabel(entry) }}</strong>
+                    <small>{{ entry.command }}</small>
+                  </span>
+                  <em v-if="entry.lastOutput">{{ entry.lastOutput }}</em>
+                </li>
+              </ol>
+            </section>
+          </aside>
         </section>
 
         <RepoChangesPanel
@@ -3487,6 +3529,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <div>
               <strong>{{ error.title }}</strong>
               <p>{{ error.message }}</p>
+              <p class="project-sidebar-error-card__guidance">
+                {{ error.guidance.title }}：{{ error.guidance.steps.join(" / ") }}
+              </p>
             </div>
             <button
               v-if="error.retry === 'sync'"
@@ -3972,7 +4017,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-terminal-card {
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   align-self: stretch;
   min-width: 0;
   min-height: 0;
@@ -4025,6 +4070,75 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-terminal__output code {
   font: inherit;
+}
+
+.project-launch-diagnostics {
+  display: grid;
+  gap: 10px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0 16px 14px;
+  background: #0a0d12;
+}
+
+.project-launch-diagnostic-card,
+.project-launch-history {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(214, 222, 235, 0.15);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.project-launch-diagnostic-card strong,
+.project-launch-history strong {
+  color: #d6deeb;
+  font-size: 12px;
+}
+
+.project-launch-diagnostic-card p {
+  margin: 0;
+  color: #97a6ba;
+  font-size: 12px;
+}
+
+.project-launch-history__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-launch-history__head span {
+  color: #718096;
+  font-size: 11px;
+}
+
+.project-launch-history ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-launch-history li {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.project-launch-history small,
+.project-launch-history em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #97a6ba;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .launch-log {
@@ -4153,6 +4267,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   font-size: 12px;
   font-weight: 500;
   line-height: 1.4;
+}
+
+.project-sidebar-error-card__guidance {
+  color: var(--text-muted) !important;
+  font-weight: 500;
 }
 
 .project-sidebar-error-card__retry {

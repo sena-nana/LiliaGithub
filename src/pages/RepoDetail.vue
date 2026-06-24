@@ -56,6 +56,7 @@ const {
   canCommit,
   launchConfig,
   launchLogs,
+  launchHistory,
   launchRunning,
   statusCommits,
   canLoadFiles,
@@ -370,6 +371,7 @@ const {
           :commit-meta-title="commitMetaTitle"
           :launch-config="launchConfig"
           :launch-logs="launchLogs"
+          :launch-history="launchHistory"
           :launch-error="launchError"
           :action-error="actionError"
           :repo-action-error="repoActionError"

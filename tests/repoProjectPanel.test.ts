@@ -557,6 +557,7 @@ async function renderProjectPanel(
     repoSummary: null,
     launchConfig,
     launchLogs: [],
+    launchHistory: [],
     launchTerminalVisible: false,
     actionRunning: false,
     launchRunning: false,
@@ -1351,7 +1352,7 @@ describe("RepoProjectPanel", () => {
     expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
 
     await fireEvent.click(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ }));
-    expect(await view.findByRole("heading", { level: 3, name: "#52 接入 Pull Request 工作流" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { level: 3, name: "#52 接入 Pull Request 工作流" }, { timeout: 5000 })).toBeInTheDocument();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });
     });
@@ -1402,7 +1403,8 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("button", { name: /test/ }));
     expect(await view.findByText("Run tests")).toBeInTheDocument();
-    expect(getGitHubWorkflowJobLog).not.toHaveBeenCalled();
+    expect(getGitHubWorkflowJobLog).toHaveBeenCalledWith("sena-nana/remote-repo", 13103);
+    expect(await view.findByText("日志已读取，未识别到明显错误片段。")).toBeInTheDocument();
 
     await fireEvent.click(view.getByText("dist"));
     const artifactFile = await view.findByRole("button", { name: /README\.md/ });

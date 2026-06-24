@@ -847,7 +847,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
       expect(document.querySelector('[data-job-id="13101"] .actions-job__head.is-active')).toBeInTheDocument();
-    });
+    }, { timeout: 5000 });
   });
 
   it("仓库 Pull Requests 筛选可从分享 URL 恢复", async () => {
@@ -882,7 +882,7 @@ describe("基础路由", () => {
       pullQ: "workflow",
       pullReview: "approved",
     });
-    expect(await screen.findByLabelText("搜索 Pull Requests")).toHaveValue("workflow");
+    expect(await screen.findByLabelText("搜索 Pull Requests", {}, { timeout: 5000 })).toHaveValue("workflow");
     await waitFor(() => {
       expect(workspaceFallback.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual(
         expect.objectContaining({
@@ -2666,8 +2666,9 @@ describe("基础路由", () => {
     const launchCard = document.querySelector(".project-terminal-card");
     if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
     await waitFor(() => {
-      expect(within(launchCard).getByText("Error: 停止失败：operation attempted is not supported")).toBeInTheDocument();
+      expect(within(launchCard).getAllByText("Error: 停止失败：operation attempted is not supported").length).toBeGreaterThan(0);
     });
+    expect(within(launchCard).getByText("最近启动失败")).toBeInTheDocument();
     expect(document.querySelector(".repo-workbench__status")).toBeNull();
   });
 

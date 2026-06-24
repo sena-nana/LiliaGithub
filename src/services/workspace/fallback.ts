@@ -47,6 +47,7 @@ import type {
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchCandidate,
+  ProjectLaunchHistoryEntry,
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RepoConflictChoice,
@@ -2255,6 +2256,7 @@ let fallbackStartupCache: WorkspaceStartupCache | null = null;
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
+const fallbackLaunchHistory: Record<string, ProjectLaunchHistoryEntry[]> = {};
 let fallbackLaunchLogIndex = 1;
 let fallbackLaunchCandidatesOverride: Record<string, ProjectLaunchCandidate[]> | null = null;
 let fallbackStopLaunchOverride: ((repoId: string) => Promise<ProjectLaunchStatus> | ProjectLaunchStatus) | null = null;
@@ -2323,6 +2325,9 @@ export function resetWorkspaceFallbacksForTests() {
   }
   for (const key of Object.keys(fallbackLaunchLogs)) {
     delete fallbackLaunchLogs[key];
+  }
+  for (const key of Object.keys(fallbackLaunchHistory)) {
+    delete fallbackLaunchHistory[key];
   }
   fallbackLaunchLogIndex = 1;
   fallbackLaunchCandidatesOverride = null;
@@ -4669,6 +4674,41 @@ function pushFallbackLaunchLog(repoId: string, stream: ProjectLaunchLog["stream"
   ].slice(-500);
 }
 
+function rememberFallbackLaunchStart(repoId: string, config: ProjectLaunchConfig) {
+  const entry: ProjectLaunchHistoryEntry = {
+    id: `${repoId}:${Date.now()}:${fallbackLaunchLogIndex}`,
+    repoId,
+    command: config.command,
+    cwd: config.cwd,
+    startedAt: Date.now(),
+    finishedAt: null,
+    state: "running",
+    exitCode: null,
+    error: null,
+    lastOutput: null,
+  };
+  fallbackLaunchHistory[repoId] = [entry, ...(fallbackLaunchHistory[repoId] ?? [])].slice(0, 20);
+  return entry;
+}
+
+function finishFallbackLaunchHistory(repoId: string, status: ProjectLaunchStatus) {
+  const current = fallbackLaunchHistory[repoId]?.[0];
+  if (!current || current.state !== "running") return;
+  const logs = fallbackLaunchLogs[repoId] ?? [];
+  const lastOutput = logs.length ? logs[logs.length - 1].line : null;
+  fallbackLaunchHistory[repoId] = [
+    {
+      ...current,
+      state: status.state,
+      finishedAt: Date.now(),
+      exitCode: status.exitCode,
+      error: status.error,
+      lastOutput,
+    },
+    ...(fallbackLaunchHistory[repoId] ?? []).slice(1),
+  ];
+}
+
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return call("repo_get_detail", { repoId }, () => {
     const override = fallbackRepoDetailOverride?.(repoId);
@@ -4890,6 +4930,12 @@ export function getRepoLaunchLogs(repoId: string, since?: number | null): Promis
   );
 }
 
+export function listRepoLaunchHistory(repoId: string): Promise<ProjectLaunchHistoryEntry[]> {
+  return call("repo_list_launch_history", { repoId }, () =>
+    (fallbackLaunchHistory[repoId] ?? []).map((entry) => ({ ...entry })),
+  );
+}
+
 export function startRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
   return call("repo_start_launch", { repoId }, () => {
     const config = fallbackLaunchConfig(repoId);
@@ -4906,6 +4952,7 @@ export function startRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
       error: null,
     };
     fallbackLaunchStatuses[repoId] = status;
+    rememberFallbackLaunchStart(repoId, config);
     pushFallbackLaunchLog(repoId, "system", `启动命令：${config.command}`);
     pushFallbackLaunchLog(repoId, "stdout", "开发服务已启动");
     return status;
@@ -4927,6 +4974,7 @@ export function stopRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {
     fallbackLaunchStatuses[repoId] = status;
     if (status.state === "exited") {
       pushFallbackLaunchLog(repoId, "system", "已停止快速启动进程");
+      finishFallbackLaunchHistory(repoId, status);
     }
     return status;
   });

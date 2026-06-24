@@ -214,6 +214,7 @@ export function useRepoDetailController() {
   const launchCandidates = computed(() => workspace.state.launchCandidates[repoId.value] ?? []);
   const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
   const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
+  const launchHistory = computed(() => workspace.state.launchHistory[repoId.value] ?? []);
   const launchLoading = computed(() => workspace.state.launchLoading);
   const launchRunning = computed(() => launchStatus.value?.state === "running");
   const statusCommits = computed<CommitSummary[]>(() =>
@@ -1173,6 +1174,7 @@ export function useRepoDetailController() {
       launchCandidates,
       launchStatus,
       launchLogs,
+      launchHistory,
       launchLoading,
       launchRunning,
       statusCommits,

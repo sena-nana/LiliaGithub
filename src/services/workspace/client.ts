@@ -46,6 +46,7 @@ import type {
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchCandidate,
+  ProjectLaunchHistoryEntry,
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RepoConflictChoice,
@@ -1290,6 +1291,10 @@ export function getRepoLaunchStatus(repoId: string): Promise<ProjectLaunchStatus
 
 export function getRepoLaunchLogs(repoId: string, since?: number | null): Promise<ProjectLaunchLog[]> {
   return call("repo_get_launch_logs", { repoId, since: since ?? null }, () => workspaceFallback().getRepoLaunchLogs(repoId, since));
+}
+
+export function listRepoLaunchHistory(repoId: string): Promise<ProjectLaunchHistoryEntry[]> {
+  return call("repo_list_launch_history", { repoId }, () => workspaceFallback().listRepoLaunchHistory(repoId));
 }
 
 export function startRepoLaunch(repoId: string): Promise<ProjectLaunchStatus> {

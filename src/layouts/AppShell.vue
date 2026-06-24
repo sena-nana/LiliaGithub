@@ -8,6 +8,7 @@ import { provideShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import TitleBar from "../components/TitleBar.vue";
+import CommandPalette from "../components/CommandPalette.vue";
 import SecondaryPanel from "./SecondaryPanel.vue";
 import SettingsSidebar from "./SettingsSidebar.vue";
 import "../styles/shell.css";
@@ -102,5 +103,10 @@ provideShellRepoActions({
     <main class="shell__main">
       <RouterView />
     </main>
+    <CommandPalette
+      v-if="!isSetupOverlay"
+      :search-open="searchOpen"
+      @toggle-search="toggleSearch"
+    />
   </div>
 </template>
