@@ -37,9 +37,7 @@ const {
   launchError,
   pullLocalChangesDialog,
   actionRunning,
-  conflictAcceptConfirm,
   launchTerminalVisible,
-  conflictChoices,
   selectedCommitHash,
   repoId,
   repoContext,
@@ -47,12 +45,7 @@ const {
   repoTitle,
   changes,
   discardingChangePaths,
-  conflictOperationActive,
-  supportedConflictOperation,
   previewChange,
-  conflictSelectedCount,
-  canResolveSelectedConflict,
-  canContinueConflictOperation,
   canCommit,
   launchConfig,
   launchLogs,
@@ -62,15 +55,8 @@ const {
   canLoadFiles,
   activeFileRepoRef,
   filesUnavailableMessage,
-  panelConflictFiles,
-  panelConflicts,
-  panelFocusedConflict,
   recentSyncError,
   hasConflicts,
-  conflictSummaryText,
-  conflictOperationText,
-  conflictAbortText,
-  conflictContinueText,
   activeProjectTab,
   activeProjectIssue,
   activeProjectPullRequest,
@@ -96,8 +82,6 @@ const {
   autoSyncEnabled,
   repoActionError,
   focusChange,
-  focusConflict,
-  pickConflictHunk,
   stageUnstagedChanges,
   unstageStagedChanges,
   runChangeAction,
@@ -113,11 +97,6 @@ const {
   pushCurrentBranchWithUpstream,
   setCurrentBranchUpstream,
   useDefaultTokenAuth,
-  acceptConflict,
-  resolveSelectedConflict,
-  markConflictResolved,
-  abortConflict,
-  continueConflict,
   startLaunch,
   stopLaunch,
   selectLaunchCandidateByValue,
@@ -134,7 +113,6 @@ const {
   resetCommit,
   createBranchFromCommit,
   openSelectedTarget,
-  openConflictFolder,
   commitMetaTitle,
 } = useRepoDetailController();
 </script>
@@ -366,20 +344,6 @@ const {
           :files-unavailable-message="filesUnavailableMessage"
           :file-target-path="activeFilePath"
           :file-target-hash="activeFileHash"
-          :conflict-operation-text="conflictOperationText"
-          :conflict-summary-text="conflictSummaryText"
-          :conflict-continue-text="conflictContinueText"
-          :conflict-abort-text="conflictAbortText"
-          :conflict-files="panelConflictFiles"
-          :conflict-operation-active="conflictOperationActive"
-          :conflicts="panelConflicts"
-          :focused-conflict="panelFocusedConflict"
-          :conflict-choices="conflictChoices"
-          :conflict-selected-count="conflictSelectedCount"
-          :conflict-accept-confirm="conflictAcceptConfirm"
-          :can-continue-conflict-operation="canContinueConflictOperation"
-          :can-resolve-selected-conflict="canResolveSelectedConflict"
-          :supported-conflict-operation="supportedConflictOperation"
           :commit-meta-title="commitMetaTitle"
           :launch-config="launchConfig"
           :launch-logs="launchLogs"
@@ -412,14 +376,6 @@ const {
           @revert-commit="revertCommit"
           @reset-commit="resetCommit"
           @create-branch-from-commit="createBranchFromCommit"
-          @continue-conflict="continueConflict"
-          @abort-conflict="abortConflict"
-          @focus-conflict="focusConflict"
-          @pick-conflict-hunk="pickConflictHunk"
-          @resolve-selected-conflict="resolveSelectedConflict"
-          @accept-conflict="acceptConflict"
-          @mark-conflict-resolved="markConflictResolved"
-          @open-conflict-folder="openConflictFolder"
         />
       </main>
     </div>

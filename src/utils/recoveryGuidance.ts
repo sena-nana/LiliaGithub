@@ -70,15 +70,3 @@ export function recoveryGuidanceForMessage(message: string | null | undefined): 
     steps: ["展开失败仓库查看完整错误", "刷新仓库状态", "确认问题已处理后重试操作"],
   };
 }
-
-export function conflictRecoveryGuidance(operation: string, hasFiles: boolean): RecoveryGuidance {
-  if (!hasFiles) {
-    return {
-      title: "继续当前操作",
-      tone: "info",
-      summary: "冲突文件已处理，当前 Git 操作还需要继续或完成。",
-      steps: [`点击继续 ${operation || "操作"}`, "确认仓库状态回到干净或可提交状态"],
-    };
-  }
-  return recoveryGuidanceForMessage(`${operation} 冲突`);
-}

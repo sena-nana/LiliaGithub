@@ -13,9 +13,6 @@ import type {
   CommitSummary,
   ProjectLaunchCandidate,
   RepoChange,
-  RepoConflictChoice,
-  RepoConflictFile,
-  RepoConflictState,
   RepoSummary,
   SystemOpenTarget,
 } from "../services/workspace";
@@ -72,15 +69,11 @@ export function useRepoDetailController() {
     select: selectPullLocalChangesMode,
     cancel: cancelPullLocalChangesDialog,
   } = useRepoLocalChangesPrompt();
-  const conflictAbortConfirm = ref(false);
-  const conflictAcceptConfirm = ref<null | "ours" | "theirs">(null);
   const launchTerminalVisible = ref(false);
   const pullStrategy = ref<RepoPullStrategy>("merge");
   const openTarget = ref<SystemOpenTarget>("folder");
   const focusedChangePath = ref<string | null>(null);
-  const focusedConflictPath = ref<string | null>(null);
   const selectedCommitHash = ref<string | null>(null);
-  const conflictChoices = ref<Record<string, "ours" | "theirs">>({});
   const githubBranches = ref<BranchSummary[]>([]);
   const githubCommits = ref<CommitSummary[]>([]);
   const githubDefaultBranch = ref<string | null>(null);
@@ -166,23 +159,7 @@ export function useRepoDetailController() {
   const historyUsesGitHub = computed(() => repoContext.value.capabilities.history.provider === "github");
   const canUseGitHubData = computed(() => repoContext.value.capabilities.issues.available);
   const repoTitle = computed(() => repoDisplayName(summary.value));
-  const repoMetaItems = computed(() => {
-    const repo = summary.value;
-    if (!repo) return [repoId.value];
-    return [
-      repo.githubFullName ?? "未识别 GitHub",
-      repo.currentBranch ?? "detached",
-      hasRepoTag(repoContext.value, "github-remote") ? "远程仓库" : null,
-    ].filter((item): item is string => Boolean(item));
-  });
   const changes = computed(() => detail.value?.changes ?? []);
-  const conflicts = computed(() => detail.value?.conflicts ?? { operation: "none", files: [], allResolved: true });
-  const conflictOperationActive = computed(() => conflicts.value.operation !== "none");
-  const supportedConflictOperation = computed(() =>
-    conflicts.value.operation === "merge" ||
-    conflicts.value.operation === "rebase" ||
-    conflicts.value.operation === "cherry-pick",
-  );
   const unstagedChangePaths = computed(() =>
     changes.value
       .filter((change) => change.unstaged || change.untracked || change.conflicted)
@@ -195,27 +172,12 @@ export function useRepoDetailController() {
     changes.value.find((change) => change.path === focusedChangePath.value) ?? null,
   );
   const previewChange = computed(() => focusedChange.value);
-  const conflictFiles = computed(() => conflicts.value.files ?? []);
-  const focusedConflict = computed(() =>
-    conflictFiles.value.find((file) => file.path === focusedConflictPath.value) ?? conflictFiles.value[0] ?? null,
-  );
-  const conflictResolvedCount = computed(() => conflictFiles.value.filter((file) => file.resolved).length);
-  const conflictSelectedCount = computed(() => Object.keys(conflictChoices.value).length);
-  const canResolveSelectedConflict = computed(() =>
-    Boolean(
-      focusedConflict.value &&
-      focusedConflict.value.hunks.length > 0 &&
-      focusedConflict.value.hunks.every((hunk) => Boolean(conflictChoices.value[hunk.id])),
-    ),
-  );
-  const canContinueConflictOperation = computed(() => supportedConflictOperation.value && !conflictFiles.value.length);
   const canCommit = computed(() => stagedChangePaths.value.length > 0 && commitMessage.value.trim().length > 0);
   const launchConfig = computed(() => workspace.state.launchConfigs[repoId.value] ?? null);
   const launchCandidates = computed(() => workspace.state.launchCandidates[repoId.value] ?? []);
   const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
   const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
   const launchHistory = computed(() => workspace.state.launchHistory[repoId.value] ?? []);
-  const launchLoading = computed(() => workspace.state.launchLoading);
   const launchRunning = computed(() => launchStatus.value?.state === "running");
   const statusCommits = computed<CommitSummary[]>(() =>
     (historyUsesGitHub.value ? githubCommits.value : (detail.value?.commits ?? [])).map((commit) => ({
@@ -227,52 +189,16 @@ export function useRepoDetailController() {
   const activeFileRepoRef = computed(() =>
     repoContext.value.capabilities.files.provider === "github" ? remoteBrowseBranch.value : null
   );
-  const panelConflictFiles = computed<RepoConflictFile[]>(() =>
-    conflictFiles.value.map((file) => ({
-      ...file,
-      hunks: file.hunks.map((hunk) => ({
-        ...hunk,
-        oursLines: [...hunk.oursLines],
-        theirsLines: [...hunk.theirsLines],
-      })),
-    })),
-  );
-  const panelConflicts = computed<RepoConflictState>(() => ({
-    operation: conflicts.value.operation,
-    files: panelConflictFiles.value,
-    allResolved: conflicts.value.allResolved,
-  }));
-  const panelFocusedConflict = computed(
-    () => panelConflictFiles.value.find((file) => file.path === focusedConflict.value?.path) ?? null,
-  );
   const recentSyncError = computed(() => {
     return recentSyncErrorForRepo(repoId.value);
   });
-  const hasConflicts = computed(() =>
-    Boolean(summary.value?.conflictCount || conflictFiles.value.length || conflictOperationActive.value),
-  );
-  const conflictSummaryText = computed(() => {
-    if (!conflictFiles.value.length && conflictOperationActive.value) return "冲突文件已处理，等待继续操作";
-    if (!conflictFiles.value.length) return "没有待处理冲突";
-    return `已处理 ${conflictResolvedCount.value} / ${conflictFiles.value.length}`;
-  });
-  const conflictOperationText = computed(() => {
-    if (conflicts.value.operation === "merge") return "合并冲突";
-    if (conflicts.value.operation === "rebase") return "rebase 冲突";
-    if (conflicts.value.operation === "cherry-pick") return "cherry-pick 冲突";
-    return "冲突处理";
-  });
-  const conflictAbortText = computed(() => {
-    if (conflicts.value.operation === "rebase") return conflictAbortConfirm.value ? "确认终止 rebase" : "终止 rebase";
-    if (conflicts.value.operation === "cherry-pick") return conflictAbortConfirm.value ? "确认终止 cherry-pick" : "终止 cherry-pick";
-    if (conflicts.value.operation !== "merge") return "终止操作";
-    return conflictAbortConfirm.value ? "确认终止合并" : "终止合并";
-  });
-  const conflictContinueText = computed(() => {
-    if (conflicts.value.operation === "rebase") return "继续 rebase";
-    if (conflicts.value.operation === "cherry-pick") return "继续 cherry-pick";
-    if (conflicts.value.operation !== "merge") return "继续操作";
-    return "完成合并";
+  const hasConflicts = computed(() => {
+    const repoConflicts = detail.value?.conflicts;
+    return Boolean(
+      summary.value?.conflictCount ||
+      repoConflicts?.files.length ||
+      (repoConflicts && repoConflicts.operation !== "none"),
+    );
   });
 
   const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
@@ -413,11 +339,7 @@ export function useRepoDetailController() {
     commitMessage.value = "";
     launchTerminalVisible.value = false;
     focusedChangePath.value = null;
-    focusedConflictPath.value = null;
     selectedCommitHash.value = null;
-    conflictChoices.value = {};
-    conflictAbortConfirm.value = false;
-    conflictAcceptConfirm.value = null;
     cancelPullLocalChangesDialog();
     openTarget.value = "folder";
     repoDetailLoader.invalidate();
@@ -523,7 +445,6 @@ export function useRepoDetailController() {
         await workspace.loadRepoDetail(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         syncFocusedChange();
-        syncFocusedConflict();
       } catch (err) {
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         actionError.value = String(err);
@@ -635,15 +556,6 @@ export function useRepoDetailController() {
     }, { reusePending: true });
   }
 
-  function syncFocusedConflict() {
-    if (focusedConflictPath.value && conflictFiles.value.some((file) => file.path === focusedConflictPath.value)) {
-      syncConflictChoices();
-      return;
-    }
-    focusedConflictPath.value = conflictFiles.value[0]?.path ?? null;
-    syncConflictChoices();
-  }
-
   function syncFocusedChange() {
     if (!focusedChangePath.value) return;
     if (!changes.value.some((change) => change.path === focusedChangePath.value)) {
@@ -651,44 +563,8 @@ export function useRepoDetailController() {
     }
   }
 
-  watch(conflictFiles, () => {
-    syncFocusedConflict();
-  });
-
   function focusChange(path: string) {
     focusedChangePath.value = path;
-  }
-
-  function focusConflict(path: string) {
-    focusedConflictPath.value = path;
-    resetConflictConfirmation();
-    syncConflictChoices();
-  }
-
-  function syncConflictChoices() {
-    const current = focusedConflict.value;
-    if (!current) {
-      conflictChoices.value = {};
-      return;
-    }
-    const next: Record<string, "ours" | "theirs"> = {};
-    for (const hunk of current.hunks) {
-      const existing = conflictChoices.value[hunk.id];
-      if (existing) next[hunk.id] = existing;
-    }
-    conflictChoices.value = next;
-  }
-
-  function pickConflictHunk(hunkId: string, side: "ours" | "theirs") {
-    conflictChoices.value = {
-      ...conflictChoices.value,
-      [hunkId]: side,
-    };
-  }
-
-  function resetConflictConfirmation() {
-    conflictAbortConfirm.value = false;
-    conflictAcceptConfirm.value = null;
   }
 
   function requestPullLocalChangesMode(title = "拉取前处理本地修改") {
@@ -831,10 +707,6 @@ export function useRepoDetailController() {
     });
   }
 
-  function fetchRepo() {
-    void runAction(() => workspace.fetch(repoId.value));
-  }
-
   function refreshAndFetchRepo() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
@@ -924,59 +796,6 @@ export function useRepoDetailController() {
 
   function useDefaultTokenAuth() {
     void runAction(() => workspace.useDefaultTokenAuthForRepo(repoId.value));
-  }
-
-  function acceptConflict(side: "ours" | "theirs") {
-    const file = focusedConflict.value;
-    if (!file) return;
-    if (conflictAcceptConfirm.value !== side) {
-      conflictAcceptConfirm.value = side;
-      return;
-    }
-    void runAction(async () => {
-      await workspace.acceptConflictFile(repoId.value, file.path, side, true);
-      resetConflictConfirmation();
-    });
-  }
-
-  function resolveSelectedConflict() {
-    const file = focusedConflict.value;
-    if (!file) return;
-    const choices: RepoConflictChoice[] = file.hunks.map((hunk) => ({
-      hunkId: hunk.id,
-      side: conflictChoices.value[hunk.id],
-    }));
-    void runAction(async () => {
-      await workspace.resolveConflictFile(repoId.value, file.path, choices, true);
-      resetConflictConfirmation();
-    });
-  }
-
-  function markConflictResolved() {
-    const file = focusedConflict.value;
-    if (!file) return;
-    void runAction(async () => {
-      await workspace.markConflictFileResolved(repoId.value, file.path);
-      resetConflictConfirmation();
-    });
-  }
-
-  function abortConflict() {
-    if (!conflictAbortConfirm.value) {
-      conflictAbortConfirm.value = true;
-      return;
-    }
-    void runAction(async () => {
-      await workspace.abortConflictOperation(repoId.value);
-      resetConflictConfirmation();
-    });
-  }
-
-  function continueConflict() {
-    void runAction(async () => {
-      await workspace.continueConflictOperation(repoId.value);
-      resetConflictConfirmation();
-    });
   }
 
   function startLaunch() {
@@ -1119,13 +938,6 @@ export function useRepoDetailController() {
     selectedCommitHash.value = null;
   }
 
-  function openConflictFolder() {
-    const file = focusedConflict.value;
-    if (!file || !summary.value?.path) return;
-    const path = `${summary.value.path}\\${file.path.replace(/\//g, "\\")}`;
-    void workspace.openPath(path);
-  }
-
   function commitMetaTitle(commit: HistoryCommit) {
     return [
       commit.hash,
@@ -1147,49 +959,26 @@ export function useRepoDetailController() {
       launchError,
       pullLocalChangesDialog,
       actionRunning,
-      conflictAcceptConfirm,
       launchTerminalVisible,
-      conflictChoices,
       selectedCommitHash,
       repoId,
       repoContext,
-      detail,
       summary,
       repoTitle,
-      repoMetaItems,
       changes,
       discardingChangePaths,
-      conflicts,
-      conflictOperationActive,
-      supportedConflictOperation,
       previewChange,
-      conflictFiles,
-      focusedConflict,
-      conflictResolvedCount,
-      conflictSelectedCount,
-      canResolveSelectedConflict,
-      canContinueConflictOperation,
       canCommit,
       launchConfig,
-      launchCandidates,
-      launchStatus,
       launchLogs,
       launchHistory,
-      launchLoading,
       launchRunning,
       statusCommits,
       canLoadFiles,
       activeFileRepoRef,
       filesUnavailableMessage,
-      panelConflictFiles,
-      panelConflicts,
-      panelFocusedConflict,
       recentSyncError,
       hasConflicts,
-      conflictSummaryText,
-      conflictOperationText,
-      conflictAbortText,
-      conflictContinueText,
       activeProjectTab,
       activeProjectIssue,
       activeProjectPullRequest,
@@ -1214,17 +1003,12 @@ export function useRepoDetailController() {
       behindCount,
       autoSyncEnabled,
       repoActionError,
-      load,
-      refreshLaunch,
       focusChange,
-      focusConflict,
-      pickConflictHunk,
       stageUnstagedChanges,
       unstageStagedChanges,
       runChangeAction,
       commitSelected,
       refreshAndFetchRepo,
-      fetchRepo,
       selectPullStrategy,
       selectPullLocalChangesMode,
       cancelPullLocalChangesDialog,
@@ -1236,14 +1020,8 @@ export function useRepoDetailController() {
       pushCurrentBranchWithUpstream,
       setCurrentBranchUpstream,
       useDefaultTokenAuth,
-      acceptConflict,
-      resolveSelectedConflict,
-      markConflictResolved,
-      abortConflict,
-      continueConflict,
       startLaunch,
       stopLaunch,
-      selectLaunchCandidate,
       selectLaunchCandidateByValue,
       checkout,
       createBranchFromRef,
@@ -1257,7 +1035,6 @@ export function useRepoDetailController() {
       revertCommit,
       resetCommit,
       createBranchFromCommit,
-      openConflictFolder,
       commitMetaTitle,
     };
 }
