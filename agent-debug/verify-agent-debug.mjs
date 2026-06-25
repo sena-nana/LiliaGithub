@@ -302,20 +302,50 @@ async function waitForDebugUi(sessionId) {
   throw new Error("agent debug UI tree did not become ready within 30s");
 }
 
-async function waitForAgentElement(sessionId, target, timeoutMs = 30_000) {
+async function waitForAgentDebugCondition(sessionId, script, args, errorMessage, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const present = await execute(
-      sessionId,
-      `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
-       const observe = api?.observe?.();
-       return Boolean(observe?.elements?.some((element) => element.id === arguments[0] && element.visible));`,
-      [target],
-    ).catch(() => false);
+    const present = await execute(sessionId, script, args).catch(() => false);
     if (present) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`Agent debug target did not become visible: ${target}`);
+  throw new Error(errorMessage);
+}
+
+async function waitForAgentElement(sessionId, target, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     const observe = api?.observe?.();
+     return Boolean(observe?.elements?.some((element) => element.id === arguments[0] && element.visible));`,
+    [target],
+    `Agent debug target did not become visible: ${target}`,
+    timeoutMs,
+  );
+}
+
+async function waitForAgentElementPrefix(sessionId, prefix, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     const observe = api?.observe?.();
+     return Boolean(observe?.elements?.some((element) => element.id.startsWith(arguments[0]) && element.visible));`,
+    [prefix],
+    `Agent debug target prefix did not become visible: ${prefix}`,
+    timeoutMs,
+  );
+}
+
+async function waitForRouteIncludes(sessionId, routePart, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     const observe = api?.observe?.();
+     return Boolean(observe?.route?.includes(arguments[0]));`,
+    [routePart],
+    `Agent debug route did not include: ${routePart}`,
+    timeoutMs,
+  );
 }
 
 async function clickAgentTarget(sessionId, target) {
@@ -355,9 +385,72 @@ async function observeAgentStep(sessionId, label) {
 async function runRegressionFlow(sessionId) {
   const steps = [
     {
+      observe: "home-overview",
+      waits: ["home.page", "home.overview.search"],
+    },
+    {
       clicks: ["sidebar.repo.LiliaGithub-linked-worktree"],
       waits: ["repo.project.sidebar.release"],
       observe: "linked-worktree-repo",
+    },
+    {
+      clicks: ["repo.toolbar.tab.files"],
+      routeIncludes: ["/files"],
+      observe: "repo-files",
+    },
+    {
+      clicks: ["repo.toolbar.tab.changes"],
+      routeIncludes: ["/changes"],
+      waits: ["repo.changes.commit.message"],
+      observe: "repo-changes",
+    },
+    {
+      clicks: ["repo.toolbar.tab.history"],
+      routeIncludes: ["/history"],
+      waitPrefixes: ["repo.history.commit."],
+      observe: "repo-history",
+    },
+    {
+      clicks: ["repo.toolbar.tab.stash"],
+      routeIncludes: ["/stash"],
+      observe: "repo-stash",
+    },
+    {
+      clicks: ["repo.toolbar.tab.repo"],
+      waits: ["repo.project.sidebar.board"],
+      observe: "repo-readme-about",
+    },
+    {
+      clicks: ["repo.project.sidebar.board"],
+      waits: ["repo.projects.search", "repo.projects.refresh"],
+      observe: "project-board",
+    },
+    {
+      clicks: ["repo.project.sidebar.issues"],
+      waits: ["repo.issues.create", "repo.issues.sidebar.create"],
+      observe: "issues-panel",
+    },
+    {
+      clicks: ["repo.issues.create"],
+      waits: ["repo.issues.form.title"],
+      observe: "issue-create-form",
+      after: ["repo.issues.form.cancel"],
+    },
+    {
+      clicks: ["repo.project.sidebar.pulls"],
+      waits: ["repo.pulls.create", "repo.pulls.sidebar.create"],
+      observe: "pulls-panel",
+    },
+    {
+      clicks: ["repo.pulls.create"],
+      waits: ["repo.pulls.form.title"],
+      observe: "pull-create-form",
+      after: ["repo.pulls.form.cancel"],
+    },
+    {
+      clicks: ["repo.project.sidebar.actions"],
+      waits: ["repo.actions.refresh", "repo.actions.sidebar.refresh"],
+      observe: "actions-panel",
     },
     {
       clicks: ["repo.project.sidebar.release"],
@@ -371,7 +464,22 @@ async function runRegressionFlow(sessionId) {
       after: ["repo.release.form.close"],
     },
     {
-      clicks: ["sidebar.footer.settings", "settings.sidebar.about"],
+      clicks: ["repo.project.sidebar.settings"],
+      waits: ["repo.settings.form"],
+      observe: "repo-settings",
+    },
+    {
+      clicks: ["sidebar.footer.settings", "settings.sidebar.appearance"],
+      waits: ["settings.appearance.theme.dark", "settings.appearance.corner.radius"],
+      observe: "settings-appearance",
+    },
+    {
+      clicks: ["settings.sidebar.repositories"],
+      waits: ["settings.repositories.github.bind", "settings.repositories.create-remote"],
+      observe: "settings-repositories",
+    },
+    {
+      clicks: ["settings.sidebar.about"],
       waits: ["settings.about.updater.check"],
       observe: "settings-about-updater",
     },
@@ -384,7 +492,9 @@ async function runRegressionFlow(sessionId) {
   let firstObserve = null;
   for (const step of steps) {
     for (const target of step.clicks ?? []) await clickAgentTarget(sessionId, target);
+    for (const routePart of step.routeIncludes ?? []) await waitForRouteIncludes(sessionId, routePart);
     for (const target of step.waits ?? []) await waitForAgentElement(sessionId, target);
+    for (const prefix of step.waitPrefixes ?? []) await waitForAgentElementPrefix(sessionId, prefix);
     if (step.observe) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;

@@ -69,6 +69,7 @@ function openItem(item: RepoProjectsBoardItem) {
           type="search"
           placeholder="搜索项目事项"
           aria-label="搜索项目事项"
+          data-agent-id="repo.projects.search"
           @input="emit('update:query', ($event.target as HTMLInputElement).value)"
         />
       </label>
@@ -85,6 +86,7 @@ function openItem(item: RepoProjectsBoardItem) {
           'projects-board-row--pull': item.kind === 'pull',
           'is-closed': !isOpenRepoProjectsBoardItem(item),
         }"
+        :data-agent-id="`repo.projects.${item.kind}.${item.number}.open`"
         @click="openItem(item)"
       >
         <span class="projects-board-row__status" :title="repoProjectsBoardItemStateText(item)">

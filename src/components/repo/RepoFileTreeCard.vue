@@ -39,6 +39,7 @@ const {
           :key="entry.path"
           type="button"
           class="files-tree__item sb-tree__row sb-tree__row--project"
+          :data-agent-id="`repo.files.tree.${entry.path}`"
           :class="{ 'is-active': isTreeItemActive(entry) }"
           :style="{ '--tree-indent': `${depth * 10}px` }"
           :aria-expanded="entry.kind === 'dir' ? isDirectoryExpanded(entry.path) : undefined"

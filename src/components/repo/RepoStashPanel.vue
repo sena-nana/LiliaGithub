@@ -249,6 +249,7 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
             class="ghost button-compact"
             title="保存 stash"
             aria-label="保存 stash"
+            data-agent-id="repo.stash.save"
             :disabled="!canMutate"
             @click="saveStash"
           >
@@ -266,6 +267,7 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
             :key="stash.id"
             type="button"
             class="repo-stash-panel__item"
+            :data-agent-id="`repo.stash.item.${stash.id}`"
             :class="{ 'is-active': stash.id === selectedStashId }"
             :title="stash.message"
             @click="selectStash(stash)"
@@ -311,6 +313,7 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
               <div class="repo-stash-panel__mode" role="group" aria-label="diff 显示模式">
                 <button
                   type="button"
+                  data-agent-id="repo.stash.diff.hunks"
                   :class="{ 'is-active': diffMode === 'hunks' }"
                   @click="diffMode = 'hunks'"
                 >
@@ -318,6 +321,7 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
                 </button>
                 <button
                   type="button"
+                  data-agent-id="repo.stash.diff.raw"
                   :class="{ 'is-active': diffMode === 'raw' }"
                   @click="diffMode = 'raw'"
                 >
@@ -325,15 +329,15 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
                 </button>
               </div>
               <div class="repo-stash-panel__actions" role="group" aria-label="stash 操作">
-                <button type="button" class="ghost" :disabled="!canMutate" @click="applySelectedStash">
+                <button type="button" class="ghost" data-agent-id="repo.stash.apply" :disabled="!canMutate" @click="applySelectedStash">
                   <ArchiveRestore :size="14" aria-hidden="true" />
                   Apply
                 </button>
-                <button type="button" class="ghost" :disabled="!canMutate" @click="popSelectedStash">
+                <button type="button" class="ghost" data-agent-id="repo.stash.pop" :disabled="!canMutate" @click="popSelectedStash">
                   <Archive :size="14" aria-hidden="true" />
                   Pop
                 </button>
-                <button type="button" class="ghost danger" :disabled="!canMutate" @click="dropSelectedStash">
+                <button type="button" class="ghost danger" data-agent-id="repo.stash.drop" :disabled="!canMutate" @click="dropSelectedStash">
                   <Trash2 :size="14" aria-hidden="true" />
                   {{ dropConfirmStashId === selectedStash.id ? "确认删除" : "Drop" }}
                 </button>

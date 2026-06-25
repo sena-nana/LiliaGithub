@@ -27,6 +27,7 @@ function onCornerRadiusInput(event: Event) {
         <button
           type="button"
           role="radio"
+          data-agent-id="settings.appearance.theme.dark"
           :aria-checked="theme === 'dark'"
           :class="{ 'is-active': theme === 'dark' }"
           @click="setTheme('dark')"
@@ -37,6 +38,7 @@ function onCornerRadiusInput(event: Event) {
         <button
           type="button"
           role="radio"
+          data-agent-id="settings.appearance.theme.light"
           :aria-checked="theme === 'light'"
           :class="{ 'is-active': theme === 'light' }"
           @click="setTheme('light')"
@@ -62,6 +64,7 @@ function onCornerRadiusInput(event: Event) {
         <button
           type="button"
           role="radio"
+          data-agent-id="settings.appearance.corner.smooth"
           :aria-checked="cornerStyle === 'smooth'"
           :class="{ 'is-active': cornerStyle === 'smooth' }"
           @click="setCornerStyle('smooth')"
@@ -72,6 +75,7 @@ function onCornerRadiusInput(event: Event) {
         <button
           type="button"
           role="radio"
+          data-agent-id="settings.appearance.corner.round"
           :aria-checked="cornerStyle === 'round'"
           :class="{ 'is-active': cornerStyle === 'round' }"
           @click="setCornerStyle('round')"
@@ -94,6 +98,7 @@ function onCornerRadiusInput(event: Event) {
           step="1"
           :value="cornerRadius"
           aria-label="圆角半径"
+          data-agent-id="settings.appearance.corner.radius"
           @input="onCornerRadiusInput"
         />
         <output>{{ cornerRadius }}px</output>

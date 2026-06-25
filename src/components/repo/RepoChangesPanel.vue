@@ -285,6 +285,7 @@ function submitCommit(pushAfter: boolean) {
               <button
                 type="button"
                 class="changes-group__arrow"
+                :data-agent-id="`repo.changes.group.${group.key}.action`"
                 :disabled="!group.changes.length || actionRunning"
                 :aria-label="group.actionLabel"
                 :title="group.actionLabel"
@@ -306,6 +307,7 @@ function submitCommit(pushAfter: boolean) {
                   'is-discarding': isDiscardingChange(change, group.key),
                 }"
                 :disabled="isDiscardingChange(change, group.key)"
+                :data-agent-id="`repo.changes.${group.key}.${change.path}`"
                 :aria-busy="isDiscardingChange(change, group.key) || undefined"
                 :aria-pressed="isSelectedChange(change, group.key)"
                 :title="changeTitle(change)"
@@ -327,12 +329,14 @@ function submitCommit(pushAfter: boolean) {
               :value="commitMessage"
               type="text"
               placeholder="提交说明"
+              data-agent-id="repo.changes.commit.message"
               @input="$emit('update:commitMessage', ($event.target as HTMLInputElement).value)"
             />
             <div class="commit-box__actions">
               <button
                 type="button"
                 class="primary commit-box__submit commit-box__submit--push"
+                data-agent-id="repo.changes.commit.push"
                 :disabled="!canCommit || actionRunning || hasConflicts"
                 @click="submitCommit(true)"
               >
@@ -342,6 +346,7 @@ function submitCommit(pushAfter: boolean) {
               <button
                 type="button"
                 class="commit-box__submit commit-box__submit--commit"
+                data-agent-id="repo.changes.commit.only"
                 :disabled="!canCommit || actionRunning || hasConflicts"
                 @click="submitCommit(false)"
               >
@@ -358,6 +363,7 @@ function submitCommit(pushAfter: boolean) {
           v-if="file?.patch"
           type="button"
           class="commit-file-diff__action commit-file-diff__toggle"
+          data-agent-id="repo.changes.diff.toggle"
           :class="{ 'is-active': mode === 'hunks' }"
           aria-label="折叠 diff"
           :aria-pressed="mode === 'hunks'"

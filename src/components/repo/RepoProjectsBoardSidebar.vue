@@ -74,6 +74,7 @@ const emit = defineEmits<{
         class="ghost projects-board__refresh"
         :disabled="loading || metadataLoading"
         aria-label="刷新 Projects"
+        data-agent-id="repo.projects.refresh"
         @click="emit('refresh')"
       >
         <LoaderCircle v-if="loading || metadataLoading" :size="14" aria-hidden="true" class="sb-spin" />
@@ -91,6 +92,7 @@ const emit = defineEmits<{
           v-for="filter in typeFilters"
           :key="filter.value"
           type="button"
+          :data-agent-id="`repo.projects.filters.type.${filter.value}`"
           :class="{ 'is-active': typeFilter === filter.value }"
           :aria-pressed="typeFilter === filter.value"
           @click="emit('update:typeFilter', filter.value)"
@@ -109,6 +111,7 @@ const emit = defineEmits<{
           v-for="filter in stateFilters"
           :key="filter.value"
           type="button"
+          :data-agent-id="`repo.projects.filters.state.${filter.value}`"
           :class="{ 'is-active': stateFilter === filter.value }"
           :aria-pressed="stateFilter === filter.value"
           @click="emit('update:stateFilter', filter.value)"
@@ -125,6 +128,7 @@ const emit = defineEmits<{
       <nav class="projects-board__project-list" aria-label="Project filters">
         <button
           type="button"
+          data-agent-id="repo.projects.filters.project.all"
           :class="{ 'is-active': projectFilter === ALL_PROJECTS_ID }"
           @click="emit('update:projectFilter', ALL_PROJECTS_ID)"
         >
@@ -135,6 +139,7 @@ const emit = defineEmits<{
           v-for="project in projectFilterOptions"
           :key="project.id"
           type="button"
+          :data-agent-id="`repo.projects.filters.project.${project.id}`"
           :class="{ 'is-active': projectFilter === project.id }"
           @click="emit('update:projectFilter', project.id)"
         >

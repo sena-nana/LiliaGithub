@@ -123,6 +123,7 @@ function clamp(value: number, min: number, max: number) {
             :key="file.key"
             type="button"
             class="commit-file-picker__item"
+            :data-agent-id="`repo.diff.file.${file.key}`"
             :class="{ 'is-active': activeFile?.key === file.key }"
             :title="fileTitle(file)"
             @click="$emit('selectFile', file)"

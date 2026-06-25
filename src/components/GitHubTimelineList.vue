@@ -49,13 +49,19 @@ defineProps<{
           <a
             v-if="node.link.kind === 'external'"
             class="github-timeline-row__title"
+            :data-agent-id="`github.timeline.${node.id}`"
             :href="node.link.href"
             target="_blank"
             rel="noreferrer"
           >
             {{ node.title }}
           </a>
-          <RouterLink v-else-if="node.link.kind === 'route'" class="github-timeline-row__title" :to="node.link.to">
+          <RouterLink
+            v-else-if="node.link.kind === 'route'"
+            class="github-timeline-row__title"
+            :data-agent-id="`github.timeline.${node.id}`"
+            :to="node.link.to"
+          >
             {{ node.title }}
           </RouterLink>
           <strong v-else class="github-timeline-row__title">{{ node.title }}</strong>

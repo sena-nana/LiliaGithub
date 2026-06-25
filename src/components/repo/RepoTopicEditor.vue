@@ -5,8 +5,10 @@ const props = withDefaults(defineProps<{
   modelValue: string[];
   draft: string;
   placeholder?: string;
+  agentIdPrefix?: string;
 }>(), {
   placeholder: "Add topics",
+  agentIdPrefix: undefined,
 });
 
 const emit = defineEmits<{
@@ -62,6 +64,7 @@ function handlePaste(event: ClipboardEvent) {
       :key="topic"
       type="button"
       class="repo-topic-editor__token"
+      :data-agent-id="agentIdPrefix ? `${agentIdPrefix}.remove.${topic}` : undefined"
       :aria-label="`移除 ${topic}`"
       @click="removeTopic(topic)"
     >
@@ -72,6 +75,7 @@ function handlePaste(event: ClipboardEvent) {
       :value="draft"
       type="text"
       :placeholder="placeholder"
+      :data-agent-id="agentIdPrefix ? `${agentIdPrefix}.input` : undefined"
       @input="emit('update:draft', ($event.target as HTMLInputElement).value)"
       @keydown="handleKey"
       @blur="commitDraft"

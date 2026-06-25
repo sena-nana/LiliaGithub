@@ -54,6 +54,7 @@ async function scrollToTargetLine() {
         v-if="preview && absolutePreviewPath"
         type="button"
         class="ghost files-main__open"
+        data-agent-id="repo.files.preview.open"
         aria-label="打开文件"
         title="打开文件"
         @click="openPreviewFile"
