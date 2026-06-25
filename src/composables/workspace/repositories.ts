@@ -49,15 +49,7 @@ async function applyRepoMutation(
   await loadRepoDetail(repoId);
 }
 
-async function applyRepoMutationWithLanguageStats(
-  repoId: string,
-  loadSummary: () => Promise<import("../../services/workspace").RepoSummary>,
-) {
-  await applyRepoMutation(repoId, loadSummary);
-  await refreshRepoLanguageStats(repoId, { silent: true });
-}
-
-async function applyRepoOperationWithLanguageStats(
+async function applyRepoOperation(
   repoId: string,
   loadOperation: () => Promise<import("../../services/workspace").RepoOperationResult>,
 ) {
@@ -65,7 +57,6 @@ async function applyRepoOperationWithLanguageStats(
   upsertRepo(result.summary);
   clearRepoActionError(repoId);
   await loadRepoDetail(repoId);
-  await refreshRepoLanguageStats(repoId, { silent: true });
   return result;
 }
 
@@ -658,17 +649,17 @@ export async function addFilesToGitignore(repoId: string, files: string[]) {
 
 export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.commitRepo(repoId, files, message, pushAfter));
+  await applyRepoMutation(repoId, () => service.commitRepo(repoId, files, message, pushAfter));
 }
 
 export async function pull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.pullRepo(repoId, localChangesMode));
+  await applyRepoMutation(repoId, () => service.pullRepo(repoId, localChangesMode));
 }
 
 export async function fetch(repoId: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.fetchRepo(repoId));
+  await applyRepoMutation(repoId, () => service.fetchRepo(repoId));
 }
 
 export async function mergePull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
@@ -705,7 +696,7 @@ export async function startRebase(
   localChangesMode: RepoPullLocalChangesMode = "reject",
 ) {
   const service = await loadWorkspaceService();
-  return applyRepoOperationWithLanguageStats(repoId, () =>
+  return applyRepoOperation(repoId, () =>
     service.startRebaseRepo(repoId, ontoRef, localChangesMode)
   );
 }
@@ -713,7 +704,7 @@ export async function startRebase(
 async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSummary>) {
   const updateRecentSync = beginRecentSyncRetry(repoId);
   try {
-    await applyRepoMutationWithLanguageStats(repoId, async () => {
+    await applyRepoMutation(repoId, async () => {
       const summary = await pushRepo();
       if (updateRecentSync) {
         finishRecentSyncRetry({
@@ -761,27 +752,27 @@ export async function useDefaultTokenAuthForRepo(repoId: string) {
 
 export async function checkout(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.checkoutBranch(repoId, branch));
+  await applyRepoMutation(repoId, () => service.checkoutBranch(repoId, branch));
 }
 
 export async function createBranch(repoId: string, name: string, fromRef: string, checkoutAfter: boolean) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.createBranch(repoId, name, fromRef, checkoutAfter));
+  await applyRepoMutation(repoId, () => service.createBranch(repoId, name, fromRef, checkoutAfter));
 }
 
 export async function renameBranch(repoId: string, oldName: string, newName: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.renameBranch(repoId, oldName, newName));
+  await applyRepoMutation(repoId, () => service.renameBranch(repoId, oldName, newName));
 }
 
 export async function deleteBranch(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.deleteBranch(repoId, branch));
+  await applyRepoMutation(repoId, () => service.deleteBranch(repoId, branch));
 }
 
 export async function setUpstream(repoId: string, branch: string, upstream: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.setBranchUpstream(repoId, branch, upstream));
+  await applyRepoMutation(repoId, () => service.setBranchUpstream(repoId, branch, upstream));
 }
 
 export async function listStashes(repoId: string) {
@@ -791,17 +782,17 @@ export async function listStashes(repoId: string) {
 
 export async function saveStash(repoId: string, message?: string | null) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.saveRepoStash(repoId, message));
+  await applyRepoMutation(repoId, () => service.saveRepoStash(repoId, message));
 }
 
 export async function applyStash(repoId: string, stashId: string) {
   const service = await loadWorkspaceService();
-  return applyRepoOperationWithLanguageStats(repoId, () => service.applyRepoStash(repoId, stashId));
+  return applyRepoOperation(repoId, () => service.applyRepoStash(repoId, stashId));
 }
 
 export async function popStash(repoId: string, stashId: string) {
   const service = await loadWorkspaceService();
-  return applyRepoOperationWithLanguageStats(repoId, () => service.popRepoStash(repoId, stashId));
+  return applyRepoOperation(repoId, () => service.popRepoStash(repoId, stashId));
 }
 
 export async function dropStash(repoId: string, stashId: string) {
@@ -816,12 +807,12 @@ export async function listRemotes(repoId: string) {
 
 export async function cherryPickCommit(repoId: string, hash: string) {
   const service = await loadWorkspaceService();
-  return applyRepoOperationWithLanguageStats(repoId, () => service.cherryPickRepoCommit(repoId, hash));
+  return applyRepoOperation(repoId, () => service.cherryPickRepoCommit(repoId, hash));
 }
 
 export async function revertCommit(repoId: string, hash: string) {
   const service = await loadWorkspaceService();
-  return applyRepoOperationWithLanguageStats(repoId, () => service.revertRepoCommit(repoId, hash));
+  return applyRepoOperation(repoId, () => service.revertRepoCommit(repoId, hash));
 }
 
 export async function resetToCommit(
@@ -830,7 +821,7 @@ export async function resetToCommit(
   mode: import("../../services/workspace").RepoResetMode = "mixed",
 ) {
   const service = await loadWorkspaceService();
-  await applyRepoMutationWithLanguageStats(repoId, () => service.resetRepoToCommit(repoId, hash, mode));
+  await applyRepoMutation(repoId, () => service.resetRepoToCommit(repoId, hash, mode));
 }
 
 export async function acceptConflictFile(
