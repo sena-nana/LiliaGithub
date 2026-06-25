@@ -7,6 +7,7 @@ import { useShellSidebar } from "../composables/useShellSidebar";
 import { provideShellRepoActions } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
+import { installLaunchStatusEvents } from "../composables/workspace/launchEvents";
 import TitleBar from "../components/TitleBar.vue";
 import CommandPalette from "../components/CommandPalette.vue";
 import SecondaryPanel from "./SecondaryPanel.vue";
@@ -23,22 +24,29 @@ const workspace = useWorkspace();
 const searchOpen = ref(false);
 const searchQuery = ref("");
 void workspace.initialize();
-let cleanupFocusRefresh: (() => void) | null = null;
+let cleanupShellEffects: (() => void) | null = null;
 let focusRefreshDisposed = false;
 
 onMounted(async () => {
-  const cleanup = await installWorkspaceFocusRefresh();
+  const [cleanupFocus, cleanupLaunch] = await Promise.all([
+    installWorkspaceFocusRefresh(),
+    installLaunchStatusEvents(),
+  ]);
+  const cleanup = () => {
+    cleanupFocus();
+    cleanupLaunch();
+  };
   if (focusRefreshDisposed) {
     cleanup();
     return;
   }
-  cleanupFocusRefresh = cleanup;
+  cleanupShellEffects = cleanup;
 });
 
 onUnmounted(() => {
   focusRefreshDisposed = true;
-  cleanupFocusRefresh?.();
-  cleanupFocusRefresh = null;
+  cleanupShellEffects?.();
+  cleanupShellEffects = null;
 });
 
 const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.value);

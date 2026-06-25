@@ -1,15 +1,16 @@
 use super::*;
+use tauri::Emitter;
 
 pub(super) const LAUNCH_LOG_LIMIT: usize = 500;
 pub(super) const LAUNCH_HISTORY_KEY: &str = "workspace.launchHistory.v1";
 pub(super) const LAUNCH_HISTORY_LIMIT: usize = 20;
+pub(super) const LAUNCH_STATUS_EVENT: &str = "repo-launch-status";
 #[cfg(target_os = "windows")]
 pub(super) const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub(super) const ROOT_SCRIPT_PRIORITY: [&str; 6] =
     ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"];
 
 pub(super) struct LaunchEntry {
-    pub(super) child: Option<Child>,
     pub(super) status: ProjectLaunchStatus,
 }
 
@@ -144,44 +145,66 @@ pub(super) fn finish_launch_history(
     save_launch_history(app, &history)
 }
 
-pub(super) fn refresh_launch_entry(app: Option<&AppHandle>, repo_id: &str, entry: &mut LaunchEntry) {
-    if entry.status.state != "running" {
-        return;
-    }
-    let Some(child) = entry.child.as_mut() else {
-        entry.status.state = "idle".to_string();
+pub(super) fn emit_launch_status(app: &AppHandle, status: &ProjectLaunchStatus) {
+    let _ = app.emit(LAUNCH_STATUS_EVENT, status);
+}
+
+pub(super) fn complete_launch_status(
+    app: &AppHandle,
+    repo_id: &str,
+    pid: u32,
+    state: &str,
+    exit_code: Option<i32>,
+    error: Option<String>,
+    log_line: String,
+) -> Option<ProjectLaunchStatus> {
+    let status = {
+        let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+        let entry = runtime.get_mut(repo_id)?;
+        if entry.status.state != "running" || entry.status.pid != Some(pid) {
+            return None;
+        }
+        entry.status.state = state.to_string();
         entry.status.pid = None;
-        return;
+        entry.status.exit_code = exit_code;
+        entry.status.error = error.clone();
+        entry.status.clone()
     };
-    match child.try_wait() {
-        Ok(Some(status)) => {
+
+    push_launch_log(repo_id, "system", log_line);
+    let _ = finish_launch_history(app, repo_id, state, exit_code, error);
+    emit_launch_status(app, &status);
+    Some(status)
+}
+
+pub(super) fn watch_launch_child(app: AppHandle, repo_id: String, pid: u32, mut child: Child) {
+    thread::spawn(move || match child.wait() {
+        Ok(status) => {
             let exit_code = status.code();
-            entry.child = None;
-            entry.status.state = "exited".to_string();
-            entry.status.pid = None;
-            entry.status.exit_code = exit_code;
-            entry.status.error = None;
-            push_launch_log(
-                repo_id,
-                "system",
-                format!("进程已退出：exit {}", exit_code.unwrap_or(-1)),
+            let code_text = exit_code.unwrap_or(-1);
+            let _ = complete_launch_status(
+                &app,
+                &repo_id,
+                pid,
+                "exited",
+                exit_code,
+                None,
+                format!("进程已退出：exit {code_text}"),
             );
-            if let Some(app) = app {
-                let _ = finish_launch_history(app, repo_id, "exited", exit_code, None);
-            }
         }
-        Ok(None) => {}
         Err(err) => {
-            entry.child = None;
-            entry.status.state = "error".to_string();
-            entry.status.pid = None;
-            entry.status.error = Some(err.to_string());
-            push_launch_log(repo_id, "system", format!("读取进程状态失败：{err}"));
-            if let Some(app) = app {
-                let _ = finish_launch_history(app, repo_id, "error", None, Some(err.to_string()));
-            }
+            let error = err.to_string();
+            let _ = complete_launch_status(
+                &app,
+                &repo_id,
+                pid,
+                "error",
+                None,
+                Some(error.clone()),
+                format!("读取进程状态失败：{error}"),
+            );
         }
-    }
+    });
 }
 
 pub(super) fn package_manager(
@@ -347,10 +370,8 @@ pub(super) fn infer_launch_candidates(repo_path: &Path) -> Vec<ProjectLaunchCand
                     .and_then(|value| value.as_str()),
             );
             if let Some(scripts) = scripts {
-                let mut script_names: Vec<_> = scripts
-                    .keys()
-                    .map(|name| name.to_string())
-                    .collect();
+                let mut script_names: Vec<_> =
+                    scripts.keys().map(|name| name.to_string()).collect();
                 sort_root_script_names(&mut script_names);
                 for script in script_names {
                     push_launch_candidate(
@@ -495,8 +516,7 @@ pub(super) fn spawn_launch_command(command: &str, cwd: &Path) -> Result<Child, S
         .map_err(|e| format!("启动项目失败：{e}"))
 }
 
-pub(super) fn stop_launch_child(child: &mut Child) -> Result<i32, String> {
-    let pid = child.id();
+pub(super) fn stop_launch_process_tree(pid: u32) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let output = Command::new("taskkill")
@@ -537,13 +557,15 @@ pub(super) fn stop_launch_child(child: &mut Child) -> Result<i32, String> {
 
     #[cfg(not(any(target_os = "windows", unix)))]
     {
-        child.kill().map_err(|e| format!("停止项目失败：{e}"))?;
+        Command::new("kill")
+            .arg(pid.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("停止项目失败：{e}"))?;
     }
 
-    child
-        .wait()
-        .map(|status| status.code().unwrap_or(-1))
-        .map_err(|e| format!("等待项目退出失败：{e}"))
+    Ok(())
 }
 
 pub(super) fn pipe_launch_output(
@@ -611,12 +633,14 @@ pub fn repo_save_launch_config(
 }
 
 #[tauri::command]
-pub fn repo_get_launch_status(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
-    let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(entry) = runtime.get_mut(&repo_id) else {
+pub fn repo_get_launch_status(
+    _app: AppHandle,
+    repo_id: String,
+) -> Result<ProjectLaunchStatus, String> {
+    let runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(entry) = runtime.get(&repo_id) else {
         return Ok(idle_launch_status(&repo_id));
     };
-    refresh_launch_entry(Some(&app), &repo_id, entry);
     Ok(entry.status.clone())
 }
 
@@ -662,8 +686,7 @@ pub fn repo_start_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunc
     let cwd = resolve_launch_cwd(&repo_path, config.cwd.as_deref())?;
 
     let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(entry) = runtime.get_mut(&repo_id) {
-        refresh_launch_entry(Some(&app), &repo_id, entry);
+    if let Some(entry) = runtime.get(&repo_id) {
         if entry.status.state == "running" {
             return Ok(entry.status.clone());
         }
@@ -699,34 +722,41 @@ pub fn repo_start_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunc
     runtime.insert(
         repo_id.clone(),
         LaunchEntry {
-            child: Some(child),
             status: status.clone(),
         },
     );
+    drop(runtime);
     push_launch_log(&repo_id, "system", format!("启动命令：{command}"));
     push_launch_log(&repo_id, "system", format!("工作目录：{}", cwd.display()));
+    emit_launch_status(&app, &status);
+    watch_launch_child(app, repo_id.clone(), pid, child);
     Ok(status)
 }
 
 #[tauri::command]
 pub fn repo_stop_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
-    let mut runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
-    let Some(entry) = runtime.get_mut(&repo_id) else {
-        return Ok(idle_launch_status(&repo_id));
+    let current = {
+        let runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
+        runtime
+            .get(&repo_id)
+            .map(|entry| entry.status.clone())
+            .unwrap_or_else(|| idle_launch_status(&repo_id))
     };
-    refresh_launch_entry(Some(&app), &repo_id, entry);
-    if entry.status.state != "running" {
-        return Ok(entry.status.clone());
+    if current.state != "running" {
+        return Ok(current);
     }
-    if let Some(child) = entry.child.as_mut() {
-        let exit_code = stop_launch_child(child)?;
-        entry.status.state = "exited".to_string();
-        entry.status.pid = None;
-        entry.status.exit_code = Some(exit_code);
-        entry.status.error = None;
-        entry.child = None;
-        push_launch_log(&repo_id, "system", "已停止快速启动进程");
-        let _ = finish_launch_history(&app, &repo_id, "exited", Some(exit_code), None);
-    }
-    Ok(entry.status.clone())
+    let Some(pid) = current.pid else {
+        return Ok(current);
+    };
+    stop_launch_process_tree(pid)?;
+    Ok(complete_launch_status(
+        &app,
+        &repo_id,
+        pid,
+        "exited",
+        Some(0),
+        None,
+        "已停止快速启动进程".to_string(),
+    )
+    .unwrap_or(current))
 }
