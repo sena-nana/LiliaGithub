@@ -1,6 +1,6 @@
 import type { GitHubWorkflowRun, ProjectLaunchConfig, ProjectLaunchStatus, RepoChange, RepoSummary } from "../services/workspace";
 
-type RepoIdentity = Pick<RepoSummary, "name" | "path" | "githubFullName">;
+type RepoIdentity = Pick<RepoSummary, "name" | "path" | "githubFullName" | "worktree">;
 type ConflictStatusSource = {
   binary: boolean;
   hunks: readonly unknown[];
@@ -9,6 +9,9 @@ type ConflictStatusSource = {
 export type WorkflowRunTone = "error" | "warn" | "ok" | "muted";
 
 export function repoDisplayName(repo: RepoIdentity | null | undefined) {
+  if (repo?.worktree?.role === "linked") {
+    return repo.name;
+  }
   const githubFullName = repo?.githubFullName?.trim();
   if (githubFullName) {
     const parts = githubFullName.split("/").filter(Boolean);
