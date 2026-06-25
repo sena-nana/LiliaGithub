@@ -110,8 +110,6 @@ import type {
   ProjectLaunchHistoryEntry,
   ProjectLaunchLog,
   RepoChange,
-  RepoConflictFile,
-  RepoConflictState,
   RepoFilePreview,
   RepoSummary,
 } from "../../services/workspace/types";
@@ -306,20 +304,6 @@ const props = defineProps<{
   filesUnavailableMessage?: string | null;
   fileTargetPath?: string | null;
   fileTargetHash?: string | null;
-  conflictOperationText: string;
-  conflictSummaryText: string;
-  conflictContinueText: string;
-  conflictAbortText: string;
-  conflictFiles: readonly RepoConflictFile[];
-  conflictOperationActive: boolean;
-  conflicts: RepoConflictState;
-  focusedConflict: RepoConflictFile | null;
-  conflictChoices: Record<string, "ours" | "theirs">;
-  conflictSelectedCount: number;
-  conflictAcceptConfirm: "ours" | "theirs" | null;
-  canContinueConflictOperation: boolean;
-  canResolveSelectedConflict: boolean;
-  supportedConflictOperation: boolean;
   commitMetaTitle: (commit: CommitSummary) => string;
   projectTab?: ProjectTab;
   projectIssueNumber?: number | null;
@@ -347,14 +331,6 @@ const emit = defineEmits<{
   revertCommit: [hash: string];
   resetCommit: [hash: string, mode: "soft" | "mixed" | "hard"];
   createBranchFromCommit: [hash: string];
-  continueConflict: [];
-  abortConflict: [];
-  focusConflict: [path: string];
-  pickConflictHunk: [hunkId: string, side: "ours" | "theirs"];
-  resolveSelectedConflict: [];
-  acceptConflict: [side: "ours" | "theirs"];
-  markConflictResolved: [];
-  openConflictFolder: [];
   retrySync: [];
 }>();
 const workspace = useWorkspace();

@@ -1,11 +1,6 @@
-import type { GitHubWorkflowRun, ProjectLaunchConfig, ProjectLaunchStatus, RepoChange, RepoSummary } from "../services/workspace";
+import type { GitHubWorkflowRun, RepoChange, RepoSummary } from "../services/workspace";
 
 type RepoIdentity = Pick<RepoSummary, "name" | "path" | "githubFullName" | "worktree">;
-type ConflictStatusSource = {
-  binary: boolean;
-  hunks: readonly unknown[];
-  resolved: boolean;
-};
 export type WorkflowRunTone = "error" | "warn" | "ok" | "muted";
 
 export function repoDisplayName(repo: RepoIdentity | null | undefined) {
@@ -53,11 +48,6 @@ export function formatRepoTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString();
 }
 
-export function formatNullableRepoTime(timestamp: number | null | undefined, fallback = "无提交") {
-  if (!timestamp) return fallback;
-  return formatRepoTime(timestamp);
-}
-
 export function formatCompactRepoTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString(undefined, {
     month: "2-digit",
@@ -81,37 +71,6 @@ export function formatRelativeRepoTime(timestamp: number | null | undefined, now
   if (deltaMs < month) return `${Math.floor(deltaMs / day)} 天前`;
   if (deltaMs < year) return `${Math.floor(deltaMs / month)} 个月前`;
   return `${Math.floor(deltaMs / year)} 年前`;
-}
-
-export function conflictStatusText(file: ConflictStatusSource) {
-  if (file.binary) return "二进制 / 不可解析";
-  if (!file.hunks.length) return "文件级处理";
-  if (file.resolved) return "已解决";
-  return `${file.hunks.length} 个分段`;
-}
-
-export function conflictStatusTone(file: ConflictStatusSource) {
-  if (file.resolved) return "change-badge--ok";
-  if (file.binary || !file.hunks.length) return "change-badge--warn";
-  return "change-badge--err";
-}
-
-export function launchStatusText(status: ProjectLaunchStatus | null | undefined) {
-  const state = status?.state ?? "idle";
-  if (state === "running") return "运行中";
-  if (state === "exited") return `已退出${status?.exitCode != null ? ` · ${status.exitCode}` : ""}`;
-  if (state === "error") return "异常";
-  return "未运行";
-}
-
-export function launchSourceText(config: ProjectLaunchConfig | null | undefined) {
-  return config?.source === "manual" ? "手动配置" : "自动推断";
-}
-
-export function streamLabel(stream: string) {
-  if (stream === "stderr") return "ERR";
-  if (stream === "stdout") return "OUT";
-  return "SYS";
 }
 
 export function bulkResultTone(result: { status: string }) {
