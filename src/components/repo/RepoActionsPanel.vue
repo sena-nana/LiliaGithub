@@ -406,7 +406,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
           <strong>运行</strong>
           <span>{{ runs.length }} 条运行</span>
         </div>
-        <button type="button" class="ghost actions-icon-btn" aria-label="刷新 Actions" title="刷新" @click="emit('refresh')">
+        <button type="button" class="ghost actions-icon-btn" data-agent-id="repo.actions.refresh" aria-label="刷新 Actions" title="刷新" @click="emit('refresh')">
           <LoaderCircle v-if="loading" :size="14" aria-hidden="true" class="sb-spin" />
           <RefreshCw v-else :size="14" aria-hidden="true" />
         </button>
@@ -419,6 +419,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
         class="actions-run repo-list-row"
         :class="{ 'is-active': selectedRunId === run.id }"
         :data-run-id="run.id"
+        :data-agent-id="`repo.actions.run.${run.id}`"
         @click="selectRun(run.id, { load: false })"
       >
         <span class="actions-status repo-list-row__status" :class="runToneClass(run)" :title="workflowRunStatusText(run)" :aria-label="workflowRunStatusText(run)">
@@ -439,7 +440,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
       <template v-else>
         <header class="actions-detail-head">
           <div class="actions-detail-title">
-            <button type="button" class="ghost actions-icon-btn" aria-label="返回 Actions 运行列表" title="返回 Runs" @click="closeRunDetail">
+            <button type="button" class="ghost actions-icon-btn" data-agent-id="repo.actions.detail.back" aria-label="返回 Actions 运行列表" title="返回 Runs" @click="closeRunDetail">
               <ArrowLeft :size="14" aria-hidden="true" />
             </button>
             <span
@@ -453,7 +454,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
               <CircleDot v-else :size="16" aria-hidden="true" />
             </span>
           </div>
-          <button v-if="detailRun?.htmlUrl" type="button" class="ghost actions-icon-btn" aria-label="打开 GitHub" title="打开 GitHub" @click="openUrl(detailRun.htmlUrl)">
+          <button v-if="detailRun?.htmlUrl" type="button" class="ghost actions-icon-btn" data-agent-id="repo.actions.detail.open-github" aria-label="打开 GitHub" title="打开 GitHub" @click="openUrl(detailRun.htmlUrl)">
             <ExternalLink :size="14" aria-hidden="true" />
           </button>
         </header>
@@ -501,6 +502,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
             :key="`${job.id}:${step.number}`"
             type="button"
             class="actions-failure-row"
+            :data-agent-id="`repo.actions.failure.${job.id}.${step.number}`"
             @click="selectJob(job)"
           >
             <XCircle :size="14" aria-hidden="true" />
@@ -550,6 +552,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
                   class="actions-job-node"
                   :class="[{ 'is-active': expandedJobId === node.job.id }, `actions-job-node--${node.tone}`]"
                   :data-job-id="node.job.id"
+                  :data-agent-id="`repo.actions.job.${node.job.id}`"
                   :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${workflowGraph.nodeWidth}px`, minHeight: `${workflowGraph.nodeHeight}px` }"
                   :title="`${node.job.name} · ${statusLabel(node.job)} · ${durationText(node.job.startedAt, node.job.completedAt)}`"
                   @click="selectJob(node.job)"
@@ -570,7 +573,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 
           <section v-else class="actions-jobs" aria-label="Job 步骤">
             <div class="actions-section-head">
-              <button type="button" class="ghost actions-flow-back" @click="closeJobDetail">
+              <button type="button" class="ghost actions-flow-back" data-agent-id="repo.actions.job.back" @click="closeJobDetail">
                 <ArrowLeft :size="14" aria-hidden="true" />
                 <span>返回流程</span>
               </button>
@@ -613,7 +616,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
                   <pre>{{ activeJobFailureExcerpt }}</pre>
                 </template>
                 <p v-else-if="jobLogs[activeJob.id]" class="muted actions-empty">日志已读取，未识别到明显错误片段。</p>
-                <button type="button" class="ghost" @click="loadJobLog(activeJob, true)">刷新日志</button>
+                <button type="button" class="ghost" data-agent-id="repo.actions.job.log.refresh" @click="loadJobLog(activeJob, true)">刷新日志</button>
               </div>
             </article>
           </section>
@@ -630,6 +633,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
               type="button"
               class="actions-artifact"
               :class="{ 'is-active': selectedArtifactId === artifact.id }"
+              :data-agent-id="`repo.actions.artifact.${artifact.id}`"
               @click="selectArtifact(artifact)"
             >
               <Package :size="15" aria-hidden="true" />
@@ -653,6 +657,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
                       type="button"
                       class="actions-artifact-file-select"
                       :disabled="entry.kind !== 'file'"
+                      :data-agent-id="`repo.actions.artifact.file.${entry.path}`"
                       @click="selectArtifactFile(entry)"
                     >
                       <FileArchive :size="14" aria-hidden="true" />
@@ -664,6 +669,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
                       type="button"
                       class="ghost actions-artifact-attach"
                       :disabled="!selectedDraftRelease || attachAssetMutating"
+                      :data-agent-id="`repo.actions.artifact.attach.${entry.name}`"
                       :aria-label="`附加 ${entry.name} 到 draft release`"
                       :title="selectedDraftRelease ? `附加到 ${selectedDraftRelease.tagName}` : '没有 draft release'"
                       @click="attachArtifactFile(entry)"
@@ -676,7 +682,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
                   <div v-if="hasAttachableArtifact(selectedArtifactEntries)" class="actions-artifact-release-target">
                     <label>
                       <span>Draft Release</span>
-                      <select v-model.number="selectedDraftReleaseId" :disabled="!draftReleaseTargets.length || attachAssetMutating">
+                      <select v-model.number="selectedDraftReleaseId" data-agent-id="repo.actions.artifact.release-target" :disabled="!draftReleaseTargets.length || attachAssetMutating">
                         <option v-for="release in draftReleaseTargets" :key="release.id" :value="release.id">
                           {{ releaseOptionLabel(release) }}
                         </option>

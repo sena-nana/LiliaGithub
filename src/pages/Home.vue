@@ -1829,7 +1829,13 @@ function bulkOperationDescription(operation: BulkOperation) {
             </svg>
             <ul class="language-list">
               <li v-for="slice in activeCodeOverview.slices" :key="slice.key">
-                <RouterLink v-if="slice.to" class="language-list__link" :to="slice.to" :title="slice.linkTitle">
+                <RouterLink
+                  v-if="slice.to"
+                  class="language-list__link"
+                  :data-agent-id="`home.language.slice.${slice.key}`"
+                  :to="slice.to"
+                  :title="slice.linkTitle"
+                >
                   <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
                   <span class="language-name">{{ slice.label }}</span>
                   <strong>{{ formatPercent(slice.percent) }}</strong>
@@ -1894,6 +1900,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 :class="{ 'is-cloned': localRepo }"
                 role="link"
                 tabindex="0"
+                :data-agent-id="`home.repo-status.${githubRepo.fullName}`"
                 :aria-label="`打开 ${githubRepo.fullName}`"
                 :title="localRepo ? localRepo.path : githubRepo.htmlUrl"
                 @click="openGitHubRepo(githubRepo, localRepo)"
@@ -1933,6 +1940,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       v-if="syncIssue?.retryable"
                       type="button"
                       class="repo-action-link repo-action-link--warn"
+                      :data-agent-id="`home.repo-status.${githubRepo.fullName}.retry`"
                       :disabled="workspace.state.bulkRunning || syncingRepoId === localRepo.id || syncIssue.retrying"
                       :title="syncIssue.message"
                       @click.stop="retryRepoPush(localRepo)"
@@ -1949,6 +1957,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       <RouterLink
                         v-if="action.kind !== 'sync'"
                         class="repo-action-link repo-action-link--warn"
+                        :data-agent-id="`home.repo-status.${githubRepo.fullName}.action.${action.kind}`"
                         :to="action.to"
                         :title="action.title"
                         @click.stop
@@ -1959,6 +1968,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                         v-else
                         type="button"
                         class="repo-action-link repo-action-link--warn"
+                        :data-agent-id="`home.repo-status.${githubRepo.fullName}.action.sync`"
                         :disabled="workspace.state.bulkRunning || syncingRepoId === localRepo.id"
                         :title="action.title"
                         @click.stop="syncRepo(localRepo)"
@@ -1978,6 +1988,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                     v-else
                     type="button"
                     class="repo-action-link"
+                    :data-agent-id="`home.repo-status.${githubRepo.fullName}.clone`"
                     :disabled="Boolean(cloningFullName)"
                     @click.stop="cloneGitHubRepo(githubRepo)"
                   >
@@ -1995,6 +2006,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 v-if="hiddenRepoStatusRowCount > 0"
                 type="button"
                 class="repo-status-more"
+                data-agent-id="home.repo-status.show-more"
                 @click="showMoreRepoStatusRows"
               >
                 显示更多 {{ hiddenRepoStatusRowCount }} 个
@@ -2003,6 +2015,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 v-else-if="githubReposNextPage"
                 type="button"
                 class="repo-status-more"
+                data-agent-id="home.repo-status.load-more"
                 :disabled="githubReposLoadingMore"
                 @click="loadMoreGitHubRepos"
               >

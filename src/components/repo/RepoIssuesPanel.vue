@@ -232,6 +232,7 @@ function issueMetaText(issue: GitHubIssue) {
           v-for="filter in stateFilters"
           :key="filter.value"
           type="button"
+          :data-agent-id="`repo.issues.state.${filter.value}`"
           :class="{ 'is-active': state === filter.value }"
           :aria-pressed="state === filter.value"
           @click="emit('update:state', filter.value)"
@@ -244,6 +245,7 @@ function issueMetaText(issue: GitHubIssue) {
       <button
         type="button"
         class="ghost issues-panel__filter-button"
+        data-agent-id="repo.issues.filters.toggle"
         :class="{ 'is-active': filtersOpen || activeFilterCount > 0 }"
         :aria-expanded="filtersOpen"
         @click="filtersOpen = !filtersOpen"
@@ -260,11 +262,12 @@ function issueMetaText(issue: GitHubIssue) {
           type="search"
           placeholder="搜索 Issues"
           aria-label="搜索 Issues"
+          data-agent-id="repo.issues.search"
           @input="updateFilters({ query: ($event.target as HTMLInputElement).value })"
         />
       </label>
 
-      <button type="button" class="primary issues-panel__new" @click="emit('create')">
+      <button type="button" class="primary issues-panel__new" data-agent-id="repo.issues.create" @click="emit('create')">
         <Plus :size="14" aria-hidden="true" />
         新建 Issue
       </button>
@@ -281,6 +284,7 @@ function issueMetaText(issue: GitHubIssue) {
           menu-width="220px"
           menu-label="作者"
           placement="bottom"
+          agent-id="repo.issues.filters.creator"
           @update:model-value="(value) => updateFilters({ creator: value || null })"
         />
       </div>
@@ -297,6 +301,7 @@ function issueMetaText(issue: GitHubIssue) {
           menu-width="220px"
           menu-label="标签"
           placement="bottom"
+          agent-id="repo.issues.filters.labels"
           @update:model-value="(value) => updateFilters({ labels: value })"
         />
       </div>
@@ -310,6 +315,7 @@ function issueMetaText(issue: GitHubIssue) {
           menu-width="220px"
           menu-label="项目"
           placement="bottom"
+          agent-id="repo.issues.filters.project"
           @update:model-value="(value) => updateFilters({ project: value || null })"
         />
       </div>
@@ -323,6 +329,7 @@ function issueMetaText(issue: GitHubIssue) {
           menu-width="220px"
           menu-label="里程碑"
           placement="bottom"
+          agent-id="repo.issues.filters.milestone"
           @update:model-value="(value) => updateFilters({ milestone: value || null })"
         />
       </div>
@@ -336,6 +343,7 @@ function issueMetaText(issue: GitHubIssue) {
           menu-width="220px"
           menu-label="负责人"
           placement="bottom"
+          agent-id="repo.issues.filters.assignee"
           @update:model-value="(value) => updateFilters({ assignee: value || null })"
         />
       </div>
@@ -348,6 +356,7 @@ function issueMetaText(issue: GitHubIssue) {
           menu-width="220px"
           menu-label="排序"
           placement="bottom"
+          agent-id="repo.issues.filters.sort"
           @update:model-value="updateSort"
         />
       </div>
@@ -372,18 +381,31 @@ function issueMetaText(issue: GitHubIssue) {
             <CircleOff v-else :size="15" aria-hidden="true" />
           </span>
           <div class="issues-list__content repo-list-row__body">
-            <button type="button" class="issues-list__title repo-list-row__title" @click="emit('focus', row.issue)">
+            <button
+              type="button"
+              class="issues-list__title repo-list-row__title"
+              :data-agent-id="`repo.issues.${row.issue.number}.open`"
+              @click="emit('focus', row.issue)"
+            >
               #{{ row.issue.number }} {{ row.issue.title }}
             </button>
             <span class="issues-list__meta repo-list-row__meta">{{ row.metaText }}</span>
           </div>
           <div class="issues-list__actions">
-            <button type="button" class="ghost project-icon-action" aria-label="编辑" title="编辑" @click.stop="emit('edit', row.issue)">
+            <button
+              type="button"
+              class="ghost project-icon-action"
+              :data-agent-id="`repo.issues.${row.issue.number}.edit`"
+              aria-label="编辑"
+              title="编辑"
+              @click.stop="emit('edit', row.issue)"
+            >
               <Pencil :size="14" aria-hidden="true" />
             </button>
             <button
               type="button"
               class="ghost project-icon-action"
+              :data-agent-id="`repo.issues.${row.issue.number}.toggle`"
               :aria-label="row.issue.state === 'open' ? '关闭' : '重开'"
               :title="row.issue.state === 'open' ? '关闭' : '重开'"
               @click.stop="emit('toggle', row.issue)"
@@ -401,23 +423,27 @@ function issueMetaText(issue: GitHubIssue) {
               class="project-compact-form__title"
               type="text"
               placeholder="Issue 标题"
+              :data-agent-id="`repo.issues.${row.issue.number}.edit.title`"
               @input="emit('update:editingTitle', ($event.target as HTMLInputElement).value)"
             />
             <input
               :value="editingLabels"
               type="text"
               placeholder="labels, comma separated"
+              :data-agent-id="`repo.issues.${row.issue.number}.edit.labels`"
               @input="emit('update:editingLabels', ($event.target as HTMLInputElement).value)"
             />
             <input
               :value="editingAssignees"
               type="text"
               placeholder="assignees"
+              :data-agent-id="`repo.issues.${row.issue.number}.edit.assignees`"
               @input="emit('update:editingAssignees', ($event.target as HTMLInputElement).value)"
             />
             <button
               type="submit"
               class="primary project-icon-action project-icon-action--primary"
+              :data-agent-id="`repo.issues.${row.issue.number}.edit.save`"
               :disabled="updating || !editingTitle.trim()"
               aria-label="保存"
               title="保存"
@@ -425,7 +451,14 @@ function issueMetaText(issue: GitHubIssue) {
               <LoaderCircle v-if="updating" :size="14" aria-hidden="true" class="sb-spin" />
               <Check v-else :size="14" aria-hidden="true" />
             </button>
-            <button type="button" class="ghost project-icon-action" aria-label="取消" title="取消" @click="emit('cancel-edit')">
+            <button
+              type="button"
+              class="ghost project-icon-action"
+              :data-agent-id="`repo.issues.${row.issue.number}.edit.cancel`"
+              aria-label="取消"
+              title="取消"
+              @click="emit('cancel-edit')"
+            >
               <X :size="14" aria-hidden="true" />
             </button>
           </div>
@@ -433,6 +466,7 @@ function issueMetaText(issue: GitHubIssue) {
             :value="editingBody"
             rows="2"
             placeholder="Issue 内容"
+            :data-agent-id="`repo.issues.${row.issue.number}.edit.body`"
             @input="emit('update:editingBody', ($event.target as HTMLTextAreaElement).value)"
           ></textarea>
         </form>
@@ -448,6 +482,7 @@ function issueMetaText(issue: GitHubIssue) {
         v-if="hiddenIssueCount > 0"
         type="button"
         class="issues-list__more"
+        data-agent-id="repo.issues.show-more"
         @click="showMoreIssues"
       >
         显示更多 {{ hiddenIssueCount }} 个

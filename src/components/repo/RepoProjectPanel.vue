@@ -3068,16 +3068,17 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             v-if="!issuesAccessUnavailable && issueCreateView"
             class="project-create-form"
             aria-label="新建 Issue"
+            data-agent-id="repo.issues.form"
             @submit.prevent="createIssue"
           >
             <div class="project-create-form__head">
-              <button type="button" class="ghost project-create-back" @click="() => closeIssueCreateView()">
+              <button type="button" class="ghost project-create-back" data-agent-id="repo.issues.form.back" @click="() => closeIssueCreateView()">
                 <ArrowLeft :size="14" aria-hidden="true" />
                 Issues
               </button>
               <div class="project-create-form__actions">
-                <button type="button" class="ghost" :disabled="creatingIssue" @click="() => closeIssueCreateView()">取消</button>
-                <button type="submit" class="primary" :disabled="!canSubmitIssueCreate">
+                <button type="button" class="ghost" data-agent-id="repo.issues.form.cancel" :disabled="creatingIssue" @click="() => closeIssueCreateView()">取消</button>
+                <button type="submit" class="primary" data-agent-id="repo.issues.form.save" :disabled="!canSubmitIssueCreate">
                   <LoaderCircle v-if="creatingIssue" :size="14" aria-hidden="true" class="sb-spin" />
                   <Plus v-else :size="14" aria-hidden="true" />
                   创建 Issue
@@ -3095,6 +3096,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   menu-width="260px"
                   menu-label="Issue 模板"
                   placement="bottom"
+                  agent-id="repo.issues.form.template"
                   @update:model-value="selectIssueTemplate"
                 />
               </div>
@@ -3105,7 +3107,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <div class="project-create-grid">
               <label class="project-create-field project-create-field--wide">
                 <span>标题</span>
-                <input v-model="issueTitle" type="text" placeholder="Issue 标题" />
+                <input v-model="issueTitle" type="text" placeholder="Issue 标题" data-agent-id="repo.issues.form.title" />
               </label>
               <div class="project-create-field">
                 <span>标签</span>
@@ -3119,6 +3121,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   menu-width="220px"
                   menu-label="标签"
                   placement="bottom"
+                  agent-id="repo.issues.form.labels"
                   :disabled="issueMetadataLoading && !issueLabelOptions.length"
                 />
               </div>
@@ -3134,6 +3137,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   menu-width="220px"
                   menu-label="负责人"
                   placement="bottom"
+                  agent-id="repo.issues.form.assignees"
                   :disabled="issueMetadataLoading && !issueAssigneeOptions.length"
                 />
               </div>
@@ -3154,6 +3158,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   :value="issueFieldValue(field)"
                   rows="5"
                   :placeholder="field.placeholder"
+                  :data-agent-id="`repo.issues.form.field.${field.id}`"
                   @input="setIssueFieldValue(field.id, targetValue($event))"
                 ></textarea>
                 <Dropdown
@@ -3164,6 +3169,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   menu-width="220px"
                   :menu-label="field.label"
                   placement="bottom"
+                  :agent-id="`repo.issues.form.field.${field.id}`"
                   @update:model-value="(value) => setIssueFieldValue(field.id, value)"
                 />
                 <div v-else-if="field.type === 'checkboxes'" class="project-checkbox-list">
@@ -3171,6 +3177,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <input
                       type="checkbox"
                       :checked="issueCheckboxChecked(field.id, option.label)"
+                      :data-agent-id="`repo.issues.form.field.${field.id}.${option.label}`"
                       @change="toggleIssueCheckbox(field.id, option.label, targetChecked($event))"
                     />
                     <span>{{ option.label }}<em v-if="option.required">*</em></span>
@@ -3181,13 +3188,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   type="text"
                   :value="issueFieldValue(field)"
                   :placeholder="field.placeholder"
+                  :data-agent-id="`repo.issues.form.field.${field.id}`"
                   @input="setIssueFieldValue(field.id, targetValue($event))"
                 />
               </label>
             </div>
             <label v-else class="project-create-field project-create-field--wide">
               <span>内容</span>
-              <textarea v-model="issueBody" rows="7" placeholder="填写 Issue 内容"></textarea>
+              <textarea v-model="issueBody" rows="7" placeholder="填写 Issue 内容" data-agent-id="repo.issues.form.body"></textarea>
             </label>
           </form>
           <RepoIssuesPanel
@@ -3235,18 +3243,19 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             v-if="!pullsAccessUnavailable && pullCreateView"
             class="project-create-form"
             aria-label="新建 PR"
+            data-agent-id="repo.pulls.form"
             @submit.prevent="createPullRequest"
           >
             <div class="project-create-form__head">
-              <button type="button" class="ghost project-create-back" @click="() => closePullRequestCreateView()">
+              <button type="button" class="ghost project-create-back" data-agent-id="repo.pulls.form.back" @click="() => closePullRequestCreateView()">
                 <ArrowLeft :size="14" aria-hidden="true" />
                 Pull Requests
               </button>
               <div class="project-create-form__actions">
-                <button type="button" class="ghost" :disabled="creatingPullRequest" @click="() => closePullRequestCreateView()">
+                <button type="button" class="ghost" data-agent-id="repo.pulls.form.cancel" :disabled="creatingPullRequest" @click="() => closePullRequestCreateView()">
                   取消
                 </button>
-                <button type="submit" class="primary" :disabled="!canSubmitPullRequestCreate">
+                <button type="submit" class="primary" data-agent-id="repo.pulls.form.save" :disabled="!canSubmitPullRequestCreate">
                   <LoaderCircle v-if="creatingPullRequest" :size="14" aria-hidden="true" class="sb-spin" />
                   <GitPullRequest v-else :size="14" aria-hidden="true" />
                   创建 PR
@@ -3264,6 +3273,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   menu-width="260px"
                   menu-label="PR 模板"
                   placement="bottom"
+                  agent-id="repo.pulls.form.template"
                   @update:model-value="selectPullRequestTemplate"
                 />
               </div>
@@ -3274,27 +3284,27 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <div class="project-create-grid">
               <label class="project-create-field project-create-field--wide">
                 <span>标题</span>
-                <input v-model="pullRequestTitle" type="text" placeholder="PR 标题" />
+                <input v-model="pullRequestTitle" type="text" placeholder="PR 标题" data-agent-id="repo.pulls.form.title" />
               </label>
               <label class="project-create-field">
                 <span>来源分支</span>
-                <input v-model="pullRequestHead" type="text" placeholder="feature/my-change" />
+                <input v-model="pullRequestHead" type="text" placeholder="feature/my-change" data-agent-id="repo.pulls.form.head" />
               </label>
               <label class="project-create-field">
                 <span>目标分支</span>
-                <input v-model="pullRequestBase" type="text" placeholder="main" />
+                <input v-model="pullRequestBase" type="text" placeholder="main" data-agent-id="repo.pulls.form.base" />
               </label>
               <label class="project-create-switch ui-switch">
                 <span class="project-create-switch__content">
                   <strong>草稿</strong>
                 </span>
-                <input v-model="pullRequestDraft" class="ui-switch__input" type="checkbox" />
+                <input v-model="pullRequestDraft" class="ui-switch__input" type="checkbox" data-agent-id="repo.pulls.form.draft" />
                 <span class="ui-switch__track" aria-hidden="true"></span>
               </label>
             </div>
             <label class="project-create-field project-create-field--wide">
               <span>描述</span>
-              <textarea v-model="pullRequestBody" rows="7" placeholder="描述本次变更"></textarea>
+              <textarea v-model="pullRequestBody" rows="7" placeholder="描述本次变更" data-agent-id="repo.pulls.form.body"></textarea>
             </label>
           </form>
           <RepoPullRequestsPanel
@@ -3376,7 +3386,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
         </section>
 
-        <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" @submit.prevent="saveSettings()">
+        <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" data-agent-id="repo.settings.form" @submit.prevent="saveSettings()">
           <div class="project-section__head project-section__head--compact">
             <div class="project-section__title">
               <h3>仓库设置</h3>
@@ -3388,6 +3398,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                 v-if="settings"
                 type="submit"
                 class="primary project-icon-action project-icon-action--primary"
+                data-agent-id="repo.settings.save"
                 :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
                 aria-label="保存"
                 title="保存"
@@ -3420,7 +3431,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <strong>{{ switchItem.label }}</strong>
                     <em>{{ switchItem.hint }}</em>
                   </span>
-                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" />
+                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" :data-agent-id="`repo.settings.feature.${switchItem.key}`" />
                   <span class="ui-switch__track" aria-hidden="true"></span>
                 </label>
               </div>
@@ -3439,7 +3450,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <strong>{{ switchItem.label }}</strong>
                     <em>{{ switchItem.hint }}</em>
                   </span>
-                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" />
+                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" :data-agent-id="`repo.settings.merge.${switchItem.key}`" />
                   <span class="ui-switch__track" aria-hidden="true"></span>
                 </label>
               </div>
@@ -3524,12 +3535,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <input
                       v-model="deleteConfirmInput"
                       type="text"
+                      data-agent-id="repo.delete.confirm-input"
                       :placeholder="deleteExpectedInput ?? ''"
                       :disabled="deletingAnything"
                     />
                   </label>
                   <div class="project-delete-dialog__actions">
-                    <button type="button" class="ghost" :disabled="deletingAnything" @click="closeDeleteDialog">
+                    <button type="button" class="ghost" data-agent-id="repo.delete.cancel" :disabled="deletingAnything" @click="closeDeleteDialog">
                       取消
                     </button>
                     <button
@@ -3638,15 +3650,15 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <LoaderCircle v-if="githubLoading && !settings" :size="14" aria-hidden="true" class="sb-spin" />
             <Pencil v-else :size="14" aria-hidden="true" />
           </button>
-          <form v-if="aboutEditing" class="project-about-form" @submit.prevent="saveSettings(true)">
-            <textarea v-model="settingsForm.description" rows="3" placeholder="Description"></textarea>
-            <input v-model="settingsForm.homepage" type="url" placeholder="Homepage" />
-            <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="aboutTopicDraft" />
+          <form v-if="aboutEditing" class="project-about-form" data-agent-id="repo.about.form" @submit.prevent="saveSettings(true)">
+            <textarea v-model="settingsForm.description" rows="3" placeholder="Description" data-agent-id="repo.about.form.description"></textarea>
+            <input v-model="settingsForm.homepage" type="url" placeholder="Homepage" data-agent-id="repo.about.form.homepage" />
+            <RepoTopicEditor v-model="settingsForm.topics" v-model:draft="aboutTopicDraft" agent-id-prefix="repo.about.form.topics" />
             <div class="project-about-form__actions">
-              <button type="button" class="ghost project-icon-action" :disabled="savingSettings" aria-label="取消" title="取消" @click="cancelEditAbout">
+              <button type="button" class="ghost project-icon-action" data-agent-id="repo.about.form.cancel" :disabled="savingSettings" aria-label="取消" title="取消" @click="cancelEditAbout">
                 <X :size="14" aria-hidden="true" />
               </button>
-              <button type="submit" class="primary project-icon-action project-icon-action--primary" :disabled="savingSettings" aria-label="保存" title="保存">
+              <button type="submit" class="primary project-icon-action project-icon-action--primary" data-agent-id="repo.about.form.save" :disabled="savingSettings" aria-label="保存" title="保存">
                 <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
                 <Save v-else :size="14" aria-hidden="true" />
               </button>
@@ -3788,6 +3800,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             type="button"
             class="ghost project-sidebar-summary-card__action"
             aria-label="侧栏新建 Issue"
+            data-agent-id="repo.issues.sidebar.create"
             :disabled="issueCreateView || creatingIssue || !!issuesAccessUnavailable"
             @click="openIssueCreateView"
           >
@@ -3835,6 +3848,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             type="button"
             class="ghost project-sidebar-summary-card__action"
             aria-label="侧栏新建 PR"
+            data-agent-id="repo.pulls.sidebar.create"
             :disabled="pullCreateView || creatingPullRequest || !!pullsAccessUnavailable"
             @click="openPullRequestCreateView"
           >
@@ -3869,6 +3883,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           <button
             type="button"
             class="ghost project-sidebar-summary-card__action"
+            data-agent-id="repo.actions.sidebar.refresh"
             :disabled="actionsLoading || !!actionsAccessUnavailable"
             @click="loadActions(true)"
           >
@@ -4421,15 +4436,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   position: absolute;
   top: 6px;
   right: 6px;
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0.62;
+  pointer-events: auto;
   transition: opacity 0.12s ease;
 }
 
 .project-about-card:hover .project-about-edit,
 .project-about-card:focus-within .project-about-edit {
   opacity: 1;
-  pointer-events: auto;
 }
 
 .project-about-summary,

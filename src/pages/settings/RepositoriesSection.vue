@@ -193,6 +193,7 @@ onUnmounted(() => {
         <button
           type="button"
           class="primary"
+          data-agent-id="settings.repositories.github.bind"
           :disabled="workspace.state.authLoading"
           @click="workspace.startAuthFlow"
         >
@@ -202,17 +203,17 @@ onUnmounted(() => {
         </button>
       </div>
       <div class="repo-settings__actions">
-        <button type="button" class="ghost" :disabled="addingRepo" @click="addLocalRepo">
+        <button type="button" class="ghost" data-agent-id="settings.repositories.add-local" :disabled="addingRepo" @click="addLocalRepo">
           <LoaderCircle v-if="addingRepo" :size="14" aria-hidden="true" class="sb-spin" />
           <FolderGit2 v-else :size="14" aria-hidden="true" />
           添加本地仓库
         </button>
-        <button type="button" class="ghost" :disabled="discovering" @click="discoverRepos">
+        <button type="button" class="ghost" data-agent-id="settings.repositories.discover" :disabled="discovering" @click="discoverRepos">
           <LoaderCircle v-if="discovering" :size="14" aria-hidden="true" class="sb-spin" />
           <Radar v-else :size="14" aria-hidden="true" />
           后台发现仓库
         </button>
-        <button type="button" class="primary" @click="openCreateDialog">
+        <button type="button" class="primary" data-agent-id="settings.repositories.create-remote" @click="openCreateDialog">
           <GitBranchPlus :size="14" aria-hidden="true" />
           新建 GitHub 仓库
         </button>
@@ -235,6 +236,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="ghost"
+              :data-agent-id="`settings.repositories.system-git.restore.${repo.id}`"
               :disabled="resettingSystemGitRepoId === repo.id"
               @click="useDefaultTokenAuth(repo.id)"
             >
@@ -261,6 +263,7 @@ onUnmounted(() => {
           <button
             type="button"
             class="ghost"
+            :data-agent-id="`settings.repositories.hidden.restore.${repo.id}`"
             :disabled="restoringRepoId === repo.id"
             @click="restoreRepo(repo.id)"
           >
@@ -290,6 +293,7 @@ onUnmounted(() => {
               v-if="isTaskCancellable(task)"
               type="button"
               class="ghost workspace-task-list__action"
+              :data-agent-id="`settings.repositories.task.cancel.${task.id}`"
               :disabled="isCancellingTask(task.id)"
               @click="cancelTask(task.id)"
             >

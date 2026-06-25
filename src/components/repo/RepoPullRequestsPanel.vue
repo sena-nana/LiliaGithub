@@ -278,6 +278,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           v-for="filter in stateFilters"
           :key="filter.value"
           type="button"
+          :data-agent-id="`repo.pulls.state.${filter.value}`"
           :class="{ 'is-active': state === filter.value }"
           :aria-pressed="state === filter.value"
           @click="emit('update:state', filter.value)"
@@ -290,6 +291,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
       <button
         type="button"
         class="ghost pulls-panel__filter-button"
+        data-agent-id="repo.pulls.filters.toggle"
         :class="{ 'is-active': filtersOpen || activeFilterCount > 0 }"
         :aria-expanded="filtersOpen"
         @click="filtersOpen = !filtersOpen"
@@ -306,11 +308,12 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           type="search"
           placeholder="搜索 Pull Requests"
           aria-label="搜索 Pull Requests"
+          data-agent-id="repo.pulls.search"
           @input="updateFilters({ query: ($event.target as HTMLInputElement).value })"
         />
       </label>
 
-      <button type="button" class="primary pulls-panel__new" @click="emit('create')">
+      <button type="button" class="primary pulls-panel__new" data-agent-id="repo.pulls.create" @click="emit('create')">
         <Plus :size="14" aria-hidden="true" />
         新建 PR
       </button>
@@ -327,6 +330,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           menu-width="220px"
           menu-label="作者"
           placement="bottom"
+          agent-id="repo.pulls.filters.creator"
           @update:model-value="(value) => updateFilters({ creator: value || null })"
         />
       </div>
@@ -343,6 +347,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           menu-width="220px"
           menu-label="标签"
           placement="bottom"
+          agent-id="repo.pulls.filters.labels"
           @update:model-value="(value) => updateFilters({ labels: value })"
         />
       </div>
@@ -356,6 +361,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           menu-width="220px"
           menu-label="项目"
           placement="bottom"
+          agent-id="repo.pulls.filters.project"
           @update:model-value="(value) => updateFilters({ project: value || null })"
         />
       </div>
@@ -369,6 +375,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           menu-width="220px"
           menu-label="里程碑"
           placement="bottom"
+          agent-id="repo.pulls.filters.milestone"
           @update:model-value="(value) => updateFilters({ milestone: value || null })"
         />
       </div>
@@ -381,6 +388,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           menu-width="220px"
           menu-label="Reviews"
           placement="bottom"
+          agent-id="repo.pulls.filters.review"
           @update:model-value="(value) => updateFilters({ review: value || null })"
         />
       </div>
@@ -394,6 +402,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           menu-width="220px"
           menu-label="负责人"
           placement="bottom"
+          agent-id="repo.pulls.filters.assignee"
           @update:model-value="(value) => updateFilters({ assignee: value || null })"
         />
       </div>
@@ -406,6 +415,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           menu-width="220px"
           menu-label="排序"
           placement="bottom"
+          agent-id="repo.pulls.filters.sort"
           @update:model-value="updateSort"
         />
       </div>
@@ -418,6 +428,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
         class="pulls-list__item project-row--pull repo-list-row repo-list-row--with-actions"
         :class="{ 'is-target': isFocused(row.pull.number) }"
         :data-pull-number="row.pull.number"
+        :data-agent-id="`repo.pulls.${row.pull.number}.open`"
         role="listitem"
         @click="emit('focus', row.pull)"
       >
@@ -455,6 +466,7 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
         v-if="hiddenPullCount > 0"
         type="button"
         class="pulls-list__more"
+        data-agent-id="repo.pulls.show-more"
         @click="showMorePulls"
       >
         显示更多 {{ hiddenPullCount }} 个

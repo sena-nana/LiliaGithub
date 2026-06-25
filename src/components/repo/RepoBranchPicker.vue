@@ -328,12 +328,14 @@ function branchTitle(branch: RepoBranchPickerItem) {
               type="text"
               placeholder="搜索分支"
               aria-label="搜索分支"
+              :data-agent-id="agentId ? `${agentId}.search` : undefined"
             />
           </label>
           <button
             v-if="showRepositoryActions"
             type="button"
             class="branch-picker__actions-button"
+            :data-agent-id="agentId ? `${agentId}.actions` : undefined"
             title="更多分支操作"
             aria-label="更多分支操作"
             :disabled="disabled || actionRunning"
@@ -352,6 +354,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
               v-context-menu="branchMenu(branch)"
               type="button"
               class="branch-picker__row"
+              :data-agent-id="agentId ? `${agentId}.branch.${branch.canonicalName}` : undefined"
               :class="{
                 'is-current': branch.current,
                 'is-remote': branch.remote,

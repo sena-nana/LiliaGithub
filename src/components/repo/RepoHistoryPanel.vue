@@ -114,6 +114,7 @@ function commitContextMenu(commit: CommitSummary) {
         :key="row.commit.hash"
         type="button"
         class="history-row"
+        :data-agent-id="`repo.history.commit.${row.commit.hash}`"
         :class="{ 'is-active': selectedCommitHash === row.commit.hash }"
         :title="commitMetaTitle(row.commit)"
         v-context-menu="commitContextMenu(row.commit)"
