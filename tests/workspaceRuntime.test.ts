@@ -23,6 +23,16 @@ describe("workspace runtime mode", () => {
     })).toBe("tauri");
   });
 
+  it("allows agent debug verification to force the development mock inside Tauri", () => {
+    expect(resolveWorkspaceRuntimeForTests({
+      hasWindow: true,
+      hasTauriInternals: true,
+      isDev: true,
+      isTest: false,
+      agentDebugMockWorkspace: true,
+    })).toBe("mock");
+  });
+
   it("does not silently use the mock in non-Tauri production builds", () => {
     expect(resolveWorkspaceRuntimeForTests({
       hasWindow: true,

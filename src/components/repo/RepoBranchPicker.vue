@@ -47,6 +47,7 @@ const props = defineProps<{
   allowRemoteCreate?: boolean;
   allowRemoteDelete?: boolean;
   showRepositoryActions?: boolean;
+  agentId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -300,6 +301,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
       type="button"
       class="branch-picker__trigger"
       :class="[buttonClass, { 'is-open': open }]"
+      :data-agent-id="agentId"
       :disabled="disabled || actionRunning"
       aria-haspopup="dialog"
       :aria-expanded="open"

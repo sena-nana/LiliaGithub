@@ -282,39 +282,52 @@ defineExpose({
 
 <template>
   <div class="repo-releases-panel">
-    <form v-if="createOpen || editingReleaseId != null" class="release-form" aria-label="Release 表单" @submit.prevent="submitForm">
+    <form
+      v-if="createOpen || editingReleaseId != null"
+      class="release-form"
+      aria-label="Release 表单"
+      data-agent-id="repo.release.form"
+      @submit.prevent="submitForm"
+    >
       <div class="release-form__head">
         <strong>{{ editingReleaseId == null ? "New release" : "Edit release" }}</strong>
-        <button type="button" class="ghost project-icon-action" aria-label="关闭表单" title="关闭" @click="closeForm">
+        <button
+          type="button"
+          class="ghost project-icon-action"
+          data-agent-id="repo.release.form.close"
+          aria-label="关闭表单"
+          title="关闭"
+          @click="closeForm"
+        >
           <X :size="14" aria-hidden="true" />
         </button>
       </div>
       <div class="release-form__grid">
         <label>
           <span>Tag</span>
-          <input v-model="form.tagName" required type="text" placeholder="v1.0.0" />
+          <input v-model="form.tagName" required type="text" placeholder="v1.0.0" data-agent-id="repo.release.form.tag" />
         </label>
         <label>
           <span>Target</span>
-          <input v-model="form.targetCommitish" type="text" placeholder="main" />
+          <input v-model="form.targetCommitish" type="text" placeholder="main" data-agent-id="repo.release.form.target" />
         </label>
         <label class="release-form__wide">
           <span>Title</span>
-          <input v-model="form.name" type="text" placeholder="Release title" />
+          <input v-model="form.name" type="text" placeholder="Release title" data-agent-id="repo.release.form.title" />
         </label>
       </div>
       <label>
         <span>Notes</span>
-        <textarea v-model="form.body" rows="7" placeholder="Describe this release"></textarea>
+        <textarea v-model="form.body" rows="7" placeholder="Describe this release" data-agent-id="repo.release.form.notes"></textarea>
       </label>
       <div class="release-form__checks">
-        <label><input v-model="form.draft" type="checkbox" /> Draft</label>
-        <label><input v-model="form.prerelease" type="checkbox" /> Pre-release</label>
-        <label v-if="editingReleaseId == null"><input v-model="form.generateReleaseNotes" type="checkbox" /> Generate notes</label>
+        <label><input v-model="form.draft" type="checkbox" data-agent-id="repo.release.form.draft" /> Draft</label>
+        <label><input v-model="form.prerelease" type="checkbox" data-agent-id="repo.release.form.prerelease" /> Pre-release</label>
+        <label v-if="editingReleaseId == null"><input v-model="form.generateReleaseNotes" type="checkbox" data-agent-id="repo.release.form.generate-notes" /> Generate notes</label>
       </div>
       <div class="release-form__actions">
-        <button type="button" class="ghost" :disabled="mutating" @click="closeForm">取消</button>
-        <button type="submit" class="primary" :disabled="mutating || !form.tagName.trim()">
+        <button type="button" class="ghost" data-agent-id="repo.release.form.cancel" :disabled="mutating" @click="closeForm">取消</button>
+        <button type="submit" class="primary" data-agent-id="repo.release.form.save" :disabled="mutating || !form.tagName.trim()">
           <LoaderCircle v-if="mutating" :size="14" aria-hidden="true" class="sb-spin" />
           <Save v-else :size="14" aria-hidden="true" />
           保存
@@ -339,6 +352,7 @@ defineExpose({
             class="release-card__rail-hit"
             :aria-label="releaseTimelineLabel(release)"
             :data-tooltip="releaseTimelineLabel(release)"
+            :data-agent-id="`repo.release.${release.id}.timeline`"
             tabindex="0"
           >
             <span class="release-card__node"></span>
@@ -362,6 +376,7 @@ defineExpose({
                 <button
                   type="button"
                   class="ghost project-icon-action"
+                  :data-agent-id="`repo.release.${release.id}.actions`"
                   :disabled="mutating"
                   aria-label="编辑 Release 菜单"
                   title="编辑 Release"
@@ -387,6 +402,7 @@ defineExpose({
                 v-if="isReleaseBodyLong(release)"
                 type="button"
                 class="release-card__markdown-toggle"
+                :data-agent-id="`repo.release.${release.id}.body.toggle`"
                 :aria-expanded="isReleaseBodyExpanded(release)"
                 @click="toggleReleaseBody(release)"
               >
@@ -397,7 +413,12 @@ defineExpose({
           </div>
           <div v-if="release.assets.length" class="release-assets__list">
             <div v-for="asset in visibleReleaseAssets(release)" :key="asset.id" class="release-asset">
-              <button type="button" class="release-asset__name" @click="emit('openUrl', asset.browserDownloadUrl)">
+              <button
+                type="button"
+                class="release-asset__name"
+                :data-agent-id="`repo.release.${release.id}.asset.${asset.id}`"
+                @click="emit('openUrl', asset.browserDownloadUrl)"
+              >
                 <span>{{ asset.name }}</span>
               </button>
               <span class="release-asset__meta">
@@ -412,6 +433,7 @@ defineExpose({
               v-if="releaseHiddenAssetCount(release)"
               type="button"
               class="release-assets__more"
+              :data-agent-id="`repo.release.${release.id}.assets.more`"
               @click="toggleReleaseAssets(release)"
             >
               {{ isReleaseAssetsExpanded(release) ? "收起" : `更多 ${releaseHiddenAssetCount(release)}` }}
