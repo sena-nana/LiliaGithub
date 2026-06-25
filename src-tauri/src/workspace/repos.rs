@@ -47,6 +47,7 @@ pub(super) fn git_command(
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    configure_background_command(&mut command);
     if let Some(header) = auth_header {
         command
             .env("GIT_CONFIG_COUNT", "1")
@@ -87,6 +88,7 @@ pub(super) fn git_diff_command_lossy(repo_path: &Path, args: &[&str]) -> Option<
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    configure_background_command(&mut command);
     let output = command.output().ok()?;
     if output.status.success() || output.status.code() == Some(1) {
         Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -99,13 +101,16 @@ fn git_blob_line_counts(repo_path: &Path, object_ids: &[String]) -> Result<Vec<u
     if object_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(["cat-file", "--batch"])
         .current_dir(repo_path)
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_background_command(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("无法启动 git（请确认 git 在 PATH 中）：{e}"))?;
 
