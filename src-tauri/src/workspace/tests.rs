@@ -1364,7 +1364,7 @@ fn parses_status_pair_and_path() {
         (" ".to_string(), "M".to_string())
     );
     assert_eq!(
-        parse_status_entries(" M src/main.ts\0R  new.ts\0old.ts\0"),
+        parse_status_snapshot(" M src/main.ts\0R  new.ts\0old.ts\0").entries,
         vec![
             RepoStatusEntry {
                 index: " ".to_string(),
@@ -1380,6 +1380,33 @@ fn parses_status_pair_and_path() {
             },
         ]
     );
+}
+
+#[test]
+fn parses_status_snapshot_header_and_entries() {
+    let snapshot = parse_status_snapshot(
+        "## main...origin/main [ahead 2, behind 1]\0 M src/main.ts\0R  new.ts\0old.ts\0C  copy.ts\0source.ts\0UU conflict.ts\0?? nested/new.ts\0",
+    );
+
+    assert_eq!(snapshot.current_branch.as_deref(), Some("main"));
+    assert_eq!(snapshot.ahead, 2);
+    assert_eq!(snapshot.behind, 1);
+    assert_eq!(snapshot.entries.len(), 5);
+    assert_eq!(snapshot.entries[1].path, "new.ts");
+    assert_eq!(snapshot.entries[1].old_path.as_deref(), Some("old.ts"));
+    assert_eq!(snapshot.entries[2].path, "copy.ts");
+    assert_eq!(snapshot.entries[2].old_path.as_deref(), Some("source.ts"));
+    assert!(snapshot
+        .entries
+        .iter()
+        .any(|entry| is_conflict_status(&entry.index, &entry.worktree)));
+    assert!(!snapshot
+        .entries
+        .iter()
+        .any(|entry| entry.path.starts_with("## ")));
+
+    let detached = parse_status_snapshot("## HEAD (no branch)\0");
+    assert_eq!(detached.current_branch, None);
 }
 
 #[test]

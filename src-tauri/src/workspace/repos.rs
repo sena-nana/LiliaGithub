@@ -11,6 +11,14 @@ pub(super) struct RepoStatusEntry {
     pub(super) old_path: Option<String>,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct RepoStatusSnapshot {
+    pub(super) current_branch: Option<String>,
+    pub(super) ahead: i32,
+    pub(super) behind: i32,
+    pub(super) entries: Vec<RepoStatusEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RepoFetchFailure {
     pub(super) repo_name: String,
@@ -646,42 +654,18 @@ pub(super) fn language_for_path(path: &Path) -> Option<&'static str> {
 }
 
 pub(super) fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
-    let status = git_command_lossy(path, &["status", "--porcelain=v1", "-b", "--ahead-behind"])
-        .unwrap_or_default();
-    let entries = repo_status_entries(path);
+    let status = repo_status_snapshot(path);
+    summarize_repo_from_status(root, path, &status)
+}
+
+fn summarize_repo_from_status(root: &Path, path: &Path, status: &RepoStatusSnapshot) -> RepoSummary {
     let worktree = resolve_repo_worktree(root, path).summary;
-    let mut current_branch = None;
-    let mut ahead = 0;
-    let mut behind = 0;
     let mut staged_count = 0;
     let mut unstaged_count = 0;
     let mut untracked_count = 0;
     let mut conflict_count = 0;
 
-    for line in status.lines() {
-        if let Some(header) = line.strip_prefix("## ") {
-            let branch_part = header.split("...").next().unwrap_or(header).trim();
-            if branch_part != "HEAD (no branch)" {
-                current_branch = Some(branch_part.to_string());
-            }
-            if let Some(start) = header.find("[") {
-                if let Some(end) = header[start..].find("]") {
-                    let counts = &header[start + 1..start + end];
-                    for part in counts.split(',') {
-                        let trimmed = part.trim();
-                        if let Some(value) = trimmed.strip_prefix("ahead ") {
-                            ahead = value.parse::<i32>().unwrap_or(0);
-                        } else if let Some(value) = trimmed.strip_prefix("behind ") {
-                            behind = value.parse::<i32>().unwrap_or(0);
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-    }
-
-    for entry in entries {
+    for entry in &status.entries {
         if is_conflict_status(&entry.index, &entry.worktree) {
             conflict_count += 1;
         } else if entry.index == "?" && entry.worktree == "?" {
@@ -697,10 +681,15 @@ pub(super) fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
     }
 
     let remote_url = git_command_lossy(path, &["remote", "get-url", "origin"]);
-    let last_commit_at = git_command_lossy(path, &["log", "-1", "--format=%ct"])
+    let last_commit = git_command_lossy(path, &["log", "-1", "--format=%ct%x1f%s"]);
+    let last_commit_at = last_commit
+        .as_deref()
+        .and_then(|value| value.split_once('\x1f').map(|(timestamp, _)| timestamp))
         .and_then(|value| value.parse::<i64>().ok());
-    let last_commit_message =
-        git_command_lossy(path, &["log", "-1", "--format=%s"]).filter(|value| !value.is_empty());
+    let last_commit_message = last_commit
+        .as_deref()
+        .and_then(|value| value.split_once('\x1f').map(|(_, subject)| subject.to_string()))
+        .filter(|value| !value.is_empty());
     let relative_path = repo_id(root, path);
 
     RepoSummary {
@@ -712,11 +701,11 @@ pub(super) fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
             .to_string(),
         path: path.to_string_lossy().to_string(),
         relative_path,
-        current_branch,
+        current_branch: status.current_branch.clone(),
         github_full_name: remote_url.as_deref().and_then(github_full_name_from_remote),
         remote_url,
-        ahead,
-        behind,
+        ahead: status.ahead,
+        behind: status.behind,
         staged_count,
         unstaged_count,
         untracked_count,
@@ -759,7 +748,16 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
 }
 
 pub(super) fn summarize_repo_with_language_stats(root: &Path, path: &Path) -> RepoSummary {
-    let mut summary = summarize_repo(root, path);
+    let status = repo_status_snapshot(path);
+    summarize_repo_with_language_stats_from_status(root, path, &status)
+}
+
+fn summarize_repo_with_language_stats_from_status(
+    root: &Path,
+    path: &Path,
+    status: &RepoStatusSnapshot,
+) -> RepoSummary {
+    let mut summary = summarize_repo_from_status(root, path, status);
     summary.language_stats = repo_head_language_stats(path);
     summary.language_stats_updated_at = now_millis();
     summary
@@ -772,20 +770,30 @@ pub(super) fn status_pair(line: &str) -> (String, String) {
     (first.to_string(), second.to_string())
 }
 
-pub(super) fn repo_status_entries(path: &Path) -> Vec<RepoStatusEntry> {
-    let status = git_command(
-        path,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        None,
-    )
-    .unwrap_or_default();
-    parse_status_entries(&status)
-}
-
-pub(super) fn parse_status_entries(status: &str) -> Vec<RepoStatusEntry> {
-    let mut entries = Vec::new();
+pub(super) fn parse_status_snapshot(status: &str) -> RepoStatusSnapshot {
+    let mut snapshot = RepoStatusSnapshot::default();
     let mut records = status.split('\0').filter(|record| !record.is_empty());
     while let Some(record) = records.next() {
+        if let Some(header) = record.strip_prefix("## ") {
+            let branch_part = header.split("...").next().unwrap_or(header).trim();
+            if branch_part != "HEAD (no branch)" {
+                snapshot.current_branch = Some(branch_part.to_string());
+            }
+            if let Some(start) = header.find("[") {
+                if let Some(end) = header[start..].find("]") {
+                    let counts = &header[start + 1..start + end];
+                    for part in counts.split(',') {
+                        let trimmed = part.trim();
+                        if let Some(value) = trimmed.strip_prefix("ahead ") {
+                            snapshot.ahead = value.parse::<i32>().unwrap_or(0);
+                        } else if let Some(value) = trimmed.strip_prefix("behind ") {
+                            snapshot.behind = value.parse::<i32>().unwrap_or(0);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         if record.len() < 3 {
             continue;
         }
@@ -799,14 +807,35 @@ pub(super) fn parse_status_entries(status: &str) -> Vec<RepoStatusEntry> {
         } else {
             None
         };
-        entries.push(RepoStatusEntry {
+        snapshot.entries.push(RepoStatusEntry {
             index,
             worktree,
             path,
             old_path,
         });
     }
-    entries
+    snapshot
+}
+
+fn repo_status_snapshot(path: &Path) -> RepoStatusSnapshot {
+    let status = git_command(
+        path,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "-b",
+            "--ahead-behind",
+            "--untracked-files=all",
+        ],
+        None,
+    )
+    .unwrap_or_default();
+    parse_status_snapshot(&status)
+}
+
+pub(super) fn repo_status_entries(path: &Path) -> Vec<RepoStatusEntry> {
+    repo_status_snapshot(path).entries
 }
 
 pub(super) fn is_conflict_status(index: &str, worktree: &str) -> bool {
@@ -1385,12 +1414,21 @@ pub async fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDeta
     run_blocking("读取仓库详情", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
+        let status = repo_status_snapshot(&path);
+        let change_entries = status.entries.clone();
+        let conflict_entries = conflict_status_entries(&status.entries);
+        let changes_path = path.as_path();
+        let conflicts_path = path.as_path();
         let (summary, changes, commits, branches, conflicts) = thread::scope(|scope| {
-            let summary = scope.spawn(|| summarize_repo_with_language_stats(&root, &path));
-            let changes = scope.spawn(|| repo_changes(&path));
+            let summary = scope.spawn(|| {
+                summarize_repo_with_language_stats_from_status(&root, &path, &status)
+            });
+            let changes =
+                scope.spawn(move || repo_changes_from_entries(changes_path, change_entries));
             let commits = scope.spawn(|| repo_history(&path));
             let branches = scope.spawn(|| repo_branches(&path));
-            let conflicts = scope.spawn(|| repo_conflicts(&path));
+            let conflicts =
+                scope.spawn(move || repo_conflicts_from_entries(conflicts_path, conflict_entries));
             (
                 summary.join().expect("repo summary worker panicked"),
                 changes.join().expect("repo changes worker panicked"),
@@ -2084,7 +2122,11 @@ pub async fn repo_continue_conflict_operation(
 }
 
 pub(super) fn repo_conflicts(path: &Path) -> RepoConflictState {
-    let entries = conflict_status_entries(path);
+    let entries = repo_status_entries(path);
+    repo_conflicts_from_entries(path, conflict_status_entries(&entries))
+}
+
+fn repo_conflicts_from_entries(path: &Path, entries: Vec<(String, String)>) -> RepoConflictState {
     let files: Vec<_> = entries
         .into_iter()
         .map(|(status, file_path)| conflict_file_from_status(path, status, file_path))
@@ -2251,14 +2293,14 @@ pub(super) fn restore_pull_local_changes_for_merge_result(
     }
 }
 
-pub(super) fn conflict_status_entries(path: &Path) -> Vec<(String, String)> {
-    repo_status_entries(path)
-        .into_iter()
+fn conflict_status_entries(entries: &[RepoStatusEntry]) -> Vec<(String, String)> {
+    entries
+        .iter()
         .filter_map(|entry| {
             if !is_conflict_status(&entry.index, &entry.worktree) {
                 return None;
             }
-            Some((format!("{}{}", entry.index, entry.worktree), entry.path))
+            Some((format!("{}{}", entry.index, entry.worktree), entry.path.clone()))
         })
         .collect()
 }
@@ -2552,8 +2594,10 @@ pub(super) fn add_repo_files_to_gitignore(path: &Path, files: Vec<String>) -> Re
 }
 
 pub(super) fn repo_changes(path: &Path) -> Vec<RepoChange> {
-    let entries = repo_status_entries(path);
+    repo_changes_from_entries(path, repo_status_entries(path))
+}
 
+fn repo_changes_from_entries(path: &Path, entries: Vec<RepoStatusEntry>) -> Vec<RepoChange> {
     thread::scope(|scope| {
         let handles: Vec<_> = entries
             .into_iter()

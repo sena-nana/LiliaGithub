@@ -1371,15 +1371,20 @@ describe("workspace incremental refresh", () => {
     expect(service.mergeBranch).toHaveBeenCalledWith(initial.id, "feature/local");
     expect(service.deleteBranch).toHaveBeenCalledWith(initial.id, "feature/local");
     expect(service.getRepoDetail).toHaveBeenCalledTimes(2);
-    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(1);
-    expect(service.refreshRepoLanguageStats).toHaveBeenCalledWith(initial.id);
+    expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
   });
 
-  it("单仓库提交、拉取、推送和切换分支后刷新当前仓库语言统计", async () => {
+  it("单仓库提交、拉取、推送和切换分支后通过详情刷新语言统计", async () => {
     const initial = repoSummary("LiliaGithub", { ahead: 1, stagedCount: 1 });
     const updated = repoSummary("LiliaGithub", { ahead: 0, stagedCount: 0 });
+    const detailSummary = repoSummary("LiliaGithub", {
+      ahead: 0,
+      stagedCount: 0,
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      languageStatsUpdatedAt: 1,
+    });
     state.repos = [initial];
-    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.getRepoDetail.mockResolvedValue(repoDetail(detailSummary));
     service.commitRepo.mockResolvedValue(updated);
     service.pullRepo.mockResolvedValue(updated);
     service.pushRepo.mockResolvedValue(updated);
@@ -1390,16 +1395,12 @@ describe("workspace incremental refresh", () => {
     await push(initial.id);
     await checkout(initial.id, "main");
 
-    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(4);
-    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(1, initial.id);
-    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(2, initial.id);
-    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(3, initial.id);
-    expect(service.refreshRepoLanguageStats).toHaveBeenNthCalledWith(4, initial.id);
+    expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
     expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
     expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
   });
 
-  it("单仓库创建和重命名分支后刷新当前仓库语言统计", async () => {
+  it("单仓库创建和重命名分支后只刷新当前仓库详情", async () => {
     const initial = repoSummary("LiliaGithub", { currentBranch: "main" });
     const updated = repoSummary("LiliaGithub", { currentBranch: "feature/renamed" });
     state.repos = [initial];
@@ -1413,14 +1414,20 @@ describe("workspace incremental refresh", () => {
     expect(service.createBranch).toHaveBeenCalledWith(initial.id, "feature/new", "main", true);
     expect(service.renameBranch).toHaveBeenCalledWith(initial.id, "feature/new", "feature/renamed");
     expect(service.getRepoDetail).toHaveBeenCalledTimes(2);
-    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(2);
+    expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
   });
 
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {
     const initial = repoSummary("LiliaGithub", { ahead: 1, stagedCount: 1 });
     const updated = repoSummary("LiliaGithub", { ahead: 0, stagedCount: 0 });
+    const detailSummary = repoSummary("LiliaGithub", {
+      ahead: 0,
+      stagedCount: 0,
+      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+      languageStatsUpdatedAt: 1,
+    });
     state.repos = [initial];
-    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.getRepoDetail.mockResolvedValue(repoDetail(detailSummary));
     service.stageFiles.mockResolvedValue(undefined);
     service.unstageFiles.mockResolvedValue(undefined);
     service.commitRepo.mockResolvedValue(updated);
@@ -1437,7 +1444,7 @@ describe("workspace incremental refresh", () => {
 
     expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(service.getRepoDetail).toHaveBeenCalledTimes(6);
-    expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(4);
+    expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
     expect(state.repos[0]).toMatchObject({
       id: updated.id,
       ahead: 0,
