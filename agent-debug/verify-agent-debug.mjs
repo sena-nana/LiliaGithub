@@ -7,10 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const scriptPath = fileURLToPath(import.meta.url);
+const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 const runsRoot = path.join(repoRoot, "agent-debug-runs");
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const runDir = path.join(runsRoot, runId);
+const appDataDir = path.join(runDir, "app-data");
+const webviewDataDir = path.join(runDir, "webview-data");
 const driverPort = Number.parseInt(process.env.LILIA_GITHUB_AGENT_DEBUG_DRIVER_PORT ?? "4444", 10);
 const driverUrl = `http://127.0.0.1:${driverPort}`;
 const defaultDevUrl = "http://localhost:1420";
@@ -20,6 +23,18 @@ let devUrl = process.env.LILIA_GITHUB_AGENT_DEBUG_DEV_URL ?? defaultDevUrl;
 const appBinary = process.env.LILIA_GITHUB_AGENT_DEBUG_APP ?? defaultAppBinary();
 const localViteBin = path.join(repoRoot, "node_modules", "vite", "bin", "vite.js");
 const replay = [];
+const observedSnapshots = [];
+
+const agentDebugEnv = {
+  LILIA_GITHUB_AGENT_DEBUG: "1",
+  VITE_LILIA_GITHUB_AGENT_DEBUG: "1",
+  VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE: "1",
+  WEBVIEW2_USER_DATA_FOLDER: webviewDataDir,
+  MSEDGEDRIVER_TELEMETRY_OPTOUT: "1",
+  ...(process.platform === "win32"
+    ? { APPDATA: appDataDir, LOCALAPPDATA: appDataDir }
+    : { XDG_CONFIG_HOME: appDataDir, XDG_DATA_HOME: appDataDir }),
+};
 
 function defaultAppBinary() {
   const exe = process.platform === "win32" ? ".exe" : "";
@@ -166,6 +181,28 @@ async function writeJson(name, value) {
   return target;
 }
 
+function safeArtifactName(label) {
+  return label.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
+}
+
+function formatMissingAgentIds(missingAgentIds) {
+  return missingAgentIds
+    .slice(0, 10)
+    .map((item) => {
+      const label = item.text || item.selector || item.tagName;
+      const nearest = item.nearestAgentId ? ` nearest=${item.nearestAgentId}` : "";
+      return `${item.role} ${label}${nearest}`;
+    })
+    .join("; ");
+}
+
+export function assertNoMissingAgentIds(observe, label) {
+  const missingAgentIds = observe?.missingAgentIds ?? [];
+  if (!missingAgentIds.length) return;
+  const suffix = missingAgentIds.length > 10 ? `; +${missingAgentIds.length - 10} more` : "";
+  throw new Error(`${label} has ${missingAgentIds.length} missing agent ids: ${formatMissingAgentIds(missingAgentIds)}${suffix}`);
+}
+
 function stopProcessTree(child) {
   if (!child || child.killed) return;
   if (process.platform === "win32" && child.pid) {
@@ -265,6 +302,98 @@ async function waitForDebugUi(sessionId) {
   throw new Error("agent debug UI tree did not become ready within 30s");
 }
 
+async function waitForAgentElement(sessionId, target, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const present = await execute(
+      sessionId,
+      `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+       const observe = api?.observe?.();
+       return Boolean(observe?.elements?.some((element) => element.id === arguments[0] && element.visible));`,
+      [target],
+    ).catch(() => false);
+    if (present) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Agent debug target did not become visible: ${target}`);
+}
+
+async function clickAgentTarget(sessionId, target) {
+  await waitForAgentElement(sessionId, target);
+  const result = await execute(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     return api.act({ type: 'click', target: arguments[0] });`,
+    [target],
+  );
+  replay.push({ type: "click", target });
+  return result;
+}
+
+async function observeAgentStep(sessionId, label) {
+  const observe = await execute(
+    sessionId,
+    "const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug; return api?.observe?.() ?? null;",
+  );
+  if (!observe?.enabled) throw new Error(`Agent debug API is not enabled during ${label}`);
+  if (!observe.elements?.length) throw new Error(`Agent debug snapshot for ${label} has no addressable elements`);
+  const observePath = await writeJson(`observe-${safeArtifactName(label)}.json`, observe);
+  const missingPath = await writeJson(`missing-agent-ids-${safeArtifactName(label)}.json`, observe.missingAgentIds ?? []);
+  observedSnapshots.push({
+    label,
+    route: observe.route,
+    elementCount: observe.elements.length,
+    missingAgentIdCount: observe.missingAgentIds?.length ?? 0,
+    observePath,
+    missingPath,
+  });
+  assertNoMissingAgentIds(observe, label);
+  replay.push({ type: "observe", label, route: observe.route, elementCount: observe.elements.length });
+  return observe;
+}
+
+async function runRegressionFlow(sessionId) {
+  const steps = [
+    {
+      clicks: ["sidebar.repo.LiliaGithub-linked-worktree"],
+      waits: ["repo.project.sidebar.release"],
+      observe: "linked-worktree-repo",
+    },
+    {
+      clicks: ["repo.project.sidebar.release"],
+      waits: ["repo.release.refresh", "repo.release.filters.type.prerelease"],
+      observe: "release-panel",
+    },
+    {
+      clicks: ["repo.release.filters.type.prerelease", "repo.release.filters.tag.v1.0.0-beta", "repo.release.create"],
+      waits: ["repo.release.form.tag"],
+      observe: "release-create-form",
+      after: ["repo.release.form.close"],
+    },
+    {
+      clicks: ["sidebar.footer.settings", "settings.sidebar.about"],
+      waits: ["settings.about.updater.check"],
+      observe: "settings-about-updater",
+    },
+    {
+      clicks: ["settings.about.updater.check"],
+      observe: "settings-about-updater-after-check",
+    },
+  ];
+
+  let firstObserve = null;
+  for (const step of steps) {
+    for (const target of step.clicks ?? []) await clickAgentTarget(sessionId, target);
+    for (const target of step.waits ?? []) await waitForAgentElement(sessionId, target);
+    if (step.observe) {
+      const observe = await observeAgentStep(sessionId, step.observe);
+      firstObserve ??= observe;
+    }
+    for (const target of step.after ?? []) await clickAgentTarget(sessionId, target);
+  }
+  return firstObserve;
+}
+
 async function screenshot(sessionId, name) {
   const result = await request("GET", `/session/${sessionId}/screenshot`);
   const target = path.join(runDir, name);
@@ -276,8 +405,9 @@ async function main() {
   await mkdir(runDir, { recursive: true });
   const defaultUrlReady = await isUrlReady(devUrl);
   let autoSelectedDevUrl = false;
-  if (defaultUrlReady && !(await devUrlHasLiliaGithub(devUrl))) {
-    if (explicitDevUrl) {
+  if (defaultUrlReady) {
+    const hasLiliaGithub = await devUrlHasLiliaGithub(devUrl);
+    if (explicitDevUrl && !hasLiliaGithub) {
       await writeJson("summary.json", {
         status: "blocked",
         runId,
@@ -287,8 +417,10 @@ async function main() {
       process.exitCode = 2;
       return;
     }
-    devUrl = await findAvailableDevUrl(parsePortFromUrl(defaultDevUrl) + 1);
-    autoSelectedDevUrl = true;
+    if (!explicitDevUrl) {
+      devUrl = await findAvailableDevUrl(parsePortFromUrl(defaultDevUrl) + 1);
+      autoSelectedDevUrl = true;
+    }
   }
 
   const preflight = {
@@ -305,6 +437,8 @@ async function main() {
     appBinaryExists: existsSync(appBinary),
     platform: process.platform,
     home: os.homedir(),
+    appDataDir,
+    webviewDataDir,
   };
   const needsDevServer = !(await isUrlReady(devUrl));
   const shouldBuildDebugApp = !explicitAppBinary;
@@ -366,9 +500,9 @@ async function main() {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
+          ...agentDebugEnv,
           LILIA_GITHUB_DEV_PORT: String(parsePortFromUrl(devUrl)),
           LILIA_GITHUB_DEV_STRICT_PORT: "1",
-          VITE_LILIA_GITHUB_AGENT_DEBUG: "1",
         },
       });
       devServer.stdout.on("data", (chunk) => devServerOutput.push(chunk.toString("utf8")));
@@ -383,9 +517,7 @@ async function main() {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        LILIA_GITHUB_AGENT_DEBUG: "1",
-        MSEDGEDRIVER_TELEMETRY_OPTOUT: "1",
-        VITE_LILIA_GITHUB_AGENT_DEBUG: "1",
+        ...agentDebugEnv,
       },
     });
     driver.stdout.on("data", (chunk) => driverOutput.push(chunk.toString("utf8")));
@@ -400,8 +532,7 @@ async function main() {
             application: appBinary,
             args: [],
             env: {
-              LILIA_GITHUB_AGENT_DEBUG: "1",
-              VITE_LILIA_GITHUB_AGENT_DEBUG: "1",
+              ...agentDebugEnv,
             },
           },
         },
@@ -411,15 +542,10 @@ async function main() {
     await waitForDebugApi(sessionId);
     await waitForDebugUi(sessionId);
     const beforeScreenshotPath = await screenshot(sessionId, "before.png");
-    const observe = await execute(
-      sessionId,
-      "const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug; return api?.observe?.() ?? null;",
-    );
-    if (!observe?.enabled) throw new Error("Agent debug API is not enabled in the app session");
-    if (!observe.elements?.length) throw new Error("Agent debug snapshot has no addressable elements");
+    const observe = await runRegressionFlow(sessionId);
+
     await writeJson("observe.json", observe);
     await writeJson("missing-agent-ids.json", observe.missingAgentIds ?? []);
-    replay.push({ type: "observe", route: observe.route, elementCount: observe.elements.length });
 
     const markResult = await execute(
       sessionId,
@@ -446,8 +572,9 @@ async function main() {
       afterScreenshotPath,
       observePath: path.join(runDir, "observe.json"),
       missingAgentIdsPath: path.join(runDir, "missing-agent-ids.json"),
+      observedSnapshots,
       replayPath: path.join(runDir, "replay.json"),
-      missingAgentIdCount: observe.missingAgentIds?.length ?? 0,
+      missingAgentIdCount: observedSnapshots.reduce((count, item) => count + item.missingAgentIdCount, 0),
     });
   } catch (error) {
     let failureDiagnosticsPath = null;
@@ -462,6 +589,14 @@ async function main() {
           readyState: document.readyState,
           bodyText: document.body?.innerText?.slice(0, 2000) ?? "",
           hasAgentDebug: Boolean(window.__liliaGithubAgentDebug || window.__liliaAgentDebug),
+          observe: (() => {
+            try {
+              const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+              return api?.observe?.() ?? null;
+            } catch (error) {
+              return { error: String(error?.message ?? error) };
+            }
+          })(),
         };`,
       ).catch((diagnosticError) => ({ diagnosticError: String(diagnosticError?.message ?? diagnosticError) }));
       failureDiagnosticsPath = await writeJson("failure-diagnostics.json", diagnostics).catch(() => null);
@@ -475,6 +610,7 @@ async function main() {
       devServerOutput,
       failureScreenshotPath,
       failureDiagnosticsPath,
+      observedSnapshots,
       replay,
     });
     process.exitCode = 1;
@@ -487,4 +623,6 @@ async function main() {
   }
 }
 
-await main();
+if (path.resolve(process.argv[1] ?? "") === scriptPath) {
+  await main();
+}

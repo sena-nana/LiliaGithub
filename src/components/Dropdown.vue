@@ -21,6 +21,7 @@ const props = defineProps<{
   placement?: "top" | "bottom";
   disabled?: boolean;
   buttonClass?: string;
+  agentId?: string;
   menuWidth?: string;
   menuLabel?: string;
 }>();
@@ -117,6 +118,7 @@ onBeforeUnmount(() => {
       type="button"
       class="chat-chip"
       :class="[buttonClass, { 'is-open': open, 'is-disabled': disabled }]"
+      :data-agent-id="agentId"
       :disabled="disabled"
       :aria-haspopup="true"
       :aria-expanded="open"

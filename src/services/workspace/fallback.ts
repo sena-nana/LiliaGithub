@@ -107,6 +107,9 @@ const FALLBACK_LILIA_README = "# Lilia\n\nDesktop agent workbench.";
 const useReadmeShowcaseFallback = typeof import.meta !== "undefined"
   && import.meta.env?.DEV === true
   && import.meta.env?.VITE_README_SHOWCASE === "1";
+const useAgentDebugMockWorkspace = typeof import.meta !== "undefined"
+  && import.meta.env?.DEV === true
+  && import.meta.env?.VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE === "1";
 const useDefaultFallback = !useReadmeShowcaseFallback;
 
 let fallbackRepos: RepoSummary[] = [
@@ -259,7 +262,7 @@ if (useDefaultFallback) {
 const baseFallbackRepos = fallbackRepos.map(cloneRepoSummary);
 
 function createDefaultFallbackRepos(): RepoSummary[] {
-  return [
+  const repos: RepoSummary[] = [
     {
       id: "LiliaGithub",
       name: "LiliaGithub",
@@ -318,6 +321,36 @@ function createDefaultFallbackRepos(): RepoSummary[] {
       },
     },
   ];
+  if (useAgentDebugMockWorkspace) {
+    repos.push({
+      id: "LiliaGithub-linked-worktree",
+      name: "LiliaGithub-linked-worktree",
+      path: "C:\\Files\\workspace\\LiliaGithub-linked-worktree",
+      relativePath: "LiliaGithub-linked-worktree",
+      currentBranch: "feature/agent-debug-linked-worktree",
+      remoteUrl: "https://github.com/sena-nana/LiliaGithub.git",
+      githubFullName: "sena-nana/LiliaGithub",
+      ahead: 0,
+      behind: 0,
+      stagedCount: 0,
+      unstagedCount: 1,
+      untrackedCount: 0,
+      conflictCount: 0,
+      lastCommitAt: 1_785_010_000,
+      lastCommitMessage: "验证 linked worktree 侧栏路径",
+      languageStats: [
+        { language: "TypeScript", bytes: 16_000, lines: 420 },
+        { language: "Vue", bytes: 8_000, lines: 190 },
+      ],
+      languageStatsUpdatedAt: Date.now(),
+      worktree: {
+        role: "linked",
+        sharedRepoKey: "repo:LiliaGithub",
+        mainRepoId: "LiliaGithub",
+      },
+    });
+  }
+  return repos;
 }
 
 const defaultFallbackBinding: GitHubBindingStatus = {

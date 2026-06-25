@@ -74,6 +74,9 @@ import type {
 
 const isTest = typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
 const isDev = typeof import.meta !== "undefined" && import.meta.env?.DEV === true;
+const agentDebugMockWorkspace = typeof import.meta !== "undefined"
+  && import.meta.env?.DEV === true
+  && import.meta.env?.VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE === "1";
 const GITHUB_REPO_CACHE_TTL_MS = 5 * 60 * 1000;
 type WorkspaceFallback = typeof import("./fallback");
 
@@ -119,7 +122,9 @@ export function resolveWorkspaceRuntimeForTests(probe: {
   hasTauriInternals: boolean;
   isDev: boolean;
   isTest: boolean;
+  agentDebugMockWorkspace?: boolean;
 }): "tauri" | "mock" | "unavailable" {
+  if (probe.agentDebugMockWorkspace && probe.hasWindow && probe.isDev) return "mock";
   if (probe.hasTauriInternals && !probe.isTest) return "tauri";
   if (probe.isTest || (probe.hasWindow && probe.isDev)) return "mock";
   return "unavailable";
@@ -167,6 +172,7 @@ async function call<TCommand extends WorkspaceCommandName>(
     hasTauriInternals: hasWindow && "__TAURI_INTERNALS__" in window,
     isDev,
     isTest,
+    agentDebugMockWorkspace,
   });
   if (runtime === "tauri") {
     return invoke<WorkspaceCommandResult<TCommand>>(commandEntry.command, args);

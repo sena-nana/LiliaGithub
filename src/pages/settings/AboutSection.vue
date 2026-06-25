@@ -6,18 +6,25 @@
       <li><span>版本</span><span>1.0.0</span></li>
       <li><span>框架</span><span>Tauri 2 + Vue 3</span></li>
     </ul>
-    <section class="about-update" aria-label="更新器">
+    <section class="about-update" aria-label="更新器" data-agent-id="settings.about.updater">
       <div>
         <strong>更新</strong>
         <p>{{ updateMessage }}</p>
       </div>
-      <button type="button" class="ghost" :disabled="checking || installing" @click="checkForUpdate">
+      <button
+        type="button"
+        class="ghost"
+        data-agent-id="settings.about.updater.check"
+        :disabled="checking || installing"
+        @click="checkForUpdate"
+      >
         {{ checking ? "检查中" : "检查更新" }}
       </button>
       <button
         v-if="pendingUpdate"
         type="button"
         class="primary"
+        data-agent-id="settings.about.updater.install"
         :disabled="installing"
         @click="installUpdate"
       >

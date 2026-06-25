@@ -75,6 +75,7 @@ onBeforeUnmount(() => {
       :class="{ 'is-open': open }"
       title="设置"
       aria-label="设置"
+      data-agent-id="repo.toolbar.settings"
       :aria-expanded="open"
       aria-haspopup="menu"
       :disabled="disabled"
@@ -106,6 +107,7 @@ onBeforeUnmount(() => {
             :checked="autoSync"
             :disabled="disabled"
             :aria-label="autoSyncSetting.label"
+            data-agent-id="repo.toolbar.settings.auto-sync"
             @change="updateAutoSync"
           />
           <span class="ui-switch__track" aria-hidden="true"></span>

@@ -3484,6 +3484,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               <button
                 type="button"
                 class="ghost danger project-icon-action"
+                :data-agent-id="linkedWorktree ? 'repo.settings.delete-worktree' : 'repo.settings.delete-local'"
                 :disabled="deletingLocalRepo"
                 :aria-label="linkedWorktree ? '删除工作树' : '删除本地'"
                 :title="linkedWorktree ? '删除工作树' : '删除本地'"
@@ -3501,6 +3502,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               <button
                 type="button"
                 class="ghost danger project-icon-action"
+                data-agent-id="repo.settings.delete-remote"
                 :disabled="deletingRepo || githubLoading || !settings || !repoFullName || !canDeleteRemote"
                 aria-label="删除仓库"
                 title="删除仓库"
@@ -3557,6 +3559,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <button
                       type="button"
                       class="ghost danger"
+                      data-agent-id="repo.delete.confirm"
                       :disabled="deletingAnything || !deleteConfirmMatches"
                       @click="confirmDeleteDialog"
                     >
@@ -3601,6 +3604,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             class="project-sidebar-switcher__button"
             :class="{ 'is-active': isProjectSidebarButtonActive(tab.key) }"
             role="tab"
+            :data-agent-id="`repo.project.sidebar.${tab.key}`"
             :aria-selected="isProjectSidebarButtonActive(tab.key)"
             :aria-label="tab.label"
             :title="tab.label"
@@ -3649,6 +3653,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             v-if="!aboutEditing"
             type="button"
             class="ghost project-icon-action project-about-edit"
+            data-agent-id="repo.about.edit"
             :disabled="githubLoading || savingSettings"
             aria-label="编辑仓库描述"
             title="编辑"
@@ -3909,6 +3914,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <button
               type="button"
               class="primary project-sidebar-summary-card__action"
+              data-agent-id="repo.release.create"
               :disabled="releaseMutating || !!releasesAccessUnavailable"
               @click="repoReleasesPanel?.openCreate()"
             >
@@ -3918,6 +3924,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <button
               type="button"
               class="ghost project-sidebar-summary-card__action"
+              data-agent-id="repo.release.refresh"
               :disabled="releasesLoading || !!releasesAccessUnavailable"
               @click="loadReleases(true)"
             >
@@ -3929,6 +3936,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           <button
             type="button"
             class="ghost project-release-filter-clear"
+            data-agent-id="repo.release.filters.clear"
             :disabled="activeReleaseFilterCount === 0"
             @click="clearReleaseFilters"
           >
@@ -3945,6 +3953,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   :key="filter.value"
                   type="button"
                   class="project-release-type-filter"
+                  :data-agent-id="`repo.release.filters.type.${filter.value}`"
                   :class="{ 'is-active': releaseTypeFilter === filter.value }"
                   @click="setReleaseTypeFilter(filter.value)"
                 >
@@ -3961,6 +3970,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   :key="release.id"
                   type="button"
                   class="project-release-tag"
+                  :data-agent-id="`repo.release.filters.tag.${release.tagName}`"
                   :class="[`is-${release.type}`, { 'is-active': focusedReleaseTag === release.tagName }]"
                   @click="focusReleaseTag(release.tagName, true)"
                 >

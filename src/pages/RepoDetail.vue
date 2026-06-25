@@ -155,6 +155,7 @@ const {
                   'repo-toolbar__btn--counted': tab.key === 'changes' && changes.length,
                 }"
                 role="tab"
+                :data-agent-id="`repo.toolbar.tab.${tab.key}`"
                 :aria-selected="activeTab === tab.key"
                 :to="repoRoute(repoId, tab.key)"
                 :title="tab.title"
@@ -174,6 +175,7 @@ const {
                 :display-label="activeBranchName"
                 :branches="branchItems"
                 button-class="repo-toolbar__btn repo-toolbar__branch-select"
+                agent-id="repo.toolbar.branch.select"
                 :disabled="branchActionRunning || !branchItems.length"
                 :action-running="branchActionRunning"
                 :allow-remote-checkout="true"
@@ -201,6 +203,7 @@ const {
                 placeholder="选择启动指令"
                 placement="bottom"
                 button-class="repo-toolbar__btn repo-toolbar__command-select"
+                agent-id="repo.toolbar.launch.select"
                 menu-width="280px"
                 menu-label="启动指令候选"
                 :disabled="actionRunning || launchRunning || !launchCommandOptions.length"
@@ -210,6 +213,7 @@ const {
                 type="button"
                 class="repo-toolbar__btn"
                 :aria-label="launchRunning ? '停止' : '运行'"
+                data-agent-id="repo.toolbar.launch.toggle"
                 :title="launchRunning ? '停止' : '运行'"
                 :disabled="!launchRunning && (actionRunning || !launchConfig?.command?.trim())"
                 @click="launchRunning ? stopLaunch() : startLaunch()"
@@ -221,6 +225,7 @@ const {
                 class="repo-toolbar__btn"
                 :class="{ 'is-active': activeTab === 'run' }"
                 :to="repoRoute(repoId, 'run')"
+                data-agent-id="repo.toolbar.tab.run"
                 title="日志"
                 aria-label="日志"
               >
@@ -238,6 +243,7 @@ const {
                 v-if="repoContext.tags.includes('system-git')"
                 type="button"
                 class="repo-toolbar__btn"
+                data-agent-id="repo.toolbar.auth.default-token"
                 title="恢复默认 token 推送"
                 aria-label="恢复默认 token 推送"
                 :disabled="actionRunning"
@@ -251,6 +257,7 @@ const {
                   class="repo-toolbar__btn repo-toolbar__open-main"
                   :title="openTargetLabel"
                   :aria-label="openTargetLabel"
+                  data-agent-id="repo.toolbar.open.selected"
                   :disabled="actionRunning || !summary?.path"
                   @click="openSelectedTarget"
                 >
@@ -263,6 +270,7 @@ const {
                   :options="openTargetOptions"
                   placement="bottom"
                   button-class="repo-toolbar__btn repo-toolbar__open-target-toggle"
+                  agent-id="repo.toolbar.open.target"
                   menu-width="132px"
                   menu-label="打开目标"
                   :disabled="actionRunning || !summary?.path"
@@ -276,6 +284,7 @@ const {
                   :class="{ 'repo-toolbar__btn--counted': behindCount }"
                   title="拉取"
                   aria-label="拉取"
+                  data-agent-id="repo.toolbar.pull.selected"
                   :disabled="actionRunning || hasConflicts"
                   @click="runSelectedPullStrategy"
                 >
@@ -287,6 +296,7 @@ const {
                   :options="pullStrategyOptions"
                   placement="bottom"
                   button-class="repo-toolbar__btn repo-toolbar__pull-strategy-toggle"
+                  agent-id="repo.toolbar.pull.strategy"
                   menu-width="144px"
                   menu-label="拉取策略"
                   :disabled="actionRunning || hasConflicts"
@@ -300,6 +310,7 @@ const {
                 disabled
                 title="冲突解决功能将重新设计"
                 aria-label="有冲突"
+                data-agent-id="repo.toolbar.conflict.status"
               >
                 <TriangleAlert :size="17" aria-hidden="true" />
               </button>
@@ -313,6 +324,7 @@ const {
                 }"
                 title="推送"
                 aria-label="推送"
+                data-agent-id="repo.toolbar.push"
                 :disabled="actionRunning || !aheadCount"
                 @click="push"
               >
