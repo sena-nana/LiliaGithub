@@ -54,6 +54,7 @@ fn open_command_target(path: &Path, label: &str, commands: &[&str]) -> Result<()
     let candidates = commands.iter().map(|command_name| {
         let mut command = Command::new(command_name);
         command.arg(path_text);
+        configure_background_command(&mut command);
         (*command_name, command)
     });
     spawn_first(label, candidates)

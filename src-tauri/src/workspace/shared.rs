@@ -1,5 +1,14 @@
 use super::*;
 
+#[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+pub(super) fn configure_background_command(command: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 pub(super) fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

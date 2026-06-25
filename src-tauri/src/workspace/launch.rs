@@ -5,8 +5,6 @@ pub(super) const LAUNCH_LOG_LIMIT: usize = 500;
 pub(super) const LAUNCH_HISTORY_KEY: &str = "workspace.launchHistory.v1";
 pub(super) const LAUNCH_HISTORY_LIMIT: usize = 20;
 pub(super) const LAUNCH_STATUS_EVENT: &str = "repo-launch-status";
-#[cfg(target_os = "windows")]
-pub(super) const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub(super) const ROOT_SCRIPT_PRIORITY: [&str; 6] =
     ["tauri:dev", "dev", "start", "serve", "preview", "docs:dev"];
 
@@ -487,7 +485,7 @@ pub(super) fn spawn_launch_command(command: &str, cwd: &Path) -> Result<Child, S
     let mut process = {
         let mut command_process = Command::new("cmd");
         command_process.args(["/C", command]);
-        command_process.creation_flags(CREATE_NO_WINDOW);
+        configure_background_command(&mut command_process);
         command_process
     };
 
@@ -519,10 +517,13 @@ pub(super) fn spawn_launch_command(command: &str, cwd: &Path) -> Result<Child, S
 pub(super) fn stop_launch_process_tree(pid: u32) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("taskkill")
+        let mut command = Command::new("taskkill");
+        command
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_background_command(&mut command);
+        let output = command
             .output()
             .map_err(|e| format!("停止项目进程树失败：{e}"))?;
         if !output.status.success() {
