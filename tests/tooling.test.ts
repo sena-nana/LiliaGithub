@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
@@ -24,6 +24,18 @@ function rustFunctionBody(source: string, name: string) {
   }
   const nextCommand = source.indexOf("#[tauri::command]", start);
   return source.slice(commandStart, nextCommand === -1 ? undefined : nextCommand);
+}
+
+function sourceStyleFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(dir, entry.name);
+    if (entry.isDirectory()) return sourceStyleFiles(path);
+    return /\.(css|vue)$/.test(entry.name) ? [path] : [];
+  });
+}
+
+function collectCssVariables(source: string, regex: RegExp) {
+  return [...source.matchAll(regex)].map((match) => match[1]);
 }
 
 describe("单应用模板工具链", () => {
@@ -181,16 +193,18 @@ describe("单应用模板工具链", () => {
     expect(scrollbars).toContain("export function uninstallGlobalScrollbarVisibility()");
   });
 
-  it("源码不引用未定义的背景色变量", () => {
-    const files = [
-      "src/components/sidebar/RepoCreateCard.vue",
-      "src/layouts/SecondaryPanel.vue",
-      "src/styles.css",
-    ];
-    const combined = files.map((file) => readFileSync(resolve(file), "utf-8")).join("\n");
+  it("Vue 和 CSS 源码不引用未定义的 CSS 变量", () => {
+    const files = sourceStyleFiles(resolve("src"));
+    const combined = files.map((file) => readFileSync(file, "utf-8")).join("\n");
+    const definitions = new Set(
+      collectCssVariables(combined, /["']?(--[a-zA-Z0-9_-]+)["']?\s*:/g),
+    );
+    const references = new Set(collectCssVariables(combined, /var\(\s*(--[a-zA-Z0-9_-]+)/g));
+    const missing = [...references].filter((name) => !definitions.has(name)).sort();
 
-    expect(combined).toContain("--bg-elev");
-    expect(combined).not.toContain("--bg-elevated");
+    expect(definitions).toContain("--bg-elevated");
+    expect(definitions).toContain("--panel");
+    expect(missing).toEqual([]);
   });
 
   it("主界面高度由 CSS 网格约束，不依赖加载后测量卡片高度", () => {
