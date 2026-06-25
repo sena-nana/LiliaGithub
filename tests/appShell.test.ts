@@ -6,6 +6,7 @@ import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { resetWorkspaceStateForTests, setRepoActionError, state } from "../src/composables/workspace/state";
+import { REPO_LAUNCH_STATUS_EVENT } from "../src/composables/workspace/launchEvents";
 import { workspaceFallbackForTests } from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
@@ -545,6 +546,45 @@ describe("AppShell sidebar", () => {
       const row = sidebarRowForText(view.container, "LiliaGithub");
       expect(within(row).getByLabelText("正在同步")).toBeInTheDocument();
       expect(within(row).queryByLabelText("同步失败")).not.toBeInTheDocument();
+    });
+  });
+
+  it("进程停止后移除侧边栏 RUN 标签", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    state.launchStatuses.LiliaGithub = {
+      repoId: "LiliaGithub",
+      state: "running",
+      pid: 1,
+      command: "yarn dev",
+      startedAt: 1,
+      exitCode: null,
+      error: null,
+    };
+
+    await waitFor(() => {
+      expect(within(sidebarRowForText(view.container, "LiliaGithub")).getByText("RUN")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      window.dispatchEvent(
+        new CustomEvent(REPO_LAUNCH_STATUS_EVENT, {
+          detail: {
+            repoId: "LiliaGithub",
+            state: "exited",
+            pid: null,
+            command: "yarn dev",
+            startedAt: 1,
+            exitCode: 0,
+            error: null,
+          },
+        }),
+      );
+      expect(within(sidebarRowForText(view.container, "LiliaGithub")).queryByText("RUN")).toBeNull();
     });
   });
 
