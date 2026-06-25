@@ -1446,18 +1446,24 @@ describe("RepoProjectPanel", () => {
 
     const board = await view.findByLabelText("Projects board", {}, { timeout: 5000 });
     const itemList = within(board).getByRole("list", { name: "Project items" });
-    const projectFilters = within(board).getByRole("navigation", { name: "Project filters" });
+    const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
+    expect(projectSidebar).toBeInTheDocument();
+    const projectFilters = await waitFor(() =>
+      within(projectSidebar).getByRole("navigation", { name: "Project filters" })
+    );
     expect(board.querySelector(".projects-board__columns")).toBeNull();
+    expect(board.querySelector(".projects-board__main")).toBeNull();
+    expect(board.querySelector(".projects-board__sidebar")).toBeNull();
     expect(itemList).toHaveClass("projects-board__list");
-    expect(within(board).getByLabelText("Projects filters")).toBeInTheDocument();
+    expect(within(board).queryByLabelText("Projects filters")).toBeNull();
     expect(within(projectFilters).getByRole("button", { name: /All projects/ })).toBeInTheDocument();
     expect(within(projectFilters).getByRole("button", { name: /Roadmap/ })).toBeInTheDocument();
     expect(within(projectFilters).getByRole("button", { name: /No project/ })).toBeInTheDocument();
-    expect(within(board).getByRole("button", { name: "刷新 Projects" })).toBeInTheDocument();
+    expect(within(projectSidebar).getByRole("button", { name: "刷新 Projects" })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /#66 整理文档/ })).toBeInTheDocument();
-    const overview = within(board).getByLabelText("Projects 摘要");
+    const overview = within(projectSidebar).getByLabelText("Projects 摘要");
     expect(overview).toHaveTextContent("Items3");
     expect(overview).toHaveTextContent("Issues2");
     expect(overview).toHaveTextContent("PRs1");

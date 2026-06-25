@@ -39,6 +39,13 @@ import RepoIssuesPanel from "./RepoIssuesPanel.vue";
 import RepoTopicEditor from "./RepoTopicEditor.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
+  ALL_PROJECTS_ID,
+  useRepoProjectsBoard,
+  type RepoProjectsBoardProjectFilter,
+  type RepoProjectsBoardStateFilter,
+  type RepoProjectsBoardTypeFilter,
+} from "./useRepoProjectsBoard";
+import {
   blankPullRequestPanelFilters,
   type PullRequestPanelFilters,
   type PullRequestState,
@@ -258,11 +265,13 @@ const README_PATH = "README.md";
 const repoLanguageStatsCardModule = createCachedAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
 const repoActionsPanelModule = createCachedAsyncComponent(() => import("./RepoActionsPanel.vue"));
 const repoProjectsBoardModule = createCachedAsyncComponent(() => import("./RepoProjectsBoard.vue"));
+const repoProjectsBoardSidebarModule = createCachedAsyncComponent(() => import("./RepoProjectsBoardSidebar.vue"));
 const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
 const repoReleasesPanelModule = createCachedAsyncComponent(() => import("./RepoReleasesPanel.vue"));
 const RepoLanguageStatsCard = repoLanguageStatsCardModule.component;
 const RepoActionsPanel = repoActionsPanelModule.component;
 const RepoProjectsBoard = repoProjectsBoardModule.component;
+const RepoProjectsBoardSidebar = repoProjectsBoardSidebarModule.component;
 const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
 const RepoReleasesPanel = repoReleasesPanelModule.component;
 
@@ -411,6 +420,10 @@ const boardIssues = ref<GitHubIssue[]>([]);
 const boardPulls = ref<GitHubPullRequest[]>([]);
 const boardLoadedRepo = ref<string | null>(null);
 const boardLoading = ref(false);
+const boardTypeFilter = ref<RepoProjectsBoardTypeFilter>("all");
+const boardStateFilter = ref<RepoProjectsBoardStateFilter>("open");
+const boardProjectFilter = ref<RepoProjectsBoardProjectFilter>(ALL_PROJECTS_ID);
+const boardQuery = ref("");
 const issueDiscussion = ref<GitHubIssueDiscussion | null>(null);
 const issueDiscussionLoading = ref(false);
 const issueDiscussionError = ref<string | null>(null);
@@ -448,6 +461,25 @@ const issueMetadataLoadedRepo = ref<string | null>(null);
 const issueFilterMetadata = ref<GitHubIssueFilterMetadata>(emptyIssueFilterMetadata());
 const issueFilterMetadataLoading = ref(false);
 const issueFilterMetadataLoadedRepo = ref<string | null>(null);
+const boardMetadataProjects = computed(() => issueFilterMetadata.value.projects);
+const {
+  baseFilteredItems: boardBaseFilteredItems,
+  issueCount: boardIssueCount,
+  projectCountTotal: boardProjectCountTotal,
+  projectFilterOptions: boardProjectFilterOptions,
+  pullCount: boardPullCount,
+  visibleItems: boardVisibleItems,
+} = useRepoProjectsBoard({
+  issues: boardIssues,
+  pulls: boardPulls,
+  projects: boardMetadataProjects,
+  typeFilter: boardTypeFilter,
+  stateFilter: boardStateFilter,
+  projectFilter: boardProjectFilter,
+  query: boardQuery,
+});
+const boardLoadingText = computed(() => boardLoading.value || issueFilterMetadataLoading.value ? "读取中" : "已同步");
+const boardEmptyText = computed(() => boardLoading.value ? "正在读取项目事项。" : "没有匹配的项目事项。");
 const issuePanelFilters = ref<IssuePanelFilters>(issuePanelFiltersFromRoute());
 const pullRequestPanelFilters = ref<PullRequestPanelFilters>(pullRequestPanelFiltersFromRoute());
 const pullState = ref<PullRequestState>(pullRequestStateFromRoute());
@@ -3024,7 +3056,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           <p class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
         </section>
 
-        <section v-else-if="activeSection === 'board'" class="project-section project-github-section">
+        <section
+          v-else-if="activeSection === 'board'"
+          class="project-section project-github-section"
+          :class="{ 'project-section--flush': !projectsAccessUnavailable }"
+        >
           <RepoGitHubUnavailableNotice
             v-if="projectsAccessUnavailable"
             :title="projectsAccessUnavailable.title"
@@ -3034,12 +3070,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
           <RepoProjectsBoard
             v-else
-            :issues="boardIssues"
-            :pulls="boardPulls"
-            :projects="issueFilterMetadata.projects"
-            :loading="boardLoading"
-            :metadata-loading="issueFilterMetadataLoading"
-            @refresh="refreshLoadedSectionData"
+            v-model:query="boardQuery"
+            :items="boardVisibleItems"
+            :project-count-total="boardProjectCountTotal"
+            :loading-text="boardLoadingText"
+            :empty-text="boardEmptyText"
             @open-issue="openIssueFromBoard"
             @open-pull-request="openPullRequestFromBoard"
           />
@@ -3715,6 +3750,22 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           </div>
           <p>{{ fileUnavailableMessage }}</p>
         </section>
+
+        <RepoProjectsBoardSidebar
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'board'"
+          v-model:type-filter="boardTypeFilter"
+          v-model:state-filter="boardStateFilter"
+          v-model:project-filter="boardProjectFilter"
+          :project-filter-options="boardProjectFilterOptions"
+          :base-item-count="boardBaseFilteredItems.length"
+          :visible-item-count="boardVisibleItems.length"
+          :issue-count="boardIssueCount"
+          :pull-count="boardPullCount"
+          :project-count-total="boardProjectCountTotal"
+          :loading="boardLoading"
+          :metadata-loading="issueFilterMetadataLoading"
+          @refresh="refreshLoadedSectionData"
+        />
 
         <RepoGitHubDetailSidebar
           v-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues' && focusedIssueDetail"
