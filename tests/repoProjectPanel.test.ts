@@ -897,6 +897,12 @@ describe("RepoProjectPanel", () => {
     expect(terminal.querySelector('span[style*="rgb(0,187,0)"]')).toBeInstanceOf(HTMLElement);
     expect(terminal.innerHTML).toContain("&lt;tag&gt;");
     expect(terminal.querySelector(".launch-log--stderr")).toHaveTextContent("plain error");
+    const terminalOutput = terminal.querySelector(".project-terminal__output");
+    if (!(terminalOutput instanceof HTMLElement)) {
+      throw new Error("未找到启动终端样式容器");
+    }
+    expect(getComputedStyle(terminal).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(getComputedStyle(terminalOutput).backgroundColor).toBe("rgba(0, 0, 0, 0)");
   });
 
   it("远程仓库只显示项目 tabs，不进入启动工作流", async () => {

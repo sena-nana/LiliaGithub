@@ -4153,7 +4153,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: #0a0d12;
 }
 
 .project-terminal__body {
@@ -4163,8 +4162,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   height: 100%;
   overflow: auto;
   padding: 14px 16px;
-  background: #0a0d12;
-  color: #d6deeb;
+  color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   font-size: 12px;
   line-height: 1.55;
@@ -4177,11 +4175,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-terminal__line--error {
-  color: #ff8a8a;
+  color: var(--err);
 }
 
 .project-terminal__line--muted {
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .project-terminal__output {
@@ -4190,6 +4188,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   border: 0;
   border-radius: 0;
   padding: 0;
+  background: transparent;
   color: inherit;
   font: inherit;
 }
@@ -4204,7 +4203,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   max-height: 220px;
   overflow: auto;
   padding: 0 16px 14px;
-  background: #0a0d12;
 }
 
 .project-launch-diagnostic-card,
@@ -4212,20 +4210,20 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: grid;
   gap: 7px;
   padding: 10px;
-  border: 1px solid rgba(214, 222, 235, 0.15);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.04);
+  background: color-mix(in srgb, var(--bg-hover) 38%, transparent);
 }
 
 .project-launch-diagnostic-card strong,
 .project-launch-history strong {
-  color: #d6deeb;
+  color: var(--text);
   font-size: 12px;
 }
 
 .project-launch-diagnostic-card p {
   margin: 0;
-  color: #97a6ba;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -4237,7 +4235,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-launch-history__head span {
-  color: #718096;
+  color: var(--text-muted);
   font-size: 11px;
 }
 
@@ -4260,7 +4258,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: #97a6ba;
+  color: var(--text-muted);
   font-size: 11px;
   font-style: normal;
   text-overflow: ellipsis;
@@ -4272,11 +4270,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .launch-log--stderr {
-  color: #ff8a8a;
+  color: var(--err);
 }
 
 .launch-log--system {
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .project-terminal__empty {
