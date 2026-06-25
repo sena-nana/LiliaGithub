@@ -24,6 +24,8 @@
     "tauri:dev": "node scripts/tauri-dev.mjs",
     "pretauri:build": "node scripts/check-package-manager.mjs",
     "tauri:build": "tauri build",
+    "pretauri:install": "node scripts/check-package-manager.mjs",
+    "tauri:install": "yarn tauri:build && node scripts/tauri-install.mjs",
     "preverify": "node scripts/check-package-manager.mjs",
     "verify": "yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml",
     "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
