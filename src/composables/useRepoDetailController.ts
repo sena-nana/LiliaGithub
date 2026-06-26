@@ -377,6 +377,9 @@ export function useRepoDetailController() {
 
   watch(activeTab, (tab) => {
     if (tab !== "history") selectedCommitHash.value = null;
+    if (hasLocalRepo.value && (tab === "history" || (tab === "changes" && canShowChanges.value))) {
+      void load();
+    }
   });
 
   watch(

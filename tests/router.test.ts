@@ -23,6 +23,7 @@ import { repoDetail, repoSummary } from "./fixtures/workspace";
 
 const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
+type RepoDetailOptions = NonNullable<Parameters<typeof repoDetail>[1]>;
 let workspaceFallback: WorkspaceFallbackForTests;
 
 async function renderAt(path: string) {
@@ -67,6 +68,31 @@ async function waitForRepoTitle(name: string) {
   await waitFor(() => {
     expect(document.querySelector(".repo-header__sr-title")).toHaveTextContent(name);
   });
+}
+
+function linkedWorktreeSummary(id: string, name: string, overrides: Parameters<typeof repoSummary>[1] = {}) {
+  return repoSummary(id, {
+    name,
+    path: `C:\\Files\\workspace\\${id}`,
+    relativePath: id,
+    githubFullName: "sena-nana/LiliaGithub",
+    worktree: {
+      role: "linked",
+      sharedRepoKey: "gitdir:LiliaGithub",
+      mainRepoId: "LiliaGithub",
+    },
+    ...overrides,
+  });
+}
+
+function mockRepoDetail(summary: ReturnType<typeof repoSummary>, detailOptions: RepoDetailOptions) {
+  const detailRequests: string[] = [];
+  workspaceFallback.setFallbackRepoOverridesForTests({ [summary.id]: summary });
+  workspaceFallback.setFallbackRepoDetailOverrideForTests((repoId) => {
+    detailRequests.push(repoId);
+    return repoId === summary.id ? repoDetail(summary, detailOptions) : null;
+  });
+  return detailRequests;
 }
 
 function repoStatusRow(repoFullName: string) {
@@ -478,6 +504,65 @@ describe("基础路由", () => {
     expect(workspaceFallback.getFallbackGitHubCommitDetailCallsForTests()).toEqual([
       { repoFullName, hash: commit.hash },
     ]);
+  });
+
+  it("linked worktree 变更页读取当前工作树自己的变更并在进入历史时刷新详情", async () => {
+    const linkedSummary = linkedWorktreeSummary("LiliaGithub-linked", "LiliaGithub linked", {
+      unstagedCount: 1,
+    });
+    const linkedCommit = commitSummary({
+      hash: "abcabcabcabcabc1",
+      shortHash: "abcabca",
+      subject: "linked worktree history",
+      refs: ["feature/worktree"],
+    });
+    const detailRequests = mockRepoDetail(linkedSummary, {
+      changes: [
+        repoChange("src/linked-worktree.ts", {
+          diff: "@@ -1 +1 @@\n-old linked\n+new linked",
+        }),
+      ],
+      commits: [linkedCommit],
+    });
+
+    await renderAt("/repos/LiliaGithub-linked/changes");
+
+    expect(await screen.findByRole("tab", { name: "变更" })).toHaveClass("is-active");
+    await fireEvent.click(await screen.findByText("src/linked-worktree.ts"));
+    expect(screen.getByLabelText("变更预览")).toHaveTextContent("new linked");
+    expect(detailRequests).toContain(linkedSummary.id);
+
+    detailRequests.length = 0;
+    await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "历史" })).toHaveClass("is-active");
+    });
+    await waitFor(() => {
+      expect(detailRequests).toContain(linkedSummary.id);
+    });
+    expect(await screen.findByRole("button", { name: /linked worktree history/ })).toBeInTheDocument();
+  });
+
+  it("linked worktree 历史页直接进入时读取本地提交历史", async () => {
+    const linkedSummary = linkedWorktreeSummary(
+      "LiliaGithub-history-worktree",
+      "LiliaGithub history worktree",
+    );
+    const linkedCommit = commitSummary({
+      hash: "defdefdefdefdef2",
+      shortHash: "defdefd",
+      subject: "direct linked history",
+      refs: ["feature/direct-history"],
+    });
+    const detailRequests = mockRepoDetail(linkedSummary, { commits: [linkedCommit] });
+
+    await renderAt("/repos/LiliaGithub-history-worktree/history");
+
+    expect(await screen.findByRole("tab", { name: "历史" })).toHaveClass("is-active");
+    expect(await screen.findByRole("button", { name: /direct linked history/ })).toBeInTheDocument();
+    expect(detailRequests).toContain(linkedSummary.id);
+    expect(screen.queryByRole("tab", { name: "变更" })).toBeInTheDocument();
   });
 
   it("远程详情页没有 README.md 时显示空态", async () => {
