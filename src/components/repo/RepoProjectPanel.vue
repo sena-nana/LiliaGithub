@@ -107,7 +107,6 @@ import type {
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
   ProjectLaunchConfig,
-  ProjectLaunchHistoryEntry,
   ProjectLaunchLog,
   RepoChange,
   RepoFilePreview,
@@ -121,7 +120,6 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { recoveryGuidanceForMessage, type RecoveryGuidance } from "../../utils/recoveryGuidance";
-import { launchDiagnostic, launchHistoryLabel } from "../../utils/launchDiagnostics";
 import { repoRoute, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
 import { createCachedAsyncComponent } from "../../utils/asyncComponent";
 import {
@@ -282,7 +280,6 @@ const props = defineProps<{
   repoContext: RepoContext;
   launchConfig: ProjectLaunchConfig | null;
   launchLogs: readonly ProjectLaunchLog[];
-  launchHistory: readonly ProjectLaunchHistoryEntry[];
   launchError?: string | null;
   actionError?: string | null;
   repoActionError?: string | null;
@@ -722,9 +719,6 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "settings",
 );
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
-const launchDiagnosticInfo = computed(() => {
-  return launchDiagnostic(null, props.launchLogs, props.launchHistory, props.launchError);
-});
 const displayedIssueTemplates = computed(() => [blankIssueTemplate(), ...issueTemplates.value]);
 const issueTemplateOptions = computed(() =>
   displayedIssueTemplates.value.map((template) => ({
@@ -2944,28 +2938,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             <pre v-if="launchLogs.length" class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
             <div v-else class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
           </div>
-          <aside v-if="launchDiagnosticInfo || launchHistory.length" class="project-launch-diagnostics" aria-label="启动诊断">
-            <section v-if="launchDiagnosticInfo" class="project-launch-diagnostic-card">
-              <strong>{{ launchDiagnosticInfo.title }}</strong>
-              <p>{{ launchDiagnosticInfo.detail }}</p>
-              <p>{{ launchDiagnosticInfo.steps.join(" / ") }}</p>
-            </section>
-            <section v-if="launchHistory.length" class="project-launch-history">
-              <div class="project-launch-history__head">
-                <strong>启动历史</strong>
-                <span>{{ launchHistory.length }} 条</span>
-              </div>
-              <ol>
-                <li v-for="entry in launchHistory.slice(0, 5)" :key="entry.id">
-                  <span>
-                    <strong>{{ launchHistoryLabel(entry) }}</strong>
-                    <small>{{ entry.command }}</small>
-                  </span>
-                  <em v-if="entry.lastOutput">{{ entry.lastOutput }}</em>
-                </li>
-              </ol>
-            </section>
-          </aside>
         </section>
 
         <RepoChangesPanel
@@ -4158,7 +4130,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-terminal-card {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
   align-self: stretch;
   min-width: 0;
   min-height: 0;
@@ -4210,74 +4181,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-terminal__output code {
   font: inherit;
-}
-
-.project-launch-diagnostics {
-  display: grid;
-  gap: 10px;
-  max-height: 220px;
-  overflow: auto;
-  padding: 0 16px 14px;
-}
-
-.project-launch-diagnostic-card,
-.project-launch-history {
-  display: grid;
-  gap: 7px;
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--bg-hover) 38%, transparent);
-}
-
-.project-launch-diagnostic-card strong,
-.project-launch-history strong {
-  color: var(--text);
-  font-size: 12px;
-}
-
-.project-launch-diagnostic-card p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.project-launch-history__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.project-launch-history__head span {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.project-launch-history ol {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.project-launch-history li {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.project-launch-history small,
-.project-launch-history em {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .launch-log {

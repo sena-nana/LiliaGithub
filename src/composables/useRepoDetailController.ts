@@ -181,7 +181,6 @@ export function useRepoDetailController() {
   const launchCandidates = computed(() => workspace.state.launchCandidates[repoId.value] ?? []);
   const launchStatus = computed(() => workspace.state.launchStatuses[repoId.value] ?? null);
   const launchLogs = computed(() => workspace.state.launchLogs[repoId.value] ?? []);
-  const launchHistory = computed(() => workspace.state.launchHistory[repoId.value] ?? []);
   const launchRunning = computed(() => launchStatus.value?.state === "running");
   const statusCommits = computed<CommitSummary[]>(() =>
     (historyUsesGitHub.value ? githubCommits.value : (detail.value?.commits ?? [])).map((commit) => ({
@@ -983,7 +982,6 @@ export function useRepoDetailController() {
       canCommit,
       launchConfig,
       launchLogs,
-      launchHistory,
       launchRunning,
       statusCommits,
       canLoadFiles,

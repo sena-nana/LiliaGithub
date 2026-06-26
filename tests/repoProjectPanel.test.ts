@@ -591,7 +591,6 @@ async function renderProjectPanel(
     repoSummary: null,
     launchConfig,
     launchLogs: [],
-    launchHistory: [],
     launchTerminalVisible: false,
     actionRunning: false,
     launchRunning: false,
