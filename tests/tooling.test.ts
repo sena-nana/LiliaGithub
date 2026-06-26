@@ -161,7 +161,7 @@ describe("单应用模板工具链", () => {
       cwd: resolve("."),
       env: {
         ...process.env,
-        TAURI_TEMPLATE_INSTALL_DRY_RUN: "1",
+        LILIA_GITHUB_INSTALL_DRY_RUN: "1",
         RUSTFLAGS: "-C debuginfo=0",
       },
       encoding: "utf-8",
@@ -181,7 +181,7 @@ describe("单应用模板工具链", () => {
       cwd: resolve("."),
       env: {
         ...process.env,
-        TAURI_TEMPLATE_INSTALL_DRY_RUN: "1",
+        LILIA_GITHUB_INSTALL_DRY_RUN: "1",
         RUSTFLAGS: "-C target-cpu=x86-64-v3",
       },
       encoding: "utf-8",
@@ -192,6 +192,18 @@ describe("单应用模板工具链", () => {
       env: Record<string, string>;
     };
     expect(parsed.env.RUSTFLAGS).toBe("-C target-cpu=x86-64-v3");
+  });
+
+  it("Tauri install dry-run 只暴露 LiliaGithub 项目环境变量", () => {
+    const installEntrypoints = [
+      readFileSync(resolve("scripts/tauri-install.mjs"), "utf-8"),
+      readFileSync(resolve("docs/guide/development.md"), "utf-8"),
+      readFileSync(resolve("package.json"), "utf-8"),
+    ].join("\n");
+    const legacyTemplatePrefix = ["TAURI", "TEMPLATE"].join("_");
+
+    expect(installEntrypoints).toContain("LILIA_GITHUB_INSTALL_DRY_RUN");
+    expect(installEntrypoints).not.toContain(`${legacyTemplatePrefix}_INSTALL_DRY_RUN`);
   });
 
   it("GitHub workflow 使用模板路径和通用发布配置", () => {
