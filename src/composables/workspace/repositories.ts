@@ -17,6 +17,7 @@ import { repoAutoSyncEnabled } from "../../config/repoSettingsManifest";
 import type {
   GitHubContributionDay,
   GitHubContributionMeta,
+  GitHubContributionRepository,
   RemoteRepoShortcut,
   RepoConflictChoice,
   RepoPullLocalChangesMode,
@@ -30,6 +31,10 @@ import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
 const CONTRIBUTION_REPO_LIMIT = 30;
 const REPO_REFRESH_CONCURRENCY = 4;
 const LOCAL_REPO_CONTRIBUTION_SCOPE = "local:";
+type ContributionRefreshScope = {
+  scope: string;
+  source: GitHubContributionRepository;
+};
 let repositoryRuntimeGeneration = 0;
 let contributionRefreshGeneration = 0;
 let contributionRefreshPendingCount = 0;
@@ -278,16 +283,25 @@ function scheduleLowPriorityRefresh(repoIds: string[]) {
   void refreshWorkspaceTasks();
 }
 
-function repoContributionScope(repo: {
-  id: string;
-}) {
-  return `${LOCAL_REPO_CONTRIBUTION_SCOPE}${repo.id}`;
+function repoContributionScope(repo: Pick<RepoSummary, "id" | "name" | "githubFullName">): ContributionRefreshScope {
+  return {
+    scope: `${LOCAL_REPO_CONTRIBUTION_SCOPE}${repo.id}`,
+    source: {
+      repoId: repo.id,
+      repoName: repo.name.trim() || repo.id,
+      repoFullName: repo.githubFullName?.trim() || null,
+      count: 0,
+    },
+  };
 }
 
 function repoContributionScopes() {
-  return Array.from(new Set(
-    representativeReposBySharedGroup(state.repos).map((repo) => repoContributionScope(repo)),
-  ));
+  const scopes = new Map<string, ContributionRefreshScope>();
+  for (const repo of representativeReposBySharedGroup(state.repos)) {
+    const item = repoContributionScope(repo);
+    scopes.set(item.scope, item);
+  }
+  return [...scopes.values()];
 }
 
 export async function refreshRepoContributions() {
@@ -322,8 +336,8 @@ function beginContributionRefresh() {
   return generation;
 }
 
-function scheduleRepoContributionRefresh(scope: string, generation: number) {
-  const normalized = scope.trim();
+function scheduleRepoContributionRefresh(item: ContributionRefreshScope, generation: number) {
+  const normalized = item.scope.trim();
   if (!normalized || contributionRefreshSeenFullNames.has(normalized) || generation !== contributionRefreshGeneration) {
     return;
   }
@@ -336,15 +350,19 @@ function scheduleRepoContributionRefresh(scope: string, generation: number) {
   });
   contributionRefreshPendingCount += 1;
   state.githubContributions.loading = true;
-  void refreshSingleRepoContribution(normalized, generation);
+  void refreshSingleRepoContribution({ ...item, scope: normalized }, generation);
 }
 
-async function refreshSingleRepoContribution(scope: string, generation: number) {
+async function refreshSingleRepoContribution(item: ContributionRefreshScope, generation: number) {
   try {
     const service = await loadWorkspaceService();
-    const result = await service.listRepoContribution(scope);
+    const result = await service.listRepoContribution(item.scope);
     if (generation !== contributionRefreshGeneration) return;
-    contributionRefreshDays = mergeContributionDays(contributionRefreshDays, result.days);
+    contributionRefreshDays = mergeContributionDays(
+      contributionRefreshDays,
+      result.days,
+      item.source,
+    );
     state.githubContributions.days = contributionRefreshDays;
     updateContributionMeta({
       repoCount: (state.githubContributions.meta?.repoCount ?? 0) + (result.meta.repoCount ?? 1),
@@ -394,14 +412,59 @@ function emptyContributionDays(now = Date.now()) {
 function mergeContributionDays(
   current: GitHubContributionDay[],
   incoming: GitHubContributionDay[],
+  source: GitHubContributionRepository,
 ) {
-  const counts = new Map(current.map((day) => [day.date, day.count]));
+  const daysByDate = new Map(current.map((day) => [day.date, {
+    ...day,
+    repositories: normalizeContributionRepositories(day.repositories ?? []),
+  }]));
   for (const day of incoming) {
-    counts.set(day.date, (counts.get(day.date) ?? 0) + day.count);
+    const currentDay = daysByDate.get(day.date);
+    const count = (currentDay?.count ?? 0) + day.count;
+    const repositories = day.count > 0
+      ? day.repositories?.length
+        ? day.repositories
+        : [{ ...source, count: day.count }]
+      : [];
+    daysByDate.set(day.date, {
+      date: day.date,
+      count,
+      repositories: normalizeContributionRepositories([
+        ...(currentDay?.repositories ?? []),
+        ...repositories,
+      ]),
+    });
   }
-  return [...counts.entries()]
-    .map(([date, count]) => ({ date, count }))
+  return [...daysByDate.values()]
+    .map((day) => ({
+      date: day.date,
+      count: day.count,
+      repositories: day.repositories?.length ? day.repositories : undefined,
+    }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function normalizeContributionRepositories(repositories: readonly GitHubContributionRepository[]) {
+  const byRepo = new Map<string, GitHubContributionRepository>();
+  for (const repo of repositories) {
+    if (repo.count <= 0) continue;
+    const repoId = repo.repoId.trim();
+    if (!repoId) continue;
+    const current = byRepo.get(repoId);
+    byRepo.set(repoId, {
+      repoId,
+      repoName: repo.repoName.trim() || repoId,
+      repoFullName: repo.repoFullName?.trim() || null,
+      count: (current?.count ?? 0) + repo.count,
+    });
+  }
+  return [...byRepo.values()].sort((a, b) =>
+    contributionRepositoryLabel(a).localeCompare(contributionRepositoryLabel(b)),
+  );
+}
+
+function contributionRepositoryLabel(repo: GitHubContributionRepository) {
+  return repo.repoFullName || repo.repoName || repo.repoId;
 }
 
 function updateContributionMeta(update: Partial<GitHubContributionMeta> & {

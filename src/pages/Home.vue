@@ -1367,7 +1367,12 @@ function contributionLevel(count: number, maxCount: number) {
 }
 
 function contributionTitle(day: GitHubContributionDay) {
-  return `${day.date}：${day.count} 次提交`;
+  const lines = [`${day.date}：${day.count} 次提交`];
+  for (const repo of day.repositories ?? []) {
+    const label = repo.repoFullName || repo.repoName || repo.repoId;
+    lines.push(`${label}：${repo.count} 次`);
+  }
+  return lines.join("\n");
 }
 
 function parseGitHubTime(value: string | null | undefined) {

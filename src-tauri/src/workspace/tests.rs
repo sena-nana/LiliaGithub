@@ -1281,6 +1281,16 @@ fn local_contribution_cache_reads_writes_and_removes_repo_days() {
 }
 
 #[test]
+fn github_contribution_day_deserializes_without_repository_details() {
+    let day: GitHubContributionDay =
+        serde_json::from_str(r#"{"date":"2026-06-11","count":3}"#).unwrap();
+
+    assert_eq!(day.date, "2026-06-11");
+    assert_eq!(day.count, 3);
+    assert!(day.repositories.is_empty());
+}
+
+#[test]
 fn converts_civil_dates_for_github_contributions() {
     let day = shared::days_from_civil(2026, 6, 11);
     assert_eq!(format_day_index(day), "2026-06-11");

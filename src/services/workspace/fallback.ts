@@ -11,6 +11,7 @@ import type {
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubBindingStatus,
   GitHubCommitListOptions,
+  GitHubContributionDay,
   GitHubContributionMeta,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
@@ -503,6 +504,13 @@ function cloneRepoSummary(repo: RepoSummary): RepoSummary {
   };
 }
 
+function cloneContributionDay(day: GitHubContributionDay): GitHubContributionDay {
+  return {
+    ...day,
+    repositories: day.repositories?.map((repo) => ({ ...repo })),
+  };
+}
+
 function cloneStartupCache(cache: WorkspaceStartupCache): WorkspaceStartupCache {
   return {
     workspaceRoot: cache.workspaceRoot,
@@ -518,7 +526,7 @@ function cloneStartupCache(cache: WorkspaceStartupCache): WorkspaceStartupCache 
     ),
     contributions: cache.contributions
       ? {
-          days: cache.contributions.days.map((day) => ({ ...day })),
+          days: cache.contributions.days.map(cloneContributionDay),
           meta: { ...cache.contributions.meta },
           cachedAt: cache.contributions.cachedAt,
         }
@@ -2920,7 +2928,7 @@ export function writeStartupContributions(
   return call("workspace_write_startup_contributions", { contributions }, () => {
     const cache = currentStartupCache();
     cache.contributions = {
-      days: contributions.days.map((day) => ({ ...day })),
+      days: contributions.days.map(cloneContributionDay),
       meta: { ...contributions.meta },
       cachedAt: Date.now(),
     };
@@ -4439,24 +4447,38 @@ function fallbackContributionMeta(repoScope: string): GitHubContributionMeta {
   };
 }
 
+function fallbackContributionRepository(repoScope: string) {
+  const repoId = repoScope.trim().replace(/^local:/, "").replace(/^\/+|\/+$/g, "");
+  if (!repoId) return null;
+  const repo = fallbackRepo(repoId);
+  return {
+    repoId,
+    repoName: repo?.name?.trim() || repoId,
+    repoFullName: repo?.githubFullName?.trim() || null,
+  };
+}
+
 export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {
   return call("github_list_repo_contribution", { repoFullName: repoScope }, () => {
     if (fallbackRepoContributionOverride) {
       const result = fallbackRepoContributionOverride(repoScope);
       return {
-        days: result.days.map((item) => ({ ...item })),
+        days: result.days.map(cloneContributionDay),
         meta: { ...result.meta },
       };
     }
     const end = new Date("2026-06-11T00:00:00Z");
+    const repo = fallbackContributionRepository(repoScope);
     const days = Array.from({ length: CONTRIBUTION_DAYS }, (_, index) => {
       const date = new Date(end);
       date.setUTCDate(end.getUTCDate() - (CONTRIBUTION_DAYS - 1 - index));
       const dayIndex = Math.floor(date.getTime() / 86_400_000);
       const active = dayIndex % 5 === 0 || dayIndex % 17 === 0 || dayIndex > Math.floor(end.getTime() / 86_400_000) - 45;
+      const count = active ? ((dayIndex % 4) + 1) : 0;
       return {
         date: date.toISOString().slice(0, 10),
-        count: active ? ((dayIndex % 4) + 1) : 0,
+        count,
+        repositories: repo && count > 0 ? [{ ...repo, count }] : undefined,
       };
     });
     return {
