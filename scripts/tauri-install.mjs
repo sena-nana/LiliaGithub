@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 const bundleDir = path.join(cwd, "src-tauri", "target", "release", "bundle");
 const nativeCpuFlag = "-C target-cpu=native";
-const dryRun = process.env.TAURI_TEMPLATE_INSTALL_DRY_RUN === "1";
+const dryRun = process.env.LILIA_GITHUB_INSTALL_DRY_RUN === "1";
 const platform = process.platform;
 const platformTargets = {
   win32: { dirs: ["msi", "nsis"], exts: [".msi", ".exe"] },

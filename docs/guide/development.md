@@ -36,6 +36,7 @@ yarn tauri:install
 `yarn tauri:dev` 会自动寻找可用本地端口,再把对应 `devUrl` 传给 Tauri。此模式和生产包一样通过现有 Tauri command 访问真实工作区、Git 和 GitHub 能力。
 `yarn tauri:build:no-bundle` 只验证 release 编译并跳过安装包生成,适合发布前的本机快速检查。
 `yarn tauri:install` 会先用本机 CPU 优化参数打包,再打开安装程序并尝试安装;该入口面向本机安装验证,不要用它产出的包做通用分发。
+需要检查 install 打包命令但不执行构建和安装时,使用 `LILIA_GITHUB_INSTALL_DRY_RUN=1 yarn tauri:install`;这是 LiliaGithub 的唯一 install dry-run 接口。
 
 Rust 编译缓存可在个人机器启用 `sccache`,但不要写入仓库配置。确认本机已安装后,在 `~/.cargo/config.toml` 配置:
 
