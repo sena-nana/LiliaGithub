@@ -55,6 +55,8 @@ describe("单应用模板工具链", () => {
       tauri: "tauri",
       "tauri:dev": "node scripts/tauri-dev.mjs",
       "tauri:build": "tauri build",
+      "tauri:build:no-bundle": "yarn check:package-manager && yarn tauri build --no-bundle",
+      "tauri:install": "node scripts/tauri-install.mjs",
       verify: "yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml",
     });
   });
@@ -154,6 +156,44 @@ describe("单应用模板工具链", () => {
     });
   });
 
+  it("Tauri install 脚本默认为本机 CPU 优化 release 打包", () => {
+    const run = spawnSync("node", ["scripts/tauri-install.mjs"], {
+      cwd: resolve("."),
+      env: {
+        ...process.env,
+        TAURI_TEMPLATE_INSTALL_DRY_RUN: "1",
+        RUSTFLAGS: "-C debuginfo=0",
+      },
+      encoding: "utf-8",
+    });
+
+    expect(run.status).toBe(0);
+    const parsed = JSON.parse(run.stdout) as {
+      args: string[];
+      env: Record<string, string>;
+    };
+    expect(parsed.args.join(" ")).toContain("tauri build");
+    expect(parsed.env.RUSTFLAGS).toBe("-C debuginfo=0 -C target-cpu=native");
+  });
+
+  it("Tauri install 脚本不覆盖显式 target-cpu 配置", () => {
+    const run = spawnSync("node", ["scripts/tauri-install.mjs"], {
+      cwd: resolve("."),
+      env: {
+        ...process.env,
+        TAURI_TEMPLATE_INSTALL_DRY_RUN: "1",
+        RUSTFLAGS: "-C target-cpu=x86-64-v3",
+      },
+      encoding: "utf-8",
+    });
+
+    expect(run.status).toBe(0);
+    const parsed = JSON.parse(run.stdout) as {
+      env: Record<string, string>;
+    };
+    expect(parsed.env.RUSTFLAGS).toBe("-C target-cpu=x86-64-v3");
+  });
+
   it("GitHub workflow 使用模板路径和通用发布配置", () => {
     const ci = readFileSync(resolve(".github/workflows/ci.yml"), "utf-8");
     const release = readFileSync(resolve(".github/workflows/release.yml"), "utf-8");
@@ -162,15 +202,28 @@ describe("单应用模板工具链", () => {
 
     expect(ci).toContain("corepack yarn verify");
     expect(ci).toContain("corepack yarn docs:build");
-    expect(ci).toContain("src-tauri/target");
+    expect(ci).toContain("Swatinem/rust-cache@v2");
+    expect(ci).toContain("workspaces: src-tauri -> target");
+    expect(ci).toContain('CARGO_INCREMENTAL: "0"');
+    expect(ci).toContain("RUSTC_WRAPPER: sccache");
+    expect(ci).toContain('SCCACHE_GHA_ENABLED: "true"');
+    expect(ci).toContain("$env:SCCACHE_PATH --show-stats");
     expect(release).toContain("projectPath: .");
+    expect(release).toContain("Swatinem/rust-cache@v2");
+    expect(release).toContain("workspaces: src-tauri -> target");
     expect(release).toContain("TAURI_SIGNING_PRIVATE_KEY");
     expect(release).toContain("WINDOWS_CERTIFICATE_THUMBPRINT");
     expect(release).toContain("createUpdaterArtifacts = $true");
     expect(release).toContain("src-tauri/tauri.release.conf.json");
     expect(release).toContain("releaseName: LiliaGithub");
+    expect(release).toContain('CARGO_INCREMENTAL: "0"');
+    expect(release).toContain("RUSTC_WRAPPER: sccache");
+    expect(release).toContain('SCCACHE_GHA_ENABLED: "true"');
+    expect(release).toContain("$env:SCCACHE_PATH --show-stats");
     expect(pages).toContain("docs/.vitepress/dist");
     expect(pages).not.toContain("enablement: true");
+    expect(combined).not.toContain("actions/cache@v4");
+    expect(combined).not.toContain("cargo install sccache");
     expect(combined).not.toContain("apps/desktop");
     expect(combined).not.toContain("LiliaCode");
   });

@@ -27,11 +27,24 @@ corepack prepare yarn@4.14.1 --activate
 yarn install
 yarn dev
 yarn tauri:dev
+yarn tauri:build:no-bundle
+yarn tauri:install
 ```
 
 `yarn dev` 只启动 Vite 前端。浏览器中没有 Tauri runtime 时,前端会使用内置开发 mock 数据,用于快速浏览页面和调试界面。
 
 `yarn tauri:dev` 会自动寻找可用本地端口,再把对应 `devUrl` 传给 Tauri。此模式和生产包一样通过现有 Tauri command 访问真实工作区、Git 和 GitHub 能力。
+`yarn tauri:build:no-bundle` 只验证 release 编译并跳过安装包生成,适合发布前的本机快速检查。
+`yarn tauri:install` 会先用本机 CPU 优化参数打包,再打开安装程序并尝试安装;该入口面向本机安装验证,不要用它产出的包做通用分发。
+
+Rust 编译缓存可在个人机器启用 `sccache`,但不要写入仓库配置。确认本机已安装后,在 `~/.cargo/config.toml` 配置:
+
+```toml
+[build]
+rustc-wrapper = "sccache"
+```
+
+启用后用 `sccache --show-stats` 和重复构建耗时确认命中效果。CI 通过 `mozilla-actions/sccache-action` 使用预构建 sccache,不要在 workflow 里用 `cargo install sccache`,否则会从源码编译并拖慢构建。
 
 ## Agent 调试
 
@@ -49,6 +62,7 @@ yarn agent-debug:verify
 yarn test
 yarn build
 cargo check --manifest-path src-tauri/Cargo.toml
+yarn tauri:build:no-bundle
 yarn verify
 yarn agent-debug:verify
 ```
