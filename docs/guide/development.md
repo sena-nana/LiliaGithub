@@ -19,7 +19,7 @@ LiliaGithub/
 
 ## 本地运行
 
-本仓库通过 Corepack 使用 Yarn 4.14.1。建议从仓库根目录通过根 `yarn ...` 脚本运行贡献命令。
+本仓库通过 Corepack 使用 Yarn 4.14.1,并通过根目录 `rust-toolchain.toml` 固定 Rust 工具链。建议从仓库根目录通过根 `yarn ...` 脚本运行贡献命令,让本机、CI 和 release 都读取同一份工具链约定。
 
 ```bash
 corepack enable
