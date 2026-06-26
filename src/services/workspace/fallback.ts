@@ -2272,7 +2272,7 @@ let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContribut
 let fallbackGitHubWorkflowRunsOverride:
   ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null = null;
 let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
-let fallbackRepoDetailOverride: ((repoId: string) => RepoDetail | null) | null = null;
+let fallbackRepoDetailOverride: ((repoId: string) => RepoDetail | Promise<RepoDetail> | null) | null = null;
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
@@ -2411,7 +2411,9 @@ export function setFallbackRepoRemoteSyncOverrideForTests(
   fallbackRepoRemoteSyncOverride = override;
 }
 
-export function setFallbackRepoDetailOverrideForTests(override: ((repoId: string) => RepoDetail | null) | null) {
+export function setFallbackRepoDetailOverrideForTests(
+  override: ((repoId: string) => RepoDetail | Promise<RepoDetail> | null) | null,
+) {
   fallbackRepoDetailOverride = override;
 }
 

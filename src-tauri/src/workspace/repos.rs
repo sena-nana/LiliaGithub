@@ -896,6 +896,7 @@ pub(super) fn lightweight_managed_repos(
     repos
 }
 
+#[cfg(test)]
 pub(super) fn cached_managed_repos(
     root: &Path,
     settings: &WorkspaceSettings,
@@ -998,6 +999,7 @@ pub(super) fn repo_refresh_worker_count(repo_count: usize) -> usize {
     repo_count.min(available.clamp(1, MAX_REPO_REFRESH_CONCURRENCY))
 }
 
+#[cfg(test)]
 pub(super) fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> Vec<PathBuf> {
     settings
         .managed_repo_ids
@@ -1006,6 +1008,38 @@ pub(super) fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> V
         .map(|id| root.join(id.replace('/', std::path::MAIN_SEPARATOR_STR)))
         .filter(|path| path.exists() && is_git_repo(path))
         .collect()
+}
+
+pub(super) fn managed_repo_paths_and_prune_stale(
+    root: &Path,
+    settings: &mut WorkspaceSettings,
+) -> (Vec<PathBuf>, bool) {
+    let mut paths = Vec::new();
+    let mut changed = false;
+    for repo_id in settings.managed_repo_ids.clone() {
+        let path = root.join(repo_id.replace('/', std::path::MAIN_SEPARATOR_STR));
+        if path.exists() && is_git_repo(&path) {
+            if !settings.hidden_repo_ids.iter().any(|hidden| hidden == &repo_id) {
+                paths.push(path);
+            }
+        } else {
+            prune_deleted_repo_settings(settings, &repo_id);
+            changed = true;
+        }
+    }
+    (paths, changed)
+}
+
+fn managed_repo_paths_and_prune_settings(
+    app: &AppHandle,
+    root: &Path,
+    settings: &mut WorkspaceSettings,
+) -> Result<Vec<PathBuf>, String> {
+    let (paths, changed) = managed_repo_paths_and_prune_stale(root, settings);
+    if changed {
+        save_settings(app, settings)?;
+    }
+    Ok(paths)
 }
 
 pub(super) fn sort_repos(repos: &mut [RepoSummary]) {
@@ -1034,7 +1068,7 @@ pub(super) fn filter_hidden_repos(
 pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     run_blocking("刷新仓库", move || {
         let root = workspace_root(&app)?;
-        let settings = load_settings(&app);
+        let mut settings = load_settings(&app);
         let task = record_workspace_task(
             "repoStatus",
             "high",
@@ -1042,7 +1076,7 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
             "running",
             Some("刷新已管理仓库并同步远端状态".to_string()),
         );
-        let paths = managed_repo_paths(&root, &settings);
+        let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
         let failures = refresh_managed_repo_remotes(&paths, |path| run_fetch(&app, path));
         let mut repos = summarize_repos(&root, paths);
         sort_repos(&mut repos);
@@ -1071,9 +1105,15 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
 pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     run_blocking("读取已管理仓库", move || {
         let root = workspace_root(&app)?;
-        let settings = load_settings(&app);
+        let mut settings = load_settings(&app);
         let cache = matching_startup_cache(&app, &settings);
-        Ok(cached_managed_repos(&root, &settings, &cache))
+        let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
+        let mut repos: Vec<_> = paths
+            .into_iter()
+            .map(|path| cached_repo_summary(&cache, lightweight_repo_summary(&root, &path)))
+            .collect();
+        sort_repos(&mut repos);
+        Ok(repos)
     })
     .await
 }

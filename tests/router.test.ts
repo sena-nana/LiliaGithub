@@ -17,6 +17,7 @@ import type {
   GitHubRepoSummary,
   GitHubWorkflowRun,
   RepoChange,
+  RepoDetail,
   RepoOperationResult,
 } from "../src/services/workspace";
 import { repoDetail, repoSummary } from "./fixtures/workspace";
@@ -544,6 +545,31 @@ describe("基础路由", () => {
     expect(await screen.findByRole("button", { name: /linked worktree history/ })).toBeInTheDocument();
   });
 
+  it("linked worktree 变更页读取期间不显示空变更", async () => {
+    const linkedSummary = linkedWorktreeSummary("LiliaGithub-loading-worktree", "LiliaGithub loading worktree", {
+      unstagedCount: 1,
+    });
+    const detail = repoDetail(linkedSummary, {
+      changes: [
+        repoChange("src/loading-worktree.ts", {
+          diff: "@@ -1 +1 @@\n-old loading\n+new loading",
+        }),
+      ],
+    });
+    const detailGate = deferred<RepoDetail>();
+    workspaceFallback.setFallbackRepoOverridesForTests({ [linkedSummary.id]: linkedSummary });
+    workspaceFallback.setFallbackRepoDetailOverrideForTests((repoId) =>
+      repoId === linkedSummary.id ? detailGate.promise : null
+    );
+
+    await renderAt("/repos/LiliaGithub-loading-worktree/changes");
+
+    expect((await screen.findAllByText("正在读取本地变更。")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("没有本地变更。")).toBeNull();
+    detailGate.resolve(detail);
+    expect(await screen.findByText("src/loading-worktree.ts")).toBeInTheDocument();
+  });
+
   it("linked worktree 历史页直接进入时读取本地提交历史", async () => {
     const linkedSummary = linkedWorktreeSummary(
       "LiliaGithub-history-worktree",
@@ -563,6 +589,24 @@ describe("基础路由", () => {
     expect(await screen.findByRole("button", { name: /direct linked history/ })).toBeInTheDocument();
     expect(detailRequests).toContain(linkedSummary.id);
     expect(screen.queryByRole("tab", { name: "变更" })).toBeInTheDocument();
+  });
+
+  it("linked worktree 历史页读取失败不显示空历史", async () => {
+    const linkedSummary = linkedWorktreeSummary(
+      "LiliaGithub-missing-worktree",
+      "LiliaGithub missing worktree",
+    );
+    workspaceFallback.setFallbackRepoOverridesForTests({ [linkedSummary.id]: linkedSummary });
+    workspaceFallback.setFallbackRepoDetailOverrideForTests((repoId) => {
+      if (repoId === linkedSummary.id) throw new Error("未找到 Git 仓库：LiliaGithub-missing-worktree");
+      return null;
+    });
+
+    await renderAt("/repos/LiliaGithub-missing-worktree/history");
+
+    expect(await screen.findByText("提交历史读取失败。")).toBeInTheDocument();
+    expect(screen.queryByText("没有提交历史。")).toBeNull();
+    expect(await screen.findByText(/未找到 Git 仓库：LiliaGithub-missing-worktree/)).toBeInTheDocument();
   });
 
   it("远程详情页没有 README.md 时显示空态", async () => {

@@ -296,6 +296,8 @@ const props = defineProps<{
   canCommit: boolean;
   statusCommits: readonly CommitSummary[];
   selectedCommitHash?: string | null;
+  repoDetailLoading?: boolean;
+  repoDetailError?: string | null;
   canLoadFiles?: boolean;
   fileRepoRef?: string | null;
   filesUnavailableMessage?: string | null;
@@ -2949,6 +2951,8 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           :can-commit="canCommit"
           :action-running="actionRunning"
           :preview-change="previewChange"
+          :detail-loading="repoDetailLoading"
+          :detail-error="repoDetailError"
           @stage-unstaged-changes="emit('stageUnstagedChanges', $event)"
           @unstage-staged-changes="emit('unstageStagedChanges', $event)"
           @change-action="(action, change, paths) => emit('changeAction', action, change, paths)"
@@ -2963,6 +2967,8 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           :commit-meta-title="commitMetaTitle"
           :selected-commit-hash="selectedCommitHash"
           :read-only="historyReadOnly"
+          :detail-loading="repoDetailLoading"
+          :detail-error="repoDetailError"
           @open-commit="emit('openCommit', $event)"
           @cherry-pick-commit="emit('cherryPickCommit', $event)"
           @revert-commit="emit('revertCommit', $event)"

@@ -24,6 +24,8 @@ const props = defineProps<{
   actionRunning: boolean;
   previewChange: RepoChange | null;
   commitMessage: string;
+  detailLoading?: boolean;
+  detailError?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -53,6 +55,12 @@ const selectedChangePaths = ref<Set<string>>(new Set());
 const selectedChangeGroup = ref<ChangeGroupKey | null>(null);
 const selectionAnchor = ref<{ group: ChangeGroupKey; path: string } | null>(null);
 const discardingChangePathSet = computed(() => new Set(props.discardingChangePaths));
+const changesUnavailableText = computed(() => {
+  if (props.detailLoading) return "正在读取本地变更。";
+  if (props.detailError) return "变更读取失败。";
+  return null;
+});
+const emptyFileText = computed(() => changesUnavailableText.value ?? "没有本地变更。");
 
 function changeKey(change: RepoChange, group: "staged" | "unstaged") {
   return `${group}:${change.oldPath ?? ""}:${change.path}`;
@@ -71,7 +79,7 @@ const changeGroups = computed(() => [
   {
     key: "unstaged" as const,
     label: "未暂存变更",
-    emptyText: "没有未暂存变更。",
+    emptyText: changesUnavailableText.value ?? "没有未暂存变更。",
     actionLabel: "暂存全部未暂存变更",
     action: "stageUnstagedChanges" as const,
     icon: ArrowDownToLine,
@@ -80,7 +88,7 @@ const changeGroups = computed(() => [
   {
     key: "staged" as const,
     label: "已暂存变更",
-    emptyText: "没有已暂存变更。",
+    emptyText: changesUnavailableText.value ?? "没有已暂存变更。",
     actionLabel: "取消暂存全部已暂存变更",
     action: "unstageStagedChanges" as const,
     icon: ArrowUpFromLine,
@@ -261,7 +269,7 @@ function submitCommit(pushAfter: boolean) {
       :active-file="activeWorkspaceFile"
       :file-count-label="`${changes.length} 个文件`"
       diff-panel-label="变更预览"
-      empty-file-text="没有本地变更。"
+      :empty-file-text="emptyFileText"
       empty-diff-text="当前没有可展示的差异内容。"
       :mode="diffMode"
       fill
