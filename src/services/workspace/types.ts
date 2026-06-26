@@ -132,6 +132,14 @@ export interface GitHubDeviceFlowPollResult {
 export interface GitHubContributionDay {
   date: string;
   count: number;
+  repositories?: readonly GitHubContributionRepository[];
+}
+
+export interface GitHubContributionRepository {
+  repoId: string;
+  repoName: string;
+  repoFullName: string | null;
+  count: number;
 }
 
 export interface GitHubContributionMeta {

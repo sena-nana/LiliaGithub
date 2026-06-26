@@ -196,7 +196,16 @@ describe("workspace incremental refresh", () => {
       bindingLogin: null,
       reposById: {},
       contributions: {
-        days: [{ date: "2026-06-11", count: 3 }],
+        days: [{
+          date: "2026-06-11",
+          count: 3,
+          repositories: [{
+            repoId: "Repo1",
+            repoName: "Repo1",
+            repoFullName: "sena-nana/Repo1",
+            count: 3,
+          }],
+        }],
         meta: {
           repoCount: 1,
           requestedRepoCount: 1,
@@ -212,7 +221,16 @@ describe("workspace incremental refresh", () => {
     await initialize();
 
     expect(service.readStartupCache).toHaveBeenCalledTimes(1);
-    expect(state.githubContributions.days).toEqual([{ date: "2026-06-11", count: 3 }]);
+    expect(state.githubContributions.days).toEqual([{
+      date: "2026-06-11",
+      count: 3,
+      repositories: [{
+        repoId: "Repo1",
+        repoName: "Repo1",
+        repoFullName: "sena-nana/Repo1",
+        count: 3,
+      }],
+    }]);
     expect(state.githubContributions.meta?.repoCount).toBe(1);
     expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
   });
@@ -235,10 +253,71 @@ describe("workspace incremental refresh", () => {
 
     await waitFor(() =>
       expect(service.writeStartupContributions).toHaveBeenCalledWith({
-        days: expect.arrayContaining([{ date: "2026-06-11", count: 2 }]),
+        days: expect.arrayContaining([{
+          date: "2026-06-11",
+          count: 2,
+          repositories: [{
+            repoId: "Repo1",
+            repoName: "Repo1",
+            repoFullName: "sena-nana/Repo1",
+            count: 2,
+          }],
+        }]),
         meta: expect.objectContaining({ repoCount: 1 }),
       }),
     );
+  });
+
+  it("贡献图按日期合并多仓库提交明细", async () => {
+    state.repos = [
+      repoSummary("Repo1"),
+      repoSummary("Repo2", { githubFullName: null }),
+    ];
+    service.listRepoContribution.mockImplementation(async (scope: string) => ({
+      days: scope === "local:Repo1"
+        ? [
+            { date: "2026-06-11", count: 2 },
+            { date: "2026-06-12", count: 0 },
+          ]
+        : [
+            { date: "2026-06-11", count: 1 },
+            { date: "2026-06-12", count: 0 },
+          ],
+      meta: {
+        repoCount: 1,
+        requestedRepoCount: 1,
+        repoLimit: 30,
+        truncated: false,
+        skippedRepoCount: 0,
+        refreshedAt: 1_780_000_000_000,
+      },
+    } satisfies GitHubContributionResult));
+
+    await refreshRepoContributions();
+
+    await waitFor(() => {
+      const day = state.githubContributions.days.find((item) => item.date === "2026-06-11");
+      expect(day).toMatchObject({ count: 3 });
+      expect(day?.repositories).toEqual(expect.arrayContaining([
+        {
+          repoId: "Repo1",
+          repoName: "Repo1",
+          repoFullName: "sena-nana/Repo1",
+          count: 2,
+        },
+        {
+          repoId: "Repo2",
+          repoName: "Repo2",
+          repoFullName: null,
+          count: 1,
+        },
+      ]));
+      expect(day?.repositories).toHaveLength(2);
+    });
+
+    const emptyDay = state.githubContributions.days.find((item) => item.date === "2026-06-12");
+    expect(emptyDay).toMatchObject({ count: 0 });
+    expect(emptyDay?.repositories).toBeUndefined();
   });
 
   it("自动刷新发现开启自动同步的仓库有待同步提交时执行同步", async () => {
@@ -573,7 +652,7 @@ describe("workspace incremental refresh", () => {
     expect(service.listRepoContribution).toHaveBeenCalledWith("local:Lilia");
     expect(service.listRepoContribution).toHaveBeenCalledWith("local:LocalOnly");
     expect(service.listRepoContribution).toHaveBeenCalledWith("local:LiliaDuplicate");
-    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
+    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toMatchObject({
       date: "2026-06-11",
       count: 7,
     });
@@ -633,7 +712,7 @@ describe("workspace incremental refresh", () => {
     expect(service.listRepoContribution).toHaveBeenCalledWith("local:main-repo");
     expect(service.listRepoContribution).toHaveBeenCalledWith("local:standalone-repo");
     expect(service.listRepoContribution).not.toHaveBeenCalledWith("local:linked-repo");
-    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
+    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toMatchObject({
       date: "2026-06-11",
       count: 5,
     });
@@ -736,7 +815,7 @@ describe("workspace incremental refresh", () => {
       },
     });
 
-    await waitFor(() => expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
+    await waitFor(() => expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toMatchObject({
       date: "2026-06-11",
       count: 2,
     }));
@@ -755,7 +834,7 @@ describe("workspace incremental refresh", () => {
     });
 
     await waitFor(() => expect(state.githubContributions.loading).toBe(false));
-    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
+    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toMatchObject({
       date: "2026-06-11",
       count: 5,
     });
@@ -792,7 +871,7 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("local:FastRepo"));
     await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledWith("local:SlowRepo"));
     await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toEqual({
+    await waitFor(() => expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toMatchObject({
       date: "2026-06-11",
       count: 4,
     }));

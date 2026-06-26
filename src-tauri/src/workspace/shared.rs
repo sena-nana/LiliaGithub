@@ -43,6 +43,7 @@ pub(super) fn github_contribution_days(
             GitHubContributionDay {
                 count: counts.get(&date).copied().unwrap_or_default(),
                 date,
+                repositories: Vec::new(),
             }
         })
         .collect()

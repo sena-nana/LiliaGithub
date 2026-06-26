@@ -196,6 +196,17 @@ pub struct GitHubDeviceFlowPollResult {
 pub struct GitHubContributionDay {
     pub date: String,
     pub count: usize,
+    #[serde(default)]
+    pub repositories: Vec<GitHubContributionRepository>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubContributionRepository {
+    pub repo_id: String,
+    pub repo_name: String,
+    pub repo_full_name: Option<String>,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
