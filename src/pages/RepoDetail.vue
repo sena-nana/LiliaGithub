@@ -34,6 +34,8 @@ const {
   activeTab,
   commitMessage,
   actionError,
+  repoDetailLoading,
+  repoDetailError,
   launchError,
   pullLocalChangesDialog,
   actionRunning,
@@ -338,6 +340,8 @@ const {
           :can-commit="canCommit"
           :status-commits="statusCommits"
           :selected-commit-hash="selectedCommitHash"
+          :repo-detail-loading="repoDetailLoading"
+          :repo-detail-error="repoDetailError"
           :can-load-files="canLoadFiles"
           :file-repo-ref="activeFileRepoRef"
           :files-unavailable-message="filesUnavailableMessage"

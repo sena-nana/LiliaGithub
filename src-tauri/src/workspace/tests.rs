@@ -1853,6 +1853,45 @@ fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
 }
 
 #[test]
+fn linked_worktree_detail_reads_own_history_and_changes() {
+    let root = temp_dir("linked-worktree-detail");
+    let main = root.join("main-repo");
+    init_git_repo(&main);
+    fs::write(main.join("file.txt"), "main\n").unwrap();
+    run_git(&main, &["add", "file.txt"]);
+    run_git(&main, &["commit", "-m", "main"]);
+    run_git(&main, &["branch", "-M", "main"]);
+    run_git(&main, &["checkout", "-b", "feature/worktree"]);
+    fs::write(main.join("feature.txt"), "feature\n").unwrap();
+    run_git(&main, &["add", "feature.txt"]);
+    run_git(&main, &["commit", "-m", "feature worktree"]);
+    run_git(&main, &["checkout", "main"]);
+
+    let linked = root.join("linked-worktree");
+    run_git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/worktree",
+        ],
+    );
+    fs::write(linked.join("feature.txt"), "feature changed\n").unwrap();
+
+    let history = repo_history(&linked);
+    assert!(history
+        .iter()
+        .any(|commit| commit.subject == "feature worktree"));
+
+    let changes = repo_changes(&linked);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].path, "feature.txt");
+    assert!(changes[0].unstaged);
+    assert!(changes[0].diff.contains("feature changed"));
+}
+
+#[test]
 fn remove_managed_repo_path_removes_linked_worktree_directory() {
     let root = temp_dir("remove-linked-worktree");
     let main = root.join("main-repo");
@@ -3269,6 +3308,42 @@ fn managed_repo_paths_only_returns_visible_git_repos() {
 
     assert_eq!(paths, vec![visible]);
     assert!(!missing.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn managed_repo_paths_prunes_stale_repo_ids_from_settings() {
+    let root = temp_dir("managed-repo-prune-stale");
+    let visible = root.join("visible");
+    init_git_repo(&visible);
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec![
+            "visible".to_string(),
+            "missing".to_string(),
+            "nested/missing".to_string(),
+        ],
+        hidden_repo_ids: vec!["missing".to_string()],
+        system_git_repo_ids: vec!["nested/missing".to_string()],
+        repo_groups: vec![WorkspaceRepoGroup {
+            id: "repo-group".to_string(),
+            name: "Group".to_string(),
+            repo_ids: vec![
+                "visible".to_string(),
+                "missing".to_string(),
+                "nested/missing".to_string(),
+            ],
+        }],
+        ..WorkspaceSettings::default()
+    };
+
+    let (paths, changed) = managed_repo_paths_and_prune_stale(&root, &mut settings);
+
+    assert!(changed);
+    assert_eq!(paths, vec![visible]);
+    assert_eq!(settings.managed_repo_ids, vec!["visible"]);
+    assert!(settings.hidden_repo_ids.is_empty());
+    assert!(settings.system_git_repo_ids.is_empty());
+    assert_eq!(settings.repo_groups[0].repo_ids, vec!["visible"]);
     fs::remove_dir_all(root).unwrap();
 }
 

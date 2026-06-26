@@ -66,6 +66,8 @@ export function useRepoDetailController() {
   const activeFileHash = computed<string | null>(() => normalizeStringQuery(route.query.hash));
   const commitMessage = ref("");
   const actionError = ref<string | null>(null);
+  const repoDetailLoading = ref(false);
+  const repoDetailError = ref<string | null>(null);
   const launchError = ref<string | null>(null);
   const {
     dialog: pullLocalChangesDialog,
@@ -360,6 +362,8 @@ export function useRepoDetailController() {
     githubDefaultBranch.value = null;
     activeRemoteBranch.value = null;
     githubBranchLoading.value = false;
+    repoDetailLoading.value = false;
+    repoDetailError.value = null;
     deletingRemoteBranchName.value = null;
     deletedRemoteBranchNames.value = [];
     discardingChangePaths.value = [];
@@ -448,17 +452,27 @@ export function useRepoDetailController() {
       actionError.value = null;
       launchError.value = null;
       if (!hasLocalRepo.value) {
+        repoDetailLoading.value = false;
+        repoDetailError.value = null;
         if (!remoteContextRestored.value) return;
         await loadRemoteGitHubData(githubRepoFullName.value);
         return;
       }
+      repoDetailLoading.value = true;
+      repoDetailError.value = null;
       try {
         await workspace.loadRepoDetail(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         syncFocusedChange();
       } catch (err) {
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
-        actionError.value = String(err);
+        const message = String(err);
+        repoDetailError.value = message;
+        actionError.value = message;
+      } finally {
+        if (repoDetailLoader.isCurrent(runId) && repoId.value === targetRepoId) {
+          repoDetailLoading.value = false;
+        }
       }
       if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
       if (!canUseGitHubData.value) {
@@ -967,6 +981,8 @@ export function useRepoDetailController() {
       activeTab,
       commitMessage,
       actionError,
+      repoDetailLoading,
+      repoDetailError,
       launchError,
       pullLocalChangesDialog,
       actionRunning,

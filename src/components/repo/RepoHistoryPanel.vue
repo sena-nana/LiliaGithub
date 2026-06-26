@@ -9,6 +9,8 @@ const props = defineProps<{
   commitMetaTitle: (commit: CommitSummary) => string;
   selectedCommitHash?: string | null;
   readOnly?: boolean;
+  detailLoading?: boolean;
+  detailError?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -21,6 +23,11 @@ const emit = defineEmits<{
 
 const graphRows = computed(() => buildCommitGraph(props.commits));
 const graphViewportWidth = computed(() => graphWidth(graphRows.value[0]?.maxLaneCount ?? 1));
+const emptyText = computed(() => {
+  if (props.detailLoading) return "正在读取提交历史。";
+  if (props.detailError) return "提交历史读取失败。";
+  return "没有提交历史。";
+});
 
 const graphLaneWidth = 14;
 const graphPaddingX = 8;
@@ -102,7 +109,7 @@ function commitContextMenu(commit: CommitSummary) {
 
 <template>
   <section class="repo-panel repo-panel--history project-section">
-    <p v-if="!commits.length" class="muted repo-empty">没有提交历史。</p>
+    <p v-if="!commits.length" class="muted repo-empty">{{ emptyText }}</p>
     <div
       v-else
       class="history-list"
