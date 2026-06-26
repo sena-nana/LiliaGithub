@@ -62,6 +62,10 @@ import {
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
+import {
+  repoCalculatesHomeTimeline,
+  repoIncludedInHomeCodeStats,
+} from "../config/repoSettingsManifest";
 import { representativeReposByGitHubFullName, representativeReposBySharedGroup } from "../utils/repoWorktree";
 import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
 import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
@@ -245,10 +249,13 @@ const hasContributionDays = computed(() => workspace.state.githubContributions.d
 const skippedContributionRepoCount = computed(() =>
   workspace.state.githubContributions.meta?.skippedRepoCount ?? 0,
 );
+const homeCodeStatsRepos = computed(() =>
+  representativeReposBySharedGroup(workspace.state.repos)
+    .filter((repo) => repoIncludedInHomeCodeStats(workspace.state.settings, repo.id)),
+);
+
 const languageOverview = computed<HomeCodeOverview>(() => {
-  const overview = buildLanguageOverviewFromRepos(
-    representativeReposBySharedGroup(workspace.state.repos),
-  );
+  const overview = buildLanguageOverviewFromRepos(homeCodeStatsRepos.value);
   const slices = overview.slices.map((slice) => {
     const primaryRepoId = slice.repoIds[0] ?? null;
     const target = workspace.repoById(primaryRepoId ?? "")?.name ?? primaryRepoId;
@@ -266,7 +273,7 @@ const languageOverview = computed<HomeCodeOverview>(() => {
 });
 
 const projectCodeOverview = computed<HomeCodeOverview>(() => {
-  const overview = buildProjectCodeOverviewFromRepos(representativeReposBySharedGroup(workspace.state.repos));
+  const overview = buildProjectCodeOverviewFromRepos(homeCodeStatsRepos.value);
   return {
     ...overview,
     slices: overview.slices.map((slice) => ({
@@ -303,8 +310,11 @@ const visibleRepoStatusRows = computed(() =>
 const hiddenRepoStatusRowCount = computed(() =>
   Math.max(0, repoStatusRows.value.length - visibleRepoStatusRows.value.length),
 );
+const homeTimelineRepos = computed(() =>
+  githubRepos.value.filter(repoIncludedInHomeTimeline),
+);
 const githubTimelineRepoSources = computed<GitHubTimelineRepoSource[]>(() =>
-  githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => ({
+  homeTimelineRepos.value.map((githubRepo) => ({
     githubRepo,
     localRepo: localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null,
   })),
@@ -827,15 +837,22 @@ function clearGitHubTimelineReleases() {
 }
 
 function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
-  loadGitHubTimelineIssues(repos, refresh);
-  loadGitHubTimelinePullRequests(repos, refresh);
-  loadGitHubTimelineWorkflowRuns(repos, refresh);
-  loadGitHubTimelineReleases(repos, refresh);
+  const timelineRepos = repos.filter(repoIncludedInHomeTimeline);
+  loadGitHubTimelineIssues(timelineRepos, refresh);
+  loadGitHubTimelinePullRequests(timelineRepos, refresh);
+  loadGitHubTimelineWorkflowRuns(timelineRepos, refresh);
+  loadGitHubTimelineReleases(timelineRepos, refresh);
   if (githubTimelineActivated.value) {
     drainGitHubTimelineQueues();
     return;
   }
   scheduleGitHubTimelineActivation();
+}
+
+function repoIncludedInHomeTimeline(repo: GitHubRepoSummary) {
+  if (repo.disabled) return false;
+  const localRepo = localRepoByGitHubFullName.value.get(repo.fullName) ?? null;
+  return !localRepo || repoCalculatesHomeTimeline(workspace.state.settings, localRepo.id);
 }
 
 function enqueueGitHubTimelineIssueRepos(

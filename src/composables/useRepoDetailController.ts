@@ -1,6 +1,10 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { repoAutoSyncEnabled } from "../config/repoSettingsManifest";
+import {
+  REPO_SETTING_ITEMS,
+  repoSettingValue,
+  type RepoSettingKey,
+} from "../config/repoSettingsManifest";
 import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches, listGitHubRepoCommits } from "../services/workspace";
 import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
@@ -313,7 +317,12 @@ export function useRepoDetailController() {
   });
   const aheadCount = computed(() => summary.value?.ahead ?? 0);
   const behindCount = computed(() => summary.value?.behind ?? 0);
-  const autoSyncEnabled = computed(() => repoAutoSyncEnabled(workspace.state.settings, repoId.value));
+  const repoSettingValues = computed(() => Object.fromEntries(
+    REPO_SETTING_ITEMS.map((setting) => [
+      setting.key,
+      repoSettingValue(workspace.state.settings, repoId.value, setting.key),
+    ]),
+  ) as Record<RepoSettingKey, boolean>);
   const repoActionError = computed(() => workspace.state.repoActionErrors[repoId.value]?.message ?? null);
   onMounted(() => {
     void load();
@@ -730,8 +739,8 @@ export function useRepoDetailController() {
     }
   }
 
-  function setAutoSync(value: boolean) {
-    void runAction(() => workspace.setRepoAutoSync(repoId.value, value));
+  function setRepoSetting(key: RepoSettingKey, value: boolean) {
+    void runAction(() => workspace.setRepoSetting(repoId.value, key, value));
   }
 
   function isOpenTarget(value: string): value is SystemOpenTarget {
@@ -1001,7 +1010,7 @@ export function useRepoDetailController() {
       activeBranchName,
       aheadCount,
       behindCount,
-      autoSyncEnabled,
+      repoSettingValues,
       repoActionError,
       focusChange,
       stageUnstagedChanges,
@@ -1012,7 +1021,7 @@ export function useRepoDetailController() {
       selectPullStrategy,
       selectPullLocalChangesMode,
       cancelPullLocalChangesDialog,
-      setAutoSync,
+      setRepoSetting,
       selectOpenTarget,
       openSelectedTarget,
       runSelectedPullStrategy,

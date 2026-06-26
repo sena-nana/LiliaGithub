@@ -37,7 +37,10 @@ export interface WorkspaceStartupContributions {
 }
 
 export interface RepoSyncPreference {
-  autoSync: boolean;
+  autoSync?: boolean;
+  includeInHomeCodeStats?: boolean;
+  includeInHomeContributionStats?: boolean;
+  calculateHomeTimeline?: boolean;
 }
 
 export interface WorkspaceRepoGroup {

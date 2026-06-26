@@ -75,11 +75,32 @@ pub struct LocalContributionDayCache {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoSyncPreference {
     #[serde(default)]
     pub auto_sync: bool,
+    #[serde(default = "default_true")]
+    pub include_in_home_code_stats: bool,
+    #[serde(default = "default_true")]
+    pub include_in_home_contribution_stats: bool,
+    #[serde(default = "default_true")]
+    pub calculate_home_timeline: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for RepoSyncPreference {
+    fn default() -> Self {
+        Self {
+            auto_sync: false,
+            include_in_home_code_stats: true,
+            include_in_home_contribution_stats: true,
+            calculate_home_timeline: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

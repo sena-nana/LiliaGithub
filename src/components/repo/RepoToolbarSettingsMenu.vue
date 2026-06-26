@@ -1,24 +1,24 @@
 <script setup lang="ts">
 import { Settings } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { REPO_SETTINGS_MANIFEST } from "../../config/repoSettingsManifest";
+import { REPO_SETTING_ITEMS, type RepoSettingKey } from "../../config/repoSettingsManifest";
 import { SB_MENU_POP_TRANSITION_MS } from "../../composables/menuMotion";
 import { useAnchoredMenuMotion } from "../../composables/useAnchoredMenuMotion";
 
 const props = defineProps<{
-  autoSync: boolean;
+  values: Record<RepoSettingKey, boolean>;
   disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
-  "update:autoSync": [value: boolean];
+  "update:setting": [key: RepoSettingKey, value: boolean];
 }>();
 
 const open = ref(false);
 const placement = computed(() => "bottom" as const);
 const menuMotion = useAnchoredMenuMotion(placement);
 const origin = menuMotion.origin;
-const autoSyncSetting = REPO_SETTINGS_MANIFEST.autoSync;
+const settings = REPO_SETTING_ITEMS;
 
 function toggle(event: MouseEvent) {
   if (props.disabled) return;
@@ -43,9 +43,13 @@ function onKey(event: KeyboardEvent) {
   }
 }
 
-function updateAutoSync(event: Event) {
+function updateSetting(key: RepoSettingKey, event: Event) {
   const input = event.target as HTMLInputElement;
-  emit("update:autoSync", input.checked);
+  emit("update:setting", key, input.checked);
+}
+
+function settingAgentId(key: RepoSettingKey) {
+  return `repo.toolbar.settings.${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
 }
 
 watch(open, async (value) => {
@@ -96,19 +100,23 @@ onBeforeUnmount(() => {
           '--sb-menu-origin-y': `${origin.y}px`,
         }"
       >
-        <label class="repo-toolbar-settings__item ui-switch">
+        <label
+          v-for="setting in settings"
+          :key="setting.key"
+          class="repo-toolbar-settings__item ui-switch"
+        >
           <span class="repo-toolbar-settings__content">
-            <strong>{{ autoSyncSetting.label }}</strong>
-            <em>{{ autoSyncSetting.description }}</em>
+            <strong>{{ setting.label }}</strong>
+            <em>{{ setting.description }}</em>
           </span>
           <input
             class="ui-switch__input"
             type="checkbox"
-            :checked="autoSync"
+            :checked="values[setting.key]"
             :disabled="disabled"
-            :aria-label="autoSyncSetting.label"
-            data-agent-id="repo.toolbar.settings.auto-sync"
-            @change="updateAutoSync"
+            :aria-label="setting.label"
+            :data-agent-id="settingAgentId(setting.key)"
+            @change="updateSetting(setting.key, $event)"
           />
           <span class="ui-switch__track" aria-hidden="true"></span>
         </label>
@@ -136,8 +144,8 @@ onBeforeUnmount(() => {
   z-index: 20;
   display: grid;
   gap: 3px;
-  width: 240px;
-  max-width: min(240px, calc(100vw - 16px));
+  width: 260px;
+  max-width: min(260px, calc(100vw - 16px));
   padding: 5px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

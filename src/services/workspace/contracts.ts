@@ -57,6 +57,7 @@ import type {
   RepoStashDetail,
   RepoStashEntry,
   RepoSummary,
+  RepoSyncPreference,
   SystemOpenTarget,
   WorkspaceSettings,
   WorkspaceStartupCache,
@@ -87,6 +88,7 @@ export interface WorkspaceCommandContracts {
     WorkspaceStartupCache
   >;
   workspace_set_root: CommandContract<{ workspaceRoot: string }, WorkspaceSettings>;
+  repo_set_preference: CommandContract<{ repoId: string; key: keyof RepoSyncPreference; value: boolean }, WorkspaceSettings>;
   repo_set_auto_sync: CommandContract<{ repoId: string; autoSync: boolean }, WorkspaceSettings>;
   workspace_pick_root: CommandContract<NoArgs, Maybe<string>>;
   workspace_pick_repo: CommandContract<NoArgs, Maybe<string>>;

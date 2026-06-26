@@ -79,7 +79,7 @@ const {
   activeBranchName,
   aheadCount,
   behindCount,
-  autoSyncEnabled,
+  repoSettingValues,
   repoActionError,
   focusChange,
   stageUnstagedChanges,
@@ -91,7 +91,7 @@ const {
   selectPullStrategy,
   selectPullLocalChangesMode,
   cancelPullLocalChangesDialog,
-  setAutoSync,
+  setRepoSetting,
   runSelectedPullStrategy,
   push,
   pushCurrentBranchWithUpstream,
@@ -213,9 +213,9 @@ const {
 
             <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
               <RepoToolbarSettingsMenu
-                :auto-sync="autoSyncEnabled"
+                :values="repoSettingValues"
                 :disabled="actionRunning"
-                @update:auto-sync="setAutoSync"
+                @update:setting="setRepoSetting"
               />
               <button
                 v-if="repoContext.tags.includes('system-git')"
