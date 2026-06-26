@@ -277,8 +277,12 @@ pub(super) fn push_launch_candidate(
 
 pub(super) fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaunchCandidate> {
     let mut candidates = Vec::new();
-    for folder in ["scripts", "bin"] {
-        let dir = repo_path.join(folder);
+    let scan_dirs = [
+        (repo_path.to_path_buf(), None),
+        (repo_path.join("scripts"), Some("scripts")),
+        (repo_path.join("bin"), Some("bin")),
+    ];
+    for (dir, hint) in scan_dirs {
         if !dir.is_dir() {
             continue;
         }
@@ -295,6 +299,9 @@ pub(super) fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaun
             let Some(ext) = file_path.extension().and_then(|value| value.to_str()) else {
                 continue;
             };
+            if hint.is_none() && ext != "ps1" {
+                continue;
+            }
             let rel = file_path.strip_prefix(repo_path).unwrap_or(&file_path);
             let rel_label = rel
                 .components()
@@ -309,7 +316,7 @@ pub(super) fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaun
                     &mut candidates,
                     format!("sh {rel_label}"),
                     rel_label.clone(),
-                    Some(folder.to_string()),
+                    hint.map(str::to_string),
                     "script",
                     None,
                 ),
@@ -317,7 +324,7 @@ pub(super) fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaun
                     &mut candidates,
                     rel_label.clone(),
                     rel_label.clone(),
-                    Some(folder.to_string()),
+                    hint.map(str::to_string),
                     "script",
                     None,
                 ),
@@ -325,7 +332,7 @@ pub(super) fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaun
                     &mut candidates,
                     format!("powershell -ExecutionPolicy Bypass -File {rel_label}"),
                     rel_label.clone(),
-                    Some(folder.to_string()),
+                    hint.map(str::to_string),
                     "script",
                     None,
                 ),
@@ -333,7 +340,7 @@ pub(super) fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaun
                     &mut candidates,
                     format!("node {rel_label}"),
                     rel_label.clone(),
-                    Some(folder.to_string()),
+                    hint.map(str::to_string),
                     "script",
                     None,
                 ),
@@ -341,7 +348,7 @@ pub(super) fn common_script_file_candidates(repo_path: &Path) -> Vec<ProjectLaun
                     &mut candidates,
                     format!("node --experimental-strip-types {rel_label}"),
                     rel_label.clone(),
-                    Some(folder.to_string()),
+                    hint.map(str::to_string),
                     "script",
                     None,
                 ),

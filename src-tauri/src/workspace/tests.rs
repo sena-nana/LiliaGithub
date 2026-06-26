@@ -3628,6 +3628,34 @@ fn infers_all_root_package_scripts_in_priority_order() {
 }
 
 #[test]
+fn infers_root_powershell_script_launch_candidate() {
+    let path = temp_dir("root-powershell-script");
+    fs::write(path.join("build.ps1"), "Write-Host build\n").unwrap();
+    fs::create_dir_all(path.join("scripts")).unwrap();
+    fs::write(path.join("scripts").join("dev.ps1"), "Write-Host dev\n").unwrap();
+
+    let candidates = infer_launch_candidates(&path);
+    let root_candidate = candidates
+        .iter()
+        .find(|candidate| candidate.label == "build.ps1")
+        .unwrap();
+    assert_eq!(
+        root_candidate.command,
+        "powershell -ExecutionPolicy Bypass -File build.ps1"
+    );
+    assert_eq!(root_candidate.kind, "script");
+    assert_eq!(root_candidate.hint, None);
+    assert_eq!(root_candidate.cwd, None);
+    assert!(candidates.iter().any(|candidate| {
+        candidate.command == "powershell -ExecutionPolicy Bypass -File scripts/dev.ps1"
+            && candidate.label == "scripts/dev.ps1"
+            && candidate.hint.as_deref() == Some("scripts")
+            && candidate.kind == "script"
+    }));
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
 fn infers_npm_dev_and_cargo_fallback() {
     let js_path = temp_dir("npm-dev");
     write_package(
