@@ -148,7 +148,7 @@ LiliaGithub/
 
 ## Early Development
 
-LiliaGithub uses Yarn 4.14.1 through Corepack. Enable Corepack first, then run contributor commands from the repository root through the root `yarn ...` scripts. `npm`, `pnpm`, global Yarn 1.x, and direct package-manager drift are guarded and not supported as the contributor path.
+LiliaGithub uses Yarn 4.14.1 through Corepack and pins Rust through the repository root `rust-toolchain.toml`. Enable Corepack first, then run contributor commands from the repository root through the root `yarn ...` scripts. `npm`, `pnpm`, global Yarn 1.x, and direct package-manager drift are guarded and not supported as the contributor path.
 
 ```bash
 # 1) Enable Corepack and activate the repository Yarn version
@@ -177,7 +177,7 @@ If `yarn --version` still reports `1.x` after enabling Corepack, run commands th
 
 ## First Release Packaging
 
-Release packaging is driven by the GitHub Actions release workflow. The root `package.json` may use prerelease names such as `1.0.0-beta`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
+Release packaging is driven by the GitHub Actions release workflow. Both CI and release jobs load Rust from `rust-toolchain.toml` before running `yarn verify` or the Tauri release action, so release validation and bundle builds use the same pinned Rust version as local development. The root `package.json` may use prerelease names such as `1.0.0-beta`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
 
 ### `v1.0.0-beta` Notes
 

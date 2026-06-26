@@ -210,10 +210,14 @@ describe("单应用模板工具链", () => {
     const ci = readFileSync(resolve(".github/workflows/ci.yml"), "utf-8");
     const release = readFileSync(resolve(".github/workflows/release.yml"), "utf-8");
     const pages = readFileSync(resolve(".github/workflows/pages.yml"), "utf-8");
+    const rustToolchain = readFileSync(resolve("rust-toolchain.toml"), "utf-8");
     const combined = [ci, release, pages].join("\n");
 
+    expect(rustToolchain).toContain('channel = "1.96.0"');
+    expect(rustToolchain).toContain('components = ["rustfmt", "clippy"]');
     expect(ci).toContain("corepack yarn verify");
     expect(ci).toContain("corepack yarn docs:build");
+    expect(ci).toContain("rustup show");
     expect(ci).toContain("Swatinem/rust-cache@v2");
     expect(ci).toContain("workspaces: src-tauri -> target");
     expect(ci).toContain('CARGO_INCREMENTAL: "0"');
@@ -221,6 +225,7 @@ describe("单应用模板工具链", () => {
     expect(ci).toContain('SCCACHE_GHA_ENABLED: "true"');
     expect(ci).toContain("$env:SCCACHE_PATH --show-stats");
     expect(release).toContain("projectPath: .");
+    expect(release).toContain("rustup show");
     expect(release).toContain("Swatinem/rust-cache@v2");
     expect(release).toContain("workspaces: src-tauri -> target");
     expect(release).toContain("TAURI_SIGNING_PRIVATE_KEY");
@@ -234,6 +239,8 @@ describe("单应用模板工具链", () => {
     expect(release).toContain("$env:SCCACHE_PATH --show-stats");
     expect(pages).toContain("docs/.vitepress/dist");
     expect(pages).not.toContain("enablement: true");
+    expect(combined).not.toContain("dtolnay/rust-toolchain@stable");
+    expect(combined).not.toContain("toolchain@stable");
     expect(combined).not.toContain("actions/cache@v4");
     expect(combined).not.toContain("cargo install sccache");
     expect(combined).not.toContain("apps/desktop");
