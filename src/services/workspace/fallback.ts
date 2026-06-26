@@ -1,5 +1,8 @@
 import packageJson from "../../../package.json";
-import { withRepoAutoSyncPreference } from "../../config/repoSettingsManifest";
+import {
+  withRepoAutoSyncPreference,
+  withRepoSettingPreference,
+} from "../../config/repoSettingsManifest";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -63,6 +66,7 @@ import type {
   RepoRefreshSummaryOptions,
   RepoResetMode,
   RepoSummary,
+  RepoSyncPreference,
   RepoStashEntry,
   RepoStashDetail,
   RemoteRepoShortcut,
@@ -2941,6 +2945,27 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
     fallbackStartupCache = null;
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function setRepoSetting(
+  repoId: string,
+  key: keyof RepoSyncPreference,
+  value: boolean,
+): Promise<WorkspaceSettings> {
+  return call("repo_set_preference", { repoId, key, value }, () => {
+    const normalized = repoId.trim();
+    if (!normalized) throw new Error("仓库 ID 不能为空");
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoSyncPreferences: withRepoSettingPreference(
+        fallbackSettings.repoSyncPreferences,
+        normalized,
+        key,
+        value,
+      ),
+    };
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }

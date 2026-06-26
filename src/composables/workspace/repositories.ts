@@ -13,7 +13,11 @@ import {
   upsertRepo,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
-import { repoAutoSyncEnabled } from "../../config/repoSettingsManifest";
+import {
+  repoAutoSyncEnabled,
+  repoIncludedInHomeContributionStats,
+  type RepoSettingKey,
+} from "../../config/repoSettingsManifest";
 import type {
   GitHubContributionDay,
   GitHubContributionMeta,
@@ -298,6 +302,7 @@ function repoContributionScope(repo: Pick<RepoSummary, "id" | "name" | "githubFu
 function repoContributionScopes() {
   const scopes = new Map<string, ContributionRefreshScope>();
   for (const repo of representativeReposBySharedGroup(state.repos)) {
+    if (!repoIncludedInHomeContributionStats(state.settings, repo.id)) continue;
     const item = repoContributionScope(repo);
     scopes.set(item.scope, item);
   }
@@ -306,7 +311,12 @@ function repoContributionScopes() {
 
 export async function refreshRepoContributions() {
   const generation = beginContributionRefresh();
-  for (const scope of repoContributionScopes()) {
+  const scopes = repoContributionScopes();
+  if (!scopes.length) {
+    finishEmptyContributionRefresh(generation);
+    return;
+  }
+  for (const scope of scopes) {
     scheduleRepoContributionRefresh(scope, generation);
   }
 }
@@ -376,6 +386,20 @@ async function refreshSingleRepoContribution(item: ContributionRefreshScope, gen
   } finally {
     finishRepoContributionRefresh(generation);
   }
+}
+
+function finishEmptyContributionRefresh(generation: number) {
+  if (generation !== contributionRefreshGeneration) return;
+  state.githubContributions.days = contributionRefreshDays;
+  state.githubContributions.loading = false;
+  updateContributionMeta({
+    repoCount: 0,
+    requestedRepoCount: 0,
+    sampledRepoCount: 0,
+    skippedRepoCount: 0,
+    refreshedAt: Date.now(),
+  });
+  void persistStartupContributions();
 }
 
 function finishRepoContributionRefresh(generation: number) {
@@ -650,11 +674,16 @@ export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
   return state.settings;
 }
 
-export async function setRepoAutoSync(repoId: string, autoSync: boolean) {
+export async function setRepoSetting(repoId: string, key: RepoSettingKey, value: boolean) {
   const service = await loadWorkspaceService();
-  state.settings = await service.setRepoAutoSync(repoId, autoSync);
+  state.settings = await service.setRepoSetting(repoId, key, value);
   clearRepoActionError(repoId);
+  refreshRepoStatusList();
   return state.settings;
+}
+
+export async function setRepoAutoSync(repoId: string, autoSync: boolean) {
+  return setRepoSetting(repoId, "autoSync", autoSync);
 }
 
 export async function forgetRemoteRepo(fullName: string) {

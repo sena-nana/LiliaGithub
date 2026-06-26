@@ -61,6 +61,7 @@ import type {
   RepoRefreshSummaryOptions,
   RepoResetMode,
   RepoSummary,
+  RepoSyncPreference,
   RepoStashEntry,
   RepoStashDetail,
   RemoteRepoShortcut,
@@ -206,6 +207,10 @@ export function writeStartupContributions(contributions: WorkspaceStartupContrib
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => workspaceFallback().setWorkspaceRoot(workspaceRoot));
+}
+
+export function setRepoSetting(repoId: string, key: keyof RepoSyncPreference, value: boolean): Promise<WorkspaceSettings> {
+  return call("repo_set_preference", { repoId, key, value }, () => workspaceFallback().setRepoSetting(repoId, key, value));
 }
 
 export function setRepoAutoSync(repoId: string, autoSync: boolean): Promise<WorkspaceSettings> {

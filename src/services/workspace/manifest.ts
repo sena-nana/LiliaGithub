@@ -14,6 +14,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "workspace_clear_startup_cache",
     "workspace_write_startup_contributions",
     "workspace_set_root",
+    "repo_set_preference",
     "repo_set_auto_sync",
     "workspace_pick_root",
     "workspace_pick_repo",

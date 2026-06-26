@@ -405,6 +405,23 @@ pub fn workspace_set_root(
 }
 
 #[tauri::command]
+pub fn repo_set_preference(
+    app: AppHandle,
+    repo_id: String,
+    key: String,
+    value: bool,
+) -> Result<WorkspaceSettings, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    let mut settings = load_settings(&app);
+    set_repo_preference_value(&mut settings, normalized, key.trim(), value)?;
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
 pub fn repo_set_auto_sync(
     app: AppHandle,
     repo_id: String,
@@ -415,15 +432,44 @@ pub fn repo_set_auto_sync(
         return Err("仓库 ID 不能为空".to_string());
     }
     let mut settings = load_settings(&app);
-    if auto_sync {
-        settings
-            .repo_sync_preferences
-            .insert(normalized.to_string(), RepoSyncPreference { auto_sync });
-    } else {
-        settings.repo_sync_preferences.remove(normalized);
-    }
+    set_repo_preference_value(&mut settings, normalized, "autoSync", auto_sync)?;
     save_settings(&app, &settings)?;
     Ok(settings)
+}
+
+fn set_repo_preference_value(
+    settings: &mut WorkspaceSettings,
+    repo_id: &str,
+    key: &str,
+    value: bool,
+) -> Result<(), String> {
+    let mut preference = settings
+        .repo_sync_preferences
+        .get(repo_id)
+        .cloned()
+        .unwrap_or_default();
+    match key {
+        "autoSync" => preference.auto_sync = value,
+        "includeInHomeCodeStats" => preference.include_in_home_code_stats = value,
+        "includeInHomeContributionStats" => preference.include_in_home_contribution_stats = value,
+        "calculateHomeTimeline" => preference.calculate_home_timeline = value,
+        _ => return Err(format!("未知项目设置：{key}")),
+    }
+    if is_default_repo_sync_preference(&preference) {
+        settings.repo_sync_preferences.remove(repo_id);
+    } else {
+        settings
+            .repo_sync_preferences
+            .insert(repo_id.to_string(), preference);
+    }
+    Ok(())
+}
+
+fn is_default_repo_sync_preference(preference: &RepoSyncPreference) -> bool {
+    !preference.auto_sync
+        && preference.include_in_home_code_stats
+        && preference.include_in_home_contribution_stats
+        && preference.calculate_home_timeline
 }
 
 #[tauri::command]
