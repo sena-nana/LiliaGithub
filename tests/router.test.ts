@@ -2759,7 +2759,9 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(within(launchCard).getAllByText("Error: 停止失败：operation attempted is not supported").length).toBeGreaterThan(0);
     });
-    expect(within(launchCard).getByText("最近启动失败")).toBeInTheDocument();
+    expect(within(launchCard).queryByText("最近启动失败")).toBeNull();
+    expect(within(launchCard).queryByText("启动历史")).toBeNull();
+    expect(launchCard.querySelector(".project-launch-diagnostics")).toBeNull();
     expect(document.querySelector(".repo-workbench__status")).toBeNull();
   });
 
