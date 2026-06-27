@@ -7,6 +7,7 @@ export type TimelineNodeLink = {
 } | {
   kind: "route";
   to: string;
+  preload?: () => Promise<unknown>;
 } | {
   kind: "none";
 };
@@ -24,12 +25,22 @@ export type TimelineDisplayNode = {
 </script>
 
 <script setup lang="ts">
-import { RouterLink } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 
 defineProps<{
   nodes: readonly TimelineDisplayNode[];
   formatTime: (timestamp: number) => string;
 }>();
+
+const router = useRouter();
+
+async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
+  if (link.kind !== "route" || event.defaultPrevented || event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  await link.preload?.();
+  await router.push(link.to);
+}
 </script>
 
 <template>
@@ -58,11 +69,18 @@ defineProps<{
           </a>
           <RouterLink
             v-else-if="node.link.kind === 'route'"
-            class="github-timeline-row__title"
-            :data-agent-id="`github.timeline.${node.id}`"
             :to="node.link.to"
+            custom
+            v-slot="{ href }"
           >
-            {{ node.title }}
+            <a
+              class="github-timeline-row__title"
+              :data-agent-id="`github.timeline.${node.id}`"
+              :href="href"
+              @click="openRouteLink($event, node.link)"
+            >
+              {{ node.title }}
+            </a>
           </RouterLink>
           <strong v-else class="github-timeline-row__title">{{ node.title }}</strong>
           <span class="github-timeline-row__detail">{{ node.detail }}</span>
