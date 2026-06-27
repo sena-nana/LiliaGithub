@@ -225,7 +225,7 @@ describe("RepositoriesSection", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
     const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    await screen.findByRole("option", { name: "sena-nana · user" });
+    await within(dialog).findByRole("button", { name: "sena-nana · user" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "new-repo");
     expect(within(dialog).queryByRole("button", { name: "取消" })).toBeNull();
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
@@ -262,6 +262,28 @@ describe("RepositoriesSection", () => {
     expect(workspace.refreshRepos).not.toHaveBeenCalled();
   });
 
+  it("创建 GitHub 仓库时默认选择 user owner 并将 user 排在最上方", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([
+      { login: "sena-nana", kind: "org" },
+      { login: "team-lilia", kind: "org" },
+      { login: "lilia-user", kind: "user" },
+    ]);
+
+    render(RepositoriesSection);
+
+    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
+    const ownerTrigger = await within(dialog).findByRole("button", { name: "lilia-user · user" });
+    await fireEvent.click(ownerTrigger);
+
+    const ownerOptions = await screen.findAllByRole("option");
+    expect(ownerOptions.map((option) => option.textContent?.trim())).toEqual([
+      "lilia-user · user",
+      "sena-nana · org",
+      "team-lilia · org",
+    ]);
+  });
+
   it("可只创建远程 GitHub 仓库并关闭弹窗", async () => {
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
     vi.mocked(createGitHubRepo).mockResolvedValue({
@@ -285,7 +307,7 @@ describe("RepositoriesSection", () => {
     await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
     const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
     expect(within(dialog).queryByText("仓库分组")).toBeNull();
-    await screen.findByRole("option", { name: "sena-nana · user" });
+    await within(dialog).findByRole("button", { name: "sena-nana · user" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "remote-only");
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
@@ -323,7 +345,7 @@ describe("RepositoriesSection", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
     const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    await screen.findByRole("option", { name: "sena-nana · user" });
+    await within(dialog).findByRole("button", { name: "sena-nana · user" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "from-template");
     await fireEvent.update(within(dialog).getByLabelText("描述"), "template repo");
     await fireEvent.click(within(dialog).getByLabelText("Private"));
@@ -335,6 +357,7 @@ describe("RepositoriesSection", () => {
     await waitFor(() => {
       expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
         owner: "sena-nana",
+        ownerKind: "user",
         name: "from-template",
         description: "template repo",
         private: true,

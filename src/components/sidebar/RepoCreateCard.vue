@@ -81,6 +81,20 @@ const repoGroupOptions = computed(() => [
     agentId: `repo-create.group.option.${group.id}`,
   })),
 ]);
+const repoOwnerOptions = computed(() =>
+  repoOwners.value.map((owner) => ({
+    value: owner.login,
+    label: `${owner.login} · ${owner.kind}`,
+    agentId: `repo-create.owner.option.${owner.kind}.${owner.login}`,
+  }))
+);
+const selectedOwnerValue = computed({
+  get: () => form.value.owner,
+  set: (value: string) => {
+    form.value.owner = value;
+    syncOwnerKind();
+  },
+});
 const selectedGroupValue = computed({
   get: () => selectedGroupId.value ?? UNGROUPED_REPO_GROUP_VALUE,
   set: (value: string) => {
@@ -108,9 +122,10 @@ const groupPickerDisabled = computed(() => (
 ));
 
 function resetForm() {
+  const defaultOwner = repoOwners.value[0];
   form.value = {
-    owner: repoOwners.value[0]?.login ?? "",
-    ownerKind: repoOwners.value[0]?.kind ?? "user",
+    owner: defaultOwner?.login ?? "",
+    ownerKind: defaultOwner?.kind ?? "user",
     name: "",
     description: "",
     private: false,
@@ -130,15 +145,24 @@ function resetForm() {
   selectedGroupId.value = null;
 }
 
+function sortRepoOwners(owners: readonly GitHubRepoOwner[]) {
+  return [...owners].sort((left, right) => (
+    Number(left.kind !== "user") - Number(right.kind !== "user")
+    || left.login.localeCompare(right.login)
+    || left.kind.localeCompare(right.kind)
+  ));
+}
+
 async function loadRepoOwners() {
   await repoOwnersLoader.run("repo-owners", async (runId) => {
     try {
       const owners = await listGitHubRepoOwners();
       if (!repoOwnersLoader.isCurrent(runId)) return;
-      repoOwners.value = owners;
-      if (!form.value.owner && owners.length) {
-        form.value.owner = owners[0].login;
-        form.value.ownerKind = owners[0].kind;
+      const sortedOwners = sortRepoOwners(owners);
+      repoOwners.value = sortedOwners;
+      if (!form.value.owner && sortedOwners.length) {
+        form.value.owner = sortedOwners[0].login;
+        form.value.ownerKind = sortedOwners[0].kind;
       }
     } catch {
       if (!repoOwnersLoader.isCurrent(runId)) return;
@@ -289,14 +313,19 @@ onUnmounted(() => {
       <p v-if="blockedReason" class="repo-create-card__error">{{ blockedReason }}</p>
 
       <div v-if="isRemoteMode" class="repo-create-grid">
-        <label>
+        <div class="repo-create-field">
           <span>Owner</span>
-          <select v-model="form.owner" :disabled="Boolean(blockedReason)" @change="syncOwnerKind">
-            <option v-for="owner in repoOwners" :key="`${owner.kind}:${owner.login}`" :value="owner.login">
-              {{ owner.login }} · {{ owner.kind }}
-            </option>
-          </select>
-        </label>
+          <Dropdown
+            v-model="selectedOwnerValue"
+            :options="repoOwnerOptions"
+            placement="bottom"
+            button-class="repo-create-owner-picker"
+            agent-id="repo-create.owner.trigger"
+            menu-label="选择 GitHub owner"
+            menu-width="100%"
+            :disabled="Boolean(blockedReason)"
+          />
+        </div>
         <label>
           <span>仓库名</span>
           <input ref="firstInput" v-model="form.name" type="text" required placeholder="new-repo" />
@@ -328,8 +357,16 @@ onUnmounted(() => {
       </label>
 
       <div v-if="isRemoteMode" class="repo-create-switches">
-        <label><input v-model="form.private" type="checkbox" /> Private</label>
-        <label><input v-model="form.useTemplate" type="checkbox" /> 使用模板</label>
+        <label class="repo-create-switch ui-switch">
+          <span>Private</span>
+          <input v-model="form.private" class="ui-switch__input" type="checkbox" />
+          <span class="ui-switch__track" aria-hidden="true"></span>
+        </label>
+        <label class="repo-create-switch ui-switch">
+          <span>使用模板</span>
+          <input v-model="form.useTemplate" class="ui-switch__input" type="checkbox" />
+          <span class="ui-switch__track" aria-hidden="true"></span>
+        </label>
       </div>
 
       <template v-if="isRemoteMode && form.useTemplate">
@@ -338,7 +375,11 @@ onUnmounted(() => {
           <input v-model="form.templateFullName" type="text" placeholder="owner/template-repo" />
         </label>
         <div class="repo-create-switches">
-          <label><input v-model="form.includeAllBranches" type="checkbox" /> 包含所有分支</label>
+          <label class="repo-create-switch ui-switch">
+            <span>包含所有分支</span>
+            <input v-model="form.includeAllBranches" class="ui-switch__input" type="checkbox" />
+            <span class="ui-switch__track" aria-hidden="true"></span>
+          </label>
         </div>
       </template>
 
@@ -354,9 +395,21 @@ onUnmounted(() => {
           </label>
         </div>
         <div class="repo-create-switches">
-          <label><input v-model="form.addReadme" type="checkbox" /> 初始化 README</label>
-          <label v-if="isRemoteMode"><input v-model="form.hasIssues" type="checkbox" /> Issues</label>
-          <label v-if="isRemoteMode"><input v-model="form.hasWiki" type="checkbox" /> Wiki</label>
+          <label class="repo-create-switch ui-switch">
+            <span>初始化 README</span>
+            <input v-model="form.addReadme" class="ui-switch__input" type="checkbox" />
+            <span class="ui-switch__track" aria-hidden="true"></span>
+          </label>
+          <label v-if="isRemoteMode" class="repo-create-switch ui-switch">
+            <span>Issues</span>
+            <input v-model="form.hasIssues" class="ui-switch__input" type="checkbox" />
+            <span class="ui-switch__track" aria-hidden="true"></span>
+          </label>
+          <label v-if="isRemoteMode" class="repo-create-switch ui-switch">
+            <span>Wiki</span>
+            <input v-model="form.hasWiki" class="ui-switch__input" type="checkbox" />
+            <span class="ui-switch__track" aria-hidden="true"></span>
+          </label>
         </div>
       </template>
 
@@ -454,8 +507,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.repo-create-card input[type="text"],
-.repo-create-card select {
+.repo-create-card input[type="text"] {
   width: 100%;
   min-width: 0;
   height: 32px;
@@ -466,22 +518,14 @@ onUnmounted(() => {
   color: var(--text);
 }
 
-.repo-create-card input[type="checkbox"] {
-  width: 14px;
-  min-width: 14px;
-  height: 14px;
-  margin: 0;
-  padding: 0;
-  flex: 0 0 auto;
-}
-
 .repo-create-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-:deep(.repo-create-group-picker) {
+:deep(.repo-create-group-picker),
+:deep(.repo-create-owner-picker) {
   width: 100%;
   height: 32px;
   justify-content: flex-start;
@@ -489,22 +533,30 @@ onUnmounted(() => {
   border-color: var(--border-soft);
 }
 
-:deep(.repo-create-group-picker .chat-chip__label) {
+:deep(.repo-create-group-picker .chat-chip__label),
+:deep(.repo-create-owner-picker .chat-chip__label) {
   max-width: none;
 }
 
 .repo-create-switches {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 14px;
+  gap: 8px;
 }
 
-.repo-create-switches label {
+.repo-create-card .repo-create-switch {
   display: inline-flex;
-  grid-auto-flow: column;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
   color: var(--text);
+}
+
+.repo-create-card .repo-create-switch:hover {
+  background: var(--bg-hover);
 }
 
 .repo-create-card__error {

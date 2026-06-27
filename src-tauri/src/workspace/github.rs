@@ -3343,7 +3343,6 @@ pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwn
             login: org.login,
             kind: "org".to_string(),
         }));
-        owners.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.login.cmp(&b.login)));
         Ok(owners)
     })
     .await
