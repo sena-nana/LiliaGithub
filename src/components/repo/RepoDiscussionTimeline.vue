@@ -55,13 +55,14 @@ function itemMeta(item: GitHubDiscussionTimelineItem) {
     formatDateTime(item.createdAt),
   ];
   if (item.path) {
-    parts.push(`${item.path}${item.line ? `:${item.line}` : ""}`);
+    const line = item.line ?? item.originalLine;
+    parts.push(`${item.path}${line ? `:${line}` : ""}`);
   }
   return parts.join(" · ");
 }
 
 function hasMarkdownBody(item: GitHubDiscussionTimelineItem) {
-  return item.kind !== "event" && Boolean(item.body?.trim());
+  return Boolean(item.body?.trim());
 }
 
 function openItem(item: GitHubDiscussionTimelineItem) {
@@ -92,11 +93,39 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
         class="discussion-timeline__item"
         :class="`is-${item.kind}`"
       >
-        <span class="discussion-timeline__icon">
-          <component :is="timelineIcon(item)" :size="15" aria-hidden="true" />
+        <span class="discussion-timeline__rail" aria-hidden="true">
+          <span class="discussion-timeline__node">
+            <component :is="timelineIcon(item)" :size="14" aria-hidden="true" />
+          </span>
         </span>
-        <article class="discussion-timeline__entry">
-          <header class="discussion-timeline__entry-head">
+        <div class="discussion-timeline__body">
+          <article v-if="item.kind !== 'event'" class="discussion-timeline__entry">
+            <header class="discussion-timeline__entry-head">
+              <div>
+                <strong>{{ itemTitle(item) }}</strong>
+                <span>{{ itemMeta(item) }}</span>
+              </div>
+              <button
+                v-if="item.url"
+                type="button"
+                class="ghost project-icon-action"
+                aria-label="打开讨论项"
+                title="打开讨论项"
+                @click="openItem(item)"
+              >
+                <PencilLine :size="14" aria-hidden="true" />
+              </button>
+            </header>
+            <MarkdownReadme
+              v-if="hasMarkdownBody(item)"
+              :content="item.body ?? ''"
+              :link-base-url="linkBaseUrl"
+              @open-link="openMarkdownTarget"
+            />
+            <p v-else class="muted discussion-timeline__empty">没有正文内容。</p>
+          </article>
+
+          <div v-else class="discussion-timeline__event-row">
             <div>
               <strong>{{ itemTitle(item) }}</strong>
               <span>{{ itemMeta(item) }}</span>
@@ -111,18 +140,8 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
             >
               <PencilLine :size="14" aria-hidden="true" />
             </button>
-          </header>
-          <MarkdownReadme
-            v-if="hasMarkdownBody(item)"
-            :content="item.body ?? ''"
-            :link-base-url="linkBaseUrl"
-            @open-link="openMarkdownTarget"
-          />
-          <p v-else-if="item.kind === 'event'" class="muted discussion-timeline__event">
-            {{ item.title || item.event || "记录了一次时间线事件。" }}
-          </p>
-          <p v-else class="muted discussion-timeline__event">没有正文内容。</p>
-        </article>
+          </div>
+        </div>
       </li>
     </ol>
   </section>
@@ -139,7 +158,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
 
 .discussion-timeline__list {
   display: grid;
-  gap: 12px;
+  gap: 0;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -148,21 +167,68 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
 
 .discussion-timeline__item {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 44px;
   min-width: 0;
+  padding: 0 4px;
 }
 
-.discussion-timeline__icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-top: 2px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 50%;
+.discussion-timeline__rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding-top: 9px;
+}
+
+.discussion-timeline__rail::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  content: "";
+  background: color-mix(in srgb, var(--text-muted) 42%, transparent);
+}
+
+.discussion-timeline__item:first-child .discussion-timeline__rail::before {
+  top: 10px;
+}
+
+.discussion-timeline__item:last-child .discussion-timeline__rail::before {
+  bottom: calc(100% - 10px);
+}
+
+.discussion-timeline__node {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   color: var(--text-muted);
-  background: var(--surface-raised);
+  background: var(--surface);
+  border-radius: 4px;
+}
+
+.discussion-timeline__item.is-body .discussion-timeline__node,
+.discussion-timeline__item.is-comment .discussion-timeline__node {
+  color: var(--accent);
+}
+
+.discussion-timeline__item.is-review .discussion-timeline__node,
+.discussion-timeline__item.is-reviewComment .discussion-timeline__node {
+  color: var(--success);
+}
+
+.discussion-timeline__body {
+  min-width: 0;
+  padding: 6px 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.discussion-timeline__item:last-child .discussion-timeline__body {
+  border-bottom: 0;
 }
 
 .discussion-timeline__entry {
@@ -182,31 +248,71 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.discussion-timeline__event-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 0 4px;
+}
+
+.discussion-timeline__event-row > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
 .discussion-timeline__entry-head > div {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
-.discussion-timeline__entry-head strong,
-.discussion-timeline__entry-head span {
+.discussion-timeline__entry-head strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.discussion-timeline__entry-head span {
+.discussion-timeline__entry-head span,
+.discussion-timeline__event-row span {
   color: var(--text-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
-.discussion-timeline__entry :deep(.markdown-readme) {
+.discussion-timeline__event-row strong {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.discussion-timeline__entry :deep(.readme-render) {
   padding: 12px;
 }
 
-.discussion-timeline__event {
+.discussion-timeline__empty {
   margin: 0;
   padding: 12px;
+}
+
+@media (max-width: 760px) {
+  .discussion-timeline__entry-head,
+  .discussion-timeline__event-row,
+  .discussion-timeline__event-row > div {
+    align-items: flex-start;
+  }
+
+  .discussion-timeline__event-row,
+  .discussion-timeline__event-row > div {
+    flex-direction: column;
+  }
+
+  .discussion-timeline__entry-head span {
+    white-space: normal;
+  }
 }
 </style>

@@ -1391,7 +1391,8 @@ describe("RepoProjectPanel", () => {
     expect(view.getByRole("heading", { level: 2, name: "复现步骤" })).toBeInTheDocument();
     expect(view.getByText("确认")).toBeInTheDocument();
     expect(view.getByText("已复现")).toBeInTheDocument();
-    expect(view.getAllByText("关闭了讨论")).toHaveLength(2);
+    expect(view.getByText("关闭了讨论")).toBeInTheDocument();
+    expect(view.container.querySelector(".discussion-timeline__item.is-event .discussion-timeline__event-row")).toBeInstanceOf(HTMLElement);
     expect(view.container.querySelector(".issue-detail__summary")).toBeNull();
     const issueSidebar = view.getByLabelText("Issue 详情侧栏");
     const issueSidebarChips = Array.from(issueSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
