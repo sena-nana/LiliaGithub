@@ -2,12 +2,10 @@
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, watch } from "vue";
 import {
-  CloudDownload,
   ChevronRight,
   EyeOff,
   FolderGit2,
   FolderInput,
-  GitBranchPlus,
   GitPullRequestArrow,
   Pencil,
   Plus,
@@ -16,9 +14,7 @@ import {
   X,
 } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
-import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import { useWorkspace } from "../composables/useWorkspace";
-import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import {
   bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
   repoSyncIssueForRepo,
@@ -26,9 +22,8 @@ import {
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
-import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
-import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
+import type { ContextMenuItem } from "../composables/useContextMenu";
 import type { RepoSummary } from "../services/workspace";
 import { repoDisplayName } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
@@ -45,10 +40,6 @@ const editingGroupName = ref("");
 const editingGroupError = ref<string | null>(null);
 const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
-const createRepoCardOpen = ref(false);
-const createRepoCardMode = ref<"local" | "remote">("local");
-const createRepoTargetGroupId = ref<string | null>(null);
-const cloneRepoTargetGroupId = ref<string | null>(null);
 const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
 const SIDEBAR_LIST_RENDER_PAGE_SIZE = 80;
 const searchResultVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
@@ -68,9 +59,6 @@ const emit = defineEmits<{
 const searchQueryModel = computed({
   get: () => props.searchQuery,
   set: (value: string) => emit("update:searchQuery", value),
-});
-const cloneDialog = useCloneRepoDialog({
-  onCloned: placeClonedRepo,
 });
 
 const footerStatus = computed(() => {
@@ -440,73 +428,6 @@ async function createGroup() {
   }
 }
 
-function openCreateRepoCard(mode: "local" | "remote", groupId: string | null) {
-  createRepoCardMode.value = mode;
-  createRepoTargetGroupId.value = groupId;
-  createRepoCardOpen.value = true;
-}
-
-function openCloneRepoDialog(groupId: string | null) {
-  cloneRepoTargetGroupId.value = groupId;
-  void cloneDialog.openDialog();
-}
-
-function closeCreateRepoCard() {
-  createRepoCardOpen.value = false;
-}
-
-function createRepoMenuItems(groupId: string | null): ContextMenuItem[] {
-  return [
-    {
-      id: `clone-repo-${groupId ?? "ungrouped"}`,
-      label: "克隆仓库",
-      icon: CloudDownload,
-      disabled: !workspace.workspaceRoot.value,
-      onSelect: () => openCloneRepoDialog(groupId),
-    },
-    {
-      id: `create-local-repo-${groupId ?? "ungrouped"}`,
-      label: "创建本地仓库",
-      icon: FolderGit2,
-      disabled: !workspace.workspaceRoot.value,
-      onSelect: () => openCreateRepoCard("local", groupId),
-    },
-    {
-      id: `create-remote-repo-${groupId ?? "ungrouped"}`,
-      label: "创建远程仓库",
-      icon: GitBranchPlus,
-      disabled: !workspace.workspaceRoot.value || !workspace.isAuthorized.value,
-      onSelect: () => openCreateRepoCard("remote", groupId),
-    },
-  ];
-}
-
-function openCreateRepoMenu(section: RepoSection, event: MouseEvent) {
-  const button = event.currentTarget as HTMLElement | null;
-  const rect = button?.getBoundingClientRect();
-  openContextMenuAt(
-    rect?.left ?? event.clientX,
-    (rect?.bottom ?? event.clientY) + 4,
-    createRepoMenuItems(section.group?.id ?? null),
-  );
-}
-
-async function placeCreatedRepo(repo: RepoSummary) {
-  const groupId = createRepoTargetGroupId.value;
-  if (groupId) {
-    await workspace.moveRepoToGroup(repo.id, groupId);
-  }
-  await router.push(repoRoute(repo.id));
-}
-
-async function placeClonedRepo(repo: RepoSummary) {
-  const groupId = cloneRepoTargetGroupId.value;
-  if (groupId) {
-    await workspace.moveRepoToGroup(repo.id, groupId);
-  }
-  await router.push(repoRoute(repo.id));
-}
-
 function toggleGroupCollapsed(groupId: string, event?: MouseEvent) {
   const next = new Set(collapsedGroupIds.value);
   if (next.has(groupId)) {
@@ -673,17 +594,6 @@ async function deleteGroup(group: { id: string }) {
             />
             <p v-if="editingGroupError" class="sb-group-edit__error">{{ editingGroupError }}</p>
           </div>
-          <button
-            v-if="editingGroupId !== section.id"
-            type="button"
-            class="sb-icon-btn sb-section__hover-action"
-            :data-agent-id="`sidebar.group.${section.id}.create-repo`"
-            :aria-label="`在 ${section.name} 创建仓库`"
-            title="创建仓库"
-            @click.stop="openCreateRepoMenu(section, $event)"
-          >
-            <GitBranchPlus :size="13" aria-hidden="true" />
-          </button>
           <template v-if="section.group">
             <button
               type="button"
@@ -789,20 +699,6 @@ async function deleteGroup(group: { id: string }) {
 
     <SidebarFooter
       :status="footerStatus"
-    />
-    <RepoCreateCard
-      :open="createRepoCardOpen"
-      :mode="createRepoCardMode"
-      :workspace-ready="Boolean(workspace.workspaceRoot.value)"
-      :github-ready="workspace.isAuthorized.value"
-      @close="closeCreateRepoCard"
-      @local-created="placeCreatedRepo"
-      @remote-cloned="placeCreatedRepo"
-    />
-    <HomeCloneDialog
-      v-if="cloneDialog.open"
-      v-bind="cloneDialog.props"
-      v-on="cloneDialog.events"
     />
   </aside>
 </template>

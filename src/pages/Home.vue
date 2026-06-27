@@ -7,6 +7,8 @@ import {
   CircleDot,
   FolderOpen,
   FolderGit2,
+  FolderInput,
+  GitBranchPlus,
   GitCommitHorizontal,
   GitPullRequestArrow,
   Info,
@@ -23,6 +25,8 @@ import {
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue";
+import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
+import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { repoLocalDirtyCount, useRepoLocalChangesPrompt } from "../composables/useRepoLocalChangesPrompt";
 import { useShellRepoActions } from "../composables/useShellRepoActions";
@@ -60,6 +64,8 @@ import {
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
+import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
+import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
 import {
@@ -91,6 +97,12 @@ const {
 const syncErrorDetails = computed(() => syncErrorDetailsByRepoId());
 const syncingRepoId = ref<string | null>(null);
 const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("reject");
+const createRepoCardOpen = ref(false);
+const createRepoCardMode = ref<"local" | "remote">("local");
+const pendingCreatedRepoGroupId = ref<string | null>(null);
+const cloneDialog = useCloneRepoDialog({
+  onCloned: placeCreatedRepo,
+});
 
 type RepoAction = {
   label: string;
@@ -237,6 +249,7 @@ const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
 const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
+const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
   buildContributionMonthLabels(contributionWeeks.value, workspace.state.githubContributions.days),
@@ -1411,6 +1424,82 @@ function toggleSearch() {
   void shellActions?.toggleSearch();
 }
 
+function repoGroupMenuItems(idPrefix: string, onSelect: (groupId: string | null) => void): ContextMenuItem[] {
+  return [
+    {
+      id: `${idPrefix}-ungrouped`,
+      label: "未分组仓库",
+      icon: FolderGit2,
+      onSelect: () => onSelect(null),
+    },
+    ...repoGroups.value.map((group) => ({
+      id: `${idPrefix}-${group.id}`,
+      label: group.name,
+      icon: FolderInput,
+      onSelect: () => onSelect(group.id),
+    })),
+  ];
+}
+
+function openCreateRepoCard(mode: "local" | "remote", groupId: string | null) {
+  createRepoCardMode.value = mode;
+  pendingCreatedRepoGroupId.value = groupId;
+  createRepoCardOpen.value = true;
+}
+
+function openCloneRepoDialog(groupId: string | null) {
+  pendingCreatedRepoGroupId.value = groupId;
+  void cloneDialog.openDialog();
+}
+
+function closeCreateRepoCard() {
+  createRepoCardOpen.value = false;
+}
+
+function createRepoMenuItems(): ContextMenuItem[] {
+  return [
+    {
+      id: "home-clone-repo",
+      label: "克隆仓库",
+      icon: CloudDownload,
+      disabled: !workspace.workspaceRoot.value,
+      children: repoGroupMenuItems("home-clone-repo", openCloneRepoDialog),
+    },
+    {
+      id: "home-create-local-repo",
+      label: "创建本地仓库",
+      icon: FolderGit2,
+      disabled: !workspace.workspaceRoot.value,
+      children: repoGroupMenuItems("home-create-local-repo", (groupId) => openCreateRepoCard("local", groupId)),
+    },
+    {
+      id: "home-create-remote-repo",
+      label: "创建远程仓库",
+      icon: GitBranchPlus,
+      disabled: !workspace.workspaceRoot.value || !workspace.isAuthorized.value,
+      children: repoGroupMenuItems("home-create-remote-repo", (groupId) => openCreateRepoCard("remote", groupId)),
+    },
+  ];
+}
+
+function openCreateRepoMenu(event: MouseEvent) {
+  const button = event.currentTarget as HTMLElement | null;
+  const rect = button?.getBoundingClientRect();
+  openContextMenuAt(
+    rect?.left ?? event.clientX,
+    (rect?.bottom ?? event.clientY) + 4,
+    createRepoMenuItems(),
+  );
+}
+
+async function placeCreatedRepo(repo: RepoSummary) {
+  const groupId = pendingCreatedRepoGroupId.value;
+  if (groupId) {
+    await workspace.moveRepoToGroup(repo.id, groupId);
+  }
+  await router.push(repoRoute(repo.id));
+}
+
 async function discoverRepos() {
   if (discovering.value) return;
   discovering.value = true;
@@ -1618,6 +1707,16 @@ function bulkOperationDescription(operation: BulkOperation) {
           </div>
         </div>
         <div class="overview-actions" aria-label="项目总览操作">
+          <button
+            type="button"
+            class="overview-actions__btn"
+            data-agent-id="home.overview.create-repo"
+            title="创建仓库"
+            aria-label="创建仓库"
+            @click="openCreateRepoMenu"
+          >
+            <GitBranchPlus :size="17" aria-hidden="true" />
+          </button>
           <button
             type="button"
             class="overview-actions__btn"
@@ -2140,6 +2239,20 @@ function bulkOperationDescription(operation: BulkOperation) {
       :dirty-count="pullLocalChangesDialog?.dirtyCount ?? 0"
       @select="selectPullLocalChangesMode"
       @cancel="cancelPullLocalChangesDialog"
+    />
+    <RepoCreateCard
+      :open="createRepoCardOpen"
+      :mode="createRepoCardMode"
+      :workspace-ready="Boolean(workspace.workspaceRoot.value)"
+      :github-ready="workspace.isAuthorized.value"
+      @close="closeCreateRepoCard"
+      @local-created="placeCreatedRepo"
+      @remote-cloned="placeCreatedRepo"
+    />
+    <HomeCloneDialog
+      v-if="cloneDialog.open"
+      v-bind="cloneDialog.props"
+      v-on="cloneDialog.events"
     />
   </section>
 </template>

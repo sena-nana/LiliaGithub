@@ -128,9 +128,14 @@ async function createSidebarRepoGroup(view: AppShellView, name: string) {
   });
 }
 
-async function openSidebarCloneDialog(view: AppShellView, groupName = "未分组仓库") {
-  await fireEvent.click(view.getByRole("button", { name: `在 ${groupName} 创建仓库` }));
-  await fireEvent.click(await view.findByRole("menuitem", { name: "克隆仓库" }));
+async function selectHomeCreateRepoAction(view: AppShellView, action: string, groupName = "未分组仓库") {
+  await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "创建仓库" }));
+  await fireEvent.mouseEnter(await view.findByRole("menuitem", { name: action }));
+  await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
+}
+
+async function openHomeCloneDialog(view: AppShellView, groupName = "未分组仓库") {
+  await selectHomeCreateRepoAction(view, "克隆仓库", groupName);
 }
 
 async function toggleSidebarRepoGroup(view: AppShellView, name: string) {
@@ -178,9 +183,11 @@ describe("AppShell sidebar", () => {
     expect(view.container.querySelector(".sb-section--actions")).toBeNull();
     expect(view.container.querySelector(".shell-actions")).toBeNull();
     expect(view.getByLabelText("项目总览操作")).toBeInTheDocument();
+    expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "创建仓库" })).toBeInTheDocument();
     expect(within(view.getByLabelText("项目总览操作")).queryByRole("button", { name: "克隆仓库" })).toBeNull();
     expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" })).toBeInTheDocument();
     expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" })).toBeEnabled();
+    expect(view.queryByRole("button", { name: "在 未分组仓库 创建仓库" })).toBeNull();
 
     await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
@@ -248,15 +255,14 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏分组入口可创建本地仓库并打开", async () => {
+  it("首页入口可创建本地仓库并打开", async () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "在 未分组仓库 创建仓库" }));
-    await fireEvent.click(await view.findByRole("menuitem", { name: "创建本地仓库" }));
+    await selectHomeCreateRepoAction(view, "创建本地仓库");
     const dialog = await view.findByRole("dialog", { name: "新建本地仓库" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "local-new");
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
@@ -268,7 +274,7 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏分组入口可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
+  it("首页入口可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -276,8 +282,7 @@ describe("AppShell sidebar", () => {
     });
 
     await createSidebarRepoGroup(view, "前端");
-    await fireEvent.click(view.getByRole("button", { name: "在 前端 创建仓库" }));
-    await fireEvent.click(await view.findByRole("menuitem", { name: "创建远程仓库" }));
+    await selectHomeCreateRepoAction(view, "创建远程仓库", "前端");
     const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
     await view.findByRole("option", { name: "lilia-user · user" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "template-made");
@@ -745,7 +750,7 @@ describe("AppShell sidebar", () => {
     });
 
     await createSidebarRepoGroup(view, "前端");
-    await openSidebarCloneDialog(view, "前端");
+    await openHomeCloneDialog(view, "前端");
 
     expect(view.getByRole("dialog", { name: "克隆仓库" })).toBeInTheDocument();
     const dialog = view.getByRole("dialog", { name: "克隆仓库" });
@@ -773,7 +778,7 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await openSidebarCloneDialog(view);
+    await openHomeCloneDialog(view);
     const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
 
     await fireEvent.update(input, "sena-nana/NewRepo");
@@ -796,7 +801,7 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await openSidebarCloneDialog(view);
+    await openHomeCloneDialog(view);
     const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
 
     await fireEvent.update(input, "https://github.com/meijustory123/TapdClient");
@@ -826,7 +831,7 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    await openSidebarCloneDialog(view);
+    await openHomeCloneDialog(view);
 
     expect(await view.findByText("GitHub 绑定已失效，请重新绑定。")).toBeInTheDocument();
     const dialog = view.getByRole("dialog", { name: "克隆仓库" });
