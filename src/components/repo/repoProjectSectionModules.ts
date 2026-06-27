@@ -14,6 +14,7 @@ export type RepoProjectSectionKey =
   | "settings";
 
 const commitDetailCardModule = createCachedAsyncComponent(() => import("./CommitDetailCard.vue"));
+const repoLaunchTerminalPanelModule = createCachedAsyncComponent(() => import("./RepoLaunchTerminalPanel.vue"));
 const markdownReadmeModule = createCachedAsyncComponent(() => import("./MarkdownReadme.vue"));
 const repoChangesPanelModule = createCachedAsyncComponent(() => import("./RepoChangesPanel.vue"));
 const repoFilePreviewPaneModule = createCachedAsyncComponent(() => import("./RepoFilePreviewPane.vue"));
@@ -30,6 +31,7 @@ const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./R
 const repoReleasesPanelModule = createCachedAsyncComponent(() => import("./RepoReleasesPanel.vue"));
 
 export const CommitDetailCard = commitDetailCardModule.component;
+export const RepoLaunchTerminalPanel = repoLaunchTerminalPanelModule.component;
 export const MarkdownReadme = markdownReadmeModule.component;
 export const RepoChangesPanel = repoChangesPanelModule.component;
 export const RepoFilePreviewPane = repoFilePreviewPaneModule.component;
@@ -46,6 +48,7 @@ export const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
 export const RepoReleasesPanel = repoReleasesPanelModule.component;
 
 export function preloadRepoProjectSection(section: string) {
+  if (section === "launch") return repoLaunchTerminalPanelModule.load();
   if (section === "changes") return repoChangesPanelModule.load();
   if (section === "history") return Promise.all([repoHistoryPanelModule.load(), commitDetailCardModule.load()]);
   if (section === "files") return Promise.all([repoFilePreviewPaneModule.load(), repoFileTreeCardModule.load()]);
