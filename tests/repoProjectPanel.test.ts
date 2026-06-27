@@ -807,9 +807,9 @@ describe("RepoProjectPanel", () => {
   it("本地仓库在命令运行页无日志时只显示空输出状态", async () => {
     const view = await renderProjectPanel({ activeGitTab: "run" });
 
-    const terminalCard = view.container.querySelector(".project-terminal-card");
+    const terminal = await view.findByLabelText("启动终端");
+    const terminalCard = terminal.closest(".project-terminal-card");
     expect(terminalCard).toBeInstanceOf(HTMLElement);
-    const terminal = view.getByLabelText("启动终端");
     expect(within(terminal).getByText("暂无输出。")).toBeInTheDocument();
     expect(within(terminal).queryByText("请选择一个启动指令并运行。")).toBeNull();
     expect(within(terminal).queryByText("当前指令：yarn dev")).toBeNull();

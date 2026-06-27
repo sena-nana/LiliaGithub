@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { AnsiUp } from "ansi_up";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch, type Component } from "vue";
 import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 import {
@@ -122,6 +121,7 @@ import {
   RepoGitHubDetailSidebar,
   RepoHistoryPanel,
   RepoIssuesPanel,
+  RepoLaunchTerminalPanel,
   RepoLanguageStatsCard,
   RepoProjectsBoard,
   RepoProjectsBoardSidebar,
@@ -351,7 +351,6 @@ const fileBrowser = useRepoFileBrowser({
   enabled: fileBrowserEnabled,
 });
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
-const terminalBody = ref<HTMLElement | null>(null);
 const projectMainRef = ref<HTMLElement | null>(null);
 const readmePreview = ref<RepoFilePreview | null>(null);
 const readmeLoaded = ref(false);
@@ -717,7 +716,6 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "release" ||
   activeSection.value === "settings",
 );
-const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
 const displayedIssueTemplates = computed(() => [blankIssueTemplate(), ...issueTemplates.value]);
 const issueTemplateOptions = computed(() =>
   displayedIssueTemplates.value.map((template) => ({
@@ -904,11 +902,6 @@ watch(() => resolvedRepoContext.value.capabilities.issues.available, (githubAvai
   if (!githubAvailable) {
     clearBlockedGitHubState();
   }
-});
-
-watch([() => props.launchLogs.length, () => props.launchRunning], () => {
-  if (!props.launchTerminalVisible) return;
-  void scrollTerminalToEnd();
 });
 
 watch(issueState, () => {
@@ -1310,13 +1303,6 @@ function clearProjectTargets() {
   cancelEditIssue();
   closeIssueCreateView(false);
   closePullRequestCreateView(false);
-}
-
-function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
-  const ansiUp = new AnsiUp();
-  return logs
-    .map((entry) => `<span class="launch-log launch-log--${entry.stream}">${ansiUp.ansi_to_html(entry.line)}</span>`)
-    .join("\n");
 }
 
 const githubCountFormatter = new Intl.NumberFormat("en-US");
@@ -2798,13 +2784,6 @@ async function openReadmeLink(target: ReadmeLinkTarget) {
   }
 }
 
-async function scrollTerminalToEnd() {
-  await nextTick();
-  const body = terminalBody.value;
-  if (!body) return;
-  body.scrollTop = body.scrollHeight;
-}
-
 async function activateProjectTab(tab: ProjectTab) {
   activeSection.value = tab;
   if (canUseLaunchWorkflow.value && props.launchTerminalVisible) {
@@ -2939,13 +2918,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         class="project-main"
         :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'release' }"
       >
-        <section v-if="canUseLaunchWorkflow && activeSection === 'launch'" class="project-terminal-card">
-          <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
-            <div v-if="launchError" class="project-terminal__line project-terminal__line--error">{{ launchError }}</div>
-            <pre v-if="launchLogs.length" class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
-            <div v-else class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
-          </div>
-        </section>
+        <RepoLaunchTerminalPanel
+          v-if="canUseLaunchWorkflow && activeSection === 'launch'"
+          :launch-logs="launchLogs"
+          :launch-error="launchError"
+        />
 
         <RepoChangesPanel
           v-else-if="canShowChanges && activeSection === 'changes'"
@@ -4137,78 +4114,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-section--flush {
   padding: 0;
-}
-
-.project-terminal-card {
-  display: grid;
-  align-self: stretch;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  max-height: 100%;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-}
-
-.project-terminal__body {
-  display: grid;
-  align-content: start;
-  min-height: 0;
-  height: 100%;
-  overflow: auto;
-  padding: 14px 16px;
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.project-terminal__line {
-  margin: 0;
-}
-
-.project-terminal__line--error {
-  color: var(--err);
-}
-
-.project-terminal__line--muted {
-  color: var(--text-muted);
-}
-
-.project-terminal__output {
-  max-height: none;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-
-.project-terminal__output code {
-  font: inherit;
-}
-
-.launch-log {
-  display: inline;
-}
-
-.launch-log--stderr {
-  color: var(--err);
-}
-
-.launch-log--system {
-  color: var(--text-muted);
-}
-
-.project-terminal__empty {
-  display: grid;
-  gap: 4px;
 }
 
 .project-empty {
