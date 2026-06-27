@@ -227,14 +227,15 @@ describe("RepositoriesSection", () => {
     const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
     await screen.findByRole("option", { name: "sena-nana · user" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "new-repo");
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+    expect(within(dialog).queryByRole("button", { name: "取消" })).toBeNull();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     expect(vi.mocked(createGitHubRepo)).toHaveBeenCalledWith(expect.objectContaining({
       owner: "sena-nana",
       name: "new-repo",
     }));
 
-    await fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
     expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
 
     createRequest.resolve({
@@ -257,6 +258,43 @@ describe("RepositoriesSection", () => {
       expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
     });
     expect(screen.queryByText("sena-nana/new-repo")).not.toBeInTheDocument();
+    expect(workspace.cloneRepo).not.toHaveBeenCalled();
+    expect(workspace.refreshRepos).not.toHaveBeenCalled();
+  });
+
+  it("可只创建远程 GitHub 仓库并关闭弹窗", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(createGitHubRepo).mockResolvedValue({
+      id: 3,
+      name: "remote-only",
+      fullName: "sena-nana/remote-only",
+      ownerLogin: "sena-nana",
+      private: false,
+      disabled: false,
+      archived: false,
+      description: null,
+      defaultBranch: "main",
+      createdAt: "2026-06-20T00:00:00Z",
+      updatedAt: "2026-06-20T00:00:00Z",
+      cloneUrl: "https://github.com/sena-nana/remote-only.git",
+      htmlUrl: "https://github.com/sena-nana/remote-only",
+    });
+
+    render(RepositoriesSection);
+
+    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
+    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
+    await screen.findByRole("option", { name: "sena-nana · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "remote-only");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
+        owner: "sena-nana",
+        name: "remote-only",
+      }));
+      expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
+    });
     expect(workspace.cloneRepo).not.toHaveBeenCalled();
     expect(workspace.refreshRepos).not.toHaveBeenCalled();
   });
@@ -291,7 +329,7 @@ describe("RepositoriesSection", () => {
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
     await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/template");
     await fireEvent.click(within(dialog).getByLabelText("包含所有分支"));
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(() => {
       expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({

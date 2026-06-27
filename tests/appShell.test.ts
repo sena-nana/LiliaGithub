@@ -352,7 +352,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "template-made");
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
     await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/template-made");
@@ -376,7 +376,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "palette-template");
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
     await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/palette-template");

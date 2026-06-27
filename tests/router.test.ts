@@ -3078,7 +3078,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("dialog", { name: "新建 GitHub 仓库" })).toBeInTheDocument();
     await fireEvent.update(screen.getByPlaceholderText("new-repo"), "NewRepo");
     await fireEvent.update(screen.getByPlaceholderText("Node"), "Node");
-    await fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await fireEvent.click(screen.getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(async () => {
       expect((await service.refreshRepos()).some((repo) => repo.id === "NewRepo")).toBe(true);
