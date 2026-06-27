@@ -1504,7 +1504,7 @@ watchEffect(() => {
   if (!shellActions) return;
   const workspaceReady = Boolean(workspace.workspaceRoot.value);
   const githubReady = workspace.isAuthorized.value;
-  const targets = [
+  const cloneTargets = [
     {
       groupId: null,
       label: "未分组仓库",
@@ -1516,26 +1516,26 @@ watchEffect(() => {
       keywords: group.name,
     })),
   ];
-  shellActions.homeRepoCreateCommands.value = targets.flatMap((target) => [
+  shellActions.homeRepoCreateCommands.value = [
     {
-      id: `home-create-local-repo:${target.groupId ?? "ungrouped"}`,
-      label: `创建本地仓库 / ${target.label}`,
-      detail: `在 ${target.label} 创建本地 Git 仓库`,
-      keywords: `创建 本地 仓库 create local repo repository ${target.keywords}`,
+      id: "home-create-local-repo",
+      label: "创建本地仓库",
+      detail: "打开本地 Git 仓库创建卡片",
+      keywords: "创建 本地 仓库 create local repo repository group 分组",
       icon: FolderGit2,
       disabled: !workspaceReady,
-      run: () => openCreateRepoCard("local", target.groupId),
+      run: () => openCreateRepoCard("local"),
     },
     {
-      id: `home-create-remote-repo:${target.groupId ?? "ungrouped"}`,
-      label: `从模板创建远程仓库 / ${target.label}`,
-      detail: `使用 GitHub 模板创建并克隆到 ${target.label}`,
-      keywords: `创建 远程 仓库 模板 github create remote template repo repository ${target.keywords}`,
+      id: "home-create-remote-repo",
+      label: "创建远程仓库",
+      detail: "打开 GitHub 仓库创建卡片",
+      keywords: "创建 远程 仓库 模板 github create remote template repo repository group 分组",
       icon: GitBranchPlus,
       disabled: !workspaceReady || !githubReady,
-      run: () => openCreateRepoCard("remote", target.groupId),
+      run: () => openCreateRepoCard("remote"),
     },
-    {
+    ...cloneTargets.map((target) => ({
       id: `home-clone-repo:${target.groupId ?? "ungrouped"}`,
       label: `克隆仓库 / ${target.label}`,
       detail: `克隆远程仓库到 ${target.label}`,
@@ -1543,13 +1543,13 @@ watchEffect(() => {
       icon: CloudDownload,
       disabled: !workspaceReady,
       run: () => openCloneRepoDialog(target.groupId),
-    },
-  ]);
+    })),
+  ];
 });
 
-function openCreateRepoCard(mode: "local" | "remote", groupId: string | null) {
+function openCreateRepoCard(mode: "local" | "remote") {
   createRepoCardMode.value = mode;
-  pendingCreatedRepoGroupId.value = groupId;
+  pendingCreatedRepoGroupId.value = null;
   createRepoCardOpen.value = true;
 }
 
@@ -1576,14 +1576,14 @@ function createRepoMenuItems(): ContextMenuItem[] {
       label: "创建本地仓库",
       icon: FolderGit2,
       disabled: !workspace.workspaceRoot.value,
-      children: repoGroupMenuItems("home-create-local-repo", (groupId) => openCreateRepoCard("local", groupId)),
+      onSelect: () => openCreateRepoCard("local"),
     },
     {
       id: "home-create-remote-repo",
       label: "创建远程仓库",
       icon: GitBranchPlus,
       disabled: !workspace.workspaceRoot.value || !workspace.isAuthorized.value,
-      children: repoGroupMenuItems("home-create-remote-repo", (groupId) => openCreateRepoCard("remote", groupId)),
+      onSelect: () => openCreateRepoCard("remote"),
     },
   ];
 }
@@ -1598,12 +1598,16 @@ function openCreateRepoMenu(event: MouseEvent) {
   );
 }
 
-async function placeCreatedRepo(repo: RepoSummary) {
-  const groupId = pendingCreatedRepoGroupId.value;
+async function placeCreatedRepo(repo: RepoSummary, selectedGroupId?: string | null) {
+  const groupId = selectedGroupId === undefined ? pendingCreatedRepoGroupId.value : selectedGroupId;
   if (groupId) {
     await workspace.moveRepoToGroup(repo.id, groupId);
   }
   await router.push(repoRoute(repo.id));
+}
+
+async function placeClonedCreatedRepo(repo: RepoSummary, _remote: GitHubRepoSummary, groupId: string | null) {
+  await placeCreatedRepo(repo, groupId);
 }
 
 async function discoverRepos() {
@@ -2351,9 +2355,10 @@ function bulkOperationDescription(operation: BulkOperation) {
       :mode="createRepoCardMode"
       :workspace-ready="Boolean(workspace.workspaceRoot.value)"
       :github-ready="workspace.isAuthorized.value"
+      :repo-groups="repoGroups"
       @close="closeCreateRepoCard"
       @local-created="placeCreatedRepo"
-      @remote-cloned="placeCreatedRepo"
+      @remote-cloned="placeClonedCreatedRepo"
     />
     <HomeCloneDialog
       v-if="cloneDialog.open"
