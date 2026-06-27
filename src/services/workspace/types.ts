@@ -3,6 +3,7 @@ export type SystemOpenTarget = "folder" | "terminal" | "vscode" | "liliacode";
 export interface WorkspaceSettings {
   workspaceRoot: string | null;
   githubBinding: GitHubBindingMetadata | null;
+  keyboardShortcuts: KeyboardShortcutSettings;
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
   repoSyncPreferences: Record<string, RepoSyncPreference>;
   hiddenRepoIds: string[];
@@ -11,6 +12,19 @@ export interface WorkspaceSettings {
   repoGroups: WorkspaceRepoGroup[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+}
+
+export type KeyboardShortcutActionId = "commandPalette.open";
+
+export type KeyboardShortcutSettings = Partial<Record<KeyboardShortcutActionId, KeyboardShortcutBinding>>;
+
+export interface KeyboardShortcutBinding {
+  key: string;
+  code: string | null;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
 }
 
 export interface WorkspaceStartupCache {
