@@ -134,6 +134,18 @@ async function selectHomeCreateRepoAction(view: AppShellView, action: string, gr
   await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
 }
 
+async function runCommandPaletteAction(view: AppShellView, query: string, label: string) {
+  await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+  const palette = await view.findByRole("dialog", { name: "命令入口" });
+  await fireEvent.update(within(palette).getByPlaceholderText("输入命令或 GitHub 操作"), query);
+  const labelNode = await within(palette).findByText(label);
+  const option = labelNode.closest("button");
+  if (!(option instanceof HTMLElement)) {
+    throw new Error(`未找到命令项: ${label}`);
+  }
+  await fireEvent.click(option);
+}
+
 async function openHomeCloneDialog(view: AppShellView, groupName = "未分组仓库") {
   await selectHomeCreateRepoAction(view, "克隆仓库", groupName);
 }
@@ -274,6 +286,25 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("Ctrl+K 可创建本地仓库并按未分组归位", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
+    });
+
+    await runCommandPaletteAction(view, "本地", "创建本地仓库 / 未分组仓库");
+    const dialog = await view.findByRole("dialog", { name: "新建本地仓库" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "palette-local");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/palette-local");
+      expect(sidebarRowForText(view.container, "palette-local")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 3)).toBeInTheDocument();
+    });
+  });
+
   it("首页入口可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
     const view = await renderAppShell("/");
 
@@ -296,6 +327,30 @@ describe("AppShell sidebar", () => {
     });
     await toggleSidebarRepoGroup(view, "前端");
     expect(sidebarRowForText(view.container, "template-made")).toBeInTheDocument();
+  });
+
+  it("Ctrl+K 可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
+    });
+
+    await createSidebarRepoGroup(view, "前端");
+    await runCommandPaletteAction(view, "模板 前端", "从模板创建远程仓库 / 前端");
+    const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
+    await view.findByRole("option", { name: "lilia-user · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "palette-template");
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/palette-template");
+      expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
+    });
+    await toggleSidebarRepoGroup(view, "前端");
+    expect(sidebarRowForText(view.container, "palette-template")).toBeInTheDocument();
   });
 
   it("删除非空分组后仓库回到未分组", async () => {
@@ -771,6 +826,33 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("Ctrl+K 可打开克隆仓库入口并按分组归位", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await createSidebarRepoGroup(view, "前端");
+    await runCommandPaletteAction(view, "克隆 前端", "克隆仓库 / 前端");
+    const dialog = await view.findByRole("dialog", { name: "克隆仓库" });
+    const input = await within(dialog).findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+
+    await fireEvent.update(input, "sena-nana/PaletteClone");
+    await waitFor(() => {
+      expect(within(dialog).getByText("直接克隆 sena-nana/PaletteClone")).toBeInTheDocument();
+      expect(within(dialog).getByPlaceholderText("默认从 URL 推导")).toHaveValue("PaletteClone");
+    });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "克隆" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/PaletteClone");
+      expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
+    });
+    await toggleSidebarRepoGroup(view, "前端");
+    expect(sidebarRowForText(view.container, "PaletteClone")).toBeInTheDocument();
+  });
+
   it("已绑定 GitHub 时支持 owner/repo 直接克隆", async () => {
     const view = await renderAppShell("/");
 
@@ -858,6 +940,10 @@ describe("AppShell sidebar", () => {
     expect(await view.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
     expect(view.queryByLabelText("项目总览操作")).toBeNull();
     expect(view.queryByRole("navigation", { name: "主导航" })).toBeNull();
+
+    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(view.queryByRole("dialog", { name: "命令入口" })).toBeNull();
+    expect(view.queryByText("从模板创建远程仓库 / 未分组仓库")).toBeNull();
   });
 
   it("首页初始绑定会自动复制授权码并提示已复制", async () => {

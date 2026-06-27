@@ -1,19 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, type Component } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Command, GitPullRequest, LoaderCircle, RefreshCw, RotateCw, Search, Settings2 } from "@lucide/vue";
+import { useShellRepoActions, type ShellPaletteCommand } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
 
-type PaletteCommand = {
-  id: string;
-  label: string;
-  detail: string;
-  keywords: string;
-  icon: Component;
-  run: () => unknown | Promise<unknown>;
-  disabled?: boolean;
-};
+type PaletteCommand = ShellPaletteCommand;
 
 const props = defineProps<{
   searchOpen: boolean;
@@ -24,6 +17,7 @@ const emit = defineEmits<{
 }>();
 
 const workspace = useWorkspace();
+const shellActions = useShellRepoActions();
 const route = useRoute();
 const router = useRouter();
 const open = ref(false);
@@ -91,6 +85,7 @@ const commands = computed<PaletteCommand[]>(() => {
       disabled: workspace.state.bulkRunning,
     },
   ];
+  items.push(...(shellActions?.homeRepoCreateCommands.value ?? []));
   if (repoId) {
     items.push(
       {
@@ -139,9 +134,12 @@ const commands = computed<PaletteCommand[]>(() => {
 });
 
 const filteredCommands = computed(() => {
-  const text = query.value.trim().toLowerCase();
-  const result = text
-    ? commands.value.filter((item) => `${item.label} ${item.detail} ${item.keywords}`.toLowerCase().includes(text))
+  const terms = query.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const result = terms.length
+    ? commands.value.filter((item) => {
+      const haystack = `${item.label} ${item.detail} ${item.keywords}`.toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    })
     : commands.value;
   return result.slice(0, 10);
 });
