@@ -1440,6 +1440,9 @@ async function focusRun(runId: number | null | undefined) {
     return;
   }
   if (!hasRun(runId)) {
+    await loadActions();
+  }
+  if (!hasRun(runId)) {
     await loadActions(true);
   }
   if (!hasRun(runId)) {

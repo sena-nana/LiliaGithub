@@ -45,6 +45,8 @@ import {
   listGitHubPullRequestChecks,
   listGitHubReleases,
   listGitHubWorkflowRuns,
+  getGitHubIssueDiscussion,
+  getGitHubPullRequestDiscussion,
   preloadGitHubRepos,
   type GitHubContributionDay,
   type GitHubIssue,
@@ -65,6 +67,7 @@ import {
 } from "./homeOverviewCache";
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
+import { preloadRepoProjectSection } from "../components/repo/repoProjectSectionModules";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
@@ -134,6 +137,7 @@ type GitHubTimelineEvent = {
   summary: string;
   timestamp: number;
   href?: string;
+  preload?: () => Promise<unknown>;
   tone?: WorkflowRunTone;
 };
 
@@ -1242,6 +1246,7 @@ function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelin
       summary: githubRepo.fullName,
       timestamp: parseGitHubTime(issue.updatedAt),
       href,
+      preload: () => preloadIssueDeepLink(githubRepo.fullName, issue),
     });
   }
 
@@ -1260,6 +1265,7 @@ function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelin
       summary: `${githubRepo.fullName} · ${pullRequestStatusText(pullRequest)} · ${checksOverview.detail}`,
       timestamp: parseGitHubTime(pullRequest.updatedAt),
       href,
+      preload: () => preloadPullRequestDeepLink(githubRepo.fullName, pullRequest),
       tone: checksOverview.tone,
     });
   }
@@ -1277,6 +1283,7 @@ function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelin
       summary: `${githubRepo.fullName} · ${overview.detail} · ${run.event}`,
       timestamp: parseGitHubTime(run.updatedAt),
       href,
+      preload: () => preloadWorkflowRunDeepLink(githubRepo.fullName),
       tone: overview.tone,
     });
   }
@@ -1293,6 +1300,7 @@ function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelin
       summary: releaseSummary(githubRepo.fullName, release),
       timestamp: parseGitHubTime(release.publishedAt ?? release.createdAt),
       href,
+      preload: () => preloadReleaseDeepLink(githubRepo.fullName),
     });
   }
 
@@ -1312,9 +1320,57 @@ function toGitHubTimelineDisplayNode(event: GitHubTimelineEvent): TimelineDispla
     detail: event.detail,
     summary: event.summary,
     timestamp: event.timestamp,
-    link: timelineNodeLink(event.href),
+    link: timelineNodeLink(event.href, event.preload),
     tone: event.tone,
   };
+}
+
+function preloadIssueDeepLink(repoFullName: string, issue: GitHubIssue) {
+  const states = issue.state === "open" ? ["open"] : ["open", "all"];
+  return Promise.allSettled([
+    preloadRepoProjectSection("issues"),
+    ...states.map((state) => listGitHubIssues(repoFullName, {
+      state,
+      perPage: 100,
+      sort: "created",
+      direction: "desc",
+    })),
+    getGitHubIssueDiscussion(repoFullName, issue.number),
+  ]);
+}
+
+function preloadPullRequestDeepLink(repoFullName: string, pullRequest: GitHubPullRequest) {
+  const states = pullRequest.merged
+    ? ["open", "merged"]
+    : pullRequest.state === "closed"
+      ? ["open", "closed"]
+      : ["open"];
+  return Promise.allSettled([
+    preloadRepoProjectSection("pulls"),
+    ...states.map((state) => listGitHubPullRequests(repoFullName, {
+      state,
+      perPage: 100,
+      sort: "updated",
+      direction: "desc",
+    })),
+    listGitHubPullRequestChecks(repoFullName, pullRequest.number),
+    getGitHubPullRequestDiscussion(repoFullName, pullRequest.number),
+  ]);
+}
+
+function preloadWorkflowRunDeepLink(repoFullName: string) {
+  return Promise.allSettled([
+    preloadRepoProjectSection("actions"),
+    listGitHubWorkflowRuns(repoFullName, 20),
+    listGitHubReleases(repoFullName),
+  ]);
+}
+
+function preloadReleaseDeepLink(repoFullName: string) {
+  return Promise.allSettled([
+    preloadRepoProjectSection("release"),
+    listGitHubReleases(repoFullName),
+  ]);
 }
 
 function gitHubTimelineEventIcon(kind: GitHubTimelineEvent["kind"]) {
@@ -1327,10 +1383,10 @@ function gitHubTimelineEventIcon(kind: GitHubTimelineEvent["kind"]) {
   return RefreshCw;
 }
 
-function timelineNodeLink(href: string | undefined): TimelineNodeLink {
+function timelineNodeLink(href: string | undefined, preload?: () => Promise<unknown>): TimelineNodeLink {
   if (!href) return { kind: "none" };
   if (href.startsWith("http")) return { kind: "external", href };
-  return { kind: "route", to: href };
+  return { kind: "route", to: href, preload };
 }
 
 function buildContributionWeeks(days: readonly GitHubContributionDay[]) {

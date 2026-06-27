@@ -1401,6 +1401,15 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { level: 3, name: /#12/ })).toBeInTheDocument();
     });
+    const detailIssueCalls = workspaceFallback.getFallbackGitHubIssueListCallsForTests().filter((call) =>
+      call.repoFullName === "sena-nana/LiliaGithub" &&
+      call.perPage === 100 &&
+      call.sort === "created" &&
+      call.direction === "desc" &&
+      call.since === null
+    );
+    expect(detailIssueCalls.filter((call) => call.state === "open")).toHaveLength(1);
+    expect(detailIssueCalls.filter((call) => call.state === "all")).toHaveLength(1);
   });
 
   it("总览页 GitHub 时间线展示 PR checks 并点击进入本地 Pull Request 详情", async () => {
@@ -1470,6 +1479,17 @@ describe("基础路由", () => {
     });
     expect(await screen.findByRole("heading", { level: 3, name: "#52 总览接入 PR 时间线" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: "Pull Request 详情" })).toBeInTheDocument();
+    const detailPullCalls = workspaceFallback.getFallbackGitHubPullRequestListCallsForTests().filter((call) =>
+      call.repoFullName === repo.fullName &&
+      call.state === "open" &&
+      call.perPage === 100 &&
+      call.sort === "updated" &&
+      call.direction === "desc"
+    );
+    expect(detailPullCalls).toHaveLength(1);
+    expect(workspaceFallback.getFallbackGitHubPullRequestCheckListCallsForTests().filter((call) =>
+      call.repoFullName === repo.fullName && call.pullNumber === 52
+    )).toHaveLength(1);
   });
 
   it("总览页 GitHub 时间线点击 Actions 事件进入仓库详情项目信息 Actions 并定位目标 run", async () => {
@@ -1504,6 +1524,45 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
     });
+    expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests().filter((call) =>
+      call.repoFullName === repo.fullName && call.perPage === 20
+    )).toHaveLength(1);
+  });
+
+  it("总览页 GitHub 时间线点击 Release 事件进入仓库详情项目信息 Release 并定位目标 tag", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
+    const repo = githubRepoSummary("sena-nana/LiliaGithub");
+    workspaceFallback.setFallbackGitHubReleasesForTests({
+      [repo.fullName]: [
+        githubRelease(repo.fullName, 802, "v2.0.0", "2026-06-18T08:00:00Z", {
+          name: "桌面端 v2.0.0",
+        }),
+      ],
+    });
+    const { router } = await renderAt("/");
+
+    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const releaseLink = await within(timeline).findByRole("link", { name: "Release v2.0.0" });
+    vi.useRealTimers();
+    await fireEvent.click(releaseLink);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Release" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
+    expect(router.currentRoute.value.query).toMatchObject({
+      projectTab: "release",
+      releaseTag: "v2.0.0",
+    });
+    expect(await screen.findByRole("heading", { level: 4, name: "桌面端 v2.0.0" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Release 列表").querySelector('[data-release-tag="v2.0.0"]')).toHaveClass("is-focused");
+    });
+    expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests().filter((call) =>
+      call.repoFullName === repo.fullName
+    )).toHaveLength(1);
   });
 
   it("总览页 GitHub 时间线命中持久缓存时不重复拉取 issue", async () => {
