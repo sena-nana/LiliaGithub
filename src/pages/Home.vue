@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch, watchEffect } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
@@ -412,6 +412,9 @@ watch(
 );
 
 onUnmounted(() => {
+  if (shellActions) {
+    shellActions.homeRepoCreateCommands.value = [];
+  }
   githubTimelineGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
@@ -1440,6 +1443,53 @@ function repoGroupMenuItems(idPrefix: string, onSelect: (groupId: string | null)
     })),
   ];
 }
+
+watchEffect(() => {
+  if (!shellActions) return;
+  const workspaceReady = Boolean(workspace.workspaceRoot.value);
+  const githubReady = workspace.isAuthorized.value;
+  const targets = [
+    {
+      groupId: null,
+      label: "未分组仓库",
+      keywords: "ungrouped no group",
+    },
+    ...repoGroups.value.map((group) => ({
+      groupId: group.id,
+      label: group.name,
+      keywords: group.name,
+    })),
+  ];
+  shellActions.homeRepoCreateCommands.value = targets.flatMap((target) => [
+    {
+      id: `home-create-local-repo:${target.groupId ?? "ungrouped"}`,
+      label: `创建本地仓库 / ${target.label}`,
+      detail: `在 ${target.label} 创建本地 Git 仓库`,
+      keywords: `创建 本地 仓库 create local repo repository ${target.keywords}`,
+      icon: FolderGit2,
+      disabled: !workspaceReady,
+      run: () => openCreateRepoCard("local", target.groupId),
+    },
+    {
+      id: `home-create-remote-repo:${target.groupId ?? "ungrouped"}`,
+      label: `从模板创建远程仓库 / ${target.label}`,
+      detail: `使用 GitHub 模板创建并克隆到 ${target.label}`,
+      keywords: `创建 远程 仓库 模板 github create remote template repo repository ${target.keywords}`,
+      icon: GitBranchPlus,
+      disabled: !workspaceReady || !githubReady,
+      run: () => openCreateRepoCard("remote", target.groupId),
+    },
+    {
+      id: `home-clone-repo:${target.groupId ?? "ungrouped"}`,
+      label: `克隆仓库 / ${target.label}`,
+      detail: `克隆远程仓库到 ${target.label}`,
+      keywords: `克隆 仓库 clone remote github repo repository ${target.keywords}`,
+      icon: CloudDownload,
+      disabled: !workspaceReady,
+      run: () => openCloneRepoDialog(target.groupId),
+    },
+  ]);
+});
 
 function openCreateRepoCard(mode: "local" | "remote", groupId: string | null) {
   createRepoCardMode.value = mode;
