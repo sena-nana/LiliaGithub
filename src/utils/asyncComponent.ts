@@ -3,6 +3,7 @@ import { createCachedAsyncModule, type AsyncModuleLoadState } from "./asyncModul
 
 export interface CachedAsyncComponent<T extends Component = Component> {
   component: T;
+  load: () => Promise<T | { default: T }>;
   state: Readonly<AsyncModuleLoadState>;
 }
 
@@ -13,6 +14,7 @@ export function createCachedAsyncComponent<T extends Component>(
 
   return {
     component: defineAsyncComponent(module.load) as T,
+    load: module.load,
     state: module.state,
   };
 }

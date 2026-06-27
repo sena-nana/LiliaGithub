@@ -109,12 +109,22 @@ function repoSidebarErrorCard() {
   return status;
 }
 
+async function findRepoSidebarErrorCard() {
+  const status = await screen.findByRole("region", { name: "仓库错误" });
+  if (!(status instanceof HTMLElement)) throw new Error("未找到仓库错误区");
+  return status;
+}
+
 function queryRepoSidebarErrorCard() {
   return screen.queryByRole("region", { name: "仓库错误" });
 }
 
 function repoDetailRecentSyncFailure() {
   return within(repoSidebarErrorCard()).getByText("最近同步失败").closest(".project-sidebar-error-card__item") as HTMLElement;
+}
+
+async function findRepoDetailRecentSyncFailure() {
+  return within(await findRepoSidebarErrorCard()).getByText("最近同步失败").closest(".project-sidebar-error-card__item") as HTMLElement;
 }
 
 async function mockLiliaGithubSyncFailure() {
@@ -2281,7 +2291,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub");
 
     expect((await screen.findAllByRole("heading", { level: 1, name: "LiliaGithub" })).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("tablist", { name: "右侧面板" })).toBeInTheDocument();
+    expect(await screen.findByRole("tablist", { name: "右侧面板" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
     expect(screen.queryByRole("tab", { name: "README.md" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "README.txt" })).toBeNull();
@@ -2835,7 +2845,7 @@ describe("基础路由", () => {
 
     await router.push("/repos/LiliaGithub");
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
+    expect(await findRepoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
 
     workspaceFallback.setFallbackBulkExecuteOverrideForTests(null);
     await fireEvent.click(within(repoDetailRecentSyncFailure()).getByRole("button", { name: "重试" }));
@@ -2867,7 +2877,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
     });
-    expect(repoSidebarErrorCard()).toHaveTextContent("自动同步正在执行");
+    expect(await findRepoSidebarErrorCard()).toHaveTextContent("自动同步正在执行");
   });
 
   it("仓库详情页右侧错误区出现或消失时保留项目主内容区", async () => {
@@ -2885,7 +2895,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
 
-    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
+    expect(await findRepoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
     expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
 
     workspaceFallback.setFallbackBulkExecuteOverrideForTests(null);
@@ -2913,7 +2923,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
+    expect(await findRepoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
   });
 
   it("总览页冲突仓库入口进入变更页", async () => {
