@@ -161,41 +161,45 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   gap: 0;
   min-width: 0;
   margin: 0;
-  padding: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
   list-style: none;
 }
 
 .discussion-timeline__item {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
   min-height: 44px;
   min-width: 0;
-  padding: 0 4px;
+  padding: 0;
 }
 
 .discussion-timeline__rail {
   position: relative;
   display: flex;
   justify-content: center;
-  padding-top: 9px;
+  min-height: 100%;
+  padding-top: 14px;
 }
 
 .discussion-timeline__rail::before {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 1px;
+  width: 2px;
   content: "";
-  background: color-mix(in srgb, var(--text-muted) 42%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 34%, transparent);
 }
 
 .discussion-timeline__item:first-child .discussion-timeline__rail::before {
-  top: 10px;
+  top: 18px;
 }
 
 .discussion-timeline__item:last-child .discussion-timeline__rail::before {
-  bottom: calc(100% - 10px);
+  bottom: calc(100% - 18px);
 }
 
 .discussion-timeline__node {
@@ -207,7 +211,8 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   width: 18px;
   height: 18px;
   color: var(--text-muted);
-  background: var(--surface);
+  background: var(--bg-elev);
+  border: 1px solid color-mix(in srgb, currentColor 30%, var(--border));
   border-radius: 4px;
 }
 
@@ -223,7 +228,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
 
 .discussion-timeline__body {
   min-width: 0;
-  padding: 6px 0 10px;
+  padding: 10px 0 14px;
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -232,10 +237,9 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
 }
 
 .discussion-timeline__entry {
+  display: grid;
+  gap: 8px;
   min-width: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface);
 }
 
 .discussion-timeline__entry-head {
@@ -244,8 +248,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0;
 }
 
 .discussion-timeline__event-row {
@@ -254,7 +257,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
-  padding: 2px 0 4px;
+  padding: 0;
 }
 
 .discussion-timeline__event-row > div {
@@ -291,12 +294,50 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
 }
 
 .discussion-timeline__entry :deep(.readme-render) {
-  padding: 12px;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.discussion-timeline__entry :deep(.readme-render h1),
+.discussion-timeline__entry :deep(.readme-render h2),
+.discussion-timeline__entry :deep(.readme-render h3),
+.discussion-timeline__entry :deep(.readme-render h4),
+.discussion-timeline__entry :deep(.readme-render h5),
+.discussion-timeline__entry :deep(.readme-render h6) {
+  margin: 6px 0 4px;
+  padding-bottom: 0;
+  border-bottom: 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.discussion-timeline__entry :deep(.readme-render p),
+.discussion-timeline__entry :deep(.readme-render ul),
+.discussion-timeline__entry :deep(.readme-render ol),
+.discussion-timeline__entry :deep(.readme-render blockquote),
+.discussion-timeline__entry :deep(.readme-render pre) {
+  margin: 5px 0;
+}
+
+.discussion-timeline__entry :deep(.readme-render ul),
+.discussion-timeline__entry :deep(.readme-render ol) {
+  padding-left: 18px;
+}
+
+.discussion-timeline__entry :deep(.readme-render li) {
+  margin: 2px 0;
+}
+
+.discussion-timeline__entry :deep(.readme-render blockquote),
+.discussion-timeline__entry :deep(.readme-render :where(p > img:only-child, p > a:only-child img:only-child):not([width]):not([height])) {
+  background: transparent;
 }
 
 .discussion-timeline__empty {
   margin: 0;
-  padding: 12px;
+  padding: 0;
 }
 
 @media (max-width: 760px) {
