@@ -308,11 +308,29 @@ pub(super) fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
 
 pub(super) fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
     let root = workspace_root(app)?;
-    let target = root.join(id.replace('/', std::path::MAIN_SEPARATOR_STR));
-    if !target.exists() || !is_git_repo(&target) {
-        return Err(format!("未找到 Git 仓库：{id}"));
+    repo_path_from_id(&root, id)
+}
+
+pub(super) fn repo_path_from_id(root: &Path, id: &str) -> Result<PathBuf, String> {
+    let normalized = id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
     }
-    Ok(target)
+    let relative = PathBuf::from(normalized.replace('/', std::path::MAIN_SEPARATOR_STR));
+    if relative.is_absolute() {
+        return Err(format!("未找到 Git 仓库：{normalized}"));
+    }
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("读取工作区路径失败：{e}"))?;
+    let target = canonical_root.join(relative);
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|_| format!("未找到 Git 仓库：{normalized}"))?;
+    if !canonical_target.starts_with(&canonical_root) || !is_git_repo(&canonical_target) {
+        return Err(format!("未找到 Git 仓库：{normalized}"));
+    }
+    Ok(canonical_target)
 }
 
 pub(super) fn remove_managed_repo_path(

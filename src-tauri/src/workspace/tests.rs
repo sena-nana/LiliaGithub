@@ -1853,6 +1853,20 @@ fn resolve_repo_worktree_reports_standalone_main_and_linked_roles() {
 }
 
 #[test]
+fn repo_id_uses_canonical_root_and_repo_paths() {
+    let root = temp_dir("repo-id-canonical");
+    let repo = root.join("nested").join("repo");
+    fs::create_dir_all(&repo).unwrap();
+
+    let id = repo_id(
+        &root.join("."),
+        &root.join("nested").join("..").join("nested").join("repo"),
+    );
+
+    assert_eq!(id, "nested/repo");
+}
+
+#[test]
 fn linked_worktree_detail_reads_own_history_and_changes() {
     let root = temp_dir("linked-worktree-detail");
     let main = root.join("main-repo");
@@ -1879,12 +1893,26 @@ fn linked_worktree_detail_reads_own_history_and_changes() {
     );
     fs::write(linked.join("feature.txt"), "feature changed\n").unwrap();
 
-    let history = repo_history(&linked);
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec!["linked-worktree".to_string()],
+        ..WorkspaceSettings::default()
+    };
+    let (paths, changed) = managed_repo_paths_and_prune_stale(&root, &mut settings);
+    assert!(!changed);
+    assert_eq!(paths, vec![canonical_repo_path(&linked)]);
+    assert_eq!(settings.managed_repo_ids, vec!["linked-worktree"]);
+
+    let linked_path = repo_path_from_id(&root, "linked-worktree").unwrap();
+    let summary = summarize_repo(&root, &linked_path);
+    assert_eq!(summary.id, "linked-worktree");
+    assert_eq!(summary.worktree.role, "linked");
+
+    let history = repo_history(&linked_path);
     assert!(history
         .iter()
         .any(|commit| commit.subject == "feature worktree"));
 
-    let changes = repo_changes(&linked);
+    let changes = repo_changes(&linked_path);
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].path, "feature.txt");
     assert!(changes[0].unstaged);

@@ -220,9 +220,20 @@ function mergeRepoSummary(current: RepoSummary, next: RepoSummary) {
   };
 }
 
-export function setRepoDetail(detail: RepoDetail) {
-  state.repoDetails[detail.summary.id] = detail;
-  upsertRepo(detail.summary);
+export function setRepoDetail(detail: RepoDetail, repoId = detail.summary.id) {
+  let normalizedDetail = detail;
+  if (detail.summary.id !== repoId) {
+    normalizedDetail = {
+      ...detail,
+      summary: {
+        ...detail.summary,
+        id: repoId,
+        relativePath: repoId,
+      },
+    };
+  }
+  state.repoDetails[repoId] = normalizedDetail;
+  upsertRepo(normalizedDetail.summary);
 }
 
 export function setWorkspaceTasks(tasks: WorkspaceTask[]) {

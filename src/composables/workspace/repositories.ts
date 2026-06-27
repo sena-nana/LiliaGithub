@@ -711,7 +711,7 @@ export async function loadRepoDetail(repoId: string) {
   state.error = null;
   const service = await loadWorkspaceService();
   const detail = await service.getRepoDetail(repoId);
-  setRepoDetail(detail);
+  setRepoDetail(detail, repoId);
   return detail;
 }
 

@@ -8,6 +8,7 @@ import {
   createBranch,
   continueConflictOperation,
   hideRepo,
+  loadRepoDetail,
   markConflictFileResolved,
   mergeBranch,
   mergePull,
@@ -1451,6 +1452,47 @@ describe("workspace incremental refresh", () => {
     expect(service.deleteBranch).toHaveBeenCalledWith(initial.id, "feature/local");
     expect(service.getRepoDetail).toHaveBeenCalledTimes(2);
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
+  });
+
+  it("仓库详情按请求 ID 写入，避免 alias summary 掉到当前路由空态", async () => {
+    const requested = repoSummary("nested/linked", {
+      name: "linked",
+      path: "C:\\workspace\\nested\\linked",
+      relativePath: "nested/linked",
+      worktree: {
+        role: "linked",
+        sharedRepoKey: "gitdir:main",
+        mainRepoId: "main",
+      },
+    });
+    const alias = repoSummary("linked", {
+      name: "linked",
+      path: requested.path,
+      relativePath: "linked",
+      worktree: requested.worktree,
+    });
+    state.repos = [requested];
+    service.getRepoDetail.mockResolvedValue(repoDetail(alias, {
+      changes: [{
+        path: "src/linked.ts",
+        oldPath: null,
+        indexStatus: " ",
+        worktreeStatus: "M",
+        staged: false,
+        unstaged: true,
+        untracked: false,
+        conflicted: false,
+        diff: "@@ -1 +1 @@\n-old\n+new",
+      }],
+    }));
+
+    await loadRepoDetail(requested.id);
+
+    expect(state.repoDetails[requested.id]?.summary.id).toBe(requested.id);
+    expect(state.repoDetails[requested.id]?.summary.relativePath).toBe(requested.id);
+    expect(state.repoDetails[requested.id]?.changes[0]?.path).toBe("src/linked.ts");
+    expect(state.repoDetails[alias.id]).toBeUndefined();
+    expect(state.repos.find((repo) => repo.id === requested.id)?.worktree.role).toBe("linked");
   });
 
   it("单仓库提交、拉取、推送和切换分支后通过详情刷新语言统计", async () => {

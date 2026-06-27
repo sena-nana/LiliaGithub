@@ -293,7 +293,11 @@ pub(super) fn resolve_repo_worktree(root: &Path, path: &Path) -> ResolvedRepoWor
 }
 
 pub(super) fn repo_id(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
+    let canonical_root = canonical_repo_path(root);
+    let canonical_path = canonical_repo_path(path);
+    canonical_path
+        .strip_prefix(&canonical_root)
+        .or_else(|_| path.strip_prefix(root))
         .ok()
         .and_then(|p| p.to_str())
         .filter(|value| !value.is_empty())
@@ -1004,9 +1008,8 @@ pub(super) fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> V
     settings
         .managed_repo_ids
         .iter()
-        .filter(|id| !settings.hidden_repo_ids.iter().any(|hidden| hidden == *id))
-        .map(|id| root.join(id.replace('/', std::path::MAIN_SEPARATOR_STR)))
-        .filter(|path| path.exists() && is_git_repo(path))
+        .filter(|id| !settings.hidden_repo_ids.contains(id))
+        .filter_map(|id| repo_path_from_id(root, id).ok())
         .collect()
 }
 
@@ -1017,9 +1020,8 @@ pub(super) fn managed_repo_paths_and_prune_stale(
     let mut paths = Vec::new();
     let mut changed = false;
     for repo_id in settings.managed_repo_ids.clone() {
-        let path = root.join(repo_id.replace('/', std::path::MAIN_SEPARATOR_STR));
-        if path.exists() && is_git_repo(&path) {
-            if !settings.hidden_repo_ids.iter().any(|hidden| hidden == &repo_id) {
+        if let Ok(path) = repo_path_from_id(root, &repo_id) {
+            if !settings.hidden_repo_ids.contains(&repo_id) {
                 paths.push(path);
             }
         } else {
