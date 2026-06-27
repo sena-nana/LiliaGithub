@@ -16,10 +16,6 @@ pub(super) fn now_millis() -> i64 {
         .unwrap_or_default()
 }
 
-pub(super) fn default_true() -> bool {
-    true
-}
-
 pub(super) fn current_utc_day_index() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
