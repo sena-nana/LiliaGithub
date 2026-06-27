@@ -643,14 +643,6 @@ pub(super) struct NormalizedGitHubRepo {
     pub(super) clone_url: String,
 }
 
-pub(super) struct KeyringGuard;
-
-impl Drop for KeyringGuard {
-    fn drop(&mut self) {
-        keyring::release_store();
-    }
-}
-
 pub(super) fn client_id() -> Option<&'static str> {
     let trimmed = GITHUB_CLIENT_ID.trim();
     if trimmed.is_empty() {
@@ -688,17 +680,11 @@ pub(super) fn build_client() -> Result<Client, String> {
         .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))
 }
 
-pub(super) fn init_keyring() -> Result<KeyringGuard, String> {
-    keyring::use_native_store(true).map_err(|e| format!("系统钥匙串不可用：{e}"))?;
-    Ok(KeyringGuard)
-}
-
 pub(super) fn keyring_entry(login: &str) -> Result<Entry, String> {
     Entry::new(GITHUB_SERVICE, login).map_err(|e| format!("创建 GitHub 凭证项失败：{e}"))
 }
 
 pub(super) fn read_token(login: &str) -> Result<Option<String>, String> {
-    let _guard = init_keyring()?;
     let entry = keyring_entry(login)?;
     match entry.get_password() {
         Ok(token) => Ok(Some(token)),
@@ -708,7 +694,6 @@ pub(super) fn read_token(login: &str) -> Result<Option<String>, String> {
 }
 
 pub(super) fn write_token(login: &str, token: &str) -> Result<(), String> {
-    let _guard = init_keyring()?;
     keyring_entry(login)?
         .set_password(token)
         .map_err(|e| format!("保存 GitHub 凭证失败：{e}"))

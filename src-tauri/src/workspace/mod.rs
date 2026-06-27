@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use keyring_core::{Entry, Error as KeyringError};
+use keyring::{Entry, Error as KeyringError};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LINK, USER_AGENT};
 use reqwest::StatusCode;
