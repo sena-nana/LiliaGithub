@@ -7,6 +7,7 @@ import { useWorkspace } from "../../composables/useWorkspace";
 import {
   createGitHubRepo,
   listGitHubRepoOwners,
+  type GitHubCreateRepoRequest,
   type GitHubRepoOwner,
   type GitHubRepoSummary,
   type RepoSummary,
@@ -114,6 +115,24 @@ function syncOwnerKind() {
   if (owner) form.value.ownerKind = owner.kind;
 }
 
+function buildGitHubCreateRepoRequest(): GitHubCreateRepoRequest {
+  const useTemplate = form.value.useTemplate;
+  return {
+    owner: form.value.owner,
+    ownerKind: form.value.ownerKind,
+    name: form.value.name,
+    description: form.value.description || null,
+    private: form.value.private,
+    autoInit: useTemplate ? false : form.value.addReadme,
+    gitignoreTemplate: useTemplate ? null : form.value.gitignoreTemplate || null,
+    licenseTemplate: useTemplate ? null : form.value.licenseTemplate || null,
+    hasIssues: form.value.hasIssues,
+    hasWiki: form.value.hasWiki,
+    templateFullName: useTemplate ? form.value.templateFullName : null,
+    includeAllBranches: useTemplate ? form.value.includeAllBranches : false,
+  };
+}
+
 function closeCard() {
   createRepoLoader.invalidate();
   emit("close");
@@ -163,32 +182,22 @@ async function cloneCreatedRepo() {
   }
 }
 
-async function submitRemoteRepo() {
+async function submitRemoteRepo(cloneAfterCreate = true) {
   if (createdRepo.value) {
     await cloneCreatedRepo();
     return;
   }
-  await createRepoLoader.run("create-remote-repo", async (runId) => {
+  await createRepoLoader.run(`create-remote-repo:${cloneAfterCreate ? "clone" : "only"}`, async (runId) => {
     creatingRepo.value = true;
     createError.value = null;
     syncOwnerKind();
     try {
-      const useTemplate = form.value.useTemplate;
-      const repo = await createGitHubRepo({
-        owner: form.value.owner,
-        ownerKind: form.value.ownerKind,
-        name: form.value.name,
-        description: form.value.description || null,
-        private: form.value.private,
-        autoInit: useTemplate ? false : form.value.addReadme,
-        gitignoreTemplate: useTemplate ? null : form.value.gitignoreTemplate || null,
-        licenseTemplate: useTemplate ? null : form.value.licenseTemplate || null,
-        hasIssues: form.value.hasIssues,
-        hasWiki: form.value.hasWiki,
-        templateFullName: useTemplate ? form.value.templateFullName : null,
-        includeAllBranches: useTemplate ? form.value.includeAllBranches : false,
-      });
+      const repo = await createGitHubRepo(buildGitHubCreateRepoRequest());
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
+      if (!cloneAfterCreate) {
+        emit("close");
+        return;
+      }
       createdRepo.value = repo;
       await cloneCreatedRepo();
     } catch (err) {
@@ -305,7 +314,16 @@ onUnmounted(() => {
         <span>{{ createdRepo.cloneUrl }}</span>
       </div>
       <div class="repo-create-actions">
-        <button type="button" class="ghost" @click="closeCard">取消</button>
+        <button v-if="!isRemoteMode" type="button" class="ghost" @click="closeCard">取消</button>
+        <button
+          v-if="isRemoteMode && !createdRepo"
+          type="button"
+          class="ghost"
+          :disabled="submitDisabled"
+          @click="submitRemoteRepo(false)"
+        >
+          创建
+        </button>
         <button type="submit" class="primary" :disabled="submitDisabled && !createdRepo">
           <LoaderCircle
             v-if="creatingRepo || cloningCreatedRepo"
@@ -315,7 +333,7 @@ onUnmounted(() => {
           />
           <FolderGit2 v-else-if="!isRemoteMode" :size="14" aria-hidden="true" />
           <GitBranchPlus v-else :size="14" aria-hidden="true" />
-          {{ createdRepo ? "重试克隆" : "创建" }}
+          {{ createdRepo ? "重试克隆" : isRemoteMode ? "创建并克隆" : "创建" }}
         </button>
       </div>
     </form>
