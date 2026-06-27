@@ -129,10 +129,24 @@ async function createSidebarRepoGroup(view: AppShellView, name: string) {
   });
 }
 
-async function selectHomeCreateRepoAction(view: AppShellView, action: string, groupName = "未分组仓库") {
+async function selectHomeCreateRepoAction(view: AppShellView, action: string, groupName?: string) {
   await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "创建仓库" }));
-  await fireEvent.mouseEnter(await view.findByRole("menuitem", { name: action }));
+  const item = await view.findByRole("menuitem", { name: action });
+  if (!groupName) {
+    await fireEvent.click(item);
+    return;
+  }
+  await fireEvent.mouseEnter(item);
   await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
+}
+
+async function selectCreateRepoGroup(view: AppShellView, dialog: HTMLElement, groupName: string) {
+  const trigger = dialog.querySelector('[data-agent-id="repo-create.group.trigger"]');
+  if (!(trigger instanceof HTMLElement)) {
+    throw new Error("未找到创建仓库分组选择器");
+  }
+  await fireEvent.click(trigger);
+  await fireEvent.click(await view.findByRole("option", { name: new RegExp(groupName) }));
 }
 
 async function runCommandPaletteAction(
@@ -282,6 +296,7 @@ describe("AppShell sidebar", () => {
 
     await selectHomeCreateRepoAction(view, "创建本地仓库");
     const dialog = await view.findByRole("dialog", { name: "新建本地仓库" });
+    expect(within(dialog).getByRole("button", { name: /未分组仓库/ })).toBeInTheDocument();
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "local-new");
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
@@ -299,8 +314,9 @@ describe("AppShell sidebar", () => {
       expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     });
 
-    await runCommandPaletteAction(view, "本地", "创建本地仓库 / 未分组仓库");
+    await runCommandPaletteAction(view, "本地", "创建本地仓库");
     const dialog = await view.findByRole("dialog", { name: "新建本地仓库" });
+    expect(within(dialog).getByRole("button", { name: /未分组仓库/ })).toBeInTheDocument();
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "palette-local");
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
@@ -332,7 +348,7 @@ describe("AppShell sidebar", () => {
     await runCommandPaletteAction(
       view,
       "本地",
-      "创建本地仓库 / 未分组仓库",
+      "创建本地仓库",
       { key: "p", code: "KeyP", ctrlKey: true, altKey: true },
     );
     expect(await view.findByRole("dialog", { name: "新建本地仓库" })).toBeInTheDocument();
@@ -346,9 +362,10 @@ describe("AppShell sidebar", () => {
     });
 
     await createSidebarRepoGroup(view, "前端");
-    await selectHomeCreateRepoAction(view, "创建远程仓库", "前端");
+    await selectHomeCreateRepoAction(view, "创建远程仓库");
     const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
     await view.findByRole("option", { name: "lilia-user · user" });
+    await selectCreateRepoGroup(view, dialog, "前端");
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "template-made");
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
     await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
@@ -370,9 +387,10 @@ describe("AppShell sidebar", () => {
     });
 
     await createSidebarRepoGroup(view, "前端");
-    await runCommandPaletteAction(view, "模板 前端", "从模板创建远程仓库 / 前端");
+    await runCommandPaletteAction(view, "远程", "创建远程仓库");
     const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
     await view.findByRole("option", { name: "lilia-user · user" });
+    await selectCreateRepoGroup(view, dialog, "前端");
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "palette-template");
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
     await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
@@ -976,7 +994,7 @@ describe("AppShell sidebar", () => {
 
     await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(view.queryByRole("dialog", { name: "命令入口" })).toBeNull();
-    expect(view.queryByText("从模板创建远程仓库 / 未分组仓库")).toBeNull();
+    expect(view.queryByText("创建远程仓库")).toBeNull();
   });
 
   it("首页初始绑定会自动复制授权码并提示已复制", async () => {

@@ -284,6 +284,7 @@ describe("RepositoriesSection", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
     const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
+    expect(within(dialog).queryByText("仓库分组")).toBeNull();
     await screen.findByRole("option", { name: "sena-nana · user" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "remote-only");
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));

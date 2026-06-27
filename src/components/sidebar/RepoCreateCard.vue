@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
-import { FolderGit2, GitBranchPlus, LoaderCircle, X } from "@lucide/vue";
+import { FolderGit2, FolderInput, GitBranchPlus, LoaderCircle, X } from "@lucide/vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
+import Dropdown from "../Dropdown.vue";
 import {
   createGitHubRepo,
   listGitHubRepoOwners,
@@ -14,18 +15,25 @@ import {
 } from "../../services/workspace";
 
 type RepoCreateMode = "local" | "remote";
+type RepoCreateGroup = {
+  readonly id: string;
+  readonly name: string;
+  readonly repoIds: readonly string[];
+};
+const UNGROUPED_REPO_GROUP_VALUE = "__ungrouped__";
 
 const props = defineProps<{
   open: boolean;
   mode: RepoCreateMode;
   workspaceReady: boolean;
   githubReady: boolean;
+  repoGroups?: readonly RepoCreateGroup[];
 }>();
 
 const emit = defineEmits<{
   close: [];
-  localCreated: [repo: RepoSummary];
-  remoteCloned: [repo: RepoSummary, remote: GitHubRepoSummary];
+  localCreated: [repo: RepoSummary, groupId: string | null];
+  remoteCloned: [repo: RepoSummary, remote: GitHubRepoSummary, groupId: string | null];
 }>();
 
 const workspace = useWorkspace();
@@ -38,6 +46,7 @@ const creatingRepo = ref(false);
 const cloningCreatedRepo = ref(false);
 const createdRepo = ref<GitHubRepoSummary | null>(null);
 const createError = ref<string | null>(null);
+const selectedGroupId = ref<string | null>(null);
 
 const form = ref({
   owner: "",
@@ -57,6 +66,27 @@ const form = ref({
 
 const isRemoteMode = computed(() => props.mode === "remote");
 const dialogTitle = computed(() => isRemoteMode.value ? "新建 GitHub 仓库" : "新建本地仓库");
+const groupSelectionEnabled = computed(() => props.repoGroups !== undefined);
+const repoGroupOptions = computed(() => [
+  {
+    value: UNGROUPED_REPO_GROUP_VALUE,
+    label: "未分组仓库",
+    hint: "默认",
+    agentId: "repo-create.group.option.ungrouped",
+  },
+  ...(props.repoGroups ?? []).map((group) => ({
+    value: group.id,
+    label: group.name,
+    hint: `${group.repoIds.length} 个仓库`,
+    agentId: `repo-create.group.option.${group.id}`,
+  })),
+]);
+const selectedGroupValue = computed({
+  get: () => selectedGroupId.value ?? UNGROUPED_REPO_GROUP_VALUE,
+  set: (value: string) => {
+    selectedGroupId.value = value === UNGROUPED_REPO_GROUP_VALUE ? null : value;
+  },
+});
 const blockedReason = computed(() => {
   if (!props.workspaceReady) return "请先选择工作区。";
   if (isRemoteMode.value && !props.githubReady) return "请先绑定 GitHub。";
@@ -69,6 +99,12 @@ const submitDisabled = computed(() => (
   || !form.value.name.trim()
   || (isRemoteMode.value && !form.value.owner)
   || (isRemoteMode.value && form.value.useTemplate && !form.value.templateFullName.trim())
+));
+const groupPickerDisabled = computed(() => (
+  Boolean(blockedReason.value)
+  || creatingRepo.value
+  || cloningCreatedRepo.value
+  || Boolean(createdRepo.value)
 ));
 
 function resetForm() {
@@ -91,6 +127,7 @@ function resetForm() {
   cloningCreatedRepo.value = false;
   createdRepo.value = null;
   createError.value = null;
+  selectedGroupId.value = null;
 }
 
 async function loadRepoOwners() {
@@ -151,7 +188,7 @@ async function submitLocalRepo() {
         licenseTemplate: form.value.licenseTemplate || null,
       });
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
-      emit("localCreated", repo);
+      emit("localCreated", repo, selectedGroupId.value);
       emit("close");
     } catch (err) {
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
@@ -172,7 +209,7 @@ async function cloneCreatedRepo() {
     if (!componentEpoch.assertAlive() || !props.open) return;
     await workspace.refreshRepos();
     if (!componentEpoch.assertAlive() || !props.open) return;
-    emit("remoteCloned", localRepo, repo);
+    emit("remoteCloned", localRepo, repo, selectedGroupId.value);
     emit("close");
   } catch (err) {
     if (!componentEpoch.assertAlive() || !props.open) return;
@@ -269,6 +306,21 @@ onUnmounted(() => {
         <span>仓库名</span>
         <input ref="firstInput" v-model="form.name" type="text" required placeholder="new-repo" />
       </label>
+
+      <div v-if="groupSelectionEnabled" class="repo-create-field">
+        <span>仓库分组</span>
+        <Dropdown
+          v-model="selectedGroupValue"
+          :options="repoGroupOptions"
+          :icon="FolderInput"
+          placement="bottom"
+          button-class="repo-create-group-picker"
+          agent-id="repo-create.group.trigger"
+          menu-label="选择仓库分组"
+          menu-width="240px"
+          :disabled="groupPickerDisabled"
+        />
+      </div>
 
       <label>
         <span>描述</span>
@@ -394,6 +446,14 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+.repo-create-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .repo-create-card input[type="text"],
 .repo-create-card select {
   width: 100%;
@@ -419,6 +479,18 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+:deep(.repo-create-group-picker) {
+  width: 100%;
+  height: 32px;
+  justify-content: flex-start;
+  padding: 0 9px;
+  border-color: var(--border-soft);
+}
+
+:deep(.repo-create-group-picker .chat-chip__label) {
+  max-width: none;
 }
 
 .repo-create-switches {

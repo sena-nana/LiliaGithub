@@ -9,6 +9,7 @@ interface Option {
   label: string;
   hint?: string;
   disabled?: boolean;
+  agentId?: string;
 }
 
 const props = defineProps<{
@@ -157,6 +158,7 @@ onBeforeUnmount(() => {
           :disabled="option.disabled"
           role="option"
           :aria-selected="isSelected(option)"
+          :data-agent-id="option.agentId"
           @click="pick(option)"
         >
           <span v-if="multiple" class="dd__item-check" aria-hidden="true">
