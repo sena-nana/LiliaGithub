@@ -3,6 +3,29 @@ use super::*;
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
 pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
+const COMMAND_PALETTE_SHORTCUT_ACTION: &str = "commandPalette.open";
+const INVALID_SHORTCUT_KEYS: &[&str] = &[
+    "Alt",
+    "AltGraph",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "Backspace",
+    "CapsLock",
+    "Control",
+    "Delete",
+    "End",
+    "Enter",
+    "Escape",
+    "Home",
+    "Meta",
+    "PageDown",
+    "PageUp",
+    "Shift",
+    "Tab",
+];
+
 pub(super) fn load_settings(app: &AppHandle) -> WorkspaceSettings {
     app.store(STORE_FILE)
         .ok()
@@ -423,6 +446,29 @@ pub fn workspace_set_root(
 }
 
 #[tauri::command]
+pub fn workspace_set_keyboard_shortcut(
+    app: AppHandle,
+    action_id: String,
+    shortcut: Option<KeyboardShortcutBinding>,
+) -> Result<WorkspaceSettings, String> {
+    let normalized_action_id = action_id.trim();
+    validate_keyboard_shortcut_action(normalized_action_id)?;
+    if let Some(binding) = shortcut.as_ref() {
+        validate_keyboard_shortcut_binding(binding)?;
+    }
+    let mut settings = load_settings(&app);
+    if let Some(binding) = shortcut {
+        settings
+            .keyboard_shortcuts
+            .insert(normalized_action_id.to_string(), binding);
+    } else {
+        settings.keyboard_shortcuts.remove(normalized_action_id);
+    }
+    save_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
 pub fn repo_set_preference(
     app: AppHandle,
     repo_id: String,
@@ -453,6 +499,28 @@ pub fn repo_set_auto_sync(
     set_repo_preference_value(&mut settings, normalized, "autoSync", auto_sync)?;
     save_settings(&app, &settings)?;
     Ok(settings)
+}
+
+fn validate_keyboard_shortcut_action(action_id: &str) -> Result<(), String> {
+    match action_id {
+        COMMAND_PALETTE_SHORTCUT_ACTION => Ok(()),
+        _ => Err(format!("未知快捷键：{action_id}")),
+    }
+}
+
+fn validate_keyboard_shortcut_binding(binding: &KeyboardShortcutBinding) -> Result<(), String> {
+    let key = binding.key.trim();
+    if key.is_empty() || INVALID_SHORTCUT_KEYS.contains(&key) {
+        return Err("请输入一个非修饰键组合。".to_string());
+    }
+    let is_function_key = key
+        .strip_prefix('F')
+        .and_then(|value| value.parse::<u8>().ok())
+        .is_some_and(|value| (1..=12).contains(&value));
+    if !is_function_key && !binding.ctrl_key && !binding.meta_key && !binding.alt_key {
+        return Err("非功能键快捷键需要包含 Ctrl、Cmd 或 Alt。".to_string());
+    }
+    Ok(())
 }
 
 fn set_repo_preference_value(
@@ -679,4 +747,42 @@ pub fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo> {
             HiddenRepo { id, name }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod keyboard_shortcut_tests {
+    use super::*;
+
+    fn binding(key: &str, ctrl_key: bool, meta_key: bool, alt_key: bool) -> KeyboardShortcutBinding {
+        KeyboardShortcutBinding {
+            key: key.to_string(),
+            code: Some(format!("Key{key}")),
+            ctrl_key,
+            meta_key,
+            alt_key,
+            shift_key: false,
+        }
+    }
+
+    #[test]
+    fn accepts_known_shortcut_action() {
+        assert!(validate_keyboard_shortcut_action(COMMAND_PALETTE_SHORTCUT_ACTION).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_shortcut_action() {
+        assert!(validate_keyboard_shortcut_action("repo.open").is_err());
+    }
+
+    #[test]
+    fn accepts_modifier_or_function_key_shortcuts() {
+        assert!(validate_keyboard_shortcut_binding(&binding("K", true, false, false)).is_ok());
+        assert!(validate_keyboard_shortcut_binding(&binding("F2", false, false, false)).is_ok());
+    }
+
+    #[test]
+    fn rejects_modifier_only_and_plain_letter_shortcuts() {
+        assert!(validate_keyboard_shortcut_binding(&binding("Control", true, false, false)).is_err());
+        assert!(validate_keyboard_shortcut_binding(&binding("K", false, false, false)).is_err());
+    }
 }

@@ -5,6 +5,11 @@ import { Command, GitPullRequest, LoaderCircle, RefreshCw, RotateCw, Search, Set
 import { useShellRepoActions, type ShellPaletteCommand } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
+import {
+  COMMAND_PALETTE_SHORTCUT_ACTION,
+  matchesCommandPaletteShortcut,
+  resolveKeyboardShortcut,
+} from "../utils/keyboardShortcuts";
 
 type PaletteCommand = ShellPaletteCommand;
 
@@ -164,7 +169,11 @@ async function runCommand(command: PaletteCommand) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+  const commandPaletteShortcut = resolveKeyboardShortcut(
+    workspace.state.settings?.keyboardShortcuts,
+    COMMAND_PALETTE_SHORTCUT_ACTION,
+  );
+  if (matchesCommandPaletteShortcut(event, commandPaletteShortcut)) {
     event.preventDefault();
     void show();
     return;

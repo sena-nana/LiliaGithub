@@ -44,6 +44,8 @@ import type {
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
+  KeyboardShortcutActionId,
+  KeyboardShortcutBinding,
   ProjectLaunchConfig,
   ProjectLaunchCandidate,
   ProjectLaunchHistoryEntry,
@@ -207,6 +209,15 @@ export function writeStartupContributions(contributions: WorkspaceStartupContrib
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => workspaceFallback().setWorkspaceRoot(workspaceRoot));
+}
+
+export function setKeyboardShortcut(
+  actionId: KeyboardShortcutActionId,
+  shortcut: KeyboardShortcutBinding | null,
+): Promise<WorkspaceSettings> {
+  return call("workspace_set_keyboard_shortcut", { actionId, shortcut }, () =>
+    workspaceFallback().setKeyboardShortcut(actionId, shortcut)
+  );
 }
 
 export function setRepoSetting(repoId: string, key: keyof RepoSyncPreference, value: boolean): Promise<WorkspaceSettings> {

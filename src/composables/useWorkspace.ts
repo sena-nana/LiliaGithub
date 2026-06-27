@@ -101,6 +101,9 @@ import {
   openUrl,
   copyText,
 } from "./workspace/system";
+import {
+  setKeyboardShortcut,
+} from "./workspace/preferences";
 
 export function useWorkspace() {
   return {
@@ -192,5 +195,6 @@ export function useWorkspace() {
     openPathTarget,
     openUrl,
     copyText,
+    setKeyboardShortcut,
   };
 }

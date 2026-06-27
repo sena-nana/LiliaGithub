@@ -11,6 +11,7 @@ import { workspaceFallbackForTests } from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
+import { COMMAND_PALETTE_SHORTCUT_ACTION } from "../src/utils/keyboardShortcuts";
 import { repoSummary } from "./fixtures/workspace";
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -134,8 +135,13 @@ async function selectHomeCreateRepoAction(view: AppShellView, action: string, gr
   await fireEvent.click(await view.findByRole("menuitem", { name: groupName }));
 }
 
-async function runCommandPaletteAction(view: AppShellView, query: string, label: string) {
-  await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+async function runCommandPaletteAction(
+  view: AppShellView,
+  query: string,
+  label: string,
+  shortcut: KeyboardEventInit = { key: "k", ctrlKey: true },
+) {
+  await fireEvent.keyDown(window, shortcut);
   const palette = await view.findByRole("dialog", { name: "命令入口" });
   await fireEvent.update(within(palette).getByPlaceholderText("输入命令或 GitHub 操作"), query);
   const labelNode = await within(palette).findByText(label);
@@ -303,6 +309,33 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "palette-local")).toBeInTheDocument();
       expect(sidebarGroupForText(view.container, "未分组仓库", 3)).toBeInTheDocument();
     });
+  });
+
+  it("命令面板使用设置中的自定义快捷键", async () => {
+    await workspaceFallback.setKeyboardShortcut(COMMAND_PALETTE_SHORTCUT_ACTION, {
+      key: "P",
+      code: "KeyP",
+      ctrlKey: true,
+      metaKey: false,
+      altKey: true,
+      shiftKey: false,
+    });
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
+    });
+
+    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(view.queryByRole("dialog", { name: "命令入口" })).not.toBeInTheDocument();
+
+    await runCommandPaletteAction(
+      view,
+      "本地",
+      "创建本地仓库 / 未分组仓库",
+      { key: "p", code: "KeyP", ctrlKey: true, altKey: true },
+    );
+    expect(await view.findByRole("dialog", { name: "新建本地仓库" })).toBeInTheDocument();
   });
 
   it("首页入口可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
@@ -1091,6 +1124,7 @@ describe("AppShell sidebar", () => {
     expect(view.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
     expect(view.getByRole("button", { name: /外观/ })).toHaveClass("is-active");
+    expect(view.getByRole("button", { name: /快捷键/ })).toBeInTheDocument();
     expect(view.router.currentRoute.value.meta.sidebar).toBe("settings");
     expect(view.router.currentRoute.value.meta.lockSidebar).toBe(true);
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
@@ -1101,6 +1135,12 @@ describe("AppShell sidebar", () => {
       expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=about");
     });
     expect(view.getByRole("button", { name: /关于/ })).toHaveClass("is-active");
+
+    await fireEvent.click(view.getByRole("button", { name: /快捷键/ }));
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=shortcuts");
+    });
+    expect(view.getByRole("button", { name: /快捷键/ })).toHaveClass("is-active");
 
     await view.router.push("/repos/LiliaGithub");
     expect(shell).toHaveClass("is-sidebar-collapsed");
