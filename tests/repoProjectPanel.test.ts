@@ -936,7 +936,7 @@ describe("RepoProjectPanel", () => {
       statusCommits: [remoteCommit],
     });
 
-    await fireEvent.click(view.getByRole("button", { name: /远程历史提交/ }));
+    await fireEvent.click(await view.findByRole("button", { name: /远程历史提交/ }));
     await view.rerender({ selectedCommitHash: remoteCommit.hash });
 
     expect(await view.findByLabelText("提交详情卡片")).toBeInTheDocument();
@@ -1394,7 +1394,7 @@ describe("RepoProjectPanel", () => {
     expect(view.getByText("关闭了讨论")).toBeInTheDocument();
     expect(view.container.querySelector(".discussion-timeline__item.is-event .discussion-timeline__event-row")).toBeInstanceOf(HTMLElement);
     expect(view.container.querySelector(".issue-detail__summary")).toBeNull();
-    const issueSidebar = view.getByLabelText("Issue 详情侧栏");
+    const issueSidebar = await view.findByLabelText("Issue 详情侧栏");
     const issueSidebarChips = Array.from(issueSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
       .map((chip) => chip.textContent ?? "");
     expect(issueSidebar).toHaveTextContent("Issue #12");

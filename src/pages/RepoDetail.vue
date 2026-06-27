@@ -1,33 +1,14 @@
 <script setup lang="ts">
-import {
-  CloudDownload,
-  CloudUpload,
-  Archive,
-  Code2,
-  FolderOpen,
-  GitCompare,
-  History,
-  Monitor,
-  Play,
-  RotateCcw,
-  ScrollText,
-  Square,
-  SquareTerminal,
-  TriangleAlert,
-} from "@lucide/vue";
-import Dropdown from "../components/Dropdown.vue";
-import RepoBranchPicker from "../components/repo/RepoBranchPicker.vue";
-import RepoProjectPanel from "../components/repo/RepoProjectPanel.vue";
+import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
-import { repoRoute } from "../utils/repoRoutes";
 import "../styles/page.css";
 
+const repoProjectPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoProjectPanel.vue"));
 const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
-const repoToolbarSettingsMenuModule = createCachedAsyncComponent(() => import("../components/repo/RepoToolbarSettingsMenu.vue"));
 const repoLocalChangesDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoLocalChangesDialog.vue"));
+const RepoProjectPanel = repoProjectPanelModule.component;
 const RepoStashPanel = repoStashPanelModule.component;
-const RepoToolbarSettingsMenu = repoToolbarSettingsMenuModule.component;
 const RepoLocalChangesDialog = repoLocalChangesDialogModule.component;
 
 const {
@@ -120,200 +101,52 @@ const {
 <template>
   <section class="repo-workbench">
     <div class="repo-workbench__top">
-      <header class="repo-header">
-        <div class="repo-header__tabs-wrap">
-          <h1 class="repo-header__sr-title">{{ repoTitle }}</h1>
-          <div class="repo-toolbar" aria-label="仓库页面工具条">
-            <nav class="repo-toolbar__group repo-toolbar__views" role="tablist" aria-label="仓库页面">
-              <RouterLink
-                v-for="tab in toolbarTabs"
-                :key="tab.key"
-                class="repo-toolbar__btn"
-                :class="{
-                  'is-active': activeTab === tab.key,
-                  'repo-toolbar__btn--counted': tab.key === 'changes' && changes.length,
-                }"
-                role="tab"
-                :data-agent-id="`repo.toolbar.tab.${tab.key}`"
-                :aria-selected="activeTab === tab.key"
-                :to="repoRoute(repoId, tab.key)"
-                :title="tab.title"
-                :aria-label="tab.title"
-              >
-                <Monitor v-if="tab.key === 'repo'" :size="17" aria-hidden="true" />
-                <FolderOpen v-else-if="tab.key === 'files'" :size="17" aria-hidden="true" />
-                <GitCompare v-else-if="tab.key === 'changes'" :size="17" aria-hidden="true" />
-                <History v-else-if="tab.key === 'history'" :size="17" aria-hidden="true" />
-                <Archive v-else :size="17" aria-hidden="true" />
-                <span v-if="tab.key === 'changes' && changes.length" class="repo-toolbar__badge repo-toolbar__badge--warn">
-                  {{ changes.length }}
-                </span>
-              </RouterLink>
-              <RepoBranchPicker
-                v-if="branchItems.length"
-                :display-label="activeBranchName"
-                :branches="branchItems"
-                button-class="repo-toolbar__btn repo-toolbar__branch-select"
-                agent-id="repo.toolbar.branch.select"
-                :disabled="branchActionRunning || !branchItems.length"
-                :action-running="branchActionRunning"
-                :allow-remote-checkout="true"
-                :allow-remote-create="repoContext.capabilities.branch.available"
-                :allow-remote-delete="repoContext.capabilities.deleteRemote.available"
-                :show-repository-actions="repoContext.capabilities.branch.available"
-                @checkout="checkout"
-                @update-current="updateCurrentBranch"
-                @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
-                @rename-branch="renameBranchTo($event.oldName, $event.newName)"
-                @merge-branch="mergeBranch"
-                @delete-branch="deleteBranch"
-                @refresh-branches="refreshAndFetchRepo"
-                @push-with-upstream="pushCurrentBranchWithUpstream"
-                @set-upstream="setCurrentBranchUpstream"
-              />
-            </nav>
-
-            <div v-if="repoContext.capabilities.launch.available" class="repo-toolbar__group repo-toolbar__launch" role="group" aria-label="命令执行">
-              <Dropdown
-                :model-value="activeLaunchValue"
-                :options="launchCommandOptions"
-                :icon="SquareTerminal"
-                :display-label="launchCommandText"
-                placeholder="选择启动指令"
-                placement="bottom"
-                button-class="repo-toolbar__btn repo-toolbar__command-select"
-                agent-id="repo.toolbar.launch.select"
-                menu-width="280px"
-                menu-label="启动指令候选"
-                :disabled="actionRunning || launchRunning || !launchCommandOptions.length"
-                @update:model-value="selectLaunchCandidateByValue"
-              />
-              <button
-                type="button"
-                class="repo-toolbar__btn"
-                :aria-label="launchRunning ? '停止' : '运行'"
-                data-agent-id="repo.toolbar.launch.toggle"
-                :title="launchRunning ? '停止' : '运行'"
-                :disabled="!launchRunning && (actionRunning || !launchConfig?.command?.trim())"
-                @click="launchRunning ? stopLaunch() : startLaunch()"
-              >
-                <Square v-if="launchRunning" :size="17" aria-hidden="true" />
-                <Play v-else :size="17" aria-hidden="true" />
-              </button>
-              <RouterLink
-                class="repo-toolbar__btn"
-                :class="{ 'is-active': activeTab === 'run' }"
-                :to="repoRoute(repoId, 'run')"
-                data-agent-id="repo.toolbar.tab.run"
-                title="日志"
-                aria-label="日志"
-              >
-                <ScrollText :size="17" aria-hidden="true" />
-              </RouterLink>
-            </div>
-
-            <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
-              <RepoToolbarSettingsMenu
-                :values="repoSettingValues"
-                :disabled="actionRunning"
-                @update:setting="setRepoSetting"
-              />
-              <button
-                v-if="repoContext.tags.includes('system-git')"
-                type="button"
-                class="repo-toolbar__btn"
-                data-agent-id="repo.toolbar.auth.default-token"
-                title="恢复默认 token 推送"
-                aria-label="恢复默认 token 推送"
-                :disabled="actionRunning"
-                @click="useDefaultTokenAuth"
-              >
-                <RotateCcw :size="17" aria-hidden="true" />
-              </button>
-              <div class="repo-toolbar__open-group">
-                <button
-                  type="button"
-                  class="repo-toolbar__btn repo-toolbar__open-main"
-                  :title="openTargetLabel"
-                  :aria-label="openTargetLabel"
-                  data-agent-id="repo.toolbar.open.selected"
-                  :disabled="actionRunning || !summary?.path"
-                  @click="openSelectedTarget"
-                >
-                  <FolderOpen v-if="activeOpenTargetValue === 'folder'" :size="17" aria-hidden="true" />
-                  <SquareTerminal v-else-if="activeOpenTargetValue === 'terminal'" :size="17" aria-hidden="true" />
-                  <Code2 v-else :size="17" aria-hidden="true" />
-                </button>
-                <Dropdown
-                  :model-value="activeOpenTargetValue"
-                  :options="openTargetOptions"
-                  placement="bottom"
-                  button-class="repo-toolbar__btn repo-toolbar__open-target-toggle"
-                  agent-id="repo.toolbar.open.target"
-                  menu-width="132px"
-                  menu-label="打开目标"
-                  :disabled="actionRunning || !summary?.path"
-                  @update:model-value="selectOpenTarget"
-                />
-              </div>
-              <div class="repo-toolbar__pull-group">
-                <button
-                  type="button"
-                  class="repo-toolbar__btn repo-toolbar__pull-main"
-                  :class="{ 'repo-toolbar__btn--counted': behindCount }"
-                  title="拉取"
-                  aria-label="拉取"
-                  data-agent-id="repo.toolbar.pull.selected"
-                  :disabled="actionRunning || hasConflicts"
-                  @click="runSelectedPullStrategy"
-                >
-                  <CloudDownload :size="17" aria-hidden="true" />
-                  <span v-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
-                </button>
-                <Dropdown
-                  :model-value="activePullStrategyValue"
-                  :options="pullStrategyOptions"
-                  placement="bottom"
-                  button-class="repo-toolbar__btn repo-toolbar__pull-strategy-toggle"
-                  agent-id="repo.toolbar.pull.strategy"
-                  menu-width="144px"
-                  menu-label="拉取策略"
-                  :disabled="actionRunning || hasConflicts"
-                  @update:model-value="selectPullStrategy"
-                />
-              </div>
-              <button
-                v-if="hasConflicts"
-                type="button"
-                class="repo-toolbar__btn repo-toolbar__btn--status"
-                disabled
-                title="冲突解决功能将重新设计"
-                aria-label="有冲突"
-                data-agent-id="repo.toolbar.conflict.status"
-              >
-                <TriangleAlert :size="17" aria-hidden="true" />
-              </button>
-              <button
-                v-else
-                type="button"
-                class="repo-toolbar__btn"
-                :class="{
-                  'repo-toolbar__btn--counted': aheadCount,
-                  'repo-toolbar__btn--push-ready': aheadCount,
-                }"
-                title="推送"
-                aria-label="推送"
-                data-agent-id="repo.toolbar.push"
-                :disabled="actionRunning || !aheadCount"
-                @click="push"
-              >
-                <CloudUpload :size="17" aria-hidden="true" />
-                <span v-if="aheadCount" class="repo-toolbar__badge">{{ aheadCount }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <RepoDetailToolbar
+        :active-tab="activeTab"
+        :repo-id="repoId"
+        :repo-title="repoTitle"
+        :repo-context="repoContext"
+        :changes-count="changes.length"
+        :toolbar-tabs="toolbarTabs"
+        :branch-items="branchItems"
+        :branch-action-running="branchActionRunning"
+        :active-branch-name="activeBranchName"
+        :action-running="actionRunning"
+        :launch-running="launchRunning"
+        :launch-command-options="launchCommandOptions"
+        :active-launch-value="activeLaunchValue"
+        :launch-command-text="launchCommandText"
+        :repo-setting-values="repoSettingValues"
+        :active-open-target-value="activeOpenTargetValue"
+        :active-pull-strategy-value="activePullStrategyValue"
+        :open-target-options="openTargetOptions"
+        :pull-strategy-options="pullStrategyOptions"
+        :open-target-label="openTargetLabel"
+        :summary-path="summary?.path"
+        :has-conflicts="hasConflicts"
+        :ahead-count="aheadCount"
+        :behind-count="behindCount"
+        :launch-command="launchConfig?.command"
+        @checkout="checkout"
+        @update-current-branch="updateCurrentBranch"
+        @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
+        @rename-branch="renameBranchTo($event.oldName, $event.newName)"
+        @merge-branch="mergeBranch"
+        @delete-branch="deleteBranch"
+        @refresh-branches="refreshAndFetchRepo"
+        @push-with-upstream="pushCurrentBranchWithUpstream"
+        @set-upstream="setCurrentBranchUpstream"
+        @select-launch-candidate="selectLaunchCandidateByValue"
+        @start-launch="startLaunch"
+        @stop-launch="stopLaunch"
+        @update-setting="setRepoSetting"
+        @use-default-token-auth="useDefaultTokenAuth"
+        @open-selected-target="openSelectedTarget"
+        @select-open-target="selectOpenTarget"
+        @run-selected-pull-strategy="runSelectedPullStrategy"
+        @select-pull-strategy="selectPullStrategy"
+        @push="push"
+      />
     </div>
 
     <div class="repo-workbench__body">

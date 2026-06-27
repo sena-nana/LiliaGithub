@@ -26,17 +26,8 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
-import CommitDetailCard from "./CommitDetailCard.vue";
 import Dropdown from "../Dropdown.vue";
-import MarkdownReadme from "./MarkdownReadme.vue";
-import RepoChangesPanel from "./RepoChangesPanel.vue";
-import RepoFilePreviewPane from "./RepoFilePreviewPane.vue";
-import RepoFileTreeCard from "./RepoFileTreeCard.vue";
-import RepoGitHubDetailSidebar from "./RepoGitHubDetailSidebar.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
-import RepoHistoryPanel from "./RepoHistoryPanel.vue";
-import RepoIssuesPanel from "./RepoIssuesPanel.vue";
-import RepoTopicEditor from "./RepoTopicEditor.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
   ALL_PROJECTS_ID,
@@ -121,7 +112,25 @@ import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { recoveryGuidanceForMessage, type RecoveryGuidance } from "../../utils/recoveryGuidance";
 import { repoRoute, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
-import { createCachedAsyncComponent } from "../../utils/asyncComponent";
+import {
+  CommitDetailCard,
+  MarkdownReadme,
+  RepoActionsPanel,
+  RepoChangesPanel,
+  RepoFilePreviewPane,
+  RepoFileTreeCard,
+  RepoGitHubDetailSidebar,
+  RepoHistoryPanel,
+  RepoIssuesPanel,
+  RepoLanguageStatsCard,
+  RepoProjectsBoard,
+  RepoProjectsBoardSidebar,
+  RepoPullRequestsPanel,
+  RepoReleasesPanel,
+  RepoTopicEditor,
+  preloadRepoProjectSection,
+  type RepoProjectSectionKey,
+} from "./repoProjectSectionModules";
 import {
   blankIssueTemplate,
   blankPullRequestTemplate,
@@ -140,7 +149,7 @@ import type {
 
 type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = RepoProjectTab;
-type ProjectContentMode = "launch" | ProjectTab | GitTab;
+type ProjectContentMode = RepoProjectSectionKey | GitTab;
 type IssueState = "open" | "closed" | "all";
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
@@ -183,7 +192,7 @@ type IssuePanelFilters = {
 };
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
-type MarkdownReadmeInstance = InstanceType<typeof MarkdownReadme>;
+type MarkdownReadmeInstance = { scrollToAnchor: (hash: string) => void };
 type SharedPanelFilters = Pick<
   IssuePanelFilters,
   "creator" | "assignee" | "labels" | "milestone" | "project" | "sort" | "direction" | "query"
@@ -258,18 +267,6 @@ const blankIssuePanelFilters = (): IssuePanelFilters => ({
 
 const ABOUT_TOPIC_COLLAPSED_LINE_LIMIT = 2;
 const README_PATH = "README.md";
-const repoLanguageStatsCardModule = createCachedAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
-const repoActionsPanelModule = createCachedAsyncComponent(() => import("./RepoActionsPanel.vue"));
-const repoProjectsBoardModule = createCachedAsyncComponent(() => import("./RepoProjectsBoard.vue"));
-const repoProjectsBoardSidebarModule = createCachedAsyncComponent(() => import("./RepoProjectsBoardSidebar.vue"));
-const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
-const repoReleasesPanelModule = createCachedAsyncComponent(() => import("./RepoReleasesPanel.vue"));
-const RepoLanguageStatsCard = repoLanguageStatsCardModule.component;
-const RepoActionsPanel = repoActionsPanelModule.component;
-const RepoProjectsBoard = repoProjectsBoardModule.component;
-const RepoProjectsBoardSidebar = repoProjectsBoardSidebarModule.component;
-const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
-const RepoReleasesPanel = repoReleasesPanelModule.component;
 
 const props = defineProps<{
   repoId: string;
@@ -1945,8 +1942,10 @@ async function refreshActionsPanel() {
 }
 
 async function ensureSectionData(section: ProjectContentMode) {
+  const preload = preloadRepoProjectSection(section);
   if (section === "readme") {
     await Promise.all([
+      preload,
       loadReadme(),
       resolvedRepoContext.value.capabilities.settings.available ? loadSettings() : Promise.resolve(),
     ]);
@@ -1954,6 +1953,7 @@ async function ensureSectionData(section: ProjectContentMode) {
   }
   if (section === "issues") {
     await Promise.all([
+      preload,
       loadIssues(),
       loadIssueFilterMetadata(),
     ]);
@@ -1961,6 +1961,7 @@ async function ensureSectionData(section: ProjectContentMode) {
   }
   if (section === "board") {
     await Promise.all([
+      preload,
       loadBoardItems(),
       loadIssueFilterMetadata(),
     ]);
@@ -1968,6 +1969,7 @@ async function ensureSectionData(section: ProjectContentMode) {
   }
   if (section === "pulls") {
     await Promise.all([
+      preload,
       loadPullRequests(),
       loadIssueFilterMetadata(),
     ]);
@@ -1975,18 +1977,21 @@ async function ensureSectionData(section: ProjectContentMode) {
   }
   if (section === "actions") {
     await Promise.all([
+      preload,
       loadActions(),
       loadReleases(),
     ]);
     return;
   }
   if (section === "release") {
-    await loadReleases();
+    await Promise.all([preload, loadReleases()]);
     return;
   }
   if (section === "settings") {
-    await loadSettings();
+    await Promise.all([preload, loadSettings()]);
+    return;
   }
+  await preload;
 }
 
 async function refreshLoadedSectionData() {
