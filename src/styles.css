@@ -385,11 +385,13 @@ button.primary:hover {
 }
 
 .repo-list-row__title {
+  display: block;
   min-width: 0;
   overflow: hidden;
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

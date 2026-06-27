@@ -181,6 +181,7 @@ defineProps<{
 .github-timeline-row__title {
   flex: 0 0 auto;
   font-weight: 600;
+  text-align: left;
   text-decoration: none;
   white-space: nowrap;
 }
