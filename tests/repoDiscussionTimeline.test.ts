@@ -69,7 +69,10 @@ describe("RepoDiscussionTimeline", () => {
     ]);
 
     const rows = Array.from(view.container.querySelectorAll(".discussion-timeline__item"));
+    const list = view.container.querySelector(".discussion-timeline__list");
     expect(rows).toHaveLength(5);
+    expect(list).toBeInstanceOf(HTMLOListElement);
+    expect(list?.children).toHaveLength(5);
     expect(rows.map((row) => row.className)).toEqual([
       expect.stringContaining("is-body"),
       expect.stringContaining("is-event"),
@@ -86,10 +89,14 @@ describe("RepoDiscussionTimeline", () => {
     expect(within(rows[4] as HTMLElement).getByText("Review comment")).toBeInTheDocument();
     expect(within(rows[4] as HTMLElement).getByText(/RepoProjectPanel\.vue:128/)).toBeInTheDocument();
 
+    const entryRows = [rows[0], rows[2], rows[3], rows[4]];
+    for (const row of entryRows) {
+      const entry = row?.querySelector(".discussion-timeline__entry");
+      expect(entry).toBeInstanceOf(HTMLElement);
+      expect(entry?.querySelector(".readme-render")).toBeInstanceOf(HTMLElement);
+    }
     expect(rows[1]?.querySelector(".discussion-timeline__event-row")).toBeInstanceOf(HTMLElement);
     expect(rows[1]?.querySelector(".discussion-timeline__entry")).toBeNull();
-    expect(rows[2]?.querySelector(".readme-render")).toBeInstanceOf(HTMLElement);
-    expect(rows[3]?.querySelector(".readme-render")).toBeInstanceOf(HTMLElement);
   });
 
   it("keeps loading, error and empty states", () => {

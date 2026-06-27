@@ -217,8 +217,7 @@ function openCheck(check: GitHubPullRequestCheck) {
 }
 
 .pull-detail__checks,
-.pull-detail__merge,
-.pull-detail__body {
+.pull-detail__merge {
   min-width: 0;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
@@ -232,11 +231,16 @@ function openCheck(check: GitHubPullRequestCheck) {
 }
 
 .pull-detail__checks,
-.pull-detail__merge,
-.pull-detail__body {
+.pull-detail__merge {
   display: grid;
   gap: 10px;
   padding: 12px;
+}
+
+.pull-detail__body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
 }
 
 .pull-detail__section-head,
@@ -317,12 +321,6 @@ function openCheck(check: GitHubPullRequestCheck) {
   height: 28px;
   padding: 0 9px;
   font-size: 12px;
-}
-
-.pull-detail__body :deep(.readme-render) {
-  padding: 0;
-  border: 0;
-  background: transparent;
 }
 
 .pull-detail__body .muted,
