@@ -173,6 +173,7 @@ jobs:
           if ($env:TAURI_SIGNING_PRIVATE_KEY -and $env:TAURI_UPDATER_PUBKEY) {
             $config = @{
               bundle = @{
+                targets = @("nsis")
                 createUpdaterArtifacts = $true
               }
               plugins = @{
