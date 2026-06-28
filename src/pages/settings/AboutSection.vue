@@ -185,11 +185,9 @@ async function installUpdate() {
 }
 
 .about-license-details summary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  box-sizing: border-box;
+  width: auto;
   list-style: none;
   margin: 0 0 10px;
   cursor: pointer;
