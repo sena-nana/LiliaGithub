@@ -177,11 +177,11 @@ yarn docs:preview
 
 ## 首发发布打包
 
-发布打包由 GitHub Actions release workflow 驱动。根 `package.json` 可以使用 `1.0.0-beta` 这类预发布版本名；Tauri 的 `src-tauri/tauri.conf.json` 保持 Tauri bundler 期望的数字安装包版本。
+发布打包由 GitHub Actions release workflow 驱动。当前版本同步在 `package.json`、`src-tauri/Cargo.toml` 与 `src-tauri/tauri.conf.json`，本次发布版本为 `1.0.0-beta.1`。
 
-### `v1.0.0-beta` 发布说明
+### `v1.0.0-beta.1` 发布说明
 
-本次发布记录版本对齐为 `v1.0.0-beta`，并同步 Tauri 与 Rust 打包版本号。
+本次发布记录版本对齐为 `v1.0.0-beta.1`，并同步 Tauri 与 Rust 打包版本号。
 
 - Issues 和 PR 已接入更紧凑的筛选列表、路由持久化筛选状态、模板创建入口和详情侧栏。
 - Actions 已接入应用内运行详情、job 日志、更收敛的运行列表和 workflow 节点图。
