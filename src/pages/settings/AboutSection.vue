@@ -4,8 +4,33 @@
     <h2>关于</h2>
     <ul class="kv">
       <li><span>名称</span><span>{{ appName }}</span></li>
-      <li><span>版本</span><span>{{ appVersion }}</span></li>
+      <li class="about-version-row">
+        <span>版本</span>
+        <span>
+          <span class="about-version-value">{{ appVersion }}</span>
+          <button
+            type="button"
+            class="ghost"
+            data-agent-id="settings.about.updater.check"
+            :disabled="checking || installing"
+            @click="checkForUpdate"
+          >
+            {{ checking ? "检查中" : "检查更新" }}
+          </button>
+          <button
+            v-if="pendingUpdate"
+            type="button"
+            class="primary"
+            data-agent-id="settings.about.updater.install"
+            :disabled="installing"
+            @click="installUpdate"
+          >
+            {{ installing ? "安装中" : "下载并安装" }}
+          </button>
+        </span>
+      </li>
     </ul>
+      <p class="about-version-message">{{ updateMessage }}</p>
     </section>
     <section class="card about-license-third-party" aria-label="第三方许可证协议">
       <template v-if="hasLicenseManifest">
@@ -40,31 +65,6 @@
         </details>
       </template>
       <p v-else class="about-license-fallback">未生成许可清单，请重试 yarn about:licenses</p>
-    </section>
-    <section class="card about-update" aria-label="更新器" data-agent-id="settings.about.updater">
-      <div>
-        <strong>更新</strong>
-        <p>{{ updateMessage }}</p>
-      </div>
-      <button
-        type="button"
-        class="ghost"
-        data-agent-id="settings.about.updater.check"
-        :disabled="checking || installing"
-        @click="checkForUpdate"
-      >
-        {{ checking ? "检查中" : "检查更新" }}
-      </button>
-      <button
-        v-if="pendingUpdate"
-        type="button"
-        class="primary"
-        data-agent-id="settings.about.updater.install"
-        :disabled="installing"
-        @click="installUpdate"
-      >
-        {{ installing ? "安装中" : "下载并安装" }}
-      </button>
     </section>
   </div>
 </template>
@@ -154,23 +154,23 @@ async function installUpdate() {
 </script>
 
 <style scoped>
-.about-update {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 10px;
-  align-items: center;
-}
-
 .about-page {
   display: grid;
   gap: 12px;
 }
 
-.about-update p {
-  margin: 4px 0 0;
+.about-version-row > span:last-child {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.about-version-message {
+  margin: 6px 0 0;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 12px;
 }
 
 .about-license-fallback {
@@ -242,8 +242,8 @@ async function installUpdate() {
 }
 
 @media (max-width: 720px) {
-  .about-update {
-    grid-template-columns: minmax(0, 1fr);
+  .about-version-row > span:last-child {
+    justify-content: flex-start;
   }
 }
 </style>
