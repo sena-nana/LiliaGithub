@@ -406,7 +406,7 @@ export function useRepoDetailController() {
   function normalizeProjectTab(value: unknown): RepoProjectTab | null {
     if (
       value === "readme" ||
-      value === "board" ||
+      value === "milestones" ||
       value === "issues" ||
       value === "pulls" ||
       value === "actions" ||

@@ -913,6 +913,35 @@ describe("基础路由", () => {
     });
   });
 
+  it("直接进入 milestones 分区时按需拉取并显示里程碑视图", async () => {
+    const repoFullName = "sena-nana/LiliaGithub";
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      [repoFullName]: [
+        {
+          ...githubIssue(repoFullName, 11, "2026-06-18T08:00:00Z"),
+          milestone: { number: 1, title: "v1", state: "open" },
+        },
+      ],
+    });
+
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=milestones");
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Milestones" })).toHaveClass("is-active");
+    });
+    expect(router.currentRoute.value.query).toMatchObject({ projectTab: "milestones" });
+    expect(await screen.findByLabelText("Milestones board")).toBeInTheDocument();
+    expect(screen.getByLabelText("v1 milestone")).toHaveTextContent("1");
+  });
+
+  it("旧 projectTab=board 不再激活视图并回落 README", async () => {
+    const { router } = await renderAt("/repos/LiliaGithub?projectTab=board");
+
+    expect(await screen.findByLabelText("README 内容")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Milestones" })).not.toHaveClass("is-active");
+    expect(router.currentRoute.value.query).toMatchObject({ projectTab: "board" });
+  });
+
   it("仓库 Issues 筛选写入 URL，并支持返回前进恢复", async () => {
     workspaceFallback.setFallbackGitHubIssuesForTests({
       "sena-nana/LiliaGithub": [
