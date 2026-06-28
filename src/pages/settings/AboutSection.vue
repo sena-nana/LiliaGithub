@@ -8,7 +8,7 @@
     </ul>
     </section>
     <section class="card about-license-third-party" aria-label="第三方许可证协议">
-      <h3>第三方许可证协议</h3>
+      <h2>第三方许可证协议</h2>
       <template v-if="hasLicenseManifest">
         <details class="about-license-details">
           <summary>依赖明细（{{ dependencyCount }}）</summary>
