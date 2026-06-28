@@ -238,7 +238,6 @@ function issueMetaText(issue: GitHubIssue) {
           @click="emit('update:state', filter.value)"
         >
           <span>{{ filter.label }}</span>
-          <strong>{{ state === filter.value ? issues.length : 0 }}</strong>
         </button>
       </div>
 
@@ -540,7 +539,6 @@ function issueMetaText(issue: GitHubIssue) {
   color: var(--text);
 }
 
-.issues-panel__states strong,
 .issues-panel__filter-button strong {
   min-width: 20px;
   height: 20px;
