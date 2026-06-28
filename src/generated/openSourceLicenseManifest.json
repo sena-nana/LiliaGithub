@@ -1,0 +1,207 @@
+{
+  "generatedAt": "2026-06-28T05:35:55.657Z",
+  "app": {
+    "name": "lilia-github",
+    "version": "1.0.0-beta",
+    "license": "MIT",
+    "licenseUrl": "https://github.com/sena-nana/LiliaGithub/blob/main/LICENSE"
+  },
+  "npmDependencies": [
+    {
+      "name": "@lucide/vue",
+      "version": "1.21.0",
+      "license": "ISC"
+    },
+    {
+      "name": "@tauri-apps/api",
+      "version": "2.11.1",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "@tauri-apps/cli",
+      "version": "2.11.3",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "@tauri-apps/plugin-opener",
+      "version": "2.5.4",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "@tauri-apps/plugin-store",
+      "version": "2.4.3",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "@tauri-apps/plugin-updater",
+      "version": "2.10.1",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "@testing-library/dom",
+      "version": "10.4.1",
+      "license": "MIT"
+    },
+    {
+      "name": "@testing-library/jest-dom",
+      "version": "6.9.1",
+      "license": "MIT"
+    },
+    {
+      "name": "@testing-library/vue",
+      "version": "8.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "@vitejs/plugin-vue",
+      "version": "6.0.7",
+      "license": "MIT"
+    },
+    {
+      "name": "@vue/compiler-sfc",
+      "version": "3.5.39",
+      "license": "MIT"
+    },
+    {
+      "name": "ansi_up",
+      "version": "6.0.6",
+      "license": "MIT"
+    },
+    {
+      "name": "esbuild",
+      "version": "0.28.1",
+      "license": "MIT"
+    },
+    {
+      "name": "jsdom",
+      "version": "29.1.1",
+      "license": "MIT"
+    },
+    {
+      "name": "typescript",
+      "version": "6.0.3",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "vite",
+      "version": "8.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "vitepress",
+      "version": "2.0.0-alpha.17",
+      "license": "MIT"
+    },
+    {
+      "name": "vitest",
+      "version": "4.1.9",
+      "license": "MIT"
+    },
+    {
+      "name": "vue",
+      "version": "3.5.39",
+      "license": "MIT"
+    },
+    {
+      "name": "vue-router",
+      "version": "5.1.0",
+      "license": "MIT"
+    },
+    {
+      "name": "vue-tsc",
+      "version": "3.3.5",
+      "license": "MIT"
+    },
+    {
+      "name": "yaml",
+      "version": "2.9.0",
+      "license": "ISC"
+    }
+  ],
+  "rustDependencies": [
+    {
+      "name": "base64",
+      "version": "0.21.7",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "keyring",
+      "version": "4.1.2",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.186",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "reqwest",
+      "version": "0.13.4",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "serde",
+      "version": "1.0.228",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.150",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "name": "tauri",
+      "version": "2.11.3",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "tauri-build",
+      "version": "2.6.3",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "tauri-plugin-dialog",
+      "version": "2.7.1",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "tauri-plugin-opener",
+      "version": "2.5.4",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "tauri-plugin-store",
+      "version": "2.4.3",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "tauri-plugin-updater",
+      "version": "2.10.1",
+      "license": "Apache-2.0 OR MIT"
+    },
+    {
+      "name": "tokio",
+      "version": "1.52.3",
+      "license": "MIT"
+    },
+    {
+      "name": "zip",
+      "version": "4.6.1",
+      "license": "MIT"
+    }
+  ],
+  "totals": {
+    "npm": {
+      "Apache-2.0": 1,
+      "Apache-2.0 OR MIT": 2,
+      "ISC": 2,
+      "MIT": 14,
+      "MIT OR Apache-2.0": 3
+    },
+    "rust": {
+      "Apache-2.0 OR MIT": 6,
+      "MIT": 2,
+      "MIT OR Apache-2.0": 6
+    }
+  }
+}

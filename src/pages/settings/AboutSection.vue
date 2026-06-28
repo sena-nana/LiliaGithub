@@ -2,10 +2,88 @@
   <div class="card">
     <h2>关于</h2>
     <ul class="kv">
-      <li><span>名称</span><span>LiliaGithub</span></li>
-      <li><span>版本</span><span>1.0.0</span></li>
+      <li><span>名称</span><span>{{ appName }}</span></li>
+      <li><span>版本</span><span>{{ appVersion }}</span></li>
       <li><span>框架</span><span>Tauri 2 + Vue 3</span></li>
     </ul>
+    <section
+      class="about-license"
+      aria-label="开源许可证"
+      data-agent-id="settings.about.licenses"
+    >
+      <h3>开源许可证</h3>
+      <p v-if="!hasLicenseManifest" class="about-license-fallback">
+        {{ fallbackText }}
+      </p>
+      <template v-else>
+        <ul class="kv">
+          <li><span>应用名称</span><span>{{ appName }}</span></li>
+          <li><span>版本</span><span>{{ appVersion }}</span></li>
+          <li><span>许可证</span><span>{{ appLicense }}</span></li>
+          <li>
+            <span>应用许可证</span>
+            <a
+              v-if="appLicenseUrl"
+              :href="appLicenseUrl"
+              class="about-license-link"
+              target="_blank"
+              rel="noreferrer"
+            >
+              查看 LICENSE
+            </a>
+            <span v-else>未配置</span>
+          </li>
+        </ul>
+        <section class="about-license-summary" aria-label="依赖许可概要">
+          <div>
+            <strong>依赖许可概要</strong>
+          </div>
+          <div v-if="npmSummaryRows.length">
+            <div class="about-license-summary-title">npm</div>
+            <ul class="kv">
+              <li v-for="[license, count] in npmSummaryRows" :key="`npm-${license}`">
+                <span>{{ license }}</span>
+                <span>{{ count }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="rustSummaryRows.length">
+            <div class="about-license-summary-title">Rust</div>
+            <ul class="kv">
+              <li v-for="[license, count] in rustSummaryRows" :key="`rust-${license}`">
+                <span>{{ license }}</span>
+                <span>{{ count }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-else-if="!npmSummaryRows.length" class="about-license-empty">无依赖许可摘要。</div>
+        </section>
+        <details class="about-license-details">
+          <summary>依赖明细（{{ dependencyCount }}）</summary>
+          <div v-if="npmDependencies.length">
+            <div class="about-license-summary-title">npm</div>
+            <ul class="kv">
+              <li v-for="dependency in npmDependencies" :key="`npm-dep-${dependency.name}`">
+                <span>{{ dependency.name }}</span>
+                <span>{{ dependency.version }} · {{ dependency.license }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="rustDependencies.length">
+            <div class="about-license-summary-title">Rust</div>
+            <ul class="kv">
+              <li v-for="dependency in rustDependencies" :key="`rust-dep-${dependency.name}`">
+                <span>{{ dependency.name }}</span>
+                <span>{{ dependency.version }} · {{ dependency.license }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="!npmDependencies.length && !rustDependencies.length" class="about-license-empty">
+            未发现可汇总的依赖记录。
+          </div>
+        </details>
+      </template>
+    </section>
     <section class="about-update" aria-label="更新器" data-agent-id="settings.about.updater">
       <div>
         <strong>更新</strong>
@@ -35,8 +113,53 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { check, type Update } from "@tauri-apps/plugin-updater";
+import openSourceLicenseManifest from "../../generated/openSourceLicenseManifest.json";
+
+interface OpenSourceLicenseManifestDependency {
+  name: string;
+  version: string;
+  license: string;
+}
+
+interface OpenSourceLicenseManifest {
+  app?: {
+    name?: string;
+    version?: string;
+    license?: string;
+    licenseUrl?: string;
+  };
+  npmDependencies?: OpenSourceLicenseManifestDependency[];
+  rustDependencies?: OpenSourceLicenseManifestDependency[];
+  totals?: {
+    npm?: Record<string, number>;
+    rust?: Record<string, number>;
+  };
+}
+
+const manifest = openSourceLicenseManifest as OpenSourceLicenseManifest | null;
+const fallbackText = "未生成许可清单，请重试 yarn about:licenses";
+
+const hasLicenseManifest = computed(() => {
+  return (
+    Boolean(manifest?.app?.name) &&
+    Array.isArray(manifest?.npmDependencies) &&
+    Array.isArray(manifest?.rustDependencies) &&
+    manifest?.totals?.npm !== undefined &&
+    manifest?.totals?.rust !== undefined
+  );
+});
+
+const appName = computed(() => manifest?.app?.name || "LiliaGithub");
+const appVersion = computed(() => manifest?.app?.version ?? "1.0.0");
+const appLicense = computed(() => manifest?.app?.license ?? "未声明");
+const appLicenseUrl = computed(() => manifest?.app?.licenseUrl ?? "");
+const npmSummaryRows = computed(() => Object.entries(manifest?.totals?.npm ?? {}));
+const rustSummaryRows = computed(() => Object.entries(manifest?.totals?.rust ?? {}));
+const npmDependencies = computed(() => manifest?.npmDependencies ?? []);
+const rustDependencies = computed(() => manifest?.rustDependencies ?? []);
+const dependencyCount = computed(() => npmDependencies.value.length + rustDependencies.value.length);
 
 const checking = ref(false);
 const installing = ref(false);
@@ -102,6 +225,58 @@ async function installUpdate() {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.about-license {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.about-license h3 {
+  margin: 0 0 10px;
+}
+
+.about-license .kv span {
+  line-height: 1.45;
+}
+
+.about-license-fallback {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.about-license-link {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.about-license-summary {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.about-license-summary-title {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.about-license-empty {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.about-license-details {
+  margin-top: 12px;
+}
+
+.about-license-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 @media (max-width: 720px) {
