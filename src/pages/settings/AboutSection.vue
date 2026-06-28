@@ -210,7 +210,7 @@ async function installUpdate() {
   transition: transform 0.15s ease;
 }
 
-details[open] .about-license-details > summary::after {
+.about-license-details[open] > summary::after {
   transform: rotate(90deg);
 }
 
