@@ -2,6 +2,13 @@ import type { RouteLocationNormalizedLoaded } from "vue-router";
 
 export type RepoRouteTab = "files" | "repo" | "changes" | "history" | "stash" | "run";
 export type RepoProjectTab = "readme" | "board" | "issues" | "pulls" | "actions" | "release" | "settings";
+export type RepoProjectCreateFlow = "issue" | "pull" | "release";
+
+const createFlowTabs: Record<RepoProjectCreateFlow, Exclude<RepoProjectTab, "readme">> = {
+  issue: "issues",
+  pull: "pulls",
+  release: "release",
+};
 
 export function repoRoute(repoId: string, tab: RepoRouteTab = "repo") {
   const base = `/repos/${encodeURIComponent(repoId)}`;
@@ -23,6 +30,14 @@ export function repoProjectRoute(
     if (jobId) query.set("job", String(jobId));
   }
   if (projectTab === "release" && releaseTag) query.set("releaseTag", releaseTag);
+  return `${repoRoute(repoId)}?${query.toString()}`;
+}
+
+export function repoProjectCreateRoute(repoId: string, createFlow: RepoProjectCreateFlow) {
+  const query = new URLSearchParams({
+    projectTab: createFlowTabs[createFlow],
+    create: createFlow,
+  });
   return `${repoRoute(repoId)}?${query.toString()}`;
 }
 

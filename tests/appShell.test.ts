@@ -354,6 +354,26 @@ describe("AppShell sidebar", () => {
     expect(await view.findByRole("dialog", { name: "新建本地仓库" })).toBeInTheDocument();
   });
 
+  it("Ctrl+K 可直接进入当前仓库的 GitHub 创建流程", async () => {
+    const view = await renderAppShell("/repos/LiliaGithub");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    for (const command of [
+      { query: "创建 Issue", label: "创建当前仓库 Issue", path: "/repos/LiliaGithub?projectTab=issues&create=issue" },
+      { query: "创建 PR", label: "创建当前仓库 Pull Request", path: "/repos/LiliaGithub?projectTab=pulls&create=pull" },
+      { query: "创建 Release", label: "创建当前仓库 Release", path: "/repos/LiliaGithub?projectTab=release&create=release" },
+    ]) {
+      await runCommandPaletteAction(view, command.query, command.label);
+      await waitFor(() => {
+        expect(view.router.currentRoute.value.fullPath).toBe(command.path);
+      });
+    }
+    view.unmount();
+  });
+
   it("首页入口可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
     const view = await renderAppShell("/");
 

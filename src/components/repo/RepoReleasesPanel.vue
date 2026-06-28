@@ -26,6 +26,7 @@ const props = defineProps<{
   mutating: boolean;
   focusedTag?: string | null;
   releaseTypeFilter?: ReleaseTypeFilter;
+  createRequested?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -35,6 +36,7 @@ const emit = defineEmits<{
   uploadAssets: [release: GitHubRelease];
   deleteAsset: [release: GitHubRelease, asset: GitHubReleaseAsset];
   openUrl: [url: string];
+  closeCreate: [];
 }>();
 
 type ReleaseForm = {
@@ -83,6 +85,10 @@ watch(() => props.repoFullName, () => {
   expandedAssetReleaseIds.value = new Set();
   expandedBodyReleaseIds.value = new Set();
 });
+
+watch(() => props.createRequested, (requested) => {
+  if (requested) openCreate();
+}, { immediate: true });
 
 function blankForm(): ReleaseForm {
   return {
@@ -154,9 +160,11 @@ function openReleaseActions(release: GitHubRelease, event: MouseEvent) {
 }
 
 function closeForm() {
+  const wasCreating = createOpen.value;
   createOpen.value = false;
   editingReleaseId.value = null;
   Object.assign(form, blankForm());
+  if (wasCreating) emit("closeCreate");
 }
 
 function submitForm() {
