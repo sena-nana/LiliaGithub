@@ -1,6 +1,6 @@
 [package]
 name = "lilia_github"
-version = "1.0.0"
+version = "1.0.0-beta.1"
 description = "A Tauri desktop app for local GitHub workspace and repository management."
 authors = ["sena-nana"]
 homepage = "https://github.com/sena-nana/LiliaGithub"

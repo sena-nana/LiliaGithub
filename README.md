@@ -177,11 +177,11 @@ If `yarn --version` still reports `1.x` after enabling Corepack, run commands th
 
 ## First Release Packaging
 
-Release packaging is driven by the GitHub Actions release workflow. Both CI and release jobs load Rust from `rust-toolchain.toml` before running `yarn verify` or the Tauri release action, so release validation and bundle builds use the same pinned Rust version as local development. The root `package.json` may use prerelease names such as `1.0.0-beta`, while Tauri's `src-tauri/tauri.conf.json` keeps the numeric installer version expected by the Tauri bundler.
+Release packaging is driven by the GitHub Actions release workflow. Both CI and release jobs load Rust from `rust-toolchain.toml` before running `yarn verify` or the Tauri release action, so release validation and bundle builds use the same pinned Rust version as local development. The root `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` are aligned to the same release version, such as `1.0.0-beta.1`.
 
-### `v1.0.0-beta` Notes
+### `v1.0.0-beta.1` Notes
 
-This release documents the `v1.0.0-beta` milestone and version alignment update.
+This release documents the `v1.0.0-beta.1` milestone and version alignment update.
 
 - Issues and pull requests now have denser filtered lists, route-persisted filter state, template-backed creation entry points, and detail sidebars.
 - Actions now has in-app run details, job logs, cleaner run lists, and a workflow node graph.
