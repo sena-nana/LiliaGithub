@@ -5,63 +5,63 @@ import {
   RotateCw,
 } from "@lucide/vue";
 import {
-  ALL_PROJECTS_ID,
-  type RepoProjectsBoardProjectFilter,
-  type RepoProjectsBoardStateFilter,
-  type RepoProjectsBoardTypeFilter,
-} from "./useRepoProjectsBoard";
+  ALL_MILESTONES_ID,
+  type RepoMilestonesBoardMilestoneFilter,
+  type RepoMilestonesBoardStateFilter,
+  type RepoMilestonesBoardTypeFilter,
+} from "./useRepoMilestonesBoard";
 
-const typeFilters: readonly { value: RepoProjectsBoardTypeFilter; label: string }[] = [
+const typeFilters: readonly { value: RepoMilestonesBoardTypeFilter; label: string }[] = [
   { value: "all", label: "全部" },
   { value: "issue", label: "Issues" },
   { value: "pull", label: "PRs" },
 ];
-const stateFilters: readonly { value: RepoProjectsBoardStateFilter; label: string }[] = [
+const stateFilters: readonly { value: RepoMilestonesBoardStateFilter; label: string }[] = [
   { value: "open", label: "Open" },
   { value: "closed", label: "Closed" },
   { value: "all", label: "All" },
 ];
 
 defineProps<{
-  typeFilter: RepoProjectsBoardTypeFilter;
-  stateFilter: RepoProjectsBoardStateFilter;
-  projectFilter: RepoProjectsBoardProjectFilter;
-  projectFilterOptions: readonly { id: string; title: string; count: number }[];
+  typeFilter: RepoMilestonesBoardTypeFilter;
+  stateFilter: RepoMilestonesBoardStateFilter;
+  milestoneFilter: RepoMilestonesBoardMilestoneFilter;
+  milestoneFilterOptions: readonly { id: string; title: string; state: string | null; count: number }[];
   baseItemCount: number;
   visibleItemCount: number;
   issueCount: number;
   pullCount: number;
-  projectCountTotal: number;
+  milestoneCountTotal: number;
   loading: boolean;
   metadataLoading: boolean;
 }>();
 
 const emit = defineEmits<{
-  "update:typeFilter": [value: RepoProjectsBoardTypeFilter];
-  "update:stateFilter": [value: RepoProjectsBoardStateFilter];
-  "update:projectFilter": [value: RepoProjectsBoardProjectFilter];
+  "update:typeFilter": [value: RepoMilestonesBoardTypeFilter];
+  "update:stateFilter": [value: RepoMilestonesBoardStateFilter];
+  "update:milestoneFilter": [value: RepoMilestonesBoardMilestoneFilter];
   refresh: [];
 }>();
 </script>
 
 <template>
-  <div class="projects-board-sidebar" aria-label="Projects filters">
+  <div class="milestones-sidebar" aria-label="Milestones filters">
     <section
-      class="projects-board-sidebar-card projects-board-sidebar-card--summary"
-      aria-label="Projects 摘要"
-      :title="`${visibleItemCount} items · ${issueCount} issues · ${pullCount} PRs · ${projectCountTotal} projects`"
+      class="milestones-sidebar-card milestones-sidebar-card--summary"
+      aria-label="Milestones 摘要"
+      :title="`${visibleItemCount} items · ${issueCount} issues · ${pullCount} PRs · ${milestoneCountTotal} milestones`"
     >
-      <div class="projects-board-sidebar-card__head">
+      <div class="milestones-sidebar-card__head">
         <ListFilter :size="14" aria-hidden="true" />
         <strong>Overview</strong>
         <em>{{ visibleItemCount }}</em>
       </div>
       <button
         type="button"
-        class="ghost projects-board__refresh"
+        class="ghost milestones-sidebar__refresh"
         :disabled="loading || metadataLoading"
-        aria-label="刷新 Projects"
-        data-agent-id="repo.projects.refresh"
+        aria-label="刷新 Milestones"
+        data-agent-id="repo.milestones.refresh"
         @click="emit('refresh')"
       >
         <LoaderCircle v-if="loading || metadataLoading" :size="14" aria-hidden="true" class="sb-spin" />
@@ -69,16 +69,16 @@ const emit = defineEmits<{
       </button>
     </section>
 
-    <section class="projects-board-sidebar-card" aria-label="事项类型">
-      <div class="projects-board-sidebar-card__head">
+    <section class="milestones-sidebar-card" aria-label="事项类型">
+      <div class="milestones-sidebar-card__head">
         <strong>Type</strong>
       </div>
-      <div class="projects-board__segments" role="group" aria-label="事项类型">
+      <div class="milestones-sidebar__segments" role="group" aria-label="事项类型">
         <button
           v-for="filter in typeFilters"
           :key="filter.value"
           type="button"
-          :data-agent-id="`repo.projects.filters.type.${filter.value}`"
+          :data-agent-id="`repo.milestones.filters.type.${filter.value}`"
           :class="{ 'is-active': typeFilter === filter.value }"
           :aria-pressed="typeFilter === filter.value"
           @click="emit('update:typeFilter', filter.value)"
@@ -88,16 +88,16 @@ const emit = defineEmits<{
       </div>
     </section>
 
-    <section class="projects-board-sidebar-card" aria-label="事项状态">
-      <div class="projects-board-sidebar-card__head">
+    <section class="milestones-sidebar-card" aria-label="事项状态">
+      <div class="milestones-sidebar-card__head">
         <strong>Status</strong>
       </div>
-      <div class="projects-board__segments" role="group" aria-label="事项状态">
+      <div class="milestones-sidebar__segments" role="group" aria-label="事项状态">
         <button
           v-for="filter in stateFilters"
           :key="filter.value"
           type="button"
-          :data-agent-id="`repo.projects.filters.state.${filter.value}`"
+          :data-agent-id="`repo.milestones.filters.state.${filter.value}`"
           :class="{ 'is-active': stateFilter === filter.value }"
           :aria-pressed="stateFilter === filter.value"
           @click="emit('update:stateFilter', filter.value)"
@@ -107,30 +107,30 @@ const emit = defineEmits<{
       </div>
     </section>
 
-    <section class="projects-board-sidebar-card" aria-label="Project filters">
-      <div class="projects-board-sidebar-card__head">
-        <strong>Projects</strong>
+    <section class="milestones-sidebar-card" aria-label="Milestone filters">
+      <div class="milestones-sidebar-card__head">
+        <strong>Milestones</strong>
       </div>
-      <nav class="projects-board__project-list" aria-label="Project filters">
+      <nav class="milestones-sidebar__milestone-list" aria-label="Milestone filters">
         <button
           type="button"
-          data-agent-id="repo.projects.filters.project.all"
-          :class="{ 'is-active': projectFilter === ALL_PROJECTS_ID }"
-          @click="emit('update:projectFilter', ALL_PROJECTS_ID)"
+          data-agent-id="repo.milestones.filters.milestone.all"
+          :class="{ 'is-active': milestoneFilter === ALL_MILESTONES_ID }"
+          @click="emit('update:milestoneFilter', ALL_MILESTONES_ID)"
         >
-          <span>All projects</span>
+          <span>All milestones</span>
           <em>{{ baseItemCount }}</em>
         </button>
         <button
-          v-for="project in projectFilterOptions"
-          :key="project.id"
+          v-for="milestone in milestoneFilterOptions"
+          :key="milestone.id"
           type="button"
-          :data-agent-id="`repo.projects.filters.project.${project.id}`"
-          :class="{ 'is-active': projectFilter === project.id }"
-          @click="emit('update:projectFilter', project.id)"
+          :data-agent-id="`repo.milestones.filters.milestone.${milestone.id}`"
+          :class="{ 'is-active': milestoneFilter === milestone.id }"
+          @click="emit('update:milestoneFilter', milestone.id)"
         >
-          <span>{{ project.title }}</span>
-          <em>{{ project.count }}</em>
+          <span>{{ milestone.title }}</span>
+          <em>{{ milestone.count }}</em>
         </button>
       </nav>
     </section>
@@ -138,14 +138,14 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.projects-board-sidebar {
+.milestones-sidebar {
   display: grid;
   align-content: start;
   gap: 8px;
   min-width: 0;
 }
 
-.projects-board-sidebar-card {
+.milestones-sidebar-card {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -155,12 +155,12 @@ const emit = defineEmits<{
   background: var(--bg-elev);
 }
 
-.projects-board-sidebar-card--summary {
+.milestones-sidebar-card--summary {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
 
-.projects-board-sidebar-card__head {
+.milestones-sidebar-card__head {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -169,7 +169,7 @@ const emit = defineEmits<{
   font-size: 12px;
 }
 
-.projects-board-sidebar-card__head strong {
+.milestones-sidebar-card__head strong {
   min-width: 0;
   overflow: hidden;
   font-size: 12px;
@@ -178,7 +178,7 @@ const emit = defineEmits<{
   white-space: nowrap;
 }
 
-.projects-board-sidebar-card__head em {
+.milestones-sidebar-card__head em {
   min-width: 22px;
   height: 19px;
   padding: 0 6px;
@@ -192,7 +192,7 @@ const emit = defineEmits<{
   text-align: center;
 }
 
-.projects-board__refresh {
+.milestones-sidebar__refresh {
   justify-self: end;
   display: inline-flex;
   align-items: center;
@@ -204,7 +204,7 @@ const emit = defineEmits<{
   font-size: 12px;
 }
 
-.projects-board__segments {
+.milestones-sidebar__segments {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
@@ -215,7 +215,7 @@ const emit = defineEmits<{
   background: var(--bg-subtle);
 }
 
-.projects-board__segments button {
+.milestones-sidebar__segments button {
   height: 28px;
   min-width: 0;
   padding: 0 6px;
@@ -228,18 +228,18 @@ const emit = defineEmits<{
   white-space: nowrap;
 }
 
-.projects-board__segments button.is-active {
+.milestones-sidebar__segments button.is-active {
   background: var(--bg-elev);
   color: var(--text);
 }
 
-.projects-board__project-list {
+.milestones-sidebar__milestone-list {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.projects-board__project-list button {
+.milestones-sidebar__milestone-list button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -253,22 +253,22 @@ const emit = defineEmits<{
   text-align: left;
 }
 
-.projects-board__project-list button:hover,
-.projects-board__project-list button:focus-visible,
-.projects-board__project-list button.is-active {
+.milestones-sidebar__milestone-list button:hover,
+.milestones-sidebar__milestone-list button:focus-visible,
+.milestones-sidebar__milestone-list button.is-active {
   background: var(--bg-hover);
   color: var(--text);
   filter: none;
 }
 
-.projects-board__project-list span {
+.milestones-sidebar__milestone-list span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.projects-board__project-list em {
+.milestones-sidebar__milestone-list em {
   min-width: 20px;
   height: 19px;
   padding: 0 6px;

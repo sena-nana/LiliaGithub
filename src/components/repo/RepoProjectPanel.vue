@@ -10,8 +10,8 @@ import {
   ExternalLink,
   GitFork,
   GitPullRequest,
-  LayoutDashboard,
   LoaderCircle,
+  Milestone,
   Monitor,
   Package,
   Pencil,
@@ -29,12 +29,12 @@ import Dropdown from "../Dropdown.vue";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
-  ALL_PROJECTS_ID,
-  useRepoProjectsBoard,
-  type RepoProjectsBoardProjectFilter,
-  type RepoProjectsBoardStateFilter,
-  type RepoProjectsBoardTypeFilter,
-} from "./useRepoProjectsBoard";
+  ALL_MILESTONES_ID,
+  useRepoMilestonesBoard,
+  type RepoMilestonesBoardMilestoneFilter,
+  type RepoMilestonesBoardStateFilter,
+  type RepoMilestonesBoardTypeFilter,
+} from "./useRepoMilestonesBoard";
 import {
   blankPullRequestPanelFilters,
   type PullRequestPanelFilters,
@@ -123,8 +123,8 @@ import {
   RepoIssuesPanel,
   RepoLaunchTerminalPanel,
   RepoLanguageStatsCard,
-  RepoProjectsBoard,
-  RepoProjectsBoardSidebar,
+  RepoMilestonesBoard,
+  RepoMilestonesSidebar,
   RepoPullRequestsPanel,
   RepoReleasesPanel,
   RepoTopicEditor,
@@ -166,7 +166,7 @@ type ProjectSidebarButtonConfig = {
 };
 type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
 type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
-type GitHubAccessSection = "Issues" | "Pull Requests" | "Projects" | "Actions" | "Release" | "Settings";
+type GitHubAccessSection = "Issues" | "Pull Requests" | "Milestones" | "Actions" | "Release" | "Settings";
 type ReleaseTypeFilter = "all" | "stable" | "latest" | "prerelease" | "draft";
 type GitHubAccessUnavailable = {
   title: string;
@@ -387,14 +387,14 @@ const deleteError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
 const issues = ref<GitHubIssue[]>([]);
-const boardIssues = ref<GitHubIssue[]>([]);
-const boardPulls = ref<GitHubPullRequest[]>([]);
-const boardLoadedRepo = ref<string | null>(null);
-const boardLoading = ref(false);
-const boardTypeFilter = ref<RepoProjectsBoardTypeFilter>("all");
-const boardStateFilter = ref<RepoProjectsBoardStateFilter>("open");
-const boardProjectFilter = ref<RepoProjectsBoardProjectFilter>(ALL_PROJECTS_ID);
-const boardQuery = ref("");
+const milestoneIssues = ref<GitHubIssue[]>([]);
+const milestonePulls = ref<GitHubPullRequest[]>([]);
+const milestoneLoadedRepo = ref<string | null>(null);
+const milestoneLoading = ref(false);
+const milestoneTypeFilter = ref<RepoMilestonesBoardTypeFilter>("all");
+const milestoneStateFilter = ref<RepoMilestonesBoardStateFilter>("open");
+const milestoneFilter = ref<RepoMilestonesBoardMilestoneFilter>(ALL_MILESTONES_ID);
+const milestoneQuery = ref("");
 const issueDiscussion = ref<GitHubIssueDiscussion | null>(null);
 const issueDiscussionLoading = ref(false);
 const issueDiscussionError = ref<string | null>(null);
@@ -432,25 +432,26 @@ const issueMetadataLoadedRepo = ref<string | null>(null);
 const issueFilterMetadata = ref<GitHubIssueFilterMetadata>(emptyIssueFilterMetadata());
 const issueFilterMetadataLoading = ref(false);
 const issueFilterMetadataLoadedRepo = ref<string | null>(null);
-const boardMetadataProjects = computed(() => issueFilterMetadata.value.projects);
+const milestoneMetadata = computed(() => issueFilterMetadata.value.milestones);
 const {
-  baseFilteredItems: boardBaseFilteredItems,
-  issueCount: boardIssueCount,
-  projectCountTotal: boardProjectCountTotal,
-  projectFilterOptions: boardProjectFilterOptions,
-  pullCount: boardPullCount,
-  visibleItems: boardVisibleItems,
-} = useRepoProjectsBoard({
-  issues: boardIssues,
-  pulls: boardPulls,
-  projects: boardMetadataProjects,
-  typeFilter: boardTypeFilter,
-  stateFilter: boardStateFilter,
-  projectFilter: boardProjectFilter,
-  query: boardQuery,
+  baseFilteredItems: milestoneBaseFilteredItems,
+  issueCount: milestoneIssueCount,
+  milestoneCountTotal,
+  milestoneFilterOptions,
+  pullCount: milestonePullCount,
+  visibleGroups: milestoneVisibleGroups,
+  visibleItems: milestoneVisibleItems,
+} = useRepoMilestonesBoard({
+  issues: milestoneIssues,
+  pulls: milestonePulls,
+  milestones: milestoneMetadata,
+  typeFilter: milestoneTypeFilter,
+  stateFilter: milestoneStateFilter,
+  milestoneFilter,
+  query: milestoneQuery,
 });
-const boardLoadingText = computed(() => boardLoading.value || issueFilterMetadataLoading.value ? "读取中" : "已同步");
-const boardEmptyText = computed(() => boardLoading.value ? "正在读取项目事项。" : "没有匹配的项目事项。");
+const milestoneLoadingText = computed(() => milestoneLoading.value || issueFilterMetadataLoading.value ? "读取中" : "已同步");
+const milestoneEmptyText = computed(() => milestoneLoading.value ? "正在读取里程碑事项。" : "没有匹配的里程碑事项。");
 const issuePanelFilters = ref<IssuePanelFilters>(issuePanelFiltersFromRoute());
 const pullRequestPanelFilters = ref<PullRequestPanelFilters>(pullRequestPanelFiltersFromRoute());
 const pullState = ref<PullRequestState>(pullRequestStateFromRoute());
@@ -468,7 +469,7 @@ const componentEpoch = useComponentEpoch();
 const readmeLoader = createLatestAsyncLoader({ componentEpoch });
 const settingsLoader = createLatestAsyncLoader({ componentEpoch });
 const issuesLoader = createLatestAsyncLoader({ componentEpoch });
-const boardLoader = createLatestAsyncLoader({ componentEpoch });
+const milestoneLoader = createLatestAsyncLoader({ componentEpoch });
 const issueDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
 const pullsLoader = createLatestAsyncLoader({ componentEpoch });
 const pullRequestDiscussionLoader = createLatestAsyncLoader({ componentEpoch });
@@ -584,8 +585,17 @@ const issuesAccessUnavailable = computed(() =>
 const pullsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Pull Requests", githubError.value, resolvedRepoContext.value.capabilities.pulls)
 );
-const projectsAccessUnavailable = computed(() =>
-  githubAccessUnavailable("Projects", githubError.value, resolvedRepoContext.value.capabilities.issues)
+const milestonesCapability = computed<RepoCapability>(() => {
+  const issues = resolvedRepoContext.value.capabilities.issues;
+  const pulls = resolvedRepoContext.value.capabilities.pulls;
+  return {
+    available: issues.available || pulls.available,
+    provider: issues.available ? issues.provider : pulls.provider,
+    reason: issues.reason ?? pulls.reason,
+  };
+});
+const milestonesAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Milestones", githubError.value, milestonesCapability.value)
 );
 const actionsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Actions", actionsError.value, resolvedRepoContext.value.capabilities.actions)
@@ -650,7 +660,7 @@ const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.
 const languageStatsLoading = computed(() => workspace.state.languageStatsLoadingRepoIds.includes(props.repoId));
 const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
 const projectSections: readonly ProjectSectionConfig[] = [
-  { key: "board", label: "Board", icon: LayoutDashboard },
+  { key: "milestones", label: "Milestones", icon: Milestone },
   { key: "issues", label: "Issues", icon: CircleDot },
   { key: "pulls", label: "Pull Requests", icon: GitPullRequest },
   { key: "actions", label: "Actions", icon: Play },
@@ -709,7 +719,7 @@ const showProjectSidebar = computed(() =>
   hasProjectSidebarErrors.value ||
   activeSection.value === "files" ||
   activeSection.value === "readme" ||
-  activeSection.value === "board" ||
+  activeSection.value === "milestones" ||
   activeSection.value === "issues" ||
   activeSection.value === "pulls" ||
   activeSection.value === "actions" ||
@@ -824,7 +834,7 @@ function isProjectSidebarButtonActive(section: ProjectSidebarMode) {
 const projectSidebarMode = computed<ProjectSidebarMode>(() => {
   if (activeSection.value === "files") return "files";
   if (
-    activeSection.value === "board" ||
+    activeSection.value === "milestones" ||
     activeSection.value === "issues" ||
     activeSection.value === "pulls" ||
     activeSection.value === "actions" ||
@@ -960,7 +970,7 @@ watch(() => props.activeGitTab, (tab) => {
 function normalizeProjectTab(value: unknown): ProjectTab | null {
   if (
     value === "readme" ||
-    value === "board" ||
+    value === "milestones" ||
     value === "issues" ||
     value === "pulls" ||
     value === "actions" ||
@@ -1054,7 +1064,7 @@ function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
 }
 
 function isGitHubProjectSection(section: ProjectContentMode) {
-  return section === "board" ||
+  return section === "milestones" ||
     section === "issues" ||
     section === "pulls" ||
     section === "actions" ||
@@ -1793,7 +1803,7 @@ async function loadPullRequests(force = false) {
   }, { reusePending: !force });
 }
 
-async function loadBoardItems(force = false) {
+async function loadMilestoneItems(force = false) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || remoteDeleted.value) return;
   const canUseIssues = resolvedRepoContext.value.capabilities.issues.available;
@@ -1802,10 +1812,10 @@ async function loadBoardItems(force = false) {
     clearBlockedGitHubState();
     return;
   }
-  if (!force && boardLoadedRepo.value === repoFullName) return;
+  if (!force && milestoneLoadedRepo.value === repoFullName) return;
   githubError.value = null;
-  boardLoading.value = true;
-  await boardLoader.run(repoFullName, async (runId) => {
+  milestoneLoading.value = true;
+  await milestoneLoader.run(repoFullName, async (runId) => {
     try {
       const [nextIssues, nextPulls] = await Promise.all([
         canUseIssues
@@ -1825,15 +1835,15 @@ async function loadBoardItems(force = false) {
             }, { forceRefresh: force })
           : Promise.resolve([]),
       ]);
-      if (!boardLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
-      boardIssues.value = nextIssues;
-      boardPulls.value = nextPulls;
-      boardLoadedRepo.value = repoFullName;
+      if (!milestoneLoader.isCurrent(runId) || repoFullName !== props.repoFullName || remoteDeleted.value) return;
+      milestoneIssues.value = nextIssues;
+      milestonePulls.value = nextPulls;
+      milestoneLoadedRepo.value = repoFullName;
     } catch (err) {
       githubError.value = String(err);
     } finally {
-      if (boardLoader.isCurrent(runId)) {
-        boardLoading.value = false;
+      if (milestoneLoader.isCurrent(runId)) {
+        milestoneLoading.value = false;
       }
     }
   }, { reusePending: !force });
@@ -1976,10 +1986,10 @@ async function ensureSectionData(section: ProjectContentMode) {
     ]);
     return;
   }
-  if (section === "board") {
+  if (section === "milestones") {
     await Promise.all([
       preload,
-      loadBoardItems(),
+      loadMilestoneItems(),
       loadIssueFilterMetadata(),
     ]);
     return;
@@ -2031,9 +2041,9 @@ async function refreshLoadedSectionData() {
     ]);
     return;
   }
-  if (activeSection.value === "board" && boardLoadedRepo.value) {
+  if (activeSection.value === "milestones" && milestoneLoadedRepo.value) {
     await Promise.all([
-      loadBoardItems(true),
+      loadMilestoneItems(true),
       issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
     ]);
     return;
@@ -2110,7 +2120,7 @@ function resetProjectSectionState() {
 function resetGitHubSectionState() {
   settingsLoader.invalidate();
   issuesLoader.invalidate();
-  boardLoader.invalidate();
+  milestoneLoader.invalidate();
   issueDiscussionLoader.invalidate();
   pullsLoader.invalidate();
   pullRequestDiscussionLoader.invalidate();
@@ -2121,10 +2131,10 @@ function resetGitHubSectionState() {
   settings.value = null;
   settingsLoaded.value = false;
   issues.value = [];
-  boardIssues.value = [];
-  boardPulls.value = [];
-  boardLoadedRepo.value = null;
-  boardLoading.value = false;
+  milestoneIssues.value = [];
+  milestonePulls.value = [];
+  milestoneLoadedRepo.value = null;
+  milestoneLoading.value = false;
   issueDiscussion.value = null;
   issueDiscussionLoading.value = false;
   issueDiscussionError.value = null;
@@ -2721,7 +2731,7 @@ async function focusIssueRow(issue: GitHubIssue) {
   }
 }
 
-async function openIssueFromBoard(issue: GitHubIssue) {
+async function openIssueFromMilestones(issue: GitHubIssue) {
   activeSection.value = "issues";
   await focusIssue(issue.number);
   void pushProjectTabRoute("issues");
@@ -2748,7 +2758,7 @@ async function focusPullRequestRow(pull: GitHubPullRequest) {
   }
 }
 
-async function openPullRequestFromBoard(pull: GitHubPullRequest) {
+async function openPullRequestFromMilestones(pull: GitHubPullRequest) {
   activeSection.value = "pulls";
   await focusPullRequest(pull.number);
   void pushProjectTabRoute("pulls");
@@ -3028,26 +3038,27 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <section
-          v-else-if="activeSection === 'board'"
+          v-else-if="activeSection === 'milestones'"
           class="project-section project-github-section"
-          :class="{ 'project-section--flush': !projectsAccessUnavailable }"
+          :class="{ 'project-section--flush': !milestonesAccessUnavailable }"
         >
           <RepoGitHubUnavailableNotice
-            v-if="projectsAccessUnavailable"
-            :title="projectsAccessUnavailable.title"
-            :reason="projectsAccessUnavailable.reason"
+            v-if="milestonesAccessUnavailable"
+            :title="milestonesAccessUnavailable.title"
+            :reason="milestonesAccessUnavailable.reason"
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <RepoProjectsBoard
+          <RepoMilestonesBoard
             v-else
-            v-model:query="boardQuery"
-            :items="boardVisibleItems"
-            :project-count-total="boardProjectCountTotal"
-            :loading-text="boardLoadingText"
-            :empty-text="boardEmptyText"
-            @open-issue="openIssueFromBoard"
-            @open-pull-request="openPullRequestFromBoard"
+            v-model:query="milestoneQuery"
+            :groups="milestoneVisibleGroups"
+            :item-count="milestoneVisibleItems.length"
+            :milestone-count-total="milestoneCountTotal"
+            :loading-text="milestoneLoadingText"
+            :empty-text="milestoneEmptyText"
+            @open-issue="openIssueFromMilestones"
+            @open-pull-request="openPullRequestFromMilestones"
           />
         </section>
 
@@ -3741,18 +3752,18 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           <p>{{ fileUnavailableMessage }}</p>
         </section>
 
-        <RepoProjectsBoardSidebar
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'board'"
-          v-model:type-filter="boardTypeFilter"
-          v-model:state-filter="boardStateFilter"
-          v-model:project-filter="boardProjectFilter"
-          :project-filter-options="boardProjectFilterOptions"
-          :base-item-count="boardBaseFilteredItems.length"
-          :visible-item-count="boardVisibleItems.length"
-          :issue-count="boardIssueCount"
-          :pull-count="boardPullCount"
-          :project-count-total="boardProjectCountTotal"
-          :loading="boardLoading"
+        <RepoMilestonesSidebar
+          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'milestones'"
+          v-model:type-filter="milestoneTypeFilter"
+          v-model:state-filter="milestoneStateFilter"
+          v-model:milestone-filter="milestoneFilter"
+          :milestone-filter-options="milestoneFilterOptions"
+          :base-item-count="milestoneBaseFilteredItems.length"
+          :visible-item-count="milestoneVisibleItems.length"
+          :issue-count="milestoneIssueCount"
+          :pull-count="milestonePullCount"
+          :milestone-count-total="milestoneCountTotal"
+          :loading="milestoneLoading"
           :metadata-loading="issueFilterMetadataLoading"
           @refresh="refreshLoadedSectionData"
         />

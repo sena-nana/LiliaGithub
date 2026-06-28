@@ -1453,51 +1453,76 @@ describe("RepoProjectPanel", () => {
     });
   });
 
-  it("Board 分区以列表主页展示项目事项并通过侧栏筛选和打开详情", async () => {
-    const unassignedIssue: GitHubIssue = {
+  it("Milestones 分区按里程碑分组展示事项并通过侧栏筛选和打开详情", async () => {
+    const v2Issue: GitHubIssue = {
       ...githubIssues[0],
       number: 66,
       title: "整理文档",
-      labels: ["bug", "documentation", "area: docs", "v2.0 roadmap"],
+      labels: ["documentation", "area: docs"],
+      milestone: { number: 2, title: "v2", state: "closed" },
       projectItems: [],
       htmlUrl: "https://github.com/sena-nana/remote-repo/issues/66",
+      updatedAt: "2026-06-19T08:00:00Z",
     };
-    vi.mocked(listGitHubIssues).mockResolvedValue([githubIssues[0], unassignedIssue]);
+    const unassignedIssue: GitHubIssue = {
+      ...githubIssues[0],
+      number: 88,
+      title: "整理文档",
+      labels: ["bug", "documentation", "area: docs", "v2.0 roadmap"],
+      milestone: null,
+      projectItems: [],
+      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/88",
+      updatedAt: "2026-06-17T08:00:00Z",
+    };
+    const closedV2Issue: GitHubIssue = {
+      ...closedGitHubIssues[0],
+      milestone: { number: 2, title: "v2", state: "closed" },
+    };
+    vi.mocked(getGitHubIssueFilterMetadata).mockResolvedValue({
+      authors: ["sena"],
+      labels: ["bug", "needs triage", "documentation"],
+      assignees: ["mika", "sena"],
+      milestones: [{ number: 1, title: "v1", state: "open" }, { number: 2, title: "v2", state: "closed" }],
+      projects: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
+    });
+    vi.mocked(listGitHubIssues).mockResolvedValue([githubIssues[0], v2Issue, unassignedIssue, closedV2Issue]);
     vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
     vi.mocked(listGitHubPullRequestChecks).mockResolvedValue(githubPullRequestChecks);
     const view = await renderProjectPanel({
       repoFullName: "sena-nana/remote-repo",
     });
 
-    await fireEvent.click(view.getByRole("tab", { name: "Board" }));
+    await fireEvent.click(view.getByRole("tab", { name: "Milestones" }));
 
-    const board = await view.findByLabelText("Projects board", {}, { timeout: 5000 });
-    const itemList = within(board).getByRole("list", { name: "Project items" });
+    const milestonesBoard = await view.findByLabelText("Milestones board", {}, { timeout: 5000 });
+    const groupList = within(milestonesBoard).getByRole("list", { name: "Milestone groups" });
     const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
     expect(projectSidebar).toBeInTheDocument();
-    const projectFilters = await waitFor(() =>
-      within(projectSidebar).getByRole("navigation", { name: "Project filters" })
+    const milestoneFilters = await waitFor(() =>
+      within(projectSidebar).getByRole("navigation", { name: "Milestone filters" })
     );
-    expect(board.querySelector(".projects-board__columns")).toBeNull();
-    expect(board.querySelector(".projects-board__main")).toBeNull();
-    expect(board.querySelector(".projects-board__sidebar")).toBeNull();
-    expect(itemList).toHaveClass("projects-board__list");
-    expect(within(board).queryByLabelText("Projects filters")).toBeNull();
-    expect(within(projectFilters).getByRole("button", { name: /All projects/ })).toBeInTheDocument();
-    expect(within(projectFilters).getByRole("button", { name: /Roadmap/ })).toBeInTheDocument();
-    expect(within(projectFilters).getByRole("button", { name: /No project/ })).toBeInTheDocument();
-    expect(within(projectSidebar).getByRole("button", { name: "刷新 Projects" })).toBeInTheDocument();
-    expect(within(board).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
-    expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
-    const unassignedButton = within(board).getByRole("button", { name: /#66 整理文档/ });
+    expect(groupList).toHaveClass("milestones-board__groups");
+    expect(within(milestonesBoard).queryByLabelText("Milestones filters")).toBeNull();
+    expect(within(milestoneFilters).getByRole("button", { name: /All milestones/ })).toBeInTheDocument();
+    expect(within(milestoneFilters).getByRole("button", { name: /v1/ })).toBeInTheDocument();
+    expect(within(milestoneFilters).getByRole("button", { name: /v2/ })).toBeInTheDocument();
+    expect(within(milestoneFilters).getByRole("button", { name: /No milestone/ })).toBeInTheDocument();
+    expect(within(projectSidebar).getByRole("button", { name: "刷新 Milestones" })).toBeInTheDocument();
+    expect(within(milestonesBoard).getByLabelText("v1 milestone")).toHaveTextContent("2");
+    expect(within(milestonesBoard).getByLabelText("v2 milestone")).toHaveTextContent("1");
+    expect(within(milestonesBoard).getByLabelText("No milestone milestone")).toHaveTextContent("1");
+    expect(within(milestonesBoard).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
+    expect(within(milestonesBoard).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
+    expect(within(milestonesBoard).getByRole("button", { name: /#66 整理文档/ })).toBeInTheDocument();
+    const unassignedButton = within(milestonesBoard).getByRole("button", { name: /#88 整理文档/ });
     expect(unassignedButton).toBeInTheDocument();
     expect(within(unassignedButton).getByText("area: docs")).toBeInTheDocument();
     expect(within(unassignedButton).getByText("v2.0 roadmap")).toBeInTheDocument();
     expect(within(unassignedButton).getByText("+2")).toBeInTheDocument();
-    expect(unassignedButton).not.toHaveTextContent("No project");
+    expect(unassignedButton).not.toHaveTextContent("No milestone");
     expect(unassignedButton).not.toHaveTextContent("sena");
-    const overview = within(projectSidebar).getByLabelText("Projects 摘要");
-    expect(overview).toHaveTextContent("Overview3");
+    const overview = within(projectSidebar).getByLabelText("Milestones 摘要");
+    expect(overview).toHaveTextContent("Overview4");
     expect(listGitHubIssues).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
       expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
@@ -1509,12 +1534,24 @@ describe("RepoProjectPanel", () => {
       { forceRefresh: false },
     );
 
-    await fireEvent.click(within(projectFilters).getByRole("button", { name: /Roadmap/ }));
-    expect(within(board).queryByRole("button", { name: /#66 整理文档/ })).toBeNull();
-    expect(within(board).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
-    expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
+    await fireEvent.click(within(milestoneFilters).getByRole("button", { name: /v2/ }));
+    expect(within(milestonesBoard).getByRole("button", { name: /#66 整理文档/ })).toBeInTheDocument();
+    expect(within(milestonesBoard).queryByRole("button", { name: /#12 修复懒加载/ })).toBeNull();
+    expect(within(milestonesBoard).queryByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeNull();
+    expect(within(milestonesBoard).queryByRole("button", { name: /#88 整理文档/ })).toBeNull();
 
-    await fireEvent.click(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ }));
+    await fireEvent.click(within(milestoneFilters).getByRole("button", { name: /All milestones/ }));
+    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "PRs" }));
+    expect(within(milestonesBoard).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
+    expect(within(milestonesBoard).queryByRole("button", { name: /#12 修复懒加载/ })).toBeNull();
+
+    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "全部" }));
+    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "Closed" }));
+    expect(within(milestonesBoard).getByRole("button", { name: /#34 已关闭问题/ })).toBeInTheDocument();
+    expect(within(milestonesBoard).queryByRole("button", { name: /#66 整理文档/ })).toBeNull();
+
+    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "Open" }));
+    await fireEvent.click(within(milestonesBoard).getByRole("button", { name: /#52 接入 Pull Request 工作流/ }));
     expect(await view.findByRole("heading", { level: 3, name: "#52 接入 Pull Request 工作流" }, { timeout: 5000 })).toBeInTheDocument();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });

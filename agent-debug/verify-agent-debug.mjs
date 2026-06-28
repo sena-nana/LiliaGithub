@@ -417,13 +417,13 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.toolbar.tab.repo"],
-      waits: ["repo.project.sidebar.board"],
+      waits: ["repo.project.sidebar.milestones"],
       observe: "repo-readme-about",
     },
     {
-      clicks: ["repo.project.sidebar.board"],
-      waits: ["repo.projects.search", "repo.projects.refresh"],
-      observe: "project-board",
+      clicks: ["repo.project.sidebar.milestones"],
+      waits: ["repo.milestones.search", "repo.milestones.refresh"],
+      observe: "project-milestones",
     },
     {
       clicks: ["repo.project.sidebar.issues"],

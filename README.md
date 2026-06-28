@@ -58,7 +58,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It keeps 
 
 - Workspace-first repository view: scan a local workspace and keep repository status, branch state, changes, history, and sync state close together.
 - Focused repository operations: stage, commit, pull, push, checkout, open the remote page when needed, and open the local folder from one repository surface.
-- GitHub project visibility: bring repository, issue, pull request, review, release, and project-board context into the desktop app instead of requiring constant browser switching.
+- GitHub project visibility: bring repository, issue, pull request, review, release, and milestone context into the desktop app instead of requiring constant browser switching.
 - Personal workspace management: provide a signed-in home for account state, repository lists, notifications, saved workspaces, and personal preferences.
 - Push activity review: surface recent pushes, outgoing changes, CI / release results, and sync problems where developers already manage their repositories.
 - Quick launch commands: save a repository launch target, poll running state, and inspect recent command output without turning the main workspace into a terminal-only app.
@@ -84,7 +84,7 @@ The list below tracks the current real integration surface. Only capabilities th
 - [x] Issue browsing, filtering, detail timeline, template-assisted creation, route-persisted filters, and repository project fields.
 - [x] Pull request browsing, filtering, detail timeline, checks, create flow, merge action, and route-persisted filters.
 - [x] Discussion Markdown timeline rendering inside issue and pull request details.
-- [x] Repository Projects metadata loading and board view from linked issues and pull requests.
+- [x] Repository Milestones view grouped from linked issues and pull requests.
 - [x] Actions run list, run detail, job graph, job logs, workflow node graph, and artifact preview.
 - [x] Home GitHub timeline for recent issues, pull requests, workflow runs, pushes, and sync events.
 - [x] Release list and status management.
