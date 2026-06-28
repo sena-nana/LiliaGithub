@@ -54,7 +54,6 @@ pub fn run() {
             workspace::settings::workspace_clear_startup_cache,
             workspace::settings::workspace_write_startup_contributions,
             workspace::settings::workspace_set_root,
-            workspace::settings::workspace_set_keyboard_shortcut,
             workspace::settings::repo_set_preference,
             workspace::settings::repo_set_auto_sync,
             workspace::settings::workspace_pick_root,

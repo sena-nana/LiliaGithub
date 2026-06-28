@@ -6,8 +6,6 @@ pub struct WorkspaceSettings {
     pub workspace_root: Option<String>,
     pub github_binding: Option<GitHubBindingMetadata>,
     #[serde(default)]
-    pub keyboard_shortcuts: HashMap<String, KeyboardShortcutBinding>,
-    #[serde(default)]
     pub project_launch_configs: HashMap<String, ProjectLaunchConfig>,
     #[serde(default)]
     pub repo_sync_preferences: HashMap<String, RepoSyncPreference>,
@@ -23,17 +21,6 @@ pub struct WorkspaceSettings {
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
     #[serde(default)]
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyboardShortcutBinding {
-    pub key: String,
-    pub code: Option<String>,
-    pub ctrl_key: bool,
-    pub meta_key: bool,
-    pub alt_key: bool,
-    pub shift_key: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
