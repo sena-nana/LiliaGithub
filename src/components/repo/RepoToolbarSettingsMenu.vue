@@ -6,12 +6,14 @@ import { SB_MENU_POP_TRANSITION_MS } from "../../composables/menuMotion";
 import { useAnchoredMenuMotion } from "../../composables/useAnchoredMenuMotion";
 
 const props = defineProps<{
-  values: Record<RepoSettingKey, boolean>;
+  values?: Record<RepoSettingKey, boolean>;
+  autoSync?: boolean;
   disabled?: boolean;
 }>();
 
 const emit = defineEmits<{
   "update:setting": [key: RepoSettingKey, value: boolean];
+  "update:autoSync": [value: boolean];
 }>();
 
 const open = ref(false);
@@ -19,6 +21,13 @@ const placement = computed(() => "bottom" as const);
 const menuMotion = useAnchoredMenuMotion(placement);
 const origin = menuMotion.origin;
 const settings = REPO_SETTING_ITEMS;
+const settingValues = computed(() => ({
+  autoSync: props.autoSync ?? false,
+  includeInHomeCodeStats: true,
+  includeInHomeContributionStats: true,
+  calculateHomeTimeline: true,
+  ...props.values,
+}));
 
 function toggle(event: MouseEvent) {
   if (props.disabled) return;
@@ -45,7 +54,12 @@ function onKey(event: KeyboardEvent) {
 
 function updateSetting(key: RepoSettingKey, event: Event) {
   const input = event.target as HTMLInputElement;
+  if (key === "autoSync") emit("update:autoSync", input.checked);
   emit("update:setting", key, input.checked);
+}
+
+function isSettingEnabled(key: RepoSettingKey) {
+  return settingValues.value[key];
 }
 
 function settingAgentId(key: RepoSettingKey) {
@@ -112,7 +126,7 @@ onBeforeUnmount(() => {
           <input
             class="ui-switch__input"
             type="checkbox"
-            :checked="values[setting.key]"
+            :checked="isSettingEnabled(setting.key)"
             :disabled="disabled"
             :aria-label="setting.label"
             :data-agent-id="settingAgentId(setting.key)"

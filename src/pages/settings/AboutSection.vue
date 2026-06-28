@@ -4,6 +4,7 @@
     <h2>关于</h2>
     <ul class="kv">
       <li><span>名称</span><span>{{ appName }}</span></li>
+      <li><span>框架</span><span>Tauri 2 + Vue 3</span></li>
       <li class="about-version-row">
         <span>版本</span>
         <span>
