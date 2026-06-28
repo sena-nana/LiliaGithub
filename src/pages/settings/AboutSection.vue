@@ -10,7 +10,7 @@
           <span class="about-version-value">{{ appVersion }}</span>
           <button
             type="button"
-            class="ghost"
+            class="primary about-version-action"
             data-agent-id="settings.about.updater.check"
             :disabled="checking || installing"
             @click="checkForUpdate"
@@ -20,7 +20,7 @@
           <button
             v-if="pendingUpdate"
             type="button"
-            class="primary"
+            class="primary about-version-action"
             data-agent-id="settings.about.updater.install"
             :disabled="installing"
             @click="installUpdate"
@@ -30,7 +30,6 @@
         </span>
       </li>
     </ul>
-      <p class="about-version-message">{{ updateMessage }}</p>
     </section>
     <section class="card about-license-third-party" aria-label="第三方许可证协议">
       <template v-if="hasLicenseManifest">
@@ -108,24 +107,14 @@ const rustDependencies = computed(() => manifest?.rustDependencies ?? []);
 const checking = ref(false);
 const installing = ref(false);
 const pendingUpdate = ref<Update | null>(null);
-const updateMessage = ref("正式发布包会通过 Tauri updater 检查 GitHub Releases。");
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 async function checkForUpdate() {
   checking.value = true;
   pendingUpdate.value = null;
-  updateMessage.value = "正在检查更新。";
   try {
     const update = await check();
     pendingUpdate.value = update;
-    updateMessage.value = update
-      ? `发现 ${update.version}，当前版本 ${update.currentVersion}。`
-      : "当前已是最新版本。";
-  } catch (error) {
-    updateMessage.value = `检查更新失败：${errorMessage(error)}`;
+  } catch {
   } finally {
     checking.value = false;
   }
@@ -134,19 +123,10 @@ async function checkForUpdate() {
 async function installUpdate() {
   if (!pendingUpdate.value) return;
   installing.value = true;
-  updateMessage.value = "正在下载更新。";
   try {
-    await pendingUpdate.value.downloadAndInstall((event) => {
-      if (event.event === "Started") {
-        updateMessage.value = "正在下载更新包。";
-      } else if (event.event === "Finished") {
-        updateMessage.value = "更新包下载完成，正在安装。";
-      }
-    });
-    updateMessage.value = "更新已安装，重启应用后生效。";
+    await pendingUpdate.value.downloadAndInstall(() => {});
     pendingUpdate.value = null;
-  } catch (error) {
-    updateMessage.value = `安装更新失败：${errorMessage(error)}`;
+  } catch {
   } finally {
     installing.value = false;
   }
@@ -167,10 +147,11 @@ async function installUpdate() {
   align-items: center;
 }
 
-.about-version-message {
-  margin: 6px 0 0;
-  color: var(--muted);
+.about-version-action {
+  height: 22px;
+  padding: 0 8px;
   font-size: 12px;
+  line-height: 1;
 }
 
 .about-license-fallback {
