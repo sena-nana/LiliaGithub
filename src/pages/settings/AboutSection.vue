@@ -11,7 +11,7 @@
       <h2>第三方许可证协议</h2>
       <template v-if="hasLicenseManifest">
         <details class="about-license-details">
-          <summary>依赖明细（{{ dependencyCount }}）</summary>
+          <summary>依赖明细</summary>
           <div v-if="npmDependencies.length">
             <div class="about-license-summary-title">npm</div>
             <ul class="kv">
@@ -101,8 +101,6 @@ const appName = computed(() => manifest?.app?.name || "LiliaGithub");
 const appVersion = computed(() => manifest?.app?.version ?? "1.0.0");
 const npmDependencies = computed(() => manifest?.npmDependencies ?? []);
 const rustDependencies = computed(() => manifest?.rustDependencies ?? []);
-const dependencyCount = computed(() => npmDependencies.value.length + rustDependencies.value.length);
-
 const checking = ref(false);
 const installing = ref(false);
 const pendingUpdate = ref<Update | null>(null);
