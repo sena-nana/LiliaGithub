@@ -2,7 +2,6 @@ import {
   FolderGit2,
   Home,
   Info,
-  Keyboard,
   Palette,
   Sparkles,
 } from "@lucide/vue";
@@ -69,7 +68,7 @@ export const SIDEBAR_FOOTER_STATUS: SidebarFooterStatus = {
   icon: Sparkles,
 };
 
-export type SettingsTabKey = "appearance" | "shortcuts" | "repositories" | "about";
+export type SettingsTabKey = "appearance" | "repositories" | "about";
 
 export interface SettingsTab {
   key: SettingsTabKey;
@@ -84,12 +83,6 @@ export const SETTINGS_TABS: SettingsTab[] = [
     label: "外观",
     icon: Palette,
     to: { path: "/settings", query: { tab: "appearance" } },
-  },
-  {
-    key: "shortcuts",
-    label: "快捷键",
-    icon: Keyboard,
-    to: { path: "/settings", query: { tab: "shortcuts" } },
   },
   {
     key: "repositories",
@@ -108,13 +101,11 @@ export const SETTINGS_TABS: SettingsTab[] = [
 export const DEFAULT_SETTINGS_TAB: SettingsTabKey = "appearance";
 
 const appearanceSection = createCachedAsyncComponent(() => import("../pages/settings/AppearanceSection.vue"));
-const shortcutsSection = createCachedAsyncComponent(() => import("../pages/settings/ShortcutsSection.vue"));
 const repositoriesSection = createCachedAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue"));
 const aboutSection = createCachedAsyncComponent(() => import("../pages/settings/AboutSection.vue"));
 
 export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
   appearance: appearanceSection.component,
-  shortcuts: shortcutsSection.component,
   repositories: repositoriesSection.component,
   about: aboutSection.component,
 };

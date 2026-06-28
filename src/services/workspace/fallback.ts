@@ -3,7 +3,6 @@ import {
   withRepoAutoSyncPreference,
   withRepoSettingPreference,
 } from "../../config/repoSettingsManifest";
-import { COMMAND_PALETTE_SHORTCUT_ACTION } from "../../utils/keyboardShortcuts";
 import type {
   BulkOperation,
   BulkSyncPreview,
@@ -50,8 +49,6 @@ import type {
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
   HiddenRepo,
-  KeyboardShortcutActionId,
-  KeyboardShortcutBinding,
   ProjectLaunchConfig,
   ProjectLaunchCandidate,
   ProjectLaunchHistoryEntry,
@@ -2222,7 +2219,6 @@ function createFallbackSettings(): WorkspaceSettings {
     return {
       workspaceRoot: "C:\\Files\\workspace",
       githubBinding: defaultFallbackBinding.binding,
-      keyboardShortcuts: {},
       projectLaunchConfigs: {},
       repoSyncPreferences: {},
       hiddenRepoIds: [],
@@ -2236,7 +2232,6 @@ function createFallbackSettings(): WorkspaceSettings {
   return {
     workspaceRoot: "D:\\PROJECT\\workspace",
     githubBinding: defaultFallbackBinding.binding,
-    keyboardShortcuts: {},
     projectLaunchConfigs: {
       LiliaGithub: {
         command: "yarn tauri:dev",
@@ -2748,19 +2743,6 @@ function cloneWorkspaceRepoGroup(group: WorkspaceRepoGroup): WorkspaceRepoGroup 
   };
 }
 
-function cloneKeyboardShortcuts(
-  shortcuts: WorkspaceSettings["keyboardShortcuts"] | null | undefined,
-): WorkspaceSettings["keyboardShortcuts"] {
-  return Object.fromEntries(
-    Object.entries(shortcuts ?? {})
-      .filter((entry): entry is [string, KeyboardShortcutBinding] => Boolean(entry[1]))
-      .map(([actionId, shortcut]) => [
-        actionId,
-        { ...shortcut },
-      ]),
-  ) as WorkspaceSettings["keyboardShortcuts"];
-}
-
 function normalizeRemoteRepoId(fullName: string): string | null {
   const trimmed = fullName.trim().replace(/^\/+|\/+$/g, "");
   if (!trimmed) return null;
@@ -2786,7 +2768,6 @@ function normalizeRemoteRepoIdKey(fullName: string): string | null {
 function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings {
   return {
     ...settings,
-    keyboardShortcuts: cloneKeyboardShortcuts(settings.keyboardShortcuts),
     projectLaunchConfigs: { ...settings.projectLaunchConfigs },
     repoSyncPreferences: Object.fromEntries(
       Object.entries(settings.repoSyncPreferences ?? {}).map(([repoId, preference]) => [
@@ -2966,28 +2947,6 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
     fallbackStartupCache = null;
-    return cloneWorkspaceSettings(fallbackSettings);
-  });
-}
-
-export function setKeyboardShortcut(
-  actionId: KeyboardShortcutActionId,
-  shortcut: KeyboardShortcutBinding | null,
-): Promise<WorkspaceSettings> {
-  return call("workspace_set_keyboard_shortcut", { actionId, shortcut }, () => {
-    if (actionId !== COMMAND_PALETTE_SHORTCUT_ACTION) {
-      throw new Error(`未知快捷键：${actionId}`);
-    }
-    const keyboardShortcuts = cloneKeyboardShortcuts(fallbackSettings.keyboardShortcuts);
-    if (shortcut) {
-      keyboardShortcuts[actionId] = { ...shortcut };
-    } else {
-      delete keyboardShortcuts[actionId];
-    }
-    fallbackSettings = {
-      ...fallbackSettings,
-      keyboardShortcuts,
-    };
     return cloneWorkspaceSettings(fallbackSettings);
   });
 }

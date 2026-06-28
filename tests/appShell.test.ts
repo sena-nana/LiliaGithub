@@ -11,7 +11,6 @@ import { workspaceFallbackForTests } from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
-import { COMMAND_PALETTE_SHORTCUT_ACTION } from "../src/utils/keyboardShortcuts";
 import { repoSummary } from "./fixtures/workspace";
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -147,23 +146,6 @@ async function selectCreateRepoGroup(view: AppShellView, dialog: HTMLElement, gr
   }
   await fireEvent.click(trigger);
   await fireEvent.click(await view.findByRole("option", { name: new RegExp(groupName) }));
-}
-
-async function runCommandPaletteAction(
-  view: AppShellView,
-  query: string,
-  label: string,
-  shortcut: KeyboardEventInit = { key: "k", ctrlKey: true },
-) {
-  await fireEvent.keyDown(window, shortcut);
-  const palette = await view.findByRole("dialog", { name: "命令入口" });
-  await fireEvent.update(within(palette).getByPlaceholderText("输入命令或 GitHub 操作"), query);
-  const labelNode = await within(palette).findByText(label);
-  const option = labelNode.closest("button");
-  if (!(option instanceof HTMLElement)) {
-    throw new Error(`未找到命令项: ${label}`);
-  }
-  await fireEvent.click(option);
 }
 
 async function openHomeCloneDialog(view: AppShellView, groupName = "未分组仓库") {
@@ -307,73 +289,6 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("Ctrl+K 可创建本地仓库并按未分组归位", async () => {
-    const view = await renderAppShell("/");
-
-    await waitFor(() => {
-      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
-    });
-
-    await runCommandPaletteAction(view, "本地", "创建本地仓库");
-    const dialog = await view.findByRole("dialog", { name: "新建本地仓库" });
-    expect(within(dialog).getByRole("button", { name: /未分组仓库/ })).toBeInTheDocument();
-    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "palette-local");
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
-
-    await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/palette-local");
-      expect(sidebarRowForText(view.container, "palette-local")).toBeInTheDocument();
-      expect(sidebarGroupForText(view.container, "未分组仓库", 3)).toBeInTheDocument();
-    });
-  });
-
-  it("命令面板使用设置中的自定义快捷键", async () => {
-    await workspaceFallback.setKeyboardShortcut(COMMAND_PALETTE_SHORTCUT_ACTION, {
-      key: "P",
-      code: "KeyP",
-      ctrlKey: true,
-      metaKey: false,
-      altKey: true,
-      shiftKey: false,
-    });
-    const view = await renderAppShell("/");
-
-    await waitFor(() => {
-      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
-    });
-
-    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    expect(view.queryByRole("dialog", { name: "命令入口" })).not.toBeInTheDocument();
-
-    await runCommandPaletteAction(
-      view,
-      "本地",
-      "创建本地仓库",
-      { key: "p", code: "KeyP", ctrlKey: true, altKey: true },
-    );
-    expect(await view.findByRole("dialog", { name: "新建本地仓库" })).toBeInTheDocument();
-  });
-
-  it("Ctrl+K 可直接进入当前仓库的 GitHub 创建流程", async () => {
-    const view = await renderAppShell("/repos/LiliaGithub");
-
-    await waitFor(() => {
-      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
-    });
-
-    for (const command of [
-      { query: "创建 Issue", label: "创建当前仓库 Issue", path: "/repos/LiliaGithub?projectTab=issues&create=issue" },
-      { query: "创建 PR", label: "创建当前仓库 Pull Request", path: "/repos/LiliaGithub?projectTab=pulls&create=pull" },
-      { query: "创建 Release", label: "创建当前仓库 Release", path: "/repos/LiliaGithub?projectTab=release&create=release" },
-    ]) {
-      await runCommandPaletteAction(view, command.query, command.label);
-      await waitFor(() => {
-        expect(view.router.currentRoute.value.fullPath).toBe(command.path);
-      });
-    }
-    view.unmount();
-  });
-
   it("首页入口可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
     const view = await renderAppShell("/");
 
@@ -384,7 +299,7 @@ describe("AppShell sidebar", () => {
     await createSidebarRepoGroup(view, "前端");
     await selectHomeCreateRepoAction(view, "创建远程仓库");
     const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    await view.findByRole("option", { name: "lilia-user · user" });
+    await within(dialog).findByRole("button", { name: /lilia-user · user/ });
     await selectCreateRepoGroup(view, dialog, "前端");
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "template-made");
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
@@ -397,31 +312,6 @@ describe("AppShell sidebar", () => {
     });
     await toggleSidebarRepoGroup(view, "前端");
     expect(sidebarRowForText(view.container, "template-made")).toBeInTheDocument();
-  });
-
-  it("Ctrl+K 可从 GitHub 模板创建远程仓库、克隆并归组", async () => {
-    const view = await renderAppShell("/");
-
-    await waitFor(() => {
-      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
-    });
-
-    await createSidebarRepoGroup(view, "前端");
-    await runCommandPaletteAction(view, "远程", "创建远程仓库");
-    const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    await view.findByRole("option", { name: "lilia-user · user" });
-    await selectCreateRepoGroup(view, dialog, "前端");
-    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "palette-template");
-    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
-    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
-
-    await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/palette-template");
-      expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
-    });
-    await toggleSidebarRepoGroup(view, "前端");
-    expect(sidebarRowForText(view.container, "palette-template")).toBeInTheDocument();
   });
 
   it("删除非空分组后仓库回到未分组", async () => {
@@ -897,7 +787,7 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("Ctrl+K 可打开克隆仓库入口并按分组归位", async () => {
+  it("首页入口可打开克隆仓库入口并按分组归位", async () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -905,23 +795,23 @@ describe("AppShell sidebar", () => {
     });
 
     await createSidebarRepoGroup(view, "前端");
-    await runCommandPaletteAction(view, "克隆 前端", "克隆仓库 / 前端");
+    await openHomeCloneDialog(view, "前端");
     const dialog = await view.findByRole("dialog", { name: "克隆仓库" });
     const input = await within(dialog).findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
 
-    await fireEvent.update(input, "sena-nana/PaletteClone");
+    await fireEvent.update(input, "sena-nana/HomeClone");
     await waitFor(() => {
-      expect(within(dialog).getByText("直接克隆 sena-nana/PaletteClone")).toBeInTheDocument();
-      expect(within(dialog).getByPlaceholderText("默认从 URL 推导")).toHaveValue("PaletteClone");
+      expect(within(dialog).getByText("直接克隆 sena-nana/HomeClone")).toBeInTheDocument();
+      expect(within(dialog).getByPlaceholderText("默认从 URL 推导")).toHaveValue("HomeClone");
     });
     await fireEvent.click(within(dialog).getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/PaletteClone");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/HomeClone");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
     await toggleSidebarRepoGroup(view, "前端");
-    expect(sidebarRowForText(view.container, "PaletteClone")).toBeInTheDocument();
+    expect(sidebarRowForText(view.container, "HomeClone")).toBeInTheDocument();
   });
 
   it("已绑定 GitHub 时支持 owner/repo 直接克隆", async () => {
@@ -1162,7 +1052,7 @@ describe("AppShell sidebar", () => {
     expect(view.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
     expect(view.getByRole("button", { name: /外观/ })).toHaveClass("is-active");
-    expect(view.getByRole("button", { name: /快捷键/ })).toBeInTheDocument();
+    expect(view.getByRole("button", { name: /仓库/ })).toBeInTheDocument();
     expect(view.router.currentRoute.value.meta.sidebar).toBe("settings");
     expect(view.router.currentRoute.value.meta.lockSidebar).toBe(true);
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
@@ -1174,11 +1064,11 @@ describe("AppShell sidebar", () => {
     });
     expect(view.getByRole("button", { name: /关于/ })).toHaveClass("is-active");
 
-    await fireEvent.click(view.getByRole("button", { name: /快捷键/ }));
+    await fireEvent.click(view.getByRole("button", { name: /仓库/ }));
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=shortcuts");
+      expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=repositories");
     });
-    expect(view.getByRole("button", { name: /快捷键/ })).toHaveClass("is-active");
+    expect(view.getByRole("button", { name: /仓库/ })).toHaveClass("is-active");
 
     await view.router.push("/repos/LiliaGithub");
     expect(shell).toHaveClass("is-sidebar-collapsed");

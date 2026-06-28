@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch, watchEffect } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
@@ -29,7 +29,7 @@ import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { repoLocalDirtyCount, useRepoLocalChangesPrompt } from "../composables/useRepoLocalChangesPrompt";
-import { useShellRepoActions } from "../composables/useShellRepoActions";
+import { useShellSearch } from "../composables/useShellSearch";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   repoActionErrorDetailForRepo,
@@ -88,7 +88,7 @@ import "../styles/page.css";
 
 const workspace = useWorkspace();
 const router = useRouter();
-const shellActions = useShellRepoActions();
+const shellSearch = useShellSearch();
 const repoLocalChangesDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoLocalChangesDialog.vue"));
 const RepoLocalChangesDialog = repoLocalChangesDialogModule.component;
 const {
@@ -252,7 +252,7 @@ const componentEpoch = useComponentEpoch();
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
-const searchOpen = computed(() => shellActions?.searchOpen.value ?? false);
+const searchOpen = computed(() => shellSearch?.searchOpen.value ?? false);
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -416,9 +416,6 @@ watch(
 );
 
 onUnmounted(() => {
-  if (shellActions) {
-    shellActions.homeRepoCreateCommands.value = [];
-  }
   githubTimelineGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
@@ -1480,7 +1477,7 @@ function formatTimelineTime(timestamp: number) {
 }
 
 function toggleSearch() {
-  void shellActions?.toggleSearch();
+  void shellSearch?.toggleSearch();
 }
 
 function repoGroupMenuItems(idPrefix: string, onSelect: (groupId: string | null) => void): ContextMenuItem[] {
@@ -1499,53 +1496,6 @@ function repoGroupMenuItems(idPrefix: string, onSelect: (groupId: string | null)
     })),
   ];
 }
-
-watchEffect(() => {
-  if (!shellActions) return;
-  const workspaceReady = Boolean(workspace.workspaceRoot.value);
-  const githubReady = workspace.isAuthorized.value;
-  const cloneTargets = [
-    {
-      groupId: null,
-      label: "未分组仓库",
-      keywords: "ungrouped no group",
-    },
-    ...repoGroups.value.map((group) => ({
-      groupId: group.id,
-      label: group.name,
-      keywords: group.name,
-    })),
-  ];
-  shellActions.homeRepoCreateCommands.value = [
-    {
-      id: "home-create-local-repo",
-      label: "创建本地仓库",
-      detail: "打开本地 Git 仓库创建卡片",
-      keywords: "创建 本地 仓库 create local repo repository group 分组",
-      icon: FolderGit2,
-      disabled: !workspaceReady,
-      run: () => openCreateRepoCard("local"),
-    },
-    {
-      id: "home-create-remote-repo",
-      label: "创建远程仓库",
-      detail: "打开 GitHub 仓库创建卡片",
-      keywords: "创建 远程 仓库 模板 github create remote template repo repository group 分组",
-      icon: GitBranchPlus,
-      disabled: !workspaceReady || !githubReady,
-      run: () => openCreateRepoCard("remote"),
-    },
-    ...cloneTargets.map((target) => ({
-      id: `home-clone-repo:${target.groupId ?? "ungrouped"}`,
-      label: `克隆仓库 / ${target.label}`,
-      detail: `克隆远程仓库到 ${target.label}`,
-      keywords: `克隆 仓库 clone remote github repo repository ${target.keywords}`,
-      icon: CloudDownload,
-      disabled: !workspaceReady,
-      run: () => openCloneRepoDialog(target.groupId),
-    })),
-  ];
-});
 
 function openCreateRepoCard(mode: "local" | "remote") {
   createRepoCardMode.value = mode;

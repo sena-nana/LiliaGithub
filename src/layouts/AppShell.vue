@@ -1,15 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { RouterView } from "vue-router";
 import { APP_TITLE, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
 import { useRouteReturnTarget } from "../composables/useRouteReturnTarget";
+import { provideShellSearch } from "../composables/useShellSearch";
 import { useShellSidebar } from "../composables/useShellSidebar";
-import { provideShellRepoActions, type ShellPaletteCommand } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import { installLaunchStatusEvents } from "../composables/workspace/launchEvents";
 import TitleBar from "../components/TitleBar.vue";
-import CommandPalette from "../components/CommandPalette.vue";
 import SecondaryPanel from "./SecondaryPanel.vue";
 import SettingsSidebar from "./SettingsSidebar.vue";
 import "../styles/shell.css";
@@ -23,7 +22,6 @@ const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
 const searchOpen = ref(false);
 const searchQuery = ref("");
-const homeRepoCreateCommands = shallowRef<ShellPaletteCommand[]>([]);
 void workspace.initialize();
 let cleanupShellEffects: (() => void) | null = null;
 let focusRefreshDisposed = false;
@@ -62,10 +60,9 @@ async function toggleSearch() {
   }
 }
 
-provideShellRepoActions({
+provideShellSearch({
   searchOpen,
   toggleSearch,
-  homeRepoCreateCommands,
 });
 </script>
 
@@ -114,10 +111,5 @@ provideShellRepoActions({
     <main class="shell__main">
       <RouterView />
     </main>
-    <CommandPalette
-      v-if="!isSetupOverlay"
-      :search-open="searchOpen"
-      @toggle-search="toggleSearch"
-    />
   </div>
 </template>

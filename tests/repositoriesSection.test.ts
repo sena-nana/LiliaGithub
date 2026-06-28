@@ -19,7 +19,6 @@ const workspace = vi.hoisted(() => ({
     settings: {
       workspaceRoot: "C:\\Files\\workspace",
       githubBinding: null,
-      keyboardShortcuts: {},
       projectLaunchConfigs: {},
       repoSyncPreferences: {},
       hiddenRepoIds: [],

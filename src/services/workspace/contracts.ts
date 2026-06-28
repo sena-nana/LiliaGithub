@@ -36,8 +36,6 @@ import type {
   GitHubWorkflowRun,
   GitHubWorkflowRunDetail,
   HiddenRepo,
-  KeyboardShortcutActionId,
-  KeyboardShortcutBinding,
   ProjectLaunchCandidate,
   ProjectLaunchConfig,
   ProjectLaunchHistoryEntry,
@@ -90,10 +88,6 @@ export interface WorkspaceCommandContracts {
     WorkspaceStartupCache
   >;
   workspace_set_root: CommandContract<{ workspaceRoot: string }, WorkspaceSettings>;
-  workspace_set_keyboard_shortcut: CommandContract<{
-    actionId: KeyboardShortcutActionId;
-    shortcut: Maybe<KeyboardShortcutBinding>;
-  }, WorkspaceSettings>;
   repo_set_preference: CommandContract<{ repoId: string; key: keyof RepoSyncPreference; value: boolean }, WorkspaceSettings>;
   repo_set_auto_sync: CommandContract<{ repoId: string; autoSync: boolean }, WorkspaceSettings>;
   workspace_pick_root: CommandContract<NoArgs, Maybe<string>>;
