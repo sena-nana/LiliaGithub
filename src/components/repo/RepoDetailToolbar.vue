@@ -9,6 +9,7 @@ import {
   History,
   Monitor,
   Play,
+  RotateCw,
   RotateCcw,
   ScrollText,
   Square,
@@ -94,6 +95,7 @@ const emit = defineEmits<{
   selectLaunchCandidate: [value: string];
   startLaunch: [];
   stopLaunch: [];
+  refreshProjectCache: [];
   updateSetting: [key: RepoSettingKey, value: boolean];
   useDefaultTokenAuth: [];
   openSelectedTarget: [];
@@ -197,7 +199,21 @@ const emit = defineEmits<{
           </RouterLink>
         </div>
 
-        <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="仓库操作">
+        <div class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目缓存">
+          <button
+            type="button"
+            class="repo-toolbar__btn"
+            title="刷新项目缓存"
+            aria-label="刷新项目缓存"
+            data-agent-id="repo.toolbar.refresh-project-cache"
+            :disabled="actionRunning"
+            @click="emit('refreshProjectCache')"
+          >
+            <RotateCw :size="17" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group" role="group" aria-label="仓库操作">
           <RepoToolbarSettingsMenu
             :values="repoSettingValues"
             :disabled="actionRunning"

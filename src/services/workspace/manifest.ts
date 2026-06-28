@@ -86,6 +86,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
   ],
   repo: [
     "repo_get_summary",
+    "repo_clear_local_cache",
     "repo_refresh_summary",
     "repo_refresh_language_stats",
     "repo_list_files",

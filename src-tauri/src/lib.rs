@@ -122,6 +122,7 @@ pub fn run() {
             workspace::github::github_attach_workflow_artifact_asset,
             workspace::github::github_delete_release_asset,
             workspace::repos::repo_get_summary,
+            workspace::repos::repo_clear_local_cache,
             workspace::repos::repo_refresh_summary,
             workspace::repos::repo_refresh_language_stats,
             workspace::file_browser::repo_list_files,

@@ -1329,6 +1329,26 @@ pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSum
 }
 
 #[tauri::command]
+pub async fn repo_clear_local_cache(
+    app: AppHandle,
+    repo_id: String,
+    repo_full_name: Option<String>,
+) -> Result<(), String> {
+    run_blocking("清理项目缓存", move || {
+        super::settings::remove_startup_cache_repo(&app, &repo_id)?;
+        if let Some(repo_full_name) = repo_full_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            super::github::clear_github_project_repo_cache(&app, repo_full_name)?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn repo_refresh_summary(
     app: AppHandle,
     repo_id: String,

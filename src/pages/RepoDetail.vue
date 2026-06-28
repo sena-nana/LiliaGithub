@@ -47,6 +47,7 @@ const {
   activeFilePath,
   activeFileHash,
   projectRefreshToken,
+  projectCacheResetToken,
   toolbarTabs,
   launchCommandOptions,
   activeLaunchValue,
@@ -69,6 +70,7 @@ const {
   runChangeAction,
   commitSelected,
   refreshAndFetchRepo,
+  refreshProjectCache,
   selectOpenTarget,
   selectPullStrategy,
   selectPullLocalChangesMode,
@@ -127,6 +129,7 @@ const {
         :ahead-count="aheadCount"
         :behind-count="behindCount"
         :launch-command="launchConfig?.command"
+        @refresh-project-cache="refreshProjectCache"
         @checkout="checkout"
         @update-current-branch="updateCurrentBranch"
         @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
@@ -199,6 +202,7 @@ const {
           :project-run-id="activeProjectRun"
           :project-job-id="activeProjectJob"
           :project-refresh-token="projectRefreshToken"
+          :project-cache-reset-token="projectCacheResetToken"
           @update-commit-message="commitMessage = $event"
           @stage-unstaged-changes="stageUnstagedChanges"
           @unstage-staged-changes="unstageStagedChanges"
