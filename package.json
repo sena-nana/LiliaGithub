@@ -2,12 +2,19 @@
   "name": "lilia-github",
   "private": true,
   "version": "1.0.0-beta",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sena-nana/LiliaGithub.git"
+  },
+  "homepage": "https://github.com/sena-nana/LiliaGithub",
   "type": "module",
   "scripts": {
     "check:package-manager": "node scripts/check-package-manager.mjs",
+    "about:licenses": "node scripts/generate-open-source-license-manifest.mjs",
     "predev": "node scripts/check-package-manager.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/check-package-manager.mjs",
+    "prebuild": "node scripts/check-package-manager.mjs && yarn about:licenses",
     "build": "vue-tsc --noEmit && vite build",
     "pretest": "node scripts/check-package-manager.mjs",
     "test": "vitest run",
