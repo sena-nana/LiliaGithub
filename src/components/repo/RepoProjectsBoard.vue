@@ -30,13 +30,39 @@ const emit = defineEmits<{
   openPullRequest: [pull: GitHubPullRequest];
 }>();
 
-function itemMeta(item: RepoProjectsBoardItem) {
+const VISIBLE_LABEL_LIMIT = 2;
+
+function itemUpdatedText(item: RepoProjectsBoardItem) {
+  return `更新于 ${formatDate(item.updatedAt)}`;
+}
+
+function itemDetailsTitle(item: RepoProjectsBoardItem) {
   return [
+    `#${item.number} ${item.title}`,
+    item.kind === "issue" ? "Issue" : "PR",
+    repoProjectsBoardItemStateText(item),
     item.author ? `opened by ${item.author}` : "未知作者",
-    `更新于 ${formatDate(item.updatedAt)}`,
+    itemUpdatedText(item),
     item.assignees.length ? `负责人 ${item.assignees.join(", ")}` : "未分配",
     item.milestone ? `里程碑 ${item.milestone}` : null,
+    item.projectItems.length ? `Projects ${item.projectItems.map((project) => project.title).join(", ")}` : "No project",
+    item.labels.length ? `Labels ${item.labels.join(", ")}` : null,
   ].filter(Boolean).join(" · ");
+}
+
+function labelChips(item: RepoProjectsBoardItem) {
+  const visible = [...item.labels]
+    .sort((left, right) => labelRank(left) - labelRank(right))
+    .slice(0, VISIBLE_LABEL_LIMIT);
+  const hiddenCount = item.labels.length - visible.length;
+  return hiddenCount > 0 ? [...visible, `+${hiddenCount}`] : visible;
+}
+
+function labelRank(label: string) {
+  const normalized = label.toLowerCase();
+  if (normalized.startsWith("area:")) return 0;
+  if (/^(v\d|\d)|milestone|roadmap/.test(normalized)) return 1;
+  return 2;
 }
 
 function formatDate(value: string) {
@@ -87,6 +113,7 @@ function openItem(item: RepoProjectsBoardItem) {
           'is-closed': !isOpenRepoProjectsBoardItem(item),
         }"
         :data-agent-id="`repo.projects.${item.kind}.${item.number}.open`"
+        :title="itemDetailsTitle(item)"
         @click="openItem(item)"
       >
         <span class="projects-board-row__status" :title="repoProjectsBoardItemStateText(item)">
@@ -99,20 +126,16 @@ function openItem(item: RepoProjectsBoardItem) {
           <span class="projects-board-row__title-line">
             <strong class="repo-list-row__title">#{{ item.number }} {{ item.title }}</strong>
             <em>{{ item.kind === "issue" ? "Issue" : "PR" }}</em>
-            <em>{{ repoProjectsBoardItemStateText(item) }}</em>
+            <span class="repo-list-row__meta projects-board-row__updated">{{ itemUpdatedText(item) }}</span>
           </span>
-          <span class="repo-list-row__meta projects-board-row__meta">{{ itemMeta(item) }}</span>
-          <span class="projects-board-row__chips">
-            <em v-for="label in item.labels" :key="`label:${item.key}:${label}`">{{ label }}</em>
-            <em v-if="item.milestone">{{ item.milestone }}</em>
+          <span v-if="item.labels.length" class="projects-board-row__chips" aria-label="Labels">
             <em
-              v-for="project in item.projectItems"
-              :key="`project:${item.key}:${project.id}`"
-              class="projects-board-row__project"
+              v-for="label in labelChips(item)"
+              :key="`label:${item.key}:${label}`"
+              :class="{ 'projects-board-row__more': label.startsWith('+') }"
             >
-              {{ project.title }}
+              {{ label }}
             </em>
-            <em v-if="!item.projectItems.length" class="projects-board-row__project">No project</em>
           </span>
         </span>
       </button>
@@ -156,7 +179,7 @@ function openItem(item: RepoProjectsBoardItem) {
 }
 
 .projects-board__title span,
-.projects-board-row__meta {
+.projects-board-row__updated {
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -195,9 +218,9 @@ function openItem(item: RepoProjectsBoardItem) {
 
 .projects-board-row {
   grid-template-columns: 22px minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
   width: 100%;
-  min-height: 72px;
+  min-height: 52px;
   border: 0;
   border-bottom: 1px solid var(--border-soft);
   border-radius: 0;
@@ -231,14 +254,14 @@ function openItem(item: RepoProjectsBoardItem) {
 
 .projects-board-row__body {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 
 .projects-board-row__title-line {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
 }
@@ -277,9 +300,10 @@ function openItem(item: RepoProjectsBoardItem) {
 
 .projects-board-row__chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .projects-board-row__chips em {
@@ -287,12 +311,12 @@ function openItem(item: RepoProjectsBoardItem) {
   color: var(--accent);
 }
 
-.projects-board-row__chips .projects-board-row__project {
+.projects-board-row__chips .projects-board-row__more {
   background: var(--bg-subtle);
   color: var(--text-muted);
 }
 
-.projects-board-row__meta {
+.projects-board-row__updated {
   min-width: 0;
   overflow: hidden;
   line-height: 1.35;

@@ -1458,6 +1458,7 @@ describe("RepoProjectPanel", () => {
       ...githubIssues[0],
       number: 66,
       title: "整理文档",
+      labels: ["bug", "documentation", "area: docs", "v2.0 roadmap"],
       projectItems: [],
       htmlUrl: "https://github.com/sena-nana/remote-repo/issues/66",
     };
@@ -1488,12 +1489,15 @@ describe("RepoProjectPanel", () => {
     expect(within(projectSidebar).getByRole("button", { name: "刷新 Projects" })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
     expect(within(board).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
-    expect(within(board).getByRole("button", { name: /#66 整理文档/ })).toBeInTheDocument();
+    const unassignedButton = within(board).getByRole("button", { name: /#66 整理文档/ });
+    expect(unassignedButton).toBeInTheDocument();
+    expect(within(unassignedButton).getByText("area: docs")).toBeInTheDocument();
+    expect(within(unassignedButton).getByText("v2.0 roadmap")).toBeInTheDocument();
+    expect(within(unassignedButton).getByText("+2")).toBeInTheDocument();
+    expect(unassignedButton).not.toHaveTextContent("No project");
+    expect(unassignedButton).not.toHaveTextContent("sena");
     const overview = within(projectSidebar).getByLabelText("Projects 摘要");
-    expect(overview).toHaveTextContent("Items3");
-    expect(overview).toHaveTextContent("Issues2");
-    expect(overview).toHaveTextContent("PRs1");
-    expect(overview).toHaveTextContent("Projects1");
+    expect(overview).toHaveTextContent("Overview3");
     expect(listGitHubIssues).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
       expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
