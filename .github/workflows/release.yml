@@ -147,34 +147,8 @@ jobs:
       - name: Install dependencies
         run: corepack yarn install --immutable
 
-      - name: Validate release signing secrets
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-        run: |
-          $required = @(
-            "TAURI_SIGNING_PRIVATE_KEY",
-            "TAURI_UPDATER_PUBKEY",
-            "WINDOWS_CERTIFICATE",
-            "WINDOWS_CERTIFICATE_PASSWORD",
-            "WINDOWS_CERTIFICATE_THUMBPRINT"
-          )
-          $missing = @()
-          foreach ($name in $required) {
-            if (-not [Environment]::GetEnvironmentVariable($name)) {
-              $missing += $name
-            }
-          }
-          if ($missing.Count -gt 0) {
-            throw "Missing release signing secrets: $($missing -join ', ')"
-          }
-
       - name: Import Windows signing certificate
+        if: ${{ secrets.WINDOWS_CERTIFICATE && secrets.WINDOWS_CERTIFICATE_PASSWORD && secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -189,23 +163,32 @@ jobs:
         shell: pwsh
         env:
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: |
-          $config = @{
-            bundle = @{
-              createUpdaterArtifacts = $true
-              windows = @{
-                certificateThumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT
-                timestampUrl = "http://timestamp.digicert.com"
+          $config = @{}
+          if ($env:TAURI_SIGNING_PRIVATE_KEY -and $env:TAURI_UPDATER_PUBKEY) {
+            $config = @{
+              bundle = @{
+                createUpdaterArtifacts = $true
+              }
+              plugins = @{
+                updater = @{
+                  pubkey = $env:TAURI_UPDATER_PUBKEY
+                  endpoints = @(
+                    "https://github.com/sena-nana/LiliaGithub/releases/latest/download/latest.json"
+                  )
+                }
               }
             }
-            plugins = @{
-              updater = @{
-                pubkey = $env:TAURI_UPDATER_PUBKEY
-                endpoints = @(
-                  "https://github.com/sena-nana/LiliaGithub/releases/latest/download/latest.json"
-                )
-              }
+          }
+          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) {
+            if (-not $config.ContainsKey("bundle")) {
+              $config.bundle = @{}
+            }
+            $config.bundle.windows = @{
+              certificateThumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT
+              timestampUrl = "http://timestamp.digicert.com"
             }
           }
           $config | ConvertTo-Json -Depth 10 | Set-Content -Path "src-tauri/tauri.release.conf.json" -Encoding utf8
