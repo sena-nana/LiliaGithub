@@ -1,11 +1,13 @@
 <template>
-  <div class="card">
+  <div class="about-page">
+    <section class="card about-main">
     <h2>关于</h2>
     <ul class="kv">
       <li><span>名称</span><span>{{ appName }}</span></li>
       <li><span>版本</span><span>{{ appVersion }}</span></li>
     </ul>
-    <section class="about-license-third-party" aria-label="第三方许可证协议">
+    </section>
+    <section class="card about-license-third-party" aria-label="第三方许可证协议">
       <h3>第三方许可证协议</h3>
       <template v-if="hasLicenseManifest">
         <details class="about-license-details">
@@ -35,7 +37,7 @@
       </template>
       <p v-else class="about-license-fallback">未生成许可清单，请重试 yarn about:licenses</p>
     </section>
-    <section class="about-update" aria-label="更新器" data-agent-id="settings.about.updater">
+    <section class="card about-update" aria-label="更新器" data-agent-id="settings.about.updater">
       <div>
         <strong>更新</strong>
         <p>{{ updateMessage }}</p>
@@ -155,9 +157,11 @@ async function installUpdate() {
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+}
+
+.about-page {
+  display: grid;
+  gap: 12px;
 }
 
 .about-update p {
