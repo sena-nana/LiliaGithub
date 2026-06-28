@@ -8,7 +8,7 @@
     </ul>
     <section
       class="about-license"
-      aria-label="开源许可证"
+      aria-label="关于"
       data-agent-id="settings.about.licenses"
     >
       <h3>关于</h3>
