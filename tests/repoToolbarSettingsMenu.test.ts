@@ -5,7 +5,12 @@ import RepoToolbarSettingsMenu from "../src/components/repo/RepoToolbarSettingsM
 function renderMenu(autoSync = false) {
   return render(RepoToolbarSettingsMenu, {
     props: {
-      autoSync,
+      values: {
+        autoSync,
+        includeInHomeCodeStats: true,
+        includeInHomeContributionStats: true,
+        calculateHomeTimeline: true,
+      },
     },
   });
 }
@@ -21,7 +26,7 @@ describe("RepoToolbarSettingsMenu", () => {
 
     await fireEvent.click(autoSync);
 
-    expect(view.emitted("update:autoSync")?.[0]).toEqual([true]);
+    expect(view.emitted("update:setting")?.[0]).toEqual(["autoSync", true]);
   });
 
   it("reflects enabled auto sync state", async () => {
