@@ -4,25 +4,7 @@
     <ul class="kv">
       <li><span>名称</span><span>{{ appName }}</span></li>
       <li><span>版本</span><span>{{ appVersion }}</span></li>
-      <li><span>框架</span><span>Tauri 2 + Vue 3</span></li>
     </ul>
-    <section
-      class="about-license"
-      aria-label="关于"
-      data-agent-id="settings.about.licenses"
-    >
-      <h3>关于</h3>
-      <p v-if="!hasLicenseManifest" class="about-license-fallback">
-        {{ fallbackText }}
-      </p>
-      <template v-else>
-        <ul class="kv">
-          <li><span>应用名称</span><span>{{ appName }}</span></li>
-          <li><span>版本</span><span>{{ appVersion }}</span></li>
-          <li><span>许可证</span><span>{{ appLicense }}</span></li>
-        </ul>
-      </template>
-    </section>
     <section class="about-license-third-party" aria-label="第三方许可证协议">
       <h3>第三方许可证协议</h3>
       <template v-if="hasLicenseManifest">
@@ -115,7 +97,6 @@ const hasLicenseManifest = computed(() => {
 
 const appName = computed(() => manifest?.app?.name || "LiliaGithub");
 const appVersion = computed(() => manifest?.app?.version ?? "1.0.0");
-const appLicense = computed(() => manifest?.app?.license ?? "未声明");
 const npmDependencies = computed(() => manifest?.npmDependencies ?? []);
 const rustDependencies = computed(() => manifest?.rustDependencies ?? []);
 const dependencyCount = computed(() => npmDependencies.value.length + rustDependencies.value.length);
@@ -184,20 +165,6 @@ async function installUpdate() {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
-}
-
-.about-license {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.about-license h3 {
-  margin: 0 0 10px;
-}
-
-.about-license .kv span {
-  line-height: 1.45;
 }
 
 .about-license-fallback {
