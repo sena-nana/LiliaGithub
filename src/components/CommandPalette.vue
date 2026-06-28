@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { Command, GitPullRequest, LoaderCircle, RefreshCw, RotateCw, Search, Settings2 } from "@lucide/vue";
+import { CircleDot, Command, GitPullRequest, LoaderCircle, Package, Plus, RefreshCw, RotateCw, Search, Settings2 } from "@lucide/vue";
 import { useShellRepoActions, type ShellPaletteCommand } from "../composables/useShellRepoActions";
 import { useWorkspace } from "../composables/useWorkspace";
-import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
+import { repoProjectCreateRoute, repoProjectRoute, repoRoute } from "../utils/repoRoutes";
 import {
   COMMAND_PALETTE_SHORTCUT_ACTION,
   matchesCommandPaletteShortcut,
@@ -106,8 +106,16 @@ const commands = computed<PaletteCommand[]>(() => {
         label: "当前仓库 Issues",
         detail: "打开 issue 列表和筛选",
         keywords: "github issues issue",
-        icon: Command,
+        icon: CircleDot,
         run: () => router.push(repoProjectRoute(repoId, "issues")),
+      },
+      {
+        id: "create-issue",
+        label: "创建当前仓库 Issue",
+        detail: "打开新建 Issue 表单",
+        keywords: "github issues issue create new",
+        icon: Plus,
+        run: () => router.push(repoProjectCreateRoute(repoId, "issue")),
       },
       {
         id: "pulls",
@@ -116,6 +124,14 @@ const commands = computed<PaletteCommand[]>(() => {
         keywords: "github pull request pr review",
         icon: GitPullRequest,
         run: () => router.push(repoProjectRoute(repoId, "pulls")),
+      },
+      {
+        id: "create-pull",
+        label: "创建当前仓库 Pull Request",
+        detail: "打开新建 PR 表单",
+        keywords: "github pull request pr create new",
+        icon: GitPullRequest,
+        run: () => router.push(repoProjectCreateRoute(repoId, "pull")),
       },
       {
         id: "actions",
@@ -130,8 +146,16 @@ const commands = computed<PaletteCommand[]>(() => {
         label: "当前仓库 Release",
         detail: "打开 release 和产物管理",
         keywords: "github release artifact publish",
-        icon: Command,
+        icon: Package,
         run: () => router.push(repoProjectRoute(repoId, "release")),
+      },
+      {
+        id: "create-release",
+        label: "创建当前仓库 Release",
+        detail: "打开新建 Release 表单",
+        keywords: "github release artifact publish create new",
+        icon: Plus,
+        run: () => router.push(repoProjectCreateRoute(repoId, "release")),
       },
     );
   }

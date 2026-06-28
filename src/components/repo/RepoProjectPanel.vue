@@ -110,7 +110,7 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { recoveryGuidanceForMessage, type RecoveryGuidance } from "../../utils/recoveryGuidance";
-import { repoRoute, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
+import { repoRoute, type RepoProjectCreateFlow, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
 import {
   CommitDetailCard,
   MarkdownReadme,
@@ -837,6 +837,7 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
 });
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
+const routedProjectCreateFlow = computed(() => normalizeProjectCreateFlow(route.query.create));
 const routedReleaseTag = computed(() => routeStringValue(route.query.releaseTag));
 const routedReleaseType = computed(() => releaseTypeFilterFromRoute());
 const routedProjectIssue = computed(() => normalizePositiveNumber(route.query.issue));
@@ -931,6 +932,7 @@ watch([routedIssueFilterState, routedPullRequestFilterState], () => {
 watch(
     [
       routedProjectTab,
+      routedProjectCreateFlow,
       routedReleaseTag,
       routedReleaseType,
       routedProjectIssue,
@@ -965,6 +967,12 @@ function normalizeProjectTab(value: unknown): ProjectTab | null {
     value === "release" ||
     value === "settings"
   ) return value;
+  return null;
+}
+
+function normalizeProjectCreateFlow(value: unknown): RepoProjectCreateFlow | null {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (next === "issue" || next === "pull" || next === "release") return next;
   return null;
 }
 
@@ -1162,6 +1170,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   delete query.job;
   delete query.releaseTag;
   delete query.releaseType;
+  delete query.create;
   clearRouteFilters(query, issueRouteKeys);
   clearRouteFilters(query, pullRequestRouteKeys);
 
@@ -1256,6 +1265,14 @@ function normalizedQueryEntries(query: typeof route.query | LocationQueryRaw) {
         leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue)
       ),
   );
+}
+
+function clearProjectCreateRoute() {
+  if (!routedProjectCreateFlow.value) return;
+  const query: LocationQueryRaw = { ...route.query };
+  delete query.create;
+  if (sameRouteQuery(route.query, query)) return;
+  void router.replace({ path: route.path, query });
 }
 
 function hasPullRequest(pullNumber: number) {
@@ -1545,10 +1562,12 @@ async function applyProjectRouteState() {
   clearProjectTargets();
   if (targetTab === "issues") {
     await focusIssue(props.projectIssueNumber ?? routedProjectIssue.value);
+    await applyProjectCreateForm(targetTab);
     return;
   }
   if (targetTab === "pulls") {
     await focusPullRequest(props.projectPullRequestNumber ?? routedProjectPullRequest.value);
+    await applyProjectCreateForm(targetTab);
     return;
   }
   if (targetTab === "actions") {
@@ -1561,6 +1580,15 @@ async function applyProjectRouteState() {
     return;
   }
   await ensureSectionData(targetTab);
+}
+
+async function applyProjectCreateForm(targetTab: ProjectTab) {
+  const createFlow = routedProjectCreateFlow.value;
+  if (targetTab === "issues" && createFlow === "issue" && !issuesAccessUnavailable.value) {
+    await openIssueCreateView();
+  } else if (targetTab === "pulls" && createFlow === "pull" && !pullsAccessUnavailable.value) {
+    await openPullRequestCreateView();
+  }
 }
 
 function prefetchGitHubProjectMetadata() {
@@ -2360,6 +2388,7 @@ async function openIssueCreateView() {
 function closeIssueCreateView(resetDraft = true) {
   if (issueCreateView.value) invalidateSessionContextSnapshot();
   issueCreateView.value = false;
+  if (resetDraft) clearProjectCreateRoute();
   if (!resetDraft) return;
   issueTitle.value = "";
   issueBody.value = "";
@@ -2478,6 +2507,7 @@ async function openPullRequestCreateView() {
 function closePullRequestCreateView(resetDraft = true) {
   if (pullCreateView.value) invalidateSessionContextSnapshot();
   pullCreateView.value = false;
+  if (resetDraft) clearProjectCreateRoute();
   if (!resetDraft) return;
   pullRequestTitle.value = "";
   pullRequestBody.value = "";
@@ -2583,6 +2613,7 @@ async function createIssue() {
   issueTemplateAnswers.value = {};
   issueTemplateKey.value = blankIssueTemplate().key;
   issueCreateView.value = false;
+  clearProjectCreateRoute();
 }
 
 async function toggleIssue(issue: GitHubIssue) {
@@ -2638,6 +2669,7 @@ async function createPullRequest() {
   pullRequestTemplateKey.value = blankPullRequestTemplate().key;
   pullCreateView.value = false;
   pullState.value = "open";
+  clearProjectCreateRoute();
   await Promise.all([
     loadPullRequestChecks(pull.number, true),
     loadPullRequestDiscussion(pull.number, true),
@@ -3340,12 +3372,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :mutating="releaseMutating"
             :focused-tag="focusedReleaseTag"
             :release-type-filter="releaseTypeFilter"
+            :create-requested="routedProjectCreateFlow === 'release'"
             @create="createRelease"
             @update="updateRelease"
             @delete="removeRelease"
             @upload-assets="uploadReleaseAssets"
             @delete-asset="removeReleaseAsset"
             @open-url="openUrl"
+            @close-create="clearProjectCreateRoute"
           />
         </section>
 

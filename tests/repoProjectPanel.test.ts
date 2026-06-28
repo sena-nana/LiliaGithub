@@ -1108,6 +1108,40 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      createFlow: "issue",
+      projectTab: "issues",
+      formName: "新建 Issue",
+      expectedText: null,
+    },
+    {
+      createFlow: "pull",
+      projectTab: "pulls",
+      formName: "新建 PR",
+      expectedText: null,
+    },
+    {
+      createFlow: "release",
+      projectTab: "release",
+      formName: "Release 表单",
+      expectedText: "New release",
+    },
+  ])("create $createFlow 路由直接打开创建表单", async ({ createFlow, projectTab, formName, expectedText }) => {
+    const view = await renderProjectPanel(
+      { repoFullName: "sena-nana/remote-repo" },
+      `/repos/local-repo?projectTab=${projectTab}&create=${createFlow}`,
+    );
+
+    const form = await view.findByRole("form", { name: formName });
+    if (expectedText) expect(within(form).getByText(expectedText)).toBeInTheDocument();
+    await fireEvent.click(within(form).getByRole("button", { name: "取消" }));
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.query).not.toHaveProperty("create");
+    });
+  });
+
   it("Release 二级 Tab 读取 releases，并在右侧 tag 列表跳转和刷新", async () => {
     vi.mocked(listGitHubReleases).mockResolvedValue(githubReleases);
     const view = await renderProjectPanel({
