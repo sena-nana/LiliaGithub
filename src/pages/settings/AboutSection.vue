@@ -185,8 +185,12 @@ async function installUpdate() {
 }
 
 .about-license-details summary {
-  display: list-item;
-  list-style-position: outside;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  list-style: none;
   margin: 0 0 10px;
   cursor: pointer;
   padding: 0;
@@ -198,24 +202,22 @@ async function installUpdate() {
   letter-spacing: 0.5px;
 }
 
-.about-license-details summary::marker {
-  color: var(--text-muted);
-}
-
-.about-license-details > summary::-webkit-details-marker {
-  display: none;
-}
-
-.about-license-details > summary::before {
+.about-license-details > summary::after {
   content: "▸";
-  margin-right: 6px;
+  margin-left: 6px;
+  font-size: 12px;
   display: inline-block;
+  transform-origin: center;
   transform: rotate(0deg);
   transition: transform 0.15s ease;
 }
 
-details[open] .about-license-details > summary::before {
+details[open] .about-license-details > summary::after {
   transform: rotate(90deg);
+}
+
+.about-license-details > summary::-webkit-details-marker {
+  display: none;
 }
 
 .about-license-details summary ~ div,
