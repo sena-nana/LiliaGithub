@@ -46,29 +46,16 @@ const emit = defineEmits<{
 
 <template>
   <div class="projects-board-sidebar" aria-label="Projects filters">
-    <section class="projects-board-sidebar-card" aria-label="Projects 摘要">
+    <section
+      class="projects-board-sidebar-card projects-board-sidebar-card--summary"
+      aria-label="Projects 摘要"
+      :title="`${visibleItemCount} items · ${issueCount} issues · ${pullCount} PRs · ${projectCountTotal} projects`"
+    >
       <div class="projects-board-sidebar-card__head">
         <ListFilter :size="14" aria-hidden="true" />
         <strong>Overview</strong>
+        <em>{{ visibleItemCount }}</em>
       </div>
-      <dl class="projects-board__stats">
-        <div>
-          <dt>Items</dt>
-          <dd>{{ visibleItemCount }}</dd>
-        </div>
-        <div>
-          <dt>Issues</dt>
-          <dd>{{ issueCount }}</dd>
-        </div>
-        <div>
-          <dt>PRs</dt>
-          <dd>{{ pullCount }}</dd>
-        </div>
-        <div>
-          <dt>Projects</dt>
-          <dd>{{ projectCountTotal }}</dd>
-        </div>
-      </dl>
       <button
         type="button"
         class="ghost projects-board__refresh"
@@ -79,7 +66,6 @@ const emit = defineEmits<{
       >
         <LoaderCircle v-if="loading || metadataLoading" :size="14" aria-hidden="true" class="sb-spin" />
         <RotateCw v-else :size="14" aria-hidden="true" />
-        刷新 Projects
       </button>
     </section>
 
@@ -155,18 +141,23 @@ const emit = defineEmits<{
 .projects-board-sidebar {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
 .projects-board-sidebar-card {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 10px;
+  padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
+}
+
+.projects-board-sidebar-card--summary {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 
 .projects-board-sidebar-card__head {
@@ -187,43 +178,29 @@ const emit = defineEmits<{
   white-space: nowrap;
 }
 
-.projects-board__stats {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  margin: 0;
-}
-
-.projects-board__stats div {
-  display: grid;
-  grid-template-columns: minmax(58px, max-content) minmax(0, 1fr);
-  gap: 8px;
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.projects-board__stats dt,
-.projects-board__stats dd {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.projects-board__stats dd {
+.projects-board-sidebar-card__head em {
+  min-width: 22px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-subtle);
   color: var(--text);
+  font-size: 11px;
+  font-style: normal;
   font-weight: 600;
+  line-height: 19px;
+  text-align: center;
 }
 
 .projects-board__refresh {
-  justify-self: start;
+  justify-self: end;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  width: 28px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0;
   font-size: 12px;
 }
 
