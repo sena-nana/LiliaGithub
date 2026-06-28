@@ -284,7 +284,6 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
           @click="emit('update:state', filter.value)"
         >
           <span>{{ filter.label }}</span>
-          <strong>{{ state === filter.value ? pulls.length : 0 }}</strong>
         </button>
       </div>
 
@@ -524,7 +523,6 @@ function uniqueProjects(values: readonly NonNullable<GitHubPullRequest["projectI
   color: var(--text);
 }
 
-.pulls-panel__states strong,
 .pulls-panel__filter-button strong {
   min-width: 20px;
   height: 20px;
