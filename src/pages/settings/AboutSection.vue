@@ -10,22 +10,27 @@
     <section class="card about-license-third-party" aria-label="第三方许可证协议">
       <template v-if="hasLicenseManifest">
         <details class="about-license-details">
-          <summary>第三方许可证协议</summary>
+          <summary class="about-license-summary">
+            <span>第三方许可证协议</span>
+            <ChevronRight
+              :size="13"
+              aria-hidden="true"
+              class="sb-group-toggle__chevron"
+            />
+          </summary>
           <div v-if="npmDependencies.length">
-            <div class="about-license-summary-title">npm</div>
-            <ul class="kv">
+            <ul class="kv about-license-list">
               <li v-for="dependency in npmDependencies" :key="`npm-dep-${dependency.name}`">
                 <span>{{ dependency.name }}</span>
-                <span>{{ dependency.version }} · {{ dependency.license }}</span>
+                <span>{{ dependency.license }}</span>
               </li>
             </ul>
           </div>
           <div v-if="rustDependencies.length">
-            <div class="about-license-summary-title">Rust</div>
-            <ul class="kv">
+            <ul class="kv about-license-list">
               <li v-for="dependency in rustDependencies" :key="`rust-dep-${dependency.name}`">
                 <span>{{ dependency.name }}</span>
-                <span>{{ dependency.version }} · {{ dependency.license }}</span>
+                <span>{{ dependency.license }}</span>
               </li>
             </ul>
           </div>
@@ -66,6 +71,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { ChevronRight } from "@lucide/vue";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import openSourceLicenseManifest from "../../generated/openSourceLicenseManifest.json";
 
@@ -173,23 +179,33 @@ async function installUpdate() {
   font-size: 13px;
 }
 
-.about-license-summary-title {
-  font-size: 13px;
-  color: var(--muted);
-  margin-bottom: 4px;
-}
-
 .about-license-empty {
   font-size: 13px;
   color: var(--muted);
 }
 
+.about-license-list {
+  font-size: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 2px 12px;
+}
+
+.about-license-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-soft);
+  padding: 6px 0;
+}
+
 .about-license-details summary {
   display: inline-flex;
   align-items: center;
-  width: auto;
+  gap: 6px;
   list-style: none;
-  margin: 0 0 10px;
+  margin: 6px 0;
   cursor: pointer;
   padding: 0;
   line-height: normal;
@@ -200,22 +216,13 @@ async function installUpdate() {
   letter-spacing: 0.5px;
 }
 
-.about-license-details > summary::after {
-  content: "";
-  width: 0;
-  height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 6px solid var(--text-muted);
-  border-right: 0;
-  margin-left: 6px;
-  display: inline-block;
-  transform-origin: center center;
-  transform: rotate(0deg);
-  transition: transform 0.15s ease;
+.about-license-details > summary .sb-group-toggle__chevron {
+  flex: 0 0 auto;
+  transition: transform 0.12s ease;
+  color: currentColor;
 }
 
-.about-license-details[open] > summary::after {
+.about-license-details[open] > summary .sb-group-toggle__chevron {
   transform: rotate(90deg);
 }
 
@@ -226,7 +233,7 @@ async function installUpdate() {
 .about-license-details summary ~ div,
 .about-license-details summary ~ p,
 .about-license-details summary ~ ul {
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 .about-license-details summary:focus-visible {
