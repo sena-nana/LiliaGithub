@@ -307,6 +307,7 @@ const props = defineProps<{
   projectRunId?: number | null;
   projectJobId?: number | null;
   projectRefreshToken?: number;
+  projectCacheResetToken?: number;
 }>();
 
 const emit = defineEmits<{
@@ -958,6 +959,11 @@ watch(
 
 watch(() => props.projectRefreshToken, () => {
   void refreshLoadedSectionData();
+});
+
+watch(() => props.projectCacheResetToken, () => {
+  resetProjectSectionState();
+  void ensureSectionData(activeSection.value);
 });
 
 watch(() => props.activeGitTab, (tab) => {

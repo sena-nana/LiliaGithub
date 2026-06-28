@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   attachGitHubWorkflowArtifactAsset,
+  clearRepoLocalCache,
   clearGitHubRepoCache,
   createGitHubRelease,
   deleteGitHubRelease,
@@ -185,6 +186,37 @@ describe("workspace GitHub project cache", () => {
     const refreshed = await listGitHubIssues(repoFullName, "open", { forceRefresh: true });
     expect(refreshed[0]?.title).toBe("远端新 Issue");
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(2);
+  });
+
+  it("清理单个项目本地缓存后只重新读取该仓库项目数据", async () => {
+    const otherRepoFullName = "sena-nana/other-repo";
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      [repoFullName]: [issue()],
+      [otherRepoFullName]: [issue({ number: 31, title: "其他缓存前 Issue" })],
+    });
+    workspaceFallback.setFallbackGitHubReleasesForTests({
+      [repoFullName]: [release()],
+      [otherRepoFullName]: [release({ id: 8101, name: "其他缓存前 Release" })],
+    });
+
+    await listGitHubIssues(repoFullName, "open");
+    await listGitHubReleases(repoFullName);
+    await listGitHubIssues(otherRepoFullName, "open");
+
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      [repoFullName]: [issue({ title: "清理后 Issue" })],
+      [otherRepoFullName]: [issue({ number: 31, title: "其他远端新 Issue" })],
+    });
+    workspaceFallback.setFallbackGitHubReleasesForTests({
+      [repoFullName]: [release({ name: "清理后 Release" })],
+      [otherRepoFullName]: [release({ id: 8101, name: "其他远端新 Release" })],
+    });
+
+    await clearRepoLocalCache("local-repo", repoFullName);
+
+    expect((await listGitHubIssues(repoFullName, "open"))[0]?.title).toBe("清理后 Issue");
+    expect((await listGitHubReleases(repoFullName))[0]?.name).toBe("清理后 Release");
+    expect((await listGitHubIssues(otherRepoFullName, "open"))[0]?.title).toBe("其他缓存前 Issue");
   });
 
   it("同 key GitHub 读取 pending 时只发起一笔请求并返回隔离副本", async () => {

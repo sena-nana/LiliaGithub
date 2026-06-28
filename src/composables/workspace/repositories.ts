@@ -715,6 +715,12 @@ export async function loadRepoDetail(repoId: string) {
   return detail;
 }
 
+export async function clearRepoLocalCache(repoId: string, repoFullName?: string | null) {
+  const service = await loadWorkspaceService();
+  await service.clearRepoLocalCache(repoId, repoFullName ?? null);
+  clearRepoActionError(repoId);
+}
+
 export async function stage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   await service.stageFiles(repoId, files);

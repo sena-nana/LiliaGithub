@@ -610,6 +610,7 @@ async function renderProjectPanel(
     projectRunId: null,
     projectJobId: null,
     projectRefreshToken: 0,
+    projectCacheResetToken: 0,
     ...props,
   } satisfies RenderProjectPanelProps;
   const repoSummary = panelProps.repoSummary ?? state.repos.find((repo) => repo.id === panelProps.repoId) ?? null;
@@ -2391,6 +2392,44 @@ describe("RepoProjectPanel", () => {
       expect.objectContaining({ state: "open", sort: "created", direction: "desc" }),
       { forceRefresh: true },
     );
+  });
+
+  it("项目缓存 reset token 变化后清空分区状态并重读当前分区", async () => {
+    vi.mocked(listGitHubIssues)
+      .mockResolvedValueOnce(githubIssues)
+      .mockResolvedValueOnce([{ ...githubIssues[0], title: "缓存清理后的 Issue" }]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectCacheResetToken: 1,
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+
+    await view.rerender({ projectCacheResetToken: 2 });
+
+    expect(await view.findByText("#12 缓存清理后的 Issue")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenCalledTimes(2);
+  });
+
+  it("项目缓存 reset token 变化后已加载的非当前分区会在再次进入时重读", async () => {
+    vi.mocked(listGitHubIssues)
+      .mockResolvedValueOnce(githubIssues)
+      .mockResolvedValueOnce([{ ...githubIssues[0], title: "重新进入后的 Issue" }]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectCacheResetToken: 1,
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("tab", { name: "Repo" }));
+
+    await view.rerender({ projectCacheResetToken: 2 });
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+
+    expect(await view.findByText("#12 重新进入后的 Issue")).toBeInTheDocument();
+    expect(listGitHubIssues).toHaveBeenCalledTimes(2);
   });
 
   it("创建 Issue 请求返回后不会插入已切换仓库的 Issues 列表", async () => {

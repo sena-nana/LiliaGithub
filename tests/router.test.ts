@@ -1889,6 +1889,7 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
     expect(screen.getByRole("button", { name: "推送" })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("项目缓存")).getByRole("button", { name: "刷新项目缓存" })).toBeInTheDocument();
     await within(screen.getByLabelText("仓库操作")).findByRole("button", { name: "设置" });
     expect(
       within(screen.getByLabelText("仓库操作"))
@@ -2003,6 +2004,28 @@ describe("基础路由", () => {
     await waitFor(() =>
       expect(checkoutBranch).toHaveBeenCalledWith("LiliaGithub", "origin/feature/notice-update"),
     );
+  });
+
+  it("仓库详情页右上角刷新项目缓存后重读当前详情", async () => {
+    const service = await import("../src/services/workspace");
+    const clearRepoLocalCache = vi.spyOn(service, "clearRepoLocalCache");
+    const summary = repoSummary("LiliaGithub");
+    const detailRequests = mockRepoDetail(summary, {});
+    await renderAt("/repos/LiliaGithub");
+    await waitForRepoTitle("LiliaGithub");
+    await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
+    const initialRequestCount = detailRequests.length;
+
+    try {
+      await fireEvent.click(within(screen.getByLabelText("项目缓存")).getByRole("button", { name: "刷新项目缓存" }));
+
+      await waitFor(() => {
+        expect(clearRepoLocalCache).toHaveBeenCalledWith("LiliaGithub", "sena-nana/LiliaGithub");
+      });
+      await waitFor(() => expect(detailRequests.length).toBeGreaterThan(initialRequestCount));
+    } finally {
+      clearRepoLocalCache.mockRestore();
+    }
   });
 
   it("仓库详情页打开目标按钮可下拉切换并立即打开目标", async () => {

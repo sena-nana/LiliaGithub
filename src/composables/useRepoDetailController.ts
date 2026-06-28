@@ -89,6 +89,7 @@ export function useRepoDetailController() {
   const deletedRemoteBranchNames = ref<string[]>([]);
   const discardingChangePaths = ref<string[]>([]);
   const projectRefreshToken = ref(0);
+  const projectCacheResetToken = ref(0);
   const componentEpoch = useComponentEpoch();
   const repoDetailLoader = createLatestAsyncLoader({ componentEpoch });
   const githubBranchesLoader = createLatestAsyncLoader({ componentEpoch });
@@ -749,6 +750,25 @@ export function useRepoDetailController() {
     });
   }
 
+  function refreshProjectCache() {
+    const targetRepoId = repoId.value;
+    if (!targetRepoId) return;
+
+    void runAction(async () => {
+      const repoFullName = githubRepoFullName.value;
+      await workspace.clearRepoLocalCache(targetRepoId, repoFullName);
+      if (repoId.value !== targetRepoId) return;
+      if (!hasLocalRepo.value) {
+        await loadRemoteGitHubData(repoFullName);
+      } else {
+        await load();
+      }
+      if (repoId.value === targetRepoId) {
+        projectCacheResetToken.value += 1;
+      }
+    });
+  }
+
   function selectPullStrategy(value: string) {
     if (value === "pull" || value === "merge" || value === "rebase") {
       pullStrategy.value = value;
@@ -1013,6 +1033,7 @@ export function useRepoDetailController() {
       activeFilePath,
       activeFileHash,
       projectRefreshToken,
+      projectCacheResetToken,
       toolbarTabs,
       launchCommandOptions,
       activeLaunchValue,
@@ -1035,6 +1056,7 @@ export function useRepoDetailController() {
       runChangeAction,
       commitSelected,
       refreshAndFetchRepo,
+      refreshProjectCache,
       selectPullStrategy,
       selectPullLocalChangesMode,
       cancelPullLocalChangesDialog,
