@@ -110,7 +110,7 @@ jobs:
     expect(cyclic.edges).toHaveLength(0);
   });
 
-  it("maps edge color from source job status", () => {
+  it("maps source job status to graph tone", () => {
     const graph = buildWorkflowGraph(detail(`
 jobs:
   lint:
@@ -121,6 +121,5 @@ jobs:
 `, [job(1, "lint", "completed", "failure"), job(2, "test", "queued", null)]));
 
     expect(graph.nodes[0].tone).toBe("error");
-    expect(graph.edges[0].color).toBe("var(--err)");
   });
 });

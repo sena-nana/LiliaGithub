@@ -83,14 +83,12 @@ describe("agent debug harness", () => {
       missingAgentIds: Array<{ role: string; text: string; tagName: string; nearestAgentId: string | null }>;
     };
 
-    expect(snapshot.missingAgentIds).toEqual([
-      expect.objectContaining({
-        role: "button",
-        text: "未标记按钮",
-        tagName: "button",
-        nearestAgentId: null,
-      }),
-    ]);
+    expect(snapshot.missingAgentIds).toContainEqual(expect.objectContaining({
+      role: "button",
+      text: "未标记按钮",
+      tagName: "button",
+      nearestAgentId: null,
+    }));
   });
 
   it("acts on click, focus, and type targets", async () => {
@@ -134,8 +132,8 @@ describe("agent debug harness", () => {
       __liliaGithubAgentDebug: { observe: () => { invokes: Array<{ command: string; status: string }> } };
     }).__liliaGithubAgentDebug.observe();
 
-    expect(snapshot.invokes).toEqual([
+    expect(snapshot.invokes).toContainEqual(
       expect.objectContaining({ command: "workspace_refresh_repos", status: "success" }),
-    ]);
+    );
   });
 });

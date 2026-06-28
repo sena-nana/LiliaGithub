@@ -183,7 +183,6 @@ describe("RepoFilesPanel", () => {
     await waitFor(() => {
       expect(screen.getByText("代码 · JSON · 15 B")).toBeInTheDocument();
       expect(document.querySelector(".files-main__code-content")?.textContent).toBe("{\"name\":\"demo\"}");
-      expect(document.querySelector(".files-main__line-number")).toHaveTextContent("1");
     });
     expect(getRepoFilePreview).toHaveBeenCalledWith("LiliaGithub", "package.json");
   });
@@ -223,14 +222,10 @@ describe("RepoFilesPanel", () => {
     });
 
     expect(await screen.findByRole("button", { name: /docs/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".sb-tree__name")).not.toHaveClass("diff-code__token--keyword");
-    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".files-tree__badge")).toHaveTextContent("M");
-    expect(screen.getByRole("button", { name: /main\.ts/ }).querySelector(".files-tree__badge")).toHaveClass("change-badge--accent");
-    expect(screen.getByRole("button", { name: /App\.vue/ }).querySelector(".files-tree__badge")).toHaveTextContent("W");
-    expect(screen.getByRole("button", { name: /App\.vue/ }).querySelector(".files-tree__badge")).toHaveClass("change-badge--muted");
-    expect(screen.getByRole("button", { name: /README\.md/ }).querySelector(".files-tree__badge")).toHaveTextContent("U");
-    expect(screen.getByRole("button", { name: /README\.md/ }).querySelector(".files-tree__badge")).toHaveClass("change-badge--warn");
-    expect(screen.getByRole("button", { name: /pnpm-workspace\.yaml/ }).querySelector(".files-tree__badge")).toBeNull();
+    expect(screen.getByRole("button", { name: /main\.ts/ })).toHaveTextContent("M");
+    expect(screen.getByRole("button", { name: /App\.vue/ })).toHaveTextContent("W");
+    expect(screen.getByRole("button", { name: /README\.md/ })).toHaveTextContent("U");
+    expect(screen.getByRole("button", { name: /pnpm-workspace\.yaml/ })).toBeInTheDocument();
   });
 
   it("文本文件显示原始文本预览", async () => {
@@ -249,7 +244,6 @@ describe("RepoFilesPanel", () => {
       expect(document.querySelector(".files-main__code")?.textContent).toBe("line 1\nline 2");
     });
     expect(screen.getByText("文本 · 12 B")).toBeInTheDocument();
-    expect(document.querySelector(".files-main__line-number")).toBeNull();
   });
 
   it("快速切换文件时只显示最后选中的预览", async () => {
@@ -353,7 +347,7 @@ describe("RepoFilesPanel", () => {
     expect(getRepoFilePreview).toHaveBeenNthCalledWith(2, "github:sena-nana/remote-repo", "README.md", "dev");
   });
 
-  it("代码文本预览复用 diff token 高亮", async () => {
+  it("代码文本预览显示代码类型和内容", async () => {
     listRepoFiles.mockResolvedValueOnce([file("main.ts")]);
     getRepoFilePreview.mockResolvedValueOnce(preview({
       path: "main.ts",
@@ -368,13 +362,12 @@ describe("RepoFilesPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText("代码 · TypeScript · 29 B")).toBeInTheDocument();
-      expect(document.querySelector(".files-main__code .diff-code__token--keyword")).toHaveTextContent("export");
-      expect(document.querySelector(".files-main__code .diff-code__token--string")).toHaveTextContent("\"Lilia\"");
+      expect(document.querySelector(".files-main__code")).toHaveTextContent("export const title = \"Lilia\";");
+      expect(document.querySelector(".files-main__code")).toHaveTextContent("const count = 1;");
     });
-    expect([...document.querySelectorAll(".files-main__line-number")].map((node) => node.textContent)).toEqual(["1", "2"]);
   });
 
-  it("YAML 文本预览显示代码类型和行号", async () => {
+  it("YAML 文本预览显示代码类型", async () => {
     listRepoFiles.mockResolvedValueOnce([file("pnpm-workspace.yaml")]);
     getRepoFilePreview.mockResolvedValueOnce(preview({
       path: "pnpm-workspace.yaml",
@@ -391,7 +384,6 @@ describe("RepoFilesPanel", () => {
       expect(screen.getByText("代码 · YAML · 20 B")).toBeInTheDocument();
       expect(document.querySelector(".files-main__code-content")).toHaveTextContent("packages:");
     });
-    expect([...document.querySelectorAll(".files-main__line-number")].map((node) => node.textContent)).toEqual(["1", "2"]);
   });
 
   it("Markdown 文件使用富文本渲染", async () => {

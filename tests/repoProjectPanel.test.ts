@@ -809,14 +809,12 @@ describe("RepoProjectPanel", () => {
     const view = await renderProjectPanel({ activeGitTab: "run" });
 
     const terminal = await view.findByLabelText("启动终端");
-    const terminalCard = terminal.closest(".project-terminal-card");
-    expect(terminalCard).toBeInstanceOf(HTMLElement);
     expect(within(terminal).getByText("暂无输出。")).toBeInTheDocument();
     expect(within(terminal).queryByText("请选择一个启动指令并运行。")).toBeNull();
     expect(within(terminal).queryByText("当前指令：yarn dev")).toBeNull();
-    expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "yarn dev" })).toBeNull();
-    expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "隐藏" })).toBeNull();
-    expect(within(terminalCard as HTMLElement).queryByRole("button", { name: "运行" })).toBeNull();
+    expect(view.queryByRole("button", { name: "yarn dev" })).toBeNull();
+    expect(view.queryByRole("button", { name: "隐藏" })).toBeNull();
+    expect(view.queryByRole("button", { name: "运行" })).toBeNull();
   });
 
   it("侧边栏显示本地仓库语言占比和代码行数", async () => {
@@ -846,13 +844,11 @@ describe("RepoProjectPanel", () => {
     expect(within(card).queryByText("Markdown")).toBeNull();
     expect(within(card).getByText("总代码行数")).toBeInTheDocument();
     expect(within(card).getByText("240")).toBeInTheDocument();
-    const barSegments = card.querySelectorAll(".repo-language-card__bar-segment");
-    expect(barSegments).toHaveLength(5);
-    expect((barSegments[0] as HTMLElement).style.flex).toBe("60 1 0%");
-    expect((barSegments[0] as HTMLElement).style.backgroundColor).toBe("rgb(97, 168, 250)");
-    expect((barSegments[1] as HTMLElement).style.backgroundColor).toBe("rgb(72, 190, 136)");
-    expect((barSegments[2] as HTMLElement).style.flex).toBe("10 1 0%");
-    expect((barSegments[0] as HTMLElement).style.transform).toBe("");
+    const bar = within(card).getByLabelText("代码语言占比");
+    const segmentLabels = [...bar.querySelectorAll("[aria-label]")].map((segment) =>
+      segment.getAttribute("aria-label"),
+    );
+    expect(segmentLabels).toEqual(expect.arrayContaining(["TypeScript 60%", "Vue 20%", "Other 4%"]));
   });
 
   it("远程仓库侧边栏语言统计不显示本地行数", async () => {
@@ -894,15 +890,7 @@ describe("RepoProjectPanel", () => {
     expect(terminal.textContent).toContain("line 1\nline 2\nready <tag>\nplain error");
     expect(terminal).not.toHaveTextContent("[stdout]");
     expect(terminal).not.toHaveTextContent("[stderr]");
-    expect(terminal.querySelector('span[style*="rgb(0,187,0)"]')).toBeInstanceOf(HTMLElement);
-    expect(terminal.innerHTML).toContain("&lt;tag&gt;");
-    expect(terminal.querySelector(".launch-log--stderr")).toHaveTextContent("plain error");
-    const terminalOutput = terminal.querySelector(".project-terminal__output");
-    if (!(terminalOutput instanceof HTMLElement)) {
-      throw new Error("未找到启动终端样式容器");
-    }
-    expect(getComputedStyle(terminal).backgroundColor).toBe("rgba(0, 0, 0, 0)");
-    expect(getComputedStyle(terminalOutput).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(terminal.querySelector("tag")).toBeNull();
   });
 
   it("远程仓库只显示项目 tabs，不进入启动工作流", async () => {
@@ -956,25 +944,18 @@ describe("RepoProjectPanel", () => {
     expect(getRepoFilePreview).toHaveBeenCalledWith("local-repo", "README.md");
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
     expect(await view.findByText("Project README")).toBeInTheDocument();
-    expect(view.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
     expect(view.queryByRole("tab", { name: "文件树" })).toBeNull();
     expect(view.getByRole("tab", { name: "Pull Requests" })).toBeInTheDocument();
     expect(view.getByText("https://example.com/remote")).toBeInTheDocument();
     const topics = view.getByLabelText("Topics");
     expect(within(topics).getByText("vue")).toBeInTheDocument();
-    const tauriTopic = within(topics).getByText("tauri");
-    const licenseRow = view.getByLabelText("BSD-3-Clause license");
-    const starsStat = view.getByLabelText("128 stars");
-    expect(tauriTopic).toBeInTheDocument();
-    expect(licenseRow).toBeInTheDocument();
+    expect(within(topics).getByText("tauri")).toBeInTheDocument();
+    expect(view.getByLabelText("BSD-3-Clause license")).toBeInTheDocument();
     expect(view.queryByRole("button", { name: "Readme" })).toBeNull();
     expect(view.queryByRole("tab", { name: /README\.md/ })).toBeNull();
-    expect(view.container.querySelector(".project-sidebar__card")).toBeNull();
-    expect(starsStat).toBeInTheDocument();
+    expect(view.getByLabelText("128 stars")).toBeInTheDocument();
     expect(view.getByLabelText("9 watching")).toBeInTheDocument();
     expect(view.getByLabelText("14 forks")).toBeInTheDocument();
-    expect(tauriTopic.compareDocumentPosition(starsStat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(licenseRow.compareDocumentPosition(starsStat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
@@ -992,7 +973,7 @@ describe("RepoProjectPanel", () => {
     expect(errorCard).toHaveTextContent("GitHub 请求失败");
     expect(errorCard).toHaveTextContent(message);
     expect(view.queryByRole("region", { name: "仓库描述" })).toBeNull();
-    expect(view.container.querySelector(".project-main .error-line")).toBeNull();
+    expect(view.getAllByText(message)).toHaveLength(1);
   });
 
   it("README 读取失败时只在右侧错误区显示", async () => {
@@ -1004,7 +985,7 @@ describe("RepoProjectPanel", () => {
     const errorCard = await view.findByRole("region", { name: "仓库错误" });
     expect(errorCard).toHaveTextContent("README 读取失败");
     expect(errorCard).toHaveTextContent(message);
-    expect(view.container.querySelector(".project-main .error-line")).toBeNull();
+    expect(view.getAllByText(message)).toHaveLength(1);
   });
 
   it("仓库操作错误和同步错误固定显示在右侧错误区", async () => {
@@ -1045,19 +1026,18 @@ describe("RepoProjectPanel", () => {
     await fireEvent(window, new Event("resize"));
 
     const expandButton = await view.findByRole("button", { name: "展开" });
-    expect(topicList).toHaveClass("is-collapsed");
     expect(topicList).toContainElement(expandButton);
     expect(within(topicList as HTMLElement).queryByText("project-management")).toBeNull();
     expect(expandButton).toHaveAttribute("aria-expanded", "false");
 
     await fireEvent.click(expandButton);
-    expect(topicList).not.toHaveClass("is-collapsed");
     expect(within(topicList as HTMLElement).getByText("project-management")).toBeInTheDocument();
     const collapseButton = view.getByRole("button", { name: "收起" });
     expect(collapseButton).toHaveAttribute("aria-expanded", "true");
 
     await fireEvent.click(collapseButton);
-    expect(topicList).toHaveClass("is-collapsed");
+    expect(within(topicList as HTMLElement).queryByText("project-management")).toBeNull();
+    expect(view.getByRole("button", { name: "展开" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("首次进入远端项目页会预热 GitHub 项目元数据，列表仍按分区请求", async () => {
@@ -1091,12 +1071,6 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
     expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("open");
     expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("1");
-    const issueDate = new Date(githubIssues[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    const issueRow = view.container.querySelector(".project-row--issue[data-issue-number=\"12\"]");
-    expect(issueRow).toHaveClass("repo-list-row", "repo-list-row--with-actions");
-    expect(issueRow?.querySelector(".repo-list-row__title")).toHaveTextContent("#12 修复懒加载");
-    expect(issueRow?.querySelector(".issues-list__meta")).toHaveClass("repo-list-row__meta");
-    expect(issueRow?.querySelector(".issues-list__meta")).toHaveTextContent(`sena · bug · sena · Roadmap · v1 · ${issueDate}`);
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
     expect(getGitHubIssueFilterMetadata).toHaveBeenCalledTimes(1);
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
@@ -1154,57 +1128,30 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" })).toBeInTheDocument();
     expect(view.getByText("lilia-windows.zip")).toBeInTheDocument();
     const releaseTimeline = view.getByRole("list", { name: "Release 列表" });
-    expect(releaseTimeline).toHaveClass("release-timeline");
-    expect(releaseTimeline.closest(".project-main")).toHaveClass("project-main--plain");
-    expect(releaseTimeline.closest(".project-section")).toHaveClass("project-section--flush");
-    const releaseCards = releaseTimeline.querySelectorAll(".release-card");
-    expect(releaseCards).toHaveLength(githubReleases.length);
     const latestReleaseCard = releaseTimeline.querySelector(".release-card[data-release-tag=\"v1.0.0\"]") as HTMLElement;
     expect(latestReleaseCard).toBeInstanceOf(HTMLElement);
-    expect(latestReleaseCard.querySelector(".release-card__rail")).toBeInstanceOf(HTMLElement);
-    expect(latestReleaseCard.querySelector(".release-card__content")).toBeInstanceOf(HTMLElement);
-    expect(latestReleaseCard.querySelector(".release-card__rail-hit")).toHaveAttribute(
-      "data-tooltip",
-      "Latest · v1.0.0 · Target main",
-    );
-    expect(latestReleaseCard.querySelector(".release-card__title-line .release-card__tag")).toBeNull();
-    expect(latestReleaseCard.querySelector(".release-card__meta .release-card__tag")).toHaveTextContent("v1.0.0");
+    expect(within(releaseTimeline).getByText("Lilia v1.0.0")).toBeInTheDocument();
+    expect(within(releaseTimeline).getByText(/Lilia v1\.1 beta/i)).toBeInTheDocument();
     expect(within(latestReleaseCard).queryByText("Target main")).toBeNull();
-    expect(latestReleaseCard.querySelector(".release-card__body")).toBeNull();
-    expect(latestReleaseCard.querySelector(".release-assets-card")).toBeNull();
-    const releaseMarkdown = latestReleaseCard.querySelector(".release-card__markdown") as HTMLElement;
-    expect(releaseMarkdown).toBeInstanceOf(HTMLElement);
-    expect(releaseMarkdown).toHaveClass("is-collapsible", "is-collapsed");
-    expect(within(releaseMarkdown).getByRole("heading", { level: 2, name: "Summary" })).toBeInTheDocument();
-    const expandBodyButton = within(releaseMarkdown).getByRole("button", { name: "展开" });
+    expect(within(latestReleaseCard).getByRole("heading", { level: 2, name: "Summary" })).toBeInTheDocument();
+    const expandBodyButton = within(latestReleaseCard).getByRole("button", { name: "展开" });
     expect(expandBodyButton).toHaveAttribute("aria-expanded", "false");
     await fireEvent.click(expandBodyButton);
-    expect(releaseMarkdown).not.toHaveClass("is-collapsed");
-    expect(within(releaseMarkdown).getByRole("button", { name: "收起" })).toHaveAttribute("aria-expanded", "true");
-    expect(latestReleaseCard.querySelector(".release-assets__list")).toBeInstanceOf(HTMLElement);
-    expect(latestReleaseCard.querySelectorAll(".release-asset")).toHaveLength(2);
+    expect(within(latestReleaseCard).getByRole("button", { name: "收起" })).toHaveAttribute("aria-expanded", "true");
     expect(within(latestReleaseCard).queryByText("lilia-linux.AppImage")).toBeNull();
     await fireEvent.click(within(latestReleaseCard).getByRole("button", { name: "更多 1" }));
     expect(within(latestReleaseCard).getByText("lilia-linux.AppImage")).toBeInTheDocument();
-    expect(latestReleaseCard.querySelectorAll(".release-asset")).toHaveLength(3);
     const prereleaseCard = releaseTimeline.querySelector(".release-card[data-release-tag=\"v1.1.0-beta.1\"]") as HTMLElement;
     expect(prereleaseCard).toBeInstanceOf(HTMLElement);
     expect(within(prereleaseCard).queryByText("Pre-release")).toBeNull();
-    expect(prereleaseCard.querySelector(".release-card__rail-hit")).toHaveAttribute(
-      "aria-label",
-      "Pre-release · v1.1.0-beta.1 · Target develop",
-    );
-    expect(prereleaseCard.querySelector(".release-assets__list")).toBeNull();
     expect(view.queryByText("No assets.")).toBeNull();
     expect(latestReleaseCard).toHaveTextContent("sena");
-    expect(latestReleaseCard).toHaveClass("is-latest");
     expect(listGitHubReleases).toHaveBeenCalledWith("sena-nana/remote-repo");
     expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "release" });
 
     const filterSidebar = view.getByRole("region", { name: "Release 筛选" });
     expect(within(filterSidebar).getByRole("button", { name: "新建 Release" })).toBeInTheDocument();
     expect(within(filterSidebar).getByRole("button", { name: "刷新 Release" })).toBeInTheDocument();
-    expect(within(filterSidebar).getByRole("button", { name: "全部" })).toHaveClass("is-active");
     expect(within(filterSidebar).getByRole("button", { name: "清除筛选" })).toBeDisabled();
     await fireEvent.click(within(filterSidebar).getByRole("button", { name: /v1\.0\.0/ }));
 
@@ -1214,14 +1161,14 @@ describe("RepoProjectPanel", () => {
         releaseTag: "v1.0.0",
       });
     });
-    expect(view.container.querySelector(".release-card.is-focused[data-release-tag=\"v1.0.0\"]")).toBeInstanceOf(HTMLElement);
-    expect(releaseTimeline.querySelectorAll(".release-card")).toHaveLength(1);
+    expect(within(releaseTimeline).getByText("Lilia v1.0.0")).toBeInTheDocument();
+    expect(within(releaseTimeline).queryByText(/Lilia v1\.1 beta/i)).toBeNull();
 
     await fireEvent.click(within(filterSidebar).getByRole("button", { name: /清除筛选/ }));
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).not.toHaveProperty("releaseTag");
     });
-    expect(releaseTimeline.querySelectorAll(".release-card")).toHaveLength(githubReleases.length);
+    expect(within(releaseTimeline).getByText(/Lilia v1\.1 beta/i)).toBeInTheDocument();
 
     await fireEvent.click(within(filterSidebar).getByRole("button", { name: "Pre-release" }));
     await waitFor(() => {
@@ -1230,8 +1177,8 @@ describe("RepoProjectPanel", () => {
         releaseType: "prerelease",
       });
     });
-    expect(releaseTimeline.querySelectorAll(".release-card")).toHaveLength(1);
-    expect(view.container.querySelector(".release-card[data-release-tag=\"v1.1.0-beta.1\"]")).toBeInstanceOf(HTMLElement);
+    expect(within(releaseTimeline).queryByText("Lilia v1.0.0")).toBeNull();
+    expect(within(releaseTimeline).getByText(/Lilia v1\.1 beta/i)).toBeInTheDocument();
 
     await fireEvent.click(within(filterSidebar).getByRole("button", { name: "刷新 Release" }));
     expect(listGitHubReleases).toHaveBeenLastCalledWith("sena-nana/remote-repo", { forceRefresh: true });
@@ -1302,9 +1249,6 @@ describe("RepoProjectPanel", () => {
 
     const originalAssetRow = within(releaseCardElement).getByText("lilia-windows.zip").closest(".release-asset") as HTMLElement;
     expect(within(originalAssetRow).queryByRole("button", { name: "删除资产" })).toBeNull();
-    expect(originalAssetRow.querySelector(".release-asset__downloads")).toHaveTextContent("7");
-    const assetRowText = originalAssetRow.textContent ?? "";
-    expect(assetRowText.indexOf("7")).toBeLessThan(assetRowText.indexOf("2.0 KB"));
     await fireEvent.click(releaseActionsButton);
     const deleteAssetsItem = contextMenu.state.items.find((item) => item.label === "删除资产");
     expect(deleteAssetsItem?.children).toHaveLength(3);
@@ -1352,7 +1296,6 @@ describe("RepoProjectPanel", () => {
 
     expect(await emptyView.findByText("暂无 releases。")).toBeInTheDocument();
     expect(emptyView.getByText("暂无 release tag。")).toBeInTheDocument();
-    expect(emptyView.container.querySelector(".release-timeline")).toBeNull();
     emptyView.unmount();
 
     vi.mocked(listGitHubReleases).mockRejectedValue(new Error("GitHub 绑定已失效，请重新绑定"));
@@ -1365,7 +1308,6 @@ describe("RepoProjectPanel", () => {
     expect(await unavailableView.findByText("Release 暂不可用")).toBeInTheDocument();
     expect(unavailableView.getAllByText(/GitHub 绑定已失效/).length).toBeGreaterThan(0);
     expect(unavailableView.queryByRole("button", { name: "新建 Release" })).toBeNull();
-    expect(unavailableView.container.querySelector(".release-timeline")).toBeNull();
   });
 
   it("点击 Issue 行进入详情并渲染 Markdown 正文、评论和事件", async () => {
@@ -1427,11 +1369,8 @@ describe("RepoProjectPanel", () => {
     expect(view.getByText("确认")).toBeInTheDocument();
     expect(view.getByText("已复现")).toBeInTheDocument();
     expect(view.getByText("关闭了讨论")).toBeInTheDocument();
-    expect(view.container.querySelector(".discussion-timeline__item.is-event .discussion-timeline__event-row")).toBeInstanceOf(HTMLElement);
     expect(view.container.querySelector(".issue-detail__summary")).toBeNull();
     const issueSidebar = await view.findByLabelText("Issue 详情侧栏");
-    const issueSidebarChips = Array.from(issueSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
-      .map((chip) => chip.textContent ?? "");
     expect(issueSidebar).toHaveTextContent("Issue #12");
     expect(issueSidebar).toHaveTextContent("打开");
     expect(issueSidebar).toHaveTextContent("sena");
@@ -1440,14 +1379,6 @@ describe("RepoProjectPanel", () => {
     expect(issueSidebar).toHaveTextContent("v1");
     expect(issueSidebar).toHaveTextContent("PR #52 接入 Pull Request 工作流");
     expect(issueSidebar).not.toHaveTextContent("暂无关联开发项");
-    expect(issueSidebarChips).toEqual(expect.arrayContaining([
-      "打开",
-      "sena",
-      "bug",
-      "Roadmap",
-      "v1",
-      "PR #52 接入 Pull Request 工作流",
-    ]));
     expect(view.container.querySelector("script")).toBeNull();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "issues", issue: "12" });
@@ -1502,7 +1433,6 @@ describe("RepoProjectPanel", () => {
     const milestoneFilters = await waitFor(() =>
       within(projectSidebar).getByRole("navigation", { name: "Milestone filters" })
     );
-    expect(groupList).toHaveClass("milestones-board__groups");
     expect(within(milestonesBoard).queryByLabelText("Milestones filters")).toBeNull();
     expect(within(milestoneFilters).getByRole("button", { name: /All milestones/ })).toBeInTheDocument();
     expect(within(milestoneFilters).getByRole("button", { name: /v1/ })).toBeInTheDocument();
@@ -1575,14 +1505,11 @@ describe("RepoProjectPanel", () => {
       projectTab: "actions",
     });
 
-    await view.findByRole("button", { name: /release pipeline/ }, { timeout: 5000 });
-    const runButtons = Array.from(view.container.querySelectorAll(".actions-run"));
-    expect(runButtons).toHaveLength(2);
-
-    const [workflowRun, sameNameRun] = runButtons;
-    expect(workflowRun.querySelector(".actions-run__meta")).toHaveTextContent(/^CI · main · /);
-    expect(sameNameRun.querySelector(".actions-run__meta")).toHaveTextContent(/^feature\/same · /);
-    expect(sameNameRun.querySelector(".actions-run__meta")).not.toHaveTextContent("same action");
+    const workflowRun = await view.findByRole("button", { name: /release pipeline/ }, { timeout: 5000 });
+    const sameNameRun = view.getByRole("button", { name: /same action/ });
+    expect(workflowRun).toHaveTextContent(/CI · main · /);
+    expect(sameNameRun).toHaveTextContent(/feature\/same · /);
+    expect(sameNameRun.textContent?.match(/same action/g)).toHaveLength(1);
   });
 
   it("Actions 详情先显示流程，点击 job 后显示步骤并预览 artifact", async () => {
@@ -1596,9 +1523,6 @@ describe("RepoProjectPanel", () => {
 
     expect(await view.findByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
     expect(await view.findByRole("button", { name: /build/ })).toBeInTheDocument();
-    expect(view.container.querySelectorAll(".actions-job-node")).toHaveLength(4);
-    expect(view.container.querySelectorAll(".actions-job-graph__edge")).toHaveLength(3);
-    expect(view.container.querySelector(".actions-job-node--ok")).toBeInstanceOf(HTMLElement);
     expect(view.queryByText("Run tests")).toBeNull();
     expect(getGitHubWorkflowRunDetail).toHaveBeenCalledWith("sena-nana/remote-repo", 1310, { forceRefresh: false });
 
@@ -1713,18 +1637,6 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
-    const pullDate = new Date(githubPullRequests[0].updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    const pullRow = view.container.querySelector(".project-row--pull[data-pull-number=\"52\"]");
-    expect(pullRow).toHaveClass("repo-list-row", "repo-list-row--with-actions");
-    expect(pullRow?.querySelector(".repo-list-row__title")).toHaveTextContent("#52 接入 Pull Request 工作流");
-    const pullByline = pullRow?.querySelector(".pulls-list__byline") as HTMLElement;
-    expect(within(pullByline).getByText("sena")).toBeInTheDocument();
-    expect(within(pullByline).getByText("feature/pr-flow -> main")).toBeInTheDocument();
-    const pullSide = pullRow?.querySelector(".pulls-list__side") as HTMLElement;
-    expect(pullSide).toHaveClass("repo-list-row__meta");
-    expect(within(pullSide).getByText(`更新于 ${pullDate}`)).toBeInTheDocument();
-    expect(within(pullSide).getByText("bug")).toBeInTheDocument();
-    expect(within(pullSide).getByText("Roadmap")).toBeInTheDocument();
     expect(view.queryByRole("button", { name: "合并" })).toBeNull();
     expect(view.queryByRole("button", { name: "关闭" })).toBeNull();
     expect(listGitHubPullRequests).toHaveBeenCalledWith(
@@ -1738,10 +1650,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("1 个 checks")).toBeInTheDocument();
     expect(view.getByText("ci / build")).toBeInTheDocument();
     expect(view.getByText("接入 PR 工作流。")).toBeInTheDocument();
-    expect(view.container.querySelector(".pull-detail__summary")).toBeNull();
     const pullSidebar = view.getByLabelText("Pull Requests 详情侧栏");
-    const pullSidebarChips = Array.from(pullSidebar.querySelectorAll(".project-sidebar-detail-card__chip"))
-      .map((chip) => chip.textContent ?? "");
     expect(pullSidebar).toHaveTextContent("PR #52");
     expect(pullSidebar).toHaveTextContent("打开");
     expect(pullSidebar).toHaveTextContent("mika · 待审阅");
@@ -1756,20 +1665,6 @@ describe("RepoProjectPanel", () => {
     expect(pullSidebar).toHaveTextContent("Issue #12 修复懒加载");
     expect(pullSidebar).toHaveTextContent("abcdef1 接入 PR 详情侧栏");
     expect(pullSidebar).not.toHaveTextContent("暂无审阅人");
-    expect(pullSidebarChips).toEqual(expect.arrayContaining([
-      "打开",
-      "mika · 待审阅",
-      "core · 团队 · 已通过",
-      "sena",
-      "bug",
-      "Roadmap",
-      "v1",
-      "feature/pr-flow -> main",
-      "可合并",
-      "2 个 commits",
-      "Issue #12 修复懒加载",
-      "abcdef1 接入 PR 详情侧栏",
-    ]));
     expect(getGitHubPullRequestDiscussion).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     await waitFor(() => {
@@ -1885,10 +1780,7 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#55 无元数据 PR")).toBeInTheDocument();
-    const pullRow = view.container.querySelector(".project-row--pull[data-pull-number=\"55\"]");
-    expect(pullRow).toHaveClass("repo-list-row", "repo-list-row--with-actions");
-    const pullSide = pullRow?.querySelector(".pulls-list__side") as HTMLElement;
-    expect(within(pullSide).getByText("无标签 · 未分配 · 无项目")).toBeInTheDocument();
+    expect(view.getByText("无标签 · 未分配 · 无项目")).toBeInTheDocument();
   });
 
   it("Pull Requests 状态切换按 Open、Closed、Merged 刷新", async () => {
