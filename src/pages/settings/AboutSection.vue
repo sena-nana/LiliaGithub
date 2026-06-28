@@ -201,11 +201,16 @@ async function installUpdate() {
 }
 
 .about-license-details > summary::after {
-  content: "▸";
+  content: "";
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--text-muted);
+  border-right: 0;
   margin-left: 6px;
-  font-size: 12px;
   display: inline-block;
-  transform-origin: center;
+  transform-origin: center center;
   transform: rotate(0deg);
   transition: transform 0.15s ease;
 }
