@@ -148,12 +148,15 @@ jobs:
         run: corepack yarn install --immutable
 
       - name: Import Windows signing certificate
-        if: ${{ secrets.WINDOWS_CERTIFICATE && secrets.WINDOWS_CERTIFICATE_PASSWORD && secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
+          if (-not $env:WINDOWS_CERTIFICATE -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Host "WINDOWS_SIGNING_CERTIFICATE secrets are not fully configured; skip certificate import."
+            exit 0
+          }
           $certPath = Join-Path $env:RUNNER_TEMP "liliagithub-code-signing.pfx"
           [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
           $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
