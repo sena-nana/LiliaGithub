@@ -12,6 +12,7 @@ import {
   GitCommitHorizontal,
   GitPullRequestArrow,
   Info,
+  Plus,
   CloudDownload,
   CloudUpload,
   LoaderCircle,
@@ -1775,7 +1776,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             aria-label="创建仓库"
             @click="openCreateRepoMenu"
           >
-            <GitBranchPlus :size="17" aria-hidden="true" />
+            <Plus :size="17" aria-hidden="true" />
           </button>
           <button
             type="button"
