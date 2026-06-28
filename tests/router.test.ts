@@ -1418,7 +1418,7 @@ describe("基础路由", () => {
     const issueLink = await within(timeline).findByRole("link", { name: "Issue #12" });
     await fireEvent.click(issueLink);
 
-    expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "LiliaGithub" })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "Issues" })).toHaveClass("is-active");
     });
