@@ -8,10 +8,9 @@
     </ul>
     </section>
     <section class="card about-license-third-party" aria-label="第三方许可证协议">
-      <h2>第三方许可证协议</h2>
       <template v-if="hasLicenseManifest">
         <details class="about-license-details">
-          <summary>依赖明细</summary>
+          <summary>第三方许可证协议</summary>
           <div v-if="npmDependencies.length">
             <div class="about-license-summary-title">npm</div>
             <ul class="kv">
@@ -87,7 +86,6 @@ interface OpenSourceLicenseManifest {
 }
 
 const manifest = openSourceLicenseManifest as OpenSourceLicenseManifest | null;
-const fallbackText = "未生成许可清单，请重试 yarn about:licenses";
 
 const hasLicenseManifest = computed(() => {
   return (
@@ -186,14 +184,49 @@ async function installUpdate() {
   color: var(--muted);
 }
 
-.about-license-details {
-  margin-top: 12px;
+.about-license-details summary {
+  display: list-item;
+  list-style-position: outside;
+  margin: 0 0 10px;
+  cursor: pointer;
+  padding: 0;
+  line-height: normal;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.about-license-details summary {
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--muted);
+.about-license-details summary::marker {
+  color: var(--text-muted);
+}
+
+.about-license-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.about-license-details > summary::before {
+  content: "▸";
+  margin-right: 6px;
+  display: inline-block;
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+}
+
+details[open] .about-license-details > summary::before {
+  transform: rotate(90deg);
+}
+
+.about-license-details summary ~ div,
+.about-license-details summary ~ p,
+.about-license-details summary ~ ul {
+  margin-top: 8px;
+}
+
+.about-license-details summary:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
 }
 
 @media (max-width: 720px) {
