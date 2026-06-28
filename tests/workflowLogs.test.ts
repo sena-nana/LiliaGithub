@@ -52,10 +52,8 @@ describe("parseWorkflowJobLogSections", () => {
   it("空日志仍返回 step section", () => {
     const sections = parseWorkflowJobLogSections(job(["Build"]), "");
 
-    expect(sections).toEqual([{
-      step: expect.objectContaining({ name: "Build" }),
-      content: "",
-      matched: false,
-    }]);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({ matched: false, content: "" });
+    expect(sections[0].step.name).toBe("Build");
   });
 });

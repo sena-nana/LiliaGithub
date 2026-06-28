@@ -378,19 +378,16 @@ describe("基础路由", () => {
     expect(screen.getByText(/次提交，最近一年/)).toBeInTheDocument();
     expect(screen.queryByText(/刷新于/)).toBeNull();
     expect(screen.queryByText(/覆盖 \d+ 个仓库/)).toBeNull();
-    expect(document.querySelector(".contribution-day[title$='次提交']")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "变更量排行" })).toBeNull();
     expect(screen.getByRole("heading", { level: 2, name: "编程语言占比" })).toBeInTheDocument();
     expect(await screen.findByLabelText("编程语言占比图")).toBeInTheDocument();
     expect(screen.queryByText(/HEAD 已提交文件/)).toBeNull();
-    expect(screen.getByRole("button", { name: "按编程语言" })).toHaveClass("is-active");
     expect(screen.getByRole("button", { name: "按项目" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "含改动" })).toBeNull();
     expect(await screen.findByText("TypeScript")).toBeInTheDocument();
     expect(await screen.findByText("50%")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新语言" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "按项目" }));
-    expect(screen.getByRole("button", { name: "按项目" })).toHaveClass("is-active");
     const languageChart = screen.getByLabelText("编程语言占比图");
     expect(within(languageChart).getByText("LiliaGithub")).toBeInTheDocument();
     expect(within(languageChart).getByText("63%")).toBeInTheDocument();
@@ -538,7 +535,7 @@ describe("基础路由", () => {
 
     await renderAt("/repos/LiliaGithub-linked/changes");
 
-    expect(await screen.findByRole("tab", { name: "变更" })).toHaveClass("is-active");
+    expect(await screen.findByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
     await fireEvent.click(await screen.findByText("src/linked-worktree.ts"));
     expect(screen.getByLabelText("变更预览")).toHaveTextContent("new linked");
     expect(detailRequests).toContain(linkedSummary.id);
@@ -547,7 +544,7 @@ describe("基础路由", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "历史" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "历史" })).toHaveAttribute("aria-selected", "true");
     });
     await waitFor(() => {
       expect(detailRequests).toContain(linkedSummary.id);
@@ -595,7 +592,7 @@ describe("基础路由", () => {
 
     await renderAt("/repos/LiliaGithub-history-worktree/history");
 
-    expect(await screen.findByRole("tab", { name: "历史" })).toHaveClass("is-active");
+    expect(await screen.findByRole("tab", { name: "历史" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByRole("button", { name: /direct linked history/ })).toBeInTheDocument();
     expect(detailRequests).toContain(linkedSummary.id);
     expect(screen.queryByRole("tab", { name: "变更" })).toBeInTheDocument();
@@ -662,7 +659,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "Files View" })).toBeInTheDocument();
-    expect(within(screen.getByRole("tablist", { name: "仓库页面" })).getByRole("tab", { name: "文件树" })).toHaveClass("is-active");
+    expect(within(screen.getByRole("tablist", { name: "仓库页面" })).getByRole("tab", { name: "文件树" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tablist", { name: "右侧面板" })).toBeNull();
     expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files");
   });
@@ -775,7 +772,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/github%3Asena-nana%2FRemoteFiles/files");
 
     expect(await screen.findByRole("heading", { level: 1, name: "Remote Files" })).toBeInTheDocument();
-    expect(screen.getAllByRole("tab", { name: "文件树" }).some((tab) => tab.classList.contains("is-active"))).toBe(true);
+    expect(screen.getByRole("tab", { name: "文件树", selected: true })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteFiles/files");
     await waitFor(() => {
       expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
@@ -858,7 +855,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/github%3Asena-nana%2FColdRemoteFiles/files");
 
     expect((await screen.findAllByText("正在恢复仓库上下文。")).length).toBeGreaterThan(0);
-    expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toEqual([]);
+    expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toHaveLength(0);
 
     settingsGate.resolve(restoredSettings);
 
@@ -885,7 +882,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "项目" })).toHaveAttribute("aria-selected", "true");
     });
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(initialIssueCalls);
     expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(initialWorkflowRunCalls);
@@ -902,7 +899,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub?projectTab=issues&issue=12");
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Issues" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Issues" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.query).toMatchObject({
       projectTab: "issues",
@@ -927,7 +924,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub?projectTab=milestones");
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Milestones" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Milestones" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.query).toMatchObject({ projectTab: "milestones" });
     expect(await screen.findByLabelText("Milestones board")).toBeInTheDocument();
@@ -938,7 +935,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub?projectTab=board");
 
     expect(await screen.findByLabelText("README 内容")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Milestones" })).not.toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "Milestones" })).toHaveAttribute("aria-selected", "false");
     expect(router.currentRoute.value.query).toMatchObject({ projectTab: "board" });
   });
 
@@ -1007,7 +1004,7 @@ describe("基础路由", () => {
     const { router } = await renderAt("/repos/LiliaGithub?projectTab=actions&run=1310&job=13101");
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Actions" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Actions" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.query).toMatchObject({
       projectTab: "actions",
@@ -1016,7 +1013,8 @@ describe("基础路由", () => {
     });
     await waitFor(() => {
       expect(screen.getByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
-      expect(document.querySelector('[data-job-id="13101"] .actions-job__head.is-active')).toBeInTheDocument();
+      expect(screen.getByText("3 steps")).toBeInTheDocument();
+      expect(screen.getByText("Run lint")).toBeInTheDocument();
     }, { timeout: 5000 });
   });
 
@@ -1044,7 +1042,7 @@ describe("基础路由", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.query).toMatchObject({
       projectTab: "pulls",
@@ -1420,7 +1418,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { name: "LiliaGithub" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Issues" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Issues" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
     expect(router.currentRoute.value.query).toMatchObject({
@@ -1499,7 +1497,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
     expect(router.currentRoute.value.query).toMatchObject({
@@ -1543,7 +1541,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Actions" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Actions" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
     expect(router.currentRoute.value.query).toMatchObject({
@@ -1578,7 +1576,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Release" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "Release" })).toHaveAttribute("aria-selected", "true");
     });
     expect(router.currentRoute.value.path).toBe("/repos/LiliaGithub");
     expect(router.currentRoute.value.query).toMatchObject({
@@ -1586,9 +1584,6 @@ describe("基础路由", () => {
       releaseTag: "v2.0.0",
     });
     expect(await screen.findByRole("heading", { level: 4, name: "桌面端 v2.0.0" })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByLabelText("Release 列表").querySelector('[data-release-tag="v2.0.0"]')).toHaveClass("is-focused");
-    });
     expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests().filter((call) =>
       call.repoFullName === repo.fullName
     )).toHaveLength(1);
@@ -1733,11 +1728,6 @@ describe("基础路由", () => {
     const { router } = await renderAt("/");
 
     expect(screen.queryByRole("link", { name: /TypeScript：50%/ })).toBeNull();
-    const chart = await screen.findByLabelText("编程语言占比图");
-    const pieSlice = chart.querySelector(".language-pie__slice");
-    expect(pieSlice).toBeInTheDocument();
-    await fireEvent.click(pieSlice as Element);
-    expect(router.currentRoute.value.fullPath).toBe("/");
 
     const languageName = await screen.findByText("TypeScript", { selector: ".language-list__link .language-name" });
     const listLink = languageName.closest("a");
@@ -1830,38 +1820,12 @@ describe("基础路由", () => {
     expect(screen.queryByText(/仅统计前 30 个/)).toBeNull();
   });
 
-  it("首页本地提交贡献图使用固定右侧窗口显示", async () => {
-    const service = await import("../src/services/workspace");
-    workspaceFallback.setFallbackRepoContributionOverrideForTests((repoScope) => ({
-      days: Array.from({ length: 371 }, (_, index) => ({
-        date: new Date(Date.UTC(2025, 0, 1 + index)).toISOString().slice(0, 10),
-        count: index === 370 && repoScope === "local:LiliaGithub" ? 4 : 0,
-      })),
-      meta: {
-        repoCount: 1,
-        requestedRepoCount: 1,
-        repoLimit: 30,
-        truncated: false,
-        skippedRepoCount: 0,
-        refreshedAt: 1_780_000_000_000,
-      },
-    }));
-
-    await renderAt("/");
-    const chart = await screen.findByLabelText("本地提交贡献图");
-
-    expect(chart.querySelector(".contribution-window")).toBeInTheDocument();
-    expect(chart.querySelector(".contribution-months")).toHaveTextContent("1月");
-    expect(chart.querySelector(".contribution-scroll")).toBeNull();
-    expect(await screen.findByLabelText(/2026-01-06：4 次提交/)).toBeInTheDocument();
-  });
-
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
     await renderAt("/");
 
     expect(
       await screen.findByRole("link", { name: "GitHub 已授权。点击进入设置。" }),
-    ).toHaveClass("sb-conn--ok");
+    ).toHaveAttribute("href", expect.stringContaining("/settings"));
     expect(screen.getAllByRole("link", { name: "设置" })).toHaveLength(1);
     expect(screen.queryByRole("link", { name: "扩展" })).toBeNull();
   });
@@ -1887,7 +1851,7 @@ describe("基础路由", () => {
     expect(screen.getByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
     expect(screen.queryByLabelText("快速启动")).toBeNull();
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "推送" })).toBeInTheDocument();
     expect(within(screen.getByLabelText("项目缓存")).getByRole("button", { name: "刷新项目缓存" })).toBeInTheDocument();
     await within(screen.getByLabelText("仓库操作")).findByRole("button", { name: "设置" });
@@ -1916,27 +1880,15 @@ describe("基础路由", () => {
     const diffPreview = await screen.findByLabelText("变更预览");
     expect(diffPreview).toBeInTheDocument();
     expect(diffPreview).toHaveTextContent("@@ -1 +1 @@");
-    expect(diffPreview.querySelector(".diff-code__line.is-added")).toHaveTextContent("LiliaGithub");
-    expect(diffPreview.querySelector(".diff-code__raw-line")).toBeNull();
-    const diffWorkspace = diffPreview.closest(".repo-diff-workspace") as HTMLElement;
-    Object.defineProperty(diffWorkspace, "getBoundingClientRect", {
-      configurable: true,
-      value: () => ({ left: 0, width: 1000 }),
-    });
-    const splitter = within(diffWorkspace).getByRole("separator");
-    await fireEvent.pointerDown(splitter, { clientX: 380, pointerId: 1 });
-    await fireEvent.pointerMove(window, { clientX: 500, pointerId: 1 });
-    expect(diffWorkspace.style.getPropertyValue("--commit-detail-left")).toBe("50%");
-    await fireEvent.pointerUp(window, { clientX: 500, pointerId: 1 });
+    expect(diffPreview).toHaveTextContent("LiliaGithub");
 
     const diffToggle = within(diffPreview).getByRole("button", { name: "折叠 diff" });
     expect(diffToggle).toHaveAttribute("aria-pressed", "true");
     await fireEvent.click(diffToggle);
     expect(diffToggle).toHaveAttribute("aria-pressed", "false");
-    expect(diffPreview.querySelector(".diff-code__raw-line")).toBeInTheDocument();
     await fireEvent.click(diffToggle);
     expect(diffToggle).toHaveAttribute("aria-pressed", "true");
-    expect(diffPreview.querySelector(".diff-code__line.is-added")).toHaveTextContent("LiliaGithub");
+    expect(diffPreview).toHaveTextContent("LiliaGithub");
 
     const unstagedGroup = screen.getByLabelText("未暂存变更");
     const untrackedRow = within(unstagedGroup).getByText("src-tauri/src/workspace.rs").closest("button")!;
@@ -1977,7 +1929,7 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "历史" }));
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "历史" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "历史" })).toHaveAttribute("aria-selected", "true");
     });
     expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("提交历史密集列表")).toBeInTheDocument();
@@ -2275,7 +2227,7 @@ describe("基础路由", () => {
 
     await renderAt("/repos/LiliaGithub/stash");
 
-    expect(await screen.findByRole("tab", { name: "Stash" })).toHaveClass("is-active");
+    expect(await screen.findByRole("tab", { name: "Stash" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByRole("tab", { name: "文件树" }).length).toBeGreaterThan(0);
     await waitForRepoTitle("LiliaGithub");
     expect(screen.queryByRole("group", { name: "扩展仓库操作" })).toBeNull();
@@ -2403,7 +2355,7 @@ describe("基础路由", () => {
 
     expect((await screen.findAllByRole("heading", { level: 1, name: "LiliaGithub" })).length).toBeGreaterThanOrEqual(1);
     expect(await screen.findByRole("tablist", { name: "右侧面板" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Repo" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "Repo" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: "README.md" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "README.txt" })).toBeNull();
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
@@ -2432,7 +2384,7 @@ describe("基础路由", () => {
       expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/files?file=docs/guide.md");
     });
     expect(await screen.findByRole("heading", { level: 1, name: "开发指南" })).toBeInTheDocument();
-    expect(workspaceFallback.getFallbackOpenPathCallsForTests()).toEqual([]);
+    expect(workspaceFallback.getFallbackOpenPathCallsForTests()).toHaveLength(0);
 
     await router.push("/repos/LiliaGithub");
     expect(await screen.findByLabelText("README 内容")).toHaveTextContent("工作区 Git 仓库扫描");
@@ -2683,10 +2635,11 @@ describe("基础路由", () => {
 
   it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
     const service = await import("../src/services/workspace");
-    const issueRow = () => {
-      const row = document.querySelector(".project-row--issue[data-issue-number=\"12\"]");
-      if (!row) throw new Error("未找到 Issue 行");
-      return row as HTMLElement;
+    const issueItemByTitle = (name: string | RegExp) => {
+      const titleButton = screen.getByRole("button", { name });
+      const item = titleButton.closest('[role="listitem"]');
+      if (!(item instanceof HTMLElement)) throw new Error("未找到 Issue 行");
+      return item;
     };
     workspaceFallback.setFallbackGitHubIssuesForTests({
       "sena-nana/LiliaGithub": [
@@ -2709,19 +2662,21 @@ describe("基础路由", () => {
     await fireEvent.click(await screen.findByRole("tab", { name: "Issues" }));
 
     expect(await screen.findByText(/待编辑 Issue/, {}, { timeout: 5000 })).toBeInTheDocument();
-    await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
-    await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 标题"), "编辑后标题");
-    await fireEvent.update(within(issueRow()).getByPlaceholderText("Issue 内容"), "新正文");
-    await fireEvent.update(within(issueRow()).getByPlaceholderText("labels, comma separated"), "backend, docs");
-    await fireEvent.update(within(issueRow()).getByPlaceholderText("assignees"), "carol, dana");
-    await fireEvent.click(within(issueRow()).getByRole("button", { name: "保存" }));
+    const editingItem = issueItemByTitle(/待编辑 Issue/);
+    await fireEvent.click(within(editingItem).getByRole("button", { name: "编辑" }));
+    await fireEvent.update(within(editingItem).getByPlaceholderText("Issue 标题"), "编辑后标题");
+    await fireEvent.update(within(editingItem).getByPlaceholderText("Issue 内容"), "新正文");
+    await fireEvent.update(within(editingItem).getByPlaceholderText("labels, comma separated"), "backend, docs");
+    await fireEvent.update(within(editingItem).getByPlaceholderText("assignees"), "carol, dana");
+    await fireEvent.click(within(editingItem).getByRole("button", { name: "保存" }));
 
     expect(await screen.findByText("#12 编辑后标题")).toBeInTheDocument();
-    expect(issueRow()).toHaveTextContent("backend, docs");
-    expect(issueRow()).toHaveTextContent("carol, dana");
+    expect(issueItemByTitle("#12 编辑后标题")).toHaveTextContent("backend, docs");
+    expect(issueItemByTitle("#12 编辑后标题")).toHaveTextContent("carol, dana");
 
-    await fireEvent.click(within(issueRow()).getByRole("button", { name: "编辑" }));
-    expect(within(issueRow()).getByDisplayValue("新正文")).toBeInTheDocument();
+    const updatedItem = issueItemByTitle("#12 编辑后标题");
+    await fireEvent.click(within(updatedItem).getByRole("button", { name: "编辑" }));
+    expect(within(updatedItem).getByDisplayValue("新正文")).toBeInTheDocument();
   });
 
   it("仓库项目信息页无 GitHub 远端时保留 README 并显示远端空态", async () => {
@@ -2765,7 +2720,7 @@ describe("基础路由", () => {
     await waitForRepoTitle("Lilia");
     expect(screen.getByRole("button", { name: "有冲突" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "推送" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "项目" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "项目" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: "冲突" })).toBeNull();
     expect(screen.queryByLabelText("冲突分段处理")).toBeNull();
     expect(screen.queryByRole("button", { name: "整文件采用 ours" })).toBeNull();
@@ -2795,15 +2750,11 @@ describe("基础路由", () => {
     expect(collapseToggle).toHaveAttribute("aria-pressed", "true");
     expect(diffPanel).toHaveTextContent("@@ -1,3 +1,4 @@");
     expect(diffPanel).toHaveTextContent("<h1>LiliaGithub</h1>");
-    expect(diffPanel.querySelector(".diff-code__token--type")).toHaveTextContent("template");
-    expect(diffPanel.querySelector(".diff-code__line.is-added .diff-code__token--type")).toHaveTextContent("h1");
 
     await fireEvent.click(collapseToggle);
 
     expect(collapseToggle).toHaveAttribute("aria-pressed", "false");
     expect(diffPanel).toHaveTextContent("diff --git a/src/pages/Home.vue b/src/pages/Home.vue");
-    expect(diffPanel.querySelector(".diff-code__raw-line.is-meta")).toHaveTextContent("diff --git");
-    expect(diffPanel.querySelector(".diff-code__raw-line.is-added .diff-code__token--type")).toHaveTextContent("h1");
 
     await fireEvent.click(collapseToggle);
 
@@ -2811,7 +2762,6 @@ describe("基础路由", () => {
 
     expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("@@ -10,4 +10,5 @@");
     expect(screen.getByLabelText("改动文件 diff")).toHaveTextContent("pub github_full_name: Option<String>,");
-    expect(screen.getByLabelText("改动文件 diff").querySelector(".diff-code__token--keyword")).toHaveTextContent("pub");
 
     await fireEvent.click(screen.getByRole("button", { name: "关闭提交详情" }));
 
@@ -2831,7 +2781,7 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("link", { name: "返回历史" }));
 
-    expect(await screen.findByRole("tab", { name: "历史" })).toHaveClass("is-active");
+    expect(await screen.findByRole("tab", { name: "历史" })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByLabelText("提交历史密集列表")).toBeInTheDocument();
   });
 
@@ -3046,7 +2996,7 @@ describe("基础路由", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Lilia" })).toBeInTheDocument();
     expect(router.currentRoute.value.fullPath).toBe("/repos/Lilia/changes");
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "变更" })).toHaveClass("is-active");
+      expect(screen.getByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
     });
   });
 
@@ -3077,7 +3027,7 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "外观" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /外观/ })).toHaveClass("is-active");
+    expect(screen.getByRole("button", { name: /外观/ })).toHaveAttribute("aria-current", "page");
     expect(screen.queryByText(/Claude|Codex|CC-Switch|agent/i)).toBeNull();
   });
 

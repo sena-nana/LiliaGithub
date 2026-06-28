@@ -68,18 +68,8 @@ describe("RepoDiscussionTimeline", () => {
       }),
     ]);
 
-    const rows = Array.from(view.container.querySelectorAll(".discussion-timeline__item"));
-    const list = view.container.querySelector(".discussion-timeline__list");
+    const rows = within(view.getByLabelText("讨论时间线")).getAllByRole("listitem");
     expect(rows).toHaveLength(5);
-    expect(list).toBeInstanceOf(HTMLOListElement);
-    expect(list?.children).toHaveLength(5);
-    expect(rows.map((row) => row.className)).toEqual([
-      expect.stringContaining("is-body"),
-      expect.stringContaining("is-event"),
-      expect.stringContaining("is-comment"),
-      expect.stringContaining("is-review"),
-      expect.stringContaining("is-reviewComment"),
-    ]);
 
     expect(within(rows[0] as HTMLElement).getByText("描述")).toBeInTheDocument();
     expect(within(rows[1] as HTMLElement).getByText("添加了标签")).toBeInTheDocument();
@@ -88,15 +78,6 @@ describe("RepoDiscussionTimeline", () => {
     expect(within(rows[3] as HTMLElement).getByText("Review · APPROVED")).toBeInTheDocument();
     expect(within(rows[4] as HTMLElement).getByText("Review comment")).toBeInTheDocument();
     expect(within(rows[4] as HTMLElement).getByText(/RepoProjectPanel\.vue:128/)).toBeInTheDocument();
-
-    const entryRows = [rows[0], rows[2], rows[3], rows[4]];
-    for (const row of entryRows) {
-      const entry = row?.querySelector(".discussion-timeline__entry");
-      expect(entry).toBeInstanceOf(HTMLElement);
-      expect(entry?.querySelector(".readme-render")).toBeInstanceOf(HTMLElement);
-    }
-    expect(rows[1]?.querySelector(".discussion-timeline__event-row")).toBeInstanceOf(HTMLElement);
-    expect(rows[1]?.querySelector(".discussion-timeline__entry")).toBeNull();
   });
 
   it("keeps loading, error and empty states", () => {

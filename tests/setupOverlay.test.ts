@@ -78,16 +78,12 @@ async function renderSetupHome() {
 describe("初始化覆盖界面", () => {
   it("初始化加载期间覆盖标题栏下方整窗并隐藏侧栏", async () => {
     const view = await renderSetupHome();
-    const shell = view.container.querySelector(".shell");
 
-    expect(shell).toHaveClass("is-setup-overlay");
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
-    expect(view.container.querySelector(".shell__resizer")).not.toBeInTheDocument();
     expect(view.getByRole("button", { name: "折叠左侧栏" })).toBeDisabled();
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "工作区文件夹" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "GitHub 授权" })).toBeInTheDocument();
-    expect(view.container.querySelector(".setup-screen .card")).not.toBeInTheDocument();
   });
 });

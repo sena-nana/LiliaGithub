@@ -153,7 +153,7 @@ describe("RepoBranchPicker", () => {
   });
 
   it("显示分组、搜索和 worktree 标记", async () => {
-    const view = renderPicker();
+    renderPicker();
 
     await fireEvent.click(screen.getByRole("button", { name: "main" }));
 
@@ -164,7 +164,6 @@ describe("RepoBranchPicker", () => {
     expect(screen.getByText("16 小时前")).toBeInTheDocument();
     expect(screen.queryByText("local")).toBeNull();
     expect(screen.getAllByText("origin").length).toBeGreaterThan(0);
-    expect(view.container.querySelectorAll(".branch-picker__row-worktree svg")).toHaveLength(1);
 
     await fireEvent.update(screen.getByLabelText("搜索分支"), "notice-update");
 

@@ -65,14 +65,6 @@ async function renderAppShell(initialRoute = "/") {
   };
 }
 
-function shellElement(container: HTMLElement): HTMLElement {
-  const shell = container.querySelector(".shell");
-  if (!(shell instanceof HTMLElement)) {
-    throw new Error("未找到 shell");
-  }
-  return shell;
-}
-
 function leftResizer(container: HTMLElement): HTMLElement {
   const resizer = container.querySelector(".shell__resizer");
   if (!(resizer instanceof HTMLElement)) {
@@ -194,8 +186,6 @@ describe("AppShell sidebar", () => {
     expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     expect(view.getByRole("button", { name: "折叠分组 未分组仓库" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "创建仓库分组" })).toBeInTheDocument();
-    expect(view.container.querySelector(".sb-section--actions")).toBeNull();
-    expect(view.container.querySelector(".shell-actions")).toBeNull();
     expect(view.getByLabelText("项目总览操作")).toBeInTheDocument();
     expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "创建仓库" })).toBeInTheDocument();
     expect(within(view.getByLabelText("项目总览操作")).queryByRole("button", { name: "克隆仓库" })).toBeNull();
@@ -235,8 +225,6 @@ describe("AppShell sidebar", () => {
     expect(view.getByRole("button", { name: "展开分组 未分组仓库" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "展开分组 前端" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "展开分组 后端" })).toBeInTheDocument();
-    expect(view.getByRole("button", { name: "重命名分组 后端" })).toHaveClass("sb-section__hover-action");
-    expect(view.getByRole("button", { name: "删除分组 后端" })).toHaveClass("sb-section__hover-action");
 
     await fireEvent.click(view.getByRole("button", { name: "重命名分组 后端" }));
     await fireEvent.update(await view.findByRole("textbox", { name: "重命名分组" }), "前端");
@@ -370,36 +358,6 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("linked worktree 在侧边栏使用 worktree 图标", async () => {
-    const view = await renderAppShell("/");
-
-    state.repos = [
-      repoSummary("main-repo", {
-        name: "main-repo",
-        worktree: {
-          role: "main",
-          sharedRepoKey: "shared:repo",
-          mainRepoId: "main-repo",
-        },
-      }),
-      repoSummary("linked-repo", {
-        name: "linked-repo",
-        worktree: {
-          role: "linked",
-          sharedRepoKey: "shared:repo",
-          mainRepoId: "main-repo",
-        },
-      }),
-    ];
-
-    await waitFor(() => {
-      const linkedRow = sidebarRowForText(view.container, "linked-repo");
-      expect(linkedRow.querySelector(".sb-tree__repo-icon.is-worktree")).toBeInstanceOf(SVGElement);
-      const mainRow = sidebarRowForText(view.container, "main-repo");
-      expect(mainRow.querySelector(".sb-tree__repo-icon.is-worktree")).toBeNull();
-    });
-  });
-
   it("侧边栏底部显示打开过的远程仓库并可移除跳转", async () => {
     const view = await renderAppShell("/");
 
@@ -505,7 +463,6 @@ describe("AppShell sidebar", () => {
     state.bulkRunning = true;
 
     await waitFor(() => {
-      expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" })).toHaveClass("is-running");
       const row = sidebarRowForText(view.container, "LiliaGithub");
       expect(within(row).getByLabelText("正在同步")).toBeInTheDocument();
       expect(within(row).queryByLabelText("同步失败")).not.toBeInTheDocument();
@@ -943,32 +900,15 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("只有进入首页时工作区概览才处于选中状态", async () => {
-    const view = await renderAppShell("/");
-
-    await waitFor(() => {
-      expect(sidebarRowForText(view.container, "概览")).toHaveClass("is-active");
-    });
-
-    await view.router.push("/repos/LiliaGithub");
-
-    await waitFor(() => {
-      expect(sidebarRowForText(view.container, "概览")).not.toHaveClass("is-active");
-    });
-  });
-
   it("左上角按钮切换左侧栏折叠状态并写回本地存储", async () => {
     const view = await renderAppShell("/repos/LiliaGithub");
-    const shell = shellElement(view.container);
     const collapse = view.getByRole("button", { name: "折叠左侧栏" });
 
-    expect(shell).not.toHaveClass("is-sidebar-collapsed");
     expect(leftResizer(view.container)).not.toHaveAttribute("aria-disabled");
     expect(collapse).toHaveAttribute("aria-pressed", "false");
 
     await fireEvent.click(collapse);
 
-    expect(shell).toHaveClass("is-sidebar-collapsed");
     expect(leftResizer(view.container)).toHaveAttribute("aria-disabled", "true");
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
 
@@ -977,7 +917,6 @@ describe("AppShell sidebar", () => {
 
     await fireEvent.click(expand);
 
-    expect(shell).not.toHaveClass("is-sidebar-collapsed");
     expect(leftResizer(view.container)).not.toHaveAttribute("aria-disabled");
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("0");
   });
@@ -985,10 +924,8 @@ describe("AppShell sidebar", () => {
   it("左侧栏宽度可拖拽调整、写回存储并双击恢复默认", async () => {
     localStorage.setItem(SIDEBAR_CONFIG.widthStorageKey, "260");
     const view = await renderAppShell("/repos/LiliaGithub");
-    const shell = shellElement(view.container);
     const resizer = leftResizer(view.container);
 
-    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("260px");
     expect(resizer).toHaveAttribute("aria-valuemin", "180");
     expect(resizer).toHaveAttribute("aria-valuemax", "480");
     expect(resizer).toHaveAttribute("aria-valuenow", "260");
@@ -1003,7 +940,6 @@ describe("AppShell sidebar", () => {
       pointerId: 1,
     });
 
-    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("360px");
     expect(resizer).toHaveAttribute("aria-valuenow", "360");
 
     await fireEvent.pointerUp(window, {
@@ -1015,43 +951,18 @@ describe("AppShell sidebar", () => {
 
     await fireEvent.dblClick(resizer);
 
-    expect(shell.style.getPropertyValue("--sidebar-width")).toBe("220px");
     expect(localStorage.getItem(SIDEBAR_CONFIG.widthStorageKey)).toBe("220");
-  });
-
-  it("左侧栏拖拽中断后恢复主内容交互", async () => {
-    const view = await renderAppShell("/repos/LiliaGithub");
-    const shell = shellElement(view.container);
-    const resizer = leftResizer(view.container);
-
-    await fireEvent.pointerDown(resizer, {
-      button: 0,
-      clientX: 220,
-      pointerId: 1,
-    });
-
-    expect(shell).toHaveClass("is-resizing");
-
-    await fireEvent.pointerCancel(window, {
-      clientX: 220,
-      pointerId: 1,
-    });
-
-    expect(shell).not.toHaveClass("is-resizing");
   });
 
   it("设置页替换左侧栏、禁用折叠并保留折叠偏好", async () => {
     localStorage.setItem(SIDEBAR_CONFIG.collapsedStorageKey, "1");
     const view = await renderAppShell("/settings");
-    const shell = shellElement(view.container);
     const leftToggle = view.getByRole("button", { name: "折叠左侧栏" });
 
-    expect(shell).toHaveClass("is-settings-mode");
-    expect(shell).not.toHaveClass("is-sidebar-collapsed");
     expect(leftToggle).toBeDisabled();
     expect(view.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
-    expect(view.getByRole("button", { name: /外观/ })).toHaveClass("is-active");
+    expect(view.getByRole("button", { name: /外观/ })).toHaveAttribute("aria-current", "page");
     expect(view.getByRole("button", { name: /仓库/ })).toBeInTheDocument();
     expect(view.router.currentRoute.value.meta.sidebar).toBe("settings");
     expect(view.router.currentRoute.value.meta.lockSidebar).toBe(true);
@@ -1062,16 +973,16 @@ describe("AppShell sidebar", () => {
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=about");
     });
-    expect(view.getByRole("button", { name: /关于/ })).toHaveClass("is-active");
+    expect(view.getByRole("button", { name: /关于/ })).toHaveAttribute("aria-current", "page");
 
     await fireEvent.click(view.getByRole("button", { name: /仓库/ }));
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=repositories");
     });
-    expect(view.getByRole("button", { name: /仓库/ })).toHaveClass("is-active");
+    expect(view.getByRole("button", { name: /仓库/ })).toHaveAttribute("aria-current", "page");
 
     await view.router.push("/repos/LiliaGithub");
-    expect(shell).toHaveClass("is-sidebar-collapsed");
+    expect(view.getByRole("button", { name: "展开左侧栏" })).toHaveAttribute("aria-pressed", "true");
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
   });
 

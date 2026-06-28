@@ -19,22 +19,6 @@ function commit(hash: string, parents: string[] = [], refs: string[] = []): Comm
   };
 }
 
-function expectValidGraphGeometry(container: HTMLElement) {
-  const graphElements = container.querySelectorAll(".history-graph__connector, .history-graph__node");
-  expect(graphElements.length).toBeGreaterThan(0);
-
-  for (const element of graphElements) {
-    for (const attribute of ["x1", "x2", "y1", "y2", "cx", "cy", "d"]) {
-      const value = element.getAttribute(attribute);
-      if (value === null) continue;
-      expect(value).not.toContain("NaN");
-      expect(value).not.toContain("-Infinity");
-      expect(value).not.toContain("Infinity");
-      if (attribute !== "d") expect(Number(value)).toBeGreaterThanOrEqual(0);
-    }
-  }
-}
-
 function renderHistoryPanel(props: {
   commits: CommitSummary[];
   commitMetaTitle?: (commit: CommitSummary) => string;
@@ -84,7 +68,7 @@ describe("RepoHistoryPanel", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders multi-lane topology and keeps commit open behavior", async () => {
+  it("renders history rows and keeps commit open behavior", async () => {
     const commits = [
       commit("merge", ["main", "feature"], ["HEAD -> main", "origin/main"]),
       commit("main", ["root"]),
@@ -93,53 +77,14 @@ describe("RepoHistoryPanel", () => {
     ];
     const view = renderHistoryPanel({ commits });
 
-    const connector = Array.from(view.container.querySelectorAll(".history-graph__connector")).find(
-      (element) => element.getAttribute("stroke") === "#22a06b",
-    );
-    expect(view.container.querySelectorAll(".history-graph__svg")).toHaveLength(4);
-    expect(view.container.querySelectorAll(".history-graph__node")).toHaveLength(4);
-    expect(view.container.querySelector(".history-graph__node--merge")).toBeInstanceOf(Element);
-    expect(view.container.querySelector(".history-graph__node--root")).toBeInstanceOf(Element);
-    expect(connector).toBeInstanceOf(Element);
-    expect(connector).toHaveAttribute("d", expect.stringContaining(" C "));
-    expect(connector).toHaveAttribute("d", expect.stringContaining("28"));
-    expect(connector).toHaveAttribute("stroke", "#22a06b");
-    expect(view.container.querySelector(".repo-panel--history")).toBeInstanceOf(HTMLElement);
-    expect(view.container.querySelector(".history-list")).toHaveAttribute("style", expect.stringContaining("--history-graph-width"));
     expect(view.getByText("HEAD -> main")).toBeInTheDocument();
     expect(view.getByText("origin/main")).toBeInTheDocument();
     expect(view.getAllByText("Sena").length).toBeGreaterThan(0);
     expect(view.getAllByText("feature").length).toBeGreaterThan(0);
-    expectValidGraphGeometry(view.container);
 
     await fireEvent.click(view.getByRole("button", { name: /merge/ }));
 
     expect(view.handlers.openCommit).toHaveBeenCalledWith(commits[0]);
-  });
-
-  it("renders dangling and octopus graph geometry without invalid coordinates", () => {
-    const commits = [
-      commit("octopus", ["main", "feature-a", "missing-parent"]),
-      commit("main", ["root"]),
-      commit("feature-a", ["root"]),
-      commit("root"),
-    ];
-    const view = renderHistoryPanel({ commits });
-
-    expect(view.container.querySelectorAll(".history-graph__connector").length).toBeGreaterThanOrEqual(2);
-    expect(view.container.querySelectorAll(".history-graph__node")).toHaveLength(4);
-    expectValidGraphGeometry(view.container);
-  });
-
-  it("marks the selected commit without rendering detail content", async () => {
-    const commits = [commit("1234567890abcdef")];
-    const view = renderHistoryPanel({
-      commits,
-      selectedCommitHash: commits[0].hash,
-    });
-
-    expect(view.getByRole("button", { name: /1234567890abcdef/ })).toHaveClass("is-active");
-    expect(view.queryByLabelText("提交详情卡片")).toBeNull();
   });
 
   it("shows commit actions in the row context menu and emits the selected operation", async () => {

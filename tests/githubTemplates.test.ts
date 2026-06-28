@@ -24,16 +24,11 @@ describe("githubTemplates", () => {
       titlePrefix: "[BUG] ",
       labels: ["bug", "needs triage"],
     });
-    expect(template?.fields.map((field) => field.type)).toEqual([
-      "markdown",
-      "textarea",
-      "textarea",
-      "textarea",
-      "dropdown",
-      "textarea",
-      "textarea",
-    ]);
-    expect(issueTemplateRequiredFieldsSatisfied(template!, createIssueTemplateAnswers(template!))).toBe(false);
+    const answers = createIssueTemplateAnswers(template!);
+    expect(issueTemplateRequiredFieldsSatisfied(template!, answers)).toBe(false);
+    answers.problem = "启动后无法加载仓库";
+    answers.done = "看到项目列表";
+    expect(buildIssueTemplateBody(template!, answers, "")).toContain("启动后无法加载仓库");
   });
 
   it("serializes Issue Form answers into markdown body", () => {

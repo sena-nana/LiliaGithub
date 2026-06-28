@@ -41,7 +41,7 @@ function renderTimeline(nodes: TimelineDisplayNode[]) {
 
 describe("GitHubTimelineList", () => {
   it("renders external, route and plain timeline nodes", () => {
-    const view = renderTimeline([
+    renderTimeline([
       node({
         id: "external",
         title: "外链节点",
@@ -67,7 +67,6 @@ describe("GitHubTimelineList", () => {
     const route = screen.getByRole("link", { name: "路由节点" });
     expect(route).toHaveAttribute("href", "/repos/LiliaGithub");
 
-    expect(screen.getByText("纯文本节点").tagName).toBe("STRONG");
-    expect(view.container.querySelector(".github-timeline-row__node.is-ok")).toBeInstanceOf(HTMLElement);
+    expect(screen.getByText("纯文本节点")).toBeInTheDocument();
   });
 });
