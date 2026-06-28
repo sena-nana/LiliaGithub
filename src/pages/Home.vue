@@ -1462,10 +1462,6 @@ function contributionTitle(day: GitHubContributionDay) {
   return lines.join("\n");
 }
 
-function contributionAriaLabel(day: GitHubContributionDay) {
-  return `${day.date}：${day.count} 次提交`;
-}
-
 function parseGitHubTime(value: string | null | undefined) {
   if (!value) return 0;
   const timestamp = Date.parse(value);
@@ -1954,7 +1950,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       class="contribution-day"
                       :class="`contribution-day--${day.level}`"
                       :title="contributionTitle(day)"
-                      :aria-label="contributionAriaLabel(day)"
+                      :aria-label="contributionTitle(day)"
                     />
                   </div>
                 </div>

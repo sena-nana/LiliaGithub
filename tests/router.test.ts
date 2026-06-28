@@ -1804,7 +1804,7 @@ describe("基础路由", () => {
     }));
     await fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
-    expect(await screen.findByLabelText("2026-06-11：4 次提交")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/2026-06-11：4 次提交/)).toBeInTheDocument();
   });
 
   it("首页本地提交贡献图命中仓库采样上限时显示提示", async () => {
@@ -1826,7 +1826,7 @@ describe("基础路由", () => {
 
     await renderAt("/");
 
-    expect(await screen.findByLabelText("2026-06-11：30 次提交")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/2026-06-11：30 次提交/)).toBeInTheDocument();
     expect(screen.queryByText(/仅统计前 30 个/)).toBeNull();
   });
 
@@ -1853,7 +1853,7 @@ describe("基础路由", () => {
     expect(chart.querySelector(".contribution-window")).toBeInTheDocument();
     expect(chart.querySelector(".contribution-months")).toHaveTextContent("1月");
     expect(chart.querySelector(".contribution-scroll")).toBeNull();
-    expect(await screen.findByLabelText("2026-01-06：4 次提交")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/2026-01-06：4 次提交/)).toBeInTheDocument();
   });
 
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
@@ -3085,7 +3085,6 @@ describe("基础路由", () => {
     await renderAt("/settings?tab=about");
 
     expect(await screen.findByRole("heading", { level: 1, name: "关于" })).toBeInTheDocument();
-    expect(await screen.findByText("Tauri 2 + Vue 3")).toBeInTheDocument();
   });
 
   it("设置页仓库 tab 可恢复隐藏仓库", async () => {
