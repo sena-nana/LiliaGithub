@@ -327,7 +327,9 @@ function beginContributionRefresh() {
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;
-  contributionRefreshDays = emptyContributionDays(refreshedAt);
+  contributionRefreshDays = state.githubContributions.days.length > 0
+    ? [...state.githubContributions.days]
+    : emptyContributionDays(refreshedAt);
   if (!state.githubContributions.days.length) {
     state.githubContributions.days = contributionRefreshDays;
   }
@@ -392,13 +394,21 @@ function finishEmptyContributionRefresh(generation: number) {
   if (generation !== contributionRefreshGeneration) return;
   state.githubContributions.days = contributionRefreshDays;
   state.githubContributions.loading = false;
-  updateContributionMeta({
-    repoCount: 0,
-    requestedRepoCount: 0,
-    sampledRepoCount: 0,
-    skippedRepoCount: 0,
-    refreshedAt: Date.now(),
-  });
+  if (state.githubContributions.meta) {
+    state.githubContributions.meta = {
+      ...state.githubContributions.meta,
+      refreshedAt: Date.now(),
+    };
+  } else {
+    state.githubContributions.meta = {
+      repoCount: 0,
+      requestedRepoCount: 0,
+      repoLimit: CONTRIBUTION_REPO_LIMIT,
+      truncated: false,
+      skippedRepoCount: 0,
+      refreshedAt: Date.now(),
+    };
+  }
   void persistStartupContributions();
 }
 
