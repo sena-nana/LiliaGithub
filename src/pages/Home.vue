@@ -29,7 +29,6 @@ import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
-import { repoLocalDirtyCount, useRepoLocalChangesPrompt } from "../composables/useRepoLocalChangesPrompt";
 import { useShellSearch } from "../composables/useShellSearch";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -70,7 +69,6 @@ import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } f
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import { preloadRepoProjectSection } from "../components/repo/repoProjectSectionModules";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
-import { createCachedAsyncComponent } from "../utils/asyncComponent";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
 import {
   repoCalculatesHomeTimeline,
@@ -90,17 +88,9 @@ import "../styles/page.css";
 const workspace = useWorkspace();
 const router = useRouter();
 const shellSearch = useShellSearch();
-const repoLocalChangesDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoLocalChangesDialog.vue"));
-const RepoLocalChangesDialog = repoLocalChangesDialogModule.component;
-const {
-  dialog: pullLocalChangesDialog,
-  request: requestPullLocalChangesMode,
-  select: selectPullLocalChangesMode,
-  cancel: cancelPullLocalChangesDialog,
-} = useRepoLocalChangesPrompt();
 const syncErrorDetails = computed(() => syncErrorDetailsByRepoId());
 const syncingRepoId = ref<string | null>(null);
-const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("reject");
+const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("stash");
 const createRepoCardOpen = ref(false);
 const createRepoCardMode = ref<"local" | "remote">("local");
 const pendingCreatedRepoGroupId = ref<string | null>(null);
@@ -1600,17 +1590,11 @@ async function openGitHubRepo(githubRepo: GitHubRepoSummary, localRepo: RepoSumm
   await router.push(remoteRepoRoute(githubRepo.fullName));
 }
 
-function reposNeedingPullLocalChanges(repos = workspace.state.repos) {
-  return repos.filter((repo) => repo.behind > 0 && repoLocalDirtyCount(repo) > 0);
-}
-
 async function syncRepo(repo: RepoSummary) {
   if (syncingRepoId.value) return;
-  const localChangesMode = await requestPullLocalChangesMode("同步前处理本地修改", [repo]);
-  if (!localChangesMode) return;
   syncingRepoId.value = repo.id;
   try {
-    await workspace.mergePull(repo.id, localChangesMode);
+    await workspace.mergePull(repo.id, "stash");
   } catch {
     /* action error is surfaced by workspace state */
   } finally {
@@ -1631,25 +1615,18 @@ async function retryRepoPush(repo: RepoSummary) {
 }
 
 async function previewBulkOperation(operation: BulkOperation) {
-  const localChangesMode = operation === "push"
-    ? "reject"
-    : await requestPullLocalChangesMode(
-        `${bulkOperationLabel(operation)}前处理本地修改`,
-        reposNeedingPullLocalChanges(),
-      );
-  if (!localChangesMode) return;
-  bulkLocalChangesMode.value = localChangesMode;
-  void workspace.previewBulk(operation, localChangesMode);
+  if (operation === "push") {
+    bulkLocalChangesMode.value = "reject";
+    void workspace.previewBulk(operation, "reject");
+    return;
+  }
+  bulkLocalChangesMode.value = "stash";
+  void workspace.previewBulk(operation, "stash");
 }
 
-async function runSyncAll() {
-  const localChangesMode = await requestPullLocalChangesMode(
-    "同步前处理本地修改",
-    reposNeedingPullLocalChanges(),
-  );
-  if (!localChangesMode) return;
-  bulkLocalChangesMode.value = localChangesMode;
-  void workspace.syncAll(localChangesMode);
+function runSyncAll() {
+  bulkLocalChangesMode.value = "stash";
+  void workspace.syncAll("stash");
 }
 
 function executeBulkOperation() {
@@ -2293,14 +2270,6 @@ function bulkOperationDescription(operation: BulkOperation) {
       </div>
     </div>
 
-    <RepoLocalChangesDialog
-      :open="Boolean(pullLocalChangesDialog)"
-      :title="pullLocalChangesDialog?.title ?? ''"
-      :repo-name="pullLocalChangesDialog?.repoName ?? ''"
-      :dirty-count="pullLocalChangesDialog?.dirtyCount ?? 0"
-      @select="selectPullLocalChangesMode"
-      @cancel="cancelPullLocalChangesDialog"
-    />
     <RepoCreateCard
       :open="createRepoCardOpen"
       :mode="createRepoCardMode"
