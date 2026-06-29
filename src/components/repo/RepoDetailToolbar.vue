@@ -199,7 +199,7 @@ const emit = defineEmits<{
           </RouterLink>
         </div>
 
-        <div class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目缓存">
+        <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目操作">
           <button
             type="button"
             class="repo-toolbar__btn"
@@ -211,9 +211,6 @@ const emit = defineEmits<{
           >
             <RotateCw :size="17" aria-hidden="true" />
           </button>
-        </div>
-
-        <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group" role="group" aria-label="仓库操作">
           <RepoToolbarSettingsMenu
             :values="repoSettingValues"
             :disabled="actionRunning"
