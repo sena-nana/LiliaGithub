@@ -2967,7 +2967,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       <main
         ref="projectMainRef"
         class="project-main"
-        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'release' }"
+        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'milestones' || activeSection === 'release' }"
       >
         <RepoLaunchTerminalPanel
           v-if="canUseLaunchWorkflow && activeSection === 'launch'"
