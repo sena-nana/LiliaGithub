@@ -92,6 +92,7 @@ export interface ProjectLaunchLog {
   repoId: string;
   stream: "stdout" | "stderr" | "system";
   line: string;
+  writeMode?: "append" | "replace";
   timestamp: number;
 }
 

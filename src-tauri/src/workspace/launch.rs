@@ -40,6 +40,15 @@ pub(super) fn idle_launch_status(repo_id: &str) -> ProjectLaunchStatus {
 }
 
 pub(super) fn push_launch_log(repo_id: &str, stream: &str, line: impl Into<String>) {
+    push_launch_log_with_mode(repo_id, stream, "append", line);
+}
+
+pub(super) fn push_launch_log_with_mode(
+    repo_id: &str,
+    stream: &str,
+    write_mode: &str,
+    line: impl Into<String>,
+) {
     let mut logs = launch_logs().lock().unwrap_or_else(|e| e.into_inner());
     let repo_logs = logs.entry(repo_id.to_string()).or_default();
     repo_logs.push_back(ProjectLaunchLog {
@@ -47,6 +56,7 @@ pub(super) fn push_launch_log(repo_id: &str, stream: &str, line: impl Into<Strin
         repo_id: repo_id.to_string(),
         stream: stream.to_string(),
         line: line.into(),
+        write_mode: Some(write_mode.to_string()),
         timestamp: now_millis(),
     });
     while repo_logs.len() > LAUNCH_LOG_LIMIT {
@@ -576,16 +586,83 @@ pub(super) fn stop_launch_process_tree(pid: u32) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) struct LaunchOutputEvent {
+    pub(super) write_mode: &'static str,
+    pub(super) line: String,
+}
+
+#[derive(Default)]
+pub(super) struct LaunchOutputParser {
+    buffer: Vec<u8>,
+    pending_cr: bool,
+}
+
+impl LaunchOutputParser {
+    pub(super) fn push(&mut self, bytes: &[u8]) -> Vec<LaunchOutputEvent> {
+        let mut events = Vec::new();
+        for byte in bytes {
+            if self.pending_cr {
+                self.pending_cr = false;
+                if *byte == b'\n' {
+                    self.push_event("append", &mut events);
+                    continue;
+                }
+                self.push_event("replace", &mut events);
+            }
+
+            match *byte {
+                b'\r' => {
+                    self.pending_cr = true;
+                }
+                b'\n' => {
+                    self.push_event("append", &mut events);
+                }
+                _ => self.buffer.push(*byte),
+            }
+        }
+        events
+    }
+
+    pub(super) fn finish(&mut self) -> Vec<LaunchOutputEvent> {
+        let mut events = Vec::new();
+        if self.pending_cr {
+            self.pending_cr = false;
+            self.push_event("replace", &mut events);
+        }
+        if !self.buffer.is_empty() {
+            self.push_event("append", &mut events);
+        }
+        events
+    }
+
+    fn push_event(&mut self, write_mode: &'static str, events: &mut Vec<LaunchOutputEvent>) {
+        let line = String::from_utf8_lossy(&self.buffer).to_string();
+        self.buffer.clear();
+        events.push(LaunchOutputEvent { write_mode, line });
+    }
+}
+
 pub(super) fn pipe_launch_output(
     repo_id: String,
     stream: &'static str,
-    reader: impl std::io::Read + Send + 'static,
+    mut reader: impl std::io::Read + Send + 'static,
 ) {
     std::thread::spawn(move || {
-        let reader = BufReader::new(reader);
-        for line in reader.lines() {
-            match line {
-                Ok(line) => push_launch_log(&repo_id, stream, line),
+        let mut parser = LaunchOutputParser::default();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            match std::io::Read::read(&mut reader, &mut buffer) {
+                Ok(0) => {
+                    for event in parser.finish() {
+                        push_launch_log_with_mode(&repo_id, stream, event.write_mode, event.line);
+                    }
+                    break;
+                }
+                Ok(read_count) => {
+                    for event in parser.push(&buffer[..read_count]) {
+                        push_launch_log_with_mode(&repo_id, stream, event.write_mode, event.line);
+                    }
+                }
                 Err(err) => {
                     push_launch_log(&repo_id, "system", format!("读取 {stream} 失败：{err}"));
                     break;

@@ -4835,7 +4835,12 @@ function fallbackIdleStatus(repoId: string): ProjectLaunchStatus {
   };
 }
 
-function pushFallbackLaunchLog(repoId: string, stream: ProjectLaunchLog["stream"], line: string) {
+function pushFallbackLaunchLog(
+  repoId: string,
+  stream: ProjectLaunchLog["stream"],
+  line: string,
+  writeMode: ProjectLaunchLog["writeMode"] = "append",
+) {
   fallbackLaunchLogs[repoId] = [
     ...(fallbackLaunchLogs[repoId] ?? []),
     {
@@ -4843,6 +4848,7 @@ function pushFallbackLaunchLog(repoId: string, stream: ProjectLaunchLog["stream"
       repoId,
       stream,
       line,
+      writeMode,
       timestamp: Date.now(),
     },
   ].slice(-500);
