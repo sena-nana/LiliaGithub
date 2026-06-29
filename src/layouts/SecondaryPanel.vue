@@ -630,23 +630,30 @@ async function deleteGroup(group: { id: string }) {
             <Plus :size="13" aria-hidden="true" />
           </button>
         </div>
-        <div v-if="!section.collapsed" class="sb-tree">
-          <RepoSidebarRow
-            v-for="item in section.visibleItems"
-            :key="item.repo.id"
-            v-bind="repoRowProps(item)"
-          />
-          <button
-            v-if="section.hiddenItemCount > 0"
-            type="button"
-            class="sb-tree__more"
-            :data-agent-id="`sidebar.group.${section.id}.show-more`"
-            @click="showMoreRepoSection(section.id)"
-          >
-            显示更多 {{ section.hiddenItemCount }} 个
-          </button>
-          <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
-          <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
+        <div
+          class="sb-collapse"
+          :class="{ 'is-open': !section.collapsed }"
+          :aria-hidden="section.collapsed"
+          :inert="section.collapsed"
+        >
+          <div class="sb-collapse__inner sb-tree">
+            <RepoSidebarRow
+              v-for="item in section.visibleItems"
+              :key="item.repo.id"
+              v-bind="repoRowProps(item)"
+            />
+            <button
+              v-if="section.hiddenItemCount > 0"
+              type="button"
+              class="sb-tree__more"
+              :data-agent-id="`sidebar.group.${section.id}.show-more`"
+              @click="showMoreRepoSection(section.id)"
+            >
+              显示更多 {{ section.hiddenItemCount }} 个
+            </button>
+            <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
+            <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
+          </div>
         </div>
       </div>
     </template>
@@ -895,6 +902,28 @@ async function deleteGroup(group: { id: string }) {
 
 .sb-group-toggle__chevron.is-open {
   transform: rotate(90deg);
+}
+
+.sb-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  pointer-events: none;
+  transition: grid-template-rows 0.26s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.sb-collapse.is-open {
+  grid-template-rows: 1fr;
+  pointer-events: auto;
+}
+
+.sb-collapse__inner {
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.2s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.sb-collapse.is-open .sb-collapse__inner {
+  opacity: 1;
 }
 
 .sb-group-edit {

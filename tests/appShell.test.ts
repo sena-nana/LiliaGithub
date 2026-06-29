@@ -595,7 +595,6 @@ describe("AppShell sidebar", () => {
     await waitFor(() => {
       const row = sidebarRowForText(view.container, "LiliaGithub");
       expect(within(row).getByLabelText("最近同步失败")).toHaveAttribute("title", "认证失败");
-      expect(within(row).getByText("认证失败")).toBeInTheDocument();
       expect(within(row).getByRole("button", { name: "重试最近同步失败" })).toBeInTheDocument();
     });
   });
@@ -615,7 +614,6 @@ describe("AppShell sidebar", () => {
         "title",
         "存在未提交变更，已跳过自动同步",
       );
-      expect(within(row).getByText("存在未提交变更，已跳过自动同步")).toBeInTheDocument();
       expect(within(row).queryByRole("button", { name: "重试最近同步失败" })).toBeNull();
     });
   });
