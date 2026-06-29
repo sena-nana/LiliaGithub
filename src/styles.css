@@ -82,7 +82,7 @@
     0 18px 48px -20px rgba(0, 0, 0, 0.72),
     0 10px 28px -18px rgba(0, 0, 0, 0.55);
   --app-corner-shape: squircle;
-  --app-corner-radius: 8px;
+  --app-corner-radius: 16px;
   --radius-xs: calc(var(--app-corner-radius) * 0.5);
   --radius-sm: calc(var(--app-corner-radius) * 0.75);
   --radius-md: var(--app-corner-radius);
