@@ -60,5 +60,6 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     repoGroups: [],
     remoteRepoShortcuts: [],
     localContributionCache: {},
+    contributionIdentities: [],
   };
 }

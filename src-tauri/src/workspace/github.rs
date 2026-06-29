@@ -5546,33 +5546,48 @@ pub async fn github_list_repo_contribution(
         let end_day_index = current_utc_day_index();
         let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
         let Some(repo_id) = normalize_local_contribution_repo_id(&repo_full_name) else {
-            return Ok(GitHubContributionResult {
-                days: github_contribution_days(&HashMap::new(), end_day_index),
-                meta: github_contribution_meta(0, 0, 0),
-            });
+            return Ok(github_contribution_result(
+                &HashMap::new(),
+                end_day_index,
+                0,
+                0,
+                0,
+            ));
         };
         let path = repo_path_by_id(&app, &repo_id)?;
-        let today = format_day_index(end_day_index);
-        let mut settings = load_settings(&app);
-        let mut counts: HashMap<String, usize> = HashMap::new();
-        if let Some(count) = cached_local_contribution_count(&settings, &repo_id, &today) {
-            collect_local_contribution_counts(
-                &path,
-                start_day_index,
-                end_day_index - 1,
-                &mut counts,
-            )?;
-            counts.insert(today, count);
-        } else {
-            collect_local_contribution_counts(&path, start_day_index, end_day_index, &mut counts)?;
-            let today_count = counts.get(&today).copied().unwrap_or_default();
-            write_local_contribution_cache(&mut settings, &repo_id, &today, today_count);
-            save_settings(&app, &settings)?;
+        let settings = load_settings(&app);
+        let identities = local_contribution_identities(&path, &settings);
+        if identities.is_empty() {
+            return Ok(github_contribution_result(
+                &HashMap::new(),
+                end_day_index,
+                0,
+                1,
+                1,
+            ));
         }
-        Ok(GitHubContributionResult {
-            days: github_contribution_days(&counts, end_day_index),
-            meta: github_contribution_meta(1, 1, 0),
-        })
+        let mut counts = HashMap::new();
+        collect_local_contribution_counts(
+            &path,
+            start_day_index,
+            end_day_index,
+            &identities,
+            &mut counts,
+        )?;
+        Ok(github_contribution_result(&counts, end_day_index, 1, 1, 0))
     })
     .await
+}
+
+pub(super) fn github_contribution_result(
+    counts: &HashMap<String, usize>,
+    end_day_index: i64,
+    repo_count: usize,
+    requested_repo_count: usize,
+    skipped_repo_count: usize,
+) -> GitHubContributionResult {
+    GitHubContributionResult {
+        days: github_contribution_days(counts, end_day_index),
+        meta: github_contribution_meta(repo_count, requested_repo_count, skipped_repo_count),
+    }
 }

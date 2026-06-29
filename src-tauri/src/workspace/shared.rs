@@ -64,9 +64,10 @@ pub(super) fn collect_local_contribution_counts(
     path: &Path,
     start_day_index: i64,
     end_day_index: i64,
+    identities: &[ContributionIdentity],
     counts: &mut HashMap<String, usize>,
 ) -> Result<(), String> {
-    if end_day_index < start_day_index {
+    if end_day_index < start_day_index || identities.is_empty() {
         return Ok(());
     }
     let since = format!("{}T00:00:00Z", format_day_index(start_day_index));
@@ -77,12 +78,18 @@ pub(super) fn collect_local_contribution_counts(
             "log",
             &format!("--since={since}"),
             &format!("--until={until}"),
-            "--format=%ct",
+            "--format=%an%x1f%ae%x1f%ct",
         ],
     )
     .unwrap_or_default();
     for line in output.lines() {
-        let ts = match line.trim().parse::<i64>() {
+        let mut parts = line.split('\x1f');
+        let author_name = parts.next().unwrap_or("");
+        let author_email = parts.next().unwrap_or("");
+        if !contribution_identity_matches(identities, author_name, author_email) {
+            continue;
+        }
+        let ts = match parts.next().unwrap_or("").trim().parse::<i64>() {
             Ok(value) => value,
             Err(_) => continue,
         };
@@ -93,6 +100,51 @@ pub(super) fn collect_local_contribution_counts(
         *counts.entry(format_day_index(day_index)).or_default() += 1;
     }
     Ok(())
+}
+
+pub(super) fn local_contribution_identities(
+    path: &Path,
+    settings: &WorkspaceSettings,
+) -> Vec<ContributionIdentity> {
+    if !settings.contribution_identities.is_empty() {
+        return settings.contribution_identities.clone();
+    }
+    repo_git_identity(path).into_iter().collect()
+}
+
+fn repo_git_identity(path: &Path) -> Option<ContributionIdentity> {
+    let name = git_command_lossy(path, &["config", "user.name"])
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let email = git_command_lossy(path, &["config", "user.email"])
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty());
+    if name.is_none() && email.is_none() {
+        None
+    } else {
+        Some(ContributionIdentity { name, email })
+    }
+}
+
+pub(super) fn contribution_identity_matches(
+    identities: &[ContributionIdentity],
+    author_name: &str,
+    author_email: &str,
+) -> bool {
+    let name = author_name.trim().to_ascii_lowercase();
+    let email = author_email.trim().to_ascii_lowercase();
+    identities.iter().any(|identity| {
+        if let Some(identity_email) = identity.email.as_deref() {
+            return !email.is_empty() && email == identity_email.trim().to_ascii_lowercase();
+        }
+        identity
+            .name
+            .as_deref()
+            .map(|identity_name| {
+                !name.is_empty() && name == identity_name.trim().to_ascii_lowercase()
+            })
+            .unwrap_or(false)
+    })
 }
 
 pub(super) fn normalize_local_contribution_repo_id(raw: &str) -> Option<String> {
@@ -108,6 +160,7 @@ pub(super) fn normalize_local_contribution_repo_id(raw: &str) -> Option<String> 
     }
 }
 
+#[cfg(test)]
 pub(super) fn cached_local_contribution_count(
     settings: &WorkspaceSettings,
     repo_id: &str,
@@ -120,6 +173,7 @@ pub(super) fn cached_local_contribution_count(
         .map(|entry| entry.count)
 }
 
+#[cfg(test)]
 pub(super) fn write_local_contribution_cache(
     settings: &mut WorkspaceSettings,
     repo_id: &str,

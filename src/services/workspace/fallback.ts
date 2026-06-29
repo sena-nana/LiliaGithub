@@ -2227,6 +2227,7 @@ function createFallbackSettings(): WorkspaceSettings {
       repoGroups: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
+      contributionIdentities: [],
     };
   }
   return {
@@ -2260,6 +2261,7 @@ function createFallbackSettings(): WorkspaceSettings {
     ],
     remoteRepoShortcuts: [],
     localContributionCache: {},
+    contributionIdentities: [],
   };
 }
 
@@ -2780,6 +2782,7 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     systemGitRepoIds: [...settings.systemGitRepoIds],
     repoGroups: settings.repoGroups.map(cloneWorkspaceRepoGroup),
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
+    contributionIdentities: (settings.contributionIdentities ?? []).map((identity) => ({ ...identity })),
     localContributionCache: Object.fromEntries(
       Object.entries(settings.localContributionCache).map(([repoId, days]) => [
         repoId,
@@ -2955,6 +2958,26 @@ export function writeStartupContributions(
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => {
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
+    fallbackStartupCache = null;
+    return cloneWorkspaceSettings(fallbackSettings);
+  });
+}
+
+export function setContributionIdentities(
+  identities: import("./types").ContributionIdentity[],
+): Promise<WorkspaceSettings> {
+  return call("workspace_set_contribution_identities", { identities }, () => {
+    const seen = new Set<string>();
+    const contributionIdentities = identities.flatMap((identity) => {
+      const name = identity.name?.trim() || null;
+      const email = identity.email?.trim().toLowerCase() || null;
+      if (!name && !email) return [];
+      const key = `${name?.toLowerCase() ?? ""}\u001f${email ?? ""}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ name, email }];
+    });
+    fallbackSettings = { ...fallbackSettings, contributionIdentities };
     fallbackStartupCache = null;
     return cloneWorkspaceSettings(fallbackSettings);
   });
