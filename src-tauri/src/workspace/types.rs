@@ -794,6 +794,14 @@ pub struct GitHubIssue {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct GitHubAccountIssueItem {
+    pub repo_full_name: String,
+    pub issue: GitHubIssue,
+    pub pull_request: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct GitHubIssueMilestone {
     pub number: u64,
     pub title: String,
@@ -977,6 +985,22 @@ pub struct GitHubWorkflowRun {
     pub workflow_id: Option<u64>,
     #[serde(default)]
     pub run_started_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubActionNotification {
+    pub id: String,
+    pub repo_full_name: String,
+    pub title: String,
+    pub reason: String,
+    pub subject_type: String,
+    #[serde(default)]
+    pub subject_url: Option<String>,
+    #[serde(default)]
+    pub latest_comment_url: Option<String>,
+    pub updated_at: String,
+    pub unread: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

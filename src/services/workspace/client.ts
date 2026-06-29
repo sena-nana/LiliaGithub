@@ -11,7 +11,9 @@ import type {
   CommitDetail,
   CommitSummary,
   GitHubBindingStatus,
+  GitHubActionNotification,
   GitHubAttachWorkflowArtifactAssetRequest,
+  GitHubAccountIssueItem,
   GitHubCommitListOptions,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
@@ -113,6 +115,16 @@ let githubRepoCache: {
   fetchedAt: number;
 } | null = null;
 let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
+let githubAccountIssueCache: {
+  key: string;
+  items: GitHubAccountIssueItem[];
+  fetchedAt: number;
+} | null = null;
+let githubActionNotificationCache: {
+  key: string;
+  items: GitHubActionNotification[];
+  fetchedAt: number;
+} | null = null;
 const githubProjectCache = new Map<string, GitHubProjectRepoClientCache>();
 const pendingWorkspaceReads = new Map<string, Promise<unknown>>();
 const workspaceFallbackModuleLoader = createCachedAsyncModule(() => import("./fallback"));
@@ -488,6 +500,8 @@ export function readCachedGitHubRepos(): GitHubRepoPage | null {
 export function clearGitHubRepoCache() {
   githubRepoCache = null;
   githubRepoPreloadPromise = null;
+  githubAccountIssueCache = null;
+  githubActionNotificationCache = null;
   githubProjectCache.clear();
   pendingWorkspaceReads.clear();
 }
@@ -652,6 +666,72 @@ export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoP
   });
   if ((pageNo ?? 1) === 1) writeGitHubRepoCache(result);
   return cloneRepoPage(result);
+}
+
+export function listGitHubAccountIssues(
+  options: Pick<GitHubIssueListOptions, "state" | "perPage" | "sort" | "direction"> = {},
+  fetchOptions: GitHubProjectFetchOptions = {},
+): Promise<GitHubAccountIssueItem[]> {
+  const now = Date.now();
+  const args = {
+    state: options.state ?? "open",
+    perPage: options.perPage ?? 100,
+    sort: options.sort ?? "updated",
+    direction: options.direction ?? "desc",
+    forceRefresh: fetchOptions.forceRefresh ?? null,
+  };
+  const cacheKey = JSON.stringify({
+    state: args.state,
+    perPage: args.perPage,
+    sort: args.sort,
+    direction: args.direction,
+  });
+  if (
+    !fetchOptions.forceRefresh &&
+    githubAccountIssueCache?.key === cacheKey &&
+    now - githubAccountIssueCache.fetchedAt < GITHUB_REPO_CACHE_TTL_MS
+  ) {
+    return Promise.resolve(cloneProjectList(githubAccountIssueCache.items));
+  }
+  return cachedCall("github_list_account_issues", args, () => workspaceFallback().listGitHubAccountIssues(args))
+    .then((items) => {
+      githubAccountIssueCache = {
+        key: cacheKey,
+        items: cloneProjectList(items),
+        fetchedAt: Date.now(),
+      };
+      return cloneProjectList(items);
+    });
+}
+
+export function listGitHubActionNotifications(
+  perPage = 50,
+  fetchOptions: GitHubProjectFetchOptions = {},
+): Promise<GitHubActionNotification[]> {
+  const now = Date.now();
+  const args = {
+    perPage,
+    forceRefresh: fetchOptions.forceRefresh ?? null,
+  };
+  const cacheKey = JSON.stringify({ perPage: args.perPage });
+  if (
+    !fetchOptions.forceRefresh &&
+    githubActionNotificationCache?.key === cacheKey &&
+    now - githubActionNotificationCache.fetchedAt < GITHUB_REPO_CACHE_TTL_MS
+  ) {
+    return Promise.resolve(cloneProjectList(githubActionNotificationCache.items));
+  }
+  return cachedCall("github_list_action_notifications", args, () =>
+    workspaceFallback().listGitHubActionNotifications(perPage)
+  )
+    .then((items) => {
+      githubActionNotificationCache = {
+        key: cacheKey,
+        items: cloneProjectList(items),
+        fetchedAt: Date.now(),
+      };
+      return cloneProjectList(items);
+    });
 }
 
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
