@@ -9,7 +9,6 @@ import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches, listGi
 import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
-import { useRepoLocalChangesPrompt } from "./useRepoLocalChangesPrompt";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
 import type {
@@ -69,12 +68,6 @@ export function useRepoDetailController() {
   const repoDetailLoading = ref(false);
   const repoDetailError = ref<string | null>(null);
   const launchError = ref<string | null>(null);
-  const {
-    dialog: pullLocalChangesDialog,
-    request: requestPullLocalChangesPrompt,
-    select: selectPullLocalChangesMode,
-    cancel: cancelPullLocalChangesDialog,
-  } = useRepoLocalChangesPrompt();
   const launchTerminalVisible = ref(false);
   const pullStrategy = ref<RepoPullStrategy>("merge");
   const openTarget = ref<SystemOpenTarget>("folder");
@@ -351,7 +344,6 @@ export function useRepoDetailController() {
     launchTerminalVisible.value = false;
     focusedChangePath.value = null;
     selectedCommitHash.value = null;
-    cancelPullLocalChangesDialog();
     openTarget.value = "folder";
     repoDetailLoader.invalidate();
     githubBranchesLoader.invalidate();
@@ -593,10 +585,6 @@ export function useRepoDetailController() {
     focusedChangePath.value = path;
   }
 
-  function requestPullLocalChangesMode(title = "拉取前处理本地修改") {
-    return requestPullLocalChangesPrompt(title, summary.value ? [summary.value] : []);
-  }
-
   function shouldOfferSystemGitPush(error: unknown) {
     const message = String(error);
     return message.includes("当前 GitHub 绑定无权限") || message.includes("无法认证 GitHub 仓库");
@@ -727,9 +715,7 @@ export function useRepoDetailController() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
     void runAction(async () => {
-      const localChangesMode = await requestPullLocalChangesMode();
-      if (!localChangesMode) return;
-      await workspace.mergePull(targetRepoId, localChangesMode);
+      await workspace.mergePull(targetRepoId, "stash");
     });
   }
 
@@ -800,17 +786,15 @@ export function useRepoDetailController() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
     void runAction(async () => {
-      const localChangesMode = await requestPullLocalChangesMode();
-      if (!localChangesMode) return;
       if (pullStrategy.value === "pull") {
-        await workspace.pull(targetRepoId, localChangesMode);
+        await workspace.pull(targetRepoId, "stash");
         return;
       }
       if (pullStrategy.value === "rebase") {
-        await workspace.startRebase(targetRepoId, null, localChangesMode);
+        await workspace.startRebase(targetRepoId, null, "stash");
         return;
       }
-      await workspace.mergePull(targetRepoId, localChangesMode);
+      await workspace.mergePull(targetRepoId, "stash");
     });
   }
 
@@ -1004,7 +988,6 @@ export function useRepoDetailController() {
       repoDetailLoading,
       repoDetailError,
       launchError,
-      pullLocalChangesDialog,
       actionRunning,
       launchTerminalVisible,
       selectedCommitHash,
@@ -1058,8 +1041,6 @@ export function useRepoDetailController() {
       refreshAndFetchRepo,
       refreshProjectCache,
       selectPullStrategy,
-      selectPullLocalChangesMode,
-      cancelPullLocalChangesDialog,
       setRepoSetting,
       selectOpenTarget,
       openSelectedTarget,
