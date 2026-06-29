@@ -11,14 +11,16 @@ const nativeCpuFlag = "-C target-cpu=native";
 const dryRun = process.env.LILIA_GITHUB_INSTALL_DRY_RUN === "1";
 const platform = process.platform;
 const platformTargets = {
-  win32: { dirs: ["msi", "nsis"], exts: [".msi", ".exe"] },
+  win32: { dirs: ["nsis"], exts: [".exe"] },
   darwin: { dirs: ["dmg"], exts: [".dmg"] },
   linux: { dirs: ["appimage", "deb", "rpm"], exts: [".appimage", ".deb", ".rpm"] },
 };
+const appDisplayName = "LiliaGithub";
+const legacyWindowsInstallDir = "C:\\LiliaGithub_Test";
 
 function installCommand(installerPath) {
   if (platform === "win32") {
-    return [path.extname(installerPath).toLowerCase() === ".msi" ? "msiexec" : installerPath, path.extname(installerPath).toLowerCase() === ".msi" ? ["/i", installerPath, "/qn"] : ["/S"]];
+    return [installerPath, ["/S"]];
   }
   if (platform === "darwin") return ["open", [installerPath]];
   if (platform === "linux") return ["xdg-open", [installerPath]];
@@ -45,16 +47,68 @@ function latestInstaller(target) {
 }
 
 function run(command, args, options = {}) {
+  const { capture = false, ...spawnOptions } = options;
   const result = spawnSync(command, args, {
-    ...options,
-    stdio: "inherit",
+    ...spawnOptions,
+    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
     encoding: "utf-8",
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
+    const output = capture ? `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() : "";
+    throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}${output ? `\n${output}` : ""}`);
   }
-  return result;
+  return capture ? result.stdout ?? "" : result;
+}
+
+function powershell(command) {
+  return run("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    command,
+  ], { capture: true });
+}
+
+function prepareWindowsInstall() {
+  powershell(String.raw`
+$name = '${appDisplayName}'
+$legacy = '${legacyWindowsInstallDir}'
+
+$paths = @(
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+$installs = Get-ItemProperty $paths -ErrorAction SilentlyContinue |
+  Where-Object {
+    $location = (([string]$_.InstallLocation -replace '^"|"$','') -replace '\\+$','')
+    $icon = [string]$_.DisplayIcon -replace '^"|"$',''
+    $_.DisplayName -eq $name -and (
+      $location -ieq $legacy -or
+      $icon.StartsWith("$legacy\", [StringComparison]::OrdinalIgnoreCase)
+    )
+  }
+if (-not $installs) { return }
+
+$running = Get-CimInstance Win32_Process -Filter "Name = 'lilia_github.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($legacy, [StringComparison]::OrdinalIgnoreCase) }
+if ($running) {
+  $processes = ($running | ForEach-Object { "$($_.ProcessId): $($_.ExecutablePath)" }) -join ', '
+  throw "检测到旧安装目录中的 $name 仍在运行，请先结束进程后重试：$processes"
+}
+
+foreach ($install in $installs) {
+  $command = if ($install.QuietUninstallString) { $install.QuietUninstallString } else { $install.UninstallString }
+  if (-not $command) { throw "检测到旧安装目录 $legacy，但卸载命令为空，请先手动卸载 $name" }
+  if ($command -notmatch '(^|\s)/S($|\s)') { $command = "$command /S" }
+  $source = if ($install.InstallLocation) { $install.InstallLocation } else { $install.DisplayIcon }
+  Write-Host "[lilia-github] 卸载旧测试目录安装: $source"
+  $process = Start-Process -FilePath $env:ComSpec -ArgumentList @('/d', '/s', '/c', $command) -Wait -PassThru -WindowStyle Hidden
+  if ($process.ExitCode -ne 0) { throw "旧安装卸载失败，退出码：$($process.ExitCode)" }
+}
+`);
 }
 
 function nativeBuildEnv() {
@@ -103,6 +157,7 @@ function main() {
     throw new Error(`未找到可安装文件，支持后缀: ${target.exts.join(" ")}`);
   }
 
+  if (platform === "win32") prepareWindowsInstall();
   const [command, args] = installCommand(installerPath);
   run(command, args);
   console.log(`[lilia-github] 已发起安装: ${installerPath}`);
