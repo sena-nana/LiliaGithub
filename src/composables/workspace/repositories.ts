@@ -45,6 +45,8 @@ let contributionRefreshPendingCount = 0;
 let contributionRefreshSeenFullNames = new Set<string>();
 let contributionRefreshSampledCount = 0;
 let contributionRefreshDays: GitHubContributionDay[] = [];
+let contributionRefreshRepoCount = 0;
+let contributionRefreshSkippedRepoCount = 0;
 let workspaceTaskRefreshGeneration = 0;
 let languageStatsLoadingGenerations = new Map<string, number>();
 const autoSyncRunningRepoIds = new Set<string>();
@@ -327,12 +329,9 @@ function beginContributionRefresh() {
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;
-  contributionRefreshDays = state.githubContributions.days.length > 0
-    ? [...state.githubContributions.days]
-    : emptyContributionDays(refreshedAt);
-  if (!state.githubContributions.days.length) {
-    state.githubContributions.days = contributionRefreshDays;
-  }
+  contributionRefreshRepoCount = 0;
+  contributionRefreshSkippedRepoCount = 0;
+  contributionRefreshDays = emptyContributionDays(refreshedAt);
   state.githubContributions.loading = false;
   state.githubContributions.error = null;
   if (!state.githubContributions.meta) {
@@ -375,12 +374,14 @@ async function refreshSingleRepoContribution(item: ContributionRefreshScope, gen
       result.days,
       item.source,
     );
+    contributionRefreshRepoCount += result.meta.repoCount ?? 1;
+    contributionRefreshSkippedRepoCount += result.meta.skippedRepoCount ?? 0;
     state.githubContributions.days = contributionRefreshDays;
     updateContributionMeta({
-      repoCount: (state.githubContributions.meta?.repoCount ?? 0) + (result.meta.repoCount ?? 1),
+      repoCount: contributionRefreshRepoCount,
       requestedRepoCount: contributionRefreshSeenFullNames.size,
       sampledRepoCount: contributionRefreshSampledCount,
-      skippedRepoCount: (state.githubContributions.meta?.skippedRepoCount ?? 0) + (result.meta.skippedRepoCount ?? 0),
+      skippedRepoCount: contributionRefreshSkippedRepoCount,
     });
   } catch (err) {
     if (generation !== contributionRefreshGeneration) return;
@@ -392,23 +393,20 @@ async function refreshSingleRepoContribution(item: ContributionRefreshScope, gen
 
 function finishEmptyContributionRefresh(generation: number) {
   if (generation !== contributionRefreshGeneration) return;
+  if (state.githubContributions.days.length) {
+    state.githubContributions.loading = false;
+    return;
+  }
   state.githubContributions.days = contributionRefreshDays;
   state.githubContributions.loading = false;
-  if (state.githubContributions.meta) {
-    state.githubContributions.meta = {
-      ...state.githubContributions.meta,
-      refreshedAt: Date.now(),
-    };
-  } else {
-    state.githubContributions.meta = {
-      repoCount: 0,
-      requestedRepoCount: 0,
-      repoLimit: CONTRIBUTION_REPO_LIMIT,
-      truncated: false,
-      skippedRepoCount: 0,
-      refreshedAt: Date.now(),
-    };
-  }
+  state.githubContributions.meta = {
+    repoCount: 0,
+    requestedRepoCount: 0,
+    repoLimit: CONTRIBUTION_REPO_LIMIT,
+    truncated: false,
+    skippedRepoCount: 0,
+    refreshedAt: Date.now(),
+  };
   void persistStartupContributions();
 }
 
@@ -612,6 +610,8 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshSampledCount = 0;
   contributionRefreshDays = [];
+  contributionRefreshRepoCount = 0;
+  contributionRefreshSkippedRepoCount = 0;
 }
 
 export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {
