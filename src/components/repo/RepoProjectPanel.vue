@@ -4381,8 +4381,24 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-about-form textarea {
-  min-height: 72px;
-  resize: vertical;
+  width: 100%;
+  min-height: 74px;
+  max-height: 132px;
+  padding: 4px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  line-height: 22px;
+  caret-color: var(--text-muted);
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+}
+
+.project-about-form textarea::placeholder {
+  color: var(--text-faint);
 }
 
 .project-about-form__actions {
