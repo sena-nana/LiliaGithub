@@ -63,7 +63,6 @@ defineEmits<{
       :aria-label="issue.label"
     >
       <AlertCircle :size="11" aria-hidden="true" />
-      <span>{{ issue.message }}</span>
     </span>
     <button
       v-if="issue?.retryable"
@@ -129,37 +128,22 @@ defineEmits<{
   color: var(--ok);
 }
 
-.sb-issue {
-  flex: 0 1 auto;
-  min-width: 24px;
-  max-width: min(45%, 180px);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--err);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.sb-issue span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
+.sb-issue,
 .sb-retry {
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--err-soft);
-  color: var(--err);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.sb-retry {
+  padding: 0;
+  border: 0;
   cursor: pointer;
 }
 
