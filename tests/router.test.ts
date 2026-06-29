@@ -1958,25 +1958,31 @@ describe("基础路由", () => {
     );
   });
 
-  it("仓库详情页右上角刷新项目缓存后重读当前详情", async () => {
+  it("仓库详情页右上角刷新项目缓存后重读当前项目页和详情", async () => {
     const service = await import("../src/services/workspace");
+    const workspaceClient = await import("../src/services/workspace/client");
     const clearRepoLocalCache = vi.spyOn(service, "clearRepoLocalCache");
+    const listRepoFiles = vi.spyOn(workspaceClient, "listRepoFiles").mockResolvedValue([]);
     const summary = repoSummary("LiliaGithub");
     const detailRequests = mockRepoDetail(summary, {});
     await renderAt("/repos/LiliaGithub");
     await waitForRepoTitle("LiliaGithub");
     await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
+    await waitFor(() => expect(listRepoFiles).toHaveBeenCalled());
     const initialRequestCount = detailRequests.length;
+    const initialFileRequestCount = listRepoFiles.mock.calls.length;
 
     try {
-      await fireEvent.click(within(screen.getByLabelText("项目缓存")).getByRole("button", { name: "刷新项目缓存" }));
+      await fireEvent.click(screen.getByRole("button", { name: "刷新项目缓存" }));
 
       await waitFor(() => {
         expect(clearRepoLocalCache).toHaveBeenCalledWith("LiliaGithub", "sena-nana/LiliaGithub");
       });
+      await waitFor(() => expect(listRepoFiles.mock.calls.length).toBeGreaterThan(initialFileRequestCount));
       await waitFor(() => expect(detailRequests.length).toBeGreaterThan(initialRequestCount));
     } finally {
       clearRepoLocalCache.mockRestore();
+      listRepoFiles.mockRestore();
     }
   });
 

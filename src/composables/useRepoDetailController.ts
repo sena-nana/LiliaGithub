@@ -1,4 +1,4 @@
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   REPO_SETTING_ITEMS,
@@ -744,13 +744,13 @@ export function useRepoDetailController() {
       const repoFullName = githubRepoFullName.value;
       await workspace.clearRepoLocalCache(targetRepoId, repoFullName);
       if (repoId.value !== targetRepoId) return;
+      projectCacheResetToken.value += 1;
+      await nextTick();
+      if (repoId.value !== targetRepoId) return;
       if (!hasLocalRepo.value) {
         await loadRemoteGitHubData(repoFullName);
       } else {
         await load();
-      }
-      if (repoId.value === targetRepoId) {
-        projectCacheResetToken.value += 1;
       }
     });
   }
