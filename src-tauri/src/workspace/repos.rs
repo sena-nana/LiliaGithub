@@ -147,7 +147,9 @@ fn git_blob_line_counts(repo_path: &Path, object_ids: &[String]) -> Result<Vec<u
     let mut counts = Vec::with_capacity(object_ids.len());
     let mut cursor = 0;
     while cursor < output.stdout.len() && counts.len() < object_ids.len() {
-        let Some(header_end) = output.stdout[cursor..].iter().position(|byte| *byte == b'\n')
+        let Some(header_end) = output.stdout[cursor..]
+            .iter()
+            .position(|byte| *byte == b'\n')
         else {
             break;
         };
@@ -662,7 +664,11 @@ pub(super) fn summarize_repo(root: &Path, path: &Path) -> RepoSummary {
     summarize_repo_from_status(root, path, &status)
 }
 
-fn summarize_repo_from_status(root: &Path, path: &Path, status: &RepoStatusSnapshot) -> RepoSummary {
+fn summarize_repo_from_status(
+    root: &Path,
+    path: &Path,
+    status: &RepoStatusSnapshot,
+) -> RepoSummary {
     let worktree = resolve_repo_worktree(root, path).summary;
     let mut staged_count = 0;
     let mut unstaged_count = 0;
@@ -692,7 +698,11 @@ fn summarize_repo_from_status(root: &Path, path: &Path, status: &RepoStatusSnaps
         .and_then(|value| value.parse::<i64>().ok());
     let last_commit_message = last_commit
         .as_deref()
-        .and_then(|value| value.split_once('\x1f').map(|(_, subject)| subject.to_string()))
+        .and_then(|value| {
+            value
+                .split_once('\x1f')
+                .map(|(_, subject)| subject.to_string())
+        })
         .filter(|value| !value.is_empty());
     let relative_path = repo_id(root, path);
 
@@ -1238,8 +1248,11 @@ pub async fn workspace_create_local_repo(
                 .map_err(|e| format!("写入 README 失败：{e}"))?;
         }
         if let Some(template) = normalize_local_repo_optional_string(request.gitignore_template) {
-            fs::write(target.join(".gitignore"), local_gitignore_template_content(&template))
-                .map_err(|e| format!("写入 .gitignore 失败：{e}"))?;
+            fs::write(
+                target.join(".gitignore"),
+                local_gitignore_template_content(&template),
+            )
+            .map_err(|e| format!("写入 .gitignore 失败：{e}"))?;
         }
         if let Some(template) = normalize_local_repo_optional_string(request.license_template) {
             fs::write(
@@ -1294,12 +1307,8 @@ pub async fn workspace_clone_repo(
             None
         };
         let run_clone = |auth: Option<&str>| {
-            git_command(
-                &root,
-                &["clone", remote, directory.as_str()],
-                auth,
-            )
-            .map_err(|error| normalize_git_remote_error(remote, error))
+            git_command(&root, &["clone", remote, directory.as_str()], auth)
+                .map_err(|error| normalize_git_remote_error(remote, error))
         };
         if let Err(error) = run_clone(auth_header.as_deref()) {
             if !should_retry_clone_with_system_git(remote, &error) {
@@ -1482,9 +1491,8 @@ pub async fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDeta
         let changes_path = path.as_path();
         let conflicts_path = path.as_path();
         let (summary, changes, commits, branches, conflicts) = thread::scope(|scope| {
-            let summary = scope.spawn(|| {
-                summarize_repo_with_language_stats_from_status(&root, &path, &status)
-            });
+            let summary = scope
+                .spawn(|| summarize_repo_with_language_stats_from_status(&root, &path, &status));
             let changes =
                 scope.spawn(move || repo_changes_from_entries(changes_path, change_entries));
             let commits = scope.spawn(|| repo_history(&path));
@@ -1610,7 +1618,11 @@ pub async fn repo_pull(
         let local_changes =
             prepare_pull_local_changes(&path, &summary, local_changes_mode, "pull")?;
         if let Err(err) = run_pull(&app, &path) {
-            return Err(restore_pull_local_changes_after_error(&path, local_changes, err));
+            return Err(restore_pull_local_changes_after_error(
+                &path,
+                local_changes,
+                err,
+            ));
         }
         if let Err(err) = restore_pull_local_changes(&path, local_changes) {
             let conflicts = repo_conflicts(&path);
@@ -1644,7 +1656,11 @@ pub async fn repo_merge_pull(
         let local_changes = prepare_pull_local_changes(&path, &summary, Some(mode), "合并拉取")?;
 
         if let Err(err) = run_fetch(&app, &path) {
-            return Err(restore_pull_local_changes_after_error(&path, local_changes, err));
+            return Err(restore_pull_local_changes_after_error(
+                &path,
+                local_changes,
+                err,
+            ));
         }
         match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
             Ok(_) => {
@@ -1668,7 +1684,11 @@ pub async fn repo_merge_pull(
                 let conflicts = repo_conflicts(&path);
                 let summary = summarize_repo(&root, &path);
                 if conflicts.files.is_empty() {
-                    Err(restore_pull_local_changes_after_error(&path, local_changes, err))
+                    Err(restore_pull_local_changes_after_error(
+                        &path,
+                        local_changes,
+                        err,
+                    ))
                 } else {
                     Ok(RepoMergePullResult {
                         status: "conflicts".to_string(),
@@ -1711,7 +1731,11 @@ pub async fn repo_start_rebase(
         let target = normalize_rebase_target(&path, onto_ref)?;
         if target == "@{u}" || target.contains('/') {
             if let Err(err) = run_fetch(&app, &path) {
-                return Err(restore_pull_local_changes_after_error(&path, local_changes, err));
+                return Err(restore_pull_local_changes_after_error(
+                    &path,
+                    local_changes,
+                    err,
+                ));
             }
         }
         let result = run_repo_operation_with_conflicts(
@@ -1882,7 +1906,12 @@ pub async fn repo_set_upstream(
         let upstream = normalize_branch_ref(&upstream, "upstream 不能为空")?;
         git_command(
             &path,
-            &["branch", "--set-upstream-to", upstream.as_str(), branch.as_str()],
+            &[
+                "branch",
+                "--set-upstream-to",
+                upstream.as_str(),
+                branch.as_str(),
+            ],
             None,
         )?;
         Ok(summarize_repo(&root, &path))
@@ -1943,7 +1972,11 @@ pub async fn repo_stash_save(
                 .map(|branch| format!("保存工作区：{branch}"))
                 .unwrap_or_else(|| "保存工作区".to_string())
         });
-        git_command(&path, &["stash", "push", "-u", "-m", message.as_str()], None)?;
+        git_command(
+            &path,
+            &["stash", "push", "-u", "-m", message.as_str()],
+            None,
+        )?;
         Ok(summarize_repo(&root, &path))
     })
     .await
@@ -2009,10 +2042,7 @@ pub async fn repo_stash_drop(
 }
 
 #[tauri::command]
-pub async fn repo_list_remotes(
-    app: AppHandle,
-    repo_id: String,
-) -> Result<Vec<RepoRemote>, String> {
+pub async fn repo_list_remotes(app: AppHandle, repo_id: String) -> Result<Vec<RepoRemote>, String> {
     run_blocking("读取远端配置", move || {
         let path = repo_path_by_id(&app, &repo_id)?;
         repo_remotes(&path)
@@ -2262,15 +2292,17 @@ pub(super) fn prepare_pull_local_changes(
     }
 
     match mode {
-        RepoPullLocalChangesMode::Reject => {
-            Err(format!("存在未提交变更，已阻止 {operation}"))
-        }
+        RepoPullLocalChangesMode::Reject => Err(format!("存在未提交变更，已阻止 {operation}")),
         RepoPullLocalChangesMode::Discard => {
             discard_all_repo_local_changes(path)?;
             Ok(PullLocalChanges { stash_ref: None })
         }
         RepoPullLocalChangesMode::Stash => {
-            git_command(path, &["stash", "push", "-u", "-m", "拉取前保存本地修改"], None)?;
+            git_command(
+                path,
+                &["stash", "push", "-u", "-m", "拉取前保存本地修改"],
+                None,
+            )?;
             Ok(PullLocalChanges {
                 stash_ref: Some("stash@{0}".to_string()),
             })
@@ -2362,7 +2394,10 @@ fn conflict_status_entries(entries: &[RepoStatusEntry]) -> Vec<(String, String)>
             if !is_conflict_status(&entry.index, &entry.worktree) {
                 return None;
             }
-            Some((format!("{}{}", entry.index, entry.worktree), entry.path.clone()))
+            Some((
+                format!("{}{}", entry.index, entry.worktree),
+                entry.path.clone(),
+            ))
         })
         .collect()
 }
@@ -2829,11 +2864,9 @@ pub(super) fn repo_stash_file_changes(path: &Path, stash: &str) -> Vec<CommitFil
         &["stash", "show", "--numstat", "--find-renames", stash],
     )
     .unwrap_or_default();
-    let patch_output = git_command_lossy(
-        path,
-        &["stash", "show", "--patch", "--find-renames", stash],
-    )
-    .unwrap_or_default();
+    let patch_output =
+        git_command_lossy(path, &["stash", "show", "--patch", "--find-renames", stash])
+            .unwrap_or_default();
     commit_file_changes_from_outputs(&status_output, &numstat_output, &patch_output)
 }
 
@@ -3202,7 +3235,12 @@ pub(super) fn local_branch_short_name(remote_branch: &str) -> Option<String> {
 pub(super) fn local_branch_exists(path: &Path, branch: &str) -> bool {
     git_command_lossy(
         path,
-        &["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch}")],
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
     )
     .is_some()
 }
@@ -3210,7 +3248,12 @@ pub(super) fn local_branch_exists(path: &Path, branch: &str) -> bool {
 pub(super) fn remote_branch_exists(path: &Path, branch: &str) -> bool {
     git_command_lossy(
         path,
-        &["show-ref", "--verify", "--quiet", &format!("refs/remotes/{branch}")],
+        &[
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/remotes/{branch}"),
+        ],
     )
     .is_some()
 }
@@ -3238,7 +3281,9 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
             let current = parts.first().copied().unwrap_or("").trim() == "*";
             let full_ref = parts.get(1).copied().unwrap_or("").trim();
             let raw_short_ref = parts.get(2).copied().unwrap_or("").trim();
-            let short_ref = raw_short_ref.strip_prefix("remotes/").unwrap_or(raw_short_ref);
+            let short_ref = raw_short_ref
+                .strip_prefix("remotes/")
+                .unwrap_or(raw_short_ref);
             if short_ref.is_empty() {
                 return None;
             }
@@ -3286,7 +3331,11 @@ pub(super) fn repo_branches(path: &Path) -> Vec<BranchSummary> {
         .collect()
 }
 
-pub(super) fn checkout_branch_at(root: &Path, path: &Path, branch: &str) -> Result<RepoSummary, String> {
+pub(super) fn checkout_branch_at(
+    root: &Path,
+    path: &Path,
+    branch: &str,
+) -> Result<RepoSummary, String> {
     let branch = branch.trim();
     if branch.is_empty() {
         return Err("分支名不能为空".to_string());
@@ -3300,7 +3349,11 @@ pub(super) fn checkout_branch_at(root: &Path, path: &Path, branch: &str) -> Resu
             if local_branch_exists(path, &local_branch) {
                 git_command(path, &["checkout", &local_branch], None)?;
             } else {
-                git_command(path, &["checkout", "-b", &local_branch, "--track", branch], None)?;
+                git_command(
+                    path,
+                    &["checkout", "-b", &local_branch, "--track", branch],
+                    None,
+                )?;
             }
             return Ok(summarize_repo(root, path));
         }
@@ -3397,7 +3450,11 @@ pub(super) fn merge_branch_at(
     }
 }
 
-pub(super) fn delete_branch_at(root: &Path, path: &Path, branch: &str) -> Result<RepoSummary, String> {
+pub(super) fn delete_branch_at(
+    root: &Path,
+    path: &Path,
+    branch: &str,
+) -> Result<RepoSummary, String> {
     let branch = branch.trim();
     if branch.is_empty() {
         return Err("分支名不能为空".to_string());
@@ -3425,7 +3482,8 @@ pub(super) fn parse_track(track: &str) -> (i32, i32) {
 }
 
 pub(super) fn repo_stashes(path: &Path) -> Result<Vec<RepoStashEntry>, String> {
-    let output = git_command_lossy(path, &["stash", "list", "--format=%gd\x1f%gs"]).unwrap_or_default();
+    let output =
+        git_command_lossy(path, &["stash", "list", "--format=%gd\x1f%gs"]).unwrap_or_default();
     Ok(output
         .lines()
         .enumerate()
@@ -3492,11 +3550,17 @@ pub(super) fn stash_branch_from_message(message: &str) -> Option<String> {
     let trimmed = message.trim();
     let branch = trimmed
         .strip_prefix("On ")
-        .and_then(|value| value.split_once(':').map(|(head, _)| head.trim().to_string()))
+        .and_then(|value| {
+            value
+                .split_once(':')
+                .map(|(head, _)| head.trim().to_string())
+        })
         .or_else(|| {
-            trimmed
-                .strip_prefix("WIP on ")
-                .and_then(|value| value.split_once(':').map(|(head, _)| head.trim().to_string()))
+            trimmed.strip_prefix("WIP on ").and_then(|value| {
+                value
+                    .split_once(':')
+                    .map(|(head, _)| head.trim().to_string())
+            })
         })?;
     if branch.is_empty() {
         None

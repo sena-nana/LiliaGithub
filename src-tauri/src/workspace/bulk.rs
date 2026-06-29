@@ -30,7 +30,9 @@ pub(super) fn merge_pull_block_reason_with_mode(
 ) -> Option<String> {
     if summary.conflict_count > 0 {
         Some("已有冲突需要先处理".to_string())
-    } else if repo_dirty_count(summary) > 0 && local_changes_mode == RepoPullLocalChangesMode::Reject {
+    } else if repo_dirty_count(summary) > 0
+        && local_changes_mode == RepoPullLocalChangesMode::Reject
+    {
         Some("存在未提交变更，已阻止合并拉取".to_string())
     } else if !has_upstream {
         Some("当前分支没有 upstream".to_string())
@@ -207,9 +209,11 @@ pub(super) fn build_bulk_sync_preview_with_mode(
     repos: Vec<RepoSummary>,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> BulkSyncPreview {
-    build_bulk_sync_preview_with_lookup_and_mode(repos, |repo| {
-        current_branch_upstream(&PathBuf::from(&repo.path)).is_some()
-    }, local_changes_mode)
+    build_bulk_sync_preview_with_lookup_and_mode(
+        repos,
+        |repo| current_branch_upstream(&PathBuf::from(&repo.path)).is_some(),
+        local_changes_mode,
+    )
 }
 
 #[cfg(test)]
@@ -307,12 +311,14 @@ pub(super) fn bulk_sync_repo(
         return sync_repo(app, root, repo_id, &path, &summary, local_changes_mode);
     }
     let run = if operation == "pull" {
-        prepare_pull_local_changes(&path, &summary, Some(local_changes_mode), "pull")
-            .and_then(|local_changes| {
-                run_pull(app, &path)
-                    .map_err(|err| restore_pull_local_changes_after_error(&path, local_changes.clone(), err))?;
+        prepare_pull_local_changes(&path, &summary, Some(local_changes_mode), "pull").and_then(
+            |local_changes| {
+                run_pull(app, &path).map_err(|err| {
+                    restore_pull_local_changes_after_error(&path, local_changes.clone(), err)
+                })?;
                 restore_pull_local_changes(&path, local_changes)
-            })
+            },
+        )
     } else if let Some(reason) =
         push_block_reason(&summary, current_branch_upstream(&path).is_some())
     {
@@ -357,12 +363,20 @@ pub(super) fn sync_repo(
         } else if !has_upstream {
             Err(skip("当前分支没有 upstream，已跳过同步"))
         } else if summary.ahead > 0 {
-            run_merge_pull_then_push(app, root, repo_id.clone(), path, summary, local_changes_mode)
+            run_merge_pull_then_push(
+                app,
+                root,
+                repo_id.clone(),
+                path,
+                summary,
+                local_changes_mode,
+            )
         } else {
             prepare_pull_local_changes(path, summary, Some(local_changes_mode), "pull")
                 .and_then(|local_changes| {
-                    run_pull(app, path)
-                        .map_err(|err| restore_pull_local_changes_after_error(path, local_changes.clone(), err))?;
+                    run_pull(app, path).map_err(|err| {
+                        restore_pull_local_changes_after_error(path, local_changes.clone(), err)
+                    })?;
                     restore_pull_local_changes(path, local_changes)
                 })
                 .map_err(|err| bulk_error_result_for(&repo_id, err))
@@ -400,8 +414,9 @@ pub(super) fn run_merge_pull_then_push(
     summary: &RepoSummary,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> Result<(), BulkSyncResult> {
-    let local_changes = prepare_pull_local_changes(path, summary, Some(local_changes_mode), "合并拉取")
-        .map_err(|err| bulk_error_result_for(&repo_id, err))?;
+    let local_changes =
+        prepare_pull_local_changes(path, summary, Some(local_changes_mode), "合并拉取")
+            .map_err(|err| bulk_error_result_for(&repo_id, err))?;
     run_fetch(app, path).map_err(|err| {
         bulk_error_result_for(
             &repo_id,
