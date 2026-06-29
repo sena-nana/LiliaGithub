@@ -1237,24 +1237,137 @@ fn aggregates_language_stats_from_head_tree() {
     fs::remove_dir_all(path).unwrap();
 }
 
+fn commit_with_author(path: &Path, file: &str, body: &str, message: &str, name: &str, email: &str) {
+    fs::write(path.join(file), body).unwrap();
+    run_git(path, &["add", file]);
+    run_git(
+        path,
+        &[
+            "-c",
+            &format!("user.name={name}"),
+            "-c",
+            &format!("user.email={email}"),
+            "commit",
+            "-m",
+            message,
+        ],
+    );
+}
+
 #[test]
-fn collect_local_contribution_counts_counts_all_repo_commits() {
-    let path = temp_dir("collect-local-contribution");
+fn local_contribution_counts_use_configured_author_identities() {
+    let path = temp_dir("local-contribution-identities");
     init_git_repo(&path);
-    fs::create_dir_all(path.join("src")).unwrap();
-    fs::write(path.join("src").join("app.ts"), "console.log(1)\n").unwrap();
-    run_git(&path, &["add", "src/app.ts"]);
-    run_git(&path, &["commit", "-m", "first commit"]);
+    commit_with_author(
+        &path,
+        "mine.txt",
+        "mine\n",
+        "mine",
+        "Lilia User",
+        "lilia@example.com",
+    );
+    commit_with_author(
+        &path,
+        "other.txt",
+        "other\n",
+        "other",
+        "Other User",
+        "other@example.com",
+    );
 
     let end_day_index = current_utc_day_index();
     let start_day_index = end_day_index - 2;
-
     let mut counts = HashMap::new();
-    collect_local_contribution_counts(&path, start_day_index, end_day_index, &mut counts).unwrap();
-    let total: usize = counts.values().sum();
+    collect_local_contribution_counts(
+        &path,
+        start_day_index,
+        end_day_index,
+        &[
+            ContributionIdentity {
+                name: None,
+                email: Some("lilia@example.com".to_string()),
+            },
+            ContributionIdentity {
+                name: Some("Legacy Lilia".to_string()),
+                email: None,
+            },
+        ],
+        &mut counts,
+    )
+    .unwrap();
 
-    assert_eq!(total, 1);
+    assert_eq!(counts.values().sum::<usize>(), 1);
     fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn local_contribution_identities_fall_back_to_repo_git_config() {
+    let path = temp_dir("local-contribution-git-config");
+    init_git_repo(&path);
+    commit_with_author(
+        &path,
+        "mine.txt",
+        "mine\n",
+        "mine",
+        "Test User",
+        "test@example.com",
+    );
+    commit_with_author(
+        &path,
+        "other.txt",
+        "other\n",
+        "other",
+        "Other User",
+        "other@example.com",
+    );
+
+    let identities = local_contribution_identities(&path, &WorkspaceSettings::default());
+    let end_day_index = current_utc_day_index();
+    let start_day_index = end_day_index - 2;
+    let mut counts = HashMap::new();
+    collect_local_contribution_counts(
+        &path,
+        start_day_index,
+        end_day_index,
+        &identities,
+        &mut counts,
+    )
+    .unwrap();
+
+    assert_eq!(identities.len(), 1);
+    assert_eq!(counts.values().sum::<usize>(), 1);
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn contribution_identity_matching_prefers_email_when_present() {
+    assert!(contribution_identity_matches(
+        &[ContributionIdentity {
+            name: Some("Same Name".to_string()),
+            email: Some("lilia@example.com".to_string()),
+        },],
+        "Different Name",
+        "lilia@example.com",
+    ));
+    assert!(!contribution_identity_matches(
+        &[ContributionIdentity {
+            name: Some("Same Name".to_string()),
+            email: Some("lilia@example.com".to_string()),
+        },],
+        "Same Name",
+        "other@example.com",
+    ));
+}
+
+#[test]
+fn github_contribution_result_marks_repo_without_identity_as_skipped() {
+    let end_day_index = parse_github_datetime("2026-06-11T12:00:00Z").unwrap() / 86_400;
+    let result = github_contribution_result(&HashMap::new(), end_day_index, 0, 1, 1);
+
+    assert_eq!(result.meta.repo_count, 0);
+    assert_eq!(result.meta.requested_repo_count, 1);
+    assert_eq!(result.meta.skipped_repo_count, 1);
+    assert!(result.days.iter().all(|day| day.count == 0));
 }
 
 #[test]

@@ -27,6 +27,7 @@ const workspace = vi.hoisted(() => ({
       repoGroups: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
+      contributionIdentities: [],
     },
     repos: [
       {
@@ -75,6 +76,9 @@ const workspace = vi.hoisted(() => ({
   useDefaultTokenAuthForRepo: vi.fn(async (repoId: string) => {
     workspace.state.settings.systemGitRepoIds = workspace.state.settings.systemGitRepoIds.filter((id) => id !== repoId);
   }),
+  setContributionIdentities: vi.fn(async (identities) => {
+    workspace.state.settings.contributionIdentities = identities;
+  }),
 }));
 
 vi.mock("../src/composables/useWorkspace", () => ({
@@ -103,9 +107,27 @@ describe("RepositoriesSection", () => {
     workspace.state.authNotice = null;
     workspace.githubBinding.value = null;
     workspace.deviceFlow.value = null;
+    workspace.setContributionIdentities.mockClear();
     workspace.listHiddenRepos.mockResolvedValue([]);
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
     vi.mocked(createGitHubRepo).mockReset();
+  });
+
+  it("保存贡献身份映射", async () => {
+    render(RepositoriesSection);
+
+    const panel = screen.getByRole("region", { name: "贡献身份" });
+    await fireEvent.click(within(panel).getByRole("button", { name: "添加身份" }));
+    await fireEvent.update(within(panel).getByLabelText("名称"), "Lilia User");
+    await fireEvent.update(within(panel).getByLabelText("邮箱"), "LILIA@EXAMPLE.COM");
+    await fireEvent.click(within(panel).getByRole("button", { name: "保存贡献身份" }));
+
+    await waitFor(() => {
+      expect(workspace.setContributionIdentities).toHaveBeenCalledWith([
+        { name: "Lilia User", email: "lilia@example.com" },
+      ]);
+    });
+    expect(within(panel).getByText("已保存")).toBeInTheDocument();
   });
 
   it("展示已切到系统 git 凭证的仓库并提供恢复默认 token 入口", async () => {

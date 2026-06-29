@@ -209,6 +209,12 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
   return call("workspace_set_root", { workspaceRoot }, () => workspaceFallback().setWorkspaceRoot(workspaceRoot));
 }
 
+export function setContributionIdentities(identities: import("./types").ContributionIdentity[]): Promise<WorkspaceSettings> {
+  return call("workspace_set_contribution_identities", { identities }, () =>
+    workspaceFallback().setContributionIdentities(identities)
+  );
+}
+
 export function setRepoSetting(repoId: string, key: keyof RepoSyncPreference, value: boolean): Promise<WorkspaceSettings> {
   return call("repo_set_preference", { repoId, key, value }, () => workspaceFallback().setRepoSetting(repoId, key, value));
 }

@@ -11,6 +11,7 @@ export interface WorkspaceSettings {
   repoGroups: WorkspaceRepoGroup[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
+  contributionIdentities: ContributionIdentity[];
 }
 
 export interface WorkspaceStartupCache {
@@ -52,6 +53,11 @@ export interface WorkspaceRepoGroup {
 export interface LocalContributionDayCache {
   count: number;
   updatedAt: number;
+}
+
+export interface ContributionIdentity {
+  name?: string | null;
+  email?: string | null;
 }
 
 export interface ProjectLaunchConfig {

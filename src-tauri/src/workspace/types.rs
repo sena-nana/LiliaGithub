@@ -21,6 +21,8 @@ pub struct WorkspaceSettings {
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
     #[serde(default)]
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
+    #[serde(default)]
+    pub contribution_identities: Vec<ContributionIdentity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -73,6 +75,15 @@ pub struct WorkspaceRepoGroup {
 pub struct LocalContributionDayCache {
     pub count: usize,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributionIdentity {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

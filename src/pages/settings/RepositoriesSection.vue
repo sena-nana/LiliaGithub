@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { FolderGit2, GitBranchPlus, KeyRound, LoaderCircle, Radar, RotateCcw, ShieldCheck, X } from "@lucide/vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
@@ -7,6 +7,7 @@ import { useWorkspace } from "../../composables/useWorkspace";
 import RepoCreateCard from "../../components/sidebar/RepoCreateCard.vue";
 import {
   type HiddenRepo,
+  type ContributionIdentity,
   type WorkspaceTask,
 } from "../../services/workspace";
 
@@ -21,6 +22,9 @@ const createDialogOpen = ref(false);
 const error = ref<string | null>(null);
 const cancellingTaskIds = ref<string[]>([]);
 const taskCancelErrors = ref<Record<string, string | undefined>>({});
+const contributionIdentityDraft = ref<ContributionIdentity[]>([]);
+const savingContributionIdentities = ref(false);
+const contributionIdentitySaved = ref(false);
 const componentEpoch = useComponentEpoch();
 const hiddenReposLoader = createLatestAsyncLoader({ componentEpoch });
 
@@ -62,6 +66,52 @@ function isCancellingTask(taskId: string) {
 
 function taskMessage(task: WorkspaceTask) {
   return task.message ?? taskStatusText(task.status);
+}
+
+function cloneContributionIdentities(identities: readonly ContributionIdentity[] | undefined) {
+  return (identities ?? []).map((identity) => ({
+    name: identity.name ?? "",
+    email: identity.email ?? "",
+  }));
+}
+
+function normalizeContributionIdentityDraft() {
+  return contributionIdentityDraft.value
+    .map((identity) => ({
+      name: identity.name?.trim() || null,
+      email: identity.email?.trim().toLowerCase() || null,
+    }))
+    .filter((identity) => identity.name || identity.email);
+}
+
+function addContributionIdentity() {
+  contributionIdentityDraft.value.push({ name: "", email: "" });
+  contributionIdentitySaved.value = false;
+}
+
+function removeContributionIdentity(index: number) {
+  contributionIdentityDraft.value.splice(index, 1);
+  contributionIdentitySaved.value = false;
+}
+
+function markContributionIdentityChanged() {
+  contributionIdentitySaved.value = false;
+}
+
+async function saveContributionIdentities() {
+  savingContributionIdentities.value = true;
+  contributionIdentitySaved.value = false;
+  error.value = null;
+  try {
+    await workspace.setContributionIdentities(normalizeContributionIdentityDraft());
+    if (!componentEpoch.assertAlive()) return;
+    contributionIdentitySaved.value = true;
+  } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
+    error.value = String(err);
+  } finally {
+    if (componentEpoch.assertAlive()) savingContributionIdentities.value = false;
+  }
 }
 
 async function loadHiddenRepos() {
@@ -165,6 +215,15 @@ onMounted(() => {
   void loadHiddenRepos();
 });
 
+watch(
+  () => workspace.state.settings?.contributionIdentities,
+  (identities) => {
+    contributionIdentityDraft.value = cloneContributionIdentities(identities);
+    contributionIdentitySaved.value = false;
+  },
+  { immediate: true },
+);
+
 onUnmounted(() => {
   hiddenReposLoader.invalidate();
 });
@@ -218,6 +277,70 @@ onUnmounted(() => {
           新建 GitHub 仓库
         </button>
       </div>
+      <section class="contribution-identity-list" aria-labelledby="contribution-identity-list-title">
+        <div class="contribution-identity-list__head">
+          <div>
+            <h3 id="contribution-identity-list-title">贡献身份</h3>
+            <p>热度图只统计这些名称或邮箱对应的本地提交。</p>
+          </div>
+          <button
+            type="button"
+            class="ghost"
+            data-agent-id="settings.repositories.contribution-identities.add"
+            @click="addContributionIdentity"
+          >
+            添加身份
+          </button>
+        </div>
+        <div class="contribution-identity-list__rows">
+          <div
+            v-for="(identity, index) in contributionIdentityDraft"
+            :key="index"
+            class="contribution-identity-list__row"
+          >
+            <label>
+              <span>名称</span>
+              <input
+                v-model="identity.name"
+                type="text"
+                :data-agent-id="`settings.repositories.contribution-identities.${index}.name`"
+                @input="markContributionIdentityChanged"
+              />
+            </label>
+            <label>
+              <span>邮箱</span>
+              <input
+                v-model="identity.email"
+                type="email"
+                :data-agent-id="`settings.repositories.contribution-identities.${index}.email`"
+                @input="markContributionIdentityChanged"
+              />
+            </label>
+            <button
+              type="button"
+              class="ghost contribution-identity-list__remove"
+              :data-agent-id="`settings.repositories.contribution-identities.${index}.remove`"
+              @click="removeContributionIdentity(index)"
+            >
+              <X :size="14" aria-hidden="true" />
+            </button>
+          </div>
+          <p v-if="!contributionIdentityDraft.length" class="muted">未添加身份时使用仓库用户配置。</p>
+        </div>
+        <div class="contribution-identity-list__footer">
+          <button
+            type="button"
+            class="primary"
+            data-agent-id="settings.repositories.contribution-identities.save"
+            :disabled="savingContributionIdentities"
+            @click="saveContributionIdentities"
+          >
+            <LoaderCircle v-if="savingContributionIdentities" :size="14" aria-hidden="true" class="sb-spin" />
+            保存贡献身份
+          </button>
+          <span v-if="contributionIdentitySaved">已保存</span>
+        </div>
+      </section>
       <section class="system-git-list" aria-labelledby="system-git-list-title">
         <div class="system-git-list__head">
           <KeyRound :size="15" aria-hidden="true" />
@@ -390,6 +513,82 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.contribution-identity-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.contribution-identity-list__head,
+.contribution-identity-list__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.contribution-identity-list__head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.contribution-identity-list__head p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.contribution-identity-list__rows {
+  display: grid;
+  gap: 8px;
+}
+
+.contribution-identity-list__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.contribution-identity-list__row label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.contribution-identity-list__row span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.contribution-identity-list__row input {
+  min-width: 0;
+}
+
+.contribution-identity-list__remove {
+  width: 32px;
+  padding-inline: 0;
+}
+
+.contribution-identity-list__footer {
+  justify-content: flex-start;
+}
+
+.contribution-identity-list__footer .primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.contribution-identity-list__footer span {
+  color: var(--ok);
+  font-size: 12px;
 }
 
 .system-git-list {
@@ -643,6 +842,20 @@ onUnmounted(() => {
   .system-git-list__item {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .contribution-identity-list__head,
+  .contribution-identity-list__footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .contribution-identity-list__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .contribution-identity-list__row label {
+    grid-column: 1 / -1;
   }
 
   .workspace-task-list li {

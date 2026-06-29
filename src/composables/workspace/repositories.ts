@@ -696,6 +696,20 @@ export async function setRepoAutoSync(repoId: string, autoSync: boolean) {
   return setRepoSetting(repoId, "autoSync", autoSync);
 }
 
+export async function setContributionIdentities(
+  identities: import("../../services/workspace").ContributionIdentity[],
+) {
+  const service = await loadWorkspaceService();
+  state.settings = await service.setContributionIdentities(identities);
+  state.githubContributions = {
+    days: [],
+    meta: null,
+    loading: false,
+    error: null,
+  };
+  return state.settings;
+}
+
 export async function forgetRemoteRepo(fullName: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.forgetRemoteRepo(fullName);

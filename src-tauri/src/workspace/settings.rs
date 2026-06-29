@@ -424,6 +424,49 @@ pub fn workspace_set_root(
 }
 
 #[tauri::command]
+pub fn workspace_set_contribution_identities(
+    app: AppHandle,
+    identities: Vec<ContributionIdentity>,
+) -> Result<WorkspaceSettings, String> {
+    let mut settings = load_settings(&app);
+    settings.contribution_identities = normalize_contribution_identities(identities);
+    save_settings(&app, &settings)?;
+    let _ = clear_startup_cache(&app);
+    Ok(settings)
+}
+
+pub(super) fn normalize_contribution_identities(
+    identities: Vec<ContributionIdentity>,
+) -> Vec<ContributionIdentity> {
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+    for identity in identities {
+        let name = normalize_optional_string(identity.name);
+        let email =
+            normalize_optional_string(identity.email).map(|value| value.to_ascii_lowercase());
+        if name.is_none() && email.is_none() {
+            continue;
+        }
+        let key = format!(
+            "{}\x1f{}",
+            name.as_deref().unwrap_or("").to_ascii_lowercase(),
+            email.as_deref().unwrap_or("")
+        );
+        if !seen.insert(key) {
+            continue;
+        }
+        normalized.push(ContributionIdentity { name, email });
+    }
+    normalized
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+#[tauri::command]
 pub fn repo_set_preference(
     app: AppHandle,
     repo_id: String,
