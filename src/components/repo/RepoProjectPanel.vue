@@ -4119,19 +4119,15 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           <template v-else>
             <div class="project-release-filter-group">
               <h4>类型</h4>
-              <div class="project-release-type-list" aria-label="Release 类型筛选">
-                <button
-                  v-for="filter in releaseTypeFilters"
-                  :key="filter.value"
-                  type="button"
-                  class="project-release-type-filter"
-                  :data-agent-id="`repo.release.filters.type.${filter.value}`"
-                  :class="{ 'is-active': releaseTypeFilter === filter.value }"
-                  @click="setReleaseTypeFilter(filter.value)"
-                >
-                  {{ filter.label }}
-                </button>
-              </div>
+              <Dropdown
+                :model-value="releaseTypeFilter"
+                :options="releaseTypeFilters"
+                menu-width="180px"
+                menu-label="Release 类型筛选"
+                placement="bottom"
+                agent-id="repo.release.filters.type"
+                @update:model-value="setReleaseTypeFilter"
+              />
             </div>
             <div class="project-release-filter-group">
               <h4>Tag</h4>
@@ -4776,32 +4772,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
-}
-
-.project-release-type-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.project-release-type-filter {
-  min-height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.project-release-type-filter:hover,
-.project-release-type-filter:focus-visible,
-.project-release-type-filter.is-active {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
-  color: var(--accent);
 }
 
 .project-release-tag {
