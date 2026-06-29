@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
@@ -26,7 +26,6 @@ import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
-import { useShellSearch } from "../composables/useShellSearch";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   repoSyncIssueForRepo,
@@ -58,7 +57,7 @@ import {
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
-import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
+import { bulkResultTone, repoDisplayName, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
 import {
   buildHomePendingItems,
   type HomePendingItem,
@@ -81,12 +80,14 @@ import "../styles/page.css";
 
 const workspace = useWorkspace();
 const router = useRouter();
-const shellSearch = useShellSearch();
 const syncingRepoId = ref<string | null>(null);
 const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("stash");
 const createRepoCardOpen = ref(false);
 const createRepoCardMode = ref<"local" | "remote">("local");
 const pendingCreatedRepoGroupId = ref<string | null>(null);
+const searchOpen = ref(false);
+const searchQuery = ref("");
+const searchInput = ref<HTMLInputElement | null>(null);
 const cloneDialog = useCloneRepoDialog({
   onCloned: placeCreatedRepo,
 });
@@ -150,6 +151,15 @@ type HomeCodeOverview = {
   slices: HomeCodeSlice[];
 };
 
+type HomeSearchResult = {
+  key: string;
+  label: string;
+  detail: string;
+} & (
+  { kind: "local"; repo: RepoSummary } |
+  { kind: "remote"; repo: GitHubRepoSummary }
+);
+
 type ProjectTabRef = "issues" | "pulls" | "actions";
 const REPO_STATUS_RENDER_PAGE_SIZE = 60;
 const HOME_PENDING_ITEM_LIMIT = 12;
@@ -175,7 +185,6 @@ const componentEpoch = useComponentEpoch();
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
-const searchOpen = computed(() => shellSearch?.searchOpen.value ?? false);
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -230,6 +239,35 @@ const activeCodeOverview = computed(() =>
 );
 
 const localRepoByGitHubFullName = computed(() => representativeReposByGitHubFullName(workspace.state.repos));
+const normalizedSearchQuery = computed(() => searchQuery.value.trim().toLocaleLowerCase());
+const homeSearchResults = computed<HomeSearchResult[]>(() => {
+  const query = normalizedSearchQuery.value;
+  if (!query) return [];
+
+  const localResults = workspace.state.repos
+    .filter((repo) => repoMatchesHomeSearch(repo, query))
+    .map((repo): HomeSearchResult => ({
+      key: `local:${repo.id}`,
+      kind: "local",
+      label: repoDisplayName(repo),
+      detail: repo.githubFullName ?? repo.relativePath ?? repo.path,
+      repo,
+    }));
+
+  const remoteResults = githubRepos.value
+    .filter((repo) => !repo.disabled)
+    .filter((repo) => !localRepoByGitHubFullName.value.has(repo.fullName))
+    .filter((repo) => githubRepoMatchesHomeSearch(repo, query))
+    .map((repo): HomeSearchResult => ({
+      key: `remote:${repo.fullName}`,
+      kind: "remote",
+      label: repo.name,
+      detail: repo.fullName,
+      repo,
+    }));
+
+  return [...localResults, ...remoteResults].slice(0, 12);
+});
 
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
@@ -797,8 +835,66 @@ function formatTimelineTime(timestamp: number) {
   }).format(new Date(timestamp));
 }
 
+function valueMatchesHomeSearch(value: string | null | undefined, query: string) {
+  return Boolean(value?.toLocaleLowerCase().includes(query));
+}
+
+function repoMatchesHomeSearch(repo: RepoSummary, query: string) {
+  return [
+    repoDisplayName(repo),
+    repo.name,
+    repo.githubFullName,
+    repo.relativePath,
+    repo.path,
+  ].some((value) => valueMatchesHomeSearch(value, query));
+}
+
+function githubRepoMatchesHomeSearch(repo: GitHubRepoSummary, query: string) {
+  return [
+    repo.name,
+    repo.fullName,
+    repo.description,
+    repo.defaultBranch,
+  ].some((value) => valueMatchesHomeSearch(value, query));
+}
+
+async function openSearch() {
+  searchOpen.value = true;
+  if (workspace.isReady.value && !githubRepos.value.length && !githubReposLoading.value) {
+    void loadGitHubRepoStatus();
+  }
+  await nextTick();
+  searchInput.value?.focus();
+}
+
+function closeSearch() {
+  searchOpen.value = false;
+  searchQuery.value = "";
+}
+
 function toggleSearch() {
-  void shellSearch?.toggleSearch();
+  if (searchOpen.value) {
+    closeSearch();
+    return;
+  }
+  void openSearch();
+}
+
+function searchResultAriaLabel(result: HomeSearchResult) {
+  return result.kind === "local"
+    ? `打开本地仓库 ${result.label}`
+    : `打开远程仓库 ${result.detail}`;
+}
+
+async function openHomeSearchResult(result: HomeSearchResult | null = homeSearchResults.value[0] ?? null) {
+  if (!result) return;
+  if (result.kind === "local") {
+    await router.push(repoRoute(result.repo.id));
+  } else {
+    await workspace.rememberRemoteRepo(shortcutFromGitHubRepo(result.repo));
+    await router.push(remoteRepoRoute(result.repo.fullName));
+  }
+  closeSearch();
 }
 
 function repoGroupMenuItems(idPrefix: string, onSelect: (groupId: string | null) => void): ContextMenuItem[] {
@@ -1075,6 +1171,75 @@ function bulkOperationDescription(operation: BulkOperation) {
           </div>
         </div>
         <div class="overview-actions" aria-label="项目总览操作">
+          <div class="overview-search" :class="{ 'is-open': searchOpen }">
+            <button
+              v-if="!searchOpen"
+              type="button"
+              class="overview-actions__btn"
+              data-agent-id="home.overview.search"
+              title="搜索"
+              aria-label="搜索"
+              :disabled="!workspace.isReady.value"
+              @click="toggleSearch"
+            >
+              <Search :size="17" aria-hidden="true" />
+            </button>
+            <div v-else class="overview-search__box">
+              <Search :size="15" aria-hidden="true" class="overview-search__icon" />
+              <input
+                ref="searchInput"
+                v-model="searchQuery"
+                type="search"
+                data-agent-id="home.overview.search.input"
+                aria-label="搜索仓库"
+                placeholder="搜索仓库"
+                autocomplete="off"
+                @keydown.enter.prevent="openHomeSearchResult()"
+                @keydown.esc.prevent="closeSearch"
+              />
+              <button
+                type="button"
+                class="overview-search__close"
+                data-agent-id="home.overview.search.close"
+                title="关闭搜索"
+                aria-label="关闭搜索"
+                @click="closeSearch"
+              >
+                <X :size="14" aria-hidden="true" />
+              </button>
+              <div
+                v-if="normalizedSearchQuery"
+                class="overview-search__results"
+                role="listbox"
+                aria-label="仓库搜索结果"
+              >
+                <button
+                  v-for="(result, index) in homeSearchResults"
+                  :key="result.key"
+                  type="button"
+                  class="overview-search__result"
+                  role="option"
+                  :aria-label="searchResultAriaLabel(result)"
+                  :title="result.detail"
+                  :data-agent-id="`home.overview.search.result.${result.kind}.${index}`"
+                  @mousedown.prevent
+                  @click="openHomeSearchResult(result)"
+                >
+                  <span class="overview-search__result-main">
+                    <span class="overview-search__result-name">{{ result.label }}</span>
+                    <span class="overview-search__result-detail">{{ result.detail }}</span>
+                  </span>
+                  <span class="overview-search__result-kind">{{ result.kind === "local" ? "本地" : "远程" }}</span>
+                </button>
+                <p v-if="!homeSearchResults.length && !githubReposLoading" class="overview-search__empty">
+                  没有匹配的仓库
+                </p>
+                <p v-if="githubReposLoading" class="overview-search__empty">
+                  正在加载远程仓库...
+                </p>
+              </div>
+            </div>
+          </div>
           <button
             type="button"
             class="overview-actions__btn"
@@ -1084,18 +1249,6 @@ function bulkOperationDescription(operation: BulkOperation) {
             @click="openCreateRepoMenu"
           >
             <Plus :size="17" aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            class="overview-actions__btn"
-            data-agent-id="home.overview.search"
-            :class="{ 'is-active': searchOpen }"
-            title="搜索"
-            aria-label="搜索"
-            :disabled="!workspace.state.repos.length"
-            @click="toggleSearch"
-          >
-            <Search :size="17" aria-hidden="true" />
           </button>
           <button
             type="button"

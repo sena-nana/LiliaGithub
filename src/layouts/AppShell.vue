@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted } from "vue";
 import { RouterView } from "vue-router";
 import { APP_TITLE, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
 import { useRouteReturnTarget } from "../composables/useRouteReturnTarget";
-import { provideShellSearch } from "../composables/useShellSearch";
 import { useShellSidebar } from "../composables/useShellSidebar";
 import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
@@ -20,8 +19,6 @@ const isSettingsMode = computed(() => sidebarVariant.value === "settings");
 const activeSettingsTab = computed(() => normalizeSettingsTab(route.query.tab));
 const sidebar = useShellSidebar(sidebarLocked);
 const workspace = useWorkspace();
-const searchOpen = ref(false);
-const searchQuery = ref("");
 void workspace.initialize();
 let cleanupShellEffects: (() => void) | null = null;
 let focusRefreshDisposed = false;
@@ -49,21 +46,6 @@ onUnmounted(() => {
 });
 
 const isSetupOverlay = computed(() => route.path === "/" && !workspace.isReady.value);
-
-async function toggleSearch() {
-  searchOpen.value = !searchOpen.value;
-  if (searchOpen.value) {
-    if (sidebar.effectiveCollapsed.value) sidebar.toggleCollapsed();
-    await nextTick();
-  } else {
-    searchQuery.value = "";
-  }
-}
-
-provideShellSearch({
-  searchOpen,
-  toggleSearch,
-});
 </script>
 
 <template>
@@ -90,11 +72,7 @@ provideShellSearch({
       :active-key="activeSettingsTab"
       :return-to="returnTo"
     />
-    <SecondaryPanel
-      v-else-if="!isSetupOverlay"
-      v-model:search-open="searchOpen"
-      v-model:search-query="searchQuery"
-    />
+    <SecondaryPanel v-else-if="!isSetupOverlay" />
     <div
       v-if="!isSetupOverlay"
       class="shell__resizer"

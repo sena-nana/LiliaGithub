@@ -9,7 +9,6 @@ import {
   GitPullRequestArrow,
   Pencil,
   Plus,
-  Search,
   Trash2,
   X,
 } from "@lucide/vue";
@@ -25,14 +24,12 @@ import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import type { ContextMenuItem } from "../composables/useContextMenu";
 import type { RepoSummary } from "../services/workspace";
-import { repoDisplayName } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
 
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
-const searchInput = ref<HTMLInputElement | null>(null);
 const createGroupBusy = ref(false);
 const collapsedGroupIds = ref<Set<string>>(new Set());
 const editingGroupId = ref<string | null>(null);
@@ -42,24 +39,8 @@ const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
 const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
 const SIDEBAR_LIST_RENDER_PAGE_SIZE = 80;
-const searchResultVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
 const remoteRepoVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
 const sectionVisibleCounts = ref<Record<string, number>>({});
-
-const props = defineProps<{
-  searchOpen: boolean;
-  searchQuery: string;
-}>();
-
-const emit = defineEmits<{
-  "update:searchOpen": [value: boolean];
-  "update:searchQuery": [value: string];
-}>();
-
-const searchQueryModel = computed({
-  get: () => props.searchQuery,
-  set: (value: string) => emit("update:searchQuery", value),
-});
 
 const footerStatus = computed(() => {
   if (!workspace.workspaceRoot.value) {
@@ -145,28 +126,6 @@ const repoItems = computed<RepoItem[]>(() =>
     dirtyCount: repoDirtyCount(repo),
     issue: repoIssue(repo),
   })),
-);
-
-function repoMatchesQuery(repo: RepoSummary, query: string) {
-  if (!query) return true;
-  return [
-    repoDisplayName(repo),
-    repo.name,
-    repo.githubFullName,
-    repo.relativePath,
-    repo.path,
-  ].some((value) => value?.toLocaleLowerCase().includes(query));
-}
-
-const filteredRepoItems = computed(() => {
-  const query = searchQueryModel.value.trim().toLocaleLowerCase();
-  return repoItems.value.filter(({ repo }) => repoMatchesQuery(repo, query));
-});
-const visibleFilteredRepoItems = computed(() =>
-  filteredRepoItems.value.slice(0, searchResultVisibleCount.value),
-);
-const hiddenFilteredRepoItemCount = computed(() =>
-  Math.max(0, filteredRepoItems.value.length - visibleFilteredRepoItems.value.length),
 );
 
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
@@ -257,29 +216,6 @@ const activeRemoteFullName = computed(() =>
   parseRemoteRepoId(String(route.params.repoId ?? "")),
 );
 
-watch(
-  () => props.searchOpen,
-  (open) => {
-    if (open) void nextTick(() => searchInput.value?.focus());
-  },
-);
-
-watch(
-  () => props.searchQuery,
-  () => {
-    searchResultVisibleCount.value = SIDEBAR_LIST_RENDER_PAGE_SIZE;
-  },
-);
-
-function closeSearch() {
-  emit("update:searchOpen", false);
-  emit("update:searchQuery", "");
-}
-
-function showMoreSearchResults() {
-  searchResultVisibleCount.value += SIDEBAR_LIST_RENDER_PAGE_SIZE;
-}
-
 function showMoreRepoSection(sectionId: string) {
   sectionVisibleCounts.value = {
     ...sectionVisibleCounts.value,
@@ -289,12 +225,6 @@ function showMoreRepoSection(sectionId: string) {
 
 function showMoreRemoteRepos() {
   remoteRepoVisibleCount.value += SIDEBAR_LIST_RENDER_PAGE_SIZE;
-}
-
-async function openFirstSearchResult() {
-  const repo = filteredRepoItems.value[0]?.repo;
-  if (!repo) return;
-  await router.push(repoRoute(repo.id));
 }
 
 async function openRemoteRepo(fullName: string) {
@@ -510,57 +440,11 @@ async function deleteGroup(group: { id: string }) {
       </nav>
     </div>
 
-    <div v-if="searchOpen" class="sb-section">
-      <div class="sb-section__header">
-        <span class="sb-section__title">搜索结果 {{ filteredRepoItems.length }}</span>
-      </div>
-      <div v-if="searchOpen" class="sb-search">
-        <Search :size="13" aria-hidden="true" />
-        <input
-          ref="searchInput"
-          v-model="searchQueryModel"
-          type="search"
-          data-agent-id="sidebar.search.input"
-          aria-label="搜索仓库"
-          placeholder="搜索仓库"
-          @keydown.enter.prevent="openFirstSearchResult"
-          @keydown.esc.prevent="closeSearch"
-        />
-        <button
-          type="button"
-          data-agent-id="sidebar.search.close"
-          aria-label="关闭搜索"
-          title="关闭搜索"
-          @click="closeSearch"
-        >
-          <X :size="13" aria-hidden="true" />
-        </button>
-      </div>
-      <div class="sb-tree">
-        <RepoSidebarRow
-          v-for="item in visibleFilteredRepoItems"
-          :key="item.repo.id"
-          v-bind="repoRowProps(item)"
-        />
-        <button
-          v-if="hiddenFilteredRepoItemCount > 0"
-          type="button"
-          class="sb-tree__more"
-          data-agent-id="sidebar.search.show-more"
-          @click="showMoreSearchResults"
-        >
-          显示更多 {{ hiddenFilteredRepoItemCount }} 个
-        </button>
-        <p v-if="!filteredRepoItems.length" class="sb-tree__empty">没有匹配的仓库。</p>
-      </div>
-    </div>
-
-    <template v-if="!searchOpen">
-      <div
-        v-for="section in localRepoSections"
-        :key="section.id"
-        class="sb-section sb-section--group"
-      >
+    <div
+      v-for="section in localRepoSections"
+      :key="section.id"
+      class="sb-section sb-section--group"
+    >
         <div class="sb-section__header">
           <button
             v-if="editingGroupId !== section.id"
@@ -655,8 +539,7 @@ async function deleteGroup(group: { id: string }) {
             <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
           </div>
         </div>
-      </div>
-    </template>
+    </div>
 
     <div v-if="remoteRepoItems.length" class="sb-section sb-section--remote">
       <div class="sb-section__header">
@@ -833,35 +716,6 @@ async function deleteGroup(group: { id: string }) {
 .sb-tree__row.is-active .sb-tree__hover-tools {
   opacity: 1;
   pointer-events: auto;
-}
-
-.sb-search {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: 4px;
-  margin: 0 6px 4px;
-  padding: 0 4px;
-  height: 30px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  color: var(--text-faint);
-  background: var(--bg-subtle);
-}
-
-.sb-search input {
-  width: 100%;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.sb-search button {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  color: var(--text-muted);
 }
 
 .sb-group-toggle {
