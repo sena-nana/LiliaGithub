@@ -26,6 +26,8 @@ const repoIssuesSidebarControlsModule = createCachedAsyncComponent(() => import(
 const repoTopicEditorModule = createCachedAsyncComponent(() => import("./RepoTopicEditor.vue"));
 const repoLanguageStatsCardModule = createCachedAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
 const repoActionsPanelModule = createCachedAsyncComponent(() => import("./RepoActionsPanel.vue"));
+const repoActionsInfoSidebarModule = createCachedAsyncComponent(() => import("./RepoActionsInfoSidebar.vue"));
+const repoActionsSidebarControlsModule = createCachedAsyncComponent(() => import("./RepoActionsSidebarControls.vue"));
 const repoMilestonesBoardModule = createCachedAsyncComponent(() => import("./RepoMilestonesBoard.vue"));
 const repoMilestonesSidebarModule = createCachedAsyncComponent(() => import("./RepoMilestonesSidebar.vue"));
 const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
@@ -45,6 +47,8 @@ export const RepoIssuesSidebarControls = repoIssuesSidebarControlsModule.compone
 export const RepoTopicEditor = repoTopicEditorModule.component;
 export const RepoLanguageStatsCard = repoLanguageStatsCardModule.component;
 export const RepoActionsPanel = repoActionsPanelModule.component;
+export const RepoActionsInfoSidebar = repoActionsInfoSidebarModule.component;
+export const RepoActionsSidebarControls = repoActionsSidebarControlsModule.component;
 export const RepoMilestonesBoard = repoMilestonesBoardModule.component;
 export const RepoMilestonesSidebar = repoMilestonesSidebarModule.component;
 export const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
@@ -68,7 +72,11 @@ export function preloadRepoProjectSection(section: string) {
     repoPullRequestsSidebarControlsModule.load(),
     repoGitHubDetailSidebarModule.load(),
   ]);
-  if (section === "actions") return repoActionsPanelModule.load();
+  if (section === "actions") return Promise.all([
+    repoActionsPanelModule.load(),
+    repoActionsInfoSidebarModule.load(),
+    repoActionsSidebarControlsModule.load(),
+  ]);
   if (section === "release") return repoReleasesPanelModule.load();
   if (section === "settings") return repoTopicEditorModule.load();
   return Promise.resolve();
