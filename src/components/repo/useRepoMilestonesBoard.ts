@@ -22,7 +22,6 @@ export type RepoMilestonesBoardItem = {
   assignees: string[];
   milestone: GitHubIssueMilestone | null;
   updatedAt: string;
-  searchText: string;
   issue?: GitHubIssue;
   pull?: GitHubPullRequest;
 };
@@ -45,7 +44,6 @@ export function useRepoMilestonesBoard(input: {
   typeFilter: SourceRef<RepoMilestonesBoardTypeFilter>;
   stateFilter: SourceRef<RepoMilestonesBoardStateFilter>;
   milestoneFilter: SourceRef<RepoMilestonesBoardMilestoneFilter>;
-  query: SourceRef<string>;
 }) {
   const allItems = computed<RepoMilestonesBoardItem[]>(() => [
     ...input.issues.value.map((issue) => milestoneIssue(issue)),
@@ -62,13 +60,11 @@ export function useRepoMilestonesBoard(input: {
   });
 
   const baseFilteredItems = computed(() => {
-    const needle = input.query.value.trim().toLowerCase();
-    return allItems.value.filter((item) => {
-      if (input.typeFilter.value !== "all" && item.kind !== input.typeFilter.value) return false;
-      if (input.stateFilter.value === "open" && !isOpenRepoMilestonesBoardItem(item)) return false;
-      if (input.stateFilter.value === "closed" && isOpenRepoMilestonesBoardItem(item)) return false;
-      return !needle || item.searchText.includes(needle);
-    });
+    return allItems.value.filter((item) =>
+      (input.typeFilter.value === "all" || item.kind === input.typeFilter.value) &&
+      (input.stateFilter.value !== "open" || isOpenRepoMilestonesBoardItem(item)) &&
+      (input.stateFilter.value !== "closed" || !isOpenRepoMilestonesBoardItem(item))
+    );
   });
 
   const visibleItems = computed(() =>
@@ -153,14 +149,6 @@ function milestoneIssue(issue: GitHubIssue): RepoMilestonesBoardItem {
     assignees: issue.assignees ?? [],
     milestone: issue.milestone ?? null,
     updatedAt: issue.updatedAt,
-    searchText: searchText([
-      issue.title,
-      issue.author,
-      issue.state,
-      issue.milestone?.title,
-      ...(issue.labels ?? []),
-      ...(issue.assignees ?? []),
-    ]),
     issue,
   };
 }
@@ -179,14 +167,6 @@ function milestonePull(pull: GitHubPullRequest): RepoMilestonesBoardItem {
     assignees: pull.assignees ?? [],
     milestone: pull.milestone ?? null,
     updatedAt: pull.updatedAt,
-    searchText: searchText([
-      pull.title,
-      pull.author,
-      pull.state,
-      pull.milestone?.title,
-      ...(pull.labels ?? []),
-      ...(pull.assignees ?? []),
-    ]),
     pull,
   };
 }
@@ -215,10 +195,6 @@ function compareGroups(left: RepoMilestonesBoardGroup, right: RepoMilestonesBoar
 
 function milestoneStateRank(state: string | null | undefined) {
   return state === "closed" ? 1 : 0;
-}
-
-function searchText(parts: readonly (string | null | undefined)[]) {
-  return parts.filter(Boolean).join(" ").toLowerCase();
 }
 
 function dateValue(value: string) {
