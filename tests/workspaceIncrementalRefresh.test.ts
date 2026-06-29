@@ -321,6 +321,47 @@ describe("workspace incremental refresh", () => {
     expect(emptyDay?.repositories).toBeUndefined();
   });
 
+  it("重复刷新贡献图不会把上一轮计数再次累加", async () => {
+    state.repos = [repoSummary("Repo1")];
+    const expectRepo1Contribution = () => {
+      expect(state.githubContributions.days.find((item) => item.date === "2026-06-11")).toMatchObject({
+        count: 2,
+        repositories: [{
+          repoId: "Repo1",
+          repoName: "Repo1",
+          repoFullName: "sena-nana/Repo1",
+          count: 2,
+        }],
+      });
+      expect(state.githubContributions.meta).toMatchObject({
+        repoCount: 1,
+        requestedRepoCount: 1,
+        skippedRepoCount: 0,
+      });
+    };
+    service.listRepoContribution.mockResolvedValue({
+      days: [{ date: "2026-06-11", count: 2 }],
+      meta: {
+        repoCount: 1,
+        requestedRepoCount: 1,
+        repoLimit: 30,
+        truncated: false,
+        skippedRepoCount: 0,
+        refreshedAt: 1_780_000_000_000,
+      },
+    } satisfies GitHubContributionResult);
+
+    await refreshRepoContributions();
+
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(1));
+    expectRepo1Contribution();
+
+    await refreshRepoContributions();
+
+    await waitFor(() => expect(service.listRepoContribution).toHaveBeenCalledTimes(2));
+    expectRepo1Contribution();
+  });
+
   it("自动刷新发现开启自动同步的仓库有待同步提交时执行同步", async () => {
     const stale = repoSummary("Repo1", { ahead: 1, behind: 1 });
     const synced = repoSummary("Repo1", { ahead: 0, behind: 0 });
