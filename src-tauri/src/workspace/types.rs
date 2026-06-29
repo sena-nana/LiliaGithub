@@ -724,9 +724,11 @@ pub struct GitHubRepoManagement {
     pub license: Option<GitHubRepoLicense>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubUpdateRepoSettingsRequest {
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]

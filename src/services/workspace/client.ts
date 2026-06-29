@@ -690,7 +690,12 @@ export function updateGitHubRepoSettings(
   return call("github_update_repo_settings", { repoFullName, request }, () =>
     workspaceFallback().updateGitHubRepoSettings(repoFullName, request),
   ).then((repo) => {
-    githubProjectRepoCache(repoFullName).management = cloneProjectData(repo);
+    if (githubProjectRepoKey(repo.fullName) !== githubProjectRepoKey(repoFullName)) {
+      clearGitHubProjectRepoCache(repoFullName);
+      githubRepoCache = null;
+      githubRepoPreloadPromise = null;
+    }
+    githubProjectRepoCache(repo.fullName).management = cloneProjectData(repo);
     return cloneProjectData(repo);
   });
 }
