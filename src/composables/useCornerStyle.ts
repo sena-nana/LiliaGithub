@@ -7,7 +7,7 @@ const RADIUS_STORAGE_KEY = "lilia-github.cornerRadius";
 const DEFAULT_STYLE: CornerStyle = "smooth";
 export const CORNER_RADIUS_MIN = 0;
 export const CORNER_RADIUS_MAX = 20;
-export const DEFAULT_CORNER_RADIUS = 8;
+export const DEFAULT_CORNER_RADIUS = 16;
 
 function normalizeStyle(value: unknown): CornerStyle {
   return value === "round" ? "round" : DEFAULT_STYLE;
