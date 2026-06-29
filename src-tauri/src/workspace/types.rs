@@ -161,6 +161,8 @@ pub struct ProjectLaunchLog {
     pub repo_id: String,
     pub stream: String,
     pub line: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub write_mode: Option<String>,
     pub timestamp: i64,
 }
 

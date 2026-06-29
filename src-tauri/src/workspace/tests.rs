@@ -3980,6 +3980,50 @@ fn returns_none_without_known_launch_entrypoint() {
     fs::remove_dir_all(path).unwrap();
 }
 
+fn parse_launch_output_entries(bytes: &[u8]) -> Vec<(&'static str, String)> {
+    let mut parser = LaunchOutputParser::default();
+    parser
+        .push(bytes)
+        .into_iter()
+        .chain(parser.finish())
+        .map(|event| (event.write_mode, event.line))
+        .collect()
+}
+
+#[test]
+fn parses_carriage_return_launch_output_as_replace_events() {
+    assert_eq!(
+        parse_launch_output_entries(b"progress 1\rprogress 2\rfinal\n"),
+        vec![
+            ("replace", "progress 1".to_string()),
+            ("replace", "progress 2".to_string()),
+            ("append", "final".to_string())
+        ]
+    );
+}
+
+#[test]
+fn parses_newline_launch_output_as_append_events() {
+    assert_eq!(
+        parse_launch_output_entries(b"line 1\nline 2\n"),
+        vec![
+            ("append", "line 1".to_string()),
+            ("append", "line 2".to_string())
+        ]
+    );
+}
+
+#[test]
+fn parses_crlf_launch_output_as_append_events() {
+    assert_eq!(
+        parse_launch_output_entries(b"line 1\r\nline 2\r\n"),
+        vec![
+            ("append", "line 1".to_string()),
+            ("append", "line 2".to_string())
+        ]
+    );
+}
+
 #[test]
 fn clears_launch_logs_for_one_repo() {
     let repo_id = format!("repo-{}", now_millis());

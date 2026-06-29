@@ -885,12 +885,41 @@ describe("RepoProjectPanel", () => {
       launchLogs,
     });
 
-    const terminal = view.getByLabelText("启动终端");
+    const terminal = await view.findByLabelText("启动终端");
     expect(terminal).toHaveTextContent("启动命令：yarn dev");
     expect(terminal.textContent).toContain("line 1\nline 2\nready <tag>\nplain error");
     expect(terminal).not.toHaveTextContent("[stdout]");
     expect(terminal).not.toHaveTextContent("[stderr]");
     expect(terminal.querySelector("tag")).toBeNull();
+  });
+
+  it("启动终端将动态进度日志折叠为当前行", async () => {
+    const launchLogs: ProjectLaunchLog[] = [
+      { index: 1, repoId: "local-repo", stream: "system", line: "启动命令：yarn tauri:dev", timestamp: 1 },
+      { index: 2, repoId: "local-repo", stream: "stdout", line: "\u001b[36mBuilding 1/3\u001b[0m <old>", writeMode: "replace", timestamp: 2 },
+      { index: 3, repoId: "local-repo", stream: "stdout", line: "\u001b[36mBuilding 2/3\u001b[0m <mid>", writeMode: "replace", timestamp: 3 },
+      { index: 4, repoId: "local-repo", stream: "stdout", line: "\u001b[32mBuilding 3/3\u001b[0m <done>", writeMode: "append", timestamp: 4 },
+      { index: 5, repoId: "local-repo", stream: "stdout", line: "legacy 1\rlegacy 2", timestamp: 5 },
+      { index: 6, repoId: "local-repo", stream: "stderr", line: "plain error", timestamp: 6 },
+    ];
+
+    const view = await renderProjectPanel({
+      activeGitTab: "run",
+      launchRunning: false,
+      launchLogs,
+    });
+
+    const terminal = await view.findByLabelText("启动终端");
+    const text = terminal.textContent ?? "";
+    expect(terminal).toHaveTextContent("启动命令：yarn tauri:dev");
+    expect(text).not.toContain("Building 1/3");
+    expect(text).not.toContain("Building 2/3");
+    expect(text.match(/Building 3\/3/g)).toHaveLength(1);
+    expect(text).not.toContain("legacy 1");
+    expect(text).toContain("legacy 2");
+    expect(text).toContain("plain error");
+    expect(terminal.querySelector("old")).toBeNull();
+    expect(terminal.querySelector("done")).toBeNull();
   });
 
   it("远程仓库只显示项目 tabs，不进入启动工作流", async () => {

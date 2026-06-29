@@ -13,6 +13,12 @@ const terminalBody = ref<HTMLElement | null>(null);
 
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
 
+type TerminalLine = {
+  stream: ProjectLaunchLog["stream"];
+  line: string;
+  dynamic: boolean;
+};
+
 onMounted(() => {
   void scrollTerminalToEnd();
 });
@@ -22,9 +28,63 @@ watch(() => props.launchLogs.length, () => {
 });
 
 function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
-  return logs
+  return buildTerminalLines(logs)
     .map((entry) => `<span class="launch-log launch-log--${entry.stream}">${ansiUp.ansi_to_html(entry.line)}</span>`)
     .join("\n");
+}
+
+function buildTerminalLines(logs: readonly ProjectLaunchLog[]) {
+  const lines: TerminalLine[] = [];
+  for (const entry of logs) {
+    applyTerminalLog(lines, entry);
+  }
+  return lines;
+}
+
+function applyTerminalLog(lines: TerminalLine[], entry: ProjectLaunchLog) {
+  let mode: ProjectLaunchLog["writeMode"] = entry.writeMode ?? "append";
+  let segment = "";
+  const normalized = entry.line.replace(/\r\n/g, "\n");
+  for (const char of normalized) {
+    if (char === "\r") {
+      applyTerminalSegment(lines, entry.stream, "replace", segment);
+      segment = "";
+      mode = "replace";
+    } else if (char === "\n") {
+      applyTerminalSegment(lines, entry.stream, "append", segment);
+      segment = "";
+      mode = "append";
+    } else {
+      segment += char;
+    }
+  }
+  if (segment || !normalized.length) {
+    applyTerminalSegment(lines, entry.stream, mode, segment);
+  }
+}
+
+function applyTerminalSegment(
+  lines: TerminalLine[],
+  stream: ProjectLaunchLog["stream"],
+  mode: ProjectLaunchLog["writeMode"],
+  line: string,
+) {
+  const last = lines[lines.length - 1];
+  if (mode === "replace") {
+    if (last?.dynamic && last.stream === stream) {
+      last.line = line;
+    } else {
+      lines.push({ stream, line, dynamic: true });
+    }
+    return;
+  }
+
+  if (last?.dynamic && last.stream === stream) {
+    last.line = line;
+    last.dynamic = false;
+  } else {
+    lines.push({ stream, line, dynamic: false });
+  }
 }
 
 async function scrollTerminalToEnd() {
