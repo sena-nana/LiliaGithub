@@ -114,7 +114,9 @@ import { repoRoute, type RepoProjectCreateFlow, type RepoProjectTab, type RepoRo
 import {
   CommitDetailCard,
   MarkdownReadme,
+  RepoActionsInfoSidebar,
   RepoActionsPanel,
+  RepoActionsSidebarControls,
   RepoChangesPanel,
   RepoFilePreviewPane,
   RepoFileTreeCard,
@@ -153,6 +155,9 @@ type GitTab = Exclude<RepoRouteTab, "repo" | "run">;
 type ProjectTab = RepoProjectTab;
 type ProjectContentMode = RepoProjectSectionKey | GitTab;
 type IssueState = "open" | "closed" | "all";
+type ActionState = "all" | "active" | "completed";
+type ActionSort = "updated" | "created" | "run-number";
+type ActionDirection = "asc" | "desc";
 type ProjectSectionConfig = {
   key: Exclude<ProjectTab, "readme">;
   label: string;
@@ -192,6 +197,16 @@ type IssuePanelFilters = {
   direction: "asc" | "desc";
   query: string;
 };
+type ActionPanelFilters = {
+  workflow: string | null;
+  branch: string | null;
+  event: string | null;
+  actor: string | null;
+  status: string | null;
+  sort: ActionSort;
+  direction: ActionDirection;
+  query: string;
+};
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = { scrollToAnchor: (hash: string) => void };
@@ -211,6 +226,17 @@ type RouteFilterKeys = {
   direction: string;
   review?: string;
 };
+type ActionRouteFilterKeys = {
+  state: string;
+  query: string;
+  workflow: string;
+  branch: string;
+  event: string;
+  actor: string;
+  status: string;
+  sort: string;
+  direction: string;
+};
 
 const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
   authors: [],
@@ -222,7 +248,9 @@ const emptyIssueFilterMetadata = (): GitHubIssueFilterMetadata => ({
 
 const issueStates = ["open", "closed", "all"] as const;
 const pullRequestStates = ["open", "closed", "merged"] as const;
+const actionStates = ["all", "active", "completed"] as const;
 const listSorts = ["created", "updated", "comments"] as const;
+const actionSorts = ["updated", "created", "run-number"] as const;
 const listDirections = ["asc", "desc"] as const;
 const pullRequestReviews = ["none", "required", "approved", "changes_requested"] as const;
 const releaseTypeFilters: readonly { value: ReleaseTypeFilter; label: string }[] = [
@@ -255,6 +283,17 @@ const pullRequestRouteKeys: RouteFilterKeys = {
   direction: "pullDirection",
   review: "pullReview",
 };
+const actionRouteKeys: ActionRouteFilterKeys = {
+  state: "actionState",
+  query: "actionQ",
+  workflow: "actionWorkflow",
+  branch: "actionBranch",
+  event: "actionEvent",
+  actor: "actionActor",
+  status: "actionStatus",
+  sort: "actionSort",
+  direction: "actionDirection",
+};
 
 const blankIssuePanelFilters = (): IssuePanelFilters => ({
   creator: null,
@@ -263,6 +302,17 @@ const blankIssuePanelFilters = (): IssuePanelFilters => ({
   milestone: null,
   project: null,
   sort: "created",
+  direction: "desc",
+  query: "",
+});
+
+const blankActionPanelFilters = (): ActionPanelFilters => ({
+  workflow: null,
+  branch: null,
+  event: null,
+  actor: null,
+  status: null,
+  sort: "updated",
   direction: "desc",
   query: "",
 });
@@ -454,7 +504,9 @@ const {
 const milestoneEmptyText = computed(() => milestoneLoading.value ? "正在读取里程碑事项。" : "没有匹配的里程碑事项。");
 const issuePanelFilters = ref<IssuePanelFilters>(issuePanelFiltersFromRoute());
 const pullRequestPanelFilters = ref<PullRequestPanelFilters>(pullRequestPanelFiltersFromRoute());
+const actionPanelFilters = ref<ActionPanelFilters>(actionPanelFiltersFromRoute());
 const pullState = ref<PullRequestState>(pullRequestStateFromRoute());
+const actionState = ref<ActionState>(actionStateFromRoute());
 const editingIssueNumber = ref<number | null>(null);
 const editingIssueTitle = ref("");
 const editingIssueBody = ref("");
@@ -787,6 +839,9 @@ const pullListOptions = computed<GitHubPullRequestListOptions>(() => ({
   query: pullRequestPanelFilters.value.query,
 }));
 const pullListKey = computed(() => JSON.stringify(pullListOptions.value));
+const filteredActionRuns = computed(() =>
+  sortActionRuns(workflowRuns.value.filter((run) => actionRunMatchesFilters(run)))
+);
 const focusedIssueDetail = computed(() => {
   const issueNumber = focusedIssueNumber.value;
   if (issueNumber == null) return null;
@@ -827,6 +882,45 @@ const canSubmitPullRequestCreate = computed(() =>
   pullRequestBase.value.trim().length > 0
 );
 
+function actionRunMatchesFilters(run: GitHubWorkflowRun) {
+  if (actionState.value === "active" && run.status === "completed") return false;
+  if (actionState.value === "completed" && run.status !== "completed") return false;
+  const filters = actionPanelFilters.value;
+  if (filters.workflow && run.name !== filters.workflow) return false;
+  if (filters.branch && run.branch !== filters.branch) return false;
+  if (filters.event && run.event !== filters.event) return false;
+  if (filters.actor && (run.actor ?? "") !== filters.actor) return false;
+  if (filters.status && (run.conclusion || run.status) !== filters.status) return false;
+  const query = filters.query.trim().toLowerCase();
+  if (!query) return true;
+  return [
+    run.displayTitle,
+    run.name,
+    run.branch,
+    run.event,
+    run.actor ?? "",
+    run.conclusion ?? "",
+    run.status,
+  ].some((value) => value.toLowerCase().includes(query));
+}
+
+function sortActionRuns(runs: readonly GitHubWorkflowRun[]) {
+  const { sort, direction } = actionPanelFilters.value;
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...runs].sort((left, right) => {
+    if (sort === "run-number") {
+      const leftNumber = left.runNumber ?? left.id;
+      const rightNumber = right.runNumber ?? right.id;
+      return (leftNumber - rightNumber) * multiplier;
+    }
+    const leftTime = Date.parse(sort === "created" ? left.createdAt : left.updatedAt);
+    const rightTime = Date.parse(sort === "created" ? right.createdAt : right.updatedAt);
+    const leftValue = Number.isFinite(leftTime) ? leftTime : 0;
+    const rightValue = Number.isFinite(rightTime) ? rightTime : 0;
+    return (leftValue - rightValue) * multiplier;
+  });
+}
+
 function isProjectSidebarButtonActive(section: ProjectSidebarMode) {
   return projectSidebarMode.value === section;
 }
@@ -859,6 +953,10 @@ const routedIssueFilterState = computed(() => JSON.stringify({
 const routedPullRequestFilterState = computed(() => JSON.stringify({
   state: pullRequestStateFromRoute(),
   filters: pullRequestPanelFiltersFromRoute(),
+}));
+const routedActionFilterState = computed(() => JSON.stringify({
+  state: actionStateFromRoute(),
+  filters: actionPanelFiltersFromRoute(),
 }));
 
 onMounted(() => {
@@ -935,8 +1033,20 @@ watch(pullState, () => {
   }
 });
 
-watch([routedIssueFilterState, routedPullRequestFilterState], () => {
+watch(actionState, () => {
+  if (activeSection.value === "actions") {
+    clearFilteredActionFocus();
+  }
+});
+
+watch([routedIssueFilterState, routedPullRequestFilterState, routedActionFilterState], () => {
   applyRoutedListFilters();
+});
+
+watch(filteredActionRuns, () => {
+  if (activeSection.value === "actions") {
+    clearFilteredActionFocus();
+  }
 });
 
 watch(
@@ -1019,6 +1129,10 @@ function pullRequestStateFromRoute(): PullRequestState {
   return routeEnum(route.query[pullRequestRouteKeys.state], pullRequestStates) ?? "open";
 }
 
+function actionStateFromRoute(): ActionState {
+  return routeEnum(route.query[actionRouteKeys.state], actionStates) ?? "all";
+}
+
 function releaseTypeFilterFromRoute(): ReleaseTypeFilter {
   return routeEnum(route.query.releaseType, releaseTypeFilters.map((item) => item.value)) ?? "all";
 }
@@ -1048,6 +1162,21 @@ function pullRequestPanelFiltersFromRoute(): PullRequestPanelFilters {
   return {
     ...sharedPanelFiltersFromRoute(pullRequestRouteKeys, blankPullRequestPanelFilters()),
     review: routeEnum(route.query[pullRequestRouteKeys.review ?? ""], pullRequestReviews),
+  };
+}
+
+function actionPanelFiltersFromRoute(): ActionPanelFilters {
+  const defaults = blankActionPanelFilters();
+  return {
+    ...defaults,
+    workflow: routeStringValue(route.query[actionRouteKeys.workflow]),
+    branch: routeStringValue(route.query[actionRouteKeys.branch]),
+    event: routeStringValue(route.query[actionRouteKeys.event]),
+    actor: routeStringValue(route.query[actionRouteKeys.actor]),
+    status: routeStringValue(route.query[actionRouteKeys.status]),
+    sort: routeEnum(route.query[actionRouteKeys.sort], actionSorts) ?? defaults.sort,
+    direction: routeEnum(route.query[actionRouteKeys.direction], listDirections) ?? defaults.direction,
+    query: routeStringValue(route.query[actionRouteKeys.query]) ?? "",
   };
 }
 
@@ -1117,6 +1246,20 @@ function setPullRequestPanelFilters(filters: PullRequestPanelFilters) {
   void pushProjectTabRoute("pulls");
 }
 
+function setActionState(value: ActionState) {
+  if (actionState.value === value) return;
+  actionState.value = value;
+  clearFilteredActionFocus();
+  void pushProjectTabRoute("actions");
+}
+
+function setActionPanelFilters(filters: ActionPanelFilters) {
+  if (sameActionPanelFilters(actionPanelFilters.value, filters)) return;
+  actionPanelFilters.value = { ...filters };
+  clearFilteredActionFocus();
+  void pushProjectTabRoute("actions");
+}
+
 function applyRoutedListFilters() {
   const nextIssueState = issueStateFromRoute();
   const nextIssueFilters = issuePanelFiltersFromRoute();
@@ -1149,6 +1292,18 @@ function applyRoutedListFilters() {
       void loadPullRequests();
     }
   }
+
+  const nextActionState = actionStateFromRoute();
+  const nextActionFilters = actionPanelFiltersFromRoute();
+  const actionChanged = actionState.value !== nextActionState ||
+    !sameActionPanelFilters(actionPanelFilters.value, nextActionFilters);
+  if (actionChanged) {
+    actionState.value = nextActionState;
+    actionPanelFilters.value = { ...nextActionFilters };
+    if (activeSection.value === "actions") {
+      clearFilteredActionFocus();
+    }
+  }
 }
 
 function sameIssuePanelFilters(left: IssuePanelFilters, right: IssuePanelFilters) {
@@ -1157,6 +1312,17 @@ function sameIssuePanelFilters(left: IssuePanelFilters, right: IssuePanelFilters
 
 function samePullRequestPanelFilters(left: PullRequestPanelFilters, right: PullRequestPanelFilters) {
   return sameSharedPanelFilters(left, right) && left.review === right.review;
+}
+
+function sameActionPanelFilters(left: ActionPanelFilters, right: ActionPanelFilters) {
+  return left.workflow === right.workflow &&
+    left.branch === right.branch &&
+    left.event === right.event &&
+    left.actor === right.actor &&
+    left.status === right.status &&
+    left.sort === right.sort &&
+    left.direction === right.direction &&
+    left.query === right.query;
 }
 
 function sameSharedPanelFilters(left: SharedPanelFilters, right: SharedPanelFilters) {
@@ -1188,6 +1354,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   delete query.create;
   clearRouteFilters(query, issueRouteKeys);
   clearRouteFilters(query, pullRequestRouteKeys);
+  clearActionRouteFilters(query);
 
   if (tab === "readme") {
     delete query.projectTab;
@@ -1209,6 +1376,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
     );
     if (focusedPullRequestNumber.value) query.pr = String(focusedPullRequestNumber.value);
   } else if (tab === "actions") {
+    applyActionRouteFilters(query);
     if (focusedRunId.value) query.run = String(focusedRunId.value);
     if (focusedJobId.value) query.job = String(focusedJobId.value);
   } else if (tab === "release") {
@@ -1220,6 +1388,10 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
 
 function clearRouteFilters(query: LocationQueryRaw, keys: RouteFilterKeys) {
   for (const key of Object.values(keys)) delete query[key];
+}
+
+function clearActionRouteFilters(query: LocationQueryRaw) {
+  for (const key of Object.values(actionRouteKeys)) delete query[key];
 }
 
 function applyRouteFilters<T extends SharedPanelFilters>(
@@ -1242,6 +1414,20 @@ function applyRouteFilters<T extends SharedPanelFilters>(
   if (keys.review && "review" in filters) {
     setRouteString(query, keys.review, filters.review as string | null);
   }
+}
+
+function applyActionRouteFilters(query: LocationQueryRaw) {
+  const filters = actionPanelFilters.value;
+  const defaults = blankActionPanelFilters();
+  setRouteString(query, actionRouteKeys.state, actionState.value === "all" ? null : actionState.value);
+  setRouteString(query, actionRouteKeys.query, filters.query);
+  setRouteString(query, actionRouteKeys.workflow, filters.workflow);
+  setRouteString(query, actionRouteKeys.branch, filters.branch);
+  setRouteString(query, actionRouteKeys.event, filters.event);
+  setRouteString(query, actionRouteKeys.actor, filters.actor);
+  setRouteString(query, actionRouteKeys.status, filters.status);
+  setRouteString(query, actionRouteKeys.sort, filters.sort === defaults.sort ? null : filters.sort);
+  setRouteString(query, actionRouteKeys.direction, filters.direction === defaults.direction ? null : filters.direction);
 }
 
 function setRouteString(query: LocationQueryRaw, key: string, value: string | number | null | undefined) {
@@ -1296,6 +1482,14 @@ function hasPullRequest(pullNumber: number) {
 
 function hasRun(runId: number) {
   return workflowRuns.value.some((run) => run.id === runId);
+}
+
+function clearFilteredActionFocus() {
+  const runId = focusedRunId.value;
+  if (runId == null) return;
+  if (filteredActionRuns.value.some((run) => run.id === runId)) return;
+  focusedRunId.value = null;
+  focusedJobId.value = null;
 }
 
 function hasReleaseTag(tag: string) {
@@ -2854,11 +3048,7 @@ async function activateProjectSidebarButton(tab: ProjectSidebarButtonMode) {
 function focusActionRun(runId: number | null) {
   focusedRunId.value = runId;
   focusedJobId.value = null;
-  if (activeSection.value === "actions") void pushProjectTabRoute("actions");
-}
-
-function focusActionJob(jobId: number | null) {
-  focusedJobId.value = jobId;
+  if (runId) void loadReleases();
   if (activeSection.value === "actions") void pushProjectTabRoute("actions");
 }
 
@@ -3343,17 +3533,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
           <RepoActionsPanel
             v-else-if="repoFullName"
-            :repo-full-name="repoFullName"
-            :runs="workflowRuns"
+            :runs="filteredActionRuns"
             :loading="actionsLoading"
             :focused-run-id="focusedRunId"
-            :focused-job-id="focusedJobId"
-            :draft-releases="draftReleases"
-            :attach-asset-mutating="releaseAssetUploadTracker.running.value"
             @focus-run="focusActionRun"
-            @focus-job="focusActionJob"
             @refresh="refreshActionsPanel"
-            @attach-artifact-asset="attachWorkflowArtifactAsset"
           />
         </section>
 
@@ -3803,40 +3987,28 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           @create="openPullRequestCreateView"
         />
 
-        <section
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'actions'"
-          class="project-sidebar-summary-card"
-          aria-label="Actions 摘要"
-        >
-          <div class="project-sidebar-summary-card__head">
-            <Play :size="14" aria-hidden="true" />
-            <strong>Actions</strong>
-          </div>
-          <dl class="project-sidebar-summary-card__stats">
-            <div>
-              <dt>已加载</dt>
-              <dd>{{ workflowRuns.length }}</dd>
-            </div>
-            <div>
-              <dt>状态</dt>
-              <dd>{{ actionsLoading ? "读取中" : actionsLoaded ? "已同步" : "未读取" }}</dd>
-            </div>
-            <div v-if="focusedRunId">
-              <dt>Run</dt>
-              <dd>#{{ focusedRunId }}</dd>
-            </div>
-          </dl>
-          <button
-            type="button"
-            class="ghost project-sidebar-summary-card__action"
-            data-agent-id="repo.actions.sidebar.refresh"
-            :disabled="actionsLoading || !!actionsAccessUnavailable"
-            @click="loadActions(true)"
-          >
-            <RotateCw :size="14" aria-hidden="true" />
-            刷新 Actions
-          </button>
-        </section>
+        <template v-if="!hasProjectSidebarErrors && projectSidebarMode === 'actions'">
+          <RepoActionsSidebarControls
+            :runs="workflowRuns"
+            :visible-count="filteredActionRuns.length"
+            :state="actionState"
+            :filters="actionPanelFilters"
+            :loading="actionsLoading"
+            :loaded="actionsLoaded"
+            @update:state="setActionState"
+            @update:filters="setActionPanelFilters"
+            @refresh="loadActions(true)"
+          />
+          <RepoActionsInfoSidebar
+            v-if="repoFullName"
+            :repo-full-name="repoFullName"
+            :runs="filteredActionRuns"
+            :focused-run-id="focusedRunId"
+            :draft-releases="draftReleases"
+            :attach-asset-mutating="releaseAssetUploadTracker.running.value"
+            @attach-artifact-asset="attachWorkflowArtifactAsset"
+          />
+        </template>
 
         <section
           v-if="!hasProjectSidebarErrors && projectSidebarMode === 'release'"

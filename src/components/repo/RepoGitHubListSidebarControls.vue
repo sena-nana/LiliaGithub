@@ -269,7 +269,8 @@ const emit = defineEmits<{
 }
 
 .project-sidebar-filter-card__filter :deep(.issue-filter-dropdown),
-.project-sidebar-filter-card__filter :deep(.pull-filter-dropdown) {
+.project-sidebar-filter-card__filter :deep(.pull-filter-dropdown),
+.project-sidebar-filter-card__filter :deep(.action-filter-dropdown) {
   width: 100%;
   min-width: 0;
   height: 30px;
@@ -279,7 +280,8 @@ const emit = defineEmits<{
 }
 
 .project-sidebar-filter-card__filter :deep(.issue-filter-dropdown span),
-.project-sidebar-filter-card__filter :deep(.pull-filter-dropdown span) {
+.project-sidebar-filter-card__filter :deep(.pull-filter-dropdown span),
+.project-sidebar-filter-card__filter :deep(.action-filter-dropdown span) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

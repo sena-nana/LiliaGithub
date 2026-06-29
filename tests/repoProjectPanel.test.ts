@@ -1068,7 +1068,7 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
-    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(await view.findByText("#12 修复懒加载", {}, { timeout: 5000 })).toBeInTheDocument();
     const issueFilters = view.getByLabelText("Issue 筛选项");
     expect(within(issueFilters).getByRole("button", { name: "Open" })).toHaveAttribute("aria-pressed", "true");
     expect(view.container.querySelector(".project-main")?.querySelector("[aria-label='Issue 筛选项']")).toBeNull();
@@ -1078,8 +1078,9 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Actions" }));
     expect(await view.findByRole("button", { name: /release pipeline/ }, { timeout: 5000 })).toBeInTheDocument();
-    expect(view.getByLabelText("Actions 摘要")).toHaveTextContent("1");
-    expect(view.getByLabelText("Actions 摘要")).toHaveTextContent("已同步");
+    const actionSummary = await view.findByLabelText("Actions 摘要");
+    expect(actionSummary).toHaveTextContent("1");
+    expect(actionSummary).toHaveTextContent("已同步");
     expect(listGitHubWorkflowRuns).toHaveBeenCalledTimes(1);
     expect(getGitHubWorkflowRunDetail).not.toHaveBeenCalled();
   });
@@ -1514,7 +1515,7 @@ describe("RepoProjectPanel", () => {
     expect(sameNameRun.textContent?.match(/same action/g)).toHaveLength(1);
   });
 
-  it("Actions 详情先显示流程，点击 job 后显示步骤并预览 artifact", async () => {
+  it("Actions 右侧显示 run 摘要并预览 artifact，主区域保持运行列表", async () => {
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue(githubWorkflowRuns);
     vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(githubWorkflowRunDetail);
     const view = await renderProjectPanel({
@@ -1524,20 +1525,87 @@ describe("RepoProjectPanel", () => {
     });
 
     expect(await view.findByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
-    expect(await view.findByRole("button", { name: /build/ })).toBeInTheDocument();
-    expect(view.queryByText("Run tests")).toBeNull();
+    expect(await view.findByRole("button", { name: /release pipeline/ })).toBeInTheDocument();
+    expect(view.getByLabelText("Actions 运行列表")).toHaveTextContent("release pipeline");
     expect(getGitHubWorkflowRunDetail).toHaveBeenCalledWith("sena-nana/remote-repo", 1310, { forceRefresh: false });
-
-    await fireEvent.click(view.getByRole("button", { name: /test/ }));
-    expect(await view.findByText("Run tests")).toBeInTheDocument();
-    expect(getGitHubWorkflowJobLog).toHaveBeenCalledWith("sena-nana/remote-repo", 13103);
-    expect(await view.findByText("日志已读取，未识别到明显错误片段。")).toBeInTheDocument();
+    expect(view.queryByText("Run tests")).toBeNull();
+    expect(getGitHubWorkflowJobLog).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByText("dist"));
     const artifactFile = await view.findByRole("button", { name: /README\.md/ });
     await fireEvent.click(artifactFile);
     expect(await view.findByText("Artifact")).toBeInTheDocument();
     expect(getGitHubWorkflowArtifactFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", 131001, "README.md");
+  });
+
+  it("Actions 筛选更新列表并写入路由", async () => {
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([
+      githubWorkflowRuns[0],
+      {
+        ...githubWorkflowRuns[0],
+        id: 1311,
+        name: "Deploy",
+        displayTitle: "feature deploy",
+        status: "in_progress",
+        conclusion: null,
+        branch: "feature/actions",
+        event: "push",
+        updatedAt: "2026-06-18T09:00:00Z",
+      },
+    ]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+    });
+
+    expect(await view.findByRole("button", { name: /feature deploy/ }, { timeout: 5000 })).toBeInTheDocument();
+    await fireEvent.update(view.getByLabelText("搜索 Actions"), "feature");
+
+    await waitFor(() => {
+      expect(view.queryByRole("button", { name: /release pipeline/ })).toBeNull();
+      expect(view.getByRole("button", { name: /feature deploy/ })).toBeInTheDocument();
+      expect(view.router.currentRoute.value.query).toMatchObject({
+        projectTab: "actions",
+        actionQ: "feature",
+      });
+    });
+  });
+
+  it("Actions 从路由恢复筛选，并在当前 run 被筛掉时清空右侧信息", async () => {
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([
+      githubWorkflowRuns[0],
+      {
+        ...githubWorkflowRuns[0],
+        id: 1311,
+        name: "Deploy",
+        displayTitle: "feature deploy",
+        status: "in_progress",
+        conclusion: null,
+        branch: "feature/actions",
+        event: "push",
+        updatedAt: "2026-06-18T09:00:00Z",
+      },
+    ]);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    }, "/repos/local-repo?projectTab=actions&actionState=active&actionQ=feature");
+
+    expect(await view.findByRole("button", { name: /feature deploy/ }, { timeout: 5000 })).toBeInTheDocument();
+    expect(view.getByLabelText("搜索 Actions")).toHaveValue("feature");
+    expect(view.queryByRole("button", { name: /release pipeline/ })).toBeNull();
+
+    const actionFilters = await view.findByLabelText("Actions 筛选项");
+    await fireEvent.click(within(actionFilters).getByRole("button", { name: "All" }));
+    await fireEvent.update(view.getByLabelText("搜索 Actions"), "");
+    const releaseRun = await view.findByRole("button", { name: /release pipeline/ });
+    await fireEvent.click(releaseRun);
+    expect(await view.findByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
+
+    await fireEvent.update(view.getByLabelText("搜索 Actions"), "feature");
+    await waitFor(() => {
+      expect(view.getByLabelText("Actions 信息")).toHaveTextContent("选择一个 run 查看摘要和产物。");
+      expect(view.router.currentRoute.value.query.run).toBeUndefined();
+    });
   });
 
   it("Actions artifact 中的 Windows 安装包可直接附加到对应 draft release", async () => {
