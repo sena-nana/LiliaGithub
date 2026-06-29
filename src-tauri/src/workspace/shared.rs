@@ -106,10 +106,22 @@ pub(super) fn local_contribution_identities(
     path: &Path,
     settings: &WorkspaceSettings,
 ) -> Vec<ContributionIdentity> {
-    if !settings.contribution_identities.is_empty() {
-        return settings.contribution_identities.clone();
+    let mut identities = Vec::new();
+    let mut seen = Vec::new();
+    for identity in repo_git_identity(path)
+        .into_iter()
+        .chain(settings.contribution_identities.iter().cloned())
+    {
+        let Some(key) = contribution_identity_key(&identity) else {
+            continue;
+        };
+        if seen.iter().any(|seen_key| seen_key == &key) {
+            continue;
+        }
+        seen.push(key);
+        identities.push(identity);
     }
-    repo_git_identity(path).into_iter().collect()
+    identities
 }
 
 fn repo_git_identity(path: &Path) -> Option<ContributionIdentity> {
@@ -126,6 +138,24 @@ fn repo_git_identity(path: &Path) -> Option<ContributionIdentity> {
     }
 }
 
+fn contribution_identity_key(identity: &ContributionIdentity) -> Option<(String, String)> {
+    let name = identity
+        .name
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    let email = identity
+        .email
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if name.is_empty() && email.is_empty() {
+        None
+    } else {
+        Some((name, email))
+    }
+}
+
 pub(super) fn contribution_identity_matches(
     identities: &[ContributionIdentity],
     author_name: &str,
@@ -134,16 +164,21 @@ pub(super) fn contribution_identity_matches(
     let name = author_name.trim().to_ascii_lowercase();
     let email = author_email.trim().to_ascii_lowercase();
     identities.iter().any(|identity| {
-        if let Some(identity_email) = identity.email.as_deref() {
-            return !email.is_empty() && email == identity_email.trim().to_ascii_lowercase();
-        }
-        identity
+        let name_matches = identity
             .name
             .as_deref()
             .map(|identity_name| {
                 !name.is_empty() && name == identity_name.trim().to_ascii_lowercase()
             })
-            .unwrap_or(false)
+            .unwrap_or(false);
+        let email_matches = identity
+            .email
+            .as_deref()
+            .map(|identity_email| {
+                !email.is_empty() && email == identity_email.trim().to_ascii_lowercase()
+            })
+            .unwrap_or(false);
+        name_matches || email_matches
     })
 }
 

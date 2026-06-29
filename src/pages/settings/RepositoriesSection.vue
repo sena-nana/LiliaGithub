@@ -1,6 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { FolderGit2, GitBranchPlus, KeyRound, LoaderCircle, Radar, RotateCcw, ShieldCheck, X } from "@lucide/vue";
+import {
+  FolderGit2,
+  GitBranchPlus,
+  KeyRound,
+  LoaderCircle,
+  Pencil,
+  Radar,
+  RotateCcw,
+  Save,
+  ShieldCheck,
+  X,
+} from "@lucide/vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
@@ -23,6 +34,7 @@ const error = ref<string | null>(null);
 const cancellingTaskIds = ref<string[]>([]);
 const taskCancelErrors = ref<Record<string, string | undefined>>({});
 const contributionIdentityDraft = ref<ContributionIdentity[]>([]);
+const editingContributionIdentityIndex = ref<number | null>(null);
 const savingContributionIdentities = ref(false);
 const contributionIdentitySaved = ref(false);
 const componentEpoch = useComponentEpoch();
@@ -84,13 +96,28 @@ function normalizeContributionIdentityDraft() {
     .filter((identity) => identity.name || identity.email);
 }
 
+function isContributionIdentityEditing(index: number) {
+  return editingContributionIdentityIndex.value === index;
+}
+
+function canSaveContributionIdentity(index: number) {
+  const identity = contributionIdentityDraft.value[index];
+  return Boolean(identity?.name?.trim() || identity?.email?.trim());
+}
+
 function addContributionIdentity() {
   contributionIdentityDraft.value.push({ name: "", email: "" });
+  editingContributionIdentityIndex.value = contributionIdentityDraft.value.length - 1;
   contributionIdentitySaved.value = false;
 }
 
 function removeContributionIdentity(index: number) {
   contributionIdentityDraft.value.splice(index, 1);
+  if (editingContributionIdentityIndex.value === index) {
+    editingContributionIdentityIndex.value = null;
+  } else if (editingContributionIdentityIndex.value !== null && editingContributionIdentityIndex.value > index) {
+    editingContributionIdentityIndex.value -= 1;
+  }
   contributionIdentitySaved.value = false;
 }
 
@@ -106,11 +133,20 @@ async function saveContributionIdentities() {
     await workspace.setContributionIdentities(normalizeContributionIdentityDraft());
     if (!componentEpoch.assertAlive()) return;
     contributionIdentitySaved.value = true;
+    return true;
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
+    return false;
   } finally {
     if (componentEpoch.assertAlive()) savingContributionIdentities.value = false;
+  }
+}
+
+async function saveContributionIdentity(index: number) {
+  if (!canSaveContributionIdentity(index)) return;
+  if (await saveContributionIdentities()) {
+    editingContributionIdentityIndex.value = null;
   }
 }
 
@@ -297,33 +333,70 @@ onUnmounted(() => {
             v-for="(identity, index) in contributionIdentityDraft"
             :key="index"
             class="contribution-identity-list__row"
+            :class="{ 'is-preview': !isContributionIdentityEditing(index) }"
           >
-            <label>
-              <span>名称</span>
-              <input
-                v-model="identity.name"
-                type="text"
-                :data-agent-id="`settings.repositories.contribution-identities.${index}.name`"
-                @input="markContributionIdentityChanged"
-              />
-            </label>
-            <label>
-              <span>邮箱</span>
-              <input
-                v-model="identity.email"
-                type="email"
-                :data-agent-id="`settings.repositories.contribution-identities.${index}.email`"
-                @input="markContributionIdentityChanged"
-              />
-            </label>
-            <button
-              type="button"
-              class="ghost contribution-identity-list__remove"
-              :data-agent-id="`settings.repositories.contribution-identities.${index}.remove`"
-              @click="removeContributionIdentity(index)"
-            >
-              <X :size="14" aria-hidden="true" />
-            </button>
+            <template v-if="isContributionIdentityEditing(index)">
+              <label>
+                <span>名称</span>
+                <input
+                  v-model="identity.name"
+                  type="text"
+                  :data-agent-id="`settings.repositories.contribution-identities.${index}.name`"
+                  @input="markContributionIdentityChanged"
+                />
+              </label>
+              <label>
+                <span>邮箱</span>
+                <input
+                  v-model="identity.email"
+                  type="email"
+                  :data-agent-id="`settings.repositories.contribution-identities.${index}.email`"
+                  @input="markContributionIdentityChanged"
+                />
+              </label>
+            </template>
+            <template v-else>
+              <div class="contribution-identity-list__preview-field">
+                <span>名称</span>
+                <strong>{{ identity.name || "未命名" }}</strong>
+              </div>
+              <div class="contribution-identity-list__preview-field">
+                <span>邮箱</span>
+                <strong>{{ identity.email || "未填写" }}</strong>
+              </div>
+            </template>
+            <div class="contribution-identity-list__row-actions">
+              <button
+                v-if="isContributionIdentityEditing(index)"
+                type="button"
+                class="ghost contribution-identity-list__save"
+                :data-agent-id="`settings.repositories.contribution-identities.${index}.save`"
+                :disabled="savingContributionIdentities || !canSaveContributionIdentity(index)"
+                @click="saveContributionIdentity(index)"
+              >
+                <LoaderCircle v-if="savingContributionIdentities" :size="14" aria-hidden="true" class="sb-spin" />
+                <Save v-else :size="14" aria-hidden="true" />
+                保存
+              </button>
+              <button
+                v-else
+                type="button"
+                class="ghost contribution-identity-list__save"
+                :data-agent-id="`settings.repositories.contribution-identities.${index}.edit`"
+                @click="editingContributionIdentityIndex = index"
+              >
+                <Pencil :size="14" aria-hidden="true" />
+                编辑
+              </button>
+              <button
+                type="button"
+                class="ghost contribution-identity-list__remove"
+                :data-agent-id="`settings.repositories.contribution-identities.${index}.remove`"
+                @click="removeContributionIdentity(index)"
+              >
+                <X :size="14" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <p v-if="!contributionIdentityDraft.length" class="muted">未添加身份时使用仓库用户配置。</p>
         </div>
@@ -556,6 +629,10 @@ onUnmounted(() => {
   align-items: end;
 }
 
+.contribution-identity-list__row.is-preview {
+  align-items: center;
+}
+
 .contribution-identity-list__row label {
   display: grid;
   gap: 4px;
@@ -569,6 +646,37 @@ onUnmounted(() => {
 
 .contribution-identity-list__row input {
   min-width: 0;
+}
+
+.contribution-identity-list__preview-field {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.contribution-identity-list__preview-field strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contribution-identity-list__row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.contribution-identity-list__save {
+  min-width: 70px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .contribution-identity-list__remove {
