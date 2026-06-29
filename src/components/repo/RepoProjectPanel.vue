@@ -121,11 +121,13 @@ import {
   RepoGitHubDetailSidebar,
   RepoHistoryPanel,
   RepoIssuesPanel,
+  RepoIssuesSidebarControls,
   RepoLaunchTerminalPanel,
   RepoLanguageStatsCard,
   RepoMilestonesBoard,
   RepoMilestonesSidebar,
   RepoPullRequestsPanel,
+  RepoPullRequestsSidebarControls,
   RepoReleasesPanel,
   RepoTopicEditor,
   preloadRepoProjectSection,
@@ -2959,6 +2961,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       :class="{
         'project-layout--with-commit-detail': showCommitDetail,
         'project-layout--full': !showProjectSidebar,
+        'project-layout--wide-sidebar': projectSidebarMode === 'issues' || projectSidebarMode === 'pulls',
       }"
     >
       <main
@@ -3208,8 +3211,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :issues="issues"
             :state="issueState"
             :filters="issuePanelFilters"
-            :metadata="issueFilterMetadata"
-            :metadata-loading="issueFilterMetadataLoading"
             :loading="githubLoading"
             :updating="updatingIssue"
             :editing-issue-number="editingIssueNumber"
@@ -3224,9 +3225,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :repo-full-name="repoFullName ?? ''"
             :is-focused="isIssueRowFocused"
             :timeline-item-opener="openDiscussionTimelineItem"
-            @update:state="setIssueState"
-            @update:filters="setIssuePanelFilters"
-            @create="openIssueCreateView"
             @edit="startEditIssue"
             @focus="focusIssueRow"
             @back="closeIssueDetail"
@@ -3317,8 +3315,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :pulls="pulls"
             :state="pullState"
             :filters="pullRequestPanelFilters"
-            :metadata="issueFilterMetadata"
-            :metadata-loading="issueFilterMetadataLoading"
             :loading="pullsLoading"
             :checks-loading="pullChecksLoading"
             :discussion-loading="pullRequestDiscussionLoading"
@@ -3332,9 +3328,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             v-model:merge-method="pullRequestMergeMethod"
             :is-focused="isPullRequestRowFocused"
             :timeline-item-opener="openDiscussionTimelineItem"
-            @update:state="setPullRequestState"
-            @update:filters="setPullRequestPanelFilters"
-            @create="openPullRequestCreateView"
             @back="closePullRequestDetail"
             @focus="focusPullRequestRow"
             @merge="mergePullRequest"
@@ -3776,45 +3769,18 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           @toggle-issue="toggleIssue"
         />
 
-        <section
+        <RepoIssuesSidebarControls
           v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues'"
-          class="project-sidebar-summary-card"
-          aria-label="Issues 摘要"
-        >
-          <div class="project-sidebar-summary-card__head">
-            <CircleDot :size="14" aria-hidden="true" />
-            <strong>Issues</strong>
-          </div>
-          <dl class="project-sidebar-summary-card__stats">
-            <div>
-              <dt>状态</dt>
-              <dd>{{ issueState }}</dd>
-            </div>
-            <div>
-              <dt>已加载</dt>
-              <dd>{{ issues.length }}</dd>
-            </div>
-            <div v-if="issuePanelFilters.query">
-              <dt>搜索</dt>
-              <dd>{{ issuePanelFilters.query }}</dd>
-            </div>
-            <div v-if="issuePanelFilters.labels.length">
-              <dt>标签</dt>
-              <dd>{{ issuePanelFilters.labels.join(', ') }}</dd>
-            </div>
-          </dl>
-          <button
-            type="button"
-            class="ghost project-sidebar-summary-card__action"
-            aria-label="侧栏新建 Issue"
-            data-agent-id="repo.issues.sidebar.create"
-            :disabled="issueCreateView || creatingIssue || !!issuesAccessUnavailable"
-            @click="openIssueCreateView"
-          >
-            <Plus :size="14" aria-hidden="true" />
-            新建
-          </button>
-        </section>
+          :state="issueState"
+          :filters="issuePanelFilters"
+          :metadata="issueFilterMetadata"
+          :metadata-loading="issueFilterMetadataLoading"
+          :create-disabled="issueCreateView || creatingIssue || !!issuesAccessUnavailable"
+          :creating="creatingIssue"
+          @update:state="setIssueState"
+          @update:filters="setIssuePanelFilters"
+          @create="openIssueCreateView"
+        />
 
         <RepoGitHubDetailSidebar
           v-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls' && focusedPullRequestDetail"
@@ -3824,45 +3790,19 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           @toggle-pull-request="togglePullRequestState"
         />
 
-        <section
+        <RepoPullRequestsSidebarControls
           v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls'"
-          class="project-sidebar-summary-card"
-          aria-label="Pull Requests 摘要"
-        >
-          <div class="project-sidebar-summary-card__head">
-            <GitPullRequest :size="14" aria-hidden="true" />
-            <strong>Pull Requests</strong>
-          </div>
-          <dl class="project-sidebar-summary-card__stats">
-            <div>
-              <dt>状态</dt>
-              <dd>{{ pullState }}</dd>
-            </div>
-            <div>
-              <dt>已加载</dt>
-              <dd>{{ pulls.length }}</dd>
-            </div>
-            <div v-if="focusedPullRequestNumber">
-              <dt>焦点</dt>
-              <dd>#{{ focusedPullRequestNumber }}</dd>
-            </div>
-            <div v-if="pullRequestPanelFilters.query">
-              <dt>搜索</dt>
-              <dd>{{ pullRequestPanelFilters.query }}</dd>
-            </div>
-          </dl>
-          <button
-            type="button"
-            class="ghost project-sidebar-summary-card__action"
-            aria-label="侧栏新建 PR"
-            data-agent-id="repo.pulls.sidebar.create"
-            :disabled="pullCreateView || creatingPullRequest || !!pullsAccessUnavailable"
-            @click="openPullRequestCreateView"
-          >
-            <GitPullRequest :size="14" aria-hidden="true" />
-            新建
-          </button>
-        </section>
+          :pulls="pulls"
+          :state="pullState"
+          :filters="pullRequestPanelFilters"
+          :metadata="issueFilterMetadata"
+          :metadata-loading="issueFilterMetadataLoading"
+          :create-disabled="pullCreateView || creatingPullRequest || !!pullsAccessUnavailable"
+          :creating="creatingPullRequest"
+          @update:state="setPullRequestState"
+          @update:filters="setPullRequestPanelFilters"
+          @create="openPullRequestCreateView"
+        />
 
         <section
           v-if="!hasProjectSidebarErrors && projectSidebarMode === 'actions'"
@@ -4101,6 +4041,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-layout--full {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.project-layout--wide-sidebar {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
 }
 
 .project-main {

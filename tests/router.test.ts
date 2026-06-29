@@ -947,7 +947,7 @@ describe("基础路由", () => {
     });
     const { router } = await renderAt("/repos/LiliaGithub?projectTab=issues&issueQ=initial");
 
-    const searchInput = await screen.findByLabelText("搜索 Issues");
+    const searchInput = await screen.findByLabelText("搜索 Issues", {}, { timeout: 5000 });
     await waitFor(() => {
       expect(searchInput).toHaveValue("initial");
       expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(

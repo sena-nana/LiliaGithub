@@ -1069,8 +1069,9 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
-    expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("open");
-    expect(view.getByLabelText("Issues 摘要")).toHaveTextContent("1");
+    const issueFilters = view.getByLabelText("Issue 筛选项");
+    expect(within(issueFilters).getByRole("button", { name: "Open" })).toHaveAttribute("aria-pressed", "true");
+    expect(view.container.querySelector(".project-main")?.querySelector("[aria-label='Issue 筛选项']")).toBeNull();
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
     expect(getGitHubIssueFilterMetadata).toHaveBeenCalledTimes(1);
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
@@ -1379,6 +1380,7 @@ describe("RepoProjectPanel", () => {
     expect(issueSidebar).toHaveTextContent("v1");
     expect(issueSidebar).toHaveTextContent("PR #52 接入 Pull Request 工作流");
     expect(issueSidebar).not.toHaveTextContent("暂无关联开发项");
+    expect(view.queryByLabelText("Issue 筛选项")).toBeNull();
     expect(view.container.querySelector("script")).toBeNull();
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "issues", issue: "12" });
@@ -1665,6 +1667,7 @@ describe("RepoProjectPanel", () => {
     expect(pullSidebar).toHaveTextContent("Issue #12 修复懒加载");
     expect(pullSidebar).toHaveTextContent("abcdef1 接入 PR 详情侧栏");
     expect(pullSidebar).not.toHaveTextContent("暂无审阅人");
+    expect(view.queryByLabelText("Pull Request 筛选项")).toBeNull();
     expect(getGitHubPullRequestDiscussion).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     expect(listGitHubPullRequestChecks).toHaveBeenCalledWith("sena-nana/remote-repo", 52);
     await waitFor(() => {
@@ -1841,7 +1844,12 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
 
-    await fireEvent.update(view.getByLabelText("搜索 Pull Requests"), "workflow");
+    const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
+    expect(projectSidebar).toBeInTheDocument();
+    const filters = within(projectSidebar).getByLabelText("Pull Request 筛选项");
+    expect(view.container.querySelector(".project-main")?.querySelector("[aria-label='Pull Request 筛选项']")).toBeNull();
+
+    await fireEvent.update(within(filters).getByLabelText("搜索 Pull Requests"), "workflow");
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -1854,9 +1862,6 @@ describe("RepoProjectPanel", () => {
         pullQ: "workflow",
       });
     });
-
-    await fireEvent.click(view.getByRole("button", { name: "筛选" }));
-    const filters = view.getByLabelText("Pull Request 筛选项");
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意作者" }));
     await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
@@ -2005,7 +2010,8 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     await view.findByText("#12 修复懒加载");
-    await fireEvent.click(view.getByRole("button", { name: "新建 Issue" }));
+    const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
+    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "新建 Issue" }));
 
     const form = await view.findByRole("form", { name: "新建 Issue" });
     expect(view.queryByRole("heading", { level: 3, name: "Issues" })).toBeNull();
@@ -2064,7 +2070,8 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     await view.findByText("#52 接入 Pull Request 工作流");
-    await fireEvent.click(view.getByRole("button", { name: "新建 PR" }));
+    const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
+    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "新建 PR" }));
 
     const form = await view.findByRole("form", { name: "新建 PR" });
     expect(view.queryByRole("heading", { level: 3, name: "Pull Requests" })).toBeNull();
@@ -2138,7 +2145,11 @@ describe("RepoProjectPanel", () => {
     expect(view.getByText("#44 整理文档")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenCalledTimes(1);
 
-    await fireEvent.update(view.getByLabelText("搜索 Issues"), "Roadmap");
+    const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
+    const filters = within(projectSidebar).getByLabelText("Issue 筛选项");
+    expect(view.container.querySelector(".project-main")?.querySelector("[aria-label='Issue 筛选项']")).toBeNull();
+
+    await fireEvent.update(within(filters).getByLabelText("搜索 Issues"), "Roadmap");
 
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
@@ -2159,8 +2170,9 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
-    await fireEvent.click(view.getByRole("button", { name: "筛选" }));
-    const filters = view.getByLabelText("Issue 筛选项");
+    const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
+    const filters = within(projectSidebar).getByLabelText("Issue 筛选项");
+    expect(view.container.querySelector(".project-main")?.querySelector("[aria-label='Issue 筛选项']")).toBeNull();
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意作者" }));
     await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));

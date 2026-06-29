@@ -22,12 +22,14 @@ const repoFileTreeCardModule = createCachedAsyncComponent(() => import("./RepoFi
 const repoGitHubDetailSidebarModule = createCachedAsyncComponent(() => import("./RepoGitHubDetailSidebar.vue"));
 const repoHistoryPanelModule = createCachedAsyncComponent(() => import("./RepoHistoryPanel.vue"));
 const repoIssuesPanelModule = createCachedAsyncComponent(() => import("./RepoIssuesPanel.vue"));
+const repoIssuesSidebarControlsModule = createCachedAsyncComponent(() => import("./RepoIssuesSidebarControls.vue"));
 const repoTopicEditorModule = createCachedAsyncComponent(() => import("./RepoTopicEditor.vue"));
 const repoLanguageStatsCardModule = createCachedAsyncComponent(() => import("./RepoLanguageStatsCard.vue"));
 const repoActionsPanelModule = createCachedAsyncComponent(() => import("./RepoActionsPanel.vue"));
 const repoMilestonesBoardModule = createCachedAsyncComponent(() => import("./RepoMilestonesBoard.vue"));
 const repoMilestonesSidebarModule = createCachedAsyncComponent(() => import("./RepoMilestonesSidebar.vue"));
 const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
+const repoPullRequestsSidebarControlsModule = createCachedAsyncComponent(() => import("./RepoPullRequestsSidebarControls.vue"));
 const repoReleasesPanelModule = createCachedAsyncComponent(() => import("./RepoReleasesPanel.vue"));
 
 export const CommitDetailCard = commitDetailCardModule.component;
@@ -39,12 +41,14 @@ export const RepoFileTreeCard = repoFileTreeCardModule.component;
 export const RepoGitHubDetailSidebar = repoGitHubDetailSidebarModule.component;
 export const RepoHistoryPanel = repoHistoryPanelModule.component;
 export const RepoIssuesPanel = repoIssuesPanelModule.component;
+export const RepoIssuesSidebarControls = repoIssuesSidebarControlsModule.component;
 export const RepoTopicEditor = repoTopicEditorModule.component;
 export const RepoLanguageStatsCard = repoLanguageStatsCardModule.component;
 export const RepoActionsPanel = repoActionsPanelModule.component;
 export const RepoMilestonesBoard = repoMilestonesBoardModule.component;
 export const RepoMilestonesSidebar = repoMilestonesSidebarModule.component;
 export const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
+export const RepoPullRequestsSidebarControls = repoPullRequestsSidebarControlsModule.component;
 export const RepoReleasesPanel = repoReleasesPanelModule.component;
 
 export function preloadRepoProjectSection(section: string) {
@@ -54,8 +58,16 @@ export function preloadRepoProjectSection(section: string) {
   if (section === "files") return Promise.all([repoFilePreviewPaneModule.load(), repoFileTreeCardModule.load()]);
   if (section === "readme") return Promise.all([markdownReadmeModule.load(), repoLanguageStatsCardModule.load()]);
   if (section === "milestones") return Promise.all([repoMilestonesBoardModule.load(), repoMilestonesSidebarModule.load()]);
-  if (section === "issues") return Promise.all([repoIssuesPanelModule.load(), repoGitHubDetailSidebarModule.load()]);
-  if (section === "pulls") return Promise.all([repoPullRequestsPanelModule.load(), repoGitHubDetailSidebarModule.load()]);
+  if (section === "issues") return Promise.all([
+    repoIssuesPanelModule.load(),
+    repoIssuesSidebarControlsModule.load(),
+    repoGitHubDetailSidebarModule.load(),
+  ]);
+  if (section === "pulls") return Promise.all([
+    repoPullRequestsPanelModule.load(),
+    repoPullRequestsSidebarControlsModule.load(),
+    repoGitHubDetailSidebarModule.load(),
+  ]);
   if (section === "actions") return repoActionsPanelModule.load();
   if (section === "release") return repoReleasesPanelModule.load();
   if (section === "settings") return repoTopicEditorModule.load();
