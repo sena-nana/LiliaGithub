@@ -15,6 +15,7 @@ import {
 } from "../../services/workspace";
 
 type RepoCreateMode = "local" | "remote";
+type RepoCreateAction = "local" | "remote-only" | "remote-clone";
 type RepoCreateGroup = {
   readonly id: string;
   readonly name: string;
@@ -42,7 +43,7 @@ const repoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
 const createRepoLoader = createLatestAsyncLoader({ componentEpoch });
 const firstInput = ref<HTMLInputElement | null>(null);
 const repoOwners = ref<GitHubRepoOwner[]>([]);
-const creatingRepo = ref(false);
+const activeCreateAction = ref<RepoCreateAction | null>(null);
 const cloningCreatedRepo = ref(false);
 const createdRepo = ref<GitHubRepoSummary | null>(null);
 const createError = ref<string | null>(null);
@@ -106,9 +107,15 @@ const blockedReason = computed(() => {
   if (isRemoteMode.value && !props.githubReady) return "请先绑定 GitHub。";
   return null;
 });
+const primarySubmitLabel = computed(() => {
+  if (!isRemoteMode.value) return "创建";
+  if (cloningCreatedRepo.value) return "正在 clone";
+  if (createdRepo.value) return "重试克隆";
+  return "创建并克隆";
+});
 const submitDisabled = computed(() => (
   Boolean(blockedReason.value)
-  || creatingRepo.value
+  || activeCreateAction.value !== null
   || cloningCreatedRepo.value
   || !form.value.name.trim()
   || (isRemoteMode.value && !form.value.owner)
@@ -116,7 +123,7 @@ const submitDisabled = computed(() => (
 ));
 const groupPickerDisabled = computed(() => (
   Boolean(blockedReason.value)
-  || creatingRepo.value
+  || activeCreateAction.value !== null
   || cloningCreatedRepo.value
   || Boolean(createdRepo.value)
 ));
@@ -138,7 +145,7 @@ function resetForm() {
     hasIssues: true,
     hasWiki: false,
   };
-  creatingRepo.value = false;
+  activeCreateAction.value = null;
   cloningCreatedRepo.value = false;
   createdRepo.value = null;
   createError.value = null;
@@ -201,7 +208,7 @@ function closeCard() {
 
 async function submitLocalRepo() {
   await createRepoLoader.run("create-local-repo", async (runId) => {
-    creatingRepo.value = true;
+    activeCreateAction.value = "local";
     createError.value = null;
     try {
       const repo = await workspace.createLocalRepo({
@@ -218,7 +225,7 @@ async function submitLocalRepo() {
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
       createError.value = String(err);
     } finally {
-      if (createRepoLoader.isCurrent(runId)) creatingRepo.value = false;
+      if (createRepoLoader.isCurrent(runId)) activeCreateAction.value = null;
     }
   });
 }
@@ -249,7 +256,7 @@ async function submitRemoteRepo(cloneAfterCreate = true) {
     return;
   }
   await createRepoLoader.run(`create-remote-repo:${cloneAfterCreate ? "clone" : "only"}`, async (runId) => {
-    creatingRepo.value = true;
+    activeCreateAction.value = cloneAfterCreate ? "remote-clone" : "remote-only";
     createError.value = null;
     syncOwnerKind();
     try {
@@ -265,7 +272,7 @@ async function submitRemoteRepo(cloneAfterCreate = true) {
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
       createError.value = String(err);
     } finally {
-      if (createRepoLoader.isCurrent(runId)) creatingRepo.value = false;
+      if (createRepoLoader.isCurrent(runId)) activeCreateAction.value = null;
     }
   });
 }
@@ -415,7 +422,6 @@ onUnmounted(() => {
 
       <p v-if="createError" class="repo-create-card__error">{{ createError }}</p>
       <div v-if="createdRepo" class="repo-create-result">
-        <strong>{{ createdRepo.fullName }}</strong>
         <span>{{ createdRepo.cloneUrl }}</span>
       </div>
       <div class="repo-create-actions">
@@ -427,18 +433,24 @@ onUnmounted(() => {
           :disabled="submitDisabled"
           @click="submitRemoteRepo(false)"
         >
+          <LoaderCircle
+            v-if="activeCreateAction === 'remote-only'"
+            :size="14"
+            aria-hidden="true"
+            class="sb-spin"
+          />
           创建
         </button>
         <button type="submit" class="primary" :disabled="submitDisabled && !createdRepo">
           <LoaderCircle
-            v-if="creatingRepo || cloningCreatedRepo"
+            v-if="activeCreateAction === 'local' || activeCreateAction === 'remote-clone' || cloningCreatedRepo"
             :size="14"
             aria-hidden="true"
             class="sb-spin"
           />
           <FolderGit2 v-else-if="!isRemoteMode" :size="14" aria-hidden="true" />
           <GitBranchPlus v-else :size="14" aria-hidden="true" />
-          {{ createdRepo ? "重试克隆" : isRemoteMode ? "创建并克隆" : "创建" }}
+          {{ primarySubmitLabel }}
         </button>
       </div>
     </form>
@@ -566,8 +578,7 @@ onUnmounted(() => {
 }
 
 .repo-create-result {
-  display: grid;
-  gap: 3px;
+  display: block;
   padding: 10px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
@@ -575,9 +586,13 @@ onUnmounted(() => {
 }
 
 .repo-create-result span {
+  display: block;
+  overflow: hidden;
   color: var(--text-muted);
   font-size: 12px;
-  overflow-wrap: anywhere;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-create-actions {
