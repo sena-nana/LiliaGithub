@@ -572,6 +572,7 @@ let githubMutationGeneration = 0;
 let aboutTopicResizeObserver: ResizeObserver | null = null;
 
 const settingsForm = reactive({
+  name: "",
   description: "",
   homepage: "",
   topics: [] as string[],
@@ -1814,6 +1815,7 @@ function prefetchGitHubProjectMetadata() {
 }
 
 function applySettingsForm(next: GitHubRepoManagement) {
+  settingsForm.name = next.name;
   settingsForm.description = next.description ?? "";
   settingsForm.homepage = next.homepage ?? "";
   settingsForm.topics = [...next.topics];
@@ -2280,6 +2282,8 @@ function changedSettingsRequest(current: GitHubRepoManagement) {
   ) => {
     if (value !== previous) request[key] = value;
   };
+  const nextName = settingsForm.name.trim();
+  if (nextName && nextName !== current.name) request.name = nextName;
   maybeSet("description", settingsForm.description, current.description ?? "");
   maybeSet("homepage", settingsForm.homepage, current.homepage ?? "");
   if (!sameStringList(settingsForm.topics, current.topics)) request.topics = [...settingsForm.topics];
@@ -2440,6 +2444,7 @@ async function saveSettings(closeAboutOnSuccess = false) {
   if (!repoFullName || !settings.value) return;
   const request = changedSettingsRequest(settings.value);
   if (!Object.keys(request).length) {
+    applySettingsForm(settings.value);
     if (closeAboutOnSuccess) aboutEditing.value = false;
     return true;
   }
@@ -2450,10 +2455,51 @@ async function saveSettings(closeAboutOnSuccess = false) {
   const next = result.value;
   settings.value = next;
   applySettingsForm(next);
+  if (!await syncRenamedSettingsIdentity(repoFullName, next)) return false;
   aboutTopicDraft.value = "";
   if (closeAboutOnSuccess) aboutEditing.value = false;
   clearHomeGitHubOverviewSnapshot();
   return true;
+}
+
+function sameRepoFullName(left: string, right: string) {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function renamedRemoteCloneUrl(previousFullName: string, nextFullName: string, currentCloneUrl?: string | null) {
+  const fallback = `https://github.com/${nextFullName}.git`;
+  if (!currentCloneUrl) return fallback;
+  return currentCloneUrl.includes(previousFullName)
+    ? currentCloneUrl.replace(previousFullName, nextFullName)
+    : fallback;
+}
+
+async function syncRenamedSettingsIdentity(previousFullName: string, next: GitHubRepoManagement) {
+  if (sameRepoFullName(previousFullName, next.fullName)) return true;
+  const currentRemoteFullName = parseRemoteRepoId(props.repoId);
+  if (!currentRemoteFullName || !sameRepoFullName(currentRemoteFullName, previousFullName)) return true;
+  const currentShortcut = workspace.state.settings?.remoteRepoShortcuts.find((repo) =>
+    sameRepoFullName(repo.fullName, previousFullName)
+  ) ?? null;
+  try {
+    await workspace.forgetRemoteRepo(previousFullName);
+    await workspace.rememberRemoteRepo({
+      fullName: next.fullName,
+      name: next.name,
+      private: next.private,
+      archived: currentShortcut?.archived ?? false,
+      defaultBranch: next.defaultBranch || (currentShortcut?.defaultBranch ?? null),
+      htmlUrl: next.htmlUrl,
+      cloneUrl: renamedRemoteCloneUrl(previousFullName, next.fullName, currentShortcut?.cloneUrl),
+      openedAt: Date.now(),
+    });
+    const query: LocationQueryRaw = { ...route.query, projectTab: "settings" };
+    await router.replace({ path: remoteRepoRoute(next.fullName), query });
+    return true;
+  } catch (err) {
+    githubError.value = String(err);
+    return false;
+  }
 }
 
 function normalizedExternalUrl(value: string) {
@@ -3600,6 +3646,23 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             @rebind="rebindGitHub"
           />
           <template v-if="settings">
+            <section class="project-settings-group" aria-labelledby="project-settings-name-title">
+              <div class="project-settings-group__head">
+                <h4 id="project-settings-name-title">基本信息</h4>
+              </div>
+              <div class="project-settings-fields project-settings-fields--single">
+                <label class="project-settings-field">
+                  <span>仓库名</span>
+                  <input
+                    v-model="settingsForm.name"
+                    type="text"
+                    autocomplete="off"
+                    data-agent-id="repo.settings.name"
+                    :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                  />
+                </label>
+              </div>
+            </section>
             <section class="project-settings-group" aria-labelledby="project-settings-features-title">
               <div class="project-settings-group__head">
                 <h4 id="project-settings-features-title">功能开关</h4>
@@ -5215,6 +5278,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
   gap: 8px;
+}
+
+.project-settings-fields--single {
+  grid-template-columns: minmax(0, 360px);
 }
 
 .project-settings-field {

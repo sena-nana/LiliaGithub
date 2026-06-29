@@ -8,6 +8,7 @@ import {
   deleteGitHubReleaseAsset,
   getRepoFilePreview,
   getGitHubRepoCommitDetail,
+  getGitHubRepoManagement,
   listRepoFiles,
   listGitHubRepoCommits,
   listGitHubIssues,
@@ -15,6 +16,7 @@ import {
   listGitHubReleases,
   updateGitHubIssue,
   updateGitHubRelease,
+  updateGitHubRepoSettings,
   uploadGitHubReleaseAsset,
   workspaceFallbackForTests,
 } from "../src/services/workspace/client";
@@ -25,6 +27,7 @@ import type {
   GitHubPullRequest,
   GitHubRelease,
   GitHubReleaseAsset,
+  GitHubRepoSummary,
   GitHubWorkflowRunDetail,
 } from "../src/services/workspace/types";
 
@@ -135,6 +138,25 @@ function release(overrides: Partial<GitHubRelease> = {}): GitHubRelease {
   };
 }
 
+function githubRepoSummary(overrides: Partial<GitHubRepoSummary> = {}): GitHubRepoSummary {
+  return {
+    id: 1001,
+    name: "remote-repo",
+    fullName: repoFullName,
+    ownerLogin: "sena-nana",
+    private: false,
+    disabled: false,
+    archived: false,
+    description: "Remote repository tools",
+    defaultBranch: "main",
+    createdAt: "2026-06-18T08:00:00Z",
+    updatedAt: "2026-06-18T08:00:00Z",
+    cloneUrl: "https://github.com/sena-nana/remote-repo.git",
+    htmlUrl: "https://github.com/sena-nana/remote-repo",
+    ...overrides,
+  };
+}
+
 function workflowRunDetail(): GitHubWorkflowRunDetail {
   return {
     run: {
@@ -233,6 +255,20 @@ describe("workspace GitHub project cache", () => {
     const cached = await listGitHubIssues(repoFullName, "open");
     expect(cached[0]?.title).toBe("缓存前 Issue");
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+  });
+
+  it("仓库改名后迁移项目缓存和 fallback 仓库身份", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [githubRepoSummary()], nextPage: null }]);
+    expect((await getGitHubRepoManagement(repoFullName)).name).toBe("remote-repo");
+
+    const renamed = await updateGitHubRepoSettings(repoFullName, { name: "renamed-repo" });
+
+    expect(renamed.fullName).toBe("sena-nana/renamed-repo");
+    expect(renamed.name).toBe("renamed-repo");
+    await expect(getGitHubRepoManagement(repoFullName)).rejects.toThrow("未找到 GitHub 仓库");
+    const next = await getGitHubRepoManagement("sena-nana/renamed-repo", { forceRefresh: true });
+    expect(next.fullName).toBe("sena-nana/renamed-repo");
+    expect(next.name).toBe("renamed-repo");
   });
 
   it("Issue 缓存按筛选和排序参数分桶", async () => {

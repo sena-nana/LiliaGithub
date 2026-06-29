@@ -2478,7 +2478,12 @@ describe("RepoProjectPanel", () => {
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
 
+    const nameInput = await view.findByLabelText("仓库名") as HTMLInputElement;
+    expect(nameInput.value).toBe("remote-repo");
     expect(await view.findByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
+    const nameGroup = nameInput.closest(".project-settings-group");
+    const featureHeading = view.getByRole("heading", { level: 4, name: "功能开关" });
+    expect(Boolean(nameGroup?.compareDocumentPosition(featureHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(view.getByRole("heading", { level: 4, name: "Pull Request / Merge" })).toBeInTheDocument();
     expect(view.getByLabelText("本地危险操作")).toBeInTheDocument();
     expect(view.getByLabelText("远端危险操作")).toBeInTheDocument();
@@ -2495,6 +2500,37 @@ describe("RepoProjectPanel", () => {
       );
     });
     expect(vi.mocked(updateGitHubRepoSettings).mock.calls[0][1]).not.toHaveProperty("defaultBranch");
+  });
+
+  it("修改远程仓库名后同步 shortcut 并跳转到新仓库路由", async () => {
+    vi.mocked(updateGitHubRepoSettings).mockResolvedValue({
+      ...githubSettings,
+      fullName: "sena-nana/renamed-repo",
+      name: "renamed-repo",
+      htmlUrl: "https://github.com/sena-nana/renamed-repo",
+    });
+    const view = await renderProjectPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoFullName: "sena-nana/remote-repo",
+      repoPath: null,
+      projectTab: "settings",
+    }, "/repos/github%3Asena-nana%2Fremote-repo?projectTab=settings");
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    await fireEvent.update(await view.findByLabelText("仓库名"), "renamed-repo");
+    await fireEvent.click(view.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        name: "renamed-repo",
+      });
+    });
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.path).toBe("/repos/github%3Asena-nana%2Frenamed-repo");
+    });
+    expect(view.router.currentRoute.value.query.projectTab).toBe("settings");
+    expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/renamed-repo");
+    expect((view.getByLabelText("仓库名") as HTMLInputElement).value).toBe("renamed-repo");
   });
 
   it("保存设置请求返回后不会覆盖已切换仓库的设置状态", async () => {

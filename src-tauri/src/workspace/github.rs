@@ -1491,6 +1491,9 @@ pub(super) fn github_update_repo_settings_payload(
     request: &GitHubUpdateRepoSettingsRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut payload = serde_json::Map::new();
+    if let Some(value) = normalize_optional_string(request.name.clone()) {
+        payload.insert("name".to_string(), serde_json::Value::String(value));
+    }
     if let Some(value) = request.description.clone() {
         payload.insert("description".to_string(), serde_json::Value::String(value));
     }

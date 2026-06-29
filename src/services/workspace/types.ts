@@ -263,7 +263,7 @@ export interface GitHubRepoManagement {
   license: GitHubRepoLicense | null;
 }
 
-export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "name" | "htmlUrl" | "license">>;
+export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "htmlUrl" | "license">>;
 
 export interface GitHubIssue {
   number: number;

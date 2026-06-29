@@ -493,6 +493,18 @@ function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
   return { ...repo };
 }
 
+function renamedGitHubRepoSummary(repo: GitHubRepoSummary, fullName: string, name: string): GitHubRepoSummary {
+  const ownerLogin = fullName.split("/")[0] || repo.ownerLogin;
+  return {
+    ...repo,
+    name,
+    fullName,
+    ownerLogin,
+    cloneUrl: `https://github.com/${fullName}.git`,
+    htmlUrl: `https://github.com/${fullName}`,
+  };
+}
+
 function cloneGitHubRepoManagement(repo: GitHubRepoManagement): GitHubRepoManagement {
   return {
     ...repo,
@@ -3584,6 +3596,44 @@ function allFallbackGitHubRepos() {
   return [...repos.values()].map(cloneGitHubRepoSummary);
 }
 
+function moveFallbackGitHubRepoBucket(bucket: Record<string, unknown>, fromFullName: string, toFullName: string) {
+  if (fromFullName === toFullName || !(fromFullName in bucket)) return;
+  bucket[toFullName] = bucket[fromFullName];
+  delete bucket[fromFullName];
+}
+
+function renameFallbackGitHubRepoReferences(fromFullName: string, toFullName: string, toName: string) {
+  if (fromFullName === toFullName) return;
+  fallbackGitHubRepos = fallbackGitHubRepos.map((repo) =>
+    repo.fullName === fromFullName ? renamedGitHubRepoSummary(repo, toFullName, toName) : repo
+  );
+  fallbackGitHubRepoPagesOverride = fallbackGitHubRepoPagesOverride?.map((page) => ({
+    ...page,
+    items: page.items.map((repo) =>
+      repo.fullName === fromFullName ? renamedGitHubRepoSummary(repo, toFullName, toName) : repo
+    ),
+  })) ?? null;
+  const buckets: Array<Record<string, unknown>> = [
+    fallbackGitHubIssues,
+    fallbackGitHubPullRequests,
+    fallbackGitHubIssueDiscussions,
+    fallbackGitHubPullRequestDiscussions,
+    fallbackGitHubPullRequestChecks,
+    fallbackGitHubReleases,
+    fallbackGitHubWorkflowRuns,
+    fallbackGitHubWorkflowRunDetails,
+    fallbackGitHubWorkflowJobLogs,
+    fallbackGitHubWorkflowArtifactEntries,
+    fallbackGitHubWorkflowArtifactPreviews,
+    fallbackGitHubCommits,
+    fallbackGitHubCommitDetails,
+    fallbackGitHubBranches,
+    fallbackGitHubRepoFiles,
+    fallbackGitHubRepoFilePreviews,
+  ];
+  buckets.forEach((bucket) => moveFallbackGitHubRepoBucket(bucket, fromFullName, toFullName));
+}
+
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
   return call("github_list_repo_owners", undefined, () => fallbackGitHubRepoOwners.map((owner) => ({ ...owner })));
 }
@@ -3660,14 +3710,24 @@ export function updateGitHubRepoSettings(
 ): Promise<GitHubRepoManagement> {
   return call("github_update_repo_settings", { repoFullName, request }, () => {
     const current = fallbackRepoManagement(repoFullName);
+    const owner = current.fullName.split("/")[0] || repoFullName.split("/")[0] || "sena-nana";
+    const nextName = request.name?.trim() || current.name;
+    const nextFullName = `${owner}/${nextName}`;
     const updated = {
       ...current,
       ...request,
+      fullName: nextFullName,
+      name: nextName,
       description: request.description ?? current.description,
       homepage: request.homepage ?? current.homepage,
       topics: request.topics ? [...request.topics] : [...current.topics],
+      htmlUrl: nextFullName === current.fullName ? current.htmlUrl : `https://github.com/${nextFullName}`,
     };
-    fallbackGitHubRepoManagement[repoFullName] = updated;
+    if (nextFullName !== repoFullName) {
+      delete fallbackGitHubRepoManagement[repoFullName];
+      renameFallbackGitHubRepoReferences(repoFullName, nextFullName, nextName);
+    }
+    fallbackGitHubRepoManagement[nextFullName] = updated;
     return cloneGitHubRepoManagement(updated);
   });
 }

@@ -2897,6 +2897,7 @@ fn parses_github_next_page_from_link_header() {
 #[test]
 fn builds_github_repo_settings_patch_with_changed_fields_only() {
     let request = GitHubUpdateRepoSettingsRequest {
+        name: Some(" renamed-repo ".to_string()),
         description: Some("new desc".to_string()),
         homepage: None,
         topics: Some(vec![
@@ -2920,7 +2921,8 @@ fn builds_github_repo_settings_patch_with_changed_fields_only() {
     };
     let payload = github_update_repo_settings_payload(&request);
 
-    assert_eq!(payload.len(), 5);
+    assert_eq!(payload.len(), 6);
+    assert_eq!(payload.get("name").unwrap(), "renamed-repo");
     assert_eq!(payload.get("description").unwrap(), "new desc");
     assert_eq!(payload.get("private").unwrap(), true);
     assert_eq!(payload.get("default_branch").unwrap(), "main");
@@ -2932,6 +2934,13 @@ fn builds_github_repo_settings_patch_with_changed_fields_only() {
         normalize_github_topics(request.topics.unwrap()),
         vec!["vue".to_string(), "tauri".to_string()]
     );
+
+    let blank_name_payload =
+        github_update_repo_settings_payload(&GitHubUpdateRepoSettingsRequest {
+            name: Some("   ".to_string()),
+            ..Default::default()
+        });
+    assert!(blank_name_payload.get("name").is_none());
 }
 
 #[test]
