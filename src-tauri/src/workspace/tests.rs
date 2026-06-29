@@ -2799,12 +2799,13 @@ fn github_delete_repo_requires_delete_repo_scope() {
 }
 
 #[test]
-fn github_oauth_scope_requests_project_read_access() {
+fn github_oauth_scope_requests_project_and_notifications_access() {
     let scopes = normalize_scope_list(Some(GITHUB_SCOPE));
 
     assert!(scopes
         .iter()
         .any(|scope| scope == GITHUB_READ_PROJECT_SCOPE));
+    assert!(scopes.iter().any(|scope| scope == "notifications"));
 }
 
 #[test]
@@ -2969,6 +2970,7 @@ fn filters_pull_requests_from_github_issues() {
             login: "octo".to_string(),
         }],
         pull_request: None,
+        repository: None,
     };
     let pr = GitHubIssueResponse {
         pull_request: Some(
@@ -2986,6 +2988,7 @@ fn filters_pull_requests_from_github_issues() {
         comments: 0,
         labels: Vec::new(),
         assignees: Vec::new(),
+        repository: None,
     };
 
     let mapped = github_issue_from_response(issue).unwrap();

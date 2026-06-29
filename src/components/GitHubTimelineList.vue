@@ -30,6 +30,7 @@ import { RouterLink, useRouter } from "vue-router";
 defineProps<{
   nodes: readonly TimelineDisplayNode[];
   formatTime: (timestamp: number) => string;
+  ariaLabel?: string;
 }>();
 
 const router = useRouter();
@@ -44,7 +45,7 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
 </script>
 
 <template>
-  <ol class="github-timeline-list" aria-label="GitHub 时间线列表">
+  <ol class="github-timeline-list" :aria-label="ariaLabel ?? 'GitHub 时间线列表'">
     <li
       v-for="node in nodes"
       :key="node.id"

@@ -46,6 +46,8 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_poll_device_flow",
     "github_unbind",
     "github_list_repos",
+    "github_list_account_issues",
+    "github_list_action_notifications",
     "github_list_repo_contribution",
     "github_list_repo_owners",
     "github_create_repo",

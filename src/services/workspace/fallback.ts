@@ -11,6 +11,8 @@ import type {
   CommitDetail,
   CommitFileChange,
   CommitSummary,
+  GitHubActionNotification,
+  GitHubAccountIssueItem,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubBindingStatus,
   GitHubCommitListOptions,
@@ -366,7 +368,7 @@ const defaultFallbackBinding: GitHubBindingStatus = {
     login: "lilia-user",
     avatarUrl: null,
     boundAt: Date.now(),
-    scopes: ["repo", "workflow", "read:user", "delete_repo"],
+    scopes: ["repo", "workflow", "read:user", "delete_repo", "notifications"],
     clientIdSource: "bundled",
   },
 };
@@ -577,6 +579,32 @@ function cloneIssue(issue: GitHubIssue): GitHubIssue {
     milestone: issue.milestone ? { ...issue.milestone } : null,
     projectItems: issue.projectItems?.map((project) => ({ ...project })) ?? [],
     developmentItems: issue.developmentItems?.map((item) => ({ ...item })) ?? [],
+  };
+}
+
+function fallbackPullRequestAccountIssueItem(
+  repoFullName: string,
+  pullRequest: GitHubPullRequest,
+): GitHubAccountIssueItem {
+  return {
+    repoFullName,
+    pullRequest: true,
+    issue: {
+      number: pullRequest.number,
+      title: pullRequest.title,
+      state: pullRequest.state,
+      body: pullRequest.body,
+      labels: [...pullRequest.labels],
+      assignees: [...pullRequest.assignees],
+      author: pullRequest.author,
+      milestone: pullRequest.milestone ? { ...pullRequest.milestone } : null,
+      comments: pullRequest.comments ?? 0,
+      projectItems: pullRequest.projectItems?.map((project) => ({ ...project })) ?? [],
+      developmentItems: pullRequest.developmentItems?.map((item) => ({ ...item })) ?? [],
+      htmlUrl: pullRequest.htmlUrl,
+      updatedAt: pullRequest.updatedAt,
+      createdAt: pullRequest.createdAt,
+    },
   };
 }
 
@@ -1339,6 +1367,26 @@ function createFallbackGitHubWorkflowRuns(): Record<string, GitHubWorkflowRun[]>
       },
     ],
   };
+}
+
+function createFallbackGitHubActionNotifications(): GitHubActionNotification[] {
+  return Object.entries(createFallbackGitHubWorkflowRuns())
+    .flatMap(([repoFullName, runs]) =>
+      runs
+        .filter((run) => run.status !== "completed" || run.conclusion !== "success")
+        .map((run) => ({
+          id: `workflow:${repoFullName}:${run.id}`,
+          repoFullName,
+          title: run.displayTitle,
+          reason: "ci_activity",
+          subjectType: "WorkflowRun",
+          subjectUrl: run.htmlUrl,
+          latestCommentUrl: null,
+          updatedAt: run.updatedAt,
+          unread: true,
+        })),
+    )
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 }
 
 function createFallbackGitHubWorkflowRunDetails(
@@ -2153,6 +2201,7 @@ let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
+let fallbackGitHubActionNotifications = createFallbackGitHubActionNotifications();
 let fallbackGitHubIssueDiscussions: Record<string, Record<number, GitHubIssueDiscussion>> = {};
 let fallbackGitHubPullRequestDiscussions: Record<string, Record<number, GitHubPullRequestDiscussion>> = {};
 let fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
@@ -2291,6 +2340,13 @@ let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
+let fallbackGitHubAccountIssueListCalls: Array<{
+  state: string | null;
+  perPage: number | null;
+  sort: string | null;
+  direction: string | null;
+}> = [];
+let fallbackGitHubActionNotificationListCalls: Array<{ perPage: number | null }> = [];
 let fallbackGitHubPullRequestListCalls: FallbackGitHubPullRequestListCall[] = [];
 let fallbackGitHubPullRequestCheckListCalls: FallbackGitHubPullRequestCheckListCall[] = [];
 let fallbackGitHubReleaseListCalls: Array<{ repoFullName: string }> = [];
@@ -2337,6 +2393,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
+  fallbackGitHubActionNotifications = createFallbackGitHubActionNotifications();
   fallbackGitHubIssueDiscussions = {};
   fallbackGitHubPullRequestDiscussions = {};
   fallbackGitHubPullRequestChecks = createFallbackGitHubPullRequestChecks();
@@ -2358,6 +2415,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoFilePreviews = createFallbackRepoFilePreviews();
   fallbackGitHubRepoFilePreviews = createFallbackGitHubRepoFilePreviews();
   fallbackGitHubIssueListCalls = [];
+  fallbackGitHubAccountIssueListCalls = [];
+  fallbackGitHubActionNotificationListCalls = [];
   fallbackGitHubPullRequestListCalls = [];
   fallbackGitHubPullRequestCheckListCalls = [];
   fallbackGitHubReleaseListCalls = [];
@@ -2492,6 +2551,14 @@ export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueLi
   return fallbackGitHubIssueListCalls.map((call) => ({ ...call }));
 }
 
+export function getFallbackGitHubAccountIssueListCallsForTests() {
+  return fallbackGitHubAccountIssueListCalls.map((call) => ({ ...call }));
+}
+
+export function getFallbackGitHubActionNotificationListCallsForTests() {
+  return fallbackGitHubActionNotificationListCalls.map((call) => ({ ...call }));
+}
+
 export function getFallbackGitHubPullRequestListCallsForTests(): FallbackGitHubPullRequestListCall[] {
   return fallbackGitHubPullRequestListCalls.map((call) => ({
     ...call,
@@ -2551,6 +2618,10 @@ export function setFallbackGitHubPullRequestsForTests(pullRequestsByRepo: Record
       pullRequests.map(clonePullRequest),
     ]),
   );
+}
+
+export function setFallbackGitHubActionNotificationsForTests(notifications: GitHubActionNotification[]) {
+  fallbackGitHubActionNotifications = notifications.map((notification) => ({ ...notification }));
 }
 
 export function setFallbackGitHubReleasesForTests(releasesByRepo: Record<string, GitHubRelease[]>) {
@@ -3777,6 +3848,44 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
     if (target.protected) throw new Error("受保护分支不能删除");
     fallbackGitHubBranches[repoFullName] = branches.filter((item) => item.name !== branch);
   });
+}
+
+export function listGitHubAccountIssues(
+  options: Pick<GitHubIssueListOptions, "state" | "perPage" | "sort" | "direction"> = {},
+): Promise<GitHubAccountIssueItem[]> {
+  const state = options.state ?? "open";
+  const sort = options.sort ?? "updated";
+  const direction = options.direction ?? "desc";
+  const perPage = Number.isFinite(options.perPage) ? Math.max(1, Math.trunc(options.perPage ?? 0)) : null;
+  fallbackGitHubAccountIssueListCalls.push({ state, perPage, sort, direction });
+  return call("github_list_account_issues", { state, perPage, sort, direction }, () => {
+    const issueItems = Object.entries(fallbackGitHubIssues).flatMap(([repoFullName, issues]) =>
+      issues
+        .filter((issue) => !state || state === "all" || issue.state === state)
+        .map((issue) => ({ repoFullName, issue: cloneIssue(issue), pullRequest: false })),
+    );
+    const pullItems = Object.entries(fallbackGitHubPullRequests).flatMap(([repoFullName, pullRequests]) =>
+      pullRequests
+        .filter((pullRequest) => !state || state === "all" || pullRequest.state === state)
+        .map((pullRequest) => fallbackPullRequestAccountIssueItem(repoFullName, pullRequest)),
+    );
+    const sorted = [...issueItems, ...pullItems].sort((left, right) => {
+      const leftValue = sort === "created" ? left.issue.createdAt : left.issue.updatedAt;
+      const rightValue = sort === "created" ? right.issue.createdAt : right.issue.updatedAt;
+      const delta = Date.parse(rightValue) - Date.parse(leftValue) || right.issue.number - left.issue.number;
+      return direction === "asc" ? -delta : delta;
+    });
+    return sorted.slice(0, perPage ?? sorted.length);
+  });
+}
+
+export function listGitHubActionNotifications(perPage?: number | null): Promise<GitHubActionNotification[]> {
+  fallbackGitHubActionNotificationListCalls.push({ perPage: perPage ?? null });
+  return call("github_list_action_notifications", { perPage: perPage ?? null }, () =>
+    fallbackGitHubActionNotifications
+      .slice(0, perPage ?? undefined)
+      .map((notification) => ({ ...notification })),
+  );
 }
 
 export function listGitHubPullRequests(

@@ -7,7 +7,9 @@ import type {
   CommitSummary,
   ContributionIdentity,
   GitHubBindingStatus,
+  GitHubActionNotification,
   GitHubAttachWorkflowArtifactAssetRequest,
+  GitHubAccountIssueItem,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreatePullRequestRequest,
@@ -126,6 +128,17 @@ export interface WorkspaceCommandContracts {
   >;
   github_unbind: CommandContract<NoArgs, void>;
   github_list_repos: CommandContract<{ page: Maybe<number> }, GitHubRepoPage>;
+  github_list_account_issues: CommandContract<{
+    state: Maybe<string>;
+    perPage: Maybe<number>;
+    sort: Maybe<string>;
+    direction: Maybe<string>;
+    forceRefresh: Maybe<boolean>;
+  }, GitHubAccountIssueItem[]>;
+  github_list_action_notifications: CommandContract<{
+    perPage: Maybe<number>;
+    forceRefresh: Maybe<boolean>;
+  }, GitHubActionNotification[]>;
   github_list_repo_contribution: CommandContract<{ repoFullName: string }, GitHubContributionResult>;
   github_list_repo_owners: CommandContract<NoArgs, GitHubRepoOwner[]>;
   github_create_repo: CommandContract<{ request: GitHubCreateRepoRequest }, GitHubRepoSummary>;

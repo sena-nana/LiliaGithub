@@ -283,6 +283,12 @@ export interface GitHubIssue {
   createdAt: string;
 }
 
+export interface GitHubAccountIssueItem {
+  repoFullName: string;
+  issue: GitHubIssue;
+  pullRequest: boolean;
+}
+
 export type GitHubDiscussionTimelineItemKind = "body" | "comment" | "event" | "review" | "reviewComment";
 
 export interface GitHubDiscussionTimelineItem {
@@ -424,6 +430,18 @@ export interface GitHubWorkflowRun {
   runAttempt?: number | null;
   workflowId?: number | null;
   runStartedAt?: string | null;
+}
+
+export interface GitHubActionNotification {
+  id: string;
+  repoFullName: string;
+  title: string;
+  reason: string;
+  subjectType: string;
+  subjectUrl: string | null;
+  latestCommentUrl: string | null;
+  updatedAt: string;
+  unread: boolean;
 }
 
 export interface GitHubWorkflowJobStep {

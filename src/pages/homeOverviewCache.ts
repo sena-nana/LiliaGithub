@@ -4,6 +4,7 @@ import type {
   GitHubPullRequestCheck,
   GitHubRelease,
   GitHubRepoSummary,
+  GitHubActionNotification,
   GitHubWorkflowRun,
 } from "../services/workspace";
 
@@ -17,6 +18,7 @@ export type HomeGitHubOverviewSnapshot = {
   pullRequestsByRepo: Record<string, GitHubPullRequest[] | undefined>;
   pullRequestChecksByRepo: Record<string, Record<number, GitHubPullRequestCheck[] | undefined> | undefined>;
   workflowRunsByRepo: Record<string, GitHubWorkflowRun[] | undefined>;
+  actionNotificationsByRepo: Record<string, GitHubActionNotification[] | undefined>;
   releasesByRepo: Record<string, GitHubRelease[] | undefined>;
 };
 
@@ -102,6 +104,7 @@ function cloneSnapshot(snapshot: HomeGitHubOverviewSnapshot): HomeGitHubOverview
     pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, clonePullRequest),
     pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
     workflowRunsByRepo: cloneListByRepo(snapshot.workflowRunsByRepo, cloneShallow),
+    actionNotificationsByRepo: cloneListByRepo(snapshot.actionNotificationsByRepo ?? {}, cloneShallow),
     releasesByRepo: cloneListByRepo(snapshot.releasesByRepo, cloneRelease),
   };
 }
@@ -182,6 +185,7 @@ function parseSnapshot(value: unknown): HomeGitHubOverviewSnapshot | null {
     pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, clonePullRequest),
     pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
     workflowRunsByRepo: cloneListByRepo(snapshot.workflowRunsByRepo, cloneShallow),
+    actionNotificationsByRepo: cloneListByRepo(snapshot.actionNotificationsByRepo ?? {}, cloneShallow),
     releasesByRepo: cloneListByRepo(snapshot.releasesByRepo, cloneRelease),
   };
 }

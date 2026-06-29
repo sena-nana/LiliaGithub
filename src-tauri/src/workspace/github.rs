@@ -3,7 +3,8 @@ use std::io::{Cursor, Read};
 use super::*;
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
-pub(super) const GITHUB_SCOPE: &str = "repo workflow read:user delete_repo read:project";
+pub(super) const GITHUB_SCOPE: &str =
+    "repo workflow read:user delete_repo read:project notifications";
 pub(super) const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
 pub(super) const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";
 pub(super) const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
@@ -178,12 +179,46 @@ pub(super) struct GitHubIssueResponse {
     pub(super) assignees: Vec<GitHubAssigneeResponse>,
     #[serde(default)]
     pub(super) pull_request: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(super) repository: Option<GitHubIssueRepositoryResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubIssueRepositoryResponse {
+    pub(super) full_name: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubIssueSearchResponse {
     #[serde(default)]
     pub(super) items: Vec<GitHubIssueResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubNotificationRepositoryResponse {
+    pub(super) full_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubNotificationSubjectResponse {
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) url: Option<String>,
+    #[serde(default)]
+    pub(super) latest_comment_url: Option<String>,
+    #[serde(rename = "type")]
+    pub(super) kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubNotificationResponse {
+    pub(super) id: String,
+    pub(super) repository: GitHubNotificationRepositoryResponse,
+    pub(super) subject: GitHubNotificationSubjectResponse,
+    pub(super) reason: String,
+    pub(super) updated_at: String,
+    #[serde(default)]
+    pub(super) unread: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1573,6 +1608,16 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
     Some(github_issue_like_from_response(issue))
 }
 
+fn github_account_issue_item_from_response(issue: GitHubIssueResponse) -> Option<GitHubAccountIssueItem> {
+    let repo_full_name = issue.repository.as_ref()?.full_name.clone();
+    let pull_request = issue.pull_request.is_some();
+    Some(GitHubAccountIssueItem {
+        repo_full_name,
+        issue: github_issue_like_from_response(issue),
+        pull_request,
+    })
+}
+
 fn github_pull_request_issue_from_response(issue: GitHubIssueResponse) -> Option<GitHubIssue> {
     if issue.pull_request.is_none() {
         return None;
@@ -2461,6 +2506,29 @@ pub(super) fn github_workflow_run_from_response(
         workflow_id: run.workflow_id,
         run_started_at: normalize_optional_string(run.run_started_at),
     }
+}
+
+fn github_action_notification_from_response(
+    notification: GitHubNotificationResponse,
+) -> Option<GitHubActionNotification> {
+    let reason = notification.reason.trim().to_string();
+    let subject_type = notification.subject.kind.trim().to_string();
+    let is_action_notification =
+        reason == "ci_activity" || subject_type.to_ascii_lowercase().contains("workflow");
+    if !is_action_notification {
+        return None;
+    }
+    Some(GitHubActionNotification {
+        id: notification.id,
+        repo_full_name: notification.repository.full_name,
+        title: notification.subject.title,
+        reason,
+        subject_type,
+        subject_url: normalize_optional_string(notification.subject.url),
+        latest_comment_url: normalize_optional_string(notification.subject.latest_comment_url),
+        updated_at: notification.updated_at,
+        unread: notification.unread,
+    })
 }
 
 pub(super) fn github_workflow_job_from_response(
@@ -5536,6 +5604,89 @@ pub async fn github_get_repo_file_preview(
         )?;
         let file = github_json::<GitHubContentFileResponse>("读取 GitHub 文件预览失败", response)?;
         github_file_preview_from_content("读取 GitHub 文件预览失败", file)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_account_issues(
+    app: AppHandle,
+    state: Option<String>,
+    per_page: Option<u32>,
+    sort: Option<String>,
+    direction: Option<String>,
+    _force_refresh: Option<bool>,
+) -> Result<Vec<GitHubAccountIssueItem>, String> {
+    run_blocking("读取 GitHub 待处理 Issue", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let issue_state = state.unwrap_or_else(|| "open".to_string());
+        let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+        let issue_sort = match sort.as_deref() {
+            Some("created") => "created",
+            Some("comments") => "comments",
+            _ => "updated",
+        };
+        let issue_direction = match direction.as_deref() {
+            Some("asc") => "asc",
+            _ => "desc",
+        };
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 待处理 Issue 失败",
+            github_headers(
+                client.get("https://api.github.com/issues").query(&[
+                    ("filter", "all"),
+                    ("state", issue_state.as_str()),
+                    ("per_page", issue_per_page.as_str()),
+                    ("sort", issue_sort),
+                    ("direction", issue_direction),
+                ]),
+                Some(&token),
+            ),
+        )?;
+        let items = github_json::<Vec<GitHubIssueResponse>>(
+            "读取 GitHub 待处理 Issue 失败",
+            response,
+        )?;
+        Ok(items
+            .into_iter()
+            .filter_map(github_account_issue_item_from_response)
+            .collect())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn github_list_action_notifications(
+    app: AppHandle,
+    per_page: Option<u32>,
+    _force_refresh: Option<bool>,
+) -> Result<Vec<GitHubActionNotification>, String> {
+    run_blocking("读取 GitHub Actions 通知", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let notification_per_page = per_page.unwrap_or(50).clamp(1, 100).to_string();
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub Actions 通知失败",
+            github_headers(
+                client.get("https://api.github.com/notifications").query(&[
+                    ("all", "false"),
+                    ("participating", "false"),
+                    ("per_page", notification_per_page.as_str()),
+                ]),
+                Some(&token),
+            ),
+        )?;
+        let notifications = github_json::<Vec<GitHubNotificationResponse>>(
+            "读取 GitHub Actions 通知失败",
+            response,
+        )?;
+        Ok(notifications
+            .into_iter()
+            .filter_map(github_action_notification_from_response)
+            .collect())
     })
     .await
 }

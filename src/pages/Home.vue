@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
@@ -9,7 +9,6 @@ import {
   FolderGit2,
   FolderInput,
   GitBranchPlus,
-  GitCommitHorizontal,
   GitPullRequestArrow,
   Info,
   Plus,
@@ -21,38 +20,29 @@ import {
   RotateCw,
   Search,
   ShieldCheck,
-  Tag,
   X,
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
-import { createConcurrentTaskQueue } from "../composables/useConcurrentTaskQueue";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useShellSearch } from "../composables/useShellSearch";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
-  repoActionErrorDetailForRepo,
   repoSyncIssueForRepo,
-  syncErrorDetailsByRepoId,
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import {
   isGitHubBindingExpiredError,
   listGitHubRepos,
-  listGitHubIssues,
-  listGitHubPullRequests,
-  listGitHubPullRequestChecks,
-  listGitHubReleases,
-  listGitHubWorkflowRuns,
-  getGitHubIssueDiscussion,
-  getGitHubPullRequestDiscussion,
+  listGitHubAccountIssues,
+  listGitHubActionNotifications,
   preloadGitHubRepos,
+  type GitHubAccountIssueItem,
+  type GitHubActionNotification,
   type GitHubContributionDay,
   type GitHubIssue,
   type GitHubPullRequest,
-  type GitHubPullRequestCheck,
-  type GitHubRelease,
   type GitHubRepoSummary,
   type GitHubWorkflowRun,
   type BulkOperation,
@@ -67,9 +57,13 @@ import {
 } from "./homeOverviewCache";
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
-import { preloadRepoProjectSection } from "../components/repo/repoProjectSectionModules";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
 import { bulkResultTone, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
+import {
+  buildHomePendingItems,
+  type HomePendingItem,
+  type HomePendingRepoSource,
+} from "../utils/homePendingItems";
 import {
   repoCalculatesHomeTimeline,
   repoIncludedInHomeCodeStats,
@@ -88,7 +82,6 @@ import "../styles/page.css";
 const workspace = useWorkspace();
 const router = useRouter();
 const shellSearch = useShellSearch();
-const syncErrorDetails = computed(() => syncErrorDetailsByRepoId());
 const syncingRepoId = ref<string | null>(null);
 const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("stash");
 const createRepoCardOpen = ref(false);
@@ -116,20 +109,6 @@ type RepoStatusRow = {
   action: RepoAction | null;
   syncIssue: RepoSyncIssueDisplay | null;
   workflowRun: WorkflowRunOverview | null;
-};
-
-type GitHubTimelineRepoSource = Pick<RepoStatusRow, "githubRepo" | "localRepo">;
-
-type GitHubTimelineEvent = {
-  id: string;
-  kind: "repo" | "operation" | "commit" | "issue" | "pull" | "workflow" | "release";
-  title: string;
-  detail: string;
-  summary: string;
-  timestamp: number;
-  href?: string;
-  preload?: () => Promise<unknown>;
-  tone?: WorkflowRunTone;
 };
 
 type WorkflowRunOverview = {
@@ -171,53 +150,11 @@ type HomeCodeOverview = {
   slices: HomeCodeSlice[];
 };
 
-type ProjectTabRef = "issues" | "pulls" | "actions" | "release";
+type ProjectTabRef = "issues" | "pulls" | "actions";
 const REPO_STATUS_RENDER_PAGE_SIZE = 60;
-const GITHUB_TIMELINE_EVENT_LIMIT = 12;
-const GITHUB_TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
-const GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS = 5 * 60 * 1000;
-const GITHUB_TIMELINE_ISSUE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const GITHUB_TIMELINE_ISSUES_PER_REPO = 100;
-const GITHUB_TIMELINE_PULL_REQUESTS_PER_REPO = 5;
-const GITHUB_TIMELINE_WORKFLOW_RUNS_PER_REPO = 5;
-const GITHUB_TIMELINE_FETCH_CONCURRENCY = 2;
-
-type GitHubTimelineIssueCacheEntry = {
-  repoFullName: string;
-  since: string;
-  fetchedAt: number;
-  issues: GitHubIssue[];
-};
-
-type GitHubTimelineIssueCache = Record<string, GitHubTimelineIssueCacheEntry | undefined>;
-
-type IdleRequestWindow = Window & {
-  requestIdleCallback?: (callback: () => void) => number;
-  cancelIdleCallback?: (handle: number) => void;
-};
-
-type GitHubTimelineIssueTask = {
-  repo: GitHubRepoSummary;
-  generation: number;
-  since: string;
-  cache: GitHubTimelineIssueCache;
-};
-
-type GitHubTimelinePullRequestTask = {
-  repo: GitHubRepoSummary;
-  generation: number;
-  since: string;
-};
-
-type GitHubTimelineWorkflowTask = {
-  repo: GitHubRepoSummary;
-  generation: number;
-};
-
-type GitHubTimelineReleaseTask = {
-  repo: GitHubRepoSummary;
-  generation: number;
-};
+const HOME_PENDING_ITEM_LIMIT = 12;
+const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
+const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
 
 const languageChartMode = ref<LanguageChartMode>("language");
 const discovering = ref(false);
@@ -227,16 +164,11 @@ const githubReposLoading = ref(false);
 const githubReposLoadingMore = ref(false);
 const githubReposError = ref<string | null>(null);
 const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
-const githubIssuesLoading = ref(false);
 const githubPullRequestsByRepo = ref<Record<string, GitHubPullRequest[] | undefined>>({});
-const githubPullRequestChecksByRepo = ref<Record<string, Record<number, GitHubPullRequestCheck[] | undefined> | undefined>>({});
-const githubPullRequestsLoading = ref(false);
+const githubAccountIssuesLoading = ref(false);
 const githubWorkflowRunsByRepo = ref<Record<string, GitHubWorkflowRun[] | undefined>>({});
-const githubWorkflowRunsLoading = ref(false);
-const githubReleasesByRepo = ref<Record<string, GitHubRelease[] | undefined>>({});
-const githubReleasesLoading = ref(false);
-const githubTimelineCard = ref<HTMLElement | null>(null);
-const githubTimelineActivated = ref(false);
+const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotification[] | undefined>>({});
+const githubActionNotificationsLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const componentEpoch = useComponentEpoch();
@@ -321,82 +253,29 @@ const hiddenRepoStatusRowCount = computed(() =>
 const homeTimelineRepos = computed(() =>
   githubRepos.value.filter(repoIncludedInHomeTimeline),
 );
-const githubTimelineRepoSources = computed<GitHubTimelineRepoSource[]>(() =>
+const githubTimelineRepoSources = computed<HomePendingRepoSource[]>(() =>
   homeTimelineRepos.value.map((githubRepo) => ({
     githubRepo,
     localRepo: localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null,
+    syncIssue: repoSyncIssueForTimeline(githubRepo),
+    issues: githubIssuesByRepo.value[githubRepo.fullName] ?? [],
+    pullRequests: githubPullRequestsByRepo.value[githubRepo.fullName] ?? [],
+    pullRequestChecksByPull: undefined,
+    actionNotifications: githubActionNotificationsByRepo.value[githubRepo.fullName] ?? [],
   })),
 );
-const githubTimelineNodes = computed<TimelineDisplayNode[]>(() =>
-  githubTimelineRepoSources.value
-    .flatMap((source) => buildGitHubTimelineEvents(source))
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, GITHUB_TIMELINE_EVENT_LIMIT)
-    .map(toGitHubTimelineDisplayNode),
-);
-const githubTimelineWaitingForActivation = computed(() =>
-  !githubTimelineActivated.value && (
-    githubIssuesPendingCount.value > 0 ||
-    githubPullRequestsPendingCount.value > 0 ||
-    githubWorkflowRunsPendingCount.value > 0 ||
-    githubReleasesPendingCount.value > 0
-  ),
+const homePendingNodes = computed<TimelineDisplayNode[]>(() =>
+  buildHomePendingItems(githubTimelineRepoSources.value)
+    .slice(0, HOME_PENDING_ITEM_LIMIT)
+    .map(toHomePendingDisplayNode),
 );
 const githubTimelineBusy = computed(() =>
   githubReposLoading.value ||
-  githubIssuesLoading.value ||
-  githubPullRequestsLoading.value ||
-  githubWorkflowRunsLoading.value ||
-  githubReleasesLoading.value ||
-  githubTimelineWaitingForActivation.value,
+  githubAccountIssuesLoading.value ||
+  githubActionNotificationsLoading.value,
 );
 
-const githubIssuesPendingCount = ref(0);
-const githubPullRequestsPendingCount = ref(0);
-const githubWorkflowRunsPendingCount = ref(0);
-const githubReleasesPendingCount = ref(0);
-let githubTimelineGeneration = 0;
-let githubTimelineActivationQueued = false;
-let githubTimelineObserver: IntersectionObserver | null = null;
-let githubTimelineIdleHandle: number | null = null;
-let githubTimelineIdleFallbackTimer: number | null = null;
-const githubTimelineIssueTasks = createConcurrentTaskQueue<GitHubTimelineIssueTask>({
-  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
-  key: (task) => task.repo.fullName,
-  loading: githubIssuesLoading,
-  pendingCount: githubIssuesPendingCount,
-  canRun: () => githubTimelineActivated.value,
-  isCurrent: (task) => task.generation === githubTimelineGeneration,
-  worker: processGitHubTimelineIssueTask,
-});
-const githubTimelinePullRequestTasks = createConcurrentTaskQueue<GitHubTimelinePullRequestTask>({
-  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
-  key: (task) => task.repo.fullName,
-  loading: githubPullRequestsLoading,
-  pendingCount: githubPullRequestsPendingCount,
-  canRun: () => githubTimelineActivated.value,
-  isCurrent: (task) => task.generation === githubTimelineGeneration,
-  worker: processGitHubTimelinePullRequestTask,
-});
-const githubTimelineWorkflowTasks = createConcurrentTaskQueue<GitHubTimelineWorkflowTask>({
-  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
-  key: (task) => task.repo.fullName,
-  loading: githubWorkflowRunsLoading,
-  pendingCount: githubWorkflowRunsPendingCount,
-  canRun: () => githubTimelineActivated.value,
-  isCurrent: (task) => task.generation === githubTimelineGeneration,
-  worker: processGitHubTimelineWorkflowTask,
-});
-const githubTimelineReleaseTasks = createConcurrentTaskQueue<GitHubTimelineReleaseTask>({
-  concurrency: GITHUB_TIMELINE_FETCH_CONCURRENCY,
-  key: (task) => task.repo.fullName,
-  loading: githubReleasesLoading,
-  pendingCount: githubReleasesPendingCount,
-  canRun: () => githubTimelineActivated.value,
-  isCurrent: (task) => task.generation === githubTimelineGeneration,
-  worker: processGitHubTimelineReleaseTask,
-});
-
+let githubPendingGeneration = 0;
 watch(
   () => repoStatusRows.value.length,
   (length, previousLength) => {
@@ -407,11 +286,9 @@ watch(
 );
 
 onUnmounted(() => {
-  githubTimelineGeneration += 1;
+  githubPendingGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
-  clearGitHubTimelineActivationHooks();
-  resetGitHubTimelineQueues();
 });
 
 watch(
@@ -475,8 +352,7 @@ function applyGitHubRepoPage(
   refreshIssues = false,
 ) {
   if (!append || refreshIssues) {
-    githubTimelineGeneration += 1;
-    resetGitHubTimelineQueues();
+    githubPendingGeneration += 1;
   }
   githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
   githubReposNextPage.value = page.nextPage;
@@ -500,9 +376,8 @@ function restoreGitHubOverviewSnapshot() {
   githubReposNextPage.value = snapshot.nextPage;
   githubIssuesByRepo.value = snapshot.issuesByRepo;
   githubPullRequestsByRepo.value = snapshot.pullRequestsByRepo;
-  githubPullRequestChecksByRepo.value = snapshot.pullRequestChecksByRepo;
   githubWorkflowRunsByRepo.value = snapshot.workflowRunsByRepo;
-  githubReleasesByRepo.value = snapshot.releasesByRepo;
+  githubActionNotificationsByRepo.value = snapshot.actionNotificationsByRepo;
   githubReposError.value = null;
   prepareGitHubTimeline(snapshot.repos);
   return snapshot;
@@ -517,188 +392,148 @@ function writeGitHubOverviewSnapshot() {
     nextPage: githubReposNextPage.value,
     issuesByRepo: githubIssuesByRepo.value,
     pullRequestsByRepo: githubPullRequestsByRepo.value,
-    pullRequestChecksByRepo: githubPullRequestChecksByRepo.value,
+    pullRequestChecksByRepo: {},
     workflowRunsByRepo: githubWorkflowRunsByRepo.value,
-    releasesByRepo: githubReleasesByRepo.value,
+    actionNotificationsByRepo: githubActionNotificationsByRepo.value,
+    releasesByRepo: {},
   });
 }
 
 function githubRepoLoadErrorMessage(err: unknown) {
   if (isGitHubBindingExpiredError(err)) {
-    clearGitHubTimelineIssueCache();
-    clearGitHubTimelinePullRequests();
-    clearGitHubTimelineWorkflowRuns();
-    clearGitHubTimelineReleases();
+    clearGitHubPendingItems();
     return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
   }
   return `GitHub 仓库列表加载失败：${String(err)}`;
 }
 
-function loadGitHubTimelineReleases(
-  repos: GitHubRepoSummary[],
-  refresh = false,
-) {
-  let nextReleasesByRepo = { ...githubReleasesByRepo.value };
-  if (refresh) {
-    for (const repo of repos) {
-      delete nextReleasesByRepo[repo.fullName];
-    }
-  }
-  githubReleasesByRepo.value = nextReleasesByRepo;
-  writeGitHubOverviewSnapshot();
-  const missingRepos = repos.filter((repo) => nextReleasesByRepo[repo.fullName] == null);
-  enqueueGitHubTimelineReleaseRepos(missingRepos);
-}
+async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh = false) {
+  if (!repos.length) return;
+  const alreadyLoaded = repos.every((repo) =>
+    githubIssuesByRepo.value[repo.fullName] != null &&
+    githubPullRequestsByRepo.value[repo.fullName] != null
+  );
+  if (!refresh && alreadyLoaded) return;
 
-async function fetchGitHubTimelineReleases(
-  repo: GitHubRepoSummary,
-): Promise<readonly [string, GitHubRelease[]]> {
+  const generation = githubPendingGeneration;
+  githubAccountIssuesLoading.value = true;
   try {
-    const releases = await listGitHubReleases(repo.fullName);
-    return [repo.fullName, releases.map(cloneRelease)] as const;
-  } catch (err) {
-    if (isGitHubBindingExpiredError(err)) clearGitHubTimelineReleases();
-    return [repo.fullName, []] as const;
-  }
-}
-
-function loadGitHubTimelineWorkflowRuns(
-  repos: GitHubRepoSummary[],
-  refresh = false,
-) {
-  let nextWorkflowRunsByRepo = { ...githubWorkflowRunsByRepo.value };
-  if (refresh) {
-    for (const repo of repos) {
-      delete nextWorkflowRunsByRepo[repo.fullName];
-    }
-  }
-  githubWorkflowRunsByRepo.value = nextWorkflowRunsByRepo;
-  writeGitHubOverviewSnapshot();
-  const missingRepos = repos.filter((repo) => nextWorkflowRunsByRepo[repo.fullName] == null);
-  enqueueGitHubTimelineWorkflowRepos(missingRepos);
-}
-
-async function fetchGitHubTimelineWorkflowRuns(
-  repo: GitHubRepoSummary,
-): Promise<readonly [string, GitHubWorkflowRun[]]> {
-  try {
-    const runs = await listGitHubWorkflowRuns(repo.fullName, GITHUB_TIMELINE_WORKFLOW_RUNS_PER_REPO);
-    return [repo.fullName, runs.map(cloneWorkflowRun)] as const;
-  } catch (err) {
-    if (isGitHubBindingExpiredError(err)) clearGitHubTimelineWorkflowRuns();
-    return [repo.fullName, []] as const;
-  }
-}
-
-function loadGitHubTimelinePullRequests(
-  repos: GitHubRepoSummary[],
-  refresh = false,
-) {
-  const since = gitHubTimelineIssueSince();
-  let nextPullRequestsByRepo = { ...githubPullRequestsByRepo.value };
-  let nextPullRequestChecksByRepo = { ...githubPullRequestChecksByRepo.value };
-  if (refresh) {
-    for (const repo of repos) {
-      delete nextPullRequestsByRepo[repo.fullName];
-      delete nextPullRequestChecksByRepo[repo.fullName];
-    }
-  }
-  githubPullRequestsByRepo.value = nextPullRequestsByRepo;
-  githubPullRequestChecksByRepo.value = nextPullRequestChecksByRepo;
-  writeGitHubOverviewSnapshot();
-  const missingRepos = repos.filter((repo) => nextPullRequestsByRepo[repo.fullName] == null);
-  enqueueGitHubTimelinePullRequestRepos(missingRepos, since);
-}
-
-async function fetchGitHubTimelinePullRequests(
-  repo: GitHubRepoSummary,
-  since: string,
-): Promise<readonly [string, GitHubPullRequest[], Record<number, GitHubPullRequestCheck[]>]> {
-  try {
-    const pullRequests = filterRecentGitHubPullRequests(
-      await listGitHubPullRequests(repo.fullName, "all"),
-      since,
-    ).slice(0, GITHUB_TIMELINE_PULL_REQUESTS_PER_REPO);
-    const checkEntries = await Promise.all(
-      pullRequests.map(async (pullRequest) => {
-        try {
-          const checks = await listGitHubPullRequestChecks(repo.fullName, pullRequest.number);
-          return [pullRequest.number, checks.map((check) => ({ ...check }))] as const;
-        } catch {
-          return [pullRequest.number, []] as const;
-        }
-      }),
-    );
-    return [repo.fullName, pullRequests, Object.fromEntries(checkEntries)] as const;
-  } catch (err) {
-    if (isGitHubBindingExpiredError(err)) clearGitHubTimelinePullRequests();
-    return [repo.fullName, [], {}] as const;
-  }
-}
-
-function loadGitHubTimelineIssues(
-  repos: GitHubRepoSummary[],
-  refresh = false,
-) {
-  const since = gitHubTimelineIssueSince();
-  const now = Date.now();
-  const cache = readGitHubTimelineIssueCache();
-  let nextIssuesByRepo = { ...githubIssuesByRepo.value };
-  if (refresh) {
-    for (const repo of repos) {
-      delete nextIssuesByRepo[repo.fullName];
-      delete cache[repo.fullName];
-    }
-  }
-  for (const repo of repos) {
-    if (nextIssuesByRepo[repo.fullName] != null) continue;
-    const cached = cache[repo.fullName];
-    if (cached && isGitHubTimelineIssueCacheFresh(cached, now)) {
-      nextIssuesByRepo[repo.fullName] = filterRecentGitHubIssues(cached.issues, since);
-    }
-  }
-  githubIssuesByRepo.value = nextIssuesByRepo;
-  writeGitHubOverviewSnapshot();
-  const missingRepos = repos.filter((repo) => nextIssuesByRepo[repo.fullName] == null);
-  enqueueGitHubTimelineIssueRepos(missingRepos, since, cache);
-}
-
-async function fetchGitHubTimelineIssues(
-  repo: GitHubRepoSummary,
-  since: string,
-): Promise<readonly [string, GitHubIssue[]]> {
-  try {
-    const issues = await listGitHubIssues(repo.fullName, {
-      state: "all",
-      perPage: GITHUB_TIMELINE_ISSUES_PER_REPO,
+    const items = await listGitHubAccountIssues({
+      state: "open",
+      perPage: GITHUB_ACCOUNT_ISSUES_PER_PAGE,
       sort: "updated",
       direction: "desc",
-      since,
-    });
-    return [repo.fullName, filterRecentGitHubIssues(issues, since)] as const;
+    }, { forceRefresh: refresh });
+    if (generation !== githubPendingGeneration) return;
+    const grouped = groupAccountIssuesByRepo(items, repos);
+    githubIssuesByRepo.value = replaceReposByFullName(githubIssuesByRepo.value, repos, grouped.issues);
+    githubPullRequestsByRepo.value = replaceReposByFullName(
+      githubPullRequestsByRepo.value,
+      repos,
+      grouped.pullRequests,
+    );
+    writeGitHubOverviewSnapshot();
   } catch (err) {
-    if (isGitHubBindingExpiredError(err)) clearGitHubTimelineIssueCache();
-    return [repo.fullName, []] as const;
+    if (isGitHubBindingExpiredError(err)) clearGitHubPendingItems();
+  } finally {
+    if (generation === githubPendingGeneration) {
+      githubAccountIssuesLoading.value = false;
+    }
   }
 }
 
-function gitHubTimelineIssueSince() {
-  return new Date(Date.now() - GITHUB_TIMELINE_ISSUE_WINDOW_MS).toISOString();
+async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], refresh = false) {
+  if (!repos.length) return;
+  const alreadyLoaded = repos.every((repo) => githubActionNotificationsByRepo.value[repo.fullName] != null);
+  if (!refresh && alreadyLoaded) return;
+
+  const generation = githubPendingGeneration;
+  githubActionNotificationsLoading.value = true;
+  try {
+    const notifications = await listGitHubActionNotifications(
+      GITHUB_ACTION_NOTIFICATIONS_PER_PAGE,
+      { forceRefresh: refresh },
+    );
+    if (generation !== githubPendingGeneration) return;
+    githubActionNotificationsByRepo.value = replaceReposByFullName(
+      githubActionNotificationsByRepo.value,
+      repos,
+      groupActionNotificationsByRepo(notifications, repos),
+    );
+    writeGitHubOverviewSnapshot();
+  } catch (err) {
+    if (isGitHubBindingExpiredError(err)) clearGitHubPendingItems();
+  } finally {
+    if (generation === githubPendingGeneration) {
+      githubActionNotificationsLoading.value = false;
+    }
+  }
 }
 
-function filterRecentGitHubIssues(issues: readonly GitHubIssue[], since: string) {
-  const sinceTimestamp = parseGitHubTime(since);
-  return issues
-    .filter((issue) => parseGitHubTime(issue.updatedAt) >= sinceTimestamp)
-    .map(cloneGitHubIssue);
+function groupAccountIssuesByRepo(items: readonly GitHubAccountIssueItem[], repos: readonly GitHubRepoSummary[]) {
+  const repoNames = new Set(repos.map((repo) => repo.fullName));
+  const issues: Record<string, GitHubIssue[]> = {};
+  const pullRequests: Record<string, GitHubPullRequest[]> = {};
+  for (const item of items) {
+    if (!repoNames.has(item.repoFullName)) continue;
+    if (item.pullRequest) {
+      (pullRequests[item.repoFullName] ??= []).push(accountIssueItemToPullRequest(item));
+    } else {
+      (issues[item.repoFullName] ??= []).push(cloneGitHubIssue(item.issue));
+    }
+  }
+  return { issues, pullRequests };
 }
 
-function filterRecentGitHubPullRequests(pullRequests: readonly GitHubPullRequest[], since: string) {
-  const sinceTimestamp = parseGitHubTime(since);
-  return pullRequests
-    .filter((pullRequest) => parseGitHubTime(pullRequest.updatedAt) >= sinceTimestamp)
-    .sort((a, b) => parseGitHubTime(b.updatedAt) - parseGitHubTime(a.updatedAt) || b.number - a.number)
-    .map((pullRequest) => ({ ...pullRequest }));
+function groupActionNotificationsByRepo(
+  notifications: readonly GitHubActionNotification[],
+  repos: readonly GitHubRepoSummary[],
+) {
+  const repoNames = new Set(repos.map((repo) => repo.fullName));
+  const byRepo: Record<string, GitHubActionNotification[]> = {};
+  for (const notification of notifications) {
+    if (!repoNames.has(notification.repoFullName)) continue;
+    (byRepo[notification.repoFullName] ??= []).push({ ...notification });
+  }
+  return byRepo;
+}
+
+function replaceReposByFullName<T>(
+  current: Record<string, T[] | undefined>,
+  repos: readonly GitHubRepoSummary[],
+  values: Record<string, T[] | undefined>,
+) {
+  const next = { ...current };
+  for (const repo of repos) {
+    next[repo.fullName] = values[repo.fullName] ?? [];
+  }
+  return next;
+}
+
+function accountIssueItemToPullRequest(item: GitHubAccountIssueItem): GitHubPullRequest {
+  const issue = cloneGitHubIssue(item.issue);
+  return {
+    number: issue.number,
+    title: issue.title,
+    state: issue.state,
+    draft: false,
+    body: issue.body,
+    labels: issue.labels,
+    assignees: issue.assignees,
+    author: issue.author ?? "",
+    milestone: issue.milestone ?? null,
+    comments: issue.comments ?? 0,
+    projectItems: issue.projectItems ?? [],
+    developmentItems: issue.developmentItems ?? [],
+    htmlUrl: issue.htmlUrl,
+    updatedAt: issue.updatedAt,
+    createdAt: issue.createdAt,
+    baseBranch: "",
+    headBranch: "",
+    merged: false,
+    mergeable: null,
+    mergeableState: null,
+  };
 }
 
 function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
@@ -706,326 +541,29 @@ function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
     ...issue,
     labels: [...issue.labels],
     assignees: [...issue.assignees],
+    milestone: issue.milestone ? { ...issue.milestone } : null,
+    projectItems: issue.projectItems?.map((project) => ({ ...project })) ?? [],
+    developmentItems: issue.developmentItems?.map((item) => ({ ...item })) ?? [],
   };
 }
 
-function cloneWorkflowRun(run: GitHubWorkflowRun): GitHubWorkflowRun {
-  return { ...run };
-}
-
-function cloneRelease(release: GitHubRelease): GitHubRelease {
-  return {
-    ...release,
-    assets: release.assets.map((asset) => ({ ...asset })),
-  };
-}
-
-function isGitHubTimelineIssueCacheFresh(entry: GitHubTimelineIssueCacheEntry, now: number) {
-  return Number.isFinite(entry.fetchedAt) &&
-    now - entry.fetchedAt >= 0 &&
-    now - entry.fetchedAt < GITHUB_TIMELINE_ISSUE_CACHE_TTL_MS;
-}
-
-function readGitHubTimelineIssueCache(): GitHubTimelineIssueCache {
-  try {
-    const raw = localStorage.getItem(GITHUB_TIMELINE_ISSUE_CACHE_KEY);
-    if (!raw) return {};
-    return parseGitHubTimelineIssueCache(JSON.parse(raw));
-  } catch {
-    return {};
-  }
-}
-
-function parseGitHubTimelineIssueCache(value: unknown): GitHubTimelineIssueCache {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const entries: GitHubTimelineIssueCache = {};
-  for (const [repoFullName, rawEntry] of Object.entries(value)) {
-    const entry = parseGitHubTimelineIssueCacheEntry(repoFullName, rawEntry);
-    if (entry) entries[repoFullName] = entry;
-  }
-  return entries;
-}
-
-function parseGitHubTimelineIssueCacheEntry(
-  repoFullName: string,
-  value: unknown,
-): GitHubTimelineIssueCacheEntry | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const entry = value as Partial<GitHubTimelineIssueCacheEntry>;
-  if (entry.repoFullName !== repoFullName) return null;
-  if (typeof entry.since !== "string" || typeof entry.fetchedAt !== "number" || !Array.isArray(entry.issues)) {
-    return null;
-  }
-  return {
-    repoFullName,
-    since: entry.since,
-    fetchedAt: entry.fetchedAt,
-    issues: entry.issues
-      .map(parseCachedGitHubIssue)
-      .filter((issue): issue is GitHubIssue => issue != null),
-  };
-}
-
-function parseCachedGitHubIssue(value: unknown): GitHubIssue | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const issue = value as Partial<GitHubIssue>;
-  if (
-    typeof issue.number !== "number" ||
-    typeof issue.title !== "string" ||
-    typeof issue.state !== "string" ||
-    typeof issue.htmlUrl !== "string" ||
-    typeof issue.updatedAt !== "string" ||
-    typeof issue.createdAt !== "string"
-  ) {
-    return null;
-  }
-  return {
-    number: issue.number,
-    title: issue.title,
-    state: issue.state,
-    body: typeof issue.body === "string" || issue.body === null ? issue.body : null,
-    labels: Array.isArray(issue.labels) ? issue.labels.filter((label): label is string => typeof label === "string") : [],
-    assignees: Array.isArray(issue.assignees)
-      ? issue.assignees.filter((assignee): assignee is string => typeof assignee === "string")
-      : [],
-    htmlUrl: issue.htmlUrl,
-    updatedAt: issue.updatedAt,
-    createdAt: issue.createdAt,
-  };
-}
-
-function writeGitHubTimelineIssueCache(
-  cache: GitHubTimelineIssueCache,
-  entries: readonly (readonly [string, GitHubIssue[]])[],
-  since: string,
-) {
-  const next: GitHubTimelineIssueCache = { ...cache };
-  const fetchedAt = Date.now();
-  for (const [repoFullName, issues] of entries) {
-    const entry = {
-      repoFullName,
-      since,
-      fetchedAt,
-      issues: issues.map(cloneGitHubIssue),
-    };
-    next[repoFullName] = entry;
-    cache[repoFullName] = entry;
-  }
-  try {
-    localStorage.setItem(GITHUB_TIMELINE_ISSUE_CACHE_KEY, JSON.stringify(next));
-  } catch {
-    /* ignore quota / privacy mode errors */
-  }
-}
-
-function clearGitHubTimelineIssueCache() {
+function clearGitHubPendingItems() {
   githubIssuesByRepo.value = {};
-  clearHomeGitHubOverviewSnapshot();
-  try {
-    localStorage.removeItem(GITHUB_TIMELINE_ISSUE_CACHE_KEY);
-  } catch {
-    /* ignore storage errors */
-  }
-}
-
-function clearGitHubTimelinePullRequests() {
   githubPullRequestsByRepo.value = {};
-  githubPullRequestChecksByRepo.value = {};
-  clearHomeGitHubOverviewSnapshot();
-}
-
-function clearGitHubTimelineWorkflowRuns() {
-  githubWorkflowRunsByRepo.value = {};
-  clearHomeGitHubOverviewSnapshot();
-}
-
-function clearGitHubTimelineReleases() {
-  githubReleasesByRepo.value = {};
+  githubActionNotificationsByRepo.value = {};
   clearHomeGitHubOverviewSnapshot();
 }
 
 function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   const timelineRepos = repos.filter(repoIncludedInHomeTimeline);
-  loadGitHubTimelineIssues(timelineRepos, refresh);
-  loadGitHubTimelinePullRequests(timelineRepos, refresh);
-  loadGitHubTimelineWorkflowRuns(timelineRepos, refresh);
-  loadGitHubTimelineReleases(timelineRepos, refresh);
-  if (githubTimelineActivated.value) {
-    drainGitHubTimelineQueues();
-    return;
-  }
-  scheduleGitHubTimelineActivation();
+  void loadHomePendingAccountIssues(timelineRepos, refresh);
+  void loadHomePendingActionNotifications(timelineRepos, refresh);
 }
 
 function repoIncludedInHomeTimeline(repo: GitHubRepoSummary) {
   if (repo.disabled) return false;
   const localRepo = localRepoByGitHubFullName.value.get(repo.fullName) ?? null;
   return !localRepo || repoCalculatesHomeTimeline(workspace.state.settings, localRepo.id);
-}
-
-function enqueueGitHubTimelineIssueRepos(
-  repos: GitHubRepoSummary[],
-  since: string,
-  cache: GitHubTimelineIssueCache,
-) {
-  githubTimelineIssueTasks.enqueue(repos.map((repo) => ({
-    repo,
-    generation: githubTimelineGeneration,
-    since,
-    cache,
-  })));
-}
-
-function enqueueGitHubTimelinePullRequestRepos(
-  repos: GitHubRepoSummary[],
-  since: string,
-) {
-  githubTimelinePullRequestTasks.enqueue(repos.map((repo) => ({
-    repo,
-    generation: githubTimelineGeneration,
-    since,
-  })));
-}
-
-function enqueueGitHubTimelineWorkflowRepos(repos: GitHubRepoSummary[]) {
-  githubTimelineWorkflowTasks.enqueue(repos.map((repo) => ({
-    repo,
-    generation: githubTimelineGeneration,
-  })));
-}
-
-function enqueueGitHubTimelineReleaseRepos(repos: GitHubRepoSummary[]) {
-  githubTimelineReleaseTasks.enqueue(repos.map((repo) => ({
-    repo,
-    generation: githubTimelineGeneration,
-  })));
-}
-
-async function processGitHubTimelinePullRequestTask(task: GitHubTimelinePullRequestTask) {
-  const [repoFullName, pullRequests, checksByPull] = await fetchGitHubTimelinePullRequests(task.repo, task.since);
-  if (task.generation !== githubTimelineGeneration) return;
-  githubPullRequestsByRepo.value = {
-    ...githubPullRequestsByRepo.value,
-    [repoFullName]: pullRequests,
-  };
-  githubPullRequestChecksByRepo.value = {
-    ...githubPullRequestChecksByRepo.value,
-    [repoFullName]: checksByPull,
-  };
-  writeGitHubOverviewSnapshot();
-}
-
-async function processGitHubTimelineIssueTask(task: GitHubTimelineIssueTask) {
-  const [repoFullName, issues] = await fetchGitHubTimelineIssues(task.repo, task.since);
-  if (task.generation !== githubTimelineGeneration) return;
-  githubIssuesByRepo.value = {
-    ...githubIssuesByRepo.value,
-    [repoFullName]: issues,
-  };
-  writeGitHubOverviewSnapshot();
-  writeGitHubTimelineIssueCache(task.cache, [[repoFullName, issues]], task.since);
-}
-
-async function processGitHubTimelineWorkflowTask(task: GitHubTimelineWorkflowTask) {
-  const [repoFullName, runs] = await fetchGitHubTimelineWorkflowRuns(task.repo);
-  if (task.generation !== githubTimelineGeneration) return;
-  githubWorkflowRunsByRepo.value = {
-    ...githubWorkflowRunsByRepo.value,
-    [repoFullName]: runs,
-  };
-  writeGitHubOverviewSnapshot();
-}
-
-async function processGitHubTimelineReleaseTask(task: GitHubTimelineReleaseTask) {
-  const [repoFullName, releases] = await fetchGitHubTimelineReleases(task.repo);
-  if (task.generation !== githubTimelineGeneration) return;
-  githubReleasesByRepo.value = {
-    ...githubReleasesByRepo.value,
-    [repoFullName]: releases,
-  };
-  writeGitHubOverviewSnapshot();
-}
-
-function drainGitHubTimelineQueues() {
-  githubTimelineIssueTasks.drain();
-  githubTimelinePullRequestTasks.drain();
-  githubTimelineWorkflowTasks.drain();
-  githubTimelineReleaseTasks.drain();
-}
-
-function scheduleGitHubTimelineActivation() {
-  if (githubTimelineActivated.value || githubTimelineActivationQueued) return;
-  if (
-    !githubIssuesPendingCount.value &&
-    !githubPullRequestsPendingCount.value &&
-    !githubWorkflowRunsPendingCount.value &&
-    !githubReleasesPendingCount.value
-  ) return;
-  githubTimelineActivationQueued = true;
-  void nextTick(() => {
-    githubTimelineActivationQueued = false;
-    if (githubTimelineActivated.value) return;
-    if (
-      !githubIssuesPendingCount.value &&
-      !githubPullRequestsPendingCount.value &&
-      !githubWorkflowRunsPendingCount.value &&
-      !githubReleasesPendingCount.value
-    ) return;
-    if (typeof window === "undefined" || typeof document === "undefined") {
-      activateGitHubTimeline();
-      return;
-    }
-    clearGitHubTimelineActivationHooks();
-    const card = githubTimelineCard.value;
-    const scrollRoot = document.querySelector(".shell__main");
-    const hasVisibilityObserver = typeof IntersectionObserver === "function" && card && scrollRoot instanceof Element;
-    if (hasVisibilityObserver) {
-      githubTimelineObserver = new IntersectionObserver((entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        activateGitHubTimeline();
-      }, {
-        root: scrollRoot,
-      });
-      githubTimelineObserver.observe(card);
-    }
-    const idleWindow = window as IdleRequestWindow;
-    if (typeof idleWindow.requestIdleCallback === "function") {
-      githubTimelineIdleHandle = idleWindow.requestIdleCallback(() => activateGitHubTimeline());
-      return;
-    }
-    if (!hasVisibilityObserver) {
-      queueMicrotask(() => activateGitHubTimeline());
-      return;
-    }
-    githubTimelineIdleFallbackTimer = window.setTimeout(() => activateGitHubTimeline(), 0);
-  });
-}
-
-function activateGitHubTimeline() {
-  clearGitHubTimelineActivationHooks();
-  githubTimelineActivated.value = true;
-  drainGitHubTimelineQueues();
-}
-
-function clearGitHubTimelineActivationHooks() {
-  githubTimelineObserver?.disconnect();
-  githubTimelineObserver = null;
-  const idleWindow = typeof window === "undefined" ? null : window as IdleRequestWindow;
-  if (idleWindow && githubTimelineIdleHandle != null && typeof idleWindow.cancelIdleCallback === "function") {
-    idleWindow.cancelIdleCallback(githubTimelineIdleHandle);
-  }
-  githubTimelineIdleHandle = null;
-  if (typeof window !== "undefined" && githubTimelineIdleFallbackTimer != null) {
-    window.clearTimeout(githubTimelineIdleFallbackTimer);
-  }
-  githubTimelineIdleFallbackTimer = null;
-}
-
-function resetGitHubTimelineQueues() {
-  githubTimelineIssueTasks.reset();
-  githubTimelinePullRequestTasks.reset();
-  githubTimelineWorkflowTasks.reset();
-  githubTimelineReleaseTasks.reset();
 }
 
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
@@ -1096,6 +634,11 @@ function repoAction(repo: RepoSummary): RepoAction | null {
   return null;
 }
 
+function repoSyncIssueForTimeline(githubRepo: GitHubRepoSummary) {
+  const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
+  return localRepo ? repoSyncIssueForRepo(localRepo.id) : null;
+}
+
 function focusedWorkflowRun(runs: readonly GitHubWorkflowRun[]): WorkflowRunOverview | null {
   return runs
     .map(workflowRunOverview)
@@ -1117,257 +660,44 @@ function workflowRunOverview(run: GitHubWorkflowRun): WorkflowRunOverview {
   };
 }
 
-function pullRequestStatusText(pullRequest: GitHubPullRequest) {
-  if (pullRequest.merged) return "已合并";
-  if (pullRequest.draft) return "草稿";
-  if (pullRequest.state === "closed") return "已关闭";
-  return "打开";
-}
-
-function pullRequestChecksOverview(checks: readonly GitHubPullRequestCheck[]): { detail: string; tone?: WorkflowRunTone } {
-  if (!checks.length) return { detail: "无 checks", tone: "muted" };
-  const pending = checks.filter((check) => check.status !== "completed");
-  if (pending.length) {
-    return { detail: `Checks 运行中：${formatCheckNames(pending)}`, tone: "warn" };
-  }
-  const failed = checks.filter((check) => !isSuccessfulPullRequestCheck(check));
-  if (failed.length) {
-    return { detail: `Checks 失败：${formatCheckNames(failed)}`, tone: "error" };
-  }
-  return { detail: `Checks 通过：${checks.length} 项`, tone: "ok" };
-}
-
-function isSuccessfulPullRequestCheck(check: GitHubPullRequestCheck) {
-  return check.conclusion === "success" || check.conclusion === "neutral" || check.conclusion === "skipped";
-}
-
-function formatCheckNames(checks: readonly GitHubPullRequestCheck[]) {
-  const names = checks.map((check) => check.name).filter(Boolean).slice(0, 2);
-  const suffix = checks.length > names.length ? ` 等 ${checks.length} 项` : "";
-  return `${names.join("、") || `${checks.length} 项`}${suffix}`;
-}
-
-function releaseStatusText(release: GitHubRelease) {
-  if (release.draft) return "草稿";
-  if (release.prerelease) return "预发布";
-  return "正式发布";
-}
-
-function releaseSummary(repoFullName: string, release: GitHubRelease) {
-  const parts = [repoFullName, releaseStatusText(release)];
-  if (release.assets.length > 0) parts.push(`${release.assets.length} 个附件`);
-  return parts.join(" · ");
-}
-
-function buildGitHubTimelineEvents(row: GitHubTimelineRepoSource): GitHubTimelineEvent[] {
-  const { githubRepo, localRepo } = row;
-  const events: GitHubTimelineEvent[] = [];
-  addTimelineEvent(events, {
-    id: `repo-created:${githubRepo.fullName}`,
-    kind: "repo",
-    title: "创建仓库",
-    detail: githubRepo.fullName,
-    summary: githubRepo.private ? "私有 GitHub 仓库" : "公开 GitHub 仓库",
-    timestamp: parseGitHubTime(githubRepo.createdAt),
-    href: githubRepo.htmlUrl,
-  });
-
-  if (localRepo?.lastCommitAt) {
-    addTimelineEvent(events, {
-      id: `commit:${localRepo.id}:${localRepo.lastCommitAt}`,
-      kind: "commit",
-      title: "提交",
-      detail: localRepo.lastCommitMessage ?? "最近一次本地提交",
-      summary: githubRepo.fullName,
-      timestamp: localRepo.lastCommitAt * 1000,
-      href: repoDetailPath(localRepo),
-    });
-  }
-
-  const syncError = localRepo ? syncErrorDetails.value.get(localRepo.id) : null;
-  if (localRepo && syncError) {
-    addTimelineEvent(events, {
-      id: `operation-sync-error:${localRepo.id}`,
-      kind: "operation",
-      title: "仓库操作失败",
-      detail: syncError.message,
-      summary: githubRepo.fullName,
-      timestamp: syncError.updatedAt,
-      href: repoDetailPath(localRepo),
-    });
-  }
-
-  const repoActionError = localRepo ? repoActionErrorDetailForRepo(localRepo.id) : null;
-  if (localRepo && repoActionError) {
-    addTimelineEvent(events, {
-      id: `operation-error:${localRepo.id}`,
-      kind: "operation",
-      title: "仓库操作失败",
-      detail: repoActionError.message,
-      summary: githubRepo.fullName,
-      timestamp: repoActionError.updatedAt,
-      href: repoDetailPath(localRepo),
-    });
-  }
-
-  if (localRepo && (localRepo.ahead > 0 || localRepo.behind > 0)) {
-    addTimelineEvent(events, {
-      id: `operation-sync-state:${localRepo.id}:${localRepo.ahead}:${localRepo.behind}`,
-      kind: "operation",
-      title: "仓库同步状态",
-      detail: `待处理提交 ↑${localRepo.ahead} / ↓${localRepo.behind}`,
-      summary: githubRepo.fullName,
-      timestamp: parseGitHubTime(githubRepo.updatedAt),
-      href: repoDetailPath(localRepo),
-    });
-  }
-
-  for (const issue of githubIssuesByRepo.value[githubRepo.fullName] ?? []) {
-    const href = localRepo
-      ? repoProjectPath(localRepo, "issues", issue.number)
-      : remoteRepoProjectPath(githubRepo, "issues", issue.number);
-    addTimelineEvent(events, {
-      id: `issue-created:${githubRepo.fullName}:${issue.number}`,
-      kind: "issue",
-      title: `Issue #${issue.number}`,
-      detail: issue.title,
-      summary: githubRepo.fullName,
-      timestamp: parseGitHubTime(issue.updatedAt),
-      href,
-      preload: () => preloadIssueDeepLink(githubRepo.fullName, issue),
-    });
-  }
-
-  for (const pullRequest of githubPullRequestsByRepo.value[githubRepo.fullName] ?? []) {
-    const href = localRepo
-      ? repoProjectPath(localRepo, "pulls", pullRequest.number)
-      : remoteRepoProjectPath(githubRepo, "pulls", pullRequest.number);
-    const checksOverview = pullRequestChecksOverview(
-      githubPullRequestChecksByRepo.value[githubRepo.fullName]?.[pullRequest.number] ?? [],
-    );
-    addTimelineEvent(events, {
-      id: `pull-request:${githubRepo.fullName}:${pullRequest.number}`,
-      kind: "pull",
-      title: `PR #${pullRequest.number}`,
-      detail: pullRequest.title,
-      summary: `${githubRepo.fullName} · ${pullRequestStatusText(pullRequest)} · ${checksOverview.detail}`,
-      timestamp: parseGitHubTime(pullRequest.updatedAt),
-      href,
-      preload: () => preloadPullRequestDeepLink(githubRepo.fullName, pullRequest),
-      tone: checksOverview.tone,
-    });
-  }
-
-  for (const run of githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []) {
-    const overview = workflowRunOverview(run);
-    const href = localRepo
-      ? repoProjectPath(localRepo, "actions", run.id)
-      : remoteRepoProjectPath(githubRepo, "actions", run.id);
-    addTimelineEvent(events, {
-      id: `workflow:${githubRepo.fullName}:${run.id}`,
-      kind: "workflow",
-      title: overview.status,
-      detail: run.displayTitle,
-      summary: `${githubRepo.fullName} · ${overview.detail} · ${run.event}`,
-      timestamp: parseGitHubTime(run.updatedAt),
-      href,
-      preload: () => preloadWorkflowRunDeepLink(githubRepo.fullName),
-      tone: overview.tone,
-    });
-  }
-
-  for (const release of githubReleasesByRepo.value[githubRepo.fullName] ?? []) {
-    const href = localRepo
-      ? repoProjectPath(localRepo, "release", null, release.tagName)
-      : remoteRepoProjectPath(githubRepo, "release", null, release.tagName);
-    addTimelineEvent(events, {
-      id: `release:${githubRepo.fullName}:${release.id}`,
-      kind: "release",
-      title: `Release ${release.tagName}`,
-      detail: release.name?.trim() || release.tagName,
-      summary: releaseSummary(githubRepo.fullName, release),
-      timestamp: parseGitHubTime(release.publishedAt ?? release.createdAt),
-      href,
-      preload: () => preloadReleaseDeepLink(githubRepo.fullName),
-    });
-  }
-
-  return events;
-}
-
-function addTimelineEvent(events: GitHubTimelineEvent[], event: GitHubTimelineEvent) {
-  if (!Number.isFinite(event.timestamp) || event.timestamp <= 0) return;
-  events.push(event);
-}
-
-function toGitHubTimelineDisplayNode(event: GitHubTimelineEvent): TimelineDisplayNode {
+function toHomePendingDisplayNode(item: HomePendingItem): TimelineDisplayNode {
   return {
-    id: event.id,
-    icon: gitHubTimelineEventIcon(event.kind),
-    title: event.title,
-    detail: event.detail,
-    summary: event.summary,
-    timestamp: event.timestamp,
-    link: timelineNodeLink(event.href, event.preload),
-    tone: event.tone,
+    id: item.id,
+    icon: homePendingItemIcon(item.kind),
+    title: item.title,
+    detail: item.detail,
+    summary: item.summary,
+    timestamp: item.timestamp,
+    link: homePendingItemLink(item),
+    tone: item.tone,
   };
 }
 
-function preloadIssueDeepLink(repoFullName: string, issue: GitHubIssue) {
-  const states = issue.state === "open" ? ["open"] : ["open", "all"];
-  return Promise.allSettled([
-    preloadRepoProjectSection("issues"),
-    ...states.map((state) => listGitHubIssues(repoFullName, {
-      state,
-      perPage: 100,
-      sort: "created",
-      direction: "desc",
-    })),
-    getGitHubIssueDiscussion(repoFullName, issue.number),
-  ]);
+function homePendingItemLink(item: HomePendingItem): TimelineNodeLink {
+  const target = item.target;
+  if (target.kind === "repo") return timelineNodeLink(repoDetailPath({ id: target.repoId }));
+  if (target.kind === "issue") {
+    const href = target.localRepoId
+      ? repoProjectPath({ id: target.localRepoId }, "issues", target.number)
+      : remoteRepoProjectPath({ fullName: target.repoFullName }, "issues", target.number);
+    return timelineNodeLink(href);
+  }
+  if (target.kind === "pull") {
+    const href = target.localRepoId
+      ? repoProjectPath({ id: target.localRepoId }, "pulls", target.number)
+      : remoteRepoProjectPath({ fullName: target.repoFullName }, "pulls", target.number);
+    return timelineNodeLink(href);
+  }
+  const href = target.localRepoId
+    ? repoProjectPath({ id: target.localRepoId }, "actions", target.runId)
+    : remoteRepoProjectPath({ fullName: target.repoFullName }, "actions", target.runId);
+  return timelineNodeLink(href);
 }
 
-function preloadPullRequestDeepLink(repoFullName: string, pullRequest: GitHubPullRequest) {
-  const states = pullRequest.merged
-    ? ["open", "merged"]
-    : pullRequest.state === "closed"
-      ? ["open", "closed"]
-      : ["open"];
-  return Promise.allSettled([
-    preloadRepoProjectSection("pulls"),
-    ...states.map((state) => listGitHubPullRequests(repoFullName, {
-      state,
-      perPage: 100,
-      sort: "updated",
-      direction: "desc",
-    })),
-    listGitHubPullRequestChecks(repoFullName, pullRequest.number),
-    getGitHubPullRequestDiscussion(repoFullName, pullRequest.number),
-  ]);
-}
-
-function preloadWorkflowRunDeepLink(repoFullName: string) {
-  return Promise.allSettled([
-    preloadRepoProjectSection("actions"),
-    listGitHubWorkflowRuns(repoFullName, 20),
-    listGitHubReleases(repoFullName),
-  ]);
-}
-
-function preloadReleaseDeepLink(repoFullName: string) {
-  return Promise.allSettled([
-    preloadRepoProjectSection("release"),
-    listGitHubReleases(repoFullName),
-  ]);
-}
-
-function gitHubTimelineEventIcon(kind: GitHubTimelineEvent["kind"]) {
-  if (kind === "repo") return FolderGit2;
-  if (kind === "commit") return GitCommitHorizontal;
+function homePendingItemIcon(kind: HomePendingItem["kind"]) {
   if (kind === "issue") return CircleDot;
   if (kind === "pull") return GitPullRequestArrow;
   if (kind === "workflow") return RotateCw;
-  if (kind === "release") return Tag;
   return RefreshCw;
 }
 
@@ -2011,10 +1341,10 @@ function bulkOperationDescription(operation: BulkOperation) {
       </div>
 
       <div class="repo-overview-grid">
-        <div ref="githubTimelineCard" class="card github-timeline-card">
+        <div class="card github-timeline-card">
           <div class="repo-status-heading">
             <h2>
-              GitHub 时间线
+              待处理事项
               <LoaderCircle
                 v-if="githubTimelineBusy"
                 :size="13"
@@ -2025,13 +1355,18 @@ function bulkOperationDescription(operation: BulkOperation) {
           </div>
           <div class="home-scroll-card__body">
             <p
-              v-if="githubTimelineBusy && !githubTimelineNodes.length"
+              v-if="githubTimelineBusy && !homePendingNodes.length"
               class="repo-status-empty"
             >
-              {{ githubTimelineWaitingForActivation ? "正在准备 GitHub 时间线..." : "正在加载 GitHub 时间线..." }}
+              正在加载待处理事项...
             </p>
-            <p v-else-if="!githubTimelineNodes.length" class="repo-status-empty">暂无 GitHub 事件</p>
-            <GitHubTimelineList v-else :nodes="githubTimelineNodes" :format-time="formatTimelineTime" />
+            <p v-else-if="!homePendingNodes.length" class="repo-status-empty">暂无待处理事项</p>
+            <GitHubTimelineList
+              v-else
+              :nodes="homePendingNodes"
+              :format-time="formatTimelineTime"
+              aria-label="待处理事项列表"
+            />
           </div>
         </div>
 
