@@ -39,13 +39,20 @@ pub(super) fn repo_file_entries(
         let right_kind = right.kind == "dir";
         right_kind
             .cmp(&left_kind)
-            .then_with(|| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()))
+            .then_with(|| {
+                left.name
+                    .to_ascii_lowercase()
+                    .cmp(&right.name.to_ascii_lowercase())
+            })
             .then_with(|| left.name.cmp(&right.name))
     });
     Ok(entries)
 }
 
-pub(super) fn repo_file_preview(repo_path: &Path, file_path: &str) -> Result<RepoFilePreview, String> {
+pub(super) fn repo_file_preview(
+    repo_path: &Path,
+    file_path: &str,
+) -> Result<RepoFilePreview, String> {
     let file_path = safe_repo_file_path(repo_path, file_path.trim())?;
     if !file_path.exists() || !file_path.is_file() {
         return Err(format!("未找到文件：{}", file_path.display()));
@@ -76,7 +83,8 @@ pub(super) fn repo_file_preview(repo_path: &Path, file_path: &str) -> Result<Rep
     let bytes = fs::read(&file_path)
         .map_err(|err| format!("读取文件失败：{}（{err}）", file_path.display()))?;
     if is_markdown_path(&file_path) {
-        let content = decode_text_preview(&bytes).ok_or_else(|| format!("Markdown 文件不是 UTF-8：{}", file_path.display()))?;
+        let content = decode_text_preview(&bytes)
+            .ok_or_else(|| format!("Markdown 文件不是 UTF-8：{}", file_path.display()))?;
         let readme_dir = file_path.parent().unwrap_or(repo_path);
         return Ok(RepoFilePreview {
             path: relative_path,
@@ -97,7 +105,10 @@ pub(super) fn repo_file_preview(repo_path: &Path, file_path: &str) -> Result<Rep
             name,
             preview_kind: "image".to_string(),
             content: None,
-            data_url: Some(format!("data:{image_mime};base64,{}", STANDARD.encode(bytes))),
+            data_url: Some(format!(
+                "data:{image_mime};base64,{}",
+                STANDARD.encode(bytes)
+            )),
             images: HashMap::new(),
             size: metadata.len(),
             mime_type: Some(image_mime.to_string()),
@@ -114,7 +125,9 @@ pub(super) fn repo_file_preview(repo_path: &Path, file_path: &str) -> Result<Rep
             data_url: None,
             images: HashMap::new(),
             size: metadata.len(),
-            mime_type: mime.map(str::to_string).or_else(|| Some("text/plain".to_string())),
+            mime_type: mime
+                .map(str::to_string)
+                .or_else(|| Some("text/plain".to_string())),
             truncated: false,
         });
     }
@@ -152,8 +165,7 @@ fn directory_has_visible_entries(path: &Path) -> bool {
 }
 
 fn repo_relative_path(repo_path: &Path, path: &Path) -> String {
-    path
-        .strip_prefix(repo_path)
+    path.strip_prefix(repo_path)
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
@@ -177,7 +189,9 @@ pub(super) fn file_preview_mime(path: &Path) -> Option<&'static str> {
         "md" | "markdown" => Some("text/markdown"),
         "svg" => Some("image/svg+xml"),
         "txt" => Some("text/plain"),
-        "vue" | "ts" | "tsx" | "js" | "jsx" | "css" | "html" | "rs" | "yml" | "yaml" => Some("text/plain"),
+        "vue" | "ts" | "tsx" | "js" | "jsx" | "css" | "html" | "rs" | "yml" | "yaml" => {
+            Some("text/plain")
+        }
         _ => None,
     }
 }
