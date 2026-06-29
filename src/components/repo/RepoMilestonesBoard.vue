@@ -4,7 +4,6 @@ import {
   CircleOff,
   GitMerge,
   GitPullRequest,
-  Search,
 } from "@lucide/vue";
 import type {
   GitHubIssue,
@@ -19,15 +18,10 @@ import {
 
 const props = defineProps<{
   groups: RepoMilestonesBoardGroup[];
-  itemCount: number;
-  query: string;
-  milestoneCountTotal: number;
-  loadingText: string;
   emptyText: string;
 }>();
 
 const emit = defineEmits<{
-  "update:query": [value: string];
   openIssue: [issue: GitHubIssue];
   openPullRequest: [pull: GitHubPullRequest];
 }>();
@@ -83,25 +77,6 @@ function openItem(item: RepoMilestonesBoardItem) {
 
 <template>
   <section class="milestones-board" aria-label="Milestones board">
-    <div class="milestones-board__toolbar">
-      <div class="milestones-board__title">
-        <h3>Milestones</h3>
-        <span>{{ itemCount }} items · {{ milestoneCountTotal }} milestones · {{ loadingText }}</span>
-      </div>
-
-      <label class="milestones-board__search">
-        <Search :size="15" aria-hidden="true" />
-        <input
-          :value="query"
-          type="search"
-          placeholder="搜索里程碑事项"
-          aria-label="搜索里程碑事项"
-          data-agent-id="repo.milestones.search"
-          @input="emit('update:query', ($event.target as HTMLInputElement).value)"
-        />
-      </label>
-    </div>
-
     <div class="milestones-board__groups" role="list" aria-label="Milestone groups">
       <section
         v-for="group in props.groups"
@@ -134,15 +109,14 @@ function openItem(item: RepoMilestonesBoardItem) {
             @click="openItem(item)"
           >
             <span class="milestones-board-row__status" :title="repoMilestonesBoardItemStateText(item)">
-              <CircleDot v-if="item.kind === 'issue' && isOpenRepoMilestonesBoardItem(item)" :size="16" aria-hidden="true" />
-              <GitPullRequest v-else-if="item.kind === 'pull' && isOpenRepoMilestonesBoardItem(item)" :size="16" aria-hidden="true" />
-              <GitMerge v-else-if="item.merged" :size="16" aria-hidden="true" />
-              <CircleOff v-else :size="16" aria-hidden="true" />
+              <CircleDot v-if="item.kind === 'issue' && isOpenRepoMilestonesBoardItem(item)" :size="14" aria-hidden="true" />
+              <GitPullRequest v-else-if="item.kind === 'pull' && isOpenRepoMilestonesBoardItem(item)" :size="14" aria-hidden="true" />
+              <GitMerge v-else-if="item.merged" :size="14" aria-hidden="true" />
+              <CircleOff v-else :size="14" aria-hidden="true" />
             </span>
             <span class="milestones-board-row__body">
               <span class="milestones-board-row__title-line">
                 <strong class="repo-list-row__title">#{{ item.number }} {{ item.title }}</strong>
-                <em>{{ item.kind === "issue" ? "Issue" : "PR" }}</em>
                 <span class="repo-list-row__meta milestones-board-row__updated">{{ itemUpdatedText(item) }}</span>
               </span>
               <span v-if="item.labels.length" class="milestones-board-row__chips" aria-label="Labels">
@@ -160,89 +134,41 @@ function openItem(item: RepoMilestonesBoardItem) {
       </section>
     </div>
 
-    <p v-if="!itemCount" class="muted repo-empty milestones-board__empty">{{ emptyText }}</p>
+    <p v-if="!props.groups.length" class="muted repo-empty milestones-board__empty">{{ emptyText }}</p>
   </section>
 </template>
 
 <style scoped>
 .milestones-board {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   height: 100%;
   overflow: hidden;
 }
 
-.milestones-board__toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.milestones-board__title {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.milestones-board__title h3 {
-  margin: 0;
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.milestones-board__title span,
 .milestones-board-row__updated {
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.milestones-board__search {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  height: 32px;
-  padding: 0 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text-muted);
-}
-
-.milestones-board__search input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  outline: none;
-}
-
 .milestones-board__groups {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
   min-height: 0;
-  padding: 12px;
+  padding: 12px 14px 14px;
   overflow: auto;
 }
 
 .milestones-board-group {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg);
+  background: var(--bg-elev);
 }
 
 .milestones-board-group__head {
@@ -251,9 +177,9 @@ function openItem(item: RepoMilestonesBoardItem) {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-subtle);
+  background: var(--bg);
 }
 
 .milestones-board-group__head div {
@@ -268,7 +194,7 @@ function openItem(item: RepoMilestonesBoardItem) {
   margin: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -283,12 +209,13 @@ function openItem(item: RepoMilestonesBoardItem) {
 }
 
 .milestones-board-group__head em {
-  min-width: 22px;
-  height: 19px;
+  min-width: 28px;
+  height: 22px;
   padding: 0 6px;
   border-radius: 999px;
-  background: var(--bg-elev);
-  line-height: 19px;
+  background: var(--bg-subtle);
+  color: var(--text);
+  line-height: 22px;
   text-align: center;
 }
 
@@ -299,10 +226,10 @@ function openItem(item: RepoMilestonesBoardItem) {
 }
 
 .milestones-board-row {
-  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   width: 100%;
-  min-height: 52px;
+  min-height: 48px;
   border: 0;
   border-bottom: 1px solid var(--border-soft);
   border-radius: 0;
@@ -325,9 +252,10 @@ function openItem(item: RepoMilestonesBoardItem) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 22px;
+  width: 16px;
+  height: 20px;
   color: var(--ok);
+  opacity: 0.8;
 }
 
 .milestones-board-row--pull .milestones-board-row__status {
@@ -340,15 +268,15 @@ function openItem(item: RepoMilestonesBoardItem) {
 
 .milestones-board-row__body {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 .milestones-board-row__title-line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -358,13 +286,12 @@ function openItem(item: RepoMilestonesBoardItem) {
   overflow: hidden;
   color: var(--text);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.milestones-board-row__title-line em,
 .milestones-board-row__chips em {
   display: inline-flex;
   align-items: center;
@@ -417,7 +344,6 @@ function openItem(item: RepoMilestonesBoardItem) {
 }
 
 @media (max-width: 900px) {
-  .milestones-board__toolbar,
   .milestones-board-row {
     grid-template-columns: minmax(0, 1fr);
   }

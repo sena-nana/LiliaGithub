@@ -395,7 +395,6 @@ const milestoneLoading = ref(false);
 const milestoneTypeFilter = ref<RepoMilestonesBoardTypeFilter>("all");
 const milestoneStateFilter = ref<RepoMilestonesBoardStateFilter>("open");
 const milestoneFilter = ref<RepoMilestonesBoardMilestoneFilter>(ALL_MILESTONES_ID);
-const milestoneQuery = ref("");
 const issueDiscussion = ref<GitHubIssueDiscussion | null>(null);
 const issueDiscussionLoading = ref(false);
 const issueDiscussionError = ref<string | null>(null);
@@ -449,9 +448,7 @@ const {
   typeFilter: milestoneTypeFilter,
   stateFilter: milestoneStateFilter,
   milestoneFilter,
-  query: milestoneQuery,
 });
-const milestoneLoadingText = computed(() => milestoneLoading.value || issueFilterMetadataLoading.value ? "读取中" : "已同步");
 const milestoneEmptyText = computed(() => milestoneLoading.value ? "正在读取里程碑事项。" : "没有匹配的里程碑事项。");
 const issuePanelFilters = ref<IssuePanelFilters>(issuePanelFiltersFromRoute());
 const pullRequestPanelFilters = ref<PullRequestPanelFilters>(pullRequestPanelFiltersFromRoute());
@@ -3057,11 +3054,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
           <RepoMilestonesBoard
             v-else
-            v-model:query="milestoneQuery"
             :groups="milestoneVisibleGroups"
-            :item-count="milestoneVisibleItems.length"
-            :milestone-count-total="milestoneCountTotal"
-            :loading-text="milestoneLoadingText"
             :empty-text="milestoneEmptyText"
             @open-issue="openIssueFromMilestones"
             @open-pull-request="openPullRequestFromMilestones"
