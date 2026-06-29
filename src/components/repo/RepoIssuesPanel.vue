@@ -3,20 +3,15 @@ import {
   Check,
   CircleDot,
   CircleOff,
-  ListFilter,
   LoaderCircle,
   Pencil,
-  Plus,
   RotateCcw,
-  Search,
   X,
 } from "@lucide/vue";
 import { computed, ref, watch } from "vue";
-import Dropdown from "../Dropdown.vue";
 import type {
   GitHubDiscussionTimelineItem,
   GitHubIssue,
-  GitHubIssueFilterMetadata,
 } from "../../services/workspace/types";
 import RepoIssueDetail from "./RepoIssueDetail.vue";
 
@@ -44,8 +39,6 @@ const props = defineProps<{
   issues: GitHubIssue[];
   state: IssueState;
   filters: IssuePanelFilters;
-  metadata: GitHubIssueFilterMetadata;
-  metadataLoading: boolean;
   loading: boolean;
   updating: boolean;
   editingIssueNumber: number | null;
@@ -63,23 +56,18 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  "update:state": [value: IssueState];
-  "update:filters": [value: IssuePanelFilters];
   "update:editingTitle": [value: string];
   "update:editingLabels": [value: string];
   "update:editingAssignees": [value: string];
   "update:editingBody": [value: string];
-  create: [];
   edit: [issue: GitHubIssue];
   focus: [issue: GitHubIssue];
   back: [];
-  open: [issue: GitHubIssue];
   "cancel-edit": [];
   "save-edit": [issue: GitHubIssue];
   toggle: [issue: GitHubIssue];
 }>();
 
-const filtersOpen = ref(false);
 const ISSUE_RENDER_PAGE_SIZE = 50;
 const visibleIssueCount = ref(ISSUE_RENDER_PAGE_SIZE);
 const focusedIssue = computed(() =>
@@ -88,66 +76,6 @@ const focusedIssue = computed(() =>
     : props.issues.find((issue) => issue.number === props.focusedIssueNumber) ?? null
 );
 
-const stateFilters: readonly { value: IssueState; label: string }[] = [
-  { value: "open", label: "Open" },
-  { value: "closed", label: "Closed" },
-  { value: "all", label: "All" },
-];
-
-const sortOptions = [
-  { value: "created-desc", label: "最新创建" },
-  { value: "created-asc", label: "最早创建" },
-  { value: "updated-desc", label: "最近更新" },
-  { value: "comments-desc", label: "评论最多" },
-] as const;
-
-const authorOptions = computed(() => [
-  { value: "", label: "任意作者" },
-  ...props.metadata.authors.map((author) => ({ value: author, label: author })),
-]);
-const labelOptions = computed(() => {
-  const labels = props.metadata.labels.map((label) => ({ value: label, label }));
-  if (labels.length) return labels;
-  return [{
-    value: "__empty_labels__",
-    label: props.metadataLoading ? "正在加载标签..." : "暂无标签",
-    disabled: true,
-  }];
-});
-const assigneeOptions = computed(() => [
-  { value: "", label: "任意负责人" },
-  { value: "none", label: "未分配" },
-  ...props.metadata.assignees.map((assignee) => ({ value: assignee, label: assignee })),
-]);
-const milestoneOptions = computed(() => [
-  { value: "", label: "任意里程碑" },
-  { value: "none", label: "无里程碑" },
-  ...props.metadata.milestones.map((milestone) => ({
-    value: String(milestone.number),
-    label: milestone.title,
-  })),
-]);
-const projectOptions = computed(() => [
-  { value: "", label: "任意项目" },
-  ...props.metadata.projects.map((project) => ({ value: project.id, label: project.title })),
-]);
-
-const activeSortValue = computed(() => `${props.filters.sort}-${props.filters.direction}`);
-const labelSummary = computed(() => {
-  if (!props.filters.labels.length) return "任意标签";
-  if (props.filters.labels.length <= 2) return props.filters.labels.join(", ");
-  return `${props.filters.labels.slice(0, 2).join(", ")} +${props.filters.labels.length - 2}`;
-});
-
-const activeFilterCount = computed(() =>
-  [
-    props.filters.creator,
-    props.filters.assignee,
-    props.filters.milestone,
-    props.filters.project,
-    props.filters.labels.length ? "labels" : null,
-  ].filter(Boolean).length
-);
 const visibleIssues = computed(() => props.issues.slice(0, visibleIssueCount.value));
 const visibleIssueRows = computed<IssueDisplayRow[]>(() =>
   visibleIssues.value.map((issue) => ({
@@ -176,19 +104,6 @@ watch(
     visibleIssueCount.value = ISSUE_RENDER_PAGE_SIZE;
   },
 );
-
-function updateFilters(next: Partial<IssuePanelFilters>) {
-  emit("update:filters", {
-    ...props.filters,
-    ...next,
-    labels: next.labels ? [...next.labels] : [...props.filters.labels],
-  });
-}
-
-function updateSort(value: string) {
-  const [sort, direction] = value.split("-") as [IssueSort, IssueDirection];
-  updateFilters({ sort, direction });
-}
 
 function showMoreIssues() {
   visibleIssueCount.value += ISSUE_RENDER_PAGE_SIZE;
@@ -226,141 +141,6 @@ function issueMetaText(issue: GitHubIssue) {
 
     <template v-else>
     <h3 class="issues-panel__sr-title">Issues</h3>
-    <div class="issues-panel__toolbar">
-      <div class="issues-panel__states" role="group" aria-label="Issue 状态">
-        <button
-          v-for="filter in stateFilters"
-          :key="filter.value"
-          type="button"
-          :data-agent-id="`repo.issues.state.${filter.value}`"
-          :class="{ 'is-active': state === filter.value }"
-          :aria-pressed="state === filter.value"
-          @click="emit('update:state', filter.value)"
-        >
-          <span>{{ filter.label }}</span>
-        </button>
-      </div>
-
-      <button
-        type="button"
-        class="ghost issues-panel__filter-button"
-        data-agent-id="repo.issues.filters.toggle"
-        :class="{ 'is-active': filtersOpen || activeFilterCount > 0 }"
-        :aria-expanded="filtersOpen"
-        @click="filtersOpen = !filtersOpen"
-      >
-        <ListFilter :size="15" aria-hidden="true" />
-        筛选
-        <strong v-if="activeFilterCount">{{ activeFilterCount }}</strong>
-      </button>
-
-      <label class="issues-panel__search">
-        <Search :size="15" aria-hidden="true" />
-        <input
-          :value="filters.query"
-          type="search"
-          placeholder="搜索 Issues"
-          aria-label="搜索 Issues"
-          data-agent-id="repo.issues.search"
-          @input="updateFilters({ query: ($event.target as HTMLInputElement).value })"
-        />
-      </label>
-
-      <button type="button" class="primary issues-panel__new" data-agent-id="repo.issues.create" @click="emit('create')">
-        <Plus :size="14" aria-hidden="true" />
-        新建 Issue
-      </button>
-    </div>
-
-    <div v-if="filtersOpen" class="issues-panel__filters" aria-label="Issue 筛选项">
-      <div class="issues-panel__filter">
-        <span>作者</span>
-        <Dropdown
-          :model-value="filters.creator ?? ''"
-          :options="authorOptions"
-          :disabled="metadataLoading && !metadata.authors.length"
-          button-class="issue-filter-dropdown"
-          menu-width="220px"
-          menu-label="作者"
-          placement="bottom"
-          agent-id="repo.issues.filters.creator"
-          @update:model-value="(value) => updateFilters({ creator: value || null })"
-        />
-      </div>
-      <div class="issues-panel__filter">
-        <span>标签</span>
-        <Dropdown
-          :model-value="filters.labels"
-          multiple
-          :options="labelOptions"
-          :display-label="labelSummary"
-          :placeholder="metadataLoading ? '正在加载标签...' : '任意标签'"
-          :disabled="metadataLoading && !metadata.labels.length"
-          button-class="issue-filter-dropdown"
-          menu-width="220px"
-          menu-label="标签"
-          placement="bottom"
-          agent-id="repo.issues.filters.labels"
-          @update:model-value="(value) => updateFilters({ labels: value })"
-        />
-      </div>
-      <div class="issues-panel__filter">
-        <span>项目</span>
-        <Dropdown
-          :model-value="filters.project ?? ''"
-          :options="projectOptions"
-          :disabled="metadataLoading && !metadata.projects.length"
-          button-class="issue-filter-dropdown"
-          menu-width="220px"
-          menu-label="项目"
-          placement="bottom"
-          agent-id="repo.issues.filters.project"
-          @update:model-value="(value) => updateFilters({ project: value || null })"
-        />
-      </div>
-      <div class="issues-panel__filter">
-        <span>里程碑</span>
-        <Dropdown
-          :model-value="filters.milestone == null ? '' : String(filters.milestone)"
-          :options="milestoneOptions"
-          :disabled="metadataLoading && !metadata.milestones.length"
-          button-class="issue-filter-dropdown"
-          menu-width="220px"
-          menu-label="里程碑"
-          placement="bottom"
-          agent-id="repo.issues.filters.milestone"
-          @update:model-value="(value) => updateFilters({ milestone: value || null })"
-        />
-      </div>
-      <div class="issues-panel__filter">
-        <span>负责人</span>
-        <Dropdown
-          :model-value="filters.assignee ?? ''"
-          :options="assigneeOptions"
-          :disabled="metadataLoading && !metadata.assignees.length"
-          button-class="issue-filter-dropdown"
-          menu-width="220px"
-          menu-label="负责人"
-          placement="bottom"
-          agent-id="repo.issues.filters.assignee"
-          @update:model-value="(value) => updateFilters({ assignee: value || null })"
-        />
-      </div>
-      <div class="issues-panel__filter">
-        <span>排序</span>
-        <Dropdown
-          :model-value="activeSortValue"
-          :options="sortOptions"
-          button-class="issue-filter-dropdown"
-          menu-width="220px"
-          menu-label="排序"
-          placement="bottom"
-          agent-id="repo.issues.filters.sort"
-          @update:model-value="updateSort"
-        />
-      </div>
-    </div>
-
     <div class="issues-list" role="list" aria-label="Issues">
       <div
         v-for="row in visibleIssueRows"
@@ -507,135 +287,6 @@ function issueMetaText(issue: GitHubIssue) {
   white-space: nowrap;
 }
 
-.issues-panel__toolbar {
-  display: grid;
-  grid-template-columns: auto auto minmax(180px, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.issues-panel__states {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
-.issues-panel__states button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.issues-panel__states button.is-active {
-  background: var(--bg-active);
-  color: var(--text);
-}
-
-.issues-panel__filter-button strong {
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--bg-subtle);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 20px;
-  text-align: center;
-}
-
-.issues-panel__filter-button,
-.issues-panel__new {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 10px;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.issues-panel__filter-button.is-active {
-  color: var(--text);
-  background: var(--bg-hover);
-}
-
-.issues-panel__search {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
-  color: var(--text-muted);
-}
-
-.issues-panel__search input {
-  min-width: 0;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.issues-panel__filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 8px;
-  min-width: 0;
-  max-width: 100%;
-  padding: 10px;
-  box-sizing: border-box;
-  overflow: visible;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
-}
-
-.issues-panel__filter {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.issues-panel__filter > span {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.issues-panel__filter :deep(.dd) {
-  width: 100%;
-  min-width: 0;
-}
-
-.issues-panel__filter :deep(.issue-filter-dropdown) {
-  width: 100%;
-  min-width: 0;
-  height: 30px;
-  justify-content: space-between;
-  border-color: var(--border);
-  color: var(--text);
-}
-
-.issues-panel__filter :deep(.issue-filter-dropdown span) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .issues-list {
   display: grid;
   min-width: 0;
@@ -755,19 +406,6 @@ function issueMetaText(issue: GitHubIssue) {
 }
 
 @media (max-width: 820px) {
-  .issues-panel__toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .issues-panel__states,
-  .issues-panel__search {
-    grid-column: 1 / -1;
-  }
-
-  .issues-panel__filters {
-    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-  }
-
   .issues-list__item {
     padding-inline: 6px;
   }
