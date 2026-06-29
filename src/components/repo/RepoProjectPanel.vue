@@ -2961,7 +2961,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       :class="{
         'project-layout--with-commit-detail': showCommitDetail,
         'project-layout--full': !showProjectSidebar,
-        'project-layout--wide-sidebar': projectSidebarMode === 'issues' || projectSidebarMode === 'pulls',
       }"
     >
       <main
@@ -4041,10 +4040,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-layout--full {
   grid-template-columns: minmax(0, 1fr);
-}
-
-.project-layout--wide-sidebar {
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
 }
 
 .project-main {
