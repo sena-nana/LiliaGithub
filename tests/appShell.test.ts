@@ -7,7 +7,7 @@ import ContextMenuHost from "../src/components/ContextMenuHost.vue";
 import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
 import { resetWorkspaceStateForTests, setRepoActionError, state } from "../src/composables/workspace/state";
 import { REPO_LAUNCH_STATUS_EVENT } from "../src/composables/workspace/launchEvents";
-import { workspaceFallbackForTests } from "../src/services/workspace";
+import { workspaceFallbackForTests, type GitHubRepoSummary } from "../src/services/workspace";
 import { vContextMenu } from "../src/directives/contextMenu";
 import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
@@ -104,6 +104,27 @@ function sidebarGroupForText(container: HTMLElement, name: string, count: number
     throw new Error(`未找到侧边栏分组: ${name} ${count}`);
   }
   return group;
+}
+
+function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummary> = {}): GitHubRepoSummary {
+  const [ownerLogin = "", rawName] = fullName.split("/");
+  const name = rawName || fullName;
+  return {
+    id: 1000 + fullName.length,
+    name,
+    fullName,
+    ownerLogin,
+    private: false,
+    disabled: false,
+    archived: false,
+    description: null,
+    defaultBranch: "main",
+    createdAt: "2025-01-01T00:00:00Z",
+    updatedAt: "2025-01-02T00:00:00Z",
+    cloneUrl: `https://github.com/${fullName}.git`,
+    htmlUrl: `https://github.com/${fullName}`,
+    ...overrides,
+  };
 }
 
 type AppShellView = Awaited<ReturnType<typeof renderAppShell>>;
@@ -653,7 +674,7 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏搜索可过滤仓库并回车跳转首个结果", async () => {
+  it("总览页搜索可过滤本地仓库并回车跳转首个结果", async () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -666,8 +687,11 @@ describe("AppShell sidebar", () => {
     await fireEvent.update(search, "sena-nana/LiliaGithub");
 
     await waitFor(() => {
-      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
-      expect(() => sidebarRowForText(view.container, "Lilia")).toThrow("未找到侧边栏行: Lilia");
+      expect(
+        within(view.getByRole("listbox", { name: "仓库搜索结果" })).getByRole("option", {
+          name: "打开本地仓库 LiliaGithub",
+        }),
+      ).toBeInTheDocument();
     });
 
     await fireEvent.keyDown(search, { key: "Enter" });
@@ -677,7 +701,66 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("侧边栏搜索时使用扁平仓库列表", async () => {
+  it("总览页搜索可打开远程账号仓库", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary("sena-nana/RemoteOnly")],
+        nextPage: null,
+      },
+    ]);
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "搜索" }));
+    const search = view.getByRole("searchbox", { name: "搜索仓库" });
+    await fireEvent.update(search, "RemoteOnly");
+
+    const result = await waitFor(() =>
+      within(view.getByRole("listbox", { name: "仓库搜索结果" })).getByRole("option", {
+        name: "打开远程仓库 sena-nana/RemoteOnly",
+      })
+    );
+    await fireEvent.click(result);
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Asena-nana%2FRemoteOnly");
+    });
+  });
+
+  it("总览页搜索同名仓库时本地优先并去掉远程重复项", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary("sena-nana/LiliaGithub")],
+        nextPage: null,
+      },
+    ]);
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "搜索" }));
+    const search = view.getByRole("searchbox", { name: "搜索仓库" });
+    await fireEvent.update(search, "LiliaGithub");
+
+    await waitFor(() => {
+      const results = within(view.getByRole("listbox", { name: "仓库搜索结果" }));
+      expect(results.getByRole("option", { name: "打开本地仓库 LiliaGithub" })).toBeInTheDocument();
+      expect(results.queryByRole("option", { name: "打开远程仓库 sena-nana/LiliaGithub" })).toBeNull();
+    });
+
+    await fireEvent.keyDown(search, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("总览页搜索打开时侧边栏保持分组仓库树", async () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -704,12 +787,16 @@ describe("AppShell sidebar", () => {
     await fireEvent.update(search, "LiliaGithub");
 
     await waitFor(() => {
-      expect(view.getByText("搜索结果 1")).toBeInTheDocument();
+      expect(
+        within(view.getByRole("listbox", { name: "仓库搜索结果" })).getByRole("option", {
+          name: "打开本地仓库 LiliaGithub",
+        }),
+      ).toBeInTheDocument();
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
-      expect(() => sidebarGroupForText(view.container, "前端", 1)).toThrow("未找到侧边栏分组: 前端 1");
-      expect(() => sidebarGroupForText(view.container, "未分组仓库", 1)).toThrow(
-        "未找到侧边栏分组: 未分组仓库 1",
-      );
+      expect(sidebarRowForText(view.container, "Lilia")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 1)).toBeInTheDocument();
+      expect(view.queryByText(/^搜索结果/)).toBeNull();
     });
   });
 
