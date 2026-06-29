@@ -1340,7 +1340,60 @@ fn local_contribution_identities_fall_back_to_repo_git_config() {
 }
 
 #[test]
-fn contribution_identity_matching_prefers_email_when_present() {
+fn local_contribution_identities_include_repo_git_config_with_configured_identities() {
+    let path = temp_dir("local-contribution-git-config-and-settings");
+    init_git_repo(&path);
+    commit_with_author(
+        &path,
+        "mine.txt",
+        "mine\n",
+        "mine",
+        "Test User",
+        "test@example.com",
+    );
+    commit_with_author(
+        &path,
+        "legacy.txt",
+        "legacy\n",
+        "legacy",
+        "Legacy Lilia",
+        "legacy@example.com",
+    );
+    commit_with_author(
+        &path,
+        "other.txt",
+        "other\n",
+        "other",
+        "Other User",
+        "other@example.com",
+    );
+    let settings = WorkspaceSettings {
+        contribution_identities: vec![ContributionIdentity {
+            name: Some("Legacy Lilia".to_string()),
+            email: None,
+        }],
+        ..WorkspaceSettings::default()
+    };
+
+    let identities = local_contribution_identities(&path, &settings);
+    let end_day_index = current_utc_day_index();
+    let start_day_index = end_day_index - 2;
+    let mut counts = HashMap::new();
+    collect_local_contribution_counts(
+        &path,
+        start_day_index,
+        end_day_index,
+        &identities,
+        &mut counts,
+    )
+    .unwrap();
+
+    assert_eq!(counts.values().sum::<usize>(), 2);
+    fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn contribution_identity_matching_accepts_name_or_email() {
     assert!(contribution_identity_matches(
         &[ContributionIdentity {
             name: Some("Same Name".to_string()),
@@ -1349,7 +1402,7 @@ fn contribution_identity_matching_prefers_email_when_present() {
         "Different Name",
         "lilia@example.com",
     ));
-    assert!(!contribution_identity_matches(
+    assert!(contribution_identity_matches(
         &[ContributionIdentity {
             name: Some("Same Name".to_string()),
             email: Some("lilia@example.com".to_string()),
