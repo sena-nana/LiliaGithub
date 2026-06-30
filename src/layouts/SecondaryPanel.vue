@@ -96,6 +96,7 @@ interface RepoItem {
   name: string;
   title: string;
   to: string;
+  href: string;
   icon: Component;
   linkedWorktree: boolean;
   dirtyCount: number;
@@ -118,22 +119,48 @@ interface RepoSection {
   group: RepoGroupRef | null;
 }
 
-const repoItems = computed<RepoItem[]>(() =>
-  workspace.state.repos.map((repo) => {
+const repoItemCache = new Map<string, RepoItem>();
+
+function sameRepoItem(current: RepoItem, next: RepoItem) {
+  return current.name === next.name &&
+    current.title === next.title &&
+    current.to === next.to &&
+    current.href === next.href &&
+    current.icon === next.icon &&
+    current.linkedWorktree === next.linkedWorktree &&
+    current.dirtyCount === next.dirtyCount &&
+    current.ahead === next.ahead &&
+    current.behind === next.behind;
+}
+
+const repoItems = computed<RepoItem[]>(() => {
+  const activeRepoIds = new Set<string>();
+  const items = workspace.state.repos.map((repo) => {
     const linkedWorktree = isLinkedWorktree(repo);
-    return {
+    const to = repoRoute(repo.id);
+    const nextItem = {
       id: repo.id,
       name: repoDisplayName(repo),
       title: repoDisplayTitle(repo),
-      to: repoRoute(repo.id),
+      to,
+      href: router.resolve(to).href,
       icon: linkedWorktree ? GitBranch : FolderGit2,
       linkedWorktree,
       dirtyCount: repoDirtyCount(repo),
       ahead: repo.ahead,
       behind: repo.behind,
     };
-  }),
-);
+    activeRepoIds.add(repo.id);
+    const currentItem = repoItemCache.get(repo.id);
+    if (currentItem && sameRepoItem(currentItem, nextItem)) return currentItem;
+    repoItemCache.set(repo.id, nextItem);
+    return nextItem;
+  });
+  for (const repoId of repoItemCache.keys()) {
+    if (!activeRepoIds.has(repoId)) repoItemCache.delete(repoId);
+  }
+  return items;
+});
 
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const repoGroupIds = computed(() => repoGroups.value.map((group) => group.id));
@@ -276,15 +303,12 @@ function repoCurrentGroupId(repoId: string): string | null {
   return repoGroups.value.find((group) => group.repoIds.includes(repoId))?.id ?? null;
 }
 
-const repoContextMenuProviders = new Map<string, ContextMenuProvider>();
-
-function repoContextMenuProvider(repoId: string): ContextMenuProvider {
-  const existing = repoContextMenuProviders.get(repoId);
-  if (existing) return existing;
-  const provider: ContextMenuProvider = () => repoContextMenu(repoId);
-  repoContextMenuProviders.set(repoId, provider);
-  return provider;
-}
+const sidebarRepoContextMenuProvider: ContextMenuProvider = (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const row = target?.closest<HTMLElement>("[data-sidebar-repo-id]");
+  const repoId = row?.dataset.sidebarRepoId;
+  return repoId ? repoContextMenu(repoId) : [];
+};
 
 function repoContextMenu(repoId: string): ContextMenuItem[] {
   const currentGroupId = repoCurrentGroupId(repoId);
@@ -337,6 +361,21 @@ async function retryRepoPush(repoId: string) {
   } catch {
     /* retry state is kept in recent sync results */
   }
+}
+
+function navigateRepo(to: string, event: MouseEvent) {
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.shiftKey
+  ) {
+    return;
+  }
+  event.preventDefault();
+  void router.push(to);
 }
 
 function focusEditingGroupInput(groupId: string) {
@@ -466,7 +505,10 @@ async function deleteGroup(group: { id: string }) {
       </div>
     </div>
 
-    <div class="secondary-panel__body">
+    <div
+      class="secondary-panel__body"
+      v-context-menu="sidebarRepoContextMenuProvider"
+    >
       <div
         v-for="section in localRepoSections"
         :key="section.id"
@@ -554,7 +596,7 @@ async function deleteGroup(group: { id: string }) {
               :id="item.id"
               :name="item.name"
               :title="item.title"
-              :to="item.to"
+              :href="item.href"
               :icon="item.icon"
               :linked-worktree="item.linkedWorktree"
               :active="activeRepoId === item.id"
@@ -565,7 +607,7 @@ async function deleteGroup(group: { id: string }) {
               :syncing="bulkSyncRunningRepoIds.has(item.id)"
               :refreshing="refreshingRepoIds.has(item.id)"
               :launch-running="launchRunningRepoIds.has(item.id)"
-              :context-menu="repoContextMenuProvider(item.id)"
+              @navigate="navigateRepo(item.to, $event)"
               @retry="retryRepoPush(item.id)"
             />
             <button

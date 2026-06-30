@@ -15,8 +15,8 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const placement = computed(() => "bottom" as const);
-const menuMotion = useAnchoredMenuMotion(placement);
-const origin = menuMotion.origin;
+const menuMotion = useAnchoredMenuMotion(open, placement);
+const menuStyle = computed(() => menuMotion.overlayStyle.value);
 const settings = REPO_SETTING_ITEMS;
 
 function toggle(event: MouseEvent) {
@@ -30,9 +30,7 @@ function close() {
 }
 
 function onDocPointer(event: PointerEvent) {
-  const root = menuMotion.rootEl.value;
-  if (!root) return;
-  if (!root.contains(event.target as Node)) close();
+  if (!menuMotion.containsTarget(event.target)) close();
 }
 
 function onKey(event: KeyboardEvent) {
@@ -53,11 +51,11 @@ function settingAgentId(key: RepoSettingKey) {
 
 watch(open, async (value) => {
   if (value) {
-    menuMotion.resolveInitialOrigin();
-    await menuMotion.updateOrigin();
+    await menuMotion.updatePosition();
     document.addEventListener("pointerdown", onDocPointer, true);
     document.addEventListener("keydown", onKey);
   } else {
+    menuMotion.clearAnchor();
     document.removeEventListener("pointerdown", onDocPointer, true);
     document.removeEventListener("keydown", onKey);
   }
@@ -70,7 +68,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div :ref="menuMotion.rootEl" class="repo-toolbar-settings">
+  <div class="repo-toolbar-settings">
     <button
       :ref="menuMotion.triggerEl"
       type="button"
@@ -94,10 +92,7 @@ onBeforeUnmount(() => {
         class="repo-toolbar-settings__menu"
         role="menu"
         aria-label="项目设置"
-        :style="{
-          '--sb-menu-origin-x': `${origin.x}px`,
-          '--sb-menu-origin-y': `${origin.y}px`,
-        }"
+        :style="menuStyle"
       >
         <label
           v-for="setting in settings"
@@ -137,10 +132,8 @@ onBeforeUnmount(() => {
 }
 
 .repo-toolbar-settings__menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
+  position: fixed;
+  z-index: var(--z-dropdown, 1900);
   display: grid;
   gap: 3px;
   width: 260px;

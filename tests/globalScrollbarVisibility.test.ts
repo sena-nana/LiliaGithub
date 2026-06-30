@@ -54,6 +54,10 @@ function horizontalOverlay() {
   return document.querySelector(".global-scrollbar-overlay--horizontal");
 }
 
+function flushOverlayFrame() {
+  vi.advanceTimersByTime(16);
+}
+
 describe("global scrollbar visibility", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -70,6 +74,7 @@ describe("global scrollbar visibility", () => {
     const { element } = createScroller({ scrollTop: 50 });
 
     element.dispatchEvent(new Event("scroll"));
+    flushOverlayFrame();
 
     expect(verticalOverlay()).toBeInTheDocument();
 
@@ -88,6 +93,7 @@ describe("global scrollbar visibility", () => {
       clientX: 204,
       clientY: 50,
     }));
+    flushOverlayFrame();
 
     expect(verticalOverlay()).toBeInTheDocument();
 
@@ -117,6 +123,7 @@ describe("global scrollbar visibility", () => {
       clientY: 104,
     }));
     element.dispatchEvent(new Event("scroll"));
+    flushOverlayFrame();
 
     expect(horizontalOverlay()).toBeNull();
     expect(verticalOverlay()).toBeNull();
@@ -128,6 +135,7 @@ describe("global scrollbar visibility", () => {
     installGlobalScrollbarVisibility();
     const { element, scrollTop } = createScroller({ scrollHeight: 500 });
     element.dispatchEvent(new Event("scroll"));
+    flushOverlayFrame();
 
     const overlay = verticalOverlay();
     expect(overlay).toBeInstanceOf(HTMLElement);
@@ -159,12 +167,14 @@ describe("global scrollbar visibility", () => {
     const { element } = createScroller();
 
     element.dispatchEvent(new Event("scroll"));
+    flushOverlayFrame();
     expect(verticalOverlay()).toBeInTheDocument();
 
     uninstallGlobalScrollbarVisibility();
     expect(verticalOverlay()).toBeNull();
 
     element.dispatchEvent(new Event("scroll"));
+    flushOverlayFrame();
     vi.advanceTimersByTime(480);
     expect(verticalOverlay()).toBeNull();
 

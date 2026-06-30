@@ -168,6 +168,37 @@ export function upsertRepo(summary: RepoSummary) {
   }
 }
 
+export function upsertReposBatch(summaries: RepoSummary[]) {
+  if (!summaries.length) return;
+  const nextRepos = state.repos.slice();
+  const indexById = new Map(nextRepos.map((repo, index) => [repo.id, index]));
+  const nextSummaries = new Map<string, RepoSummary>();
+
+  for (const summary of summaries) {
+    const index = indexById.get(summary.id);
+    let nextSummary = summary;
+    if (index == null) {
+      indexById.set(summary.id, nextRepos.length);
+      nextRepos.push(summary);
+    } else {
+      nextSummary = mergeRepoSummary(nextRepos[index], summary);
+      nextRepos[index] = nextSummary;
+    }
+    nextSummaries.set(summary.id, nextSummary);
+  }
+
+  state.repos = nextRepos;
+  for (const [repoId, summary] of nextSummaries) {
+    const detail = state.repoDetails[repoId];
+    if (detail) {
+      state.repoDetails[repoId] = {
+        ...detail,
+        summary,
+      };
+    }
+  }
+}
+
 export function replaceRepos(summaries: RepoSummary[]) {
   const currentById = new Map(state.repos.map((repo) => [repo.id, repo]));
   for (const detail of Object.values(state.repoDetails)) {

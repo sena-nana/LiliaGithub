@@ -501,7 +501,7 @@ describe("workspace incremental refresh", () => {
     resolvers.get("Repo1")?.();
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(5));
     expect(service.refreshRepoSummary).toHaveBeenCalledWith("Repo5", { fetchRemote: true });
-    expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
+    await waitFor(() => expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 }));
     await waitFor(() => expect(state.refreshingRepoIds).not.toContain("Repo1"));
 
     resolvers.get("Repo2")?.();
@@ -520,7 +520,8 @@ describe("workspace incremental refresh", () => {
     const resolvers = new Map<string, () => void>();
     service.listManagedRepos.mockResolvedValue(repoIds.map((repoId) => repoSummary(repoId, { githubFullName: null })));
     service.refreshRepoSummary.mockImplementation((repoId: string) => new Promise((resolve) => {
-      resolvers.set(repoId, () => resolve(repoSummary(repoId, { ahead: repoId === "Repo3" ? 1 : 0 })));
+      const aheadByRepoId: Record<string, number> = { Repo1: 1, Repo2: 2, Repo3: 3 };
+      resolvers.set(repoId, () => resolve(repoSummary(repoId, { ahead: aheadByRepoId[repoId] ?? 0 })));
     }));
 
     await refreshRepos();
@@ -532,12 +533,14 @@ describe("workspace incremental refresh", () => {
 
     await waitFor(() => {
       expect(state.refreshingRepoIds).toEqual(["Repo3"]);
+      expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
+      expect(state.repos.find((repo) => repo.id === "Repo2")).toMatchObject({ ahead: 2 });
     });
 
     resolvers.get("Repo3")?.();
     await waitFor(() => expect(state.scanning).toBe(false));
     expect(state.refreshingRepoIds).toHaveLength(0);
-    expect(state.repos.find((repo) => repo.id === "Repo3")).toMatchObject({ ahead: 1 });
+    expect(state.repos.find((repo) => repo.id === "Repo3")).toMatchObject({ ahead: 3 });
   });
 
   it("新一轮刷新开始后旧刷新完成不会清掉当前刷新状态", async () => {
@@ -970,9 +973,11 @@ describe("workspace incremental refresh", () => {
 
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(3));
     expect(state.repos.map((repo) => repo.id)).toEqual(["LiliaGithub", "Lilia", "LocalOnly"]);
-    expect(state.repos.find((repo) => repo.id === "LiliaGithub")).toMatchObject({
-      githubFullName: "sena-nana/LiliaGithub",
-      ahead: 2,
+    await waitFor(() => {
+      expect(state.repos.find((repo) => repo.id === "LiliaGithub")).toMatchObject({
+        githubFullName: "sena-nana/LiliaGithub",
+        ahead: 2,
+      });
     });
     expect(state.repos.find((repo) => repo.id === "Lilia")).toMatchObject({
       githubFullName: null,
