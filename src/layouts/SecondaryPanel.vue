@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch, type Component } from "vue";
 import {
   ChevronRight,
   EyeOff,
   FolderGit2,
   FolderInput,
+  GitBranch,
   GitPullRequestArrow,
   Pencil,
   Plus,
@@ -23,9 +24,10 @@ import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import type { ContextMenuItem, ContextMenuProvider } from "@lilia/ui";
-import type { RepoSummary } from "../services/workspace";
+import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
+import { isLinkedWorktree } from "../utils/repoWorktree";
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -81,11 +83,24 @@ const refreshingRepoIds = computed(() => new Set(workspace.state.refreshingRepoI
 const syncIssueByRepoId = computed(() => repoSyncIssuesByRepoId());
 
 type RepoIssue = RepoSyncIssueDisplay;
+const CONFLICT_REPO_ISSUE: RepoIssue = {
+  label: "存在合并冲突",
+  message: "存在合并冲突，请处理后再同步",
+  retryable: false,
+  retrying: false,
+  updatedAt: 0,
+};
 
 interface RepoItem {
-  repo: RepoSummary;
+  id: string;
+  name: string;
+  title: string;
+  to: string;
+  icon: Component;
+  linkedWorktree: boolean;
   dirtyCount: number;
-  issue: RepoIssue | null;
+  ahead: number;
+  behind: number;
 }
 
 interface RepoGroupRef {
@@ -103,33 +118,42 @@ interface RepoSection {
   group: RepoGroupRef | null;
 }
 
-function repoIssue(repo: RepoSummary): RepoIssue | null {
-  const syncIssue = syncIssueByRepoId.value.get(repo.id);
-  if (syncIssue) return syncIssue;
-  if (repo.conflictCount > 0) {
-    return {
-      label: "存在合并冲突",
-      message: "存在合并冲突，请处理后再同步",
-      retryable: false,
-      retrying: false,
-      updatedAt: 0,
-    };
-  }
-  return null;
-}
-
 const repoItems = computed<RepoItem[]>(() =>
-  workspace.state.repos.map((repo) => ({
-    repo,
-    dirtyCount: repoDirtyCount(repo),
-    issue: repoIssue(repo),
-  })),
+  workspace.state.repos.map((repo) => {
+    const linkedWorktree = isLinkedWorktree(repo);
+    return {
+      id: repo.id,
+      name: repoDisplayName(repo),
+      title: repoDisplayTitle(repo),
+      to: repoRoute(repo.id),
+      icon: linkedWorktree ? GitBranch : FolderGit2,
+      linkedWorktree,
+      dirtyCount: repoDirtyCount(repo),
+      ahead: repo.ahead,
+      behind: repo.behind,
+    };
+  }),
 );
 
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const repoGroupIds = computed(() => repoGroups.value.map((group) => group.id));
 
-const repoItemById = computed(() => new Map(repoItems.value.map((item) => [item.repo.id, item])));
+const repoItemById = computed(() => new Map(repoItems.value.map((item) => [item.id, item])));
+const repoConflictIssueById = computed(() => {
+  const issues = new Map<string, RepoIssue>();
+  for (const repo of workspace.state.repos) {
+    if (repo.conflictCount <= 0) continue;
+    issues.set(repo.id, CONFLICT_REPO_ISSUE);
+  }
+  return issues;
+});
+const repoIssueById = computed(() => {
+  const issues = new Map<string, RepoIssue>(syncIssueByRepoId.value);
+  for (const [repoId, issue] of repoConflictIssueById.value) {
+    if (!issues.has(repoId)) issues.set(repoId, issue);
+  }
+  return issues;
+});
 
 const groupedRepoIds = computed(() => {
   const ids = new Set<string>();
@@ -140,7 +164,7 @@ const groupedRepoIds = computed(() => {
 });
 
 const ungroupedRepoItems = computed(() =>
-  repoItems.value.filter(({ repo }) => !groupedRepoIds.value.has(repo.id)),
+  repoItems.value.filter((item) => !groupedRepoIds.value.has(item.id)),
 );
 
 function sectionVisibleLimit(sectionId: string) {
@@ -212,6 +236,18 @@ const hiddenRemoteRepoItemCount = computed(() =>
 
 const activeRemoteFullName = computed(() =>
   parseRemoteRepoId(String(route.params.repoId ?? "")),
+);
+const activeRepoId = computed(() => {
+  if (!route.path.startsWith("/repos/")) return null;
+  const repoId = String(route.params.repoId ?? "");
+  return parseRemoteRepoId(repoId) ? null : repoId;
+});
+const launchRunningRepoIds = computed(() =>
+  new Set(
+    Object.entries(workspace.state.launchStatuses)
+      .filter(([, status]) => status?.state === "running")
+      .map(([repoId]) => repoId),
+  ),
 );
 
 function showMoreRepoSection(sectionId: string) {
@@ -293,15 +329,6 @@ function repoContextMenu(repoId: string): ContextMenuItem[] {
       },
     },
   ];
-}
-
-function isRepoActive(repoId: string) {
-  const base = repoRoute(repoId);
-  return route.path === base || route.path.startsWith(`${base}/`);
-}
-
-function isLaunchRunning(repoId: string) {
-  return workspace.state.launchStatuses[repoId]?.state === "running";
 }
 
 async function retryRepoPush(repoId: string) {
@@ -523,17 +550,23 @@ async function deleteGroup(group: { id: string }) {
           <div class="sb-collapse__inner sb-tree">
             <RepoSidebarRow
               v-for="item in section.visibleItems"
-              :key="item.repo.id"
-              :repo="item.repo"
-              :to="repoRoute(item.repo.id)"
-              :active="isRepoActive(item.repo.id)"
+              :key="item.id"
+              :id="item.id"
+              :name="item.name"
+              :title="item.title"
+              :to="item.to"
+              :icon="item.icon"
+              :linked-worktree="item.linkedWorktree"
+              :active="activeRepoId === item.id"
               :dirty-count="item.dirtyCount"
-              :issue="item.issue"
-              :syncing="bulkSyncRunningRepoIds.has(item.repo.id)"
-              :refreshing="refreshingRepoIds.has(item.repo.id)"
-              :launch-running="isLaunchRunning(item.repo.id)"
-              :context-menu="repoContextMenuProvider(item.repo.id)"
-              @retry="retryRepoPush(item.repo.id)"
+              :ahead="item.ahead"
+              :behind="item.behind"
+              :issue="repoIssueById.get(item.id) ?? null"
+              :syncing="bulkSyncRunningRepoIds.has(item.id)"
+              :refreshing="refreshingRepoIds.has(item.id)"
+              :launch-running="launchRunningRepoIds.has(item.id)"
+              :context-menu="repoContextMenuProvider(item.id)"
+              @retry="retryRepoPush(item.id)"
             />
             <button
               v-if="section.hiddenItemCount > 0"

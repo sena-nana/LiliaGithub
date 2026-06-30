@@ -223,7 +223,32 @@ async function refreshManagedRepoSummaries(
     return;
   }
   state.scanning = true;
-  state.refreshingRepoIds = uniqueRepoIds;
+  const refreshingRepoIds = new Set(uniqueRepoIds);
+  let refreshingStatusFlushPending = false;
+  const applyRefreshingRepoIds = () => {
+    const nextRepoIds = [...refreshingRepoIds];
+    if (
+      nextRepoIds.length === state.refreshingRepoIds.length &&
+      nextRepoIds.every((repoId, index) => state.refreshingRepoIds[index] === repoId)
+    ) {
+      return;
+    }
+    state.refreshingRepoIds = nextRepoIds;
+  };
+  const flushRefreshingRepoIds = () => {
+    refreshingStatusFlushPending = false;
+    if (generation === repositoryRuntimeGeneration) applyRefreshingRepoIds();
+  };
+  const scheduleRefreshingRepoIdsFlush = () => {
+    if (refreshingStatusFlushPending) return;
+    refreshingStatusFlushPending = true;
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(flushRefreshingRepoIds);
+    } else {
+      setTimeout(flushRefreshingRepoIds, 0);
+    }
+  };
+  applyRefreshingRepoIds();
   const shouldRefreshBackground = options.refreshBackground ?? true;
   const contributionGeneration = shouldRefreshBackground ? beginContributionRefresh() : null;
   if (contributionGeneration != null) {
@@ -246,7 +271,8 @@ async function refreshManagedRepoSummaries(
         // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
       } finally {
         if (generation !== repositoryRuntimeGeneration) return;
-        state.refreshingRepoIds = state.refreshingRepoIds.filter((id) => id !== repoId);
+        refreshingRepoIds.delete(repoId);
+        scheduleRefreshingRepoIdsFlush();
         void refreshWorkspaceTasks();
       }
     });
@@ -255,8 +281,9 @@ async function refreshManagedRepoSummaries(
     }
   } finally {
     if (generation === repositoryRuntimeGeneration) {
+      refreshingRepoIds.clear();
+      flushRefreshingRepoIds();
       state.scanning = false;
-      state.refreshingRepoIds = [];
     }
   }
 }
