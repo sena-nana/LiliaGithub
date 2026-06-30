@@ -1,14 +1,7 @@
 import { createApp } from "vue";
 import App from "./App.vue";
 import { router } from "./router";
-import {
-  installContextMenu,
-  installGlobalScrollbarVisibility,
-  setLiliaAppConfig,
-  useCornerStyle,
-  useTheme,
-  vContextMenu,
-} from "@lilia/ui";
+import { installLiliaAppRuntime } from "@lilia/ui";
 import { installAgentDebugHarness } from "./agentDebug/harness";
 import { LILIA_UI_CONFIG } from "./config/appShell";
 import "@lilia/ui/styles.css";
@@ -18,14 +11,8 @@ import "./styles.css";
 import "./styles/page.css";
 import "./styles/diffCodeTokens.css";
 
-setLiliaAppConfig(LILIA_UI_CONFIG);
-useTheme();
-useCornerStyle();
-installContextMenu();
-installGlobalScrollbarVisibility();
-
 const app = createApp(App);
+installLiliaAppRuntime({ app, config: LILIA_UI_CONFIG });
 app.use(router);
-app.directive("context-menu", vContextMenu);
 app.mount("#root");
 installAgentDebugHarness(router);

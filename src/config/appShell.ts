@@ -11,6 +11,7 @@ import type { RouteLocationRaw } from "vue-router";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 
 export const APP_TITLE = "LiliaGithub";
+type SidebarNavItems = NonNullable<LiliaSidebarConfigInput["nav"]>;
 
 export const SIDEBAR_CONFIG = {
   widthStorageKey: "lilia-github.sidebarWidth",
@@ -20,12 +21,7 @@ export const SIDEBAR_CONFIG = {
   defaultWidth: 220,
 } as const;
 
-export type SidebarActionItem = NonNullable<
-  NonNullable<LiliaSidebarConfigInput["nav"]>[number]["tools"]
->[number];
-export type SidebarNavItem = NonNullable<LiliaSidebarConfigInput["nav"]>[number];
-
-export const SIDEBAR_NAV: SidebarNavItem[] = [
+export const SIDEBAR_NAV: SidebarNavItems = [
   {
     key: "overview",
     to: "/",
