@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { defineComponent, ref } from "vue";
 import { describe, expect, it } from "vitest";
-import Dropdown from "../src/components/Dropdown.vue";
-import { SB_MENU_POP_TRANSITION_MS } from "../src/composables/menuMotion";
+import { Dropdown } from "@lilia/ui";
+import { SB_MENU_POP_TRANSITION_MS } from "@lilia/ui";
 
 const options = [
   { value: "bottom", label: "向下展开", hint: "从按钮点击点展开菜单" },

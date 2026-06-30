@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { Settings } from "@lucide/vue";
 import { RouterLink } from "vue-router";
-import type { SidebarFooterStatus } from "../../config/appShell";
+import type { LiliaSidebarConfigInput } from "@lilia/ui";
+
+type SidebarFooterStatus = NonNullable<LiliaSidebarConfigInput["footerStatus"]>;
 
 defineProps<{
   status: SidebarFooterStatus;

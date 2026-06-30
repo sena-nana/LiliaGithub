@@ -25,7 +25,7 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
-import Dropdown from "../Dropdown.vue";
+import { Dropdown } from "@lilia/ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
@@ -253,12 +253,12 @@ const listSorts = ["created", "updated", "comments"] as const;
 const actionSorts = ["updated", "created", "run-number"] as const;
 const listDirections = ["asc", "desc"] as const;
 const pullRequestReviews = ["none", "required", "approved", "changes_requested"] as const;
-const releaseTypeFilters: readonly { value: ReleaseTypeFilter; label: string }[] = [
-  { value: "all", label: "全部" },
-  { value: "stable", label: "Stable" },
-  { value: "latest", label: "Latest" },
-  { value: "prerelease", label: "Pre-release" },
-  { value: "draft", label: "Draft" },
+const releaseTypeFilters: readonly { value: ReleaseTypeFilter; label: string; agentId: string }[] = [
+  { value: "all", label: "全部", agentId: "repo.release.filters.type.all" },
+  { value: "stable", label: "Stable", agentId: "repo.release.filters.type.stable" },
+  { value: "latest", label: "Latest", agentId: "repo.release.filters.type.latest" },
+  { value: "prerelease", label: "Pre-release", agentId: "repo.release.filters.type.prerelease" },
+  { value: "draft", label: "Draft", agentId: "repo.release.filters.type.draft" },
 ];
 const issueRouteKeys: RouteFilterKeys = {
   state: "issueState",

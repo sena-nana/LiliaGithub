@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
-import ContextMenuHost from "../src/components/ContextMenuHost.vue";
+import { ContextMenuHost } from "@lilia/ui";
 import RepoBranchPicker from "../src/components/repo/RepoBranchPicker.vue";
-import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
-import { vContextMenu } from "../src/directives/contextMenu";
+import { closeContextMenu, installContextMenu } from "@lilia/ui";
+import { vContextMenu } from "@lilia/ui";
 
 const branches = [
   {

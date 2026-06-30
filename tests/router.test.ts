@@ -3,8 +3,8 @@ import { createMemoryHistory } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App.vue";
 import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
-import { installContextMenu } from "../src/composables/useContextMenu";
-import { vContextMenu } from "../src/directives/contextMenu";
+import { installContextMenu } from "@lilia/ui";
+import { vContextMenu } from "@lilia/ui";
 import { createLiliaGithubRouter } from "../src/router";
 import { workspaceFallbackForTests } from "../src/services/workspace";
 import type {

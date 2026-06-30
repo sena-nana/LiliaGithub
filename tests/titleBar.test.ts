@@ -1,6 +1,6 @@
 import { fireEvent, render, waitFor } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import TitleBar from "../src/components/TitleBar.vue";
+import { TitleBar } from "@lilia/ui";
 
 const tauriWindow = vi.hoisted(() => {
   const appWindow = {

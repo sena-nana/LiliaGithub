@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { LoaderCircle, Search } from "@lucide/vue";
 import type { Component } from "vue";
-import Dropdown from "../Dropdown.vue";
+import { Dropdown } from "@lilia/ui";
 
 type SidebarControlOption = {
   value: string;

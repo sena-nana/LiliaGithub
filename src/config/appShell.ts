@@ -5,6 +5,7 @@ import {
   Palette,
   Sparkles,
 } from "@lucide/vue";
+import type { LiliaAppConfig, LiliaSidebarConfigInput } from "@lilia/ui";
 import type { Component } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
@@ -19,54 +20,27 @@ export const SIDEBAR_CONFIG = {
   defaultWidth: 220,
 } as const;
 
-export interface SidebarActionItem {
-  key: string;
-  label: string;
-  icon: Component;
-  disabled?: boolean;
-  onSelect?: () => void;
-}
-
-export interface SidebarNavItem {
-  to?: string;
-  label: string;
-  icon: Component;
-  tools?: SidebarActionItem[];
-  disabled?: boolean;
-}
-
-export interface SidebarGroup {
-  title: string;
-  tools?: SidebarActionItem[];
-  items?: SidebarNavItem[];
-  emptyText?: string;
-}
-
-export interface SidebarFooterStatus {
-  to: string;
-  label: string;
-  title: string;
-  tone: "ok" | "warn" | "error";
-  icon: Component;
-}
+export type SidebarActionItem = NonNullable<
+  NonNullable<LiliaSidebarConfigInput["nav"]>[number]["tools"]
+>[number];
+export type SidebarNavItem = NonNullable<LiliaSidebarConfigInput["nav"]>[number];
 
 export const SIDEBAR_NAV: SidebarNavItem[] = [
   {
+    key: "overview",
     to: "/",
     label: "概览",
     icon: Home,
   },
 ];
 
-export const SIDEBAR_GROUPS: SidebarGroup[] = [];
-
-export const SIDEBAR_FOOTER_STATUS: SidebarFooterStatus = {
+const footerStatus = {
   to: "/settings",
   label: "GitHub",
   title: "GitHub 工作区状态。点击进入设置。",
   tone: "warn",
   icon: Sparkles,
-};
+} satisfies NonNullable<LiliaSidebarConfigInput["footerStatus"]>;
 
 export type SettingsTabKey = "appearance" | "repositories" | "about";
 
@@ -109,6 +83,29 @@ export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
   repositories: repositoriesSection.component,
   about: aboutSection.component,
 };
+
+export const LILIA_UI_CONFIG = {
+  appName: "lilia-github",
+  productTitle: APP_TITLE,
+  version: "1.0.0-beta.1",
+  identifier: "com.lilia.github",
+  storageKeyPrefix: "lilia-github",
+  shell: {
+    homeTitle: "概览",
+    homeDescription: "查看本地工作区和 GitHub 协作状态。",
+    workspaceSectionTitle: "工作区",
+    workspaceName: "GitHub Workspace",
+    workspaceEmptyText: "选择工作区后显示 Git 仓库。",
+    statusLabel: footerStatus.label,
+    statusTitle: footerStatus.title,
+    settingsDescription: "管理外观、仓库、GitHub 授权和应用信息。",
+  },
+  sidebar: {
+    ...SIDEBAR_CONFIG,
+    nav: SIDEBAR_NAV,
+    footerStatus,
+  },
+} satisfies LiliaAppConfig;
 
 export function normalizeSettingsTab(value: unknown): SettingsTabKey {
   const candidate = Array.isArray(value) ? value[0] : value;

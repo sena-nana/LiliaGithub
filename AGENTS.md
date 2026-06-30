@@ -1,39 +1,40 @@
-# Agent 开发规范
+# Agent 入口规范
 
-## Git 提交
+<!-- CODEGRAPH_START -->
+## CodeGraph
 
-- 提交标题用中文短句概括结果。
-- 提交正文按列表简短写具体改动;无必要不写正文。
-- 提交前按改动范围选择是否检查 diff;涉及多人协作、合并冲突或跨模块改动时,确认 diff 只包含本次改动。
-- 提交前按任务复杂度选择是否做代码自检;涉及逻辑调整、重构或公共模块时,检查是否存在可删除的冗余逻辑、重复分支、无效辅助函数或代码复述型注释。
+In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
 
-## 代码
+- MCP tools (when available): `codegraph_explore` answers most code questions in one call, returning relevant source plus call paths. `codegraph_node` returns one symbol's source and callers, or reads a whole file with line numbers. If the tools are deferred, load them by name via tool search.
+- Shell fallback: `codegraph explore "<symbol names or question>"` and `codegraph node <symbol-or-file>` print the same output.
 
-- 先读相关模块、数据契约和现有测试,再动手改代码。
-- 任务比较复杂时,先拆解为明确子任务;可并行或边界清晰的部分使用子智能体完成,主 Agent 负责整合、验证和收口。
-- 不做打补丁式修复;遇到问题先定位根因,再在正确边界修正。
-- 优先沿用现有结构和命名,不要顺手做无关重构。
-- 跨端数据契约先明确接口边界,再同步前端、后端和测试。
-- 不加冗余注释;需要长期记录的背景、取舍和未决问题写进文档。
+If there is no `.codegraph/` directory, skip CodeGraph entirely.
+<!-- CODEGRAPH_END -->
+
+## 项目级 Skills
+
+本仓库通过 `.agents/skills` 为 LiliaGithub 提供 Agent 能力。处理对应任务时优先使用这些 Skill,不要把细则继续堆进 `AGENTS.md`。
+
+- `$lilia-app-design`: 设计、交互、视觉层级、页面样式、侧边栏、卡片、浮层和状态评审。
+- `$lilia-app-coding`: 功能实现、问题修复、重构、路由、命令、业务页面和应用专属 Tauri 代码。
+- `$lilia-app-boundary`: 判断改动属于 LiliaGithub 应用代码还是 LiliaUI 公共能力。
+- `$lilia-app-validation`: 选择功能验证、测试、构建、Tauri 检查和结果汇报方式。
+- `$lilia-app-git`: 暂存、提交、推送、合并和依赖更新收口。
+- `$lilia-agent-debug`: Agent 调试入口、`data-agent-id`、`window.__liliaAgentDebug`、`yarn agent-debug:verify` 和 `tauri-driver` 调试验证。
+
+## 框架边界
+
+- LiliaGithub 的框架核心能力来自 LiliaUI: `@lilia/ui` 提供桌面壳层基础组件、TitleBar、Dropdown、ContextMenu、主题、圆角、全局滚动条、CSS token、shell/page 公共样式和公共 Agent 友好结构。
+- LiliaGithub 只保留 GitHub 工作区业务: 路由、仓库/Issue/PR/Actions/Release 页面、工作区数据契约、GitHub/Tauri 命令、应用专属状态和应用专属样式。
+- 新增或修复通用组件、主题、菜单、shell、设置页、公共样式、Agent debug 基础能力时,先改 LiliaUI,再更新 LiliaGithub 依赖或引用。
+- 不要在 LiliaGithub 重新复制 LiliaUI 已公开的通用组件、composable、directive 或 CSS 基座。
+
+## 硬约束
+
+- 灵活运用子代理任务分派,并行化执行边界清晰的任务;主 Agent 负责整合、验证和收口。
+- 修复问题时先定位根本原因,禁止打补丁式修复。
+- 实现前结合上下文判断代码和设计是否有足够价值,优先选择更简洁优雅的方案。
+- 禁止在 UI 显示技术说明内容。
+- 禁止让 UI 看起来像有功能但实际未接入;所有可见操作必须落地功能或表达真实不可用状态。
+- 禁止添加低价值测试和硬匹配日志或字符串的测试;所有测试必须以功能为准,无功能变动则不添加测试。
 - 不覆盖用户或其他 Agent 的已有改动。
-- 新增组件或功能单元时,优先解耦到独立文件/模块,并以异步懒加载方式接入;仅当任务明确是修改现有组件时,才在原组件内调整。
-
-## Agent 调试与迁移边界
-
-- 本仓库只迁移面向 Agent 友好的开发态调试结构、稳定 `data-agent-id` 和验证入口;不引入 Lilia 的 provider / agent runner 业务。
-- Agent 接手问题时,先查看 `docs/design/agent-debug-harness.md` 确认调试入口、环境变量和产物路径。
-- 涉及 Tauri command、窗口壳层、路由、工作区数据或 GitHub 数据契约时,先明确前端、Rust 端和测试边界;调试层只在开发态启用,不要变成生产功能。
-
-## 样式
-
-- 保持工程工具气质:克制、清晰、可扫描。
-- 视觉分级明确:主内容 > 当前状态 > 过程信息 / 辅助操作。
-- 优先使用现有 CSS 变量、间距和组件语言;深浅主题都要可读。
-- 涉及 UI 设计或交互模式调整时,先确认目标交互,再实现。
-
-## 验证
-
-- 功能实现后根据任务风险和影响范围选择验证;可选验证包括定向测试、`yarn test`、`yarn build`、`cargo check --manifest-path src-tauri/Cargo.toml` 或 `yarn verify`。
-- 文档、注释、配置说明等低风险改动可不跑测试;涉及持久化、权限、构建配置或用户关键路径时,优先运行最小必要验证。
-- 涉及大型 UI、Tauri command、构建配置或用户关键路径时,优先运行 `yarn agent-debug:verify`;若阻塞,最终说明写清 blocker、`agent-debug-runs/` 产物路径和剩余风险。
-- 若未运行测试、构建或验证,在最终说明里写清楚原因;若验证无法运行,写清楚阻塞原因和剩余风险。

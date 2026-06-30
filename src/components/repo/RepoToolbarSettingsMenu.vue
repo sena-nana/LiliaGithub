@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { Settings } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { SB_MENU_POP_TRANSITION_MS, useAnchoredMenuMotion } from "@lilia/ui";
 import { REPO_SETTING_ITEMS, type RepoSettingKey } from "../../config/repoSettingsManifest";
-import { SB_MENU_POP_TRANSITION_MS } from "../../composables/menuMotion";
-import { useAnchoredMenuMotion } from "../../composables/useAnchoredMenuMotion";
 
 const props = defineProps<{
   values: Record<RepoSettingKey, boolean>;

@@ -422,12 +422,16 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.project.sidebar.milestones"],
-      waits: ["repo.milestones.search", "repo.milestones.refresh"],
+      waits: [
+        "repo.milestones.refresh",
+        "repo.milestones.filters.type.all",
+        "repo.milestones.filters.milestone.all",
+      ],
       observe: "project-milestones",
     },
     {
       clicks: ["repo.project.sidebar.issues"],
-      waits: ["repo.issues.create", "repo.issues.sidebar.create"],
+      waits: ["repo.issues.create"],
       observe: "issues-panel",
     },
     {
@@ -438,7 +442,7 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.project.sidebar.pulls"],
-      waits: ["repo.pulls.create", "repo.pulls.sidebar.create"],
+      waits: ["repo.pulls.create"],
       observe: "pulls-panel",
     },
     {
@@ -454,11 +458,16 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.project.sidebar.release"],
-      waits: ["repo.release.refresh", "repo.release.filters.type.prerelease"],
+      waits: ["repo.release.refresh", "repo.release.filters.type"],
       observe: "release-panel",
     },
     {
-      clicks: ["repo.release.filters.type.prerelease", "repo.release.filters.tag.v1.0.0-beta", "repo.release.create"],
+      clicks: [
+        "repo.release.filters.type",
+        "repo.release.filters.type.prerelease",
+        "repo.release.filters.tag.v1.0.0-beta",
+        "repo.release.create",
+      ],
       waits: ["repo.release.form.tag"],
       observe: "release-create-form",
       after: ["repo.release.form.close"],

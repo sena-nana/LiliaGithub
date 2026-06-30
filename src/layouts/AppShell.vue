@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
 import { RouterView } from "vue-router";
-import { APP_TITLE, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
-import { useRouteReturnTarget } from "../composables/useRouteReturnTarget";
-import { useShellSidebar } from "../composables/useShellSidebar";
+import { setLiliaAppConfig, TitleBar, useRouteReturnTarget, useShellSidebar } from "@lilia/ui";
+import { APP_TITLE, LILIA_UI_CONFIG, SETTINGS_TABS, normalizeSettingsTab } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import { installLaunchStatusEvents } from "../composables/workspace/launchEvents";
-import TitleBar from "../components/TitleBar.vue";
 import SecondaryPanel from "./SecondaryPanel.vue";
 import SettingsSidebar from "./SettingsSidebar.vue";
-import "../styles/shell.css";
+
+setLiliaAppConfig(LILIA_UI_CONFIG);
 
 const { route, returnTo } = useRouteReturnTarget();
 const sidebarLocked = computed(() => route.meta.lockSidebar === true);
