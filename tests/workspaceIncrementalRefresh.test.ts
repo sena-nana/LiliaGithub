@@ -502,7 +502,7 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(5));
     expect(service.refreshRepoSummary).toHaveBeenCalledWith("Repo5", { fetchRemote: true });
     expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
-    expect(state.refreshingRepoIds).not.toContain("Repo1");
+    await waitFor(() => expect(state.refreshingRepoIds).not.toContain("Repo1"));
 
     resolvers.get("Repo2")?.();
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(6));
@@ -513,6 +513,31 @@ describe("workspace incremental refresh", () => {
     }
     await waitFor(() => expect(state.scanning).toBe(false));
     expect(state.refreshingRepoIds).toHaveLength(0);
+  });
+
+  it("仓库刷新状态会批量提交完成项并保留未完成项", async () => {
+    const repoIds = ["Repo1", "Repo2", "Repo3"];
+    const resolvers = new Map<string, () => void>();
+    service.listManagedRepos.mockResolvedValue(repoIds.map((repoId) => repoSummary(repoId, { githubFullName: null })));
+    service.refreshRepoSummary.mockImplementation((repoId: string) => new Promise((resolve) => {
+      resolvers.set(repoId, () => resolve(repoSummary(repoId, { ahead: repoId === "Repo3" ? 1 : 0 })));
+    }));
+
+    await refreshRepos();
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(3));
+    expect(state.refreshingRepoIds).toEqual(repoIds);
+
+    resolvers.get("Repo1")?.();
+    resolvers.get("Repo2")?.();
+
+    await waitFor(() => {
+      expect(state.refreshingRepoIds).toEqual(["Repo3"]);
+    });
+
+    resolvers.get("Repo3")?.();
+    await waitFor(() => expect(state.scanning).toBe(false));
+    expect(state.refreshingRepoIds).toHaveLength(0);
+    expect(state.repos.find((repo) => repo.id === "Repo3")).toMatchObject({ ahead: 1 });
   });
 
   it("新一轮刷新开始后旧刷新完成不会清掉当前刷新状态", async () => {

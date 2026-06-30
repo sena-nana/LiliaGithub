@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import { AlertCircle, FolderGit2, GitBranch, LoaderCircle, RotateCw } from "@lucide/vue";
+import { AlertCircle, LoaderCircle, RotateCw } from "@lucide/vue";
 import { RouterLink } from "vue-router";
 import type { ContextMenuProvider } from "@lilia/ui";
-import type { RepoSummary } from "../../services/workspace";
-import { repoDisplayName, repoDisplayTitle } from "../../utils/repoDisplay";
-import { isLinkedWorktree } from "../../utils/repoWorktree";
+import type { Component } from "vue";
 
 interface RepoSidebarIssue {
   label: string;
@@ -14,10 +12,16 @@ interface RepoSidebarIssue {
 }
 
 defineProps<{
-  repo: RepoSummary;
+  id: string;
+  name: string;
+  title: string;
   to: string;
+  icon: Component;
+  linkedWorktree: boolean;
   active: boolean;
   dirtyCount: number;
+  ahead: number;
+  behind: number;
   issue: RepoSidebarIssue | null;
   syncing: boolean;
   refreshing: boolean;
@@ -34,25 +38,25 @@ defineEmits<{
   <RouterLink
     :to="to"
     custom
-    v-slot="{ href, navigate, isActive }"
+    v-slot="{ href, navigate }"
   >
     <a
       :href="href"
       class="sb-tree__row sb-tree__row--project"
-      :class="{ 'is-active': active || isActive }"
-      :data-agent-id="`sidebar.repo.${repo.id}`"
-      :title="repoDisplayTitle(repo)"
+      :class="{ 'is-active': active }"
+      :data-agent-id="`sidebar.repo.${id}`"
+      :title="title"
       v-context-menu="contextMenu"
       @click="navigate"
     >
       <component
-        :is="isLinkedWorktree(repo) ? GitBranch : FolderGit2"
+        :is="icon"
         :size="14"
         aria-hidden="true"
         class="sb-tree__repo-icon"
-        :class="{ 'is-worktree': isLinkedWorktree(repo) }"
+        :class="{ 'is-worktree': linkedWorktree }"
       />
-      <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
+      <span class="sb-tree__name">{{ name }}</span>
       <span
         v-if="syncing"
         class="sb-badge"
@@ -73,7 +77,7 @@ defineEmits<{
         v-if="issue?.retryable"
         type="button"
         class="sb-retry"
-        :data-agent-id="`sidebar.repo.${repo.id}.retry`"
+        :data-agent-id="`sidebar.repo.${id}.retry`"
         :title="issue.retrying ? '正在重试' : '重试'"
         :aria-label="issue.retrying ? '正在重试' : '重试最近同步失败'"
         :disabled="issue.retrying"
@@ -84,8 +88,8 @@ defineEmits<{
       </button>
       <span v-if="launchRunning" class="sb-badge sb-badge--ok">RUN</span>
       <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
-      <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
-      <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
+      <span v-if="ahead" class="sb-badge">↑{{ ahead }}</span>
+      <span v-if="behind" class="sb-badge">↓{{ behind }}</span>
       <span
         v-if="refreshing"
         class="sb-row-loader"

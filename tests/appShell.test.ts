@@ -261,6 +261,39 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("长列表中仓库行状态只影响对应行并保留分页结构", async () => {
+    state.repos = Array.from({ length: 120 }, (_, index) =>
+      repoSummary(`Repo-${String(index + 1).padStart(3, "0")}`),
+    );
+    state.refreshingRepoIds = ["Repo-001"];
+    state.syncingRepoIds = ["Repo-002"];
+
+    const view = await renderAppShell("/repos/Repo-003");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "Repo-001")).toBeInTheDocument();
+    });
+
+    const firstRow = sidebarRowForText(view.container, "Repo-001");
+    const secondRow = sidebarRowForText(view.container, "Repo-002");
+    const thirdRow = sidebarRowForText(view.container, "Repo-003");
+    expect(sidebarGroupForText(view.container, "未分组仓库", 120)).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "显示更多 40 个" })).toBeInTheDocument();
+    expect(within(firstRow).getByLabelText("正在刷新仓库")).toBeInTheDocument();
+    expect(within(secondRow).getByLabelText("正在同步")).toBeInTheDocument();
+    expect(thirdRow).toHaveClass("is-active");
+    expect(within(secondRow).queryByLabelText("正在刷新仓库")).toBeNull();
+    expect(within(thirdRow).queryByLabelText("正在同步")).toBeNull();
+
+    state.refreshingRepoIds = ["Repo-003"];
+
+    await waitFor(() => {
+      expect(within(sidebarRowForText(view.container, "Repo-001")).queryByLabelText("正在刷新仓库")).toBeNull();
+      expect(within(sidebarRowForText(view.container, "Repo-003")).getByLabelText("正在刷新仓库")).toBeInTheDocument();
+    });
+    expect(sidebarGroupForText(view.container, "未分组仓库", 120)).toBeInTheDocument();
+  });
+
   it("侧边栏可创建仓库分组、立即重命名并折叠已有分组", async () => {
     const view = await renderAppShell("/");
 
