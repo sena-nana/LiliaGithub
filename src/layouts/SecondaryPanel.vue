@@ -16,13 +16,13 @@ import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   bulkSyncRunningRepoIds as getBulkSyncRunningRepoIds,
-  repoSyncIssueForRepo,
+  repoSyncIssuesByRepoId,
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
-import type { ContextMenuItem } from "@lilia/ui";
+import type { ContextMenuItem, ContextMenuProvider } from "@lilia/ui";
 import type { RepoSummary } from "../services/workspace";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
@@ -77,10 +77,8 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
 const bulkSyncRunningRepoIds = computed(() => {
   return getBulkSyncRunningRepoIds();
 });
-
-function isRefreshingRepo(repoId: string) {
-  return workspace.state.refreshingRepoIds.includes(repoId);
-}
+const refreshingRepoIds = computed(() => new Set(workspace.state.refreshingRepoIds));
+const syncIssueByRepoId = computed(() => repoSyncIssuesByRepoId());
 
 type RepoIssue = RepoSyncIssueDisplay;
 
@@ -106,7 +104,7 @@ interface RepoSection {
 }
 
 function repoIssue(repo: RepoSummary): RepoIssue | null {
-  const syncIssue = repoSyncIssueForRepo(repo.id);
+  const syncIssue = syncIssueByRepoId.value.get(repo.id);
   if (syncIssue) return syncIssue;
   if (repo.conflictCount > 0) {
     return {
@@ -242,44 +240,54 @@ function repoCurrentGroupId(repoId: string): string | null {
   return repoGroups.value.find((group) => group.repoIds.includes(repoId))?.id ?? null;
 }
 
-function repoContextMenu(repo: RepoSummary): ContextMenuItem[] {
-  const currentGroupId = repoCurrentGroupId(repo.id);
+const repoContextMenuProviders = new Map<string, ContextMenuProvider>();
+
+function repoContextMenuProvider(repoId: string): ContextMenuProvider {
+  const existing = repoContextMenuProviders.get(repoId);
+  if (existing) return existing;
+  const provider: ContextMenuProvider = () => repoContextMenu(repoId);
+  repoContextMenuProviders.set(repoId, provider);
+  return provider;
+}
+
+function repoContextMenu(repoId: string): ContextMenuItem[] {
+  const currentGroupId = repoCurrentGroupId(repoId);
   const moveChildren: ContextMenuItem[] = [
     {
-      id: `move-repo-${repo.id}-ungrouped`,
+      id: `move-repo-${repoId}-ungrouped`,
       label: "移到未分组",
       icon: FolderGit2,
       disabled: currentGroupId === null,
       async onSelect() {
-        await workspace.moveRepoToGroup(repo.id, null);
+        await workspace.moveRepoToGroup(repoId, null);
       },
     },
     ...repoGroups.value.map((group) => ({
-      id: `move-repo-${repo.id}-${group.id}`,
+      id: `move-repo-${repoId}-${group.id}`,
       label: group.name,
       icon: FolderInput,
       disabled: currentGroupId === group.id,
       async onSelect() {
-        await workspace.moveRepoToGroup(repo.id, group.id);
+        await workspace.moveRepoToGroup(repoId, group.id);
       },
     })),
   ];
   return [
     {
-      id: `move-repo-${repo.id}`,
+      id: `move-repo-${repoId}`,
       label: "移动到分组",
       icon: FolderInput,
       children: moveChildren,
     },
     {
-      id: `hide-repo-${repo.id}`,
+      id: `hide-repo-${repoId}`,
       label: "隐藏仓库",
       icon: EyeOff,
       danger: true,
       confirmLabel: "确认隐藏？再点一次",
       async onSelect() {
-        await workspace.hideRepo(repo.id);
-        if (route.path.startsWith("/repos/") && String(route.params.repoId ?? "") === repo.id) {
+        await workspace.hideRepo(repoId);
+        if (route.path.startsWith("/repos/") && String(route.params.repoId ?? "") === repoId) {
           await router.push("/");
         }
       },
@@ -292,19 +300,8 @@ function isRepoActive(repoId: string) {
   return route.path === base || route.path.startsWith(`${base}/`);
 }
 
-function repoRowProps(item: RepoItem) {
-  return {
-    repo: item.repo,
-    to: repoRoute(item.repo.id),
-    active: isRepoActive(item.repo.id),
-    dirtyCount: item.dirtyCount,
-    issue: item.issue,
-    syncing: bulkSyncRunningRepoIds.value.has(item.repo.id),
-    refreshing: isRefreshingRepo(item.repo.id),
-    launchRunning: workspace.state.launchStatuses[item.repo.id]?.state === "running",
-    contextMenu: repoContextMenu(item.repo),
-    onRetry: () => retryRepoPush(item.repo.id),
-  };
+function isLaunchRunning(repoId: string) {
+  return workspace.state.launchStatuses[repoId]?.state === "running";
 }
 
 async function retryRepoPush(repoId: string) {
@@ -527,7 +524,16 @@ async function deleteGroup(group: { id: string }) {
             <RepoSidebarRow
               v-for="item in section.visibleItems"
               :key="item.repo.id"
-              v-bind="repoRowProps(item)"
+              :repo="item.repo"
+              :to="repoRoute(item.repo.id)"
+              :active="isRepoActive(item.repo.id)"
+              :dirty-count="item.dirtyCount"
+              :issue="item.issue"
+              :syncing="bulkSyncRunningRepoIds.has(item.repo.id)"
+              :refreshing="refreshingRepoIds.has(item.repo.id)"
+              :launch-running="isLaunchRunning(item.repo.id)"
+              :context-menu="repoContextMenuProvider(item.repo.id)"
+              @retry="retryRepoPush(item.repo.id)"
             />
             <button
               v-if="section.hiddenItemCount > 0"
