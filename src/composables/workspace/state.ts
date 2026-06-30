@@ -291,6 +291,48 @@ export function syncErrorDetailsByRepoId() {
   );
 }
 
+function createRepoSyncIssue(
+  label: string,
+  error: RepoActionErrorState,
+  options: { retryable?: boolean; retrying?: boolean } = {},
+): RepoSyncIssueDisplay {
+  return {
+    label,
+    message: error.message,
+    retryable: options.retryable ?? false,
+    retrying: options.retrying ?? false,
+    updatedAt: error.updatedAt,
+  };
+}
+
+export function repoSyncIssuesByRepoId() {
+  const issues = new Map<string, RepoSyncIssueDisplay>();
+  const recentErrors = recentSyncErrorsByRepoId();
+  if (recentErrors.size) {
+    const retryingRepoIds = new Set(state.recentSync?.retryingRepoIds ?? []);
+    for (const [repoId, error] of recentErrors) {
+      issues.set(repoId, createRepoSyncIssue("最近同步失败", error, {
+        retryable: true,
+        retrying: retryingRepoIds.has(repoId),
+      }));
+    }
+  } else {
+    for (const [repoId, error] of syncErrorDetailsByRepoId()) {
+      issues.set(repoId, createRepoSyncIssue("同步失败", error));
+    }
+  }
+
+  for (const [repoId, error] of Object.entries(state.repoActionErrors)) {
+    if (error && !issues.has(repoId)) {
+      issues.set(
+        repoId,
+        createRepoSyncIssue(error.message.includes("已跳过自动同步") ? "自动同步已跳过" : "仓库操作失败", error),
+      );
+    }
+  }
+  return issues;
+}
+
 export function recentSyncErrorForRepo(repoId: string) {
   const result = state.recentSync?.results.find((item) => item.repoId === repoId && item.status === "error");
   if (!result) return null;
@@ -311,36 +353,24 @@ export function repoActionErrorDetailForRepo(repoId: string) {
 export function repoSyncIssueForRepo(repoId: string): RepoSyncIssueDisplay | null {
   const recentSyncError = recentSyncErrorForRepo(repoId);
   if (recentSyncError) {
-    return {
-      label: "最近同步失败",
-      message: recentSyncError.message,
-      retryable: true,
-      retrying: recentSyncError.retrying,
-      updatedAt: state.recentSync?.updatedAt ?? 0,
-    };
+    return createRepoSyncIssue(
+      "最近同步失败",
+      { message: recentSyncError.message, updatedAt: state.recentSync?.updatedAt ?? 0 },
+      { retryable: true, retrying: recentSyncError.retrying },
+    );
   }
 
   const syncError = syncErrorDetailsByRepoId().get(repoId);
   if (syncError) {
-    return {
-      label: "同步失败",
-      message: syncError.message,
-      retryable: false,
-      retrying: false,
-      updatedAt: syncError.updatedAt,
-    };
+    return createRepoSyncIssue("同步失败", syncError);
   }
 
   const actionError = repoActionErrorDetailForRepo(repoId);
   if (!actionError) return null;
-  const isAutoSyncSkip = actionError.message.includes("已跳过自动同步");
-  return {
-    label: isAutoSyncSkip ? "自动同步已跳过" : "仓库操作失败",
-    message: actionError.message,
-    retryable: false,
-    retrying: false,
-    updatedAt: actionError.updatedAt,
-  };
+  return createRepoSyncIssue(
+    actionError.message.includes("已跳过自动同步") ? "自动同步已跳过" : "仓库操作失败",
+    actionError,
+  );
 }
 
 export function setRepoActionError(repoId: string, message: string) {
