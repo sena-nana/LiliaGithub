@@ -5,7 +5,6 @@ import type {
   GitHubRelease,
   GitHubRepoSummary,
   GitHubActionNotification,
-  GitHubWorkflowRun,
 } from "../services/workspace";
 
 export type HomeGitHubOverviewSnapshot = {
@@ -17,7 +16,6 @@ export type HomeGitHubOverviewSnapshot = {
   issuesByRepo: Record<string, GitHubIssue[] | undefined>;
   pullRequestsByRepo: Record<string, GitHubPullRequest[] | undefined>;
   pullRequestChecksByRepo: Record<string, Record<number, GitHubPullRequestCheck[] | undefined> | undefined>;
-  workflowRunsByRepo: Record<string, GitHubWorkflowRun[] | undefined>;
   actionNotificationsByRepo: Record<string, GitHubActionNotification[] | undefined>;
   releasesByRepo: Record<string, GitHubRelease[] | undefined>;
 };
@@ -103,7 +101,6 @@ function cloneSnapshot(snapshot: HomeGitHubOverviewSnapshot): HomeGitHubOverview
     issuesByRepo: cloneListByRepo(snapshot.issuesByRepo, cloneIssue),
     pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, clonePullRequest),
     pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
-    workflowRunsByRepo: cloneListByRepo(snapshot.workflowRunsByRepo, cloneShallow),
     actionNotificationsByRepo: cloneListByRepo(snapshot.actionNotificationsByRepo ?? {}, cloneShallow),
     releasesByRepo: cloneListByRepo(snapshot.releasesByRepo, cloneRelease),
   };
@@ -170,7 +167,6 @@ function parseSnapshot(value: unknown): HomeGitHubOverviewSnapshot | null {
     !snapshot.issuesByRepo ||
     !snapshot.pullRequestsByRepo ||
     !snapshot.pullRequestChecksByRepo ||
-    !snapshot.workflowRunsByRepo ||
     !snapshot.releasesByRepo
   ) {
     return null;
@@ -184,7 +180,6 @@ function parseSnapshot(value: unknown): HomeGitHubOverviewSnapshot | null {
     issuesByRepo: cloneListByRepo(snapshot.issuesByRepo, cloneIssue),
     pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, clonePullRequest),
     pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
-    workflowRunsByRepo: cloneListByRepo(snapshot.workflowRunsByRepo, cloneShallow),
     actionNotificationsByRepo: cloneListByRepo(snapshot.actionNotificationsByRepo ?? {}, cloneShallow),
     releasesByRepo: cloneListByRepo(snapshot.releasesByRepo, cloneRelease),
   };

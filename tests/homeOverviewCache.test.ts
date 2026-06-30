@@ -33,7 +33,6 @@ function snapshot(overrides: Partial<HomeGitHubOverviewSnapshot> = {}): HomeGitH
     issuesByRepo: {},
     pullRequestsByRepo: {},
     pullRequestChecksByRepo: {},
-    workflowRunsByRepo: {},
     releasesByRepo: {
       "sena-nana/LiliaGithub": [{
         id: 8001,
@@ -112,7 +111,6 @@ describe("home overview cache", () => {
       issuesByRepo: {},
       pullRequestsByRepo: {},
       pullRequestChecksByRepo: {},
-      workflowRunsByRepo: {},
     }));
 
     expect(readHomeGitHubOverviewSnapshot()).toBeNull();
