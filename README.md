@@ -52,7 +52,7 @@ The long-term goal is a desktop-first workflow for local Git management, GitHub 
 
 Lilia is a family of toolchain applications for high-collaboration engineering workflows. Its apps share a preference for observable local state, compact desktop shells, recoverable workflows, and clear human control over automation.
 
-LiliaGithub focuses on repository operations around GitHub workspaces. It keeps the Lilia desktop shell style, theme system, context menu model, and engineering-tool interaction language, but intentionally does not include LiliaCode's agent runtime, chat timeline, provider configuration, or task orchestration features.
+LiliaGithub focuses on repository operations around GitHub workspaces. It consumes LiliaUI for the desktop shell base, theme system, context menu model, shared components, and engineering-tool interaction language, but intentionally does not include LiliaCode's agent runtime, chat timeline, provider configuration, or task orchestration features.
 
 ## What Makes It Different
 
@@ -131,10 +131,10 @@ LiliaGithub/
 ├── docs/                       # VitePress documentation
 ├── scripts/                    # Contributor and Tauri helper scripts
 ├── src/                        # Vue 3 frontend
-│   ├── components/             # Reusable UI and app components
+│   ├── components/             # GitHub business components; shared UI comes from LiliaUI
 │   ├── pages/                  # Workspace, repository, and settings pages
 │   ├── services/               # Frontend service and state helpers
-│   ├── styles/                 # Theme tokens, shell, and page styles
+│   ├── styles/                 # GitHub-specific style additions; shared styles come from LiliaUI
 │   ├── router.ts
 │   └── main.ts
 ├── src-tauri/                  # Tauri 2 Rust side
@@ -195,4 +195,4 @@ The Tauri icon source is [src-tauri/icons/icon.png](src-tauri/icons/icon.png).
 
 ## Thanks
 
-- LiliaCode provides the desktop shell style, interaction language, and engineering-workbench direction that LiliaGithub builds on.
+- LiliaUI provides the shared desktop shell foundation, common components, theme tokens, context menu, and page/shell styles consumed by LiliaGithub.

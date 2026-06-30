@@ -4,7 +4,7 @@ import { FolderGit2, FolderInput, GitBranchPlus, LoaderCircle, X } from "@lucide
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
-import Dropdown from "../Dropdown.vue";
+import { Dropdown } from "@lilia/ui";
 import {
   createGitHubRepo,
   listGitHubRepoOwners,

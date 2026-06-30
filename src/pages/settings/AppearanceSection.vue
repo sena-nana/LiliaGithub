@@ -4,8 +4,8 @@ import {
   CORNER_RADIUS_MAX,
   CORNER_RADIUS_MIN,
   useCornerStyle,
-} from "../../composables/useCornerStyle";
-import { useTheme } from "../../composables/useTheme";
+} from "@lilia/ui";
+import { useTheme } from "@lilia/ui";
 
 const { theme, setTheme } = useTheme();
 const { cornerStyle, cornerRadius, setCornerRadius, setCornerStyle } = useCornerStyle();

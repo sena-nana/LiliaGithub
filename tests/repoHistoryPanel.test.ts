@@ -1,9 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ContextMenuHost from "../src/components/ContextMenuHost.vue";
+import { ContextMenuHost } from "@lilia/ui";
 import RepoHistoryPanel from "../src/components/repo/RepoHistoryPanel.vue";
-import { closeContextMenu, installContextMenu } from "../src/composables/useContextMenu";
-import { vContextMenu } from "../src/directives/contextMenu";
+import { closeContextMenu, installContextMenu } from "@lilia/ui";
+import { vContextMenu } from "@lilia/ui";
 import type { CommitSummary } from "../src/services/workspace";
 
 function commit(hash: string, parents: string[] = [], refs: string[] = []): CommitSummary {

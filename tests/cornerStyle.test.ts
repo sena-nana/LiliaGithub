@@ -6,7 +6,9 @@ describe("useCornerStyle", () => {
     localStorage.setItem("lilia-github.cornerRadius", "14");
     vi.resetModules();
 
-    const { useCornerStyle } = await import("../src/composables/useCornerStyle");
+    const { setLiliaAppConfig, useCornerStyle } = await import("@lilia/ui");
+    const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
+    setLiliaAppConfig(LILIA_UI_CONFIG);
     const { cornerStyle, cornerRadius } = useCornerStyle();
 
     expect(cornerStyle.value).toBe("round");
@@ -17,7 +19,9 @@ describe("useCornerStyle", () => {
 
   it("setCornerRadius 会限制范围并同步存储", async () => {
     vi.resetModules();
-    const { useCornerStyle } = await import("../src/composables/useCornerStyle");
+    const { setLiliaAppConfig, useCornerStyle } = await import("@lilia/ui");
+    const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
+    setLiliaAppConfig(LILIA_UI_CONFIG);
     const { cornerRadius, setCornerRadius, setCornerStyle } = useCornerStyle();
 
     setCornerStyle("smooth");

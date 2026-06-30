@@ -7,10 +7,10 @@ import {
   installContextMenu,
   selectContextMenuItem,
   useContextMenu,
-} from "../src/composables/useContextMenu";
+} from "@lilia/ui";
 import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
-import { vContextMenu } from "../src/directives/contextMenu";
+import { vContextMenu } from "@lilia/ui";
 import {
   createGitHubPullRequest,
   createGitHubIssue,
@@ -1201,7 +1201,8 @@ describe("RepoProjectPanel", () => {
     });
     expect(within(releaseTimeline).getByText(/Lilia v1\.1 beta/i)).toBeInTheDocument();
 
-    await fireEvent.click(within(filterSidebar).getByRole("button", { name: "Pre-release" }));
+    await fireEvent.click(within(filterSidebar).getByRole("button", { name: "全部" }));
+    await fireEvent.click(within(filterSidebar).getByRole("option", { name: "Pre-release" }));
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({
         projectTab: "release",

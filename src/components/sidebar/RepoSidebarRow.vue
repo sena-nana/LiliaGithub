@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { AlertCircle, FolderGit2, GitBranch, LoaderCircle, RotateCw } from "@lucide/vue";
 import { RouterLink } from "vue-router";
-import type { ContextMenuItem } from "../../composables/useContextMenu";
+import type { ContextMenuItem } from "@lilia/ui";
 import type { RepoSummary } from "../../services/workspace";
 import { repoDisplayName, repoDisplayTitle } from "../../utils/repoDisplay";
 import { isLinkedWorktree } from "../../utils/repoWorktree";

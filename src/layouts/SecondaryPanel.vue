@@ -22,7 +22,7 @@ import {
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
-import type { ContextMenuItem } from "../composables/useContextMenu";
+import type { ContextMenuItem } from "@lilia/ui";
 import type { RepoSummary } from "../services/workspace";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";

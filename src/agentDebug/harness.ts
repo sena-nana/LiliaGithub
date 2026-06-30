@@ -12,7 +12,7 @@ import {
   type AgentDebugSnapshot,
 } from "./types";
 
-type AgentDebugWindow = Window & {
+type AgentDebugWindow = {
   __liliaGithubAgentDebug?: AgentDebugApi;
   __liliaAgentDebug?: AgentDebugApi;
 };
@@ -381,7 +381,8 @@ export function installAgentDebugHarness(router: Router): void {
     mark: markAgentDebug,
     getRecentErrors: () => [...errors],
   };
-  (window as AgentDebugWindow).__liliaGithubAgentDebug = api;
-  (window as AgentDebugWindow).__liliaAgentDebug = api;
+  const debugWindow = window as unknown as AgentDebugWindow;
+  debugWindow.__liliaGithubAgentDebug = api;
+  debugWindow.__liliaAgentDebug = api;
   void markAgentDebug("agent-debug-installed", { route: currentRoute() });
 }

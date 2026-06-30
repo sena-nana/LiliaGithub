@@ -6,7 +6,6 @@ import CommitDetailCard from "../components/repo/CommitDetailCard.vue";
 import { useWorkspace } from "../composables/useWorkspace";
 import { repoDisplayName } from "../utils/repoDisplay";
 import { repoRoute } from "../utils/repoRoutes";
-import "../styles/page.css";
 
 const route = useRoute();
 const workspace = useWorkspace();

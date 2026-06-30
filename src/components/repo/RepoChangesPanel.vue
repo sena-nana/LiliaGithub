@@ -10,7 +10,7 @@ import {
   CloudUpload,
   RotateCcw,
 } from "@lucide/vue";
-import type { ContextMenuItem } from "../../composables/useContextMenu";
+import type { ContextMenuItem } from "@lilia/ui";
 import type { RepoChange } from "../../services/workspace";
 import { changeStatusLetter, changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";

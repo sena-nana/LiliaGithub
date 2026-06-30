@@ -24,7 +24,7 @@ import {
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
-import { openContextMenuAt, type ContextMenuItem } from "../composables/useContextMenu";
+import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -75,7 +75,6 @@ import {
   formatBytes,
   formatPercent,
 } from "../utils/languageStats";
-import "../styles/page.css";
 
 const workspace = useWorkspace();
 const router = useRouter();

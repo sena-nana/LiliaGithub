@@ -5,12 +5,12 @@
 ```text
 LiliaGithub/
 ├── src/                 # Vue 3 前端
-│   ├── layouts/         # AppShell / SecondaryPanel / SettingsSidebar
-│   ├── components/      # TitleBar / ViewTabs / SidebarFooter 等
+│   ├── layouts/         # GitHub 工作区壳层接入;通用壳层能力来自 LiliaUI
+│   ├── components/      # GitHub 业务组件;通用组件来自 LiliaUI
 │   ├── pages/           # Home / Settings / RepoDetail
-│   ├── composables/     # useTheme / useResizablePane 等
+│   ├── composables/     # GitHub 工作区状态与业务生命周期
 │   ├── router.ts
-│   └── styles.css
+│   └── styles.css       # GitHub 专属样式补充;公共样式来自 LiliaUI
 ├── src-tauri/           # Tauri 2 Rust 端
 ├── tests/               # Vitest + Testing Library
 ├── scripts/             # 本地开发脚本
@@ -20,6 +20,8 @@ LiliaGithub/
 ## 本地运行
 
 本仓库通过 Corepack 使用 Yarn 4.14.1,并通过根目录 `rust-toolchain.toml` 固定 Rust 工具链。建议从仓库根目录通过根 `yarn ...` 脚本运行贡献命令,让本机、CI 和 release 都读取同一份工具链约定。
+
+框架核心能力使用 LiliaUI:`@lilia/ui` 提供共享 TitleBar、Dropdown、ContextMenu、主题/圆角、滚动条、CSS token、shell/page 公共样式和 Agent 友好基础结构。LiliaGithub 本仓库只保留 GitHub 工作区业务、应用专属 Tauri command 和业务样式补充。
 
 ```bash
 corepack enable

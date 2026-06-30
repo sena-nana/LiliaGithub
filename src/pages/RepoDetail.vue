@@ -2,7 +2,6 @@
 import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
-import "../styles/page.css";
 
 const repoProjectPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoProjectPanel.vue"));
 const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));

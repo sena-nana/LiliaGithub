@@ -1,16 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
-import ContextMenuHost from "../src/components/ContextMenuHost.vue";
+import { ContextMenuHost } from "@lilia/ui";
 import {
   closeContextMenu,
   installContextMenu,
   openContextMenuAt,
   type ContextMenuItem,
   uninstallContextMenu,
-} from "../src/composables/useContextMenu";
-import { SB_MENU_POP_TRANSITION_MS } from "../src/composables/menuMotion";
-import { vContextMenu } from "../src/directives/contextMenu";
+} from "@lilia/ui";
+import { SB_MENU_POP_TRANSITION_MS } from "@lilia/ui";
+import { vContextMenu } from "@lilia/ui";
 
 function renderWithTemplate(template: string, setup: () => Record<string, unknown>) {
   const Wrapper = defineComponent({
