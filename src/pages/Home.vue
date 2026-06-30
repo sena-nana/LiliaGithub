@@ -185,6 +185,7 @@ const componentEpoch = useComponentEpoch();
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
 let lastRepoStatusListRefreshToken = workspace.state.repoStatusListRefreshToken;
+let searchRepoPagesLoading = false;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const contributionWeeks = computed(() => buildContributionWeeks(workspace.state.githubContributions.days));
 const contributionMonthLabels = computed(() =>
@@ -268,6 +269,11 @@ const homeSearchResults = computed<HomeSearchResult[]>(() => {
 
   return [...localResults, ...remoteResults].slice(0, 12);
 });
+const searchRemotePending = computed(() =>
+  Boolean(normalizedSearchQuery.value && githubReposNextPage.value && !githubReposError.value) ||
+  githubReposLoading.value ||
+  githubReposLoadingMore.value,
+);
 
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
@@ -319,6 +325,15 @@ watch(
   (length, previousLength) => {
     if (length < previousLength) {
       repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
+    }
+  },
+);
+
+watch(
+  () => [searchOpen.value, normalizedSearchQuery.value, githubReposNextPage.value] as const,
+  ([open, query, nextPage]) => {
+    if (open && query && nextPage) {
+      void loadRemainingSearchGitHubRepos();
     }
   },
 );
@@ -647,6 +662,20 @@ async function loadMoreGitHubRepos() {
       }
     }
   });
+}
+
+async function loadRemainingSearchGitHubRepos() {
+  if (searchRepoPagesLoading || githubReposLoading.value || githubReposLoadingMore.value) return;
+  searchRepoPagesLoading = true;
+  try {
+    while (searchOpen.value && normalizedSearchQuery.value && githubReposNextPage.value) {
+      const pageNumber = githubReposNextPage.value;
+      await loadMoreGitHubRepos();
+      if (githubReposNextPage.value === pageNumber) break;
+    }
+  } finally {
+    searchRepoPagesLoading = false;
+  }
 }
 
 function showMoreRepoStatusRows() {
@@ -1231,10 +1260,10 @@ function bulkOperationDescription(operation: BulkOperation) {
                   </span>
                   <span class="overview-search__result-kind">{{ result.kind === "local" ? "本地" : "远程" }}</span>
                 </button>
-                <p v-if="!homeSearchResults.length && !githubReposLoading" class="overview-search__empty">
+                <p v-if="!homeSearchResults.length && !searchRemotePending" class="overview-search__empty">
                   没有匹配的仓库
                 </p>
-                <p v-if="githubReposLoading" class="overview-search__empty">
+                <p v-if="searchRemotePending" class="overview-search__empty">
                   正在加载远程仓库...
                 </p>
               </div>
