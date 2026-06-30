@@ -74,6 +74,7 @@ import {
   formatBytes,
   formatPercent,
 } from "../utils/languageStats";
+import { scheduleLowPriorityTask, type CancelLowPriorityTask } from "../utils/lowPriorityScheduler";
 
 const workspace = useWorkspace();
 const router = useRouter();
@@ -110,6 +111,8 @@ type RepoStatusRow = {
 type ContributionCell = GitHubContributionDay & {
   level: number;
   weekStart: string;
+  title: string;
+  ariaLabel: string;
 };
 
 type ContributionMonthLabel = {
@@ -147,84 +150,108 @@ type HomeSearchResult = {
   { kind: "remote"; repo: GitHubRepoSummary }
 );
 
-type HomePerfMetric = {
-  count: number;
-  totalMs: number;
-  maxMs: number;
-};
-
 type ProjectTabRef = "issues" | "pulls" | "actions";
 const REPO_STATUS_RENDER_PAGE_SIZE = 60;
 const HOME_PENDING_ITEM_LIMIT = 12;
 const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
 const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
-const HOME_PERF_SLOW_MS = 8;
-const HOME_PERF_LOG_INTERVAL = 120;
-const HOME_FIELD_SEPARATOR = "\u001f";
-const HOME_REPO_SEPARATOR = "\u001e";
 
-const homePerfMetrics = import.meta.env.DEV && typeof performance !== "undefined"
-  ? new Map<string, HomePerfMetric>()
-  : null;
+function cloneRepoWorktree(repo: RepoSummary) {
+  return { ...repo.worktree };
+}
 
-function measureHomeComputed<T>(label: string, compute: () => T): T {
-  if (!homePerfMetrics) return compute();
-  const start = performance.now();
-  try {
-    return compute();
-  } finally {
-    const duration = performance.now() - start;
-    const current = homePerfMetrics.get(label) ?? { count: 0, totalMs: 0, maxMs: 0 };
-    const next = {
-      count: current.count + 1,
-      totalMs: current.totalMs + duration,
-      maxMs: Math.max(current.maxMs, duration),
-    };
-    homePerfMetrics.set(label, next);
-    if (duration >= HOME_PERF_SLOW_MS || next.count % HOME_PERF_LOG_INTERVAL === 0) {
-      console.debug("[Home perf]", label, {
-        count: next.count,
-        lastMs: Number(duration.toFixed(2)),
-        maxMs: Number(next.maxMs.toFixed(2)),
-        avgMs: Number((next.totalMs / next.count).toFixed(2)),
-      });
-    }
-  }
+function snapshotHomeStatusRepos(repos: readonly RepoSummary[]): RepoSummary[] {
+  return repos.map((repo) => ({
+    ...repo,
+    languageStats: [],
+    worktree: cloneRepoWorktree(repo),
+  }));
+}
+
+function snapshotHomeCodeRepos(repos: readonly RepoSummary[]): RepoSummary[] {
+  return repos.map((repo) => ({
+    ...repo,
+    languageStats: repo.languageStats.map((stat) => ({ ...stat })),
+    worktree: cloneRepoWorktree(repo),
+  }));
 }
 
 function languageStatsSignature(repo: RepoSummary) {
-  return repo.languageStats
-    .map((stat) => `${stat.language}:${stat.bytes}:${stat.lines}`)
-    .join(",");
+  return `${repo.languageStatsUpdatedAt}:${repo.languageStats.length}`;
 }
 
-function homeRepoSignature(repo: RepoSummary) {
+function codeRepoSignature(repo: RepoSummary) {
+  const worktree = repo.worktree;
   return [
     repo.id,
     repo.name,
     repo.path,
-    repo.relativePath,
+    repo.relativePath ?? "",
     repo.githubFullName ?? "",
-    repo.ahead,
-    repo.behind,
-    repo.stagedCount,
-    repo.unstagedCount,
-    repo.untrackedCount,
-    repo.conflictCount,
-    repo.languageStatsUpdatedAt,
     languageStatsSignature(repo),
-    repo.worktree.role,
-    repo.worktree.sharedRepoKey,
-    repo.worktree.mainRepoId ?? "",
-  ].join(HOME_FIELD_SEPARATOR);
+    worktree.role,
+    worktree.sharedRepoKey ?? "",
+    worktree.mainRepoId ?? "",
+  ].join("\u001f");
 }
 
-function snapshotHomeRepos(repos: readonly RepoSummary[]): RepoSummary[] {
-  return repos.map((repo) => ({
-    ...repo,
-    languageStats: repo.languageStats.map((stat) => ({ ...stat })),
-    worktree: { ...repo.worktree },
-  }));
+function repoListSignature(repos: readonly RepoSummary[], itemSignature: (repo: RepoSummary) => string) {
+  return repos.map(itemSignature).join("\u001e");
+}
+
+function sameLanguageStats(left: RepoSummary, right: RepoSummary) {
+  if (left.languageStats.length !== right.languageStats.length) return false;
+  return left.languageStats.every((stat, index) => {
+    const other = right.languageStats[index];
+    return other != null &&
+      stat.language === other.language &&
+      stat.bytes === other.bytes &&
+      stat.lines === other.lines;
+  });
+}
+
+function sameRepoWorktree(left: RepoSummary, right: RepoSummary) {
+  return left.worktree.role === right.worktree.role &&
+    left.worktree.sharedRepoKey === right.worktree.sharedRepoKey &&
+    left.worktree.mainRepoId === right.worktree.mainRepoId;
+}
+
+function sameHomeStatusRepo(left: RepoSummary, right: RepoSummary) {
+  return left.id === right.id &&
+    left.name === right.name &&
+    left.path === right.path &&
+    left.relativePath === right.relativePath &&
+    left.currentBranch === right.currentBranch &&
+    left.remoteUrl === right.remoteUrl &&
+    left.githubFullName === right.githubFullName &&
+    left.ahead === right.ahead &&
+    left.behind === right.behind &&
+    left.stagedCount === right.stagedCount &&
+    left.unstagedCount === right.unstagedCount &&
+    left.untrackedCount === right.untrackedCount &&
+    left.conflictCount === right.conflictCount &&
+    left.lastCommitAt === right.lastCommitAt &&
+    left.lastCommitMessage === right.lastCommitMessage &&
+    sameRepoWorktree(left, right);
+}
+
+function sameHomeCodeRepo(left: RepoSummary, right: RepoSummary) {
+  return left.id === right.id &&
+    left.name === right.name &&
+    left.path === right.path &&
+    left.relativePath === right.relativePath &&
+    left.githubFullName === right.githubFullName &&
+    left.languageStatsUpdatedAt === right.languageStatsUpdatedAt &&
+    sameRepoWorktree(left, right) &&
+    sameLanguageStats(left, right);
+}
+
+function sameRepoList(
+  left: readonly RepoSummary[],
+  right: readonly RepoSummary[],
+  sameRepo: (left: RepoSummary, right: RepoSummary) => boolean,
+) {
+  return left.length === right.length && left.every((repo, index) => sameRepo(repo, right[index]!));
 }
 
 function sameRepoAction(left: RepoAction | null, right: RepoAction | null) {
@@ -293,133 +320,163 @@ const hasContributionDays = computed(() => workspace.state.githubContributions.d
 const skippedContributionRepoCount = computed(() =>
   workspace.state.githubContributions.meta?.skippedRepoCount ?? 0,
 );
-const homeReposSnapshot = shallowRef<RepoSummary[]>(
-  measureHomeComputed("repos.snapshot.initial", () => snapshotHomeRepos(workspace.state.repos)),
+const homeStatusReposSnapshot = shallowRef<RepoSummary[]>(
+  snapshotHomeStatusRepos(workspace.state.repos),
 );
 const homeCodeStatsRepos = shallowRef<RepoSummary[]>([]);
 const repoStatusRowCache = new Map<string, RepoStatusRow>();
 const timelineSourceCache = new Map<string, HomePendingRepoSource>();
-let homeCodeStatsUpdateCancel: (() => void) | null = null;
+let homeStatusReposSnapshotUpdateCancel: CancelLowPriorityTask | null = null;
+let homeCodeStatsUpdateCancel: CancelLowPriorityTask | null = null;
+let githubTimelineLoadCancel: CancelLowPriorityTask | null = null;
+let repoStatusRowsUpdateCancel: CancelLowPriorityTask | null = null;
+let homePendingNodesUpdateCancel: CancelLowPriorityTask | null = null;
+let lastHomeCodeStatsSignature = "";
 
-const homeReposSignature = computed(() =>
-  measureHomeComputed("repos.signature", () => workspace.state.repos.map(homeRepoSignature).join(HOME_REPO_SEPARATOR)),
-);
 const homeRepoSettingsSignature = computed(() =>
   JSON.stringify(workspace.state.settings?.repoSyncPreferences ?? {}),
 );
 const homeRepoById = computed(() =>
-  measureHomeComputed("repos.byId", () => new Map(homeReposSnapshot.value.map((repo) => [repo.id, repo]))),
+  new Map(homeCodeStatsRepos.value.map((repo) => [repo.id, repo])),
 );
 
 function buildHomeCodeStatsRepos() {
-  return measureHomeComputed("codeStats.repos", () =>
-    representativeReposBySharedGroup(homeReposSnapshot.value)
-      .filter((repo) => repoIncludedInHomeCodeStats(workspace.state.settings, repo.id)),
-  );
+  const codeRepos = snapshotHomeCodeRepos(workspace.state.repos);
+  return representativeReposBySharedGroup(codeRepos)
+    .filter((repo) => repoIncludedInHomeCodeStats(workspace.state.settings, repo.id));
 }
 
 function commitHomeCodeStatsRepos() {
   homeCodeStatsUpdateCancel = null;
-  homeCodeStatsRepos.value = buildHomeCodeStatsRepos();
+  const nextSignature = [
+    repoListSignature(workspace.state.repos, codeRepoSignature),
+    homeRepoSettingsSignature.value,
+  ].join("\u001d");
+  if (nextSignature === lastHomeCodeStatsSignature) return;
+  const nextRepos = buildHomeCodeStatsRepos();
+  if (!sameRepoList(homeCodeStatsRepos.value, nextRepos, sameHomeCodeRepo)) {
+    homeCodeStatsRepos.value = nextRepos;
+  }
+  lastHomeCodeStatsSignature = nextSignature;
 }
 
 function scheduleHomeCodeStatsReposUpdate() {
   if (homeCodeStatsUpdateCancel) return;
-  if (typeof requestAnimationFrame === "function") {
-    const frame = requestAnimationFrame(commitHomeCodeStatsRepos);
-    homeCodeStatsUpdateCancel = () => cancelAnimationFrame(frame);
-  } else {
-    const timer = window.setTimeout(commitHomeCodeStatsRepos, 0);
-    homeCodeStatsUpdateCancel = () => window.clearTimeout(timer);
+  homeCodeStatsUpdateCancel = scheduleLowPriorityTask(commitHomeCodeStatsRepos);
+}
+
+function commitHomeStatusReposSnapshot() {
+  homeStatusReposSnapshotUpdateCancel = null;
+  const nextRepos = snapshotHomeStatusRepos(workspace.state.repos);
+  if (!sameRepoList(homeStatusReposSnapshot.value, nextRepos, sameHomeStatusRepo)) {
+    homeStatusReposSnapshot.value = nextRepos;
   }
 }
 
-homeCodeStatsRepos.value = buildHomeCodeStatsRepos();
+function scheduleHomeStatusReposSnapshotUpdate() {
+  if (homeStatusReposSnapshotUpdateCancel) return;
+  homeStatusReposSnapshotUpdateCancel = scheduleLowPriorityTask(commitHomeStatusReposSnapshot);
+}
 
-watch(homeReposSignature, () => {
-  homeReposSnapshot.value = measureHomeComputed("repos.snapshot", () => snapshotHomeRepos(workspace.state.repos));
-});
+homeCodeStatsRepos.value = buildHomeCodeStatsRepos();
+lastHomeCodeStatsSignature = [
+  repoListSignature(workspace.state.repos, codeRepoSignature),
+  homeRepoSettingsSignature.value,
+].join("\u001d");
 
 watch(
-  () => [homeReposSnapshot.value, homeRepoSettingsSignature.value] as const,
+  () => workspace.state.repos.map((repo) => repo),
+  () => {
+    scheduleHomeStatusReposSnapshotUpdate();
+    scheduleHomeCodeStatsReposUpdate();
+  },
+);
+
+watch(
+  () => homeRepoSettingsSignature.value,
   scheduleHomeCodeStatsReposUpdate,
 );
 
 const languageOverview = computed<HomeCodeOverview>(() => {
-  return measureHomeComputed("codeStats.languageOverview", () => {
-    const overview = buildLanguageOverviewFromRepos(homeCodeStatsRepos.value);
-    const slices = overview.slices.map((slice) => {
-      const primaryRepoId = slice.repoIds[0] ?? null;
-      const target = homeRepoById.value.get(primaryRepoId ?? "")?.name ?? primaryRepoId;
-      return {
-        ...slice,
-        key: `language:${slice.language}`,
-        label: slice.language,
-        to: primaryRepoId ? repoRoute(primaryRepoId) : null,
-        linkTitle: target
-          ? `${slice.title}，点击进入 ${target}${slice.repoIds.length > 1 ? ` 等 ${slice.repoIds.length} 个仓库` : ""}`
-          : slice.title,
-      };
-    });
-    return { ...overview, slices };
+  const overview = buildLanguageOverviewFromRepos(homeCodeStatsRepos.value);
+  const slices = overview.slices.map((slice) => {
+    const primaryRepoId = slice.repoIds[0] ?? null;
+    const target = homeRepoById.value.get(primaryRepoId ?? "")?.name ?? primaryRepoId;
+    return {
+      ...slice,
+      key: `language:${slice.language}`,
+      label: slice.language,
+      to: primaryRepoId ? repoRoute(primaryRepoId) : null,
+      linkTitle: target
+        ? `${slice.title}，点击进入 ${target}${slice.repoIds.length > 1 ? ` 等 ${slice.repoIds.length} 个仓库` : ""}`
+        : slice.title,
+    };
   });
+  return { ...overview, slices };
 });
 
 const projectCodeOverview = computed<HomeCodeOverview>(() => {
-  return measureHomeComputed("codeStats.projectOverview", () => {
-    const overview = buildProjectCodeOverviewFromRepos(homeCodeStatsRepos.value);
-    return {
-      ...overview,
-      slices: overview.slices.map((slice) => ({
-        ...slice,
-        key: `project:${slice.repoId ?? "other"}`,
-        label: slice.repoName,
-        to: slice.repoId ? repoRoute(slice.repoId) : null,
-        linkTitle: slice.repoId ? `${slice.title}，点击进入 ${slice.repoName}` : slice.title,
-      })),
-    };
-  });
+  const overview = buildProjectCodeOverviewFromRepos(homeCodeStatsRepos.value);
+  return {
+    ...overview,
+    slices: overview.slices.map((slice) => ({
+      ...slice,
+      key: `project:${slice.repoId ?? "other"}`,
+      label: slice.repoName,
+      to: slice.repoId ? repoRoute(slice.repoId) : null,
+      linkTitle: slice.repoId ? `${slice.title}，点击进入 ${slice.repoName}` : slice.title,
+    })),
+  };
 });
 const activeCodeOverview = computed(() =>
   languageChartMode.value === "project" ? projectCodeOverview.value : languageOverview.value,
 );
 
 const localRepoByGitHubFullName = computed(() =>
-  measureHomeComputed("repos.byGitHubFullName", () => representativeReposByGitHubFullName(homeReposSnapshot.value)),
+  representativeReposByGitHubFullName(homeStatusReposSnapshot.value),
 );
 const syncIssuesByRepoId = computed(() =>
-  measureHomeComputed("repos.syncIssues", () => repoSyncIssuesByRepoId()),
+  repoSyncIssuesByRepoId(),
 );
+const syncIssueSignature = computed(() => JSON.stringify({
+  recentUpdatedAt: workspace.state.recentSync?.updatedAt ?? 0,
+  retryingRepoIds: workspace.state.recentSync?.retryingRepoIds ?? [],
+  bulkOperation: workspace.state.bulkPreview?.operation ?? null,
+  bulkResults: workspace.state.bulkResults.map((result) => [result.repoId, result.status, result.message]),
+  repoActionErrors: Object.entries(workspace.state.repoActionErrors).map(([repoId, error]) => [
+    repoId,
+    error?.message ?? "",
+    error?.updatedAt ?? 0,
+  ]),
+}));
 const normalizedSearchQuery = computed(() => searchQuery.value.trim().toLocaleLowerCase());
 const homeSearchResults = computed<HomeSearchResult[]>(() => {
   const query = normalizedSearchQuery.value;
   if (!query) return [];
 
-  return measureHomeComputed("search.results", () => {
-    const localResults = homeReposSnapshot.value
-      .filter((repo) => repoMatchesHomeSearch(repo, query))
-      .map((repo): HomeSearchResult => ({
-        key: `local:${repo.id}`,
-        kind: "local",
-        label: repoDisplayName(repo),
-        detail: repo.githubFullName ?? repo.relativePath ?? repo.path,
-        repo,
-      }));
+  const localResults = homeStatusReposSnapshot.value
+    .filter((repo) => repoMatchesHomeSearch(repo, query))
+    .map((repo): HomeSearchResult => ({
+      key: `local:${repo.id}`,
+      kind: "local",
+      label: repoDisplayName(repo),
+      detail: repo.githubFullName ?? repo.relativePath ?? repo.path,
+      repo,
+    }));
 
-    const remoteResults = githubRepos.value
-      .filter((repo) => !repo.disabled)
-      .filter((repo) => !localRepoByGitHubFullName.value.has(repo.fullName))
-      .filter((repo) => githubRepoMatchesHomeSearch(repo, query))
-      .map((repo): HomeSearchResult => ({
-        key: `remote:${repo.fullName}`,
-        kind: "remote",
-        label: repo.name,
-        detail: repo.fullName,
-        repo,
-      }));
+  const remoteResults = githubRepos.value
+    .filter((repo) => !repo.disabled)
+    .filter((repo) => !localRepoByGitHubFullName.value.has(repo.fullName))
+    .filter((repo) => githubRepoMatchesHomeSearch(repo, query))
+    .map((repo): HomeSearchResult => ({
+      key: `remote:${repo.fullName}`,
+      kind: "remote",
+      label: repo.name,
+      detail: repo.fullName,
+      repo,
+    }));
 
-    return [...localResults, ...remoteResults].slice(0, 12);
-  });
+  return [...localResults, ...remoteResults].slice(0, 12);
 });
 const searchRemotePending = computed(() =>
   Boolean(normalizedSearchQuery.value && githubReposNextPage.value && !githubReposError.value) ||
@@ -427,30 +484,41 @@ const searchRemotePending = computed(() =>
   githubReposLoadingMore.value,
 );
 
-const repoStatusRows = computed<RepoStatusRow[]>(() =>
-  measureHomeComputed("repoStatus.rows", () => {
-    const activeFullNames = new Set<string>();
-    const rows = githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
-      activeFullNames.add(githubRepo.fullName);
-      const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
-      const nextRow: RepoStatusRow = {
-        githubRepo,
-        localRepo,
-        action: localRepo ? repoAction(localRepo) : null,
-        syncIssue: localRepo ? syncIssuesByRepoId.value.get(localRepo.id) ?? null : null,
-      };
-      const currentRow = repoStatusRowCache.get(githubRepo.fullName);
-      if (currentRow && sameRepoStatusRow(currentRow, nextRow)) return currentRow;
-      repoStatusRowCache.set(githubRepo.fullName, nextRow);
-      return nextRow;
-    }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived));
+const repoStatusRows = shallowRef<RepoStatusRow[]>([]);
+const homePendingNodes = shallowRef<TimelineDisplayNode[]>([]);
 
-    for (const fullName of repoStatusRowCache.keys()) {
-      if (!activeFullNames.has(fullName)) repoStatusRowCache.delete(fullName);
-    }
-    return rows;
-  }),
-);
+function buildRepoStatusRowsSnapshot() {
+  const activeFullNames = new Set<string>();
+  const rows = githubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
+    activeFullNames.add(githubRepo.fullName);
+    const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
+    const nextRow: RepoStatusRow = {
+      githubRepo,
+      localRepo,
+      action: localRepo ? repoAction(localRepo) : null,
+      syncIssue: localRepo ? syncIssuesByRepoId.value.get(localRepo.id) ?? null : null,
+    };
+    const currentRow = repoStatusRowCache.get(githubRepo.fullName);
+    if (currentRow && sameRepoStatusRow(currentRow, nextRow)) return currentRow;
+    repoStatusRowCache.set(githubRepo.fullName, nextRow);
+    return nextRow;
+  }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived));
+
+  for (const fullName of repoStatusRowCache.keys()) {
+    if (!activeFullNames.has(fullName)) repoStatusRowCache.delete(fullName);
+  }
+  return rows;
+}
+
+function commitRepoStatusRows() {
+  repoStatusRowsUpdateCancel = null;
+  repoStatusRows.value = buildRepoStatusRowsSnapshot();
+}
+
+function scheduleRepoStatusRowsUpdate() {
+  if (repoStatusRowsUpdateCancel) return;
+  repoStatusRowsUpdateCancel = scheduleLowPriorityTask(commitRepoStatusRows);
+}
 
 const visibleRepoStatusRows = computed(() =>
   repoStatusRows.value.slice(0, repoStatusVisibleCount.value),
@@ -458,13 +526,26 @@ const visibleRepoStatusRows = computed(() =>
 const hiddenRepoStatusRowCount = computed(() =>
   Math.max(0, repoStatusRows.value.length - visibleRepoStatusRows.value.length),
 );
-const homeTimelineRepos = computed(() =>
-  githubRepos.value.filter(repoIncludedInHomeTimeline),
-);
-const githubTimelineRepoSources = computed<HomePendingRepoSource[]>(() =>
-  measureHomeComputed("timeline.sources", () => {
-    const activeFullNames = new Set<string>();
-    const sources = homeTimelineRepos.value.map((githubRepo) => {
+function hasHomeTimelineRepoData(repo: GitHubRepoSummary, localRepo: RepoSummary | null) {
+  const syncIssue = localRepo ? syncIssuesByRepoId.value.get(localRepo.id) ?? null : null;
+  return Boolean(
+    syncIssue ||
+    (localRepo && (localRepo.ahead > 0 || localRepo.behind > 0 || localRepo.conflictCount > 0)) ||
+    githubIssuesByRepo.value[repo.fullName]?.length ||
+    githubPullRequestsByRepo.value[repo.fullName]?.length ||
+    githubActionNotificationsByRepo.value[repo.fullName]?.length
+  );
+}
+
+function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
+  const activeFullNames = new Set<string>();
+  const sources = githubRepos.value
+    .filter(repoIncludedInHomeTimeline)
+    .filter((githubRepo) => {
+      const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
+      return hasHomeTimelineRepoData(githubRepo, localRepo);
+    })
+    .map((githubRepo) => {
       activeFullNames.add(githubRepo.fullName);
       const nextSource: HomePendingRepoSource = {
         githubRepo,
@@ -481,18 +562,42 @@ const githubTimelineRepoSources = computed<HomePendingRepoSource[]>(() =>
       return nextSource;
     });
 
-    for (const fullName of timelineSourceCache.keys()) {
-      if (!activeFullNames.has(fullName)) timelineSourceCache.delete(fullName);
-    }
-    return sources;
-  }),
+  for (const fullName of timelineSourceCache.keys()) {
+    if (!activeFullNames.has(fullName)) timelineSourceCache.delete(fullName);
+  }
+  return sources;
+}
+
+function buildHomePendingNodesSnapshot() {
+  return buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot())
+    .slice(0, HOME_PENDING_ITEM_LIMIT)
+    .map(toHomePendingDisplayNode);
+}
+
+function commitHomePendingNodes() {
+  homePendingNodesUpdateCancel = null;
+  homePendingNodes.value = buildHomePendingNodesSnapshot();
+}
+
+function scheduleHomePendingNodesUpdate() {
+  if (homePendingNodesUpdateCancel) return;
+  homePendingNodesUpdateCancel = scheduleLowPriorityTask(commitHomePendingNodes);
+}
+
+repoStatusRows.value = buildRepoStatusRowsSnapshot();
+homePendingNodes.value = buildHomePendingNodesSnapshot();
+
+watch(
+  () => [githubRepos.value, homeStatusReposSnapshot.value, syncIssueSignature.value, homeRepoSettingsSignature.value] as const,
+  () => {
+    scheduleRepoStatusRowsUpdate();
+    scheduleHomePendingNodesUpdate();
+  },
 );
-const homePendingNodes = computed<TimelineDisplayNode[]>(() =>
-  measureHomeComputed("timeline.pendingNodes", () =>
-    buildHomePendingItems(githubTimelineRepoSources.value)
-      .slice(0, HOME_PENDING_ITEM_LIMIT)
-      .map(toHomePendingDisplayNode),
-  ),
+
+watch(
+  () => [githubIssuesByRepo.value, githubPullRequestsByRepo.value, githubActionNotificationsByRepo.value] as const,
+  scheduleHomePendingNodesUpdate,
 );
 const githubTimelineBusy = computed(() =>
   githubReposLoading.value ||
@@ -523,8 +628,16 @@ onUnmounted(() => {
   githubPendingGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
+  homeStatusReposSnapshotUpdateCancel?.();
+  homeStatusReposSnapshotUpdateCancel = null;
   homeCodeStatsUpdateCancel?.();
   homeCodeStatsUpdateCancel = null;
+  githubTimelineLoadCancel?.();
+  githubTimelineLoadCancel = null;
+  repoStatusRowsUpdateCancel?.();
+  repoStatusRowsUpdateCancel = null;
+  homePendingNodesUpdateCancel?.();
+  homePendingNodesUpdateCancel = null;
 });
 
 watch(
@@ -620,7 +733,7 @@ function restoreGitHubOverviewSnapshot() {
 
 function writeGitHubOverviewSnapshot() {
   writeHomeGitHubOverviewSnapshot({
-    schemaVersion: 2,
+    schemaVersion: 3,
     accountLogin: currentGitHubAccountLogin(),
     cachedAt: Date.now(),
     repos: githubRepos.value,
@@ -782,6 +895,10 @@ function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
 }
 
 function clearGitHubPendingItems() {
+  githubTimelineLoadCancel?.();
+  githubTimelineLoadCancel = null;
+  githubAccountIssuesLoading.value = false;
+  githubActionNotificationsLoading.value = false;
   githubIssuesByRepo.value = {};
   githubPullRequestsByRepo.value = {};
   githubActionNotificationsByRepo.value = {};
@@ -790,8 +907,40 @@ function clearGitHubPendingItems() {
 
 function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   const timelineRepos = repos.filter(repoIncludedInHomeTimeline);
-  void loadHomePendingAccountIssues(timelineRepos, refresh);
-  void loadHomePendingActionNotifications(timelineRepos, refresh);
+  const shouldLoadIssues = shouldLoadHomePendingAccountIssues(timelineRepos, refresh);
+  const shouldLoadNotifications = shouldLoadHomePendingActionNotifications(timelineRepos, refresh);
+  githubTimelineLoadCancel?.();
+  githubTimelineLoadCancel = null;
+  if (!shouldLoadIssues && !shouldLoadNotifications) {
+    githubAccountIssuesLoading.value = false;
+    githubActionNotificationsLoading.value = false;
+    return;
+  }
+
+  const generation = githubPendingGeneration;
+  if (shouldLoadIssues) githubAccountIssuesLoading.value = true;
+  if (shouldLoadNotifications) githubActionNotificationsLoading.value = true;
+  githubTimelineLoadCancel = scheduleLowPriorityTask(() => {
+    githubTimelineLoadCancel = null;
+    if (generation !== githubPendingGeneration) return;
+    if (shouldLoadIssues) void loadHomePendingAccountIssues(timelineRepos, refresh);
+    if (shouldLoadNotifications) void loadHomePendingActionNotifications(timelineRepos, refresh);
+  });
+}
+
+function shouldLoadHomePendingAccountIssues(repos: readonly GitHubRepoSummary[], refresh = false) {
+  if (!repos.length) return false;
+  if (refresh) return true;
+  return repos.some((repo) =>
+    githubIssuesByRepo.value[repo.fullName] == null ||
+    githubPullRequestsByRepo.value[repo.fullName] == null
+  );
+}
+
+function shouldLoadHomePendingActionNotifications(repos: readonly GitHubRepoSummary[], refresh = false) {
+  if (!repos.length) return false;
+  if (refresh) return true;
+  return repos.some((repo) => githubActionNotificationsByRepo.value[repo.fullName] == null);
 }
 
 function repoIncludedInHomeTimeline(repo: GitHubRepoSummary) {
@@ -888,6 +1037,7 @@ function repoSyncIssueForTimeline(githubRepo: GitHubRepoSummary) {
 }
 
 function toHomePendingDisplayNode(item: HomePendingItem): TimelineDisplayNode {
+  const date = new Date(item.timestamp);
   return {
     id: item.id,
     icon: homePendingItemIcon(item.kind),
@@ -895,6 +1045,8 @@ function toHomePendingDisplayNode(item: HomePendingItem): TimelineDisplayNode {
     detail: item.detail,
     summary: item.summary,
     timestamp: item.timestamp,
+    datetime: date.toISOString(),
+    timeLabel: formatTimelineTime(item.timestamp),
     link: homePendingItemLink(item),
     tone: item.tone,
   };
@@ -951,10 +1103,13 @@ function buildContributionWeeks(days: readonly GitHubContributionDay[]) {
       date.setUTCDate(cursor.getUTCDate() + offset);
       const key = date.toISOString().slice(0, 10);
       const day = byDate.get(key) ?? { date: key, count: 0 };
+      const title = contributionTitle(day);
       week.push({
         ...day,
         level: contributionLevel(day.count, maxCount),
         weekStart: cursor.toISOString().slice(0, 10),
+        title,
+        ariaLabel: title,
       });
     }
     weeks.push(week);
@@ -1009,13 +1164,15 @@ function contributionTitle(day: GitHubContributionDay) {
   return lines.join("\n");
 }
 
+const timelineTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatTimelineTime(timestamp: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
+  return timelineTimeFormatter.format(new Date(timestamp));
 }
 
 function valueMatchesHomeSearch(value: string | null | undefined, query: string) {
@@ -1085,8 +1242,8 @@ function openCreateRepoCard(mode: "local" | "remote") {
   createRepoCardOpen.value = true;
 }
 
-function openCloneRepoDialog() {
-  void cloneDialog.openDialog();
+function openCloneRepoDialog(groupId: string | null = null) {
+  void cloneDialog.openDialog(groupId);
 }
 
 function closeCreateRepoCard() {
@@ -1100,7 +1257,8 @@ function createRepoMenuItems(): ContextMenuItem[] {
       label: "克隆仓库",
       icon: CloudDownload,
       disabled: !workspace.workspaceRoot.value,
-      onSelect: openCloneRepoDialog,
+      onSelect: () => openCloneRepoDialog(),
+      children: cloneRepoGroupMenuItems(),
     },
     {
       id: "home-create-local-repo",
@@ -1116,6 +1274,23 @@ function createRepoMenuItems(): ContextMenuItem[] {
       disabled: !workspace.workspaceRoot.value || !workspace.isAuthorized.value,
       onSelect: () => openCreateRepoCard("remote"),
     },
+  ];
+}
+
+function cloneRepoGroupMenuItems(): ContextMenuItem[] {
+  return [
+    {
+      id: "home-clone-repo-ungrouped",
+      label: "未分组仓库",
+      icon: FolderOpen,
+      onSelect: () => openCloneRepoDialog(null),
+    },
+    ...repoGroups.value.map((group) => ({
+      id: `home-clone-repo-${group.id}`,
+      label: group.name,
+      icon: FolderOpen,
+      onSelect: () => openCloneRepoDialog(group.id),
+    })),
   ];
 }
 
@@ -1550,7 +1725,7 @@ function bulkOperationDescription(operation: BulkOperation) {
               <span>Fri</span>
               <span />
             </div>
-            <div class="contribution-window">
+            <div class="contribution-window" v-memo="[contributionWeeks, contributionMonthLabels]">
               <div class="contribution-grid">
                 <div class="contribution-months" aria-hidden="true">
                   <span
@@ -1572,8 +1747,8 @@ function bulkOperationDescription(operation: BulkOperation) {
                       :key="day.date"
                       class="contribution-day"
                       :class="`contribution-day--${day.level}`"
-                      :title="contributionTitle(day)"
-                      :aria-label="contributionTitle(day)"
+                      :title="day.title"
+                      :aria-label="day.ariaLabel"
                     />
                   </div>
                 </div>
@@ -1610,7 +1785,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             </div>
           </div>
           <p v-if="!activeCodeOverview.slices.length" class="language-empty">暂无语言数据</p>
-          <div v-else class="language-chart" aria-label="编程语言占比图">
+          <div v-else class="language-chart" aria-label="编程语言占比图" v-memo="[activeCodeOverview]">
             <svg
               class="language-pie"
               viewBox="0 0 42 42"
@@ -1680,8 +1855,8 @@ function bulkOperationDescription(operation: BulkOperation) {
             <GitHubTimelineList
               v-else
               :nodes="homePendingNodes"
-              :format-time="formatTimelineTime"
               aria-label="待处理事项列表"
+              v-memo="[homePendingNodes]"
             />
           </div>
         </div>
@@ -1701,7 +1876,11 @@ function bulkOperationDescription(operation: BulkOperation) {
             </button>
           </p>
           <div class="home-scroll-card__body">
-            <div class="repo-status-list" aria-label="仓库状态列表">
+            <div
+              class="repo-status-list"
+              aria-label="仓库状态列表"
+              v-memo="[visibleRepoStatusRows, workspace.state.bulkRunning, syncingRepoId]"
+            >
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
                 v-for="{ githubRepo, localRepo, action, syncIssue } in visibleRepoStatusRows"

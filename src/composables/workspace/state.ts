@@ -21,6 +21,7 @@ export interface WorkspaceState {
   settings: WorkspaceSettings | null;
   bindingStatus: GitHubBindingStatus | null;
   repos: RepoSummary[];
+  repoListChange: RepoListChangeState;
   repoDetails: Record<string, RepoDetail | undefined>;
   launchConfigs: Record<string, ProjectLaunchConfig | null | undefined>;
   launchCandidates: Record<string, ProjectLaunchCandidate[] | undefined>;
@@ -55,6 +56,12 @@ export interface RecentBulkSyncState {
   updatedAt: number;
 }
 
+export interface RepoListChangeState {
+  revision: number;
+  changedRepoIds: string[];
+  structural: boolean;
+}
+
 export interface RepoActionErrorState {
   message: string;
   updatedAt: number;
@@ -79,6 +86,11 @@ export const state = reactive<WorkspaceState>({
   settings: null,
   bindingStatus: null,
   repos: [],
+  repoListChange: {
+    revision: 0,
+    changedRepoIds: [],
+    structural: true,
+  },
   repoDetails: {},
   launchConfigs: {},
   launchCandidates: {},
@@ -155,10 +167,12 @@ export function upsertRepo(summary: RepoSummary) {
   let nextSummary = summary;
   if (index >= 0) {
     nextSummary = mergeRepoSummary(state.repos[index], summary);
+    if (sameRepoSummary(state.repos[index], nextSummary)) return;
     state.repos[index] = nextSummary;
   } else {
     state.repos.push(summary);
   }
+  publishRepoListChange([summary.id], index < 0);
   const detail = state.repoDetails[summary.id];
   if (detail) {
     state.repoDetails[summary.id] = {
@@ -173,6 +187,8 @@ export function upsertReposBatch(summaries: RepoSummary[]) {
   const nextRepos = state.repos.slice();
   const indexById = new Map(nextRepos.map((repo, index) => [repo.id, index]));
   const nextSummaries = new Map<string, RepoSummary>();
+  const changedRepoIds: string[] = [];
+  let structural = false;
 
   for (const summary of summaries) {
     const index = indexById.get(summary.id);
@@ -180,14 +196,27 @@ export function upsertReposBatch(summaries: RepoSummary[]) {
     if (index == null) {
       indexById.set(summary.id, nextRepos.length);
       nextRepos.push(summary);
+      changedRepoIds.push(summary.id);
+      structural = true;
     } else {
       nextSummary = mergeRepoSummary(nextRepos[index], summary);
+      if (sameRepoSummary(nextRepos[index], nextSummary)) continue;
       nextRepos[index] = nextSummary;
+      changedRepoIds.push(summary.id);
     }
     nextSummaries.set(summary.id, nextSummary);
   }
+  if (!changedRepoIds.length) return;
 
-  state.repos = nextRepos;
+  if (structural) {
+    state.repos = nextRepos;
+  } else {
+    for (const repoId of changedRepoIds) {
+      const index = indexById.get(repoId);
+      if (index != null) state.repos[index] = nextRepos[index];
+    }
+  }
+  publishRepoListChange(changedRepoIds, structural);
   for (const [repoId, summary] of nextSummaries) {
     const detail = state.repoDetails[repoId];
     if (detail) {
@@ -201,15 +230,33 @@ export function upsertReposBatch(summaries: RepoSummary[]) {
 
 export function replaceRepos(summaries: RepoSummary[]) {
   const currentById = new Map(state.repos.map((repo) => [repo.id, repo]));
+  const currentIds = state.repos.map((repo) => repo.id);
   for (const detail of Object.values(state.repoDetails)) {
     if (detail && !currentById.has(detail.summary.id)) {
       currentById.set(detail.summary.id, detail.summary);
     }
   }
-  state.repos = summaries.map((summary) => {
+  const nextRepos = summaries.map((summary) => {
     const current = currentById.get(summary.id);
     return current ? mergeRepoSummary(current, summary) : summary;
   });
+  const nextIds = nextRepos.map((repo) => repo.id);
+  const structural = currentIds.length !== nextIds.length ||
+    currentIds.some((repoId, index) => repoId !== nextIds[index]);
+  const changedRepoIds = nextRepos
+    .filter((repo, index) => structural || !sameRepoSummary(state.repos[index], repo))
+    .map((repo) => repo.id);
+  if (!structural && !changedRepoIds.length) return;
+
+  if (structural) {
+    state.repos = nextRepos;
+  } else {
+    for (const repoId of changedRepoIds) {
+      const index = nextIds.indexOf(repoId);
+      if (index >= 0) state.repos[index] = nextRepos[index];
+    }
+  }
+  publishRepoListChange(changedRepoIds.length ? changedRepoIds : nextIds, structural);
   for (const summary of state.repos) {
     const detail = state.repoDetails[summary.id];
     if (detail) {
@@ -219,6 +266,21 @@ export function replaceRepos(summaries: RepoSummary[]) {
       };
     }
   }
+}
+
+export function removeRepo(repoId: string) {
+  const nextRepos = state.repos.filter((repo) => repo.id !== repoId);
+  if (nextRepos.length === state.repos.length) return;
+  state.repos = nextRepos;
+  publishRepoListChange([repoId], true);
+}
+
+function publishRepoListChange(changedRepoIds: string[], structural: boolean) {
+  state.repoListChange = {
+    revision: state.repoListChange.revision + 1,
+    changedRepoIds: Array.from(new Set(changedRepoIds)),
+    structural,
+  };
 }
 
 function mergeRepoSummary(current: RepoSummary, next: RepoSummary) {
@@ -249,6 +311,46 @@ function mergeRepoSummary(current: RepoSummary, next: RepoSummary) {
     languageStats: hasLanguageStats ? next.languageStats : current.languageStats,
     languageStatsUpdatedAt: hasLanguageStats ? next.languageStatsUpdatedAt : current.languageStatsUpdatedAt,
   };
+}
+
+function sameRepoSummary(left: RepoSummary | undefined, right: RepoSummary | undefined) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.id === right.id &&
+    left.name === right.name &&
+    left.path === right.path &&
+    left.relativePath === right.relativePath &&
+    left.currentBranch === right.currentBranch &&
+    left.remoteUrl === right.remoteUrl &&
+    left.githubFullName === right.githubFullName &&
+    left.ahead === right.ahead &&
+    left.behind === right.behind &&
+    left.stagedCount === right.stagedCount &&
+    left.unstagedCount === right.unstagedCount &&
+    left.untrackedCount === right.untrackedCount &&
+    left.conflictCount === right.conflictCount &&
+    left.lastCommitAt === right.lastCommitAt &&
+    left.lastCommitMessage === right.lastCommitMessage &&
+    left.languageStatsUpdatedAt === right.languageStatsUpdatedAt &&
+    sameRepoWorktree(left, right) &&
+    sameLanguageStats(left, right);
+}
+
+function sameRepoWorktree(left: RepoSummary, right: RepoSummary) {
+  return left.worktree.role === right.worktree.role &&
+    left.worktree.sharedRepoKey === right.worktree.sharedRepoKey &&
+    left.worktree.mainRepoId === right.worktree.mainRepoId;
+}
+
+function sameLanguageStats(left: RepoSummary, right: RepoSummary) {
+  if (left.languageStats.length !== right.languageStats.length) return false;
+  return left.languageStats.every((stat, index) => {
+    const other = right.languageStats[index];
+    return other != null &&
+      stat.language === other.language &&
+      stat.bytes === other.bytes &&
+      stat.lines === other.lines;
+  });
 }
 
 export function setRepoDetail(detail: RepoDetail, repoId = detail.summary.id) {
@@ -491,6 +593,11 @@ export function resetWorkspaceStateForTests() {
   state.settings = null;
   state.bindingStatus = null;
   state.repos = [];
+  state.repoListChange = {
+    revision: 0,
+    changedRepoIds: [],
+    structural: true,
+  };
   state.repoDetails = {};
   state.launchConfigs = {};
   state.launchCandidates = {};

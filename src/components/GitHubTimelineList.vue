@@ -19,6 +19,8 @@ export type TimelineDisplayNode = {
   detail: string;
   summary: string;
   timestamp: number;
+  datetime: string;
+  timeLabel: string;
   link: TimelineNodeLink;
   tone?: "error" | "warn" | "ok" | "muted";
 };
@@ -29,7 +31,6 @@ import { RouterLink, useRouter } from "vue-router";
 
 defineProps<{
   nodes: readonly TimelineDisplayNode[];
-  formatTime: (timestamp: number) => string;
   ariaLabel?: string;
 }>();
 
@@ -85,7 +86,7 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
           </RouterLink>
           <strong v-else class="github-timeline-row__title">{{ node.title }}</strong>
           <span class="github-timeline-row__detail">{{ node.detail }}</span>
-          <time :datetime="new Date(node.timestamp).toISOString()">{{ formatTime(node.timestamp) }}</time>
+          <time :datetime="node.datetime">{{ node.timeLabel }}</time>
         </div>
         <p>{{ node.summary }}</p>
       </div>

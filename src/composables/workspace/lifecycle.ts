@@ -1,7 +1,8 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { state } from "./state";
-import { refreshRepoSummaries, refreshRepos } from "./repositories";
+import { refreshRepoSummaries, refreshRepos, repoSummaryRefreshIsFresh } from "./repositories";
 import { loadWorkspaceService } from "./serviceLoader";
+import { hasRecentInput } from "../../utils/lowPriorityScheduler";
 
 export const FOCUS_REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
 
@@ -58,7 +59,7 @@ export async function initialize() {
       };
     }
     if (settings.workspaceRoot) {
-      await refreshRepos();
+      await refreshRepos({ automatic: true, startupCache });
     }
     if (generation !== lifecycleGeneration) return;
     if (provisionalBindingStatus && !state.bindingStatus) state.bindingStatus = provisionalBindingStatus;
@@ -86,6 +87,7 @@ export async function chooseWorkspaceRoot() {
 
 export async function installWorkspaceFocusRefresh(): Promise<() => void> {
   lastFocusEventAt = Date.now();
+  hasRecentInput();
 
   const handleFocusChange = (focused: boolean) => {
     const now = Date.now();
@@ -94,7 +96,8 @@ export async function installWorkspaceFocusRefresh(): Promise<() => void> {
 
     if (!focused || elapsed < FOCUS_REFRESH_THRESHOLD_MS) return;
     if (!state.settings?.workspaceRoot || state.loading || state.scanning || state.bulkRunning) return;
-    void refreshRepoSummaries();
+    if (hasRecentInput() || repoSummaryRefreshIsFresh()) return;
+    void refreshRepoSummaries({ automatic: true });
   };
 
   const tauriCleanup = await installTauriFocusListener(handleFocusChange);

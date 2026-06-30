@@ -12,6 +12,8 @@ function node(overrides: Partial<TimelineDisplayNode>): TimelineDisplayNode {
     detail: "节点详情",
     summary: "节点摘要",
     timestamp: Date.UTC(2026, 5, 10, 8),
+    datetime: "2026-06-10T08:00:00.000Z",
+    timeLabel: "刚刚",
     link: { kind: "none" },
     ...overrides,
   };
@@ -31,7 +33,6 @@ function renderTimeline(nodes: TimelineDisplayNode[]) {
   return render(GitHubTimelineList, {
     props: {
       nodes,
-      formatTime: () => "刚刚",
     },
     global: {
       plugins: [router],

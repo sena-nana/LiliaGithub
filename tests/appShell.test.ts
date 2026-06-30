@@ -5,7 +5,7 @@ import { defineComponent } from "vue";
 import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import { ContextMenuHost } from "@lilia/ui";
 import { closeContextMenu, installContextMenu } from "@lilia/ui";
-import { resetWorkspaceStateForTests, setRepoActionError, state } from "../src/composables/workspace/state";
+import { resetWorkspaceStateForTests, setRepoActionError, state, upsertRepo } from "../src/composables/workspace/state";
 import { REPO_LAUNCH_STATUS_EVENT } from "../src/composables/workspace/launchEvents";
 import { workspaceFallbackForTests, type GitHubRepoSummary } from "../src/services/workspace";
 import { vContextMenu } from "@lilia/ui";
@@ -292,6 +292,44 @@ describe("AppShell sidebar", () => {
       expect(within(sidebarRowForText(view.container, "Repo-003")).getByLabelText("正在刷新仓库")).toBeInTheDocument();
     });
     expect(sidebarGroupForText(view.container, "未分组仓库", 120)).toBeInTheDocument();
+  });
+
+  it("后台批量刷新时长列表不渲染行级刷新动画", async () => {
+    state.repos = Array.from({ length: 120 }, (_, index) =>
+      repoSummary(`Repo-${String(index + 1).padStart(3, "0")}`),
+    );
+    state.scanning = true;
+    state.refreshingRepoIds = [];
+
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarGroupForText(view.container, "未分组仓库", 120)).toBeInTheDocument();
+    });
+    expect(view.queryAllByLabelText("正在刷新仓库")).toHaveLength(0);
+  });
+
+  it("仓库摘要更新后侧边栏增量更新对应行状态", async () => {
+    state.repos = Array.from({ length: 120 }, (_, index) =>
+      repoSummary(`Repo-${String(index + 1).padStart(3, "0")}`),
+    );
+
+    const view = await renderAppShell("/repos/Repo-002");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "Repo-002")).toBeInTheDocument();
+    });
+
+    upsertRepo(repoSummary("Repo-002", { ahead: 3, unstagedCount: 2 }));
+
+    await waitFor(() => {
+      const row = sidebarRowForText(view.container, "Repo-002");
+      expect(within(row).getByText("2")).toBeInTheDocument();
+      expect(within(row).getByText("↑3")).toBeInTheDocument();
+      expect(row).toHaveClass("is-active");
+    });
+    expect(sidebarGroupForText(view.container, "未分组仓库", 120)).toBeInTheDocument();
+    expect(view.getByRole("button", { name: "显示更多 40 个" })).toBeInTheDocument();
   });
 
   it("侧边栏可创建仓库分组、立即重命名并折叠已有分组", async () => {
@@ -1102,7 +1140,9 @@ describe("AppShell sidebar", () => {
       pointerId: 1,
     });
 
-    expect(resizer).toHaveAttribute("aria-valuenow", "360");
+    await waitFor(() => {
+      expect(resizer).toHaveAttribute("aria-valuenow", "360");
+    });
 
     await fireEvent.pointerUp(window, {
       clientX: 300,

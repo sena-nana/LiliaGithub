@@ -11,7 +11,7 @@ const STORAGE_KEY = "lilia-github.home.overviewSnapshot.v1";
 
 function snapshot(overrides: Partial<HomeGitHubOverviewSnapshot> = {}): HomeGitHubOverviewSnapshot {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     accountLogin: "sena-nana",
     cachedAt: Date.now(),
     repos: [{
@@ -30,9 +30,34 @@ function snapshot(overrides: Partial<HomeGitHubOverviewSnapshot> = {}): HomeGitH
       htmlUrl: "https://github.com/sena-nana/LiliaGithub",
     }],
     nextPage: null,
-    issuesByRepo: {},
+    issuesByRepo: {
+      "sena-nana/LiliaGithub": [{
+        number: 12,
+        title: "Issue 12",
+        state: "open",
+        body: null,
+        labels: [],
+        assignees: [],
+        htmlUrl: "https://github.com/sena-nana/LiliaGithub/issues/12",
+        updatedAt: "2026-06-18T08:00:00Z",
+        createdAt: "2026-06-18T08:00:00Z",
+      }],
+    },
     pullRequestsByRepo: {},
     pullRequestChecksByRepo: {},
+    actionNotificationsByRepo: {
+      "sena-nana/LiliaGithub": [{
+        id: "90",
+        repoFullName: "sena-nana/LiliaGithub",
+        title: "CI failed",
+        subjectType: "WorkflowRun",
+        subjectUrl: "https://api.github.com/repos/sena-nana/LiliaGithub/actions/runs/90",
+        latestCommentUrl: null,
+        reason: "ci_activity",
+        updatedAt: "2026-06-18T08:00:00Z",
+        unread: true,
+      }],
+    },
     releasesByRepo: {
       "sena-nana/LiliaGithub": [{
         id: 8001,
@@ -77,15 +102,27 @@ describe("home overview cache", () => {
     localStorage.clear();
   });
 
-  it("persists and restores the GitHub overview snapshot", () => {
+  it("keeps pending data in memory and persists only repo pagination", async () => {
+    vi.useFakeTimers();
     writeHomeGitHubOverviewSnapshot(snapshot());
 
     const restored = readHomeGitHubOverviewSnapshot();
 
     expect(restored?.repos[0]?.fullName).toBe("sena-nana/LiliaGithub");
     expect(restored?.accountLogin).toBe("sena-nana");
+    expect(restored?.issuesByRepo["sena-nana/LiliaGithub"]?.[0]?.number).toBe(12);
+    expect(restored?.actionNotificationsByRepo["sena-nana/LiliaGithub"]?.[0]?.id).toBe("90");
     expect(restored?.releasesByRepo["sena-nana/LiliaGithub"]?.[0]?.tagName).toBe("v1.2.0");
     expect(restored?.releasesByRepo["sena-nana/LiliaGithub"]?.[0]?.assets[0]?.name).toBe("LiliaGithub_1.2.0_x64-setup.exe");
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    await vi.runAllTimersAsync();
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(stored.repos[0].fullName).toBe("sena-nana/LiliaGithub");
+    expect(stored.issuesByRepo).toBeUndefined();
+    expect(stored.pullRequestsByRepo).toBeUndefined();
+    expect(stored.actionNotificationsByRepo).toBeUndefined();
+    expect(stored.releasesByRepo).toBeUndefined();
   });
 
   it("marks snapshots older than five minutes for background refresh", () => {
@@ -101,18 +138,42 @@ describe("home overview cache", () => {
     expect(homeGitHubOverviewSnapshotNeedsRefresh(restored!)).toBe(true);
   });
 
-  it("rejects old schema snapshots without release data", () => {
+  it("coalesces persisted snapshot writes", async () => {
+    vi.useFakeTimers();
+    writeHomeGitHubOverviewSnapshot(snapshot({ accountLogin: "first" }));
+    writeHomeGitHubOverviewSnapshot(snapshot({ accountLogin: "second" }));
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    await vi.runAllTimersAsync();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}").accountLogin).toBe("second");
+  });
+
+  it("migrates old persisted snapshots to repo-only cache", () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       accountLogin: "sena-nana",
       cachedAt: Date.now(),
-      repos: [],
+      repos: snapshot().repos,
       nextPage: null,
-      issuesByRepo: {},
-      pullRequestsByRepo: {},
+      issuesByRepo: {
+        "sena-nana/LiliaGithub": [{ number: 12 }],
+      },
+      pullRequestsByRepo: {
+        "sena-nana/LiliaGithub": [{ number: 7 }],
+      },
       pullRequestChecksByRepo: {},
+      actionNotificationsByRepo: {
+        "sena-nana/LiliaGithub": [{ id: "90" }],
+      },
+      releasesByRepo: {},
     }));
 
-    expect(readHomeGitHubOverviewSnapshot()).toBeNull();
+    const restored = readHomeGitHubOverviewSnapshot();
+
+    expect(restored?.repos[0]?.fullName).toBe("sena-nana/LiliaGithub");
+    expect(restored?.issuesByRepo).toEqual({});
+    expect(restored?.pullRequestsByRepo).toEqual({});
+    expect(restored?.actionNotificationsByRepo).toEqual({});
   });
 });
