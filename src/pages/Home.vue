@@ -43,7 +43,6 @@ import {
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubRepoSummary,
-  type GitHubWorkflowRun,
   type BulkOperation,
   type RepoPullLocalChangesMode,
   type RepoSummary,
@@ -57,7 +56,7 @@ import {
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
-import { bulkResultTone, repoDisplayName, workflowRunStatusText, workflowRunStatusTone, type WorkflowRunTone } from "../utils/repoDisplay";
+import { bulkResultTone, repoDisplayName } from "../utils/repoDisplay";
 import {
   buildHomePendingItems,
   type HomePendingItem,
@@ -109,15 +108,6 @@ type RepoStatusRow = {
   localRepo: RepoSummary | null;
   action: RepoAction | null;
   syncIssue: RepoSyncIssueDisplay | null;
-  workflowRun: WorkflowRunOverview | null;
-};
-
-type WorkflowRunOverview = {
-  run: GitHubWorkflowRun;
-  status: string;
-  detail: string;
-  tone: WorkflowRunTone;
-  priority: number;
 };
 
 type ContributionCell = GitHubContributionDay & {
@@ -176,7 +166,6 @@ const githubReposError = ref<string | null>(null);
 const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
 const githubPullRequestsByRepo = ref<Record<string, GitHubPullRequest[] | undefined>>({});
 const githubAccountIssuesLoading = ref(false);
-const githubWorkflowRunsByRepo = ref<Record<string, GitHubWorkflowRun[] | undefined>>({});
 const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotification[] | undefined>>({});
 const githubActionNotificationsLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
@@ -283,7 +272,6 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
       localRepo,
       action: localRepo ? repoAction(localRepo) : null,
       syncIssue: localRepo ? repoSyncIssueForRepo(localRepo.id) : null,
-      workflowRun: focusedWorkflowRun(githubWorkflowRunsByRepo.value[githubRepo.fullName] ?? []),
     };
   }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived)),
 );
@@ -429,7 +417,6 @@ function restoreGitHubOverviewSnapshot() {
   githubReposNextPage.value = snapshot.nextPage;
   githubIssuesByRepo.value = snapshot.issuesByRepo;
   githubPullRequestsByRepo.value = snapshot.pullRequestsByRepo;
-  githubWorkflowRunsByRepo.value = snapshot.workflowRunsByRepo;
   githubActionNotificationsByRepo.value = snapshot.actionNotificationsByRepo;
   githubReposError.value = null;
   prepareGitHubTimeline(snapshot.repos);
@@ -446,7 +433,6 @@ function writeGitHubOverviewSnapshot() {
     issuesByRepo: githubIssuesByRepo.value,
     pullRequestsByRepo: githubPullRequestsByRepo.value,
     pullRequestChecksByRepo: {},
-    workflowRunsByRepo: githubWorkflowRunsByRepo.value,
     actionNotificationsByRepo: githubActionNotificationsByRepo.value,
     releasesByRepo: {},
   });
@@ -706,27 +692,6 @@ function repoSyncIssueForTimeline(githubRepo: GitHubRepoSummary) {
   return localRepo ? repoSyncIssueForRepo(localRepo.id) : null;
 }
 
-function focusedWorkflowRun(runs: readonly GitHubWorkflowRun[]): WorkflowRunOverview | null {
-  return runs
-    .map(workflowRunOverview)
-    .sort((a, b) =>
-      b.priority - a.priority ||
-      parseGitHubTime(b.run.updatedAt) - parseGitHubTime(a.run.updatedAt) ||
-      b.run.id - a.run.id,
-    )[0] ?? null;
-}
-
-function workflowRunOverview(run: GitHubWorkflowRun): WorkflowRunOverview {
-  const tone = workflowRunStatusTone(run);
-  return {
-    run,
-    status: workflowRunStatusText(run),
-    detail: `${run.name} · ${run.branch}`,
-    tone,
-    priority: tone === "error" ? 3 : tone === "warn" ? 2 : tone === "ok" ? 0 : 1,
-  };
-}
-
 function toHomePendingDisplayNode(item: HomePendingItem): TimelineDisplayNode {
   return {
     id: item.id,
@@ -847,12 +812,6 @@ function contributionTitle(day: GitHubContributionDay) {
     lines.push(`${label}：${repo.count} 次`);
   }
   return lines.join("\n");
-}
-
-function parseGitHubTime(value: string | null | undefined) {
-  if (!value) return 0;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function formatTimelineTime(timestamp: number) {
@@ -1570,7 +1529,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             <div class="repo-status-list" aria-label="仓库状态列表">
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
-                v-for="{ githubRepo, localRepo, action, syncIssue, workflowRun } in visibleRepoStatusRows"
+                v-for="{ githubRepo, localRepo, action, syncIssue } in visibleRepoStatusRows"
                 :key="githubRepo.fullName"
                 class="repo-status-row"
                 :class="{ 'is-cloned': localRepo }"
@@ -1587,16 +1546,6 @@ function bulkOperationDescription(operation: BulkOperation) {
                   <strong class="repo-status-row__name">
                     {{ githubRepo.fullName }}
                   </strong>
-                  <span
-                    v-if="workflowRun"
-                    class="repo-action-icon"
-                    :class="`repo-action-icon--${workflowRun.tone}`"
-                    :title="`${workflowRun.status} · ${workflowRun.run.displayTitle} · ${workflowRun.detail}`"
-                    :aria-label="workflowRun.status"
-                  >
-                    <X v-if="workflowRun.tone === 'error'" :size="14" aria-hidden="true" />
-                    <CircleDot v-else :size="14" aria-hidden="true" />
-                  </span>
                   <span v-if="githubRepo.archived" class="repo-status-row__badge repo-status-row__badge--archived">Archive</span>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
                   <span
@@ -2433,32 +2382,6 @@ function bulkOperationDescription(operation: BulkOperation) {
 .repo-action-status--muted {
   color: var(--text-muted);
   background: var(--bg-subtle);
-}
-
-.repo-action-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  color: var(--text-muted);
-}
-
-.repo-action-icon--error {
-  color: var(--err);
-}
-
-.repo-action-icon--warn {
-  color: var(--warn);
-}
-
-.repo-action-icon--ok {
-  color: var(--ok);
-}
-
-.repo-action-icon--muted {
-  color: var(--text-muted);
 }
 
 .repo-action-link {
