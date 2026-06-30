@@ -33,62 +33,68 @@ defineEmits<{
 <template>
   <RouterLink
     :to="to"
-    class="sb-tree__row sb-tree__row--project"
-    :class="{ 'is-active': active }"
-    :data-agent-id="`sidebar.repo.${repo.id}`"
-    active-class="is-active"
-    :title="repoDisplayTitle(repo)"
-    v-context-menu="contextMenu"
+    custom
+    v-slot="{ href, navigate, isActive }"
   >
-    <component
-      :is="isLinkedWorktree(repo) ? GitBranch : FolderGit2"
-      :size="14"
-      aria-hidden="true"
-      class="sb-tree__repo-icon"
-      :class="{ 'is-worktree': isLinkedWorktree(repo) }"
-    />
-    <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
-    <span
-      v-if="syncing"
-      class="sb-badge"
-      title="正在同步"
-      aria-label="正在同步"
+    <a
+      :href="href"
+      class="sb-tree__row sb-tree__row--project"
+      :class="{ 'is-active': active || isActive }"
+      :data-agent-id="`sidebar.repo.${repo.id}`"
+      :title="repoDisplayTitle(repo)"
+      v-context-menu="contextMenu"
+      @click="navigate"
     >
-      <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
-    </span>
-    <span
-      v-else-if="issue"
-      class="sb-issue"
-      :title="issue.message"
-      :aria-label="issue.label"
-    >
-      <AlertCircle :size="11" aria-hidden="true" />
-    </span>
-    <button
-      v-if="issue?.retryable"
-      type="button"
-      class="sb-retry"
-      :data-agent-id="`sidebar.repo.${repo.id}.retry`"
-      :title="issue.retrying ? '正在重试' : '重试'"
-      :aria-label="issue.retrying ? '正在重试' : '重试最近同步失败'"
-      :disabled="issue.retrying"
-      @click.prevent.stop="$emit('retry')"
-    >
-      <LoaderCircle v-if="issue.retrying" :size="11" aria-hidden="true" class="sb-spin" />
-      <RotateCw v-else :size="11" aria-hidden="true" />
-    </button>
-    <span v-if="launchRunning" class="sb-badge sb-badge--ok">RUN</span>
-    <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
-    <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
-    <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
-    <span
-      v-if="refreshing"
-      class="sb-row-loader"
-      title="正在刷新仓库"
-      aria-label="正在刷新仓库"
-    >
-      <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
-    </span>
+      <component
+        :is="isLinkedWorktree(repo) ? GitBranch : FolderGit2"
+        :size="14"
+        aria-hidden="true"
+        class="sb-tree__repo-icon"
+        :class="{ 'is-worktree': isLinkedWorktree(repo) }"
+      />
+      <span class="sb-tree__name">{{ repoDisplayName(repo) }}</span>
+      <span
+        v-if="syncing"
+        class="sb-badge"
+        title="正在同步"
+        aria-label="正在同步"
+      >
+        <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
+      </span>
+      <span
+        v-else-if="issue"
+        class="sb-issue"
+        :title="issue.message"
+        :aria-label="issue.label"
+      >
+        <AlertCircle :size="11" aria-hidden="true" />
+      </span>
+      <button
+        v-if="issue?.retryable"
+        type="button"
+        class="sb-retry"
+        :data-agent-id="`sidebar.repo.${repo.id}.retry`"
+        :title="issue.retrying ? '正在重试' : '重试'"
+        :aria-label="issue.retrying ? '正在重试' : '重试最近同步失败'"
+        :disabled="issue.retrying"
+        @click.prevent.stop="$emit('retry')"
+      >
+        <LoaderCircle v-if="issue.retrying" :size="11" aria-hidden="true" class="sb-spin" />
+        <RotateCw v-else :size="11" aria-hidden="true" />
+      </button>
+      <span v-if="launchRunning" class="sb-badge sb-badge--ok">RUN</span>
+      <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
+      <span v-if="repo.ahead" class="sb-badge">↑{{ repo.ahead }}</span>
+      <span v-if="repo.behind" class="sb-badge">↓{{ repo.behind }}</span>
+      <span
+        v-if="refreshing"
+        class="sb-row-loader"
+        title="正在刷新仓库"
+        aria-label="正在刷新仓库"
+      >
+        <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
+      </span>
+    </a>
   </RouterLink>
 </template>
 
