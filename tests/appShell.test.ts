@@ -704,6 +704,10 @@ describe("AppShell sidebar", () => {
   it("总览页搜索可打开远程账号仓库", async () => {
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
+        items: [githubRepoSummary("sena-nana/PageOne")],
+        nextPage: 2,
+      },
+      {
         items: [githubRepoSummary("sena-nana/RemoteOnly")],
         nextPage: null,
       },
