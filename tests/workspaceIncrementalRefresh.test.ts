@@ -23,6 +23,7 @@ import {
   refreshRepoSummaries,
   refreshWorkspaceTasks,
   resolveConflictFile,
+  resetRepositoryRuntimeForTests,
   stage,
   unhideRepo,
   unstage,
@@ -42,7 +43,7 @@ import {
   state,
 } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
-import type { BulkSyncPreview, GitHubContributionResult } from "../src/services/workspace";
+import type { BulkSyncPreview, GitHubContributionResult, WorkspaceStartupCache } from "../src/services/workspace";
 import { conflictState, repoDetail, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 function deferred<T>() {
@@ -102,6 +103,7 @@ vi.mock("../src/composables/workspace/serviceLoader", () => ({
 
 beforeEach(() => {
   resetWorkspaceStateForTests();
+  resetRepositoryRuntimeForTests();
   vi.clearAllMocks();
   service.listRepoContribution.mockResolvedValue({
     days: [],
@@ -188,6 +190,63 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
     resolveSummary?.(refreshed);
     await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 2, stagedCount: 1 }));
+  });
+
+  it("初始化命中新鲜启动缓存时跳过自动仓库状态刷新", async () => {
+    const cached = repoSummary("LiliaGithub", {
+      ahead: 2,
+      githubFullName: "sena-nana/LiliaGithub",
+      currentBranch: "main",
+    });
+    const startupCache: WorkspaceStartupCache = {
+      workspaceRoot: "C:\\Files\\workspace",
+      bindingLogin: "sena-nana",
+      reposById: {
+        LiliaGithub: {
+          summary: cached,
+          cachedAt: Date.now(),
+        },
+      },
+      contributions: null,
+    };
+    service.readStartupCache.mockResolvedValue(startupCache);
+    service.listManagedRepos.mockResolvedValue([cached]);
+
+    await initialize();
+
+    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+    expect(service.refreshRepoSummary).not.toHaveBeenCalled();
+    expect(state.scanning).toBe(false);
+    expect(state.repos[0]).toMatchObject({ id: "LiliaGithub", ahead: 2 });
+  });
+
+  it("手动刷新即使刚命中新鲜缓存也会刷新仓库状态", async () => {
+    const cached = repoSummary("LiliaGithub", {
+      githubFullName: "sena-nana/LiliaGithub",
+      currentBranch: "main",
+    });
+    const refreshed = repoSummary("LiliaGithub", { ahead: 1 });
+    const startupCache: WorkspaceStartupCache = {
+      workspaceRoot: "C:\\Files\\workspace",
+      bindingLogin: "sena-nana",
+      reposById: {
+        LiliaGithub: {
+          summary: cached,
+          cachedAt: Date.now(),
+        },
+      },
+      contributions: null,
+    };
+    service.listManagedRepos.mockResolvedValue([cached]);
+    service.refreshRepoSummary.mockResolvedValue(refreshed);
+
+    await refreshRepos({ automatic: true, startupCache });
+    expect(service.refreshRepoSummary).not.toHaveBeenCalled();
+
+    await refreshRepos();
+
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
+    await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 1 }));
   });
 
   it("初始化从启动缓存恢复贡献图，再继续刷新仓库列表", async () => {
@@ -497,12 +556,14 @@ describe("workspace incremental refresh", () => {
 
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(4));
     expect(service.refreshRepoSummary).not.toHaveBeenCalledWith("Repo5", { fetchRemote: true });
+    expect(state.scanning).toBe(true);
+    expect(state.refreshingRepoIds).toHaveLength(0);
 
     resolvers.get("Repo1")?.();
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(5));
     expect(service.refreshRepoSummary).toHaveBeenCalledWith("Repo5", { fetchRemote: true });
     await waitFor(() => expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 }));
-    await waitFor(() => expect(state.refreshingRepoIds).not.toContain("Repo1"));
+    expect(state.refreshingRepoIds).toHaveLength(0);
 
     resolvers.get("Repo2")?.();
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(6));
@@ -515,7 +576,7 @@ describe("workspace incremental refresh", () => {
     expect(state.refreshingRepoIds).toHaveLength(0);
   });
 
-  it("仓库刷新状态会批量提交完成项并保留未完成项", async () => {
+  it("后台批量仓库刷新不会展开行级刷新状态但仍批量提交完成项", async () => {
     const repoIds = ["Repo1", "Repo2", "Repo3"];
     const resolvers = new Map<string, () => void>();
     service.listManagedRepos.mockResolvedValue(repoIds.map((repoId) => repoSummary(repoId, { githubFullName: null })));
@@ -526,16 +587,17 @@ describe("workspace incremental refresh", () => {
 
     await refreshRepos();
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(3));
-    expect(state.refreshingRepoIds).toEqual(repoIds);
+    expect(state.scanning).toBe(true);
+    expect(state.refreshingRepoIds).toHaveLength(0);
 
     resolvers.get("Repo1")?.();
     resolvers.get("Repo2")?.();
 
     await waitFor(() => {
-      expect(state.refreshingRepoIds).toEqual(["Repo3"]);
       expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
       expect(state.repos.find((repo) => repo.id === "Repo2")).toMatchObject({ ahead: 2 });
     });
+    expect(state.refreshingRepoIds).toHaveLength(0);
 
     resolvers.get("Repo3")?.();
     await waitFor(() => expect(state.scanning).toBe(false));
@@ -553,16 +615,19 @@ describe("workspace incremental refresh", () => {
 
     await refreshRepos();
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(1));
+    expect(state.scanning).toBe(true);
+    expect(state.refreshingRepoIds).toHaveLength(0);
 
     const currentRefresh = refreshRepoSummaries();
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(2));
-    expect(state.refreshingRepoIds).toEqual(["Repo1"]);
+    expect(state.scanning).toBe(true);
+    expect(state.refreshingRepoIds).toHaveLength(0);
 
     firstRefresh.resolve(repoSummary("Repo1", { ahead: 1 }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(state.scanning).toBe(true);
-    expect(state.refreshingRepoIds).toEqual(["Repo1"]);
+    expect(state.refreshingRepoIds).toHaveLength(0);
 
     secondRefresh.resolve(repoSummary("Repo1", { ahead: 2 }));
     await currentRefresh;
@@ -848,7 +913,7 @@ describe("workspace incremental refresh", () => {
     });
   });
 
-  it("GitHub 贡献图按仓库结果增量累加，不等待慢仓库完成", async () => {
+  it("GitHub 贡献图等待本轮仓库结果完成后一次提交", async () => {
     const contributionResolvers = new Map<string, (result: GitHubContributionResult) => void>();
     service.listManagedRepos.mockResolvedValue([
       repoSummary("FastRepo", { githubFullName: null }),
@@ -879,10 +944,8 @@ describe("workspace incremental refresh", () => {
       },
     });
 
-    await waitFor(() => expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toMatchObject({
-      date: "2026-06-11",
-      count: 2,
-    }));
+    await Promise.resolve();
+    expect(state.githubContributions.days.find((day) => day.date === "2026-06-11")).toBeUndefined();
     expect(state.githubContributions.loading).toBe(true);
 
     contributionResolvers.get("local:SlowRepo")?.({
@@ -908,6 +971,44 @@ describe("workspace incremental refresh", () => {
       repoLimit: 30,
       truncated: false,
       skippedRepoCount: 0,
+    });
+  });
+
+  it("后台语言统计刷新完成后批量提交仓库语言数据", async () => {
+    const languageResolvers = new Map<string, (summary: ReturnType<typeof repoSummary>) => void>();
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("Repo1", { githubFullName: null }),
+      repoSummary("Repo2", { githubFullName: null }),
+    ]);
+    service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId, { githubFullName: null }));
+    service.refreshRepoLanguageStats.mockImplementation((repoId: string) =>
+      new Promise((resolve) => {
+        languageResolvers.set(repoId, resolve);
+      }),
+    );
+
+    await refreshRepos();
+
+    await waitFor(() => expect(service.refreshRepoLanguageStats).toHaveBeenCalledTimes(2));
+    languageResolvers.get("Repo1")?.(repoSummary("Repo1", {
+      languageStats: [{ language: "TypeScript", bytes: 20, lines: 20 }],
+      languageStatsUpdatedAt: 2,
+    }));
+    await Promise.resolve();
+    expect(state.repos.find((repo) => repo.id === "Repo1")?.languageStats).toEqual([]);
+
+    languageResolvers.get("Repo2")?.(repoSummary("Repo2", {
+      languageStats: [{ language: "Vue", bytes: 10, lines: 10 }],
+      languageStatsUpdatedAt: 3,
+    }));
+
+    await waitFor(() => {
+      expect(state.repos.find((repo) => repo.id === "Repo1")?.languageStats).toEqual([
+        { language: "TypeScript", bytes: 20, lines: 20 },
+      ]);
+      expect(state.repos.find((repo) => repo.id === "Repo2")?.languageStats).toEqual([
+        { language: "Vue", bytes: 10, lines: 10 },
+      ]);
     });
   });
 

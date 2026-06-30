@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { computed, nextTick, ref, watch, type Component } from "vue";
+import { computed, nextTick, ref, shallowRef, watch, type Component } from "vue";
 import {
   ChevronRight,
   EyeOff,
@@ -28,6 +28,7 @@ import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
 import { isLinkedWorktree } from "../utils/repoWorktree";
+import type { RepoSummary } from "../services/workspace";
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -97,11 +98,13 @@ interface RepoItem {
   title: string;
   to: string;
   href: string;
+  githubFullName: string | null;
   icon: Component;
   linkedWorktree: boolean;
   dirtyCount: number;
   ahead: number;
   behind: number;
+  conflictCount: number;
 }
 
 interface RepoGroupRef {
@@ -120,47 +123,108 @@ interface RepoSection {
 }
 
 const repoItemCache = new Map<string, RepoItem>();
+const repoRouteCache = new Map<string, { to: string; href: string }>();
+const repoItemIndexById = new Map<string, number>();
 
 function sameRepoItem(current: RepoItem, next: RepoItem) {
   return current.name === next.name &&
     current.title === next.title &&
     current.to === next.to &&
     current.href === next.href &&
+    current.githubFullName === next.githubFullName &&
     current.icon === next.icon &&
     current.linkedWorktree === next.linkedWorktree &&
     current.dirtyCount === next.dirtyCount &&
     current.ahead === next.ahead &&
-    current.behind === next.behind;
+    current.behind === next.behind &&
+    current.conflictCount === next.conflictCount;
 }
 
-const repoItems = computed<RepoItem[]>(() => {
+function repoRouteEntry(repoId: string) {
+  const current = repoRouteCache.get(repoId);
+  if (current) return current;
+  const to = repoRoute(repoId);
+  const entry = { to, href: router.resolve(to).href };
+  repoRouteCache.set(repoId, entry);
+  return entry;
+}
+
+function repoItem(repo: RepoSummary) {
+  const linkedWorktree = isLinkedWorktree(repo);
+  const routeEntry = repoRouteEntry(repo.id);
+  const nextItem: RepoItem = {
+    id: repo.id,
+    name: repoDisplayName(repo),
+    title: repoDisplayTitle(repo),
+    to: routeEntry.to,
+    href: routeEntry.href,
+    githubFullName: repo.githubFullName ?? null,
+    icon: linkedWorktree ? GitBranch : FolderGit2,
+    linkedWorktree,
+    dirtyCount: repoDirtyCount(repo),
+    ahead: repo.ahead,
+    behind: repo.behind,
+    conflictCount: repo.conflictCount,
+  };
+  const currentItem = repoItemCache.get(repo.id);
+  if (currentItem && sameRepoItem(currentItem, nextItem)) return currentItem;
+  repoItemCache.set(repo.id, nextItem);
+  return nextItem;
+}
+
+function rebuildRepoItems(repos: readonly RepoSummary[]) {
   const activeRepoIds = new Set<string>();
-  const items = workspace.state.repos.map((repo) => {
-    const linkedWorktree = isLinkedWorktree(repo);
-    const to = repoRoute(repo.id);
-    const nextItem = {
-      id: repo.id,
-      name: repoDisplayName(repo),
-      title: repoDisplayTitle(repo),
-      to,
-      href: router.resolve(to).href,
-      icon: linkedWorktree ? GitBranch : FolderGit2,
-      linkedWorktree,
-      dirtyCount: repoDirtyCount(repo),
-      ahead: repo.ahead,
-      behind: repo.behind,
-    };
+  const items = repos.map((repo, index) => {
     activeRepoIds.add(repo.id);
-    const currentItem = repoItemCache.get(repo.id);
-    if (currentItem && sameRepoItem(currentItem, nextItem)) return currentItem;
-    repoItemCache.set(repo.id, nextItem);
-    return nextItem;
+    repoItemIndexById.set(repo.id, index);
+    return repoItem(repo);
   });
   for (const repoId of repoItemCache.keys()) {
-    if (!activeRepoIds.has(repoId)) repoItemCache.delete(repoId);
+    if (!activeRepoIds.has(repoId)) {
+      repoItemCache.delete(repoId);
+      repoRouteCache.delete(repoId);
+      repoItemIndexById.delete(repoId);
+    }
   }
   return items;
-});
+}
+
+const repoItems = shallowRef<RepoItem[]>(rebuildRepoItems(workspace.state.repos));
+
+watch(
+  () => workspace.state.repos,
+  () => {
+    repoItems.value = rebuildRepoItems(workspace.state.repos);
+  },
+);
+
+watch(
+  () => workspace.state.repoListChange.revision,
+  () => {
+    const change = workspace.state.repoListChange;
+    if (change.structural) {
+      repoItems.value = rebuildRepoItems(workspace.state.repos);
+      return;
+    }
+    const nextItems = repoItems.value.slice();
+    const repoById = change.changedRepoIds.length > 12
+      ? new Map(workspace.state.repos.map((repo) => [repo.id, repo]))
+      : null;
+    let changed = false;
+    for (const repoId of change.changedRepoIds) {
+      const index = repoItemIndexById.get(repoId);
+      if (index == null) continue;
+      const repo = repoById?.get(repoId) ?? workspace.state.repos.find((item) => item.id === repoId);
+      if (!repo) continue;
+      const nextItem = repoItem(repo);
+      if (nextItems[index] !== nextItem) {
+        nextItems[index] = nextItem;
+        changed = true;
+      }
+    }
+    if (changed) repoItems.value = nextItems;
+  },
+);
 
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const repoGroupIds = computed(() => repoGroups.value.map((group) => group.id));
@@ -168,9 +232,9 @@ const repoGroupIds = computed(() => repoGroups.value.map((group) => group.id));
 const repoItemById = computed(() => new Map(repoItems.value.map((item) => [item.id, item])));
 const repoConflictIssueById = computed(() => {
   const issues = new Map<string, RepoIssue>();
-  for (const repo of workspace.state.repos) {
-    if (repo.conflictCount <= 0) continue;
-    issues.set(repo.id, CONFLICT_REPO_ISSUE);
+  for (const item of repoItems.value) {
+    if (item.conflictCount <= 0) continue;
+    issues.set(item.id, CONFLICT_REPO_ISSUE);
   }
   return issues;
 });
@@ -243,7 +307,7 @@ watch(
 
 const localRepoFullNames = computed(() =>
   new Set(
-    workspace.state.repos
+    repoItems.value
       .map((repo) => repo.githubFullName)
       .filter((name): name is string => Boolean(name)),
   ),

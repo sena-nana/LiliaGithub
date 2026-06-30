@@ -6,9 +6,10 @@ import type {
   GitHubRepoSummary,
   GitHubActionNotification,
 } from "../services/workspace";
+import { scheduleLowPriorityTask, type CancelLowPriorityTask } from "../utils/lowPriorityScheduler";
 
 export type HomeGitHubOverviewSnapshot = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   accountLogin: string | null;
   cachedAt: number;
   repos: GitHubRepoSummary[];
@@ -21,9 +22,34 @@ export type HomeGitHubOverviewSnapshot = {
 };
 
 let githubOverviewSnapshot: HomeGitHubOverviewSnapshot | null = null;
+let persistedOverviewSnapshot: PersistedHomeGitHubOverviewSnapshot | null = null;
+let persistedOverviewSnapshotWriteCancel: CancelLowPriorityTask | null = null;
 const STORAGE_KEY = "lilia-github.home.overviewSnapshot.v1";
 export const HOME_GITHUB_OVERVIEW_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const HOME_GITHUB_OVERVIEW_SNAPSHOT_REFRESH_MS = 5 * 60 * 1000;
+
+type PersistedHomeGitHubOverviewSnapshot = Pick<
+  HomeGitHubOverviewSnapshot,
+  "schemaVersion" | "accountLogin" | "cachedAt" | "repos" | "nextPage"
+>;
+
+type RawStoredHomeGitHubOverviewSnapshot = {
+  schemaVersion?: unknown;
+  accountLogin?: unknown;
+  cachedAt?: unknown;
+  repos?: unknown;
+  nextPage?: unknown;
+};
+
+function emptyRepoLists() {
+  return {
+    issuesByRepo: {},
+    pullRequestsByRepo: {},
+    pullRequestChecksByRepo: {},
+    actionNotificationsByRepo: {},
+    releasesByRepo: {},
+  };
+}
 
 function cloneIssue(issue: GitHubIssue): GitHubIssue {
   return {
@@ -93,7 +119,7 @@ function clonePullRequestChecksByRepo(
 
 function cloneSnapshot(snapshot: HomeGitHubOverviewSnapshot): HomeGitHubOverviewSnapshot {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     accountLogin: snapshot.accountLogin,
     cachedAt: snapshot.cachedAt,
     repos: snapshot.repos.map((repo) => ({ ...repo })),
@@ -103,6 +129,31 @@ function cloneSnapshot(snapshot: HomeGitHubOverviewSnapshot): HomeGitHubOverview
     pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
     actionNotificationsByRepo: cloneListByRepo(snapshot.actionNotificationsByRepo ?? {}, cloneShallow),
     releasesByRepo: cloneListByRepo(snapshot.releasesByRepo, cloneRelease),
+  };
+}
+
+function cloneSnapshotForMemory(snapshot: HomeGitHubOverviewSnapshot): HomeGitHubOverviewSnapshot {
+  return {
+    schemaVersion: 3,
+    accountLogin: snapshot.accountLogin,
+    cachedAt: snapshot.cachedAt,
+    repos: snapshot.repos.map((repo) => ({ ...repo })),
+    nextPage: snapshot.nextPage,
+    issuesByRepo: snapshot.issuesByRepo,
+    pullRequestsByRepo: snapshot.pullRequestsByRepo,
+    pullRequestChecksByRepo: snapshot.pullRequestChecksByRepo,
+    actionNotificationsByRepo: snapshot.actionNotificationsByRepo,
+    releasesByRepo: snapshot.releasesByRepo,
+  };
+}
+
+function persistedSnapshot(snapshot: HomeGitHubOverviewSnapshot): PersistedHomeGitHubOverviewSnapshot {
+  return {
+    schemaVersion: 3,
+    accountLogin: snapshot.accountLogin,
+    cachedAt: snapshot.cachedAt,
+    repos: snapshot.repos.map((repo) => ({ ...repo })),
+    nextPage: snapshot.nextPage,
   };
 }
 
@@ -118,15 +169,25 @@ export function readHomeGitHubOverviewSnapshot() {
 }
 
 export function writeHomeGitHubOverviewSnapshot(snapshot: HomeGitHubOverviewSnapshot) {
-  githubOverviewSnapshot = cloneSnapshot(snapshot);
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(githubOverviewSnapshot));
-  } catch {
-    /* ignore quota / privacy mode errors */
-  }
+  githubOverviewSnapshot = cloneSnapshotForMemory(snapshot);
+  persistedOverviewSnapshot = persistedSnapshot(snapshot);
+  if (persistedOverviewSnapshotWriteCancel) return;
+  persistedOverviewSnapshotWriteCancel = scheduleLowPriorityTask(() => {
+    persistedOverviewSnapshotWriteCancel = null;
+    const next = persistedOverviewSnapshot;
+    if (!next) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore quota / privacy mode errors */
+    }
+  });
 }
 
 export function clearHomeGitHubOverviewSnapshot() {
+  persistedOverviewSnapshotWriteCancel?.();
+  persistedOverviewSnapshotWriteCancel = null;
+  persistedOverviewSnapshot = null;
   githubOverviewSnapshot = null;
   try {
     localStorage.removeItem(STORAGE_KEY);
@@ -137,7 +198,7 @@ export function clearHomeGitHubOverviewSnapshot() {
 
 function isSnapshotUsable(snapshot: HomeGitHubOverviewSnapshot) {
   const age = Date.now() - snapshot.cachedAt;
-  return snapshot.schemaVersion === 2 &&
+  return snapshot.schemaVersion === 3 &&
     Number.isFinite(snapshot.cachedAt) &&
     age >= 0 &&
     age < HOME_GITHUB_OVERVIEW_SNAPSHOT_MAX_AGE_MS;
@@ -159,28 +220,20 @@ function readStoredSnapshot() {
 
 function parseSnapshot(value: unknown): HomeGitHubOverviewSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const snapshot = value as Partial<HomeGitHubOverviewSnapshot>;
+  const snapshot = value as RawStoredHomeGitHubOverviewSnapshot;
   if (
-    snapshot.schemaVersion !== 2 ||
     typeof snapshot.cachedAt !== "number" ||
-    !Array.isArray(snapshot.repos) ||
-    !snapshot.issuesByRepo ||
-    !snapshot.pullRequestsByRepo ||
-    !snapshot.pullRequestChecksByRepo ||
-    !snapshot.releasesByRepo
+    !Array.isArray(snapshot.repos)
   ) {
     return null;
   }
+  if (snapshot.schemaVersion !== 2 && snapshot.schemaVersion !== 3) return null;
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     accountLogin: typeof snapshot.accountLogin === "string" ? snapshot.accountLogin : null,
     cachedAt: snapshot.cachedAt,
     repos: snapshot.repos.map((repo) => ({ ...repo })),
     nextPage: typeof snapshot.nextPage === "number" ? snapshot.nextPage : null,
-    issuesByRepo: cloneListByRepo(snapshot.issuesByRepo, cloneIssue),
-    pullRequestsByRepo: cloneListByRepo(snapshot.pullRequestsByRepo, clonePullRequest),
-    pullRequestChecksByRepo: clonePullRequestChecksByRepo(snapshot.pullRequestChecksByRepo),
-    actionNotificationsByRepo: cloneListByRepo(snapshot.actionNotificationsByRepo ?? {}, cloneShallow),
-    releasesByRepo: cloneListByRepo(snapshot.releasesByRepo, cloneRelease),
+    ...emptyRepoLists(),
   };
 }

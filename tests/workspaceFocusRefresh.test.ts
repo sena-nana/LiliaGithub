@@ -5,7 +5,9 @@ import {
   initialize,
   installWorkspaceFocusRefresh,
 } from "../src/composables/workspace/lifecycle";
+import { refreshRepoSummaries, resetRepositoryRuntimeForTests } from "../src/composables/workspace/repositories";
 import { recentSyncErrorForRepo, resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
+import { resetLowPrioritySchedulerForTests } from "../src/utils/lowPriorityScheduler";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
@@ -58,6 +60,8 @@ describe("workspace focus refresh", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-12T00:00:00Z"));
     resetWorkspaceStateForTests();
+    resetRepositoryRuntimeForTests();
+    resetLowPrioritySchedulerForTests();
     vi.clearAllMocks();
     const settings = workspaceSettings();
     state.settings = settings;
@@ -144,6 +148,38 @@ describe("workspace focus refresh", () => {
     expect(state.repos[0].behind).toBe(2);
     expect(state.repos[0].languageStats).toEqual(initial.languageStats);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(1);
+  });
+
+  it("仓库状态刚刷新过时回焦点不会再次自动刷新", async () => {
+    const initial = repoSummary("LiliaGithub");
+    state.repos = [initial];
+    service.listManagedRepos.mockResolvedValue([initial]);
+    service.refreshRepoSummary.mockResolvedValue(repoSummary("LiliaGithub", { behind: 1 }));
+    await refreshRepoSummaries();
+    vi.clearAllMocks();
+    cleanup = await installWorkspaceFocusRefresh();
+
+    blurWindow();
+    vi.advanceTimersByTime(FOCUS_REFRESH_THRESHOLD_MS);
+    focusWindow();
+    await flushPromises();
+
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
+    expect(service.refreshRepoSummary).not.toHaveBeenCalled();
+  });
+
+  it("近期有输入时回焦点会跳过自动刷新", async () => {
+    cleanup = await installWorkspaceFocusRefresh();
+
+    blurWindow();
+    vi.advanceTimersByTime(FOCUS_REFRESH_THRESHOLD_MS - 1);
+    window.dispatchEvent(new WheelEvent("wheel"));
+    vi.advanceTimersByTime(1);
+    focusWindow();
+    await flushPromises();
+
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
+    expect(service.refreshRepoSummary).not.toHaveBeenCalled();
   });
 
   it("回焦点刷新触发自动同步失败时保存最近同步失败", async () => {

@@ -151,7 +151,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     await loadCloneRepoPage(cloneNextRepoPage.value, true);
   }
 
-  async function openCloneDialog() {
+  async function openCloneDialog(groupId: string | null = null) {
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
     cloneOpen.value = true;
@@ -167,7 +167,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneRepoLoadError.value = null;
     cloneNextRepoPage.value = null;
     cloneSelectedRepo.value = null;
-    cloneSelectedGroupId.value = null;
+    cloneSelectedGroupId.value = groupId;
     await cloneBindingLoader.run("clone-binding", async (runId) => {
       try {
         const status = await getGitHubBindingStatus();
