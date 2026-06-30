@@ -39,7 +39,7 @@
     "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
   },
   "dependencies": {
-    "@lilia/ui": "https://github.com/sena-nana/LiliaUI.git#workspace=@lilia/ui&commit=5e5798ecb4b1b8c390d1b3b5958934d463c2948d",
+    "@lilia/ui": "https://github.com/sena-nana/LiliaUI.git#workspace=@lilia/ui&commit=d8baeb0b97251ce973063c480f86b70f96b1ec07",
     "@lucide/vue": "^1.21.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-opener": "^2.5.4",

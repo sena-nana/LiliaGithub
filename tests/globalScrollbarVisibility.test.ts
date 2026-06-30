@@ -58,6 +58,14 @@ function flushOverlayFrame() {
   vi.advanceTimersByTime(16);
 }
 
+function discoverScroller(element: HTMLElement) {
+  element.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+}
+
+function scrollScroller(element: HTMLElement) {
+  element.dispatchEvent(new Event("scroll"));
+}
+
 describe("global scrollbar visibility", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -73,7 +81,8 @@ describe("global scrollbar visibility", () => {
     installGlobalScrollbarVisibility();
     const { element } = createScroller({ scrollTop: 50 });
 
-    element.dispatchEvent(new Event("scroll"));
+    discoverScroller(element);
+    scrollScroller(element);
     flushOverlayFrame();
 
     expect(verticalOverlay()).toBeInTheDocument();
@@ -122,7 +131,8 @@ describe("global scrollbar visibility", () => {
       clientX: 50,
       clientY: 104,
     }));
-    element.dispatchEvent(new Event("scroll"));
+    discoverScroller(element);
+    scrollScroller(element);
     flushOverlayFrame();
 
     expect(horizontalOverlay()).toBeNull();
@@ -134,7 +144,8 @@ describe("global scrollbar visibility", () => {
   it("drags the overlay thumb through a larger hit target", () => {
     installGlobalScrollbarVisibility();
     const { element, scrollTop } = createScroller({ scrollHeight: 500 });
-    element.dispatchEvent(new Event("scroll"));
+    discoverScroller(element);
+    scrollScroller(element);
     flushOverlayFrame();
 
     const overlay = verticalOverlay();
@@ -166,16 +177,29 @@ describe("global scrollbar visibility", () => {
     installGlobalScrollbarVisibility();
     const { element } = createScroller();
 
-    element.dispatchEvent(new Event("scroll"));
+    discoverScroller(element);
+    scrollScroller(element);
     flushOverlayFrame();
     expect(verticalOverlay()).toBeInTheDocument();
 
     uninstallGlobalScrollbarVisibility();
     expect(verticalOverlay()).toBeNull();
 
-    element.dispatchEvent(new Event("scroll"));
+    scrollScroller(element);
     flushOverlayFrame();
     vi.advanceTimersByTime(480);
+    expect(verticalOverlay()).toBeNull();
+
+    element.remove();
+  });
+
+  it("ignores scroll events from undiscovered elements", () => {
+    installGlobalScrollbarVisibility();
+    const { element } = createScroller();
+
+    scrollScroller(element);
+    flushOverlayFrame();
+
     expect(verticalOverlay()).toBeNull();
 
     element.remove();
