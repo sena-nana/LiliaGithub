@@ -419,32 +419,35 @@ async function deleteGroup(group: { id: string }) {
 
 <template>
   <aside class="secondary-panel" data-agent-id="sidebar">
-    <div class="sb-section">
-      <div class="sb-section__header">
-        <span class="sb-section__title">工作区</span>
+    <div class="secondary-panel__top">
+      <div class="sb-section">
+        <div class="sb-section__header">
+          <span class="sb-section__title">工作区</span>
+        </div>
+        <nav class="sb-tree" aria-label="主导航">
+          <RouterLink
+            v-for="item in SIDEBAR_NAV"
+            :key="item.label"
+            :to="item.to ?? '/'"
+            class="sb-tree__row"
+            :data-agent-id="`sidebar.nav.${item.label}`"
+            exact-active-class="is-active"
+            :aria-disabled="item.disabled ? 'true' : undefined"
+          >
+            <component :is="item.icon" :size="14" aria-hidden="true" />
+            <span class="sb-tree__name">{{ item.label }}</span>
+            <SidebarRowTools v-if="item.tools?.length" :tools="item.tools" />
+          </RouterLink>
+        </nav>
       </div>
-      <nav class="sb-tree" aria-label="主导航">
-        <RouterLink
-          v-for="item in SIDEBAR_NAV"
-          :key="item.label"
-          :to="item.to ?? '/'"
-          class="sb-tree__row"
-          :data-agent-id="`sidebar.nav.${item.label}`"
-          exact-active-class="is-active"
-          :aria-disabled="item.disabled ? 'true' : undefined"
-        >
-          <component :is="item.icon" :size="14" aria-hidden="true" />
-          <span class="sb-tree__name">{{ item.label }}</span>
-          <SidebarRowTools v-if="item.tools?.length" :tools="item.tools" />
-        </RouterLink>
-      </nav>
     </div>
 
-    <div
-      v-for="section in localRepoSections"
-      :key="section.id"
-      class="sb-section sb-section--group"
-    >
+    <div class="secondary-panel__body">
+      <div
+        v-for="section in localRepoSections"
+        :key="section.id"
+        class="sb-section sb-section--group"
+      >
         <div class="sb-section__header">
           <button
             v-if="editingGroupId !== section.id"
@@ -539,62 +542,84 @@ async function deleteGroup(group: { id: string }) {
             <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
           </div>
         </div>
-    </div>
-
-    <div v-if="remoteRepoItems.length" class="sb-section sb-section--remote">
-      <div class="sb-section__header">
-        <span class="sb-section__title">远程仓库 {{ remoteRepoItems.length }}</span>
       </div>
-      <div class="sb-tree">
-        <div
-          v-for="repo in visibleRemoteRepoItems"
-          :key="repo.fullName"
-          class="sb-tree__row sb-tree__row--project sb-tree__row--remote"
-          :class="{ 'is-active': activeRemoteFullName === repo.fullName }"
-          role="link"
-          tabindex="0"
-          :data-agent-id="`sidebar.remote.${repo.fullName}`"
-          :title="repo.fullName"
-          :aria-label="`打开 ${repo.fullName}`"
-          @click="openRemoteRepo(repo.fullName)"
-          @keydown.enter.prevent="openRemoteRepo(repo.fullName)"
-          @keydown.space.prevent="openRemoteRepo(repo.fullName)"
-        >
-          <FolderGit2 :size="14" aria-hidden="true" />
-          <span class="sb-tree__name">{{ repo.name }}</span>
-          <span v-if="repo.archived" class="sb-badge">ARCH</span>
-          <span v-if="repo.private" class="sb-badge">私有</span>
-          <button
-            type="button"
-            class="sb-icon-btn sb-tree__remote-remove"
-            :data-agent-id="`sidebar.remote.${repo.fullName}.remove`"
-            :aria-label="`移除 ${repo.fullName}`"
-            title="从侧边栏移除"
-            @click.stop="removeRemoteRepo(repo.fullName)"
+
+      <div v-if="remoteRepoItems.length" class="sb-section sb-section--remote">
+        <div class="sb-section__header">
+          <span class="sb-section__title">远程仓库 {{ remoteRepoItems.length }}</span>
+        </div>
+        <div class="sb-tree">
+          <div
+            v-for="repo in visibleRemoteRepoItems"
+            :key="repo.fullName"
+            class="sb-tree__row sb-tree__row--project sb-tree__row--remote"
+            :class="{ 'is-active': activeRemoteFullName === repo.fullName }"
+            role="link"
+            tabindex="0"
+            :data-agent-id="`sidebar.remote.${repo.fullName}`"
+            :title="repo.fullName"
+            :aria-label="`打开 ${repo.fullName}`"
+            @click="openRemoteRepo(repo.fullName)"
+            @keydown.enter.prevent="openRemoteRepo(repo.fullName)"
+            @keydown.space.prevent="openRemoteRepo(repo.fullName)"
           >
-            <X :size="13" aria-hidden="true" />
+            <FolderGit2 :size="14" aria-hidden="true" />
+            <span class="sb-tree__name">{{ repo.name }}</span>
+            <span v-if="repo.archived" class="sb-badge">ARCH</span>
+            <span v-if="repo.private" class="sb-badge">私有</span>
+            <button
+              type="button"
+              class="sb-icon-btn sb-tree__remote-remove"
+              :data-agent-id="`sidebar.remote.${repo.fullName}.remove`"
+              :aria-label="`移除 ${repo.fullName}`"
+              title="从侧边栏移除"
+              @click.stop="removeRemoteRepo(repo.fullName)"
+            >
+              <X :size="13" aria-hidden="true" />
+            </button>
+          </div>
+          <button
+            v-if="hiddenRemoteRepoItemCount > 0"
+            type="button"
+            class="sb-tree__more"
+            data-agent-id="sidebar.remote.show-more"
+            @click="showMoreRemoteRepos"
+          >
+            显示更多 {{ hiddenRemoteRepoItemCount }} 个
           </button>
         </div>
-        <button
-          v-if="hiddenRemoteRepoItemCount > 0"
-          type="button"
-          class="sb-tree__more"
-          data-agent-id="sidebar.remote.show-more"
-          @click="showMoreRemoteRepos"
-        >
-          显示更多 {{ hiddenRemoteRepoItemCount }} 个
-        </button>
       </div>
     </div>
 
-    <SidebarFooter
-      :status="footerStatus"
-    />
+    <div class="secondary-panel__footer">
+      <SidebarFooter
+        :status="footerStatus"
+      />
+    </div>
   </aside>
 </template>
 
 <style scoped>
+.secondary-panel__top,
+.secondary-panel__footer {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.secondary-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.secondary-panel__body > .sb-section + .sb-section {
+  margin-top: 14px;
+}
+
 .sb-section {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -683,7 +708,6 @@ async function deleteGroup(group: { id: string }) {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  overflow-y: auto;
   min-height: 0;
 }
 
@@ -759,25 +783,15 @@ async function deleteGroup(group: { id: string }) {
 }
 
 .sb-collapse {
-  display: grid;
-  grid-template-rows: 0fr;
-  pointer-events: none;
-  transition: grid-template-rows 0.26s cubic-bezier(0.65, 0, 0.35, 1);
+  display: none;
 }
 
 .sb-collapse.is-open {
-  grid-template-rows: 1fr;
-  pointer-events: auto;
+  display: block;
 }
 
 .sb-collapse__inner {
-  overflow: hidden;
-  opacity: 0;
-  transition: opacity 0.2s cubic-bezier(0.65, 0, 0.35, 1);
-}
-
-.sb-collapse.is-open .sb-collapse__inner {
-  opacity: 1;
+  overflow: visible;
 }
 
 .sb-group-edit {
