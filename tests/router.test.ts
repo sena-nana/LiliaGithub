@@ -783,7 +783,7 @@ describe("基础路由", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "main" }));
-    await fireEvent.click(within(screen.getByRole("listbox", { name: "分支候选" })).getByRole("button", { name: "dev" }));
+    await fireEvent.click(within(await screen.findByRole("listbox", { name: "分支候选" })).getByRole("button", { name: "dev" }));
 
     await waitFor(() => {
       expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({
@@ -1853,20 +1853,21 @@ describe("基础路由", () => {
     expect(screen.queryByRole("button", { name: "启动配置" })).toBeNull();
     expect(screen.getByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "推送" })).toBeInTheDocument();
-    expect(within(screen.getByLabelText("项目缓存")).getByRole("button", { name: "刷新项目缓存" })).toBeInTheDocument();
-    await within(screen.getByLabelText("仓库操作")).findByRole("button", { name: "设置" });
+    const repoActions = await screen.findByLabelText("项目操作");
+    expect(within(repoActions).getByRole("button", { name: "刷新项目缓存" })).toBeInTheDocument();
+    await within(repoActions).findByRole("button", { name: "设置" });
     expect(
-      within(screen.getByLabelText("仓库操作"))
+      within(repoActions)
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label"))
         .filter(Boolean),
-    ).toEqual(["设置", "文件夹", "拉取", "推送"]);
-    expect(screen.getByText("src/pages/Home.vue")).toBeInTheDocument();
-    expect(screen.getByLabelText("变更预览")).toBeInTheDocument();
-    expect(screen.getByText("当前没有可展示的差异内容。")).toBeInTheDocument();
-    expect(screen.getByLabelText("未暂存变更")).toBeInTheDocument();
-    expect(screen.getByLabelText("已暂存变更")).toBeInTheDocument();
-    expect(screen.getByLabelText("提交操作")).toBeInTheDocument();
+    ).toEqual(["刷新项目缓存", "设置", "文件夹", "拉取", "推送"]);
+    expect(await screen.findByText("src/pages/Home.vue")).toBeInTheDocument();
+    expect(await screen.findByLabelText("变更预览")).toBeInTheDocument();
+    expect(await screen.findByText("当前没有可展示的差异内容。")).toBeInTheDocument();
+    expect(await screen.findByLabelText("未暂存变更")).toBeInTheDocument();
+    expect(await screen.findByLabelText("已暂存变更")).toBeInTheDocument();
+    expect(await screen.findByLabelText("提交操作")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "暂存全部未暂存变更" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "取消暂存全部已暂存变更" })).toBeEnabled();
     expect(screen.getByPlaceholderText("提交说明")).toBeInTheDocument();
@@ -1931,8 +1932,8 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "历史" })).toHaveAttribute("aria-selected", "true");
     });
-    expect(screen.getAllByText("搭建 LiliaGithub MVP").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByLabelText("提交历史密集列表")).toBeInTheDocument();
+    expect((await screen.findAllByText("搭建 LiliaGithub MVP")).length).toBeGreaterThanOrEqual(1);
+    expect(await screen.findByLabelText("提交历史密集列表")).toBeInTheDocument();
     expect(screen.queryByText("提交历史")).toBeNull();
     expect(screen.queryByText("按时间倒序展示最近提交")).toBeNull();
     expect(screen.queryByLabelText("历史和分支树")).toBeNull();
@@ -1944,7 +1945,7 @@ describe("基础路由", () => {
     expect(within(viewTabs).queryByRole("tab", { name: "分支" })).toBeNull();
     expect(screen.queryByRole("group", { name: "当前分支" })).toBeNull();
     await fireEvent.click(within(viewTabs).getByRole("button", { name: "main" }));
-    const branchList = await within(viewTabs).findByRole("listbox", { name: "分支候选" });
+    const branchList = await screen.findByRole("listbox", { name: "分支候选" });
     expect(branchList).toBeInTheDocument();
     expect(screen.getByText("当前分支")).toBeInTheDocument();
     expect(screen.getByText("本地分支")).toBeInTheDocument();
@@ -1991,7 +1992,7 @@ describe("基础路由", () => {
     await renderAt("/repos/LiliaGithub/changes");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
-    const actions = screen.getByLabelText("仓库操作");
+    const actions = await screen.findByLabelText("项目操作");
     const openMain = actions.querySelector(".repo-toolbar__open-main");
     const openToggle = actions.querySelector(".repo-toolbar__open-target-toggle");
     expect(openMain).toBeInstanceOf(HTMLButtonElement);
@@ -2061,7 +2062,7 @@ describe("基础路由", () => {
     const branchTrigger = await within(viewTabs).findByRole("button", { name: "main" });
     await waitFor(() => expect(branchTrigger).toBeEnabled());
     await fireEvent.click(branchTrigger);
-    const branchList = await within(viewTabs).findByRole("listbox", { name: "分支候选" });
+    const branchList = await screen.findByRole("listbox", { name: "分支候选" });
 
     await fireEvent.contextMenu(within(branchList).getByRole("button", { name: "dev" }));
     expect(await screen.findByRole("menuitem", { name: "删除" })).toBeInTheDocument();
@@ -2626,7 +2627,7 @@ describe("基础路由", () => {
     await fireEvent.click(trigger);
     expect(screen.getByText("默认")).toBeInTheDocument();
 
-    const branchList = screen.getByRole("listbox", { name: "分支候选" });
+    const branchList = await screen.findByRole("listbox", { name: "分支候选" });
     await fireEvent.contextMenu(within(branchList).getByRole("button", { name: "feature/cleanup" }));
     await fireEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: "确认删除远程分支？再点一次" }));
@@ -2820,7 +2821,7 @@ describe("基础路由", () => {
     const launchCard = launchTerminal.closest(".project-terminal-card");
     if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
     await fireEvent.click(within(launchGroup).getByRole("button", { name: /yarn tauri:dev/ }));
-    expect(await within(launchGroup).findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
+    expect(await screen.findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /^preview/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /^verify/ })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("option", { name: /^verify/ }));

@@ -1202,7 +1202,7 @@ describe("RepoProjectPanel", () => {
     expect(within(releaseTimeline).getByText(/Lilia v1\.1 beta/i)).toBeInTheDocument();
 
     await fireEvent.click(within(filterSidebar).getByRole("button", { name: "全部" }));
-    await fireEvent.click(within(filterSidebar).getByRole("option", { name: "Pre-release" }));
+    await fireEvent.click(await view.findByRole("option", { name: "Pre-release" }));
     await waitFor(() => {
       expect(view.router.currentRoute.value.query).toMatchObject({
         projectTab: "release",
@@ -1962,7 +1962,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意作者" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await fireEvent.click(await view.findByRole("option", { name: "sena" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -1971,7 +1971,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意标签" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "bug" }));
+    await fireEvent.click(await view.findByRole("option", { name: "bug" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -1980,7 +1980,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意项目" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "Roadmap" }));
+    await fireEvent.click(await view.findByRole("option", { name: "Roadmap" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -1989,7 +1989,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意里程碑" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "v1" }));
+    await fireEvent.click(await view.findByRole("option", { name: "v1" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -1998,7 +1998,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意 Review" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "已批准" }));
+    await fireEvent.click(await view.findByRole("option", { name: "已批准" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2012,7 +2012,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意负责人" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await fireEvent.click(await view.findByRole("option", { name: "sena" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2021,7 +2021,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "最近更新" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "评论最多" }));
+    await fireEvent.click(await view.findByRole("option", { name: "评论最多" }));
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2121,14 +2121,14 @@ describe("RepoProjectPanel", () => {
       expect(listGitHubIssueAssignees).toHaveBeenCalledWith("sena-nana/remote-repo", { forceRefresh: false });
     });
     await fireEvent.click(within(form).getByRole("button", { name: "空白 Issue" }));
-    await fireEvent.click(await within(form).findByRole("option", { name: /Bug report/ }));
+    await fireEvent.click(await view.findByRole("option", { name: /Bug report/ }));
     await fireEvent.click(within(form).getByRole("button", { name: "未分配" }));
-    await fireEvent.click(await within(form).findByRole("option", { name: /^sena$/ }));
+    await fireEvent.click(await view.findByRole("option", { name: /^sena$/ }));
     await fireEvent.update(within(form).getByLabelText("标题"), "[BUG] 模板创建");
     await fireEvent.update(within(form).getByLabelText("Summary*"), "点击按钮后没有进入创建页");
     await fireEvent.update(within(form).getByLabelText("Details"), "需要展示完整模板表单。");
     await fireEvent.click(within(form).getByRole("button", { name: "Area" }));
-    await fireEvent.click(await within(form).findByRole("option", { name: /^UI$/ }));
+    await fireEvent.click(await view.findByRole("option", { name: /^UI$/ }));
     await fireEvent.click(within(form).getByRole("button", { name: "创建 Issue" }));
 
     await waitFor(() => {
@@ -2177,7 +2177,7 @@ describe("RepoProjectPanel", () => {
       expect(getGitHubRepoFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", ".github/PULL_REQUEST_TEMPLATE.md");
     });
     await fireEvent.click(within(form).getByRole("button", { name: "空白 PR" }));
-    await fireEvent.click(await within(form).findByRole("option", { name: /PULL REQUEST TEMPLATE/ }));
+    await fireEvent.click(await view.findByRole("option", { name: /PULL REQUEST TEMPLATE/ }));
     expect(within(form).getByLabelText("来源分支")).toHaveValue("feature/template-create");
     expect(within(form).getByLabelText("目标分支")).toHaveValue("main");
 
@@ -2273,7 +2273,7 @@ describe("RepoProjectPanel", () => {
     expect(view.container.querySelector(".project-main")?.querySelector("[aria-label='Issue 筛选项']")).toBeNull();
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意作者" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await fireEvent.click(await view.findByRole("option", { name: "sena" }));
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2288,7 +2288,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意标签" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "bug" }));
+    await fireEvent.click(await view.findByRole("option", { name: "bug" }));
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2300,7 +2300,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意项目" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "Roadmap" }));
+    await fireEvent.click(await view.findByRole("option", { name: "Roadmap" }));
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2309,7 +2309,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意里程碑" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "v1" }));
+    await fireEvent.click(await view.findByRole("option", { name: "v1" }));
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2318,7 +2318,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "任意负责人" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "sena" }));
+    await fireEvent.click(await view.findByRole("option", { name: "sena" }));
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2327,7 +2327,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await fireEvent.click(within(filters).getByRole("button", { name: "最新创建" }));
-    await fireEvent.click(await within(filters).findByRole("option", { name: "评论最多" }));
+    await fireEvent.click(await view.findByRole("option", { name: "评论最多" }));
     await waitFor(() => {
       expect(listGitHubIssues).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",

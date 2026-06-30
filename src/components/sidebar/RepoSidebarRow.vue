@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { AlertCircle, LoaderCircle, RotateCw } from "@lucide/vue";
-import { RouterLink } from "vue-router";
-import type { ContextMenuProvider } from "@lilia/ui";
 import type { Component } from "vue";
 
 interface RepoSidebarIssue {
@@ -15,7 +13,7 @@ defineProps<{
   id: string;
   name: string;
   title: string;
-  to: string;
+  href: string;
   icon: Component;
   linkedWorktree: boolean;
   active: boolean;
@@ -26,80 +24,74 @@ defineProps<{
   syncing: boolean;
   refreshing: boolean;
   launchRunning: boolean;
-  contextMenu: ContextMenuProvider;
 }>();
 
 defineEmits<{
+  navigate: [event: MouseEvent];
   retry: [];
 }>();
 </script>
 
 <template>
-  <RouterLink
-    :to="to"
-    custom
-    v-slot="{ href, navigate }"
+  <a
+    :href="href"
+    class="sb-tree__row sb-tree__row--project"
+    :class="{ 'is-active': active }"
+    :data-agent-id="`sidebar.repo.${id}`"
+    :data-sidebar-repo-id="id"
+    :title="title"
+    @click="$emit('navigate', $event)"
   >
-    <a
-      :href="href"
-      class="sb-tree__row sb-tree__row--project"
-      :class="{ 'is-active': active }"
-      :data-agent-id="`sidebar.repo.${id}`"
-      :title="title"
-      v-context-menu="contextMenu"
-      @click="navigate"
+    <component
+      :is="icon"
+      :size="14"
+      aria-hidden="true"
+      class="sb-tree__repo-icon"
+      :class="{ 'is-worktree': linkedWorktree }"
+    />
+    <span class="sb-tree__name">{{ name }}</span>
+    <span
+      v-if="syncing"
+      class="sb-badge"
+      title="正在同步"
+      aria-label="正在同步"
     >
-      <component
-        :is="icon"
-        :size="14"
-        aria-hidden="true"
-        class="sb-tree__repo-icon"
-        :class="{ 'is-worktree': linkedWorktree }"
-      />
-      <span class="sb-tree__name">{{ name }}</span>
-      <span
-        v-if="syncing"
-        class="sb-badge"
-        title="正在同步"
-        aria-label="正在同步"
-      >
-        <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
-      </span>
-      <span
-        v-else-if="issue"
-        class="sb-issue"
-        :title="issue.message"
-        :aria-label="issue.label"
-      >
-        <AlertCircle :size="11" aria-hidden="true" />
-      </span>
-      <button
-        v-if="issue?.retryable"
-        type="button"
-        class="sb-retry"
-        :data-agent-id="`sidebar.repo.${id}.retry`"
-        :title="issue.retrying ? '正在重试' : '重试'"
-        :aria-label="issue.retrying ? '正在重试' : '重试最近同步失败'"
-        :disabled="issue.retrying"
-        @click.prevent.stop="$emit('retry')"
-      >
-        <LoaderCircle v-if="issue.retrying" :size="11" aria-hidden="true" class="sb-spin" />
-        <RotateCw v-else :size="11" aria-hidden="true" />
-      </button>
-      <span v-if="launchRunning" class="sb-badge sb-badge--ok">RUN</span>
-      <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
-      <span v-if="ahead" class="sb-badge">↑{{ ahead }}</span>
-      <span v-if="behind" class="sb-badge">↓{{ behind }}</span>
-      <span
-        v-if="refreshing"
-        class="sb-row-loader"
-        title="正在刷新仓库"
-        aria-label="正在刷新仓库"
-      >
-        <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
-      </span>
-    </a>
-  </RouterLink>
+      <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
+    </span>
+    <span
+      v-else-if="issue"
+      class="sb-issue"
+      :title="issue.message"
+      :aria-label="issue.label"
+    >
+      <AlertCircle :size="11" aria-hidden="true" />
+    </span>
+    <button
+      v-if="issue?.retryable"
+      type="button"
+      class="sb-retry"
+      :data-agent-id="`sidebar.repo.${id}.retry`"
+      :title="issue.retrying ? '正在重试' : '重试'"
+      :aria-label="issue.retrying ? '正在重试' : '重试最近同步失败'"
+      :disabled="issue.retrying"
+      @click.prevent.stop="$emit('retry')"
+    >
+      <LoaderCircle v-if="issue.retrying" :size="11" aria-hidden="true" class="sb-spin" />
+      <RotateCw v-else :size="11" aria-hidden="true" />
+    </button>
+    <span v-if="launchRunning" class="sb-badge sb-badge--ok">RUN</span>
+    <span v-if="dirtyCount" class="sb-badge sb-badge--warn">{{ dirtyCount }}</span>
+    <span v-if="ahead" class="sb-badge">↑{{ ahead }}</span>
+    <span v-if="behind" class="sb-badge">↓{{ behind }}</span>
+    <span
+      v-if="refreshing"
+      class="sb-row-loader"
+      title="正在刷新仓库"
+      aria-label="正在刷新仓库"
+    >
+      <LoaderCircle :size="11" aria-hidden="true" class="sb-spin" />
+    </span>
+  </a>
 </template>
 
 <style scoped>

@@ -11,6 +11,7 @@ import {
   setWorkspaceTasks,
   setRepoActionError,
   upsertRepo,
+  upsertReposBatch,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 import {
@@ -224,7 +225,9 @@ async function refreshManagedRepoSummaries(
   }
   state.scanning = true;
   const refreshingRepoIds = new Set(uniqueRepoIds);
+  const pendingRepoSummaries = new Map<string, RepoSummary>();
   let refreshingStatusFlushPending = false;
+  let repoSummaryFlushPending = false;
   const applyRefreshingRepoIds = () => {
     const nextRepoIds = [...refreshingRepoIds];
     if (
@@ -248,6 +251,25 @@ async function refreshManagedRepoSummaries(
       setTimeout(flushRefreshingRepoIds, 0);
     }
   };
+  const applyPendingRepoSummaries = () => {
+    if (generation !== repositoryRuntimeGeneration || !pendingRepoSummaries.size) return;
+    const summaries = [...pendingRepoSummaries.values()];
+    pendingRepoSummaries.clear();
+    upsertReposBatch(summaries);
+  };
+  const flushPendingRepoSummaries = () => {
+    repoSummaryFlushPending = false;
+    applyPendingRepoSummaries();
+  };
+  const scheduleRepoSummaryFlush = () => {
+    if (repoSummaryFlushPending) return;
+    repoSummaryFlushPending = true;
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(flushPendingRepoSummaries);
+    } else {
+      setTimeout(flushPendingRepoSummaries, 0);
+    }
+  };
   applyRefreshingRepoIds();
   const shouldRefreshBackground = options.refreshBackground ?? true;
   const contributionGeneration = shouldRefreshBackground ? beginContributionRefresh() : null;
@@ -264,9 +286,13 @@ async function refreshManagedRepoSummaries(
       try {
         const summary = await service.refreshRepoSummary(repoId, { fetchRemote: options.fetchRemote ?? false });
         if (generation !== repositoryRuntimeGeneration) return;
-        upsertRepo(summary);
+        pendingRepoSummaries.set(summary.id, summary);
+        scheduleRepoSummaryFlush();
         refreshedRepoIds.push(summary.id);
-        await autoSyncRepoIfNeeded(summary.id, { summary });
+        const syncResult = await autoSyncRepoIfNeeded(summary.id, { summary });
+        if (syncResult?.summary) {
+          pendingRepoSummaries.delete(summary.id);
+        }
       } catch {
         // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
       } finally {
@@ -281,6 +307,7 @@ async function refreshManagedRepoSummaries(
     }
   } finally {
     if (generation === repositoryRuntimeGeneration) {
+      flushPendingRepoSummaries();
       refreshingRepoIds.clear();
       flushRefreshingRepoIds();
       state.scanning = false;

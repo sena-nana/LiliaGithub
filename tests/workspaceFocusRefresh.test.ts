@@ -132,6 +132,8 @@ describe("workspace focus refresh", () => {
     await flushPromises();
     await flushPromises();
     await flushPromises();
+    vi.advanceTimersByTime(16);
+    await flushPromises();
 
     expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true });
     expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
