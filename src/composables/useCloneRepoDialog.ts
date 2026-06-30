@@ -16,7 +16,7 @@ import {
 } from "../services/workspace";
 
 type UseCloneRepoDialogOptions = {
-  onCloned: (repo: RepoSummary) => void | Promise<void>;
+  onCloned: (repo: RepoSummary, groupId: string | null) => void | Promise<void>;
 };
 
 function normalizeGitHubCloneInput(input: string): string | null {
@@ -69,6 +69,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const cloneRepoLoadError = ref<string | null>(null);
   const cloneNextRepoPage = ref<number | null>(null);
   const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
+  const cloneSelectedGroupId = ref<string | null>(null);
 
   const canSubmitClone = computed(() => cloneRemoteUrl.value.trim().length > 0 && !cloneBusy.value);
   const cloneGitHubBound = computed(() => cloneBindingStatus.value?.state === "bound");
@@ -166,6 +167,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneRepoLoadError.value = null;
     cloneNextRepoPage.value = null;
     cloneSelectedRepo.value = null;
+    cloneSelectedGroupId.value = null;
     await cloneBindingLoader.run("clone-binding", async (runId) => {
       try {
         const status = await getGitHubBindingStatus();
@@ -213,7 +215,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       cloneBindingLoader.invalidate();
       cloneRepoPageLoader.invalidate();
       cloneOpen.value = false;
-      await options.onCloned(summary);
+      await options.onCloned(summary, cloneSelectedGroupId.value);
     } catch (err) {
       if (isGitHubBindingExpiredError(err)) {
         showCloneRepoLoadError(err);
@@ -296,6 +298,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     nextRepoPage: cloneNextRepoPage.value,
     selectedRepo: cloneSelectedRepo.value,
     directRepo: cloneDirectGitHubRepo.value,
+    selectedGroupId: cloneSelectedGroupId.value,
   }));
 
   const events = {
@@ -316,6 +319,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       cloneTouchedDirectory.value = true;
     },
     clearSelectedRepo: useDirectCloneTarget,
+    updateSelectedGroup: (groupId: string | null) => {
+      cloneSelectedGroupId.value = groupId;
+    },
   };
 
   return reactive({

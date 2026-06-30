@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from "vue";
-import { LoaderCircle, Lock, Search, Sparkles, X } from "@lucide/vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { FolderInput, LoaderCircle, Lock, Search, Sparkles, X } from "@lucide/vue";
+import { Dropdown } from "@lilia/ui";
 import type { GitHubBindingStatus, GitHubRepoSummary } from "../../services/workspace";
+
+type RepoCloneGroup = {
+  readonly id: string;
+  readonly name: string;
+  readonly repoIds: readonly string[];
+};
+
+const UNGROUPED_REPO_GROUP_VALUE = "__ungrouped__";
 
 const props = defineProps<{
   busy: boolean;
@@ -20,6 +29,8 @@ const props = defineProps<{
   nextRepoPage: number | null;
   selectedRepo: GitHubRepoSummary | null;
   directRepo: string | null;
+  repoGroups: readonly RepoCloneGroup[];
+  selectedGroupId: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -32,11 +43,32 @@ const emit = defineEmits<{
   selectRepo: [repo: GitHubRepoSummary];
   updateRemoteUrl: [value: string];
   updateDirectoryName: [value: string];
+  updateSelectedGroup: [groupId: string | null];
   markDirectoryTouched: [];
   clearSelectedRepo: [];
 }>();
 
 const cloneInput = ref<HTMLInputElement | null>(null);
+const repoGroupOptions = computed(() => [
+  {
+    value: UNGROUPED_REPO_GROUP_VALUE,
+    label: "未分组仓库",
+    hint: "默认",
+    agentId: "clone-repo.group.option.ungrouped",
+  },
+  ...props.repoGroups.map((group) => ({
+    value: group.id,
+    label: group.name,
+    hint: `${group.repoIds.length} 个仓库`,
+    agentId: `clone-repo.group.option.${group.id}`,
+  })),
+]);
+const selectedGroupValue = computed({
+  get: () => props.selectedGroupId ?? UNGROUPED_REPO_GROUP_VALUE,
+  set: (value: string) => {
+    emit("updateSelectedGroup", value === UNGROUPED_REPO_GROUP_VALUE ? null : value);
+  },
+});
 
 function focusCloneInput() {
   void nextTick(() => cloneInput.value?.focus());
@@ -151,6 +183,20 @@ watch(() => props.gitHubBound, focusCloneInput);
         <span>目录名（可选）</span>
         <input :value="directoryName" type="text" placeholder="默认从 URL 推导" @input="updateDirectoryName" />
       </label>
+      <div class="clone-field">
+        <span>目标分组</span>
+        <Dropdown
+          v-model="selectedGroupValue"
+          :options="repoGroupOptions"
+          :icon="FolderInput"
+          placement="bottom"
+          button-class="clone-group-picker"
+          agent-id="clone-repo.group.trigger"
+          menu-label="选择仓库分组"
+          menu-width="240px"
+          :disabled="busy"
+        />
+      </div>
       <div v-if="error" class="clone-dialog__error-row">
         <p class="clone-dialog__error">{{ error }}</p>
         <button
@@ -305,6 +351,18 @@ watch(() => props.gitHubBound, focusCloneInput);
   gap: 6px;
   padding: 8px 10px;
   cursor: pointer;
+}
+
+:deep(.clone-group-picker) {
+  width: 100%;
+  height: 34px;
+  justify-content: flex-start;
+  padding: 0 9px;
+  border-color: var(--border-soft);
+}
+
+:deep(.clone-group-picker .chat-chip__label) {
+  max-width: none;
 }
 
 .clone-dialog__hint {

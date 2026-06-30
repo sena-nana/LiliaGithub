@@ -7,7 +7,6 @@ import {
   CircleDot,
   FolderOpen,
   FolderGit2,
-  FolderInput,
   GitBranchPlus,
   GitPullRequestArrow,
   Info,
@@ -82,7 +81,6 @@ const syncingRepoId = ref<string | null>(null);
 const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("stash");
 const createRepoCardOpen = ref(false);
 const createRepoCardMode = ref<"local" | "remote">("local");
-const pendingCreatedRepoGroupId = ref<string | null>(null);
 const searchOpen = ref(false);
 const searchQuery = ref("");
 const searchInput = ref<HTMLInputElement | null>(null);
@@ -884,31 +882,12 @@ async function openHomeSearchResult(result: HomeSearchResult | null = homeSearch
   closeSearch();
 }
 
-function repoGroupMenuItems(idPrefix: string, onSelect: (groupId: string | null) => void): ContextMenuItem[] {
-  return [
-    {
-      id: `${idPrefix}-ungrouped`,
-      label: "未分组仓库",
-      icon: FolderGit2,
-      onSelect: () => onSelect(null),
-    },
-    ...repoGroups.value.map((group) => ({
-      id: `${idPrefix}-${group.id}`,
-      label: group.name,
-      icon: FolderInput,
-      onSelect: () => onSelect(group.id),
-    })),
-  ];
-}
-
 function openCreateRepoCard(mode: "local" | "remote") {
   createRepoCardMode.value = mode;
-  pendingCreatedRepoGroupId.value = null;
   createRepoCardOpen.value = true;
 }
 
-function openCloneRepoDialog(groupId: string | null) {
-  pendingCreatedRepoGroupId.value = groupId;
+function openCloneRepoDialog() {
   void cloneDialog.openDialog();
 }
 
@@ -923,7 +902,7 @@ function createRepoMenuItems(): ContextMenuItem[] {
       label: "克隆仓库",
       icon: CloudDownload,
       disabled: !workspace.workspaceRoot.value,
-      children: repoGroupMenuItems("home-clone-repo", openCloneRepoDialog),
+      onSelect: openCloneRepoDialog,
     },
     {
       id: "home-create-local-repo",
@@ -952,8 +931,7 @@ function openCreateRepoMenu(event: MouseEvent) {
   );
 }
 
-async function placeCreatedRepo(repo: RepoSummary, selectedGroupId?: string | null) {
-  const groupId = selectedGroupId === undefined ? pendingCreatedRepoGroupId.value : selectedGroupId;
+async function placeCreatedRepo(repo: RepoSummary, groupId: string | null = null) {
   if (groupId) {
     await workspace.moveRepoToGroup(repo.id, groupId);
   }
@@ -1748,6 +1726,7 @@ function bulkOperationDescription(operation: BulkOperation) {
     <HomeCloneDialog
       v-if="cloneDialog.open"
       v-bind="cloneDialog.props"
+      :repo-groups="repoGroups"
       v-on="cloneDialog.events"
     />
   </section>
