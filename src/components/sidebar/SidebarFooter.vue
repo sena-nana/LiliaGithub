@@ -39,7 +39,6 @@ defineProps<{
 
 <style scoped>
 .sb-footer {
-  margin-top: auto;
   padding: 0;
   display: flex;
   align-items: center;

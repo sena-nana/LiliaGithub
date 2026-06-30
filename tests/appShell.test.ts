@@ -73,6 +73,14 @@ function leftResizer(container: HTMLElement): HTMLElement {
   return resizer;
 }
 
+function sidebarZone(container: HTMLElement, className: string): HTMLElement {
+  const zone = container.querySelector(`.${className}`);
+  if (!(zone instanceof HTMLElement)) {
+    throw new Error(`未找到侧边栏区域: ${className}`);
+  }
+  return zone;
+}
+
 function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
   const label = Array.from(container.querySelectorAll(".sb-tree__name")).find(
     (node) => node.textContent === text,
@@ -218,6 +226,38 @@ describe("AppShell sidebar", () => {
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("侧边栏用固定顶部、滚动仓库区和固定底部承载长列表", async () => {
+    state.repos = Array.from({ length: 120 }, (_, index) =>
+      repoSummary(`Repo-${String(index + 1).padStart(3, "0")}`),
+    );
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "Repo-001")).toBeInTheDocument();
+    });
+
+    const top = sidebarZone(view.container, "secondary-panel__top");
+    const body = sidebarZone(view.container, "secondary-panel__body");
+    const footer = sidebarZone(view.container, "secondary-panel__footer");
+    const mainNav = view.getByRole("navigation", { name: "主导航" });
+    const footerSettings = view.container.querySelector('[data-agent-id="sidebar.footer.settings"]');
+    const footerConnection = view.container.querySelector('[data-agent-id="sidebar.footer.connection"]');
+
+    expect(top).toContainElement(mainNav);
+    expect(body).toContainElement(sidebarGroupForText(view.container, "未分组仓库", 120));
+    expect(body).toContainElement(sidebarRowForText(view.container, "Repo-001"));
+    expect(footer).toContainElement(footerSettings);
+    expect(footer).toContainElement(footerConnection);
+    expect(body).not.toContainElement(mainNav);
+    expect(body).not.toContainElement(footerSettings);
+
+    await fireEvent.click(view.getByRole("button", { name: "显示更多 40 个" }));
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "Repo-120")).toBeInTheDocument();
     });
   });
 
