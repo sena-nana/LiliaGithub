@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+pub mod tauri_commands;
+
 const MAX_LOGS: usize = 500;
 
 static AGENT_DEBUG_STATE: OnceLock<Mutex<AgentDebugBuffer>> = OnceLock::new();
