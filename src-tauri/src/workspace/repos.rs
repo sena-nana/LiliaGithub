@@ -3682,29 +3682,21 @@ pub(super) fn ensure_repo_has_no_conflicts(
 
 pub(super) fn run_pull(app: &AppHandle, path: &Path) -> Result<(), String> {
     let auth = git_auth_for_repo(app, path)?;
-    git_command(path, &["pull", "--ff-only"], auth.as_deref())
-        .map(|_| ())
-        .map_err(|error| map_remote_git_error(path, error))
+    lilia_github_git::run_pull(path, auth.as_deref())
 }
 
 pub(super) fn run_fetch(app: &AppHandle, path: &Path) -> Result<(), String> {
     let auth = git_auth_for_repo(app, path)?;
-    git_command(path, &["fetch"], auth.as_deref())
-        .map(|_| ())
-        .map_err(|error| map_remote_git_error(path, error))
+    lilia_github_git::run_fetch(path, auth.as_deref())
 }
 
 pub(super) fn run_push(app: &AppHandle, path: &Path) -> Result<(), String> {
     let auth = git_auth_for_repo(app, path)?;
-    git_command(path, &["push"], auth.as_deref())
-        .map(|_| ())
-        .map_err(|error| map_remote_git_error(path, error))
+    lilia_github_git::run_push(path, auth.as_deref())
 }
 
 pub(super) fn run_system_git_push(path: &Path) -> Result<(), String> {
-    git_command(path, &["push"], None)
-        .map(|_| ())
-        .map_err(|error| map_remote_git_error(path, error))
+    lilia_github_git::run_push(path, None)
 }
 
 pub(super) fn current_branch_upstream(path: &Path) -> Option<String> {

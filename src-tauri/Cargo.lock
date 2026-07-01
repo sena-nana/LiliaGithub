@@ -2171,6 +2171,8 @@ dependencies = [
  "keyring",
  "libc",
  "lilia_github_contracts",
+ "lilia_github_git",
+ "lilia_github_github",
  "reqwest",
  "serde",
  "serde_json",
@@ -2189,6 +2191,23 @@ name = "lilia_github_contracts"
 version = "1.0.0-beta.1"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "lilia_github_git"
+version = "1.0.0-beta.1"
+dependencies = [
+ "lilia_github_contracts",
+]
+
+[[package]]
+name = "lilia_github_github"
+version = "1.0.0-beta.1"
+dependencies = [
+ "base64 0.22.1",
+ "lilia_github_contracts",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

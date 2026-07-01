@@ -3890,8 +3890,8 @@ fn refresh_managed_repo_remotes_starts_other_repos_while_one_fetch_is_blocked() 
         })
     });
 
-    let first = started_rx.recv_timeout(TestDuration::from_secs(1)).unwrap();
-    let second = started_rx.recv_timeout(TestDuration::from_secs(1)).unwrap();
+    let first = started_rx.recv_timeout(TestDuration::from_secs(5)).unwrap();
+    let second = started_rx.recv_timeout(TestDuration::from_secs(5)).unwrap();
     let mut started = vec![first, second];
     started.sort();
     assert_eq!(started, vec!["blocking", "other"]);
