@@ -4,13 +4,9 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const BG: Color = Color(0x18, 0x18, 0x18, 0xFF);
 
 mod agent_debug;
+mod runtime;
 mod window_state;
 mod workspace;
-
-#[tauri::command]
-fn ping() -> &'static str {
-    "pong"
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -48,7 +44,6 @@ pub fn run() {
             agent_debug::agent_debug_runtime_snapshot,
             agent_debug::agent_debug_record_action,
             agent_debug::agent_debug_reset_state,
-            ping,
             workspace::settings::workspace_get_settings,
             workspace::settings::workspace_read_startup_cache,
             workspace::settings::workspace_clear_startup_cache,
