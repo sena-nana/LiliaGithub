@@ -406,7 +406,9 @@ const homeSearchResults = computed<HomeSearchResult[]>(() => {
   const query = normalizedSearchQuery.value;
   if (!query) return [];
 
-  const localResults = overviewStatusRepos.value
+  const searchStatusRepos = snapshotHomeStatusRepos(workspace.state.repos);
+  const searchLocalRepoByGitHubFullName = representativeReposByGitHubFullName(searchStatusRepos);
+  const localResults = searchStatusRepos
     .filter((repo) => repoMatchesHomeSearch(repo, query))
     .map((repo): HomeSearchResult => ({
       key: `local:${repo.id}`,
@@ -418,7 +420,7 @@ const homeSearchResults = computed<HomeSearchResult[]>(() => {
 
   const remoteResults = overviewGitHubRepos.value
     .filter((repo) => !repo.disabled)
-    .filter((repo) => !localRepoByGitHubFullName.value.has(repo.fullName))
+    .filter((repo) => !searchLocalRepoByGitHubFullName.has(repo.fullName))
     .filter((repo) => githubRepoMatchesHomeSearch(repo, query))
     .map((repo): HomeSearchResult => ({
       key: `remote:${repo.fullName}`,
@@ -1163,6 +1165,7 @@ async function placeCreatedRepo(repo: RepoSummary, groupId: string | null = null
   if (groupId) {
     await workspace.moveRepoToGroup(repo.id, groupId);
   }
+  commitHomeOverviewSnapshot();
   await router.push(repoRoute(repo.id));
 }
 
