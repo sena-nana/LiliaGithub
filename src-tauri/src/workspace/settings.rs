@@ -8,7 +8,7 @@ use crate::workspace::repos::{
 };
 use crate::workspace::run_blocking;
 use crate::workspace::shared::{now_millis, remove_local_contribution_cache};
-use crate::workspace::types::{
+use lilia_github_contracts::workspace::{
     CachedContributionResult, CachedRepoSummary, ContributionIdentity, HiddenRepo,
     RemoteRepoShortcut, RepoSummary, RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings,
     WorkspaceStartupCache, WorkspaceStartupContributions,

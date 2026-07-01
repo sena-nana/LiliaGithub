@@ -6,8 +6,8 @@ use crate::workspace::readme::{image_mime_for_path, readme_image_data_urls};
 use crate::workspace::repos::safe_repo_file_path;
 use crate::workspace::run_blocking;
 use crate::workspace::settings::repo_path_by_id;
-use crate::workspace::types::{RepoFilePreview, RepoFileTreeEntry};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use lilia_github_contracts::workspace::{RepoFilePreview, RepoFileTreeEntry};
 use tauri::AppHandle;
 
 pub(super) const MAX_FILE_PREVIEW_BYTES: u64 = 1024 * 1024;

@@ -8,7 +8,7 @@ use std::thread;
 
 use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
 use crate::workspace::shared::{configure_background_command, now_millis};
-use crate::workspace::types::{
+use lilia_github_contracts::workspace::{
     ProjectLaunchCandidate, ProjectLaunchConfig, ProjectLaunchHistoryEntry, ProjectLaunchLog,
     ProjectLaunchStatus,
 };

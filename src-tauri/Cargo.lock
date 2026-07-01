@@ -2170,6 +2170,7 @@ dependencies = [
  "base64 0.22.1",
  "keyring",
  "libc",
+ "lilia_github_contracts",
  "reqwest",
  "serde",
  "serde_json",
@@ -2181,6 +2182,13 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "lilia_github_contracts"
+version = "1.0.0-beta.1"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

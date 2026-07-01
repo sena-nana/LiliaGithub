@@ -1,0 +1,7 @@
+[package]
+name = "lilia_github_contracts"
+version = "1.0.0-beta.1"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -71,7 +71,8 @@ use super::shared::{
     remove_local_contribution_cache, write_local_contribution_cache,
 };
 use super::tasks::task_priority_rank;
-use super::types::{
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use lilia_github_contracts::workspace::{
     BulkSyncResult, CachedRepoSummary, ContributionIdentity, GitHubBindingMetadata,
     GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue, GitHubProjectCache,
     GitHubPullRequest, GitHubRelease, GitHubReleaseAsset, GitHubUpdateRepoSettingsRequest,
@@ -79,7 +80,6 @@ use super::types::{
     RepoConflictChoice, RepoPullLocalChangesMode, RepoSummary, RepoWorktree, WorkspaceRepoGroup,
     WorkspaceSettings, WorkspaceStartupCache,
 };
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;

@@ -23,7 +23,7 @@ use crate::workspace::shared::{
     github_contribution_meta, local_contribution_identities, normalize_local_contribution_repo_id,
     now_millis,
 };
-use crate::workspace::types::{
+use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitFileChange, CommitSummary, GitHubAccountIssueItem,
     GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest, GitHubBindingMetadata,
     GitHubBindingStatus, GitHubContributionResult, GitHubCreateIssueRequest,

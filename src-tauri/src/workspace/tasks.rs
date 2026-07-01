@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::workspace::shared::now_millis;
-use crate::workspace::types::WorkspaceTask;
+use lilia_github_contracts::workspace::WorkspaceTask;
 
 pub(super) fn workspace_tasks() -> &'static Mutex<Vec<WorkspaceTask>> {
     static TASKS: OnceLock<Mutex<Vec<WorkspaceTask>>> = OnceLock::new();
