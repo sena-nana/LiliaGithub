@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
+import type { ContributionChartModel } from "../../utils/contributionChart";
 
 defineProps<{
   loading: boolean;
@@ -7,7 +8,7 @@ defineProps<{
   totalContributions: number;
   skippedRepoCount: number;
   hasContributionDays: boolean;
-  chartHtml: string;
+  chartModel: ContributionChartModel;
 }>();
 
 defineEmits<{
@@ -60,18 +61,49 @@ defineEmits<{
     >
       暂无本地提交
     </p>
-    <div v-else class="contribution-chart" aria-label="本地提交贡献图">
-      <div class="contribution-week-labels" aria-hidden="true">
-        <span class="contribution-month-spacer" />
-        <span />
-        <span>Mon</span>
-        <span />
-        <span>Wed</span>
-        <span />
-        <span>Fri</span>
-        <span />
+    <div v-else class="contribution-chart">
+      <div class="contribution-window">
+        <span
+          v-for="cell in chartModel.activeCells"
+          :key="cell.date"
+          class="contribution-cell-label"
+          :aria-label="cell.title"
+        />
+        <svg
+          class="contribution-svg"
+          role="img"
+          aria-label="本地提交贡献图"
+          :viewBox="chartModel.viewBox"
+          :width="chartModel.width"
+          :height="chartModel.height"
+        >
+          <text
+            v-for="label in chartModel.dayLabels"
+            :key="label.label"
+            class="contribution-day-label"
+            :x="label.x"
+            :y="label.y"
+          >
+            {{ label.label }}
+          </text>
+          <text
+            v-for="month in chartModel.monthLabels"
+            :key="month.key"
+            class="contribution-month"
+            :x="month.x"
+            y="10"
+          >
+            {{ month.label }}
+          </text>
+          <path
+            v-for="path in chartModel.levelPaths"
+            :key="path.level"
+            class="contribution-level"
+            :class="`contribution-level--${path.level}`"
+            :d="path.d"
+          />
+        </svg>
       </div>
-      <div class="contribution-window" v-html="chartHtml" />
     </div>
   </div>
 </template>
@@ -131,95 +163,76 @@ defineEmits<{
 }
 
 .contribution-chart {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 8px;
+  display: flex;
   padding-bottom: 2px;
   min-width: 0;
   contain: layout paint;
 }
 
-.contribution-week-labels {
-  display: grid;
-  grid-template-rows: 14px repeat(7, 11px);
-  gap: 3px;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 11px;
-}
-
-.contribution-month-spacer {
-  height: 14px;
-}
-
 .contribution-window {
+  position: relative;
   display: flex;
   justify-content: flex-end;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   contain: layout paint style;
 }
 
-.contribution-window :deep(.contribution-grid) {
-  min-width: max-content;
-  contain: layout paint style;
-}
-
-.contribution-window :deep(.contribution-months) {
-  display: flex;
-  gap: 3px;
-  min-width: max-content;
-  margin-bottom: 3px;
-}
-
-.contribution-window :deep(.contribution-month) {
-  width: 11px;
-  height: 14px;
-  overflow: visible;
-  color: var(--text-muted);
-  font-size: 10px;
-  line-height: 14px;
+.contribution-cell-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
-.contribution-window :deep(.contribution-weeks) {
-  display: flex;
-  gap: 3px;
+.contribution-svg {
+  display: block;
+  flex: 0 0 auto;
   min-width: max-content;
   contain: layout paint style;
 }
 
-.contribution-window :deep(.contribution-week) {
-  display: grid;
-  grid-template-rows: repeat(7, 11px);
-  gap: 3px;
-  contain: layout paint style;
+.contribution-month,
+.contribution-day-label {
+  color: var(--text-muted);
+  fill: currentColor;
+  font-family: inherit;
 }
 
-.contribution-window :deep(.contribution-day) {
-  display: block;
-  width: 11px;
-  height: 11px;
-  border-radius: 2px;
-  background: var(--bg-subtle);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bg) 20%, transparent);
-  contain: strict;
+.contribution-month {
+  font-size: 10px;
 }
 
-.contribution-window :deep(.contribution-day--1) {
-  background: color-mix(in srgb, var(--ok) 30%, var(--bg-subtle));
+.contribution-day-label {
+  font-size: 11px;
 }
 
-.contribution-window :deep(.contribution-day--2) {
-  background: color-mix(in srgb, var(--ok) 55%, var(--bg-subtle));
+.contribution-level {
+  stroke: color-mix(in srgb, var(--bg) 20%, transparent);
+  stroke-width: 1;
 }
 
-.contribution-window :deep(.contribution-day--3) {
-  background: color-mix(in srgb, var(--ok) 78%, var(--bg-subtle));
+.contribution-level--0 {
+  fill: var(--bg-subtle);
 }
 
-.contribution-window :deep(.contribution-day--4) {
-  background: #3fb950;
+.contribution-level--1 {
+  fill: color-mix(in srgb, var(--ok) 30%, var(--bg-subtle));
+}
+
+.contribution-level--2 {
+  fill: color-mix(in srgb, var(--ok) 55%, var(--bg-subtle));
+}
+
+.contribution-level--3 {
+  fill: color-mix(in srgb, var(--ok) 78%, var(--bg-subtle));
+}
+
+.contribution-level--4 {
+  fill: #3fb950;
 }
 
 .contribution-loading {

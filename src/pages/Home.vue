@@ -1460,7 +1460,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           :total-contributions="totalContributions"
           :skipped-repo-count="skippedContributionRepoCount"
           :has-contribution-days="hasContributionDays"
-          :chart-html="contributionChart.html"
+          :chart-model="contributionChart"
           @retry="refreshOverviewContributions"
         />
 

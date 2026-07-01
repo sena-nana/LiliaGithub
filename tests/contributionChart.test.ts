@@ -1,36 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { GitHubContributionDay } from "../src/services/workspace";
-import {
-  buildContributionChartHtml,
-  buildContributionChartModel,
-  type ContributionCell,
-} from "../src/utils/contributionChart";
+import { buildContributionChartModel } from "../src/utils/contributionChart";
 
 describe("contributionChart", () => {
-  it("escapes static chart HTML without creating injected nodes", () => {
-    const title = "2026-06-01\"><script>alert(1)</script>: 3 次提交";
-    const html = buildContributionChartHtml(
-      [[
-        {
-          date: "2026-06-01",
-          level: 2,
-          weekStart: "2026-06-01",
-          title,
-        } satisfies ContributionCell,
-      ]],
-      [{ key: "2026-06-01\"><img src=x>", label: "6<月&\"" }],
-    );
-    const container = document.createElement("div");
-    container.innerHTML = html;
-
-    expect(container.querySelectorAll("script,img")).toHaveLength(0);
-    expect(container.querySelector(".contribution-month")?.textContent).toBe("6<月&\"");
-    expect(container.querySelector(".contribution-month")?.getAttribute("data-key")).toBe("2026-06-01\"><img src=x>");
-    expect(container.querySelector(".contribution-day")?.getAttribute("aria-label")).toBe(title);
-    expect(container.querySelector(".contribution-day")?.getAttribute("title")).toBe(title);
-  });
-
-  it("builds static day cells, levels and month labels from contribution days", () => {
+  it("builds day cells, levels and month labels from contribution days", () => {
     const days: GitHubContributionDay[] = [
       {
         date: "2026-06-01",
@@ -40,14 +13,39 @@ describe("contributionChart", () => {
       { date: "2026-06-03", count: 8 },
     ];
     const model = buildContributionChartModel(days);
-    const container = document.createElement("div");
-    container.innerHTML = model.html;
 
-    expect(container.querySelectorAll(".contribution-day")).toHaveLength(7);
-    expect(container.querySelectorAll(".contribution-day--1")).toHaveLength(1);
-    expect(container.querySelectorAll(".contribution-day--4")).toHaveLength(1);
-    expect(container.querySelector(".contribution-month")?.textContent).toBe("6月");
-    expect(container.querySelector("[aria-label='2026-06-01：2 次提交']")).not.toBeNull();
-    expect(model.html).not.toContain("<unsafe>");
+    expect("html" in model).toBe(false);
+    expect(model.activeCells).toEqual([
+      {
+        date: "2026-06-01",
+        title: "2026-06-01：2 次提交",
+      },
+      {
+        date: "2026-06-03",
+        title: "2026-06-03：8 次提交",
+      },
+    ]);
+    expect(model.monthLabels.find((label) => label.label === "6月")).toMatchObject({
+      key: "2026-05-31",
+    });
+    expect(model.levelPaths.map((path) => path.level)).toEqual([0, 1, 4]);
+    expect(model.levelPaths.every((path) => path.d.length > 0)).toBe(true);
+    expect(JSON.stringify(model)).not.toContain("<unsafe>");
+  });
+
+  it("returns stable svg dimensions and weekday labels", () => {
+    const model = buildContributionChartModel([
+      { date: "2026-06-01", count: 1 },
+    ]);
+
+    expect(model.viewBox).toBe(`0 0 ${model.width} ${model.height}`);
+    expect(model.dayLabels.map((label) => label.label)).toEqual(["Mon", "Wed", "Fri"]);
+    expect(model.activeCells).toEqual([
+      {
+        date: "2026-06-01",
+        title: "2026-06-01：1 次提交",
+      },
+    ]);
+    expect(model.levelPaths.every((path) => path.d.length > 0)).toBe(true);
   });
 });
