@@ -940,6 +940,14 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
   }
   return "repo";
 });
+const projectSidebarContentUnavailable = computed(() =>
+  (projectSidebarMode.value === "milestones" && Boolean(milestonesAccessUnavailable.value)) ||
+  (projectSidebarMode.value === "issues" && Boolean(issuesAccessUnavailable.value)) ||
+  (projectSidebarMode.value === "pulls" && Boolean(pullsAccessUnavailable.value)) ||
+  (projectSidebarMode.value === "actions" && Boolean(actionsAccessUnavailable.value)) ||
+  (projectSidebarMode.value === "release" && Boolean(releasesAccessUnavailable.value)) ||
+  (projectSidebarMode.value === "settings" && Boolean(settingsAccessUnavailable.value))
+);
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectCreateFlow = computed(() => normalizeProjectCreateFlow(route.query.create));
@@ -3882,13 +3890,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           </div>
         </section>
 
-        <section v-if="repoFullName && !hasProjectSidebarErrors && projectSidebarMode === 'repo'" class="project-about-card" aria-label="仓库描述">
+        <template v-if="!projectSidebarContentUnavailable">
+        <section v-if="repoFullName && projectSidebarMode === 'repo'" class="project-about-card" aria-label="仓库描述">
           <button
             v-if="!aboutEditing"
             type="button"
             class="ghost project-icon-action project-about-edit"
             data-agent-id="repo.about.edit"
-            :disabled="githubLoading || savingSettings"
+            :disabled="githubLoading || savingSettings || !!settingsAccessUnavailable"
             aria-label="编辑仓库描述"
             title="编辑"
             @click="startEditAbout"
@@ -3974,12 +3983,12 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <RepoFileTreeCard
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'files' && canBrowseFiles"
+          v-if="projectSidebarMode === 'files' && canBrowseFiles"
           :browser="fileBrowser"
         />
 
         <section
-          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'files'"
+          v-else-if="projectSidebarMode === 'files'"
           class="project-sidebar-summary-card"
           aria-label="文件树摘要"
         >
@@ -3991,7 +4000,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <RepoMilestonesSidebar
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'milestones'"
+          v-if="projectSidebarMode === 'milestones'"
           v-model:type-filter="milestoneTypeFilter"
           v-model:state-filter="milestoneStateFilter"
           v-model:milestone-filter="milestoneFilter"
@@ -4007,7 +4016,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         />
 
         <RepoGitHubDetailSidebar
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues' && focusedIssueDetail"
+          v-if="projectSidebarMode === 'issues' && focusedIssueDetail"
           :issue="focusedIssueDetail"
           :updating-issue="updatingIssue"
           @open-issue="(issue) => openUrl(issue.htmlUrl)"
@@ -4016,7 +4025,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         />
 
         <RepoIssuesSidebarControls
-          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'issues'"
+          v-else-if="projectSidebarMode === 'issues'"
           :state="issueState"
           :filters="issuePanelFilters"
           :metadata="issueFilterMetadata"
@@ -4029,7 +4038,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         />
 
         <RepoGitHubDetailSidebar
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls' && focusedPullRequestDetail"
+          v-if="projectSidebarMode === 'pulls' && focusedPullRequestDetail"
           :pull="focusedPullRequestDetail"
           :updating-pull-request="updatingPullRequest"
           @open-pull-request="(pull) => openUrl(pull.htmlUrl)"
@@ -4037,7 +4046,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         />
 
         <RepoPullRequestsSidebarControls
-          v-else-if="!hasProjectSidebarErrors && projectSidebarMode === 'pulls'"
+          v-else-if="projectSidebarMode === 'pulls'"
           :pulls="pulls"
           :state="pullState"
           :filters="pullRequestPanelFilters"
@@ -4050,7 +4059,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           @create="openPullRequestCreateView"
         />
 
-        <template v-if="!hasProjectSidebarErrors && projectSidebarMode === 'actions'">
+        <template v-if="projectSidebarMode === 'actions'">
           <RepoActionsSidebarControls
             :runs="workflowRuns"
             :visible-count="filteredActionRuns.length"
@@ -4074,7 +4083,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </template>
 
         <section
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'release'"
+          v-if="projectSidebarMode === 'release'"
           class="project-sidebar-summary-card project-release-filters-card"
           aria-label="Release 筛选"
         >
@@ -4151,7 +4160,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <section
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'settings'"
+          v-if="projectSidebarMode === 'settings'"
           class="project-sidebar-summary-card"
           aria-label="Settings 摘要"
         >
@@ -4176,11 +4185,12 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <RepoLanguageStatsCard
-          v-if="!hasProjectSidebarErrors && projectSidebarMode === 'repo'"
+          v-if="projectSidebarMode === 'repo'"
           :repo="repoSummary ?? null"
           :show-line-counts="resolvedRepoContext.capabilities.open.available"
           :loading="languageStatsLoading"
         />
+        </template>
 
       </aside>
     </div>

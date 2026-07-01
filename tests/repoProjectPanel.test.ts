@@ -990,7 +990,7 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
   });
 
-  it("仓库设置读取失败时只显示右侧错误卡并隐藏描述卡片", async () => {
+  it("仓库设置读取失败时右侧错误卡不替换仓库侧栏", async () => {
     const message = "读取 GitHub 仓库设置失败：HTTP 404 Not Found";
     vi.mocked(getGitHubRepoManagement).mockRejectedValue(message);
 
@@ -1001,7 +1001,8 @@ describe("RepoProjectPanel", () => {
     const errorCard = await view.findByRole("region", { name: "仓库错误" });
     expect(errorCard).toHaveTextContent("GitHub 请求失败");
     expect(errorCard).toHaveTextContent(message);
-    expect(view.queryByRole("region", { name: "仓库描述" })).toBeNull();
+    expect(view.getByRole("region", { name: "仓库描述" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "代码统计" })).toBeInTheDocument();
     expect(view.getAllByText(message)).toHaveLength(1);
   });
 
@@ -1019,6 +1020,7 @@ describe("RepoProjectPanel", () => {
 
   it("仓库操作错误和同步错误固定显示在右侧错误区", async () => {
     const view = await renderProjectPanel({
+      repoFullName: "sena-nana/local-repo",
       activeGitTab: "changes",
       actionError: "操作失败：无法提交",
       repoActionError: "仓库错误：自动同步失败",
@@ -1032,6 +1034,7 @@ describe("RepoProjectPanel", () => {
     expect(errorCard).toHaveTextContent("操作失败：无法提交");
     expect(errorCard).toHaveTextContent("仓库错误：自动同步失败");
     expect(within(errorCard).getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "仓库描述" })).toBeInTheDocument();
   });
 
   it("仓库描述标签超过两行时显示展开和收起按钮", async () => {
