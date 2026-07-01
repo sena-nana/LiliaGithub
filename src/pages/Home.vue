@@ -192,6 +192,7 @@ const githubPullRequestsByRepo = ref<Record<string, GitHubPullRequest[] | undefi
 const githubAccountIssuesLoading = ref(false);
 const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotification[] | undefined>>({});
 const githubActionNotificationsLoading = ref(false);
+const githubTimelineError = ref<string | null>(null);
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const homeOverviewSnapshot = shallowRef<HomeOverviewSnapshot | null>(null);
@@ -453,6 +454,16 @@ const visibleRepoStatusRows = computed(() =>
 const hiddenRepoStatusRowCount = computed(() =>
   Math.max(0, repoStatusRows.value.length - visibleRepoStatusRows.value.length),
 );
+const homeTimelineRepos = computed(() => overviewGitHubRepos.value.filter((repo) => repoIncludedInHomeTimeline(repo)));
+const homeTimelineAccountIssuesPending = computed(() =>
+  homeTimelineRepos.value.some((repo) =>
+    overviewIssuesByRepo.value[repo.fullName] == null ||
+    overviewPullRequestsByRepo.value[repo.fullName] == null
+  ),
+);
+const homeTimelineActionNotificationsPending = computed(() =>
+  homeTimelineRepos.value.some((repo) => overviewActionNotificationsByRepo.value[repo.fullName] == null),
+);
 function hasHomeTimelineRepoData(repo: GitHubRepoSummary, localRepo: RepoSummary | null) {
   const syncIssue = localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null;
   return Boolean(
@@ -465,8 +476,7 @@ function hasHomeTimelineRepoData(repo: GitHubRepoSummary, localRepo: RepoSummary
 }
 
 function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
-  return overviewGitHubRepos.value
-    .filter((repo) => repoIncludedInHomeTimeline(repo))
+  return homeTimelineRepos.value
     .filter((githubRepo) => {
       const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
       return hasHomeTimelineRepoData(githubRepo, localRepo);
@@ -491,7 +501,9 @@ const homePendingNodes = computed<TimelineDisplayNode[]>(() =>
 const githubTimelineBusy = computed(() =>
   githubReposLoading.value ||
   githubAccountIssuesLoading.value ||
-  githubActionNotificationsLoading.value,
+  githubActionNotificationsLoading.value ||
+  homeTimelineAccountIssuesPending.value ||
+  homeTimelineActionNotificationsPending.value,
 );
 
 let githubPendingGeneration = 0;
@@ -660,6 +672,7 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
 
   const generation = githubPendingGeneration;
   githubAccountIssuesLoading.value = true;
+  githubTimelineError.value = null;
   try {
     const items = await listGitHubAccountIssues({
       state: "open",
@@ -677,7 +690,13 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
     );
     commitHomeOverviewSnapshotFromGitHubState();
   } catch (err) {
-    if (isGitHubBindingExpiredError(err)) clearGitHubPendingItems();
+    if (isGitHubBindingExpiredError(err)) {
+      clearGitHubPendingItems();
+      return;
+    }
+    if (generation === githubPendingGeneration) {
+      githubTimelineError.value = `Issue / PR 加载失败：${String(err)}`;
+    }
   } finally {
     if (generation === githubPendingGeneration) {
       githubAccountIssuesLoading.value = false;
@@ -692,6 +711,7 @@ async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], re
 
   const generation = githubPendingGeneration;
   githubActionNotificationsLoading.value = true;
+  githubTimelineError.value = null;
   try {
     const notifications = await listGitHubActionNotifications(
       GITHUB_ACTION_NOTIFICATIONS_PER_PAGE,
@@ -705,7 +725,13 @@ async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], re
     );
     commitHomeOverviewSnapshotFromGitHubState();
   } catch (err) {
-    if (isGitHubBindingExpiredError(err)) clearGitHubPendingItems();
+    if (isGitHubBindingExpiredError(err)) {
+      clearGitHubPendingItems();
+      return;
+    }
+    if (generation === githubPendingGeneration) {
+      githubTimelineError.value = `Actions 通知加载失败：${String(err)}`;
+    }
   } finally {
     if (generation === githubPendingGeneration) {
       githubActionNotificationsLoading.value = false;
@@ -793,6 +819,7 @@ function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
 function clearGitHubPendingItems() {
   githubAccountIssuesLoading.value = false;
   githubActionNotificationsLoading.value = false;
+  githubTimelineError.value = null;
   githubIssuesByRepo.value = {};
   githubPullRequestsByRepo.value = {};
   githubActionNotificationsByRepo.value = {};
@@ -811,11 +838,24 @@ function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   }
 
   const generation = githubPendingGeneration;
-  if (shouldLoadIssues) githubAccountIssuesLoading.value = true;
-  if (shouldLoadNotifications) githubActionNotificationsLoading.value = true;
+  githubTimelineError.value = null;
+  if (shouldLoadIssues) {
+    githubAccountIssuesLoading.value = true;
+  } else {
+    githubAccountIssuesLoading.value = false;
+  }
+  if (shouldLoadNotifications) {
+    githubActionNotificationsLoading.value = true;
+  } else {
+    githubActionNotificationsLoading.value = false;
+  }
   if (generation !== githubPendingGeneration) return;
   if (shouldLoadIssues) void loadHomePendingAccountIssues(timelineRepos, refresh);
   if (shouldLoadNotifications) void loadHomePendingActionNotifications(timelineRepos, refresh);
+}
+
+function retryHomePendingItems() {
+  prepareGitHubTimeline(homeTimelineRepos.value, true);
 }
 
 function shouldLoadHomePendingAccountIssues(repos: readonly GitHubRepoSummary[], refresh = false) {
@@ -852,10 +892,12 @@ async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
       applyGitHubRepoPage(page, false, options.force);
     } catch (err) {
       if (!githubRepoStatusLoader.isCurrent(runId) || !workspace.isReady.value) return;
-      githubRepos.value = [];
-      githubReposNextPage.value = null;
       githubReposError.value = githubRepoLoadErrorMessage(err);
-      commitHomeOverviewSnapshotFromGitHubState();
+      if (isGitHubBindingExpiredError(err)) {
+        githubRepos.value = [];
+        githubReposNextPage.value = null;
+        commitHomeOverviewSnapshotFromGitHubState();
+      }
     } finally {
       if (githubRepoStatusLoader.isCurrent(runId)) {
         githubReposLoading.value = false;
@@ -1606,14 +1648,23 @@ function bulkOperationDescription(operation: BulkOperation) {
           </div>
           <div class="home-scroll-card__body">
             <p
-              v-if="githubTimelineBusy && !homePendingNodes.length"
+              v-if="githubTimelineError"
+              class="repo-status-error"
+            >
+              {{ githubTimelineError }}
+              <button type="button" class="ghost" :disabled="githubAccountIssuesLoading || githubActionNotificationsLoading" @click="retryHomePendingItems">
+                重试
+              </button>
+            </p>
+            <p
+              v-if="githubTimelineBusy && !homePendingNodes.length && !githubTimelineError"
               class="repo-status-empty"
             >
               正在加载待处理事项...
             </p>
-            <p v-else-if="!homePendingNodes.length" class="repo-status-empty">暂无待处理事项</p>
+            <p v-else-if="!homePendingNodes.length && !githubTimelineError" class="repo-status-empty">暂无待处理事项</p>
             <GitHubTimelineList
-              v-else
+              v-if="homePendingNodes.length"
               :nodes="homePendingNodes"
               aria-label="待处理事项列表"
               v-memo="[homePendingNodes]"
