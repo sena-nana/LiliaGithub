@@ -6,8 +6,9 @@ import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import { ContextMenuHost } from "@lilia/ui";
 import { closeContextMenu, installContextMenu } from "@lilia/ui";
 import { resetWorkspaceStateForTests, setRepoActionError, state, upsertRepo } from "../src/composables/workspace/state";
+import { refreshRepoContributions } from "../src/composables/workspace/repositories";
 import { REPO_LAUNCH_STATUS_EVENT } from "../src/composables/workspace/launchEvents";
-import { workspaceFallbackForTests, type GitHubRepoSummary } from "../src/services/workspace";
+import { workspaceFallbackForTests, type GitHubContributionResult, type GitHubRepoSummary } from "../src/services/workspace";
 import { vContextMenu } from "@lilia/ui";
 import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
@@ -135,6 +136,33 @@ function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummar
   };
 }
 
+function contributionResult(count: number): GitHubContributionResult {
+  return {
+    days: [{ date: "2026-06-11", count }],
+    meta: {
+      repoCount: 1,
+      requestedRepoCount: 1,
+      repoLimit: 30,
+      truncated: false,
+      skippedRepoCount: 0,
+      refreshedAt: 1_780_000_000_000,
+    },
+  };
+}
+
+function contributionTotal() {
+  return state.githubContributions.days.reduce((total, day) => total + day.count, 0);
+}
+
+function contributionSummaryText(total: number) {
+  return `${total} 次提交，最近一年`;
+}
+
+function readDisplayedContributionTotal(view: AppShellView) {
+  const text = view.getByText(/\d+ 次提交，最近一年/).textContent ?? "";
+  return Number(text.match(/^\d+/)?.[0] ?? 0);
+}
+
 type AppShellView = Awaited<ReturnType<typeof renderAppShell>>;
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
 let workspaceFallback: WorkspaceFallbackForTests;
@@ -204,6 +232,34 @@ beforeEach(async () => {
 });
 
 describe("AppShell sidebar", () => {
+  it("首页贡献热力图只跟随启动快照和手动刷新更新", async () => {
+    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => contributionResult(1));
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(readDisplayedContributionTotal(view)).toBeGreaterThan(0);
+    });
+    const startupContributionTotal = readDisplayedContributionTotal(view);
+
+    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => contributionResult(5));
+    await refreshRepoContributions();
+
+    await waitFor(() => {
+      expect(contributionTotal()).not.toBe(startupContributionTotal);
+    });
+    const backgroundContributionTotal = contributionTotal();
+    expect(view.getByText(contributionSummaryText(startupContributionTotal))).toBeInTheDocument();
+    expect(view.queryByText(contributionSummaryText(backgroundContributionTotal))).toBeNull();
+
+    const refreshButton = within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" });
+    await waitFor(() => expect(refreshButton).not.toBeDisabled());
+    await fireEvent.click(refreshButton);
+
+    await waitFor(() => {
+      expect(view.getByText(contributionSummaryText(backgroundContributionTotal))).toBeInTheDocument();
+    });
+  });
+
   it("主侧边栏显示总览和仓库列表，仓库操作集中在总览页", async () => {
     const view = await renderAppShell("/");
 

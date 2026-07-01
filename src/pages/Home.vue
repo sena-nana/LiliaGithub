@@ -152,7 +152,6 @@ type HomeOverviewSnapshot = {
   pullRequestsByRepo: Record<string, GitHubPullRequest[] | undefined>;
   actionNotificationsByRepo: Record<string, GitHubActionNotification[] | undefined>;
   syncIssuesByRepoId: Map<string, RepoSyncIssueDisplay>;
-  contributions: GitHubContributionsState;
 };
 
 type ProjectTabRef = "issues" | "pulls" | "actions";
@@ -196,11 +195,13 @@ const githubActionNotificationsLoading = ref(false);
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const homeOverviewSnapshot = shallowRef<HomeOverviewSnapshot | null>(null);
+const homeContributionSnapshot = shallowRef<GitHubContributionsState | null>(null);
 const componentEpoch = useComponentEpoch();
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
 let searchRepoPagesLoading = false;
 let homeOverviewInitialized = false;
+let homeContributionRefreshGeneration = 0;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const emptySyncIssuesByRepoId = new Map<string, RepoSyncIssueDisplay>();
 const emptyContributions: GitHubContributionsState = {
@@ -274,7 +275,6 @@ function buildHomeOverviewSnapshot(
         githubActionNotificationsByRepo.value,
     ),
     syncIssuesByRepoId: new Map(repoSyncIssuesByRepoId()),
-    contributions: cloneContributions(workspace.state.githubContributions),
   };
 }
 
@@ -301,6 +301,42 @@ function commitHomeOverviewSnapshotFromGitHubState() {
   });
 }
 
+function commitHomeContributionSnapshot() {
+  homeContributionSnapshot.value = cloneContributions(workspace.state.githubContributions);
+}
+
+async function refreshHomeContributionSnapshot() {
+  const generation = ++homeContributionRefreshGeneration;
+  await workspace.refreshRepoContributions();
+  await nextTick();
+  await waitForOverviewContributionRefresh();
+  if (generation !== homeContributionRefreshGeneration || !workspace.isReady.value) {
+    return;
+  }
+  commitHomeContributionSnapshot();
+}
+
+function homeContributionRefreshSettled() {
+  const contributions = workspace.state.githubContributions;
+  return !contributions.loading && (
+    contributions.days.length > 0 ||
+    contributions.meta !== null ||
+    contributions.error !== null
+  );
+}
+
+function commitInitialHomeContributionSnapshot() {
+  if (!workspace.isReady.value || homeContributionSnapshot.value || !homeContributionRefreshSettled()) {
+    return;
+  }
+  commitHomeContributionSnapshot();
+}
+
+async function refreshHomeAfterRepoMutation() {
+  commitHomeOverviewSnapshot();
+  await refreshHomeContributionSnapshot();
+}
+
 const overviewStatusRepos = computed(() => homeOverviewSnapshot.value?.statusRepos ?? []);
 const overviewCodeRepos = computed(() => homeOverviewSnapshot.value?.codeRepos ?? []);
 const overviewGitHubRepos = computed(() => homeOverviewSnapshot.value?.githubRepos ?? []);
@@ -311,7 +347,7 @@ const overviewActionNotificationsByRepo = computed(() => homeOverviewSnapshot.va
 const overviewSyncIssuesByRepoId = computed(() =>
   homeOverviewSnapshot.value?.syncIssuesByRepoId ?? emptySyncIssuesByRepoId,
 );
-const overviewContributions = computed(() => homeOverviewSnapshot.value?.contributions ?? emptyContributions);
+const overviewContributions = computed(() => homeContributionSnapshot.value ?? emptyContributions);
 
 const contributionChart = computed(() => buildContributionChartModel(overviewContributions.value.days));
 
@@ -479,6 +515,7 @@ watch(
 
 onUnmounted(() => {
   githubPendingGeneration += 1;
+  homeContributionRefreshGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
 });
@@ -488,6 +525,8 @@ watch(
   (ready) => {
     if (!ready) {
       homeOverviewInitialized = false;
+      homeContributionRefreshGeneration += 1;
+      homeContributionSnapshot.value = null;
       return;
     }
     if (homeOverviewInitialized) return;
@@ -502,6 +541,18 @@ watch(
     }
     void loadGitHubRepoStatus();
   },
+  { immediate: true },
+);
+
+watch(
+  () => [
+    workspace.isReady.value,
+    workspace.state.githubContributions.days,
+    workspace.state.githubContributions.loading,
+    workspace.state.githubContributions.meta,
+    workspace.state.githubContributions.error,
+  ] as const,
+  commitInitialHomeContributionSnapshot,
   { immediate: true },
 );
 
@@ -1082,6 +1133,7 @@ async function discoverRepos() {
   discovering.value = true;
   try {
     await workspace.discoverRepos();
+    await refreshHomeAfterRepoMutation();
   } finally {
     discovering.value = false;
   }
@@ -1089,15 +1141,12 @@ async function discoverRepos() {
 
 async function refreshOverviewRepos() {
   await workspace.refreshRepos();
-  await refreshOverviewContributions();
+  await refreshHomeContributionSnapshot();
   await loadGitHubRepoStatus({ force: true });
 }
 
 async function refreshOverviewContributions() {
-  await workspace.refreshRepoContributions();
-  await nextTick();
-  await waitForOverviewContributionRefresh();
-  commitHomeOverviewSnapshot();
+  await refreshHomeContributionSnapshot();
 }
 
 function waitForOverviewContributionRefresh() {
@@ -1120,6 +1169,7 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
   githubReposError.value = null;
   try {
     await workspace.cloneRepo(repo.cloneUrl, repo.name);
+    await refreshHomeAfterRepoMutation();
   } catch (err) {
     githubReposError.value = isGitHubBindingExpiredError(err)
       ? "GitHub 绑定已失效，请重新绑定后再克隆仓库。"
@@ -1143,6 +1193,7 @@ async function syncRepo(repo: RepoSummary) {
   syncingRepoId.value = repo.id;
   try {
     await workspace.mergePull(repo.id, "stash");
+    await refreshHomeAfterRepoMutation();
   } catch {
     /* action error is surfaced by workspace state */
   } finally {
@@ -1155,6 +1206,7 @@ async function retryRepoPush(repo: RepoSummary) {
   syncingRepoId.value = repo.id;
   try {
     await workspace.push(repo.id);
+    await refreshHomeAfterRepoMutation();
   } catch {
     /* retry state is surfaced by recent sync status */
   } finally {
@@ -1174,11 +1226,12 @@ async function previewBulkOperation(operation: BulkOperation) {
 
 function runSyncAll() {
   bulkLocalChangesMode.value = "stash";
-  void workspace.syncAll("stash");
+  void workspace.syncAll("stash").then(refreshHomeAfterRepoMutation);
 }
 
-function executeBulkOperation() {
-  void workspace.executeBulk(undefined, bulkLocalChangesMode.value);
+async function executeBulkOperation() {
+  await workspace.executeBulk(undefined, bulkLocalChangesMode.value);
+  await refreshHomeAfterRepoMutation();
 }
 
 function bulkOperationLabel(operation: BulkOperation) {
