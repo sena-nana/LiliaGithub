@@ -1,10 +1,93 @@
-use super::bulk::*;
-use super::github::*;
-use super::launch::*;
-use super::*;
+use super::bulk::{
+    build_bulk_preview, build_bulk_push_preview_with_lookup, build_bulk_sync_preview_with_lookup,
+    build_bulk_sync_preview_with_lookup_and_mode, bulk_error_result, merge_pull_block_reason,
+    run_bulk_sync_parallel, should_retry_push_with_system_git,
+};
+use super::file_browser::{repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES};
+use super::github::{
+    add_pull_request_reviewers_from_reviews, forget_remote_repo_shortcut,
+    github_artifact_entry_path, github_artifact_file_bytes_from_zip,
+    github_artifact_preview_from_bytes, github_branch_from_response, github_commit_file_changes,
+    github_content_items_to_file_entries, github_contribution_result,
+    github_development_items_from_timeline, github_file_preview_from_content,
+    github_graphql_errors_require_read_project, github_issue_cache_key, github_issue_from_response,
+    github_issue_project_items_from_graphql, github_project_cache_repo_key,
+    github_pull_request_cache_key, github_pull_request_reviewers_from_requested,
+    github_pull_request_search_query, github_pull_request_search_required,
+    github_release_asset_bytes, github_release_asset_name, github_release_from_response,
+    github_release_upload_base_url, github_release_validate_asset_file_size,
+    github_repo_management_from_response, github_require_scope,
+    github_review_comment_timeline_item_from_response, github_review_timeline_item_from_response,
+    github_timeline_item_from_response, github_update_repo_settings_payload,
+    github_validate_release_for_artifact_asset, github_workflow_artifact_from_response,
+    github_workflow_definition_from_file, github_workflow_job_from_response,
+    github_workflow_run_from_response, github_workflow_runs_cache_key,
+    normalize_github_content_path, normalize_github_repo_input, normalize_github_topics,
+    normalize_scope_list, parse_github_datetime, parse_next_page, remember_remote_repo_shortcut,
+    sort_github_discussion_timeline, GitHubAssigneeResponse, GitHubBranchResponse,
+    GitHubCommitFileResponse, GitHubContentFileResponse, GitHubContentListItem, GitHubGraphQlError,
+    GitHubIssueMilestoneResponse, GitHubIssueProjectsGraphQlData, GitHubIssueResponse,
+    GitHubIssueTimelineResponse, GitHubIssueTimelineSourceIssueResponse,
+    GitHubIssueTimelineSourceResponse, GitHubLabelResponse, GitHubPullRequestReviewCommentResponse,
+    GitHubPullRequestReviewResponse, GitHubPullRequestUserResponse, GitHubReleaseAssetResponse,
+    GitHubReleaseResponse, GitHubReleaseUserResponse, GitHubRepoLicenseResponse,
+    GitHubRepoOwnerResponse, GitHubRepoResponse, GitHubRequestedReviewersResponse,
+    GitHubTeamResponse, GitHubWorkflowActorResponse, GitHubWorkflowArtifactResponse,
+    GitHubWorkflowJobResponse, GitHubWorkflowJobStepResponse, GitHubWorkflowResponse,
+    GitHubWorkflowRunResponse, GITHUB_DELETE_REPO_SCOPE, GITHUB_READ_PROJECT_SCOPE,
+    GITHUB_RELEASE_ASSET_MAX_BYTES, GITHUB_SCOPE,
+};
+use super::launch::{
+    clear_launch_logs, infer_launch_candidates, infer_launch_config, launch_logs, push_launch_log,
+    LaunchOutputParser,
+};
+use super::readme::readme_image_data_urls;
+use super::repos::{
+    add_repo_files_to_gitignore, cached_managed_repos, canonical_repo_path, checkout_branch_at,
+    commit_file_change_from_status, commit_file_changes_from_outputs, commit_file_numstats,
+    commit_file_patches, commit_file_statuses, conflict_operation_args, create_branch_at,
+    current_branch_upstream, delete_branch_at, discard_all_repo_local_changes, discard_repo_files,
+    filter_hidden_repos, git_worktree_entries, infer_clone_directory_name, is_conflict_status,
+    language_for_path, lightweight_managed_repos, local_branch_exists, managed_repo_paths,
+    managed_repo_paths_and_prune_stale, merge_branch_at, normalize_clone_directory_name,
+    normalize_git_remote_error, normalize_stash_id, parse_conflict_hunks, parse_github_remote,
+    parse_status_snapshot, prepare_pull_local_changes, refresh_managed_repo_remotes,
+    rename_branch_at, repo_branches, repo_changes, repo_head_language_stats, repo_history, repo_id,
+    repo_refresh_partial_failure_message, repo_refresh_success_message, repo_refresh_worker_count,
+    repo_status_entries, resolve_conflict_content, resolve_repo_worktree,
+    restore_pull_local_changes, selected_repo_files, should_retry_clone_with_system_git,
+    should_skip_language_path, status_pair, summarize_repo, validate_clone_directory_name,
+    RepoFetchFailure, RepoStatusEntry,
+};
+use super::settings::{
+    add_managed_repo_id, create_repo_group, delete_repo_group, move_repo_to_group,
+    prune_deleted_repo_settings, remove_managed_repo_path, remove_system_git_repo_id,
+    rename_repo_group, repo_path_from_id,
+};
+use super::shared::{
+    cached_local_contribution_count, collect_local_contribution_counts,
+    contribution_identity_matches, current_utc_day_index, days_from_civil, format_day_index,
+    local_contribution_identities, normalize_local_contribution_repo_id, now_millis,
+    remove_local_contribution_cache, write_local_contribution_cache,
+};
+use super::tasks::task_priority_rank;
+use super::types::{
+    BulkSyncResult, CachedRepoSummary, ContributionIdentity, GitHubBindingMetadata,
+    GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue, GitHubProjectCache,
+    GitHubPullRequest, GitHubRelease, GitHubReleaseAsset, GitHubUpdateRepoSettingsRequest,
+    LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut,
+    RepoConflictChoice, RepoPullLocalChangesMode, RepoSummary, RepoWorktree, WorkspaceRepoGroup,
+    WorkspaceSettings, WorkspaceStartupCache,
+};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use std::collections::HashMap;
+use std::fs;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex as TestMutex};
+use std::thread;
 use std::time::Duration as TestDuration;
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -1458,7 +1541,7 @@ fn github_contribution_day_deserializes_without_repository_details() {
 
 #[test]
 fn converts_civil_dates_for_github_contributions() {
-    let day = shared::days_from_civil(2026, 6, 11);
+    let day = days_from_civil(2026, 6, 11);
     assert_eq!(format_day_index(day), "2026-06-11");
 }
 
@@ -3178,7 +3261,7 @@ fn previews_github_artifact_files_by_kind() {
     let image = github_artifact_preview_from_bytes("image.png".to_string(), 4, vec![1, 2, 3, 4]);
     let large = github_artifact_preview_from_bytes(
         "large.log".to_string(),
-        super::file_browser::MAX_FILE_PREVIEW_BYTES + 1,
+        MAX_FILE_PREVIEW_BYTES + 1,
         Vec::new(),
     );
 
@@ -3512,7 +3595,7 @@ fn managed_repo_paths_only_returns_visible_git_repos() {
 
     let paths = managed_repo_paths(&root, &settings);
 
-    assert_eq!(paths, vec![visible]);
+    assert_eq!(paths, vec![canonical_repo_path(&visible)]);
     assert!(!missing.exists());
     fs::remove_dir_all(root).unwrap();
 }
@@ -3545,7 +3628,7 @@ fn managed_repo_paths_prunes_stale_repo_ids_from_settings() {
     let (paths, changed) = managed_repo_paths_and_prune_stale(&root, &mut settings);
 
     assert!(changed);
-    assert_eq!(paths, vec![visible]);
+    assert_eq!(paths, vec![canonical_repo_path(&visible)]);
     assert_eq!(settings.managed_repo_ids, vec!["visible"]);
     assert!(settings.hidden_repo_ids.is_empty());
     assert!(settings.system_git_repo_ids.is_empty());
@@ -3633,7 +3716,10 @@ fn cached_managed_repos_merges_cached_metadata_with_current_repo_identity() {
     assert_eq!(repos.len(), 1);
     assert_eq!(repos[0].id, "visible");
     assert_eq!(repos[0].name, "visible");
-    assert_eq!(repos[0].path, visible.to_string_lossy().to_string());
+    assert_eq!(
+        repos[0].path,
+        canonical_repo_path(&visible).to_string_lossy().to_string()
+    );
     assert_eq!(repos[0].relative_path, "visible");
     assert_eq!(repos[0].worktree.role, "standalone");
     assert_eq!(repos[0].current_branch.as_deref(), Some("cached-main"));

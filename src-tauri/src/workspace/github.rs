@@ -1,6 +1,45 @@
+use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{Cursor, Read};
+use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
-use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use keyring::{Entry, Error as KeyringError};
+use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, LINK, USER_AGENT};
+use reqwest::StatusCode;
+use serde::Deserialize;
+use tauri::AppHandle;
+use tauri_plugin_store::StoreExt;
+
+use crate::workspace::file_browser::{file_preview_mime, MAX_FILE_PREVIEW_BYTES};
+use crate::workspace::readme::image_mime_for_path;
+use crate::workspace::repos::commit_file_patches;
+use crate::workspace::run_blocking;
+use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
+use crate::workspace::shared::{
+    collect_local_contribution_counts, current_utc_day_index, github_contribution_days,
+    github_contribution_meta, local_contribution_identities, normalize_local_contribution_repo_id,
+    now_millis,
+};
+use crate::workspace::types::{
+    BranchSummary, CommitDetail, CommitFileChange, CommitSummary, GitHubAccountIssueItem,
+    GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest, GitHubBindingMetadata,
+    GitHubBindingStatus, GitHubContributionResult, GitHubCreateIssueRequest,
+    GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest, GitHubCreateRepoRequest,
+    GitHubDevelopmentItem, GitHubDeviceFlowPollResult, GitHubDeviceFlowStart,
+    GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion, GitHubIssueFilterMetadata,
+    GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest,
+    GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
+    GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
+    GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage, GitHubRepoSummary,
+    GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
+    GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry,
+    GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
+    GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview,
+    RepoFileTreeEntry,
+};
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 pub(super) const GITHUB_SCOPE: &str =
@@ -1343,8 +1382,8 @@ pub(super) fn github_file_preview_from_content(
     let declared_size = file.size;
     let path = file.path.clone();
     let name = file.name.clone();
-    let mime = super::file_browser::file_preview_mime(Path::new(&path)).map(str::to_string);
-    if declared_size.unwrap_or_default() > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+    let mime = file_preview_mime(Path::new(&path)).map(str::to_string);
+    if declared_size.unwrap_or_default() > MAX_FILE_PREVIEW_BYTES {
         return Ok(RepoFilePreview {
             path,
             name,
@@ -1608,7 +1647,9 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
     Some(github_issue_like_from_response(issue))
 }
 
-fn github_account_issue_item_from_response(issue: GitHubIssueResponse) -> Option<GitHubAccountIssueItem> {
+fn github_account_issue_item_from_response(
+    issue: GitHubIssueResponse,
+) -> Option<GitHubAccountIssueItem> {
     let repo_full_name = issue.repository.as_ref()?.full_name.clone();
     let pull_request = issue.pull_request.is_some();
     Some(GitHubAccountIssueItem {
@@ -2820,8 +2861,8 @@ pub(super) fn github_artifact_preview_from_bytes(
         .unwrap_or(&path)
         .to_string();
     let preview_path = Path::new(&path);
-    let mime = super::file_browser::file_preview_mime(preview_path).map(str::to_string);
-    if size > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+    let mime = file_preview_mime(preview_path).map(str::to_string);
+    if size > MAX_FILE_PREVIEW_BYTES {
         return RepoFilePreview {
             path,
             name,
@@ -5001,7 +5042,7 @@ pub async fn github_get_workflow_artifact_file_preview(
                 return Err("不能预览 artifact 目录".to_string());
             }
             let size = file.size();
-            if size > super::file_browser::MAX_FILE_PREVIEW_BYTES {
+            if size > MAX_FILE_PREVIEW_BYTES {
                 return Ok(github_artifact_preview_from_bytes(
                     entry_path,
                     size,
@@ -5645,10 +5686,8 @@ pub async fn github_list_account_issues(
                 Some(&token),
             ),
         )?;
-        let items = github_json::<Vec<GitHubIssueResponse>>(
-            "读取 GitHub 待处理 Issue 失败",
-            response,
-        )?;
+        let items =
+            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub 待处理 Issue 失败", response)?;
         Ok(items
             .into_iter()
             .filter_map(github_account_issue_item_from_response)

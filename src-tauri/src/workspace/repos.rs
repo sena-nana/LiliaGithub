@@ -1,5 +1,35 @@
-use super::bulk::{merge_pull_block_reason_with_mode, repo_dirty_count};
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::thread;
+
+use crate::workspace::bulk::{merge_pull_block_reason_with_mode, repo_dirty_count};
+use crate::workspace::github::{
+    clear_github_project_repo_cache, github_auth_header, normalize_github_repo_input,
+    normalize_optional_string, token_for_binding,
+};
+use crate::workspace::run_blocking;
+use crate::workspace::settings::{
+    add_managed_repo_id, cached_repo_summary, load_settings, matching_startup_cache,
+    prune_deleted_repo_settings, remove_startup_cache_repo, repo_path_by_id, repo_path_from_id,
+    save_settings, sort_dedup, workspace_root, write_startup_repo_summary,
+};
+use crate::workspace::shared::{configure_background_command, now_millis};
+use crate::workspace::tasks::{record_workspace_task, update_workspace_task};
+use crate::workspace::types::{
+    BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
+    LanguageStat, RepoChange, RepoConflictChoice, RepoConflictFile, RepoConflictHunk,
+    RepoConflictState, RepoDetail, RepoMergePullResult, RepoOperationResult,
+    RepoPullLocalChangesMode, RepoRefreshSummaryOptions, RepoRemote, RepoStashDetail,
+    RepoStashEntry, RepoSummary, RepoWorktree, WorkspaceCreateLocalRepoRequest, WorkspaceSettings,
+};
+use tauri::AppHandle;
+
+#[cfg(test)]
+use crate::workspace::types::WorkspaceStartupCache;
 
 pub(super) const MAX_REPO_REFRESH_CONCURRENCY: usize = 4;
 
@@ -1344,13 +1374,13 @@ pub async fn repo_clear_local_cache(
     repo_full_name: Option<String>,
 ) -> Result<(), String> {
     run_blocking("清理项目缓存", move || {
-        super::settings::remove_startup_cache_repo(&app, &repo_id)?;
+        remove_startup_cache_repo(&app, &repo_id)?;
         if let Some(repo_full_name) = repo_full_name
             .as_deref()
             .map(str::trim)
             .filter(|name| !name.is_empty())
         {
-            super::github::clear_github_project_repo_cache(&app, repo_full_name)?;
+            clear_github_project_repo_cache(&app, repo_full_name)?;
         }
         Ok(())
     })

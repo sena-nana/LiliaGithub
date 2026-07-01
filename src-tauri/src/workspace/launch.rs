@@ -1,5 +1,19 @@
-use super::*;
-use tauri::Emitter;
+use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+
+use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
+use crate::workspace::shared::{configure_background_command, now_millis};
+use crate::workspace::types::{
+    ProjectLaunchCandidate, ProjectLaunchConfig, ProjectLaunchHistoryEntry, ProjectLaunchLog,
+    ProjectLaunchStatus,
+};
+use tauri::{AppHandle, Emitter};
+use tauri_plugin_store::StoreExt;
 
 pub(super) const LAUNCH_LOG_LIMIT: usize = 500;
 pub(super) const LAUNCH_HISTORY_KEY: &str = "workspace.launchHistory.v1";

@@ -1,4 +1,12 @@
-use super::*;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use crate::workspace::shared::configure_background_command;
+use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
