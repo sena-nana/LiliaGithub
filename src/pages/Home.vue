@@ -326,12 +326,44 @@ const homeStatusReposSnapshot = shallowRef<RepoSummary[]>(
 const homeCodeStatsRepos = shallowRef<RepoSummary[]>([]);
 const repoStatusRowCache = new Map<string, RepoStatusRow>();
 const timelineSourceCache = new Map<string, HomePendingRepoSource>();
-let homeStatusReposSnapshotUpdateCancel: CancelLowPriorityTask | null = null;
-let homeCodeStatsUpdateCancel: CancelLowPriorityTask | null = null;
-let githubTimelineLoadCancel: CancelLowPriorityTask | null = null;
-let repoStatusRowsUpdateCancel: CancelLowPriorityTask | null = null;
-let homePendingNodesUpdateCancel: CancelLowPriorityTask | null = null;
 let lastHomeCodeStatsSignature = "";
+type HomeOverviewWorkKey = "statusRepos" | "codeStats" | "repoStatusRows" | "pendingNodes" | "githubTimeline";
+const homeOverviewWorkQueue = new Map<HomeOverviewWorkKey, () => void>();
+let homeOverviewWorkCancel: CancelLowPriorityTask | null = null;
+const HOME_OVERVIEW_WORK_OPTIONS = {
+  inputQuietMs: 260,
+  idleTimeout: 120,
+} satisfies Parameters<typeof scheduleLowPriorityTask>[1];
+
+function scheduleHomeOverviewWork(key: HomeOverviewWorkKey, callback: () => void) {
+  homeOverviewWorkQueue.set(key, callback);
+  if (homeOverviewWorkCancel) return;
+  homeOverviewWorkCancel = scheduleLowPriorityTask(runNextHomeOverviewWork, HOME_OVERVIEW_WORK_OPTIONS);
+}
+
+function runNextHomeOverviewWork() {
+  homeOverviewWorkCancel = null;
+  const next = homeOverviewWorkQueue.entries().next().value as [HomeOverviewWorkKey, () => void] | undefined;
+  if (!next) return;
+  const [key, callback] = next;
+  homeOverviewWorkQueue.delete(key);
+  callback();
+  if (homeOverviewWorkQueue.size) {
+    homeOverviewWorkCancel = scheduleLowPriorityTask(runNextHomeOverviewWork, HOME_OVERVIEW_WORK_OPTIONS);
+  }
+}
+
+function cancelHomeOverviewWork(key?: HomeOverviewWorkKey) {
+  if (key) {
+    homeOverviewWorkQueue.delete(key);
+  } else {
+    homeOverviewWorkQueue.clear();
+  }
+  if (!homeOverviewWorkQueue.size) {
+    homeOverviewWorkCancel?.();
+    homeOverviewWorkCancel = null;
+  }
+}
 
 const homeRepoSettingsSignature = computed(() =>
   JSON.stringify(workspace.state.settings?.repoSyncPreferences ?? {}),
@@ -347,7 +379,6 @@ function buildHomeCodeStatsRepos() {
 }
 
 function commitHomeCodeStatsRepos() {
-  homeCodeStatsUpdateCancel = null;
   const nextSignature = [
     repoListSignature(workspace.state.repos, codeRepoSignature),
     homeRepoSettingsSignature.value,
@@ -361,12 +392,10 @@ function commitHomeCodeStatsRepos() {
 }
 
 function scheduleHomeCodeStatsReposUpdate() {
-  if (homeCodeStatsUpdateCancel) return;
-  homeCodeStatsUpdateCancel = scheduleLowPriorityTask(commitHomeCodeStatsRepos);
+  scheduleHomeOverviewWork("codeStats", commitHomeCodeStatsRepos);
 }
 
 function commitHomeStatusReposSnapshot() {
-  homeStatusReposSnapshotUpdateCancel = null;
   const nextRepos = snapshotHomeStatusRepos(workspace.state.repos);
   if (!sameRepoList(homeStatusReposSnapshot.value, nextRepos, sameHomeStatusRepo)) {
     homeStatusReposSnapshot.value = nextRepos;
@@ -374,8 +403,7 @@ function commitHomeStatusReposSnapshot() {
 }
 
 function scheduleHomeStatusReposSnapshotUpdate() {
-  if (homeStatusReposSnapshotUpdateCancel) return;
-  homeStatusReposSnapshotUpdateCancel = scheduleLowPriorityTask(commitHomeStatusReposSnapshot);
+  scheduleHomeOverviewWork("statusRepos", commitHomeStatusReposSnapshot);
 }
 
 homeCodeStatsRepos.value = buildHomeCodeStatsRepos();
@@ -511,13 +539,11 @@ function buildRepoStatusRowsSnapshot() {
 }
 
 function commitRepoStatusRows() {
-  repoStatusRowsUpdateCancel = null;
   repoStatusRows.value = buildRepoStatusRowsSnapshot();
 }
 
 function scheduleRepoStatusRowsUpdate() {
-  if (repoStatusRowsUpdateCancel) return;
-  repoStatusRowsUpdateCancel = scheduleLowPriorityTask(commitRepoStatusRows);
+  scheduleHomeOverviewWork("repoStatusRows", commitRepoStatusRows);
 }
 
 const visibleRepoStatusRows = computed(() =>
@@ -569,19 +595,16 @@ function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
 }
 
 function buildHomePendingNodesSnapshot() {
-  return buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot())
-    .slice(0, HOME_PENDING_ITEM_LIMIT)
+  return buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot(), HOME_PENDING_ITEM_LIMIT)
     .map(toHomePendingDisplayNode);
 }
 
 function commitHomePendingNodes() {
-  homePendingNodesUpdateCancel = null;
   homePendingNodes.value = buildHomePendingNodesSnapshot();
 }
 
 function scheduleHomePendingNodesUpdate() {
-  if (homePendingNodesUpdateCancel) return;
-  homePendingNodesUpdateCancel = scheduleLowPriorityTask(commitHomePendingNodes);
+  scheduleHomeOverviewWork("pendingNodes", commitHomePendingNodes);
 }
 
 repoStatusRows.value = buildRepoStatusRowsSnapshot();
@@ -628,16 +651,7 @@ onUnmounted(() => {
   githubPendingGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
-  homeStatusReposSnapshotUpdateCancel?.();
-  homeStatusReposSnapshotUpdateCancel = null;
-  homeCodeStatsUpdateCancel?.();
-  homeCodeStatsUpdateCancel = null;
-  githubTimelineLoadCancel?.();
-  githubTimelineLoadCancel = null;
-  repoStatusRowsUpdateCancel?.();
-  repoStatusRowsUpdateCancel = null;
-  homePendingNodesUpdateCancel?.();
-  homePendingNodesUpdateCancel = null;
+  cancelHomeOverviewWork();
 });
 
 watch(
@@ -706,7 +720,7 @@ function applyGitHubRepoPage(
   githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
   githubReposNextPage.value = page.nextPage;
   githubReposError.value = null;
-  writeGitHubOverviewSnapshot();
+  writeGitHubRepoOverviewSnapshot();
   prepareGitHubTimeline(page.items, refreshIssues);
 }
 
@@ -731,17 +745,17 @@ function restoreGitHubOverviewSnapshot() {
   return snapshot;
 }
 
-function writeGitHubOverviewSnapshot() {
+function writeGitHubRepoOverviewSnapshot() {
   writeHomeGitHubOverviewSnapshot({
     schemaVersion: 3,
     accountLogin: currentGitHubAccountLogin(),
     cachedAt: Date.now(),
     repos: githubRepos.value,
     nextPage: githubReposNextPage.value,
-    issuesByRepo: githubIssuesByRepo.value,
-    pullRequestsByRepo: githubPullRequestsByRepo.value,
+    issuesByRepo: {},
+    pullRequestsByRepo: {},
     pullRequestChecksByRepo: {},
-    actionNotificationsByRepo: githubActionNotificationsByRepo.value,
+    actionNotificationsByRepo: {},
     releasesByRepo: {},
   });
 }
@@ -779,7 +793,6 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
       repos,
       grouped.pullRequests,
     );
-    writeGitHubOverviewSnapshot();
   } catch (err) {
     if (isGitHubBindingExpiredError(err)) clearGitHubPendingItems();
   } finally {
@@ -807,7 +820,6 @@ async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], re
       repos,
       groupActionNotificationsByRepo(notifications, repos),
     );
-    writeGitHubOverviewSnapshot();
   } catch (err) {
     if (isGitHubBindingExpiredError(err)) clearGitHubPendingItems();
   } finally {
@@ -895,8 +907,7 @@ function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
 }
 
 function clearGitHubPendingItems() {
-  githubTimelineLoadCancel?.();
-  githubTimelineLoadCancel = null;
+  cancelHomeOverviewWork("githubTimeline");
   githubAccountIssuesLoading.value = false;
   githubActionNotificationsLoading.value = false;
   githubIssuesByRepo.value = {};
@@ -909,8 +920,7 @@ function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   const timelineRepos = repos.filter(repoIncludedInHomeTimeline);
   const shouldLoadIssues = shouldLoadHomePendingAccountIssues(timelineRepos, refresh);
   const shouldLoadNotifications = shouldLoadHomePendingActionNotifications(timelineRepos, refresh);
-  githubTimelineLoadCancel?.();
-  githubTimelineLoadCancel = null;
+  cancelHomeOverviewWork("githubTimeline");
   if (!shouldLoadIssues && !shouldLoadNotifications) {
     githubAccountIssuesLoading.value = false;
     githubActionNotificationsLoading.value = false;
@@ -920,8 +930,7 @@ function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
   const generation = githubPendingGeneration;
   if (shouldLoadIssues) githubAccountIssuesLoading.value = true;
   if (shouldLoadNotifications) githubActionNotificationsLoading.value = true;
-  githubTimelineLoadCancel = scheduleLowPriorityTask(() => {
-    githubTimelineLoadCancel = null;
+  scheduleHomeOverviewWork("githubTimeline", () => {
     if (generation !== githubPendingGeneration) return;
     if (shouldLoadIssues) void loadHomePendingAccountIssues(timelineRepos, refresh);
     if (shouldLoadNotifications) void loadHomePendingActionNotifications(timelineRepos, refresh);

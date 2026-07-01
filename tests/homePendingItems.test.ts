@@ -233,4 +233,26 @@ describe("buildHomePendingItems", () => {
       tone: "warn",
     });
   });
+
+  it("can build only the top pending items without changing ordering", () => {
+    const sources = [
+      source({
+        issues: Array.from({ length: 18 }, (_, index) =>
+          issue(index + 1, "open", `2026-06-${String(index + 1).padStart(2, "0")}T12:00:00Z`)
+        ),
+        pullRequests: [
+          pullRequest(101, { updatedAt: "2026-06-25T09:00:00Z" }),
+          pullRequest(102, { updatedAt: "2026-06-25T10:00:00Z" }),
+        ],
+        actionNotifications: [
+          actionNotification("201", "CI failed", "2026-06-20T09:00:00Z"),
+          actionNotification("202", "Release cancelled", "2026-06-21T09:00:00Z"),
+        ],
+      }),
+    ];
+    const fullTopIds = buildHomePendingItems(sources).slice(0, 5).map((item) => item.id);
+
+    expect(buildHomePendingItems(sources, 5).map((item) => item.id)).toEqual(fullTopIds);
+    expect(buildHomePendingItems(sources, 0)).toEqual([]);
+  });
 });

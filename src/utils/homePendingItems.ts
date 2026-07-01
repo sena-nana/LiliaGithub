@@ -65,10 +65,39 @@ const PRIORITY_PULL_OPEN = 320;
 const PRIORITY_ISSUE_OPEN = 260;
 const PRIORITY_SYNC_STATE = 180;
 
-export function buildHomePendingItems(sources: readonly HomePendingRepoSource[]) {
-  return sources
-    .flatMap(buildHomePendingItemsForRepo)
-    .sort(compareHomePendingItems);
+export function buildHomePendingItems(sources: readonly HomePendingRepoSource[], limit?: number) {
+  const normalizedLimit = normalizePendingItemLimit(limit);
+  if (normalizedLimit === 0) return [];
+  if (normalizedLimit == null) {
+    return sources
+      .flatMap(buildHomePendingItemsForRepo)
+      .filter(isUsableHomePendingItem)
+      .sort(compareHomePendingItems);
+  }
+
+  const items: HomePendingItem[] = [];
+  for (const source of sources) {
+    for (const item of buildHomePendingItemsForRepo(source)) {
+      collectTopHomePendingItem(items, item, normalizedLimit);
+    }
+  }
+  return items;
+}
+
+function normalizePendingItemLimit(limit: number | undefined) {
+  if (limit == null || !Number.isFinite(limit)) return null;
+  return Math.max(0, Math.floor(limit));
+}
+
+function collectTopHomePendingItem(items: HomePendingItem[], item: HomePendingItem, limit: number) {
+  if (!isUsableHomePendingItem(item)) return;
+  const index = items.findIndex((current) => compareHomePendingItems(item, current) < 0);
+  if (index < 0) {
+    if (items.length < limit) items.push(item);
+    return;
+  }
+  items.splice(index, 0, item);
+  if (items.length > limit) items.pop();
 }
 
 function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendingItem[] {
@@ -178,7 +207,11 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
     });
   }
 
-  return items.filter((item) => Number.isFinite(item.timestamp) && item.timestamp > 0);
+  return items;
+}
+
+function isUsableHomePendingItem(item: HomePendingItem) {
+  return Number.isFinite(item.timestamp) && item.timestamp > 0;
 }
 
 function compareHomePendingItems(left: HomePendingItem, right: HomePendingItem) {
