@@ -1,4 +1,19 @@
-use super::*;
+use std::collections::HashMap;
+use std::path::Path;
+use std::process::Command;
+use std::time::SystemTime;
+
+use crate::workspace::github::{GITHUB_CONTRIBUTIONS_REPO_LIMIT, GITHUB_CONTRIBUTION_DAYS};
+use crate::workspace::repos::git_command_lossy;
+use crate::workspace::types::{
+    ContributionIdentity, GitHubContributionDay, GitHubContributionMeta, WorkspaceSettings,
+};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(test)]
+use crate::workspace::types::LocalContributionDayCache;
 
 #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
 pub(super) fn configure_background_command(command: &mut Command) {

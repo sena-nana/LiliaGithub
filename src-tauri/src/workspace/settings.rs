@@ -1,4 +1,21 @@
-use super::*;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::workspace::github::{forget_remote_repo_shortcut, remember_remote_repo_shortcut};
+use crate::workspace::repos::{
+    git_command, is_git_repo, resolve_repo_worktree, ResolvedRepoWorktree,
+};
+use crate::workspace::run_blocking;
+use crate::workspace::shared::{now_millis, remove_local_contribution_cache};
+use crate::workspace::types::{
+    CachedContributionResult, CachedRepoSummary, ContributionIdentity, HiddenRepo,
+    RemoteRepoShortcut, RepoSummary, RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings,
+    WorkspaceStartupCache, WorkspaceStartupContributions,
+};
+use tauri::AppHandle;
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_store::StoreExt;
 
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";

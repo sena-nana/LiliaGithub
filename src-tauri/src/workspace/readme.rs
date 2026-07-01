@@ -1,4 +1,8 @@
-use super::*;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 pub(super) fn readme_image_data_urls(
     content: &str,
