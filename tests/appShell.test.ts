@@ -5,6 +5,7 @@ import { defineComponent } from "vue";
 import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import { ContextMenuHost } from "@lilia/ui";
 import { closeContextMenu, installContextMenu } from "@lilia/ui";
+import { useWorkspace } from "../src/composables/useWorkspace";
 import { resetWorkspaceStateForTests, setRepoActionError, state, upsertRepo } from "../src/composables/workspace/state";
 import { refreshRepoContributions } from "../src/composables/workspace/repositories";
 import { REPO_LAUNCH_STATUS_EVENT } from "../src/composables/workspace/launchEvents";
@@ -928,6 +929,37 @@ describe("AppShell sidebar", () => {
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
+    });
+  });
+
+  it("总览页搜索立即包含用户操作后新增并移动分组的本地仓库", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary("sena-nana/InstantSearchRepo")],
+        nextPage: null,
+      },
+    ]);
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(repoStatusRowForText(view.container, "sena-nana/InstantSearchRepo")).toBeInTheDocument();
+    });
+
+    const workspace = useWorkspace();
+    const settings = await workspace.createRepoGroup("即时搜索");
+    const groupId = settings.repoGroups.find((group) => group.name === "即时搜索")?.id;
+    expect(groupId).toBeTruthy();
+    const repo = await workspace.cloneRepo("https://github.com/sena-nana/InstantSearchRepo.git", "InstantSearchRepo");
+    await workspace.moveRepoToGroup(repo.id, groupId!);
+
+    await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "搜索" }));
+    const search = view.getByRole("searchbox", { name: "搜索仓库" });
+    await fireEvent.update(search, "InstantSearchRepo");
+
+    await waitFor(() => {
+      const results = within(view.getByRole("listbox", { name: "仓库搜索结果" }));
+      expect(results.getByRole("option", { name: "打开本地仓库 InstantSearchRepo" })).toBeInTheDocument();
+      expect(results.queryByRole("option", { name: "打开远程仓库 sena-nana/InstantSearchRepo" })).toBeNull();
     });
   });
 
