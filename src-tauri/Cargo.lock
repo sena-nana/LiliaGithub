@@ -2167,13 +2167,9 @@ dependencies = [
 name = "lilia_github"
 version = "1.0.0-beta.1"
 dependencies = [
- "base64 0.22.1",
- "keyring",
- "libc",
+ "lilia_github_agent_debug",
  "lilia_github_contracts",
- "lilia_github_git",
- "lilia_github_github",
- "reqwest",
+ "lilia_github_workspace",
  "serde",
  "serde_json",
  "tauri",
@@ -2182,8 +2178,14 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-store",
  "tauri-plugin-updater",
- "tokio",
- "zip 8.6.0",
+]
+
+[[package]]
+name = "lilia_github_agent_debug"
+version = "1.0.0-beta.1"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2208,6 +2210,23 @@ dependencies = [
  "lilia_github_contracts",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "lilia_github_workspace"
+version = "1.0.0-beta.1"
+dependencies = [
+ "base64 0.22.1",
+ "keyring",
+ "libc",
+ "lilia_github_contracts",
+ "lilia_github_git",
+ "lilia_github_github",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zip 8.6.0",
 ]
 
 [[package]]

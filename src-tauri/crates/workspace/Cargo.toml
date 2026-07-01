@@ -1,0 +1,17 @@
+[package]
+name = "lilia_github_workspace"
+version = "1.0.0-beta.1"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+keyring = "4.0.1"
+libc = "0.2"
+lilia_github_contracts = { path = "../lilia_github_contracts" }
+lilia_github_git = { path = "../git" }
+lilia_github_github = { path = "../github" }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "form", "json", "query", "rustls", "system-proxy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
