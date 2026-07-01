@@ -2336,9 +2336,17 @@ let fallbackGitHubWorkflowRunsOverride:
   ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null = null;
 let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
 let fallbackRepoDetailOverride: ((repoId: string) => RepoDetail | Promise<RepoDetail> | null) | null = null;
+type FallbackGitHubAccountIssuesOverride = (
+  options: Pick<GitHubIssueListOptions, "state" | "perPage" | "sort" | "direction">,
+) => Promise<GitHubAccountIssueItem[]> | GitHubAccountIssueItem[];
+type FallbackGitHubActionNotificationsOverride = (
+  perPage: number | null,
+) => Promise<GitHubActionNotification[]> | GitHubActionNotification[];
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
+let fallbackGitHubAccountIssuesOverride: FallbackGitHubAccountIssuesOverride | null = null;
+let fallbackGitHubActionNotificationsOverride: FallbackGitHubActionNotificationsOverride | null = null;
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
 let fallbackGitHubAccountIssueListCalls: Array<{
   state: string | null;
@@ -2387,6 +2395,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
   fallbackGitHubRepoPagesOverride = null;
+  fallbackGitHubAccountIssuesOverride = null;
+  fallbackGitHubActionNotificationsOverride = null;
   fallbackRepos = baseFallbackRepos.map(cloneRepoSummary);
   fallbackGitHubRepos = createFallbackGitHubRepos();
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
@@ -2536,6 +2546,18 @@ export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | nul
     items: page.items.map(cloneGitHubRepoSummary),
     nextPage: page.nextPage,
   })) ?? null;
+}
+
+export function setFallbackGitHubAccountIssuesOverrideForTests(
+  override: FallbackGitHubAccountIssuesOverride | null,
+) {
+  fallbackGitHubAccountIssuesOverride = override;
+}
+
+export function setFallbackGitHubActionNotificationsOverrideForTests(
+  override: FallbackGitHubActionNotificationsOverride | null,
+) {
+  fallbackGitHubActionNotificationsOverride = override;
 }
 
 export function setFallbackGitHubBranchesForTests(branchesByRepo: Record<string, BranchSummary[]>) {
@@ -3858,7 +3880,15 @@ export function listGitHubAccountIssues(
   const direction = options.direction ?? "desc";
   const perPage = Number.isFinite(options.perPage) ? Math.max(1, Math.trunc(options.perPage ?? 0)) : null;
   fallbackGitHubAccountIssueListCalls.push({ state, perPage, sort, direction });
-  return call("github_list_account_issues", { state, perPage, sort, direction }, () => {
+  return call("github_list_account_issues", { state, perPage, sort, direction }, async () => {
+    if (fallbackGitHubAccountIssuesOverride) {
+      const items = await fallbackGitHubAccountIssuesOverride({ state, perPage, sort, direction });
+      return items.map((item) => ({
+        repoFullName: item.repoFullName,
+        issue: cloneIssue(item.issue),
+        pullRequest: item.pullRequest,
+      }));
+    }
     const issueItems = Object.entries(fallbackGitHubIssues).flatMap(([repoFullName, issues]) =>
       issues
         .filter((issue) => !state || state === "all" || issue.state === state)
@@ -3881,11 +3911,15 @@ export function listGitHubAccountIssues(
 
 export function listGitHubActionNotifications(perPage?: number | null): Promise<GitHubActionNotification[]> {
   fallbackGitHubActionNotificationListCalls.push({ perPage: perPage ?? null });
-  return call("github_list_action_notifications", { perPage: perPage ?? null }, () =>
-    fallbackGitHubActionNotifications
+  return call("github_list_action_notifications", { perPage: perPage ?? null }, async () => {
+    if (fallbackGitHubActionNotificationsOverride) {
+      const notifications = await fallbackGitHubActionNotificationsOverride(perPage ?? null);
+      return notifications.map((notification) => ({ ...notification }));
+    }
+    return fallbackGitHubActionNotifications
       .slice(0, perPage ?? undefined)
-      .map((notification) => ({ ...notification })),
-  );
+      .map((notification) => ({ ...notification }));
+  });
 }
 
 export function listGitHubPullRequests(
