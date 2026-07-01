@@ -162,7 +162,7 @@ describe("workspace incremental refresh", () => {
       remoteUrl: null,
       githubFullName: null,
       ahead: 0,
-      stagedCount: 0,
+      unstagedCount: 1,
     });
     const refreshed = repoSummary("LiliaGithub", {
       githubFullName: "sena-nana/LiliaGithub",
@@ -190,6 +190,37 @@ describe("workspace incremental refresh", () => {
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
     resolveSummary?.(refreshed);
     await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 2, stagedCount: 1 }));
+  });
+
+  it("自动仓库状态刷新只刷新有本地内容或未推送提交的仓库", async () => {
+    const clean = repoSummary("Clean");
+    const dirty = repoSummary("Dirty", { unstagedCount: 1 });
+    const ahead = repoSummary("Ahead", { ahead: 2 });
+    const behind = repoSummary("Behind", { behind: 3 });
+    const conflict = repoSummary("Conflict", { conflictCount: 1 });
+    service.listManagedRepos.mockResolvedValue([clean, dirty, ahead, behind, conflict]);
+    service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
+
+    await refreshRepos({ automatic: true });
+
+    await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledTimes(3));
+    expect(service.refreshRepoSummary.mock.calls.map(([repoId]) => repoId).sort()).toEqual([
+      "Ahead",
+      "Conflict",
+      "Dirty",
+    ]);
+  });
+
+  it("自动仓库状态刷新没有目标仓库时不进入扫描状态", async () => {
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("Clean"),
+      repoSummary("Behind", { behind: 1 }),
+    ]);
+
+    await refreshRepoSummaries({ automatic: true });
+
+    expect(service.refreshRepoSummary).not.toHaveBeenCalled();
+    expect(state.scanning).toBe(false);
   });
 
   it("初始化命中新鲜启动缓存时跳过自动仓库状态刷新", async () => {
