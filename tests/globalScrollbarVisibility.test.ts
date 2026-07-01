@@ -111,6 +111,7 @@ describe("global scrollbar visibility", () => {
       clientX: 40,
       clientY: 50,
     }));
+    flushOverlayFrame();
     vi.advanceTimersByTime(960);
 
     expect(verticalOverlay()).toBeNull();
@@ -161,6 +162,7 @@ describe("global scrollbar visibility", () => {
       clientX: 205,
       clientY: 32,
     }));
+    flushOverlayFrame();
 
     expect(scrollTop()).toBeGreaterThan(0);
 
