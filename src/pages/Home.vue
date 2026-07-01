@@ -39,7 +39,6 @@ import {
   preloadGitHubRepos,
   type GitHubAccountIssueItem,
   type GitHubActionNotification,
-  type GitHubContributionDay,
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubRepoSummary,
@@ -55,6 +54,7 @@ import {
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
+import HomeContributionCard from "../components/home/HomeContributionCard.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
 import { bulkResultTone, repoDisplayName } from "../utils/repoDisplay";
@@ -76,6 +76,7 @@ import {
   formatBytes,
   formatPercent,
 } from "../utils/languageStats";
+import { buildContributionChartModel } from "../utils/contributionChart";
 
 const workspace = useWorkspace();
 const router = useRouter();
@@ -107,18 +108,6 @@ type RepoStatusRow = {
   localRepo: RepoSummary | null;
   action: RepoAction | null;
   syncIssue: RepoSyncIssueDisplay | null;
-};
-
-type ContributionCell = GitHubContributionDay & {
-  level: number;
-  weekStart: string;
-  title: string;
-  ariaLabel: string;
-};
-
-type ContributionMonthLabel = {
-  key: string;
-  label: string;
 };
 
 type LanguageChartMode = "language" | "project";
@@ -324,10 +313,7 @@ const overviewSyncIssuesByRepoId = computed(() =>
 );
 const overviewContributions = computed(() => homeOverviewSnapshot.value?.contributions ?? emptyContributions);
 
-const contributionWeeks = computed(() => buildContributionWeeks(overviewContributions.value.days));
-const contributionMonthLabels = computed(() =>
-  buildContributionMonthLabels(contributionWeeks.value, overviewContributions.value.days),
-);
+const contributionChart = computed(() => buildContributionChartModel(overviewContributions.value.days));
 
 const totalContributions = computed(() =>
   overviewContributions.value.days.reduce((total, day) => total + day.count, 0),
@@ -940,84 +926,6 @@ function timelineNodeLink(href: string | undefined, preload?: () => Promise<unkn
   return { kind: "route", to: href, preload };
 }
 
-function buildContributionWeeks(days: readonly GitHubContributionDay[]) {
-  if (!days.length) return [];
-  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
-  const maxCount = Math.max(1, ...sorted.map((day) => day.count));
-  const start = parseDateOnly(sorted[0].date);
-  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
-  const end = parseDateOnly(sorted[sorted.length - 1].date);
-  end.setUTCDate(end.getUTCDate() + (6 - end.getUTCDay()));
-  const byDate = new Map(sorted.map((day) => [day.date, day]));
-  const weeks: ContributionCell[][] = [];
-  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 7)) {
-    const week: ContributionCell[] = [];
-    for (let offset = 0; offset < 7; offset += 1) {
-      const date = new Date(cursor);
-      date.setUTCDate(cursor.getUTCDate() + offset);
-      const key = date.toISOString().slice(0, 10);
-      const day = byDate.get(key) ?? { date: key, count: 0 };
-      const title = contributionTitle(day);
-      week.push({
-        ...day,
-        level: contributionLevel(day.count, maxCount),
-        weekStart: cursor.toISOString().slice(0, 10),
-        title,
-        ariaLabel: title,
-      });
-    }
-    weeks.push(week);
-  }
-  return weeks;
-}
-
-function buildContributionMonthLabels(
-  weeks: readonly ContributionCell[][],
-  days: readonly GitHubContributionDay[],
-): ContributionMonthLabel[] {
-  let lastMonth = "";
-  const sortedDays = [...days].sort((a, b) => a.date.localeCompare(b.date));
-  const start = sortedDays[0]?.date ?? "";
-  const end = sortedDays[sortedDays.length - 1]?.date ?? "";
-  const isInRange = (date: string) => start !== "" && date >= start && date <= end;
-  return weeks.map((week, index) => {
-    const weekStart = week[0]?.weekStart ?? String(index);
-    const month = week
-      .filter((day) => isInRange(day.date))
-      .map((day) => day.date.slice(0, 7))
-      .find((value) => value && value !== lastMonth) ?? "";
-    const label = month && month !== lastMonth ? formatContributionMonth(month) : "";
-    if (month) lastMonth = month;
-    return {
-      key: weekStart,
-      label,
-    };
-  });
-}
-
-function formatContributionMonth(month: string) {
-  const [, rawMonth] = month.split("-");
-  return `${Number(rawMonth)}月`;
-}
-
-function parseDateOnly(date: string) {
-  return new Date(`${date}T00:00:00Z`);
-}
-
-function contributionLevel(count: number, maxCount: number) {
-  if (count <= 0) return 0;
-  return Math.min(4, Math.max(1, Math.ceil((count / maxCount) * 4)));
-}
-
-function contributionTitle(day: GitHubContributionDay) {
-  const lines = [`${day.date}：${day.count} 次提交`];
-  for (const repo of day.repositories ?? []) {
-    const label = repo.repoFullName || repo.repoName || repo.repoId;
-    lines.push(`${label}：${repo.count} 次`);
-  }
-  return lines.join("\n");
-}
-
 const timelineTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "2-digit",
   day: "2-digit",
@@ -1546,92 +1454,15 @@ function bulkOperationDescription(operation: BulkOperation) {
       </div>
 
       <div class="overview-grid">
-        <div class="card contribution-card">
-          <div class="card-heading">
-            <div>
-              <h2>
-                最近工作结果
-                <LoaderCircle
-              v-if="overviewContributions.loading"
-              :size="13"
-              aria-hidden="true"
-              class="card-title-loader"
-            />
-              </h2>
-              <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
-              <p v-if="skippedContributionRepoCount > 0" class="contribution-notice">
-                已跳过 {{ skippedContributionRepoCount }} 个不可读取仓库
-              </p>
-            </div>
-            <button
-              v-if="workspace.state.githubContributions.error"
-              type="button"
-              class="ghost contribution-retry"
-              :disabled="overviewContributions.loading"
-              @click="refreshOverviewContributions"
-            >
-              <RefreshCw :size="13" aria-hidden="true" />
-              重试
-            </button>
-          </div>
-          <p v-if="overviewContributions.error" class="contribution-error">
-            {{ overviewContributions.error }}
-          </p>
-          <div
-            v-if="overviewContributions.loading && !hasContributionDays"
-            class="contribution-loading"
-            aria-label="本地提交加载中"
-          >
-            <span v-for="index in 84" :key="index" />
-          </div>
-          <p
-            v-else-if="!overviewContributions.loading && totalContributions <= 0 && !overviewContributions.error"
-            class="contribution-empty"
-          >
-            暂无本地提交
-          </p>
-          <div v-else class="contribution-chart" aria-label="本地提交贡献图">
-            <div class="contribution-week-labels" aria-hidden="true">
-              <span class="contribution-month-spacer" />
-              <span />
-              <span>Mon</span>
-              <span />
-              <span>Wed</span>
-              <span />
-              <span>Fri</span>
-              <span />
-            </div>
-            <div class="contribution-window" v-memo="[contributionWeeks, contributionMonthLabels]">
-              <div class="contribution-grid">
-                <div class="contribution-months" aria-hidden="true">
-                  <span
-                    v-for="month in contributionMonthLabels"
-                    :key="month.key"
-                    class="contribution-month"
-                  >
-                    {{ month.label }}
-                  </span>
-                </div>
-                <div class="contribution-weeks">
-                  <div
-                    v-for="(week, weekIndex) in contributionWeeks"
-                    :key="weekIndex"
-                    class="contribution-week"
-                  >
-                    <span
-                      v-for="day in week"
-                      :key="day.date"
-                      class="contribution-day"
-                      :class="`contribution-day--${day.level}`"
-                      :title="day.title"
-                      :aria-label="day.ariaLabel"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <HomeContributionCard
+          :loading="overviewContributions.loading"
+          :error="overviewContributions.error"
+          :total-contributions="totalContributions"
+          :skipped-repo-count="skippedContributionRepoCount"
+          :has-contribution-days="hasContributionDays"
+          :chart-html="contributionChart.html"
+          @retry="refreshOverviewContributions"
+        />
 
         <div class="card language-card">
           <div class="card-heading">
@@ -2149,13 +1980,6 @@ function bulkOperationDescription(operation: BulkOperation) {
   color: var(--err);
 }
 
-.contribution-card {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 760px;
-}
-
 .card-heading {
   display: flex;
   align-items: center;
@@ -2166,134 +1990,6 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .card-heading h2 {
   margin: 0;
-}
-
-.contribution-total {
-  margin: 3px 0 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.contribution-notice {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.contribution-retry {
-  height: 26px;
-  padding: 0 7px;
-  color: var(--ok);
-}
-
-.contribution-error,
-.contribution-empty {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.contribution-error {
-  color: var(--err);
-  margin-bottom: 8px;
-}
-
-.contribution-chart {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 8px;
-  padding-bottom: 2px;
-  min-width: 0;
-}
-
-.contribution-week-labels {
-  display: grid;
-  grid-template-rows: 14px repeat(7, 11px);
-  gap: 3px;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 11px;
-}
-
-.contribution-month-spacer {
-  height: 14px;
-}
-
-.contribution-window {
-  display: flex;
-  justify-content: flex-end;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.contribution-grid {
-  min-width: max-content;
-}
-
-.contribution-months,
-.contribution-weeks {
-  display: flex;
-  gap: 3px;
-  min-width: max-content;
-}
-
-.contribution-months {
-  margin-bottom: 3px;
-}
-
-.contribution-month {
-  width: 11px;
-  height: 14px;
-  overflow: visible;
-  color: var(--text-muted);
-  font-size: 10px;
-  line-height: 14px;
-  white-space: nowrap;
-}
-
-.contribution-week {
-  display: grid;
-  grid-template-rows: repeat(7, 11px);
-  gap: 3px;
-}
-
-.contribution-day {
-  width: 11px;
-  height: 11px;
-  border-radius: 2px;
-  border: 1px solid color-mix(in srgb, var(--bg) 20%, transparent);
-  background: var(--bg-subtle);
-}
-
-.contribution-day--1 {
-  background: color-mix(in srgb, var(--ok) 30%, var(--bg-subtle));
-}
-
-.contribution-day--2 {
-  background: color-mix(in srgb, var(--ok) 55%, var(--bg-subtle));
-}
-
-.contribution-day--3 {
-  background: color-mix(in srgb, var(--ok) 78%, var(--bg-subtle));
-}
-
-.contribution-day--4 {
-  background: #3fb950;
-}
-
-.contribution-loading {
-  display: grid;
-  grid-template-columns: repeat(21, 11px);
-  gap: 3px;
-  min-height: 98px;
-}
-
-.contribution-loading span {
-  width: 11px;
-  height: 11px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--ok) 14%, var(--bg-subtle));
 }
 
 .language-card {
