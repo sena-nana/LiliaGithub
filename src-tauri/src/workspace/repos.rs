@@ -19,7 +19,7 @@ use crate::workspace::settings::{
 };
 use crate::workspace::shared::{configure_background_command, now_millis};
 use crate::workspace::tasks::{record_workspace_task, update_workspace_task};
-use crate::workspace::types::{
+use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
     LanguageStat, RepoChange, RepoConflictChoice, RepoConflictFile, RepoConflictHunk,
     RepoConflictState, RepoDetail, RepoMergePullResult, RepoOperationResult,
@@ -29,7 +29,7 @@ use crate::workspace::types::{
 use tauri::AppHandle;
 
 #[cfg(test)]
-use crate::workspace::types::WorkspaceStartupCache;
+use lilia_github_contracts::workspace::WorkspaceStartupCache;
 
 pub(super) const MAX_REPO_REFRESH_CONCURRENCY: usize = 4;
 

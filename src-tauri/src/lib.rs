@@ -3,9 +3,9 @@ use tauri::{utils::config::Color, Manager, WindowEvent};
 const MAIN_WINDOW_LABEL: &str = "main";
 const BG: Color = Color(0x18, 0x18, 0x18, 0xFF);
 
+mod agent_debug;
 mod window_state;
 mod workspace;
-mod agent_debug;
 
 #[tauri::command]
 fn ping() -> &'static str {

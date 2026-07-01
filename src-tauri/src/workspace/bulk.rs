@@ -9,7 +9,7 @@ use crate::workspace::repos::{
 };
 use crate::workspace::run_blocking;
 use crate::workspace::settings::{repo_path_by_id, workspace_root};
-use crate::workspace::types::{
+use lilia_github_contracts::workspace::{
     BulkSyncPreview, BulkSyncRepo, BulkSyncResult, RepoPullLocalChangesMode, RepoSummary,
 };
 use tauri::AppHandle;
