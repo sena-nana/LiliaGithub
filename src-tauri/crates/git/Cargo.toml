@@ -1,0 +1,7 @@
+[package]
+name = "lilia_github_git"
+version = "1.0.0-beta.1"
+edition = "2021"
+
+[dependencies]
+lilia_github_contracts = { path = "../lilia_github_contracts" }

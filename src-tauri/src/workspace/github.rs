@@ -54,7 +54,9 @@ pub(super) const GITHUB_CONTRIBUTIONS_REPO_LIMIT: usize = 30;
 pub(super) const GITHUB_CONTRIBUTION_DAYS: usize = 371;
 pub(super) const GITHUB_PROJECT_CACHE_KEY: &str = "workspace.githubProjectCache";
 pub(super) const GITHUB_ACTIONS_ARTIFACT_MAX_BYTES: u64 = 200 * 1024 * 1024;
-pub(super) const GITHUB_RELEASE_ASSET_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+#[cfg(test)]
+pub(super) const GITHUB_RELEASE_ASSET_MAX_BYTES: u64 =
+    lilia_github_github::GITHUB_RELEASE_ASSET_MAX_BYTES;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1115,12 +1117,7 @@ pub(super) fn github_require_scope(
     binding: &GitHubBindingMetadata,
     scope: &str,
 ) -> Result<(), String> {
-    if github_binding_has_scope(binding, scope) {
-        return Ok(());
-    }
-    Err(format!(
-        "GitHub 绑定缺少 {scope} 权限，请重新绑定 GitHub 后再试"
-    ))
+    lilia_github_github::github_require_scope(binding, scope)
 }
 
 pub(super) fn github_send(
@@ -2687,13 +2684,7 @@ pub(super) fn github_release_asset_name(file_path: &str) -> Result<String, Strin
 }
 
 pub(super) fn github_release_validate_asset_file_size(size: u64) -> Result<(), String> {
-    if size > GITHUB_RELEASE_ASSET_MAX_BYTES {
-        return Err(format!(
-            "Release asset 文件过大：最大支持 {} MB",
-            GITHUB_RELEASE_ASSET_MAX_BYTES / 1024 / 1024
-        ));
-    }
-    Ok(())
+    lilia_github_github::github_release_validate_asset_file_size(size)
 }
 
 pub(super) fn github_release_asset_bytes(file_path: &str) -> Result<Vec<u8>, String> {
@@ -3156,8 +3147,7 @@ pub(super) fn github_branch_from_response(branch: GitHubBranchResponse) -> Branc
 }
 
 pub(super) fn github_auth_header(token: &str) -> String {
-    let encoded = STANDARD.encode(format!("x-access-token:{token}"));
-    format!("AUTHORIZATION: basic {encoded}")
+    lilia_github_github::github_auth_header(token)
 }
 
 pub(super) fn normalize_github_repo_input(input: &str) -> Result<NormalizedGitHubRepo, String> {
