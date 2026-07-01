@@ -120,11 +120,11 @@ describe("workspace focus refresh", () => {
 
   it("失焦超过 5 分钟后回焦点只同步仓库摘要和远端状态", async () => {
     const initial = repoSummary("LiliaGithub", {
-      behind: 0,
+      ahead: 1,
       languageStats: [{ language: "Vue", bytes: 10, lines: 10 }],
       languageStatsUpdatedAt: 1,
     });
-    const refreshed = repoSummary("LiliaGithub", { behind: 2 });
+    const refreshed = repoSummary("LiliaGithub", { ahead: 2 });
     state.repos = [initial];
     service.listManagedRepos.mockResolvedValue([initial]);
     service.refreshRepoSummary.mockResolvedValue(refreshed);
@@ -145,7 +145,7 @@ describe("workspace focus refresh", () => {
     expect(service.listRepoContribution).not.toHaveBeenCalled();
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
     expect(service.listWorkspaceTasks).toHaveBeenCalledTimes(1);
-    expect(state.repos[0].behind).toBe(2);
+    expect(state.repos[0].ahead).toBe(2);
     expect(state.repos[0].languageStats).toEqual(initial.languageStats);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(1);
   });
@@ -183,8 +183,8 @@ describe("workspace focus refresh", () => {
   });
 
   it("回焦点刷新触发自动同步失败时保存最近同步失败", async () => {
-    const initial = repoSummary("LiliaGithub", { behind: 0 });
-    const refreshed = repoSummary("LiliaGithub", { behind: 2 });
+    const initial = repoSummary("LiliaGithub", { ahead: 1 });
+    const refreshed = repoSummary("LiliaGithub", { ahead: 2 });
     state.settings = {
       ...workspaceSettings(),
       repoSyncPreferences: { LiliaGithub: { autoSync: true } },

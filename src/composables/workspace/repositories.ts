@@ -91,6 +91,10 @@ function repoDirtyCount(summary: RepoSummary) {
   return summary.stagedCount + summary.unstagedCount + summary.untrackedCount;
 }
 
+function repoNeedsAutomaticSummaryRefresh(summary: RepoSummary) {
+  return summary.ahead > 0 || summary.conflictCount > 0 || repoDirtyCount(summary) > 0;
+}
+
 function autoSyncBlockReason(summary: RepoSummary) {
   if (!summary.remoteUrl) return "没有 origin remote，已跳过自动同步";
   if (!summary.currentBranch) return "当前不是命名分支，已跳过自动同步";
@@ -200,7 +204,12 @@ export async function refreshRepos(options: RepoSummaryRefreshOptions = {}) {
       markRepoSummaryRefreshFresh();
       return;
     }
-    void refreshManagedRepoSummaries(repos.map((repo) => repo.id), { fetchRemote: true });
+    const repoIds = repoSummaryRefreshTargetIds(repos, options.automatic === true);
+    if (options.automatic && !repoIds.length) {
+      markRepoSummaryRefreshFresh();
+      return;
+    }
+    void refreshManagedRepoSummaries(repoIds, { fetchRemote: true });
   }
 }
 
@@ -213,8 +222,13 @@ export async function refreshRepoSummaries(options: RepoSummaryRefreshOptions = 
     markRepoSummaryRefreshFresh();
     return repos;
   }
+  const repoIds = repoSummaryRefreshTargetIds(repos, options.automatic === true);
+  if (options.automatic && !repoIds.length) {
+    markRepoSummaryRefreshFresh();
+    return repos;
+  }
   try {
-    await refreshManagedRepoSummaries(repos.map((repo) => repo.id), { fetchRemote: true, refreshBackground: false });
+    await refreshManagedRepoSummaries(repoIds, { fetchRemote: true, refreshBackground: false });
     return repos;
   } catch (err) {
     state.error = String(err);
@@ -237,6 +251,11 @@ async function loadManagedRepoList() {
     state.error = String(err);
     return null;
   }
+}
+
+function repoSummaryRefreshTargetIds(repos: readonly RepoSummary[], automatic: boolean) {
+  const targets = automatic ? repos.filter(repoNeedsAutomaticSummaryRefresh) : repos;
+  return targets.map((repo) => repo.id);
 }
 
 async function refreshManagedRepoSummaries(
