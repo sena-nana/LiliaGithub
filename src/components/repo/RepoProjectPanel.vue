@@ -5288,11 +5288,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-settings-switch {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  align-items: center;
   gap: 8px;
-  min-width: 0;
   min-height: 36px;
   padding: 5px 0;
   color: var(--text);
