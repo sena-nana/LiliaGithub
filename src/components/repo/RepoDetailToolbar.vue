@@ -250,6 +250,7 @@ const emit = defineEmits<{
               agent-id="repo.toolbar.open.target"
               menu-width="132px"
               menu-label="打开目标"
+              hide-button-label
               :disabled="actionRunning || !summaryPath"
               @update:model-value="emit('selectOpenTarget', $event)"
             />
@@ -276,6 +277,7 @@ const emit = defineEmits<{
               agent-id="repo.toolbar.pull.strategy"
               menu-width="144px"
               menu-label="拉取策略"
+              hide-button-label
               :disabled="actionRunning || hasConflicts"
               @update:model-value="emit('selectPullStrategy', $event)"
             />

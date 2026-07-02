@@ -355,8 +355,8 @@ const {
   padding: 0 5px;
 }
 
-.repo-toolbar__open-target-toggle.chat-chip,
-.repo-toolbar__pull-strategy-toggle.chat-chip {
+.repo-toolbar__open-target-toggle.dd__button,
+.repo-toolbar__pull-strategy-toggle.dd__button {
   width: 22px;
   min-width: 22px;
   max-width: 22px;
@@ -365,37 +365,7 @@ const {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
-.repo-toolbar__open-target-toggle .chat-chip__label,
-.repo-toolbar__pull-strategy-toggle .chat-chip__label {
-  display: none;
-}
-
-.repo-toolbar__open-group > .dd,
-.repo-toolbar__pull-group > .dd {
-  position: static;
-}
-
-.repo-toolbar__open-group .dd__menu,
-.repo-toolbar__pull-group .dd__menu {
-  right: 0;
-  left: auto;
-  min-width: 144px;
-  max-width: min(144px, calc(100vw - 16px));
-  translate: 0;
-}
-
-.repo-toolbar__open-group .dd__item,
-.repo-toolbar__pull-group .dd__item {
-  padding: 3px 9px;
-}
-
-.repo-toolbar__open-group .dd__item-label,
-.repo-toolbar__pull-group .dd__item-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.repo-toolbar .chat-chip.repo-toolbar__btn {
+.repo-toolbar .dd__button.repo-toolbar__btn {
   height: 32px;
   border: 0;
   background: transparent;
@@ -431,13 +401,13 @@ const {
   color: var(--warn);
 }
 
-.repo-toolbar .chat-chip.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
-.repo-toolbar .chat-chip.repo-toolbar__btn.is-open {
+.repo-toolbar .dd__button.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
+.repo-toolbar .dd__button.repo-toolbar__btn.is-open {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.repo-toolbar .chat-chip.repo-toolbar__btn.is-disabled {
+.repo-toolbar .dd__button.repo-toolbar__btn.is-disabled {
   color: var(--text-faint);
   cursor: default;
 }
@@ -462,15 +432,15 @@ const {
 }
 
 .repo-toolbar__open-group .repo-toolbar__btn:hover,
-.repo-toolbar .repo-toolbar__open-group .chat-chip.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
-.repo-toolbar .repo-toolbar__open-group .chat-chip.repo-toolbar__btn.is-open,
+.repo-toolbar .repo-toolbar__open-group .dd__button.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
+.repo-toolbar .repo-toolbar__open-group .dd__button.repo-toolbar__btn.is-open,
 .repo-toolbar__pull-group .repo-toolbar__btn:hover,
-.repo-toolbar .repo-toolbar__pull-group .chat-chip.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
-.repo-toolbar .repo-toolbar__pull-group .chat-chip.repo-toolbar__btn.is-open {
+.repo-toolbar .repo-toolbar__pull-group .dd__button.repo-toolbar__btn:hover:not(.is-disabled):not(:disabled),
+.repo-toolbar .repo-toolbar__pull-group .dd__button.repo-toolbar__btn.is-open {
   background: transparent;
 }
 
-.repo-toolbar .chat-chip.repo-toolbar__btn .chat-chip__label {
+.repo-toolbar .dd__button.repo-toolbar__btn .dd__button-label {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -480,11 +450,7 @@ const {
   font-weight: 600;
 }
 
-.repo-toolbar__branch-select .chat-chip__label {
-  max-width: 96px;
-}
-
-.repo-toolbar__command-select .chat-chip__label {
+.repo-toolbar__command-select .dd__button-label {
   max-width: 180px;
 }
 
