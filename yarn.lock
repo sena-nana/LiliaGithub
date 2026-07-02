@@ -780,15 +780,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@lilia/ui@https://github.com/sena-nana/LiliaUI.git#workspace=@lilia/ui&commit=9f951d642c682689ba1b342986351fa02ad96d76":
+"@lilia/ui@https://github.com/sena-nana/LiliaUI.git#workspace=@lilia/ui&commit=5a1e8d96e3dcf545cdf2055a5af6ba1fa8eeaa4c":
   version: 0.1.0
-  resolution: "@lilia/ui@https://github.com/sena-nana/LiliaUI.git#workspace=%40lilia%2Fui&commit=9f951d642c682689ba1b342986351fa02ad96d76"
+  resolution: "@lilia/ui@https://github.com/sena-nana/LiliaUI.git#workspace=%40lilia%2Fui&commit=5a1e8d96e3dcf545cdf2055a5af6ba1fa8eeaa4c"
   peerDependencies:
     "@lucide/vue": ^1.17.0
     "@tauri-apps/api": ^2.11.0
     vue: ^3.5.35
     vue-router: ^5.1.0
-  checksum: 10c0/9224eb73fe40e4c41f86ad66e268b9165704b42d903c1750ef774cda5608853d95c29b21eccf637a8a32455330b82b61ec471ba73e136527daafdce782eaa960
+  checksum: 10c0/bcd1bec764ddc0ed6c756b5edf2a4cecff0ff2ab68d799ee722286b5210cf4675e695359a81d401f14202eade7119a5e591086fb14ff84cdc21019625ab8495c
   languageName: node
   linkType: hard
 
@@ -3532,7 +3532,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "lilia-github@workspace:."
   dependencies:
-    "@lilia/ui": "https://github.com/sena-nana/LiliaUI.git#workspace=@lilia/ui&commit=9f951d642c682689ba1b342986351fa02ad96d76"
+    "@lilia/ui": "https://github.com/sena-nana/LiliaUI.git#workspace=@lilia/ui&commit=5a1e8d96e3dcf545cdf2055a5af6ba1fa8eeaa4c"
     "@lucide/vue": "npm:^1.21.0"
     "@tauri-apps/api": "npm:^2.11.1"
     "@tauri-apps/cli": "npm:^2.11.3"
