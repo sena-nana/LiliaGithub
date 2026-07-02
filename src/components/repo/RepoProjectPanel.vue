@@ -604,23 +604,48 @@ type SettingsSwitchKey = keyof Pick<
   | "allowAutoMerge"
   | "deleteBranchOnMerge"
 >;
+type SettingsSwitchItem = { key: SettingsSwitchKey; label: string; hint: string };
+type SettingsSwitchGroup = {
+  title: string;
+  titleId: string;
+  agentPrefix: "feature" | "merge";
+  items: readonly SettingsSwitchItem[];
+};
 
-const featureSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hint: string }[] = [
-  { key: "private", label: "Private", hint: "限制仓库访问范围。" },
-  { key: "hasIssues", label: "Issues", hint: "启用问题跟踪。" },
-  { key: "hasWiki", label: "Wiki", hint: "启用仓库 Wiki。" },
-  { key: "hasProjects", label: "Projects", hint: "启用项目看板。" },
-  { key: "hasDiscussions", label: "Discussions", hint: "启用社区讨论。" },
-  { key: "allowForking", label: "Forking", hint: "允许其他用户 fork。" },
-  { key: "webCommitSignoffRequired", label: "Web signoff", hint: "要求网页提交签署。" },
-];
-
-const mergeSettingSwitches: readonly { key: SettingsSwitchKey; label: string; hint: string }[] = [
-  { key: "allowMergeCommit", label: "Merge commit", hint: "允许创建 merge commit。" },
-  { key: "allowSquashMerge", label: "Squash", hint: "允许 squash 合并。" },
-  { key: "allowRebaseMerge", label: "Rebase", hint: "允许 rebase 合并。" },
-  { key: "allowAutoMerge", label: "Auto merge", hint: "允许满足条件后自动合并。" },
-  { key: "deleteBranchOnMerge", label: "合并后删分支", hint: "合并 Pull Request 后删除来源分支。" },
+const settingsSwitchGroups: readonly SettingsSwitchGroup[] = [
+  {
+    title: "协作与访问",
+    titleId: "project-settings-access-title",
+    agentPrefix: "feature",
+    items: [
+      { key: "private", label: "Private", hint: "限制仓库访问范围。" },
+      { key: "allowForking", label: "Forking", hint: "允许其他用户 fork。" },
+      { key: "webCommitSignoffRequired", label: "Web signoff", hint: "要求网页提交签署。" },
+    ],
+  },
+  {
+    title: "GitHub 功能",
+    titleId: "project-settings-features-title",
+    agentPrefix: "feature",
+    items: [
+      { key: "hasIssues", label: "Issues", hint: "启用问题跟踪。" },
+      { key: "hasWiki", label: "Wiki", hint: "启用仓库 Wiki。" },
+      { key: "hasProjects", label: "Projects", hint: "启用项目看板。" },
+      { key: "hasDiscussions", label: "Discussions", hint: "启用社区讨论。" },
+    ],
+  },
+  {
+    title: "Pull Request / Merge",
+    titleId: "project-settings-merge-title",
+    agentPrefix: "merge",
+    items: [
+      { key: "allowMergeCommit", label: "Merge commit", hint: "允许创建 merge commit。" },
+      { key: "allowSquashMerge", label: "Squash", hint: "允许 squash 合并。" },
+      { key: "allowRebaseMerge", label: "Rebase", hint: "允许 rebase 合并。" },
+      { key: "allowAutoMerge", label: "Auto merge", hint: "允许满足条件后自动合并。" },
+      { key: "deleteBranchOnMerge", label: "合并后删分支", hint: "合并 Pull Request 后删除来源分支。" },
+    ],
+  },
 ];
 
 const githubAuthLoading = computed(() => workspace.state.authLoading);
@@ -3650,111 +3675,105 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <template v-if="settings">
-            <section class="project-settings-group" aria-labelledby="project-settings-name-title">
-              <div class="project-settings-group__head">
-                <h4 id="project-settings-name-title">基本信息</h4>
-              </div>
-              <div class="project-settings-fields project-settings-fields--single">
-                <label class="project-settings-field">
-                  <span>仓库名</span>
-                  <input
-                    v-model="settingsForm.name"
-                    type="text"
-                    autocomplete="off"
-                    data-agent-id="repo.settings.name"
-                    :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                  />
-                </label>
-              </div>
-            </section>
-            <section class="project-settings-group" aria-labelledby="project-settings-features-title">
-              <div class="project-settings-group__head">
-                <h4 id="project-settings-features-title">功能开关</h4>
-              </div>
-              <div class="project-settings-switches">
-                <UiSwitch
-                  v-for="switchItem in featureSettingSwitches"
-                  :key="switchItem.key"
-                  v-model="settingsForm[switchItem.key]"
-                  class="project-settings-switch"
-                  control-position="end"
-                  block
-                  :aria-label="switchItem.label"
-                  :agent-id="`repo.settings.feature.${switchItem.key}`"
-                >
-                  <span class="project-settings-switch__content">
-                    <strong>{{ switchItem.label }}</strong>
-                    <em>{{ switchItem.hint }}</em>
-                  </span>
-                </UiSwitch>
-              </div>
-            </section>
-            <section class="project-settings-group" aria-labelledby="project-settings-merge-title">
-              <div class="project-settings-group__head">
-                <h4 id="project-settings-merge-title">Pull Request / Merge</h4>
-              </div>
-              <div class="project-settings-switches">
-                <UiSwitch
-                  v-for="switchItem in mergeSettingSwitches"
-                  :key="switchItem.key"
-                  v-model="settingsForm[switchItem.key]"
-                  class="project-settings-switch"
-                  control-position="end"
-                  block
-                  :aria-label="switchItem.label"
-                  :agent-id="`repo.settings.merge.${switchItem.key}`"
-                >
-                  <span class="project-settings-switch__content">
-                    <strong>{{ switchItem.label }}</strong>
-                    <em>{{ switchItem.hint }}</em>
-                  </span>
-                </UiSwitch>
-              </div>
-            </section>
-          </template>
-          <div v-if="(canDeleteLocal && repoPath) || (canDeleteRemote && settings)" class="project-settings-danger-list">
-            <section v-if="canDeleteLocal && repoPath" class="project-danger-zone" aria-label="本地危险操作">
-              <div>
-                <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
-                <span>
-                  {{
-                    linkedWorktree
-                      ? "从当前共享仓库移除该工作树，并从工作区仓库列表移除。"
-                      : "删除工作区内的本地目录，并从本地仓库列表移除。"
-                  }}
-                </span>
-              </div>
-              <button
-                type="button"
-                class="ghost danger project-icon-action"
-                :data-agent-id="linkedWorktree ? 'repo.settings.delete-worktree' : 'repo.settings.delete-local'"
-                :disabled="deletingLocalRepo"
-                :aria-label="linkedWorktree ? '删除工作树' : '删除本地'"
-                :title="linkedWorktree ? '删除工作树' : '删除本地'"
-                @click="openDeleteDialog('local')"
+          <div v-if="settings || (canDeleteLocal && repoPath)" class="project-settings-cards">
+            <template v-if="settings">
+              <section class="project-settings-card" aria-labelledby="project-settings-name-title">
+                <div class="project-settings-card__head">
+                  <h4 id="project-settings-name-title">仓库信息</h4>
+                </div>
+                <div class="project-settings-fields project-settings-fields--single">
+                  <label class="project-settings-field">
+                    <span>仓库名</span>
+                    <input
+                      v-model="settingsForm.name"
+                      type="text"
+                      autocomplete="off"
+                      data-agent-id="repo.settings.name"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                    />
+                  </label>
+                </div>
+              </section>
+              <section
+                v-for="group in settingsSwitchGroups"
+                :key="group.titleId"
+                class="project-settings-card"
+                :aria-labelledby="group.titleId"
               >
-                <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
-                <Trash2 v-else :size="14" aria-hidden="true" />
-              </button>
-            </section>
-            <section v-if="canDeleteRemote && settings" class="project-danger-zone" aria-label="远端危险操作">
-              <div>
-                <strong>删除 GitHub 远端仓库</strong>
-                <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
+                <div class="project-settings-card__head">
+                  <h4 :id="group.titleId">{{ group.title }}</h4>
+                </div>
+                <div class="project-settings-switches">
+                  <UiSwitch
+                    v-for="switchItem in group.items"
+                    :key="switchItem.key"
+                    v-model="settingsForm[switchItem.key]"
+                    class="project-settings-switch"
+                    control-position="end"
+                    block
+                    :aria-label="switchItem.label"
+                    :agent-id="`repo.settings.${group.agentPrefix}.${switchItem.key}`"
+                  >
+                    <span class="project-settings-switch__content">
+                      <strong>{{ switchItem.label }}</strong>
+                      <em>{{ switchItem.hint }}</em>
+                    </span>
+                  </UiSwitch>
+                </div>
+              </section>
+            </template>
+            <section
+              v-if="(canDeleteLocal && repoPath) || (canDeleteRemote && settings)"
+              class="project-settings-card project-settings-card--danger"
+              aria-labelledby="project-settings-danger-title"
+            >
+              <div class="project-settings-card__head">
+                <h4 id="project-settings-danger-title">危险操作</h4>
               </div>
-              <button
-                type="button"
-                class="ghost danger project-icon-action"
-                data-agent-id="repo.settings.delete-remote"
-                :disabled="deletingRepo || githubLoading || !settings || !repoFullName || !canDeleteRemote"
-                aria-label="删除仓库"
-                title="删除仓库"
-                @click="openDeleteDialog('remote')"
-              >
-                <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
-                <Trash2 v-else :size="14" aria-hidden="true" />
-              </button>
+              <div class="project-settings-danger-list">
+                <section v-if="canDeleteLocal && repoPath" class="project-danger-zone" aria-label="本地危险操作">
+                  <div>
+                    <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
+                    <span>
+                      {{
+                        linkedWorktree
+                          ? "从当前共享仓库移除该工作树，并从工作区仓库列表移除。"
+                          : "删除工作区内的本地目录，并从本地仓库列表移除。"
+                      }}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="ghost danger project-icon-action"
+                    :data-agent-id="linkedWorktree ? 'repo.settings.delete-worktree' : 'repo.settings.delete-local'"
+                    :disabled="deletingLocalRepo"
+                    :aria-label="linkedWorktree ? '删除工作树' : '删除本地'"
+                    :title="linkedWorktree ? '删除工作树' : '删除本地'"
+                    @click="openDeleteDialog('local')"
+                  >
+                    <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
+                    <Trash2 v-else :size="14" aria-hidden="true" />
+                  </button>
+                </section>
+                <section v-if="canDeleteRemote && settings" class="project-danger-zone" aria-label="远端危险操作">
+                  <div>
+                    <strong>删除 GitHub 远端仓库</strong>
+                    <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="ghost danger project-icon-action"
+                    data-agent-id="repo.settings.delete-remote"
+                    :disabled="deletingRepo || githubLoading || !settings || !repoFullName || !canDeleteRemote"
+                    aria-label="删除仓库"
+                    title="删除仓库"
+                    @click="openDeleteDialog('remote')"
+                  >
+                    <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
+                    <Trash2 v-else :size="14" aria-hidden="true" />
+                  </button>
+                </section>
+              </div>
             </section>
           </div>
           <Teleport to="body">
@@ -5227,25 +5246,34 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
 }
 
-.project-settings-group {
+.project-settings-cards {
   display: grid;
-  gap: 8px;
-  padding: 10px 0;
-  border-top: 1px solid var(--border-soft);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
 }
 
-.project-settings-group:first-of-type {
-  padding-top: 0;
-  border-top: 0;
+.project-settings-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
 }
 
-.project-settings-group__head {
+.project-settings-card--danger {
+  grid-column: 1 / -1;
+}
+
+.project-settings-card__head {
   display: flex;
   align-items: center;
   min-height: 24px;
 }
 
-.project-settings-group__head h4 {
+.project-settings-card__head h4 {
   margin: 0;
   color: var(--text);
   font-size: 13px;
@@ -5275,15 +5303,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   width: 100%;
 }
 
-.project-settings-field--topics {
-  grid-column: 1 / -1;
-  align-items: start;
-}
-
 .project-settings-switches {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0 16px;
+  gap: 0;
   border-top: 1px solid var(--border-soft);
 }
 
@@ -5296,37 +5318,29 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-settings-switch__content {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
 .project-settings-switch strong {
-  flex: 0 0 auto;
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.25;
 }
 
 .project-settings-switch em {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--text-muted);
   font-size: 12px;
   font-style: normal;
-}
-
-.project-settings-switch em::before {
-  content: "· ";
+  line-height: 1.35;
 }
 
 .project-settings-danger-list {
   display: grid;
   gap: 6px;
-  padding-top: 2px;
   border-top: 1px solid var(--border-soft);
 }
 
@@ -5341,29 +5355,26 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-danger-zone div {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
 .project-danger-zone strong {
-  flex: 0 0 auto;
   color: var(--err);
   font-size: 13px;
+  line-height: 1.25;
 }
 
 .project-danger-zone span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--text-muted);
   font-size: 12px;
+  line-height: 1.35;
 }
 
-.project-danger-zone span::before {
-  content: "· ";
+.project-danger-zone:last-child {
+  border-bottom: 0;
 }
 
 .project-danger-zone button,
