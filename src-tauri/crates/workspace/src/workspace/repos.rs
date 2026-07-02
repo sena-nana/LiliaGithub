@@ -22,9 +22,10 @@ use crate::workspace::tasks::{record_workspace_task, update_workspace_task};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
     LanguageStat, RepoChange, RepoConflictChoice, RepoConflictFile, RepoConflictHunk,
-    RepoConflictState, RepoDetail, RepoMergePullResult, RepoOperationResult,
-    RepoPullLocalChangesMode, RepoRefreshSummaryOptions, RepoRemote, RepoStashDetail,
-    RepoStashEntry, RepoSummary, RepoWorktree, WorkspaceCreateLocalRepoRequest, WorkspaceSettings,
+    RepoConflictState, RepoDetail, RepoDetailPatch, RepoDetailPatchRequest, RepoMergePullResult,
+    RepoOperationResult, RepoPullLocalChangesMode, RepoRefreshSummaryOptions, RepoRemote,
+    RepoStashDetail, RepoStashEntry, RepoSummary, RepoWorktree, WorkspaceCreateLocalRepoRequest,
+    WorkspaceSettings,
 };
 use crate::runtime::WorkspaceContext as AppHandle;
 
@@ -1526,6 +1527,44 @@ pub async fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDeta
             commits,
             branches,
             conflicts,
+        })
+    })
+    .await
+}
+
+pub async fn repo_refresh_detail_patch(
+    app: AppHandle,
+    repo_id: String,
+    request: RepoDetailPatchRequest,
+) -> Result<RepoDetailPatch, String> {
+    run_blocking("刷新仓库状态", move || {
+        let root = workspace_root(&app)?;
+        let path = repo_path_by_id(&app, &repo_id)?;
+        let status = repo_status_snapshot(&path);
+        let change_entries = status.entries.clone();
+        let conflict_entries = conflict_status_entries(&status.entries);
+        let changes_path = path.as_path();
+        let conflicts_path = path.as_path();
+        let (summary, changes, conflicts) = thread::scope(|scope| {
+            let summary = scope.spawn(|| summarize_repo_from_status(&root, &path, &status));
+            let changes =
+                scope.spawn(move || repo_changes_from_entries(changes_path, change_entries));
+            let conflicts =
+                scope.spawn(move || repo_conflicts_from_entries(conflicts_path, conflict_entries));
+            (
+                summary.join().expect("repo summary worker panicked"),
+                changes.join().expect("repo changes worker panicked"),
+                conflicts.join().expect("repo conflicts worker panicked"),
+            )
+        });
+        let commits = request.include_commits.then(|| repo_history(&path));
+        let branches = request.include_branches.then(|| repo_branches(&path));
+        Ok(RepoDetailPatch {
+            summary,
+            changes,
+            conflicts,
+            commits,
+            branches,
         })
     })
     .await

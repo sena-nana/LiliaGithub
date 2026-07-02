@@ -9,7 +9,7 @@ import { refreshRepoSummaries, resetRepositoryRuntimeForTests } from "../src/com
 import { recentSyncErrorForRepo, resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { resetLowPrioritySchedulerForTests } from "../src/utils/lowPriorityScheduler";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
-import { repoSummary, workspaceSettings } from "./fixtures/workspace";
+import { repoDetailPatch, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const service = vi.hoisted(() => ({
   listManagedRepos: vi.fn(),
@@ -21,6 +21,7 @@ const service = vi.hoisted(() => ({
   pickWorkspaceRoot: vi.fn(),
   setWorkspaceRoot: vi.fn(),
   refreshRepoSummary: vi.fn(),
+  refreshRepoDetailPatch: vi.fn(),
   discoverRepos: vi.fn(),
   listRepoContribution: vi.fn(),
   listWorkspaceTasks: vi.fn(),
@@ -93,6 +94,9 @@ describe("workspace focus refresh", () => {
     });
     service.listManagedRepos.mockResolvedValue([repoSummary("LiliaGithub")]);
     service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
+    service.refreshRepoDetailPatch.mockImplementation(async (repoId: string) =>
+      repoDetailPatch(repoSummary(repoId))
+    );
     service.listRepoContribution.mockResolvedValue({
       days: [],
       meta: {
@@ -115,6 +119,7 @@ describe("workspace focus refresh", () => {
   afterEach(() => {
     cleanup?.();
     cleanup = null;
+    window.history.pushState({}, "", "/");
     vi.useRealTimers();
   });
 
@@ -150,13 +155,14 @@ describe("workspace focus refresh", () => {
     expect(state.repos[0].languageStatsUpdatedAt).toBe(1);
   });
 
-  it("仓库状态刚刷新过时回焦点不会再次自动刷新", async () => {
+  it("仓库状态刚刷新过时回焦点只刷新当前仓库状态", async () => {
     const initial = repoSummary("LiliaGithub");
     state.repos = [initial];
     service.listManagedRepos.mockResolvedValue([initial]);
     service.refreshRepoSummary.mockResolvedValue(repoSummary("LiliaGithub", { behind: 1 }));
     await refreshRepoSummaries();
     vi.clearAllMocks();
+    window.history.pushState({}, "", "/repos/LiliaGithub");
     cleanup = await installWorkspaceFocusRefresh();
 
     blurWindow();
@@ -166,6 +172,10 @@ describe("workspace focus refresh", () => {
 
     expect(service.listManagedRepos).not.toHaveBeenCalled();
     expect(service.refreshRepoSummary).not.toHaveBeenCalled();
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith("LiliaGithub", {
+      includeCommits: false,
+      includeBranches: false,
+    });
   });
 
   it("近期有输入时回焦点会跳过自动刷新", async () => {

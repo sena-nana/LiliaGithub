@@ -373,8 +373,11 @@ export function useRepoDetailController() {
 
   watch(activeTab, (tab) => {
     if (tab !== "history") selectedCommitHash.value = null;
-    if (hasLocalRepo.value && (tab === "history" || (tab === "changes" && canShowChanges.value))) {
-      void load();
+    if (!hasLocalRepo.value) return;
+    if (tab === "history") {
+      void workspace.requestRepoStatusRefresh(repoId.value, { includeCommits: true }, { immediate: true });
+    } else if (tab === "changes" && canShowChanges.value) {
+      void workspace.requestRepoStatusRefresh(repoId.value, {}, { immediate: true });
     }
   });
 

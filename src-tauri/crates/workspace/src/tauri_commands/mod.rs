@@ -207,6 +207,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         repos::repo_get_branches,
         repos::repo_get_conflicts,
         repos::repo_get_detail,
+        repos::repo_refresh_detail_patch,
         launch::repo_get_launch_config,
         launch::repo_list_launch_candidates,
         launch::repo_save_launch_config,

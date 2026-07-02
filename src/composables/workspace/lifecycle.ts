@@ -1,6 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { state } from "./state";
-import { refreshRepoSummaries, refreshRepos, repoSummaryRefreshIsFresh } from "./repositories";
+import {
+  refreshRepoSummaries,
+  refreshRepos,
+  repoSummaryRefreshIsFresh,
+  requestRepoStatusRefresh,
+} from "./repositories";
 import { loadWorkspaceService } from "./serviceLoader";
 import { hasRecentInput } from "../../utils/lowPriorityScheduler";
 
@@ -96,7 +101,12 @@ export async function installWorkspaceFocusRefresh(): Promise<() => void> {
 
     if (!focused || elapsed < FOCUS_REFRESH_THRESHOLD_MS) return;
     if (!state.settings?.workspaceRoot || state.loading || state.scanning || state.bulkRunning) return;
-    if (hasRecentInput() || repoSummaryRefreshIsFresh()) return;
+    if (hasRecentInput()) return;
+    const activeRepoId = currentRepoRouteId();
+    if (activeRepoId && state.repos.some((repo) => repo.id === activeRepoId)) {
+      void requestRepoStatusRefresh(activeRepoId, {}, { immediate: true });
+    }
+    if (repoSummaryRefreshIsFresh()) return;
     void refreshRepoSummaries({ automatic: true });
   };
 
@@ -104,6 +114,18 @@ export async function installWorkspaceFocusRefresh(): Promise<() => void> {
   if (tauriCleanup) return tauriCleanup;
 
   return installBrowserFocusListener(handleFocusChange);
+}
+
+function currentRepoRouteId() {
+  if (typeof window === "undefined") return null;
+  const pathname = window.location.pathname || "";
+  const match = pathname.match(/\/repos\/([^/?#]+)/);
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
 }
 
 async function installTauriFocusListener(

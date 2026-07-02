@@ -21,6 +21,8 @@ import {
   refreshRepos,
   refreshRepoLanguageStats,
   refreshRepoSummaries,
+  requestRepoStatusRefresh,
+  REPO_STATUS_REFRESH_DEBOUNCE_MS,
   refreshWorkspaceTasks,
   resolveConflictFile,
   resetRepositoryRuntimeForTests,
@@ -44,7 +46,7 @@ import {
 } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import type { BulkSyncPreview, GitHubContributionResult, WorkspaceStartupCache } from "../src/services/workspace";
-import { conflictState, repoDetail, repoSummary, workspaceSettings } from "./fixtures/workspace";
+import { conflictState, repoDetail, repoDetailPatch, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -71,6 +73,7 @@ const service = {
   unhideRepo: vi.fn(),
   getRepoSummary: vi.fn(),
   getRepoDetail: vi.fn(),
+  refreshRepoDetailPatch: vi.fn(),
   listRepoContribution: vi.fn(),
   listWorkspaceTasks: vi.fn(),
   cancelWorkspaceTask: vi.fn(),
@@ -148,6 +151,18 @@ beforeEach(() => {
   });
   service.listManagedRepos.mockResolvedValue([]);
   service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
+  service.refreshRepoDetailPatch.mockImplementation(async (
+    repoId: string,
+    request: { includeCommits?: boolean; includeBranches?: boolean } = {},
+  ) => {
+    const detail = repoDetail(repoSummary(repoId));
+    return repoDetailPatch(detail.summary, {
+      changes: detail.changes,
+      conflicts: detail.conflicts,
+      commits: request.includeCommits ? detail.commits : null,
+      branches: request.includeBranches ? detail.branches : null,
+    });
+  });
   service.refreshRepoLanguageStats.mockImplementation(async (repoId: string) => repoSummary(repoId, {
     languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
     languageStatsUpdatedAt: 1,
@@ -278,6 +293,33 @@ describe("workspace incremental refresh", () => {
 
     await waitFor(() => expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true }));
     await waitFor(() => expect(state.repos[0]).toMatchObject({ ahead: 1 }));
+  });
+
+  it("后台仓库状态刷新会按仓库合并请求范围", async () => {
+    vi.useFakeTimers();
+    try {
+      const updated = repoSummary("LiliaGithub", { unstagedCount: 1 });
+      service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, {
+        commits: [],
+        branches: [],
+      }));
+
+      const first = requestRepoStatusRefresh("LiliaGithub", { includeCommits: true });
+      const second = requestRepoStatusRefresh("LiliaGithub", { includeBranches: true });
+
+      expect(service.refreshRepoDetailPatch).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(REPO_STATUS_REFRESH_DEBOUNCE_MS);
+      await Promise.all([first, second]);
+
+      expect(service.refreshRepoDetailPatch).toHaveBeenCalledTimes(1);
+      expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith("LiliaGithub", {
+        includeCommits: true,
+        includeBranches: true,
+      });
+      expect(state.repos[0]).toMatchObject({ id: "LiliaGithub", unstagedCount: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("初始化从启动缓存恢复贡献图，再继续刷新仓库列表", async () => {
@@ -1534,7 +1576,7 @@ describe("workspace incremental refresh", () => {
       updatedAt: 1,
     };
     service.pushRepo.mockResolvedValue(updated);
-    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [] }));
 
     await push(failed.id);
 
@@ -1550,7 +1592,7 @@ describe("workspace incremental refresh", () => {
     const updated = repoSummary("LiliaGithub", { ahead: 0, behind: 0 });
     state.repos = [initial];
     service.mergePullRepo.mockRejectedValue(new Error("合并失败：not something we can merge"));
-    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [] }));
     service.pushRepo.mockResolvedValue(updated);
 
     await expect(mergePull(initial.id)).rejects.toThrow("合并失败：not something we can merge");
@@ -1570,7 +1612,7 @@ describe("workspace incremental refresh", () => {
     const merged = repoSummary("LiliaGithub", { currentBranch: "main" });
     const deleted = repoSummary("LiliaGithub", { currentBranch: "main" });
     state.repos = [initial];
-    service.getRepoDetail.mockResolvedValue(repoDetail(deleted));
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(deleted, { branches: [] }));
     service.mergeBranch.mockResolvedValue({
       status: "success",
       message: "合并完成",
@@ -1584,7 +1626,9 @@ describe("workspace incremental refresh", () => {
 
     expect(service.mergeBranch).toHaveBeenCalledWith(initial.id, "feature/local");
     expect(service.deleteBranch).toHaveBeenCalledWith(initial.id, "feature/local");
-    expect(service.getRepoDetail).toHaveBeenCalledTimes(2);
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledTimes(2);
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: true, includeBranches: false });
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: false, includeBranches: true });
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
   });
 
@@ -1629,17 +1673,17 @@ describe("workspace incremental refresh", () => {
     expect(state.repos.find((repo) => repo.id === requested.id)?.worktree.role).toBe("linked");
   });
 
-  it("单仓库提交、拉取、推送和切换分支后通过详情刷新语言统计", async () => {
+  it("单仓库提交、拉取、推送和切换分支后只刷新需要的状态切片", async () => {
     const initial = repoSummary("LiliaGithub", { ahead: 1, stagedCount: 1 });
     const updated = repoSummary("LiliaGithub", { ahead: 0, stagedCount: 0 });
-    const detailSummary = repoSummary("LiliaGithub", {
-      ahead: 0,
-      stagedCount: 0,
-      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
+    const initialWithLanguageStats = repoSummary("LiliaGithub", {
+      ahead: 1,
+      stagedCount: 1,
+      languageStats: [{ language: "Vue", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: 1,
     });
-    state.repos = [initial];
-    service.getRepoDetail.mockResolvedValue(repoDetail(detailSummary));
+    state.repos = [initialWithLanguageStats];
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [], branches: [] }));
     service.commitRepo.mockResolvedValue(updated);
     service.pullRepo.mockResolvedValue(updated);
     service.pushRepo.mockResolvedValue(updated);
@@ -1651,15 +1695,17 @@ describe("workspace incremental refresh", () => {
     await checkout(initial.id, "main");
 
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
-    expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: true, includeBranches: false });
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: true, includeBranches: true });
+    expect(state.repos[0].languageStats).toEqual([{ language: "Vue", bytes: 1, lines: 1 }]);
+    expect(state.repoDetails[initial.id]?.summary.languageStats).toEqual([{ language: "Vue", bytes: 1, lines: 1 }]);
   });
 
   it("单仓库创建和重命名分支后只刷新当前仓库详情", async () => {
     const initial = repoSummary("LiliaGithub", { currentBranch: "main" });
     const updated = repoSummary("LiliaGithub", { currentBranch: "feature/renamed" });
     state.repos = [initial];
-    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [], branches: [] }));
     service.createBranch.mockResolvedValue(updated);
     service.renameBranch.mockResolvedValue(updated);
 
@@ -1668,21 +1714,17 @@ describe("workspace incremental refresh", () => {
 
     expect(service.createBranch).toHaveBeenCalledWith(initial.id, "feature/new", "main", true);
     expect(service.renameBranch).toHaveBeenCalledWith(initial.id, "feature/new", "feature/renamed");
-    expect(service.getRepoDetail).toHaveBeenCalledTimes(2);
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledTimes(2);
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: true, includeBranches: true });
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: false, includeBranches: true });
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
   });
 
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {
     const initial = repoSummary("LiliaGithub", { ahead: 1, stagedCount: 1 });
     const updated = repoSummary("LiliaGithub", { ahead: 0, stagedCount: 0 });
-    const detailSummary = repoSummary("LiliaGithub", {
-      ahead: 0,
-      stagedCount: 0,
-      languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
-      languageStatsUpdatedAt: 1,
-    });
     state.repos = [initial];
-    service.getRepoDetail.mockResolvedValue(repoDetail(detailSummary));
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [], branches: [] }));
     service.stageFiles.mockResolvedValue(undefined);
     service.unstageFiles.mockResolvedValue(undefined);
     service.commitRepo.mockResolvedValue(updated);
@@ -1698,21 +1740,22 @@ describe("workspace incremental refresh", () => {
     await checkout(initial.id, "main");
 
     expect(service.discoverRepos).not.toHaveBeenCalled();
-    expect(service.getRepoDetail).toHaveBeenCalledTimes(6);
+    expect(service.getRepoDetail).not.toHaveBeenCalled();
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledTimes(6);
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
     expect(state.repos[0]).toMatchObject({
       id: updated.id,
       ahead: 0,
       stagedCount: 0,
     });
-    expect(state.repos[0].languageStats).toEqual([{ language: "TypeScript", bytes: 1, lines: 1 }]);
+    expect(state.repos[0].languageStats).toEqual([]);
   });
 
   it("冲突处理操作只刷新当前仓库详情，不触发全量扫描", async () => {
     const initial = repoSummary("Lilia", { conflictCount: 1, behind: 1 });
     const updated = repoSummary("Lilia", { conflictCount: 0, stagedCount: 1, behind: 1 });
     state.repos = [initial];
-    service.getRepoDetail.mockResolvedValue(repoDetail(updated));
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated));
     service.mergePullRepo.mockResolvedValue({
       status: "conflicts",
       message: "合并产生冲突，请处理后提交",
@@ -1755,7 +1798,8 @@ describe("workspace incremental refresh", () => {
     await abortConflictOperation(initial.id);
 
     expect(service.discoverRepos).not.toHaveBeenCalled();
-    expect(service.getRepoDetail).toHaveBeenCalledTimes(6);
+    expect(service.getRepoDetail).not.toHaveBeenCalled();
+    expect(service.refreshRepoDetailPatch).toHaveBeenCalledTimes(6);
     expect(state.repos).toEqual([updated]);
   });
 });

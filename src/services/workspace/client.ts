@@ -54,6 +54,8 @@ import type {
   RepoConflictChoice,
   RepoConflictState,
   RepoDetail,
+  RepoDetailPatch,
+  RepoDetailPatchRequest,
   RepoFilePreview,
   RepoFileTreeEntry,
   RepoMergePullResult,
@@ -1312,6 +1314,15 @@ export async function deleteGitHubReleaseAsset(
 
 export function getRepoDetail(repoId: string): Promise<RepoDetail> {
   return cachedCall("repo_get_detail", { repoId }, () => workspaceFallback().getRepoDetail(repoId));
+}
+
+export function refreshRepoDetailPatch(
+  repoId: string,
+  request: RepoDetailPatchRequest = {},
+): Promise<RepoDetailPatch> {
+  return call("repo_refresh_detail_patch", { repoId, request }, () =>
+    workspaceFallback().refreshRepoDetailPatch(repoId, request)
+  );
 }
 
 export function listGitHubRepoFiles(

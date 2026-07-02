@@ -49,6 +49,8 @@ import type {
   RepoConflictChoice,
   RepoConflictState,
   RepoDetail,
+  RepoDetailPatch,
+  RepoDetailPatchRequest,
   RepoFilePreview,
   RepoFileTreeEntry,
   RepoMergePullResult,
@@ -279,6 +281,7 @@ export interface WorkspaceCommandContracts {
   repo_get_branches: CommandContract<RepoArg, BranchSummary[]>;
   repo_get_conflicts: CommandContract<RepoArg, RepoConflictState>;
   repo_get_detail: CommandContract<RepoArg, RepoDetail>;
+  repo_refresh_detail_patch: CommandContract<RepoArg & { request: RepoDetailPatchRequest }, RepoDetailPatch>;
   repo_get_launch_config: CommandContract<RepoArg, Maybe<ProjectLaunchConfig>>;
   repo_list_launch_candidates: CommandContract<RepoArg, ProjectLaunchCandidate[]>;
   repo_save_launch_config: CommandContract<

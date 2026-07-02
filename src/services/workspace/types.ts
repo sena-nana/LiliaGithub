@@ -638,6 +638,11 @@ export interface RepoRefreshSummaryOptions {
   fetchRemote?: boolean;
 }
 
+export interface RepoDetailPatchRequest {
+  includeCommits?: boolean;
+  includeBranches?: boolean;
+}
+
 export interface RepoChange {
   path: string;
   oldPath: string | null;
@@ -782,6 +787,14 @@ export interface RepoDetail {
   commits: CommitSummary[];
   branches: BranchSummary[];
   conflicts: RepoConflictState;
+}
+
+export interface RepoDetailPatch {
+  summary: RepoSummary;
+  changes: RepoChange[];
+  conflicts: RepoConflictState;
+  commits?: CommitSummary[] | null;
+  branches?: BranchSummary[] | null;
 }
 
 export interface RepoFileTreeEntry {
