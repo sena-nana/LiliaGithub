@@ -2411,7 +2411,7 @@ describe("基础路由", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 3, name: "仓库设置" })).toBeInTheDocument();
-    const wikiSwitch = await screen.findByRole("checkbox", { name: /Wiki/ });
+    const wikiSwitch = await screen.findByRole("switch", { name: /Wiki/ });
     expect(wikiSwitch).not.toBeChecked();
     await fireEvent.click(wikiSwitch);
     await fireEvent.click(screen.getByRole("button", { name: "保存" }));

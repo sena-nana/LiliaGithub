@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Settings } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { SB_MENU_POP_TRANSITION_MS, useAnchoredMenuMotion } from "@lilia/ui";
+import { SB_MENU_POP_TRANSITION_MS, UiSwitch, useAnchoredMenuMotion } from "@lilia/ui";
 import { REPO_SETTING_ITEMS, type RepoSettingKey } from "../../config/repoSettingsManifest";
 
 const props = defineProps<{
@@ -38,11 +38,6 @@ function onKey(event: KeyboardEvent) {
     close();
     event.stopPropagation();
   }
-}
-
-function updateSetting(key: RepoSettingKey, event: Event) {
-  const input = event.target as HTMLInputElement;
-  emit("update:setting", key, input.checked);
 }
 
 function settingAgentId(key: RepoSettingKey) {
@@ -94,26 +89,23 @@ onBeforeUnmount(() => {
         aria-label="项目设置"
         :style="menuStyle"
       >
-        <label
+        <UiSwitch
           v-for="setting in settings"
           :key="setting.key"
-          class="repo-toolbar-settings__item ui-switch"
+          class="repo-toolbar-settings__item"
+          control-position="end"
+          block
+          :model-value="values[setting.key]"
+          :disabled="disabled"
+          :aria-label="setting.label"
+          :agent-id="settingAgentId(setting.key)"
+          @update:model-value="emit('update:setting', setting.key, $event)"
         >
           <span class="repo-toolbar-settings__content">
             <strong>{{ setting.label }}</strong>
             <em>{{ setting.description }}</em>
           </span>
-          <input
-            class="ui-switch__input"
-            type="checkbox"
-            :checked="values[setting.key]"
-            :disabled="disabled"
-            :aria-label="setting.label"
-            :data-agent-id="settingAgentId(setting.key)"
-            @change="updateSetting(setting.key, $event)"
-          />
-          <span class="ui-switch__track" aria-hidden="true"></span>
-        </label>
+        </UiSwitch>
       </div>
     </Transition>
   </div>

@@ -25,7 +25,7 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
-import { Dropdown } from "@lilia/ui";
+import { Dropdown, UiSwitch } from "@lilia/ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
@@ -3540,12 +3540,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                 <span>目标分支</span>
                 <input v-model="pullRequestBase" type="text" placeholder="main" data-agent-id="repo.pulls.form.base" />
               </label>
-              <label class="project-create-switch ui-switch">
-                <span class="project-create-switch__content">
-                  <strong>草稿</strong>
-                </span>
-                <input v-model="pullRequestDraft" class="ui-switch__input" type="checkbox" data-agent-id="repo.pulls.form.draft" />
-                <span class="ui-switch__track" aria-hidden="true"></span>
+              <label class="project-create-check">
+                <input v-model="pullRequestDraft" type="checkbox" data-agent-id="repo.pulls.form.draft" />
+                <span>草稿</span>
               </label>
             </div>
             <label class="project-create-field project-create-field--wide">
@@ -3676,18 +3673,21 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                 <h4 id="project-settings-features-title">功能开关</h4>
               </div>
               <div class="project-settings-switches">
-                <label
+                <UiSwitch
                   v-for="switchItem in featureSettingSwitches"
                   :key="switchItem.key"
-                  class="project-settings-switch ui-switch"
+                  v-model="settingsForm[switchItem.key]"
+                  class="project-settings-switch"
+                  control-position="end"
+                  block
+                  :aria-label="switchItem.label"
+                  :agent-id="`repo.settings.feature.${switchItem.key}`"
                 >
                   <span class="project-settings-switch__content">
                     <strong>{{ switchItem.label }}</strong>
                     <em>{{ switchItem.hint }}</em>
                   </span>
-                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" :data-agent-id="`repo.settings.feature.${switchItem.key}`" />
-                  <span class="ui-switch__track" aria-hidden="true"></span>
-                </label>
+                </UiSwitch>
               </div>
             </section>
             <section class="project-settings-group" aria-labelledby="project-settings-merge-title">
@@ -3695,18 +3695,21 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                 <h4 id="project-settings-merge-title">Pull Request / Merge</h4>
               </div>
               <div class="project-settings-switches">
-                <label
+                <UiSwitch
                   v-for="switchItem in mergeSettingSwitches"
                   :key="switchItem.key"
-                  class="project-settings-switch ui-switch"
+                  v-model="settingsForm[switchItem.key]"
+                  class="project-settings-switch"
+                  control-position="end"
+                  block
+                  :aria-label="switchItem.label"
+                  :agent-id="`repo.settings.merge.${switchItem.key}`"
                 >
                   <span class="project-settings-switch__content">
                     <strong>{{ switchItem.label }}</strong>
                     <em>{{ switchItem.hint }}</em>
                   </span>
-                  <input v-model="settingsForm[switchItem.key]" class="ui-switch__input" type="checkbox" :data-agent-id="`repo.settings.merge.${switchItem.key}`" />
-                  <span class="ui-switch__track" aria-hidden="true"></span>
-                </label>
+                </UiSwitch>
               </div>
             </section>
           </template>
@@ -5044,10 +5047,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   background: var(--bg);
 }
 
-.project-create-switch {
+.project-create-check {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   align-self: end;
   min-height: 32px;
@@ -5057,11 +5059,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   background: var(--bg-subtle);
 }
 
-.project-create-switch__content {
-  min-width: 0;
-}
-
-.project-create-switch__content strong {
+.project-create-check span {
   color: var(--text);
   font-size: 12px;
   font-weight: 600;

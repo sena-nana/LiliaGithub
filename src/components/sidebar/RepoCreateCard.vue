@@ -363,16 +363,14 @@ onUnmounted(() => {
         <input v-model="form.description" type="text" maxlength="350" />
       </label>
 
-      <div v-if="isRemoteMode" class="repo-create-switches">
-        <label class="repo-create-switch ui-switch">
+      <div v-if="isRemoteMode" class="repo-create-checks">
+        <label class="repo-create-check">
+          <input v-model="form.private" type="checkbox" />
           <span>Private</span>
-          <input v-model="form.private" class="ui-switch__input" type="checkbox" />
-          <span class="ui-switch__track" aria-hidden="true"></span>
         </label>
-        <label class="repo-create-switch ui-switch">
+        <label class="repo-create-check">
+          <input v-model="form.useTemplate" type="checkbox" />
           <span>使用模板</span>
-          <input v-model="form.useTemplate" class="ui-switch__input" type="checkbox" />
-          <span class="ui-switch__track" aria-hidden="true"></span>
         </label>
       </div>
 
@@ -381,11 +379,10 @@ onUnmounted(() => {
           <span>模板仓库</span>
           <input v-model="form.templateFullName" type="text" placeholder="owner/template-repo" />
         </label>
-        <div class="repo-create-switches">
-          <label class="repo-create-switch ui-switch">
+        <div class="repo-create-checks">
+          <label class="repo-create-check">
+            <input v-model="form.includeAllBranches" type="checkbox" />
             <span>包含所有分支</span>
-            <input v-model="form.includeAllBranches" class="ui-switch__input" type="checkbox" />
-            <span class="ui-switch__track" aria-hidden="true"></span>
           </label>
         </div>
       </template>
@@ -401,21 +398,18 @@ onUnmounted(() => {
             <input v-model="form.licenseTemplate" type="text" placeholder="mit" />
           </label>
         </div>
-        <div class="repo-create-switches">
-          <label class="repo-create-switch ui-switch">
+        <div class="repo-create-checks">
+          <label class="repo-create-check">
+            <input v-model="form.addReadme" type="checkbox" />
             <span>初始化 README</span>
-            <input v-model="form.addReadme" class="ui-switch__input" type="checkbox" />
-            <span class="ui-switch__track" aria-hidden="true"></span>
           </label>
-          <label v-if="isRemoteMode" class="repo-create-switch ui-switch">
+          <label v-if="isRemoteMode" class="repo-create-check">
+            <input v-model="form.hasIssues" type="checkbox" />
             <span>Issues</span>
-            <input v-model="form.hasIssues" class="ui-switch__input" type="checkbox" />
-            <span class="ui-switch__track" aria-hidden="true"></span>
           </label>
-          <label v-if="isRemoteMode" class="repo-create-switch ui-switch">
+          <label v-if="isRemoteMode" class="repo-create-check">
+            <input v-model="form.hasWiki" type="checkbox" />
             <span>Wiki</span>
-            <input v-model="form.hasWiki" class="ui-switch__input" type="checkbox" />
-            <span class="ui-switch__track" aria-hidden="true"></span>
           </label>
         </div>
       </template>
@@ -550,16 +544,15 @@ onUnmounted(() => {
   max-width: none;
 }
 
-.repo-create-switches {
+.repo-create-checks {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.repo-create-card .repo-create-switch {
+.repo-create-card .repo-create-check {
   display: inline-flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   min-height: 30px;
   padding: 5px 7px;
@@ -567,7 +560,7 @@ onUnmounted(() => {
   color: var(--text);
 }
 
-.repo-create-card .repo-create-switch:hover {
+.repo-create-card .repo-create-check:hover {
   background: var(--bg-hover);
 }
 
