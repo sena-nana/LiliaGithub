@@ -1092,7 +1092,7 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
 
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
+    expect(await view.findByRole("region", { name: "GitHub 功能" })).toBeInTheDocument();
     expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
     expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("main");
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
@@ -1713,7 +1713,7 @@ describe("RepoProjectPanel", () => {
         .mockRejectedValueOnce(new Error("HTTP 403 Resource not accessible by integration")),
       title: "Settings 暂不可用",
       reason: "当前 GitHub 授权权限不足，无法访问该仓库的 Settings。请重新绑定 GitHub 并授予所需权限。",
-      hiddenText: "功能开关",
+      hiddenText: "GitHub 功能",
     },
   ])("$tabName 因 GitHub 授权不可用时提供重新绑定入口", async ({ tabName, fail, title, reason, hiddenText }) => {
     fail();
@@ -2511,18 +2511,31 @@ describe("RepoProjectPanel", () => {
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
 
-    const nameInput = await view.findByLabelText("仓库名") as HTMLInputElement;
+    const infoCard = await view.findByRole("region", { name: "仓库信息" });
+    const accessCard = view.getByRole("region", { name: "协作与访问" });
+    const featureCard = view.getByRole("region", { name: "GitHub 功能" });
+    const mergeCard = view.getByRole("region", { name: "Pull Request / Merge" });
+    const dangerCard = view.getByRole("region", { name: "危险操作" });
+    const nameInput = within(infoCard).getByLabelText("仓库名") as HTMLInputElement;
     expect(nameInput.value).toBe("remote-repo");
-    expect(await view.findByRole("heading", { level: 4, name: "功能开关" })).toBeInTheDocument();
-    const nameGroup = nameInput.closest(".project-settings-group");
-    const featureHeading = view.getByRole("heading", { level: 4, name: "功能开关" });
-    expect(Boolean(nameGroup?.compareDocumentPosition(featureHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-    expect(view.getByRole("heading", { level: 4, name: "Pull Request / Merge" })).toBeInTheDocument();
-    expect(view.getByLabelText("本地危险操作")).toBeInTheDocument();
-    expect(view.getByLabelText("远端危险操作")).toBeInTheDocument();
+    expect(within(accessCard).getByRole("switch", { name: /Private/ })).toBeInTheDocument();
+    expect(within(accessCard).getByRole("switch", { name: /Forking/ })).toBeInTheDocument();
+    expect(within(accessCard).getByRole("switch", { name: /Web signoff/ })).toBeInTheDocument();
+    expect(within(accessCard).queryByRole("switch", { name: /Issues/ })).toBeNull();
+    expect(within(featureCard).getByRole("switch", { name: /Issues/ })).toBeInTheDocument();
+    expect(within(featureCard).getByRole("switch", { name: /Wiki/ })).toBeInTheDocument();
+    expect(within(featureCard).getByRole("switch", { name: /Projects/ })).toBeInTheDocument();
+    expect(within(featureCard).getByRole("switch", { name: /Discussions/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /Merge commit/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /Squash/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /Rebase/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /Auto merge/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /合并后删分支/ })).toBeInTheDocument();
+    expect(within(dangerCard).getByRole("region", { name: "本地危险操作" })).toBeInTheDocument();
+    expect(within(dangerCard).getByRole("region", { name: "远端危险操作" })).toBeInTheDocument();
     expect(view.queryByText("默认分支")).toBeNull();
 
-    const wikiSwitch = view.getByRole("switch", { name: /Wiki/ });
+    const wikiSwitch = within(featureCard).getByRole("switch", { name: /Wiki/ });
     await fireEvent.click(wikiSwitch);
     await fireEvent.click(view.getByRole("button", { name: "保存" }));
 
