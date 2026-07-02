@@ -170,7 +170,7 @@ async function runStashAction(repoId: string, action: () => Promise<unknown>) {
     if (!isActionCurrent(generation, repoId)) return;
     await loadStashes();
     if (!isActionCurrent(generation, repoId)) return;
-    await workspace.loadRepoDetail(repoId).catch(() => undefined);
+    await workspace.requestRepoStatusRefresh(repoId, {}, { immediate: true }).catch(() => undefined);
   } catch (err) {
     if (isActionCurrent(generation, repoId)) {
       error.value = String(err);

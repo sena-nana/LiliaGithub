@@ -1,4 +1,4 @@
-import type { RepoConflictState, RepoDetail, RepoSummary, WorkspaceSettings } from "../../src/services/workspace";
+import type { RepoConflictState, RepoDetail, RepoDetailPatch, RepoSummary, WorkspaceSettings } from "../../src/services/workspace";
 
 export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): RepoSummary {
   return {
@@ -44,6 +44,21 @@ export function repoDetail(summary: RepoSummary, overrides: Partial<Omit<RepoDet
     commits: [],
     branches: [],
     conflicts: conflictState(),
+    ...overrides,
+  };
+}
+
+export function repoDetailPatch(
+  summary: RepoSummary,
+  overrides: Partial<Omit<RepoDetailPatch, "summary">> = {},
+): RepoDetailPatch {
+  const detail = repoDetail(summary);
+  return {
+    summary,
+    changes: detail.changes,
+    conflicts: detail.conflicts,
+    commits: null,
+    branches: null,
     ...overrides,
   };
 }

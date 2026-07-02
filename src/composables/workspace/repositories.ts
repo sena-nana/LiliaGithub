@@ -9,6 +9,7 @@ import {
   replaceRepos,
   removeRepo,
   setRepoDetail,
+  setRepoDetailPatch,
   setWorkspaceTasks,
   setRepoActionError,
   upsertRepo,
@@ -29,6 +30,8 @@ import type {
   RemoteRepoShortcut,
   RepoConflictChoice,
   RepoPullLocalChangesMode,
+  RepoDetailPatch,
+  RepoDetailPatchRequest,
   RepoSummary,
   WorkspaceStartupCache,
   WorkspaceCreateLocalRepoRequest,
@@ -39,6 +42,7 @@ import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 const REPO_REFRESH_CONCURRENCY = 4;
+export const REPO_STATUS_REFRESH_DEBOUNCE_MS = 300;
 export const AUTO_REPO_SUMMARY_REFRESH_FRESH_MS = 10 * 60 * 1000;
 const BACKGROUND_REPO_SUMMARY_FLUSH_TIMEOUT_MS = 700;
 const BACKGROUND_REFRESHING_STATUS_FLUSH_TIMEOUT_MS = 700;
@@ -62,25 +66,127 @@ let workspaceTaskRefreshGeneration = 0;
 let languageStatsLoadingGenerations = new Map<string, number>();
 let lastRepoSummaryRefreshAt = 0;
 const autoSyncRunningRepoIds = new Set<string>();
+type RepoStatusRefreshOptions = {
+  immediate?: boolean;
+};
+type RepoStatusRefreshEntry = {
+  queuedScope: RepoDetailPatchRequest | null;
+  queuedResolvers: Array<{
+    resolve: (patch: RepoDetailPatch | null) => void;
+    reject: (err: unknown) => void;
+  }>;
+  running: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+const repoStatusRefreshEntries = new Map<string, RepoStatusRefreshEntry>();
 
 async function applyRepoMutation(
   repoId: string,
   loadSummary: () => Promise<import("../../services/workspace").RepoSummary>,
+  refreshScope: RepoDetailPatchRequest = {},
 ) {
   upsertRepo(await loadSummary());
   clearRepoActionError(repoId);
-  await loadRepoDetail(repoId);
+  await requestRepoStatusRefresh(repoId, refreshScope, { immediate: true });
 }
 
 async function applyRepoOperation(
   repoId: string,
   loadOperation: () => Promise<import("../../services/workspace").RepoOperationResult>,
+  refreshScope: RepoDetailPatchRequest = {},
 ) {
   const result = await loadOperation();
   upsertRepo(result.summary);
   clearRepoActionError(repoId);
-  await loadRepoDetail(repoId);
+  await requestRepoStatusRefresh(repoId, refreshScope, { immediate: true });
   return result;
+}
+
+function repoStatusRefreshEntry(repoId: string) {
+  let entry = repoStatusRefreshEntries.get(repoId);
+  if (!entry) {
+    entry = {
+      queuedScope: null,
+      queuedResolvers: [],
+      running: false,
+      timer: null,
+    };
+    repoStatusRefreshEntries.set(repoId, entry);
+  }
+  return entry;
+}
+
+function mergeRepoStatusRefreshScope(
+  current: RepoDetailPatchRequest | null,
+  next: RepoDetailPatchRequest,
+): RepoDetailPatchRequest {
+  return {
+    includeCommits: Boolean(current?.includeCommits || next.includeCommits),
+    includeBranches: Boolean(current?.includeBranches || next.includeBranches),
+  };
+}
+
+function clearRepoStatusRefreshTimer(entry: RepoStatusRefreshEntry) {
+  if (entry.timer == null) return;
+  clearTimeout(entry.timer);
+  entry.timer = null;
+}
+
+function scheduleRepoStatusRefresh(repoId: string, entry: RepoStatusRefreshEntry, immediate: boolean) {
+  if (entry.running) return;
+  clearRepoStatusRefreshTimer(entry);
+  if (immediate) {
+    void runQueuedRepoStatusRefresh(repoId, entry);
+    return;
+  }
+  entry.timer = setTimeout(() => {
+    entry.timer = null;
+    void runQueuedRepoStatusRefresh(repoId, entry);
+  }, REPO_STATUS_REFRESH_DEBOUNCE_MS);
+}
+
+async function runQueuedRepoStatusRefresh(repoId: string, entry: RepoStatusRefreshEntry) {
+  if (entry.running || !entry.queuedScope) return;
+  entry.running = true;
+  const scope = entry.queuedScope;
+  const resolvers = entry.queuedResolvers;
+  entry.queuedScope = null;
+  entry.queuedResolvers = [];
+  try {
+    const patch = await refreshRepoStatusNow(repoId, scope);
+    for (const resolver of resolvers) resolver.resolve(patch);
+  } catch (err) {
+    for (const resolver of resolvers) resolver.reject(err);
+  } finally {
+    entry.running = false;
+    if (entry.queuedScope) {
+      scheduleRepoStatusRefresh(repoId, entry, true);
+    } else if (!entry.timer) {
+      repoStatusRefreshEntries.delete(repoId);
+    }
+  }
+}
+
+async function refreshRepoStatusNow(repoId: string, scope: RepoDetailPatchRequest) {
+  const service = await loadWorkspaceService();
+  const patch = await service.refreshRepoDetailPatch(repoId, scope);
+  setRepoDetailPatch(patch, repoId);
+  return patch;
+}
+
+export function requestRepoStatusRefresh(
+  repoId: string,
+  scope: RepoDetailPatchRequest = {},
+  options: RepoStatusRefreshOptions = {},
+) {
+  if (!repoId) return Promise.resolve(null);
+  const entry = repoStatusRefreshEntry(repoId);
+  entry.queuedScope = mergeRepoStatusRefreshScope(entry.queuedScope, scope);
+  const promise = new Promise<RepoDetailPatch | null>((resolve, reject) => {
+    entry.queuedResolvers.push({ resolve, reject });
+  });
+  scheduleRepoStatusRefresh(repoId, entry, options.immediate === true);
+  return promise;
 }
 
 function repoNeedsSync(summary: RepoSummary) {
@@ -181,7 +287,8 @@ export async function autoSyncRepoIfNeeded(
     }
     const syncedRepoId = result.summary?.id ?? summary.id;
     if (options.refreshDetail || state.repoDetails[syncedRepoId]) {
-      await loadRepoDetail(syncedRepoId).catch(() => undefined);
+      await requestRepoStatusRefresh(syncedRepoId, { includeCommits: true }, { immediate: true })
+        .catch(() => undefined);
     }
     void refreshRepoLanguageStats(syncedRepoId, { silent: true });
     return result;
@@ -793,6 +900,11 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshGeneration += 1;
   languageStatsLoadingGenerations = new Map();
   autoSyncRunningRepoIds.clear();
+  for (const entry of repoStatusRefreshEntries.values()) {
+    clearRepoStatusRefreshTimer(entry);
+    for (const resolver of entry.queuedResolvers) resolver.resolve(null);
+  }
+  repoStatusRefreshEntries.clear();
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshRequestedCount = 0;
@@ -940,14 +1052,14 @@ export async function stage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   await service.stageFiles(repoId, files);
   clearRepoActionError(repoId);
-  await loadRepoDetail(repoId);
+  await requestRepoStatusRefresh(repoId, {}, { immediate: true });
 }
 
 export async function unstage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   await service.unstageFiles(repoId, files);
   clearRepoActionError(repoId);
-  await loadRepoDetail(repoId);
+  await requestRepoStatusRefresh(repoId, {}, { immediate: true });
 }
 
 export async function discardChanges(repoId: string, files: string[]) {
@@ -962,17 +1074,25 @@ export async function addFilesToGitignore(repoId: string, files: string[]) {
 
 export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.commitRepo(repoId, files, message, pushAfter));
+  await applyRepoMutation(
+    repoId,
+    () => service.commitRepo(repoId, files, message, pushAfter),
+    { includeCommits: true },
+  );
 }
 
 export async function pull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.pullRepo(repoId, localChangesMode));
+  await applyRepoMutation(
+    repoId,
+    () => service.pullRepo(repoId, localChangesMode),
+    { includeCommits: true },
+  );
 }
 
 export async function fetch(repoId: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.fetchRepo(repoId));
+  await applyRepoMutation(repoId, () => service.fetchRepo(repoId), { includeCommits: true });
 }
 
 export async function mergePull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
@@ -982,7 +1102,7 @@ export async function mergePull(repoId: string, localChangesMode: RepoPullLocalC
     await applyRepoMutation(repoId, async () => {
       const result = await service.mergePullRepo(repoId, localChangesMode);
       return result.summary;
-    });
+    }, { includeCommits: true });
   } catch (err) {
     setRepoActionError(repoId, String(err));
     throw err;
@@ -996,7 +1116,7 @@ export async function mergeBranch(repoId: string, branch: string) {
     await applyRepoMutation(repoId, async () => {
       const result = await service.mergeBranch(repoId, branch);
       return result.summary;
-    });
+    }, { includeCommits: true });
   } catch (err) {
     setRepoActionError(repoId, String(err));
     throw err;
@@ -1009,8 +1129,10 @@ export async function startRebase(
   localChangesMode: RepoPullLocalChangesMode = "reject",
 ) {
   const service = await loadWorkspaceService();
-  return applyRepoOperation(repoId, () =>
-    service.startRebaseRepo(repoId, ontoRef, localChangesMode)
+  return applyRepoOperation(
+    repoId,
+    () => service.startRebaseRepo(repoId, ontoRef, localChangesMode),
+    { includeCommits: true },
   );
 }
 
@@ -1028,7 +1150,7 @@ async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSumma
         });
       }
       return summary;
-    });
+    }, { includeCommits: true });
   } catch (err) {
     if (updateRecentSync) {
       finishRecentSyncRetry({
@@ -1065,27 +1187,47 @@ export async function useDefaultTokenAuthForRepo(repoId: string) {
 
 export async function checkout(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.checkoutBranch(repoId, branch));
+  await applyRepoMutation(
+    repoId,
+    () => service.checkoutBranch(repoId, branch),
+    { includeCommits: true, includeBranches: true },
+  );
 }
 
 export async function createBranch(repoId: string, name: string, fromRef: string, checkoutAfter: boolean) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.createBranch(repoId, name, fromRef, checkoutAfter));
+  await applyRepoMutation(
+    repoId,
+    () => service.createBranch(repoId, name, fromRef, checkoutAfter),
+    { includeCommits: checkoutAfter, includeBranches: true },
+  );
 }
 
 export async function renameBranch(repoId: string, oldName: string, newName: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.renameBranch(repoId, oldName, newName));
+  await applyRepoMutation(
+    repoId,
+    () => service.renameBranch(repoId, oldName, newName),
+    { includeBranches: true },
+  );
 }
 
 export async function deleteBranch(repoId: string, branch: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.deleteBranch(repoId, branch));
+  await applyRepoMutation(
+    repoId,
+    () => service.deleteBranch(repoId, branch),
+    { includeBranches: true },
+  );
 }
 
 export async function setUpstream(repoId: string, branch: string, upstream: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.setBranchUpstream(repoId, branch, upstream));
+  await applyRepoMutation(
+    repoId,
+    () => service.setBranchUpstream(repoId, branch, upstream),
+    { includeBranches: true },
+  );
 }
 
 export async function listStashes(repoId: string) {
@@ -1120,12 +1262,20 @@ export async function listRemotes(repoId: string) {
 
 export async function cherryPickCommit(repoId: string, hash: string) {
   const service = await loadWorkspaceService();
-  return applyRepoOperation(repoId, () => service.cherryPickRepoCommit(repoId, hash));
+  return applyRepoOperation(
+    repoId,
+    () => service.cherryPickRepoCommit(repoId, hash),
+    { includeCommits: true },
+  );
 }
 
 export async function revertCommit(repoId: string, hash: string) {
   const service = await loadWorkspaceService();
-  return applyRepoOperation(repoId, () => service.revertRepoCommit(repoId, hash));
+  return applyRepoOperation(
+    repoId,
+    () => service.revertRepoCommit(repoId, hash),
+    { includeCommits: true },
+  );
 }
 
 export async function resetToCommit(
@@ -1134,7 +1284,11 @@ export async function resetToCommit(
   mode: import("../../services/workspace").RepoResetMode = "mixed",
 ) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.resetRepoToCommit(repoId, hash, mode));
+  await applyRepoMutation(
+    repoId,
+    () => service.resetRepoToCommit(repoId, hash, mode),
+    { includeCommits: true },
+  );
 }
 
 export async function acceptConflictFile(
@@ -1169,5 +1323,9 @@ export async function abortConflictOperation(repoId: string) {
 
 export async function continueConflictOperation(repoId: string) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.continueConflictOperation(repoId));
+  await applyRepoMutation(
+    repoId,
+    () => service.continueConflictOperation(repoId),
+    { includeCommits: true },
+  );
 }

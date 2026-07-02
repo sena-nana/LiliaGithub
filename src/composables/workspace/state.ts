@@ -12,6 +12,7 @@ import type {
   ProjectLaunchLog,
   ProjectLaunchStatus,
   RepoDetail,
+  RepoDetailPatch,
   RepoSummary,
   WorkspaceTask,
   WorkspaceSettings,
@@ -367,6 +368,27 @@ export function setRepoDetail(detail: RepoDetail, repoId = detail.summary.id) {
   }
   state.repoDetails[repoId] = normalizedDetail;
   upsertRepo(normalizedDetail.summary);
+}
+
+export function setRepoDetailPatch(patch: RepoDetailPatch, repoId = patch.summary.id) {
+  const normalizedSummary = patch.summary.id === repoId
+    ? patch.summary
+    : {
+        ...patch.summary,
+        id: repoId,
+        relativePath: repoId,
+      };
+  const current = state.repoDetails[repoId];
+  const currentSummary = current?.summary ?? state.repos.find((repo) => repo.id === repoId);
+  const nextSummary = currentSummary ? mergeRepoSummary(currentSummary, normalizedSummary) : normalizedSummary;
+  state.repoDetails[repoId] = {
+    summary: nextSummary,
+    changes: patch.changes,
+    commits: patch.commits ?? current?.commits ?? [],
+    branches: patch.branches ?? current?.branches ?? [],
+    conflicts: patch.conflicts,
+  };
+  upsertRepo(nextSummary);
 }
 
 export function setWorkspaceTasks(tasks: WorkspaceTask[]) {

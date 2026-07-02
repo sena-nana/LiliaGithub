@@ -17,6 +17,7 @@ delegate_command!(async repos; fn repo_get_commit_detail(app: AppHandle, repo_id
 delegate_command!(async repos; fn repo_get_branches(app: AppHandle, repo_id: String,) -> Result<Vec<BranchSummary>, String>);
 delegate_command!(async repos; fn repo_get_conflicts(app: AppHandle, repo_id: String,) -> Result<RepoConflictState, String>);
 delegate_command!(async repos; fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, String>);
+delegate_command!(async repos; fn repo_refresh_detail_patch(app: AppHandle, repo_id: String, request: RepoDetailPatchRequest,) -> Result<RepoDetailPatch, String>);
 delegate_command!(async repos; fn repo_stage_files(app: AppHandle, repo_id: String, files: Vec<String>,) -> Result<(), String>);
 delegate_command!(async repos; fn repo_unstage_files(app: AppHandle, repo_id: String, files: Vec<String>,) -> Result<(), String>);
 delegate_command!(async repos; fn repo_discard_files(app: AppHandle, repo_id: String, files: Vec<String>,) -> Result<RepoSummary, String>);

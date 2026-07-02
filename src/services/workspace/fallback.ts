@@ -59,6 +59,8 @@ import type {
   RepoConflictChoice,
   RepoConflictState,
   RepoDetail,
+  RepoDetailPatch,
+  RepoDetailPatchRequest,
   RepoFilePreview,
   RepoFileTreeEntry,
   RepoMergePullResult,
@@ -5124,6 +5126,22 @@ export function getRepoDetail(repoId: string): Promise<RepoDetail> {
         ...syncFallbackRepoBranchState(repoId).map(cloneBranchSummary),
       ],
       conflicts,
+    };
+  });
+}
+
+export async function refreshRepoDetailPatch(
+  repoId: string,
+  request: RepoDetailPatchRequest = {},
+): Promise<RepoDetailPatch> {
+  return call("repo_refresh_detail_patch", { repoId, request }, async () => {
+    const detail = await getRepoDetail(repoId);
+    return {
+      summary: detail.summary,
+      changes: detail.changes,
+      conflicts: detail.conflicts,
+      commits: request.includeCommits ? detail.commits : null,
+      branches: request.includeBranches ? detail.branches : null,
     };
   });
 }

@@ -355,6 +355,15 @@ pub struct RepoRefreshSummaryOptions {
     pub fetch_remote: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoDetailPatchRequest {
+    #[serde(default)]
+    pub include_commits: bool,
+    #[serde(default)]
+    pub include_branches: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoChange {
@@ -562,6 +571,18 @@ pub struct RepoDetail {
     pub commits: Vec<CommitSummary>,
     pub branches: Vec<BranchSummary>,
     pub conflicts: RepoConflictState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoDetailPatch {
+    pub summary: RepoSummary,
+    pub changes: Vec<RepoChange>,
+    pub conflicts: RepoConflictState,
+    #[serde(default)]
+    pub commits: Option<Vec<CommitSummary>>,
+    #[serde(default)]
+    pub branches: Option<Vec<BranchSummary>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
