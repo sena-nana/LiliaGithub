@@ -140,9 +140,6 @@ onBeforeUnmount(() => {
 }
 
 .repo-toolbar-settings__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 12px;
   min-height: 42px;
   padding: 6px 7px;
