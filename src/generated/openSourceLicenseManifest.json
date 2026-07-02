@@ -1,12 +1,17 @@
 {
-  "generatedAt": "2026-06-28T06:06:12.785Z",
+  "generatedAt": "2026-07-02T06:59:53.260Z",
   "app": {
     "name": "lilia-github",
-    "version": "1.0.0-beta",
+    "version": "1.0.0-beta.1",
     "license": "MIT",
     "licenseUrl": "https://github.com/sena-nana/LiliaGithub/blob/main/LICENSE"
   },
   "npmDependencies": [
+    {
+      "name": "@lilia/ui",
+      "version": "0.1.0",
+      "license": "未声明"
+    },
     {
       "name": "@lucide/vue",
       "version": "1.21.0",
@@ -30,11 +35,6 @@
     {
       "name": "@tauri-apps/plugin-store",
       "version": "2.4.3",
-      "license": "MIT OR Apache-2.0"
-    },
-    {
-      "name": "@tauri-apps/plugin-updater",
-      "version": "2.10.1",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -120,24 +120,14 @@
   ],
   "rustDependencies": [
     {
-      "name": "base64",
-      "version": "0.21.7",
-      "license": "MIT OR Apache-2.0"
+      "name": "lilia_github_agent_debug",
+      "version": "1.0.0-beta.1",
+      "license": "未声明"
     },
     {
-      "name": "keyring",
-      "version": "4.1.2",
-      "license": "MIT OR Apache-2.0"
-    },
-    {
-      "name": "libc",
-      "version": "0.2.186",
-      "license": "MIT OR Apache-2.0"
-    },
-    {
-      "name": "reqwest",
-      "version": "0.13.4",
-      "license": "MIT OR Apache-2.0"
+      "name": "lilia_github_workspace",
+      "version": "1.0.0-beta.1",
+      "license": "未声明"
     },
     {
       "name": "serde",
@@ -173,35 +163,21 @@
       "name": "tauri-plugin-store",
       "version": "2.4.3",
       "license": "Apache-2.0 OR MIT"
-    },
-    {
-      "name": "tauri-plugin-updater",
-      "version": "2.10.1",
-      "license": "Apache-2.0 OR MIT"
-    },
-    {
-      "name": "tokio",
-      "version": "1.52.3",
-      "license": "MIT"
-    },
-    {
-      "name": "zip",
-      "version": "4.6.1",
-      "license": "MIT"
     }
   ],
   "totals": {
     "npm": {
+      "未声明": 1,
       "Apache-2.0": 1,
       "Apache-2.0 OR MIT": 2,
       "ISC": 2,
       "MIT": 14,
-      "MIT OR Apache-2.0": 3
+      "MIT OR Apache-2.0": 2
     },
     "rust": {
-      "Apache-2.0 OR MIT": 6,
-      "MIT": 2,
-      "MIT OR Apache-2.0": 6
+      "未声明": 2,
+      "Apache-2.0 OR MIT": 5,
+      "MIT OR Apache-2.0": 2
     }
   }
 }
