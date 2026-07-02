@@ -21,7 +21,7 @@ describe("RepoToolbarSettingsMenu", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "设置" }));
 
-    const autoSync = screen.getByRole("checkbox", { name: "自动同步" });
+    const autoSync = screen.getByRole("switch", { name: "自动同步" });
     expect(autoSync).not.toBeChecked();
 
     await fireEvent.click(autoSync);
@@ -34,6 +34,6 @@ describe("RepoToolbarSettingsMenu", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "设置" }));
 
-    expect(screen.getByRole("checkbox", { name: "自动同步" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "自动同步" })).toBeChecked();
   });
 });

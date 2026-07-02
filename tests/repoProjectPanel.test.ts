@@ -2522,7 +2522,7 @@ describe("RepoProjectPanel", () => {
     expect(view.getByLabelText("远端危险操作")).toBeInTheDocument();
     expect(view.queryByText("默认分支")).toBeNull();
 
-    const wikiSwitch = view.getByRole("checkbox", { name: /Wiki/ });
+    const wikiSwitch = view.getByRole("switch", { name: /Wiki/ });
     await fireEvent.click(wikiSwitch);
     await fireEvent.click(view.getByRole("button", { name: "保存" }));
 
@@ -2587,7 +2587,7 @@ describe("RepoProjectPanel", () => {
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
     expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
 
-    await fireEvent.click(view.getByRole("checkbox", { name: /Wiki/ }));
+    await fireEvent.click(view.getByRole("switch", { name: /Wiki/ }));
     await fireEvent.click(view.getByRole("button", { name: "保存" }));
     expect(updateGitHubRepoSettings).toHaveBeenCalledWith(
       "sena-nana/remote-repo",
