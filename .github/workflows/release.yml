@@ -162,30 +162,12 @@ jobs:
           $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
           Import-PfxCertificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
 
-      - name: Write release updater config
+      - name: Write release signing config
         shell: pwsh
         env:
-          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: |
           $config = @{}
-          if ($env:TAURI_SIGNING_PRIVATE_KEY -and $env:TAURI_UPDATER_PUBKEY) {
-            $config = @{
-              bundle = @{
-                targets = @("nsis")
-                createUpdaterArtifacts = $true
-              }
-              plugins = @{
-                updater = @{
-                  pubkey = $env:TAURI_UPDATER_PUBKEY
-                  endpoints = @(
-                    "https://github.com/sena-nana/LiliaGithub/releases/latest/download/latest.json"
-                  )
-                }
-              }
-            }
-          }
           if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) {
             if (-not $config.ContainsKey("bundle")) {
               $config.bundle = @{}
@@ -201,8 +183,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
           tauriScript: corepack yarn tauri

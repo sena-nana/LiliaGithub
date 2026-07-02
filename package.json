@@ -44,7 +44,6 @@
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-store": "^2.4.3",
-    "@tauri-apps/plugin-updater": "^2.10.1",
     "ansi_up": "^6.0.6",
     "vue": "^3.5.39",
     "vue-router": "^5.1.0",
