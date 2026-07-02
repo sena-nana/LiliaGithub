@@ -23,7 +23,7 @@ import {
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
-import type { ContextMenuItem, ContextMenuProvider } from "@lilia/ui";
+import { SidebarCollapse, type ContextMenuItem, type ContextMenuProvider } from "@lilia/ui";
 import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
@@ -647,13 +647,8 @@ async function deleteGroup(group: { id: string }) {
             <Plus :size="13" aria-hidden="true" />
           </button>
         </div>
-        <div
-          class="sb-collapse"
-          :class="{ 'is-open': !section.collapsed }"
-          :aria-hidden="section.collapsed"
-          :inert="section.collapsed"
-        >
-          <div class="sb-collapse__inner sb-tree">
+        <SidebarCollapse :open="!section.collapsed">
+          <div class="sb-tree">
             <RepoSidebarRow
               v-for="item in section.visibleItems"
               :key="item.id"
@@ -686,7 +681,7 @@ async function deleteGroup(group: { id: string }) {
             <p v-if="!workspace.state.repos.length" class="sb-tree__empty">选择工作区后显示 Git 仓库。</p>
             <p v-else-if="!section.items.length" class="sb-tree__empty">没有仓库。</p>
           </div>
-        </div>
+        </SidebarCollapse>
       </div>
 
       <div v-if="remoteRepoItems.length" class="sb-section sb-section--remote">
@@ -925,18 +920,6 @@ async function deleteGroup(group: { id: string }) {
 
 .sb-group-toggle__chevron.is-open {
   transform: rotate(90deg);
-}
-
-.sb-collapse {
-  display: none;
-}
-
-.sb-collapse.is-open {
-  display: block;
-}
-
-.sb-collapse__inner {
-  overflow: visible;
 }
 
 .sb-group-edit {
