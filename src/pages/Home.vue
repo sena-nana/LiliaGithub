@@ -3,8 +3,11 @@ import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
+  ArrowDownAZ,
+  CalendarDays,
   CheckCircle2,
   CircleDot,
+  Clock,
   FolderOpen,
   FolderGit2,
   GitBranchPlus,
@@ -111,6 +114,12 @@ type RepoStatusRow = {
 };
 
 type LanguageChartMode = "language" | "project";
+type RepoStatusSortKey = "updated" | "name" | "created";
+type SortDirection = "asc" | "desc";
+type RepoStatusSortState = {
+  sort: RepoStatusSortKey;
+  direction: SortDirection;
+};
 
 type HomeCodeSlice = {
   key: string;
@@ -159,6 +168,20 @@ const REPO_STATUS_RENDER_PAGE_SIZE = 60;
 const HOME_PENDING_ITEM_LIMIT = 12;
 const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
 const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
+const REPO_STATUS_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
+const DEFAULT_REPO_STATUS_SORT: RepoStatusSortState = { sort: "updated", direction: "desc" };
+const repoStatusSortOptions: readonly {
+  value: RepoStatusSortKey;
+  label: string;
+  defaultDirection: SortDirection;
+  icon: NonNullable<ContextMenuItem["icon"]>;
+}[] = [
+  { value: "name", label: "首字母", defaultDirection: "asc", icon: ArrowDownAZ },
+  { value: "created", label: "创建时间", defaultDirection: "desc", icon: CalendarDays },
+  { value: "updated", label: "最近更新", defaultDirection: "desc", icon: Clock },
+];
+const defaultRepoStatusSortOption = repoStatusSortOptions[2]!;
+type RepoStatusSortOption = (typeof repoStatusSortOptions)[number];
 
 function cloneRepoWorktree(repo: RepoSummary) {
   return { ...repo.worktree };
@@ -195,6 +218,7 @@ const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
+const repoStatusSort = ref<RepoStatusSortState>(readRepoStatusSort());
 const homeOverviewSnapshot = shallowRef<HomeOverviewSnapshot | null>(null);
 const homeContributionSnapshot = shallowRef<GitHubContributionsState | null>(null);
 const componentEpoch = useComponentEpoch();
@@ -442,6 +466,17 @@ const searchRemotePending = computed(() =>
   githubReposLoadingMore.value,
 );
 
+const activeRepoStatusSortOption = computed(() =>
+  repoStatusSortOption(repoStatusSort.value.sort) ?? defaultRepoStatusSortOption,
+);
+const repoStatusSortLabel = computed(() =>
+  `${activeRepoStatusSortOption.value.label} ${repoStatusSort.value.direction === "asc" ? "↑" : "↓"}`,
+);
+const repoStatusSortIcon = computed(() => activeRepoStatusSortOption.value.icon);
+const repoStatusHeadingSummary = computed(() =>
+  `${repoStatusRows.value.length} 个 GitHub 项目 · ${repoStatusSortLabel.value}`,
+);
+
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   overviewGitHubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
     const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
@@ -451,7 +486,7 @@ const repoStatusRows = computed<RepoStatusRow[]>(() =>
       action: localRepo ? repoAction(localRepo) : null,
       syncIssue: localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null,
     };
-  }).sort((a, b) => Number(a.githubRepo.archived) - Number(b.githubRepo.archived)),
+  }).sort(compareRepoStatusRows),
 );
 
 const visibleRepoStatusRows = computed(() =>
@@ -1087,6 +1122,79 @@ function searchResultAriaLabel(result: HomeSearchResult) {
     : `打开远程仓库 ${result.detail}`;
 }
 
+function readRepoStatusSort(): RepoStatusSortState {
+  try {
+    const raw = localStorage.getItem(REPO_STATUS_SORT_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_REPO_STATUS_SORT };
+    const parsed = JSON.parse(raw) as Partial<RepoStatusSortState>;
+    const option = repoStatusSortOption(parsed.sort);
+    if (option && isSortDirection(parsed.direction)) {
+      return { sort: option.value, direction: parsed.direction };
+    }
+  } catch {
+  }
+  return { ...DEFAULT_REPO_STATUS_SORT };
+}
+
+function writeRepoStatusSort(value: RepoStatusSortState) {
+  try {
+    localStorage.setItem(REPO_STATUS_SORT_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+  }
+}
+
+function repoStatusSortOption(value: unknown) {
+  return repoStatusSortOptions.find((option) => option.value === value);
+}
+
+function isSortDirection(value: unknown): value is SortDirection {
+  return value === "asc" || value === "desc";
+}
+
+function repoStatusTimestamp(value: string) {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function compareRepoStatusRows(left: RepoStatusRow, right: RepoStatusRow) {
+  const archivedCompare = Number(left.githubRepo.archived) - Number(right.githubRepo.archived);
+  if (archivedCompare) return archivedCompare;
+
+  const { sort, direction } = repoStatusSort.value;
+  const directionFactor = direction === "asc" ? 1 : -1;
+  let valueCompare = 0;
+  if (sort === "name") {
+    valueCompare = left.githubRepo.fullName.localeCompare(right.githubRepo.fullName);
+  } else {
+    const key = sort === "created" ? "createdAt" : "updatedAt";
+    valueCompare = repoStatusTimestamp(left.githubRepo[key]) - repoStatusTimestamp(right.githubRepo[key]);
+  }
+  return valueCompare * directionFactor || left.githubRepo.fullName.localeCompare(right.githubRepo.fullName);
+}
+
+function selectRepoStatusSort(option: RepoStatusSortOption) {
+  const direction = repoStatusSort.value.sort === option.value
+    ? repoStatusSort.value.direction === "asc" ? "desc" : "asc"
+    : option.defaultDirection;
+  repoStatusSort.value = { sort: option.value, direction };
+  writeRepoStatusSort(repoStatusSort.value);
+}
+
+function openRepoStatusSortMenu(event: MouseEvent) {
+  const button = event.currentTarget as HTMLElement | null;
+  const rect = button?.getBoundingClientRect();
+  openContextMenuAt(
+    rect?.left ?? event.clientX,
+    (rect?.bottom ?? event.clientY) + 4,
+    repoStatusSortOptions.map((option) => ({
+      id: `home.repo-status.sort.${option.value}`,
+      label: option.label,
+      icon: option.icon,
+      onSelect: () => selectRepoStatusSort(option),
+    })),
+  );
+}
+
 async function openHomeSearchResult(result: HomeSearchResult | null = homeSearchResults.value[0] ?? null) {
   if (!result) return;
   if (result.kind === "local") {
@@ -1685,7 +1793,19 @@ function bulkOperationDescription(operation: BulkOperation) {
               仓库状态
               <LoaderCircle v-if="githubReposLoading" :size="13" aria-hidden="true" class="card-title-loader" />
             </h2>
-            <span>{{ repoStatusRows.length }} 个 GitHub 项目</span>
+            <div class="repo-status-heading__tools">
+              <span class="repo-status-heading__summary">{{ repoStatusHeadingSummary }}</span>
+              <button
+                type="button"
+                class="overview-actions__btn repo-status-sort-button"
+                data-agent-id="home.repo-status.sort"
+                :title="`排序：${repoStatusSortLabel}`"
+                :aria-label="`仓库排序：${repoStatusSortLabel}`"
+                @click="openRepoStatusSortMenu"
+              >
+                <component :is="repoStatusSortIcon" :size="15" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <p v-if="githubReposError" class="repo-status-error">
             {{ githubReposError }}
@@ -2294,7 +2414,7 @@ function bulkOperationDescription(operation: BulkOperation) {
 .repo-status-heading {
   flex: 0 0 auto;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
@@ -2304,10 +2424,29 @@ function bulkOperationDescription(operation: BulkOperation) {
   margin: 0;
 }
 
-.repo-status-heading span {
+.repo-status-heading__tools {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+
+.repo-status-heading__summary {
   color: var(--text-muted);
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.repo-status-sort-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
 }
 
 .repo-status-list {
