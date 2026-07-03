@@ -1,4 +1,10 @@
 /// <reference types="vitest" />
 import { defineLiliaViteConfig } from "@lilia/config";
 
-export default defineLiliaViteConfig();
+export default defineLiliaViteConfig({
+  vite: {
+    resolve: {
+      dedupe: ["@lucide/vue"],
+    },
+  },
+});

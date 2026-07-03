@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
-import type { ContributionChartModel } from "../../utils/contributionChart";
+import { ContributionHeatmap, type ContributionHeatmapModel } from "@lilia/ui";
 
 defineProps<{
   loading: boolean;
@@ -8,7 +8,7 @@ defineProps<{
   totalContributions: number;
   skippedRepoCount: number;
   hasContributionDays: boolean;
-  chartModel: ContributionChartModel;
+  chartModel: ContributionHeatmapModel;
 }>();
 
 defineEmits<{
@@ -63,46 +63,10 @@ defineEmits<{
     </p>
     <div v-else class="contribution-chart">
       <div class="contribution-window">
-        <span
-          v-for="cell in chartModel.activeCells"
-          :key="cell.date"
-          class="contribution-cell-label"
-          :aria-label="cell.title"
-        />
-        <svg
-          class="contribution-svg"
-          role="img"
+        <ContributionHeatmap
+          :model="chartModel"
           aria-label="本地提交贡献图"
-          :viewBox="chartModel.viewBox"
-          :width="chartModel.width"
-          :height="chartModel.height"
-        >
-          <text
-            v-for="label in chartModel.dayLabels"
-            :key="label.label"
-            class="contribution-day-label"
-            :x="label.x"
-            :y="label.y"
-          >
-            {{ label.label }}
-          </text>
-          <text
-            v-for="month in chartModel.monthLabels"
-            :key="month.key"
-            class="contribution-month"
-            :x="month.x"
-            y="10"
-          >
-            {{ month.label }}
-          </text>
-          <path
-            v-for="path in chartModel.levelPaths"
-            :key="path.level"
-            class="contribution-level"
-            :class="`contribution-level--${path.level}`"
-            :d="path.d"
-          />
-        </svg>
+        />
       </div>
     </div>
   </div>
@@ -177,62 +141,6 @@ defineEmits<{
   min-width: 0;
   overflow: hidden;
   contain: layout paint style;
-}
-
-.contribution-cell-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.contribution-svg {
-  display: block;
-  flex: 0 0 auto;
-  min-width: max-content;
-  contain: layout paint style;
-}
-
-.contribution-month,
-.contribution-day-label {
-  color: var(--text-muted);
-  fill: currentColor;
-  font-family: inherit;
-}
-
-.contribution-month {
-  font-size: 10px;
-}
-
-.contribution-day-label {
-  font-size: 11px;
-}
-
-.contribution-level {
-  stroke: color-mix(in srgb, var(--bg) 20%, transparent);
-  stroke-width: 1;
-}
-
-.contribution-level--0 {
-  fill: var(--bg-subtle);
-}
-
-.contribution-level--1 {
-  fill: color-mix(in srgb, var(--ok) 30%, var(--bg-subtle));
-}
-
-.contribution-level--2 {
-  fill: color-mix(in srgb, var(--ok) 55%, var(--bg-subtle));
-}
-
-.contribution-level--3 {
-  fill: color-mix(in srgb, var(--ok) 78%, var(--bg-subtle));
-}
-
-.contribution-level--4 {
-  fill: #3fb950;
 }
 
 .contribution-loading {

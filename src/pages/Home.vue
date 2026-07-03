@@ -24,6 +24,7 @@ import {
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
+import { buildContributionHeatmapModel } from "@lilia/ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -76,7 +77,6 @@ import {
   formatBytes,
   formatPercent,
 } from "../utils/languageStats";
-import { buildContributionChartModel } from "../utils/contributionChart";
 
 const workspace = useWorkspace();
 const router = useRouter();
@@ -350,7 +350,11 @@ const overviewSyncIssuesByRepoId = computed(() =>
 );
 const overviewContributions = computed(() => homeContributionSnapshot.value ?? emptyContributions);
 
-const contributionChart = computed(() => buildContributionChartModel(overviewContributions.value.days));
+const contributionHeatmapModel = computed(() =>
+  buildContributionHeatmapModel(overviewContributions.value.days, {
+    formatTitle: (day) => `${day.date}：${day.count} 次提交`,
+  })
+);
 
 const totalContributions = computed(() =>
   overviewContributions.value.days.reduce((total, day) => total + day.count, 0),
@@ -1558,7 +1562,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           :total-contributions="totalContributions"
           :skipped-repo-count="skippedContributionRepoCount"
           :has-contribution-days="hasContributionDays"
-          :chart-model="contributionChart"
+          :chart-model="contributionHeatmapModel"
           @retry="refreshOverviewContributions"
         />
 

@@ -234,7 +234,13 @@ beforeEach(async () => {
 
 describe("AppShell sidebar", () => {
   it("首页贡献热力图只跟随启动快照和手动刷新更新", async () => {
-    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => contributionResult(1));
+    const startupContributions = contributionResult(1);
+    const service = await import("../src/services/workspace");
+    await service.writeStartupContributions({
+      days: startupContributions.days,
+      meta: startupContributions.meta,
+    });
+    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => startupContributions);
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -242,6 +248,9 @@ describe("AppShell sidebar", () => {
     });
     const startupContributionTotal = readDisplayedContributionTotal(view);
 
+    await waitFor(() => {
+      expect(state.repos.length).toBeGreaterThan(0);
+    });
     workspaceFallback.setFallbackRepoContributionOverrideForTests(() => contributionResult(5));
     await refreshRepoContributions();
 

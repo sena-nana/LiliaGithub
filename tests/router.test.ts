@@ -1794,30 +1794,8 @@ describe("基础路由", () => {
     }));
     await fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
-    expect(await screen.findByLabelText(/2026-06-11：4 次提交/)).toBeInTheDocument();
-  });
-
-  it("首页本地提交贡献图命中仓库采样上限时显示提示", async () => {
-    const service = await import("../src/services/workspace");
-    workspaceFallback.setFallbackRepoContributionOverrideForTests(() => ({
-      days: [{ date: "2026-06-11", count: 1 }],
-      meta: {
-        repoCount: 1,
-        requestedRepoCount: 1,
-        repoLimit: 30,
-        truncated: true,
-        skippedRepoCount: 0,
-        refreshedAt: 1_780_000_000_000,
-      },
-    }));
-    for (let index = 0; index < 31; index += 1) {
-      await service.cloneRepo(`https://github.com/sena-nana/sample-${index}.git`);
-    }
-
-    await renderAt("/");
-
-    expect(await screen.findByLabelText(/2026-06-11：30 次提交/)).toBeInTheDocument();
-    expect(screen.queryByText(/仅统计前 30 个/)).toBeNull();
+    expect(await screen.findByText("4 次提交，最近一年")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "本地提交贡献图" })).toBeInTheDocument();
   });
 
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
