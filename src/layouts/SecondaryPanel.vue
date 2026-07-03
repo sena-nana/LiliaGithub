@@ -2,7 +2,9 @@
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { computed, nextTick, ref, shallowRef, watch, type Component } from "vue";
 import {
+  ArrowDownAZ,
   ChevronRight,
+  Clock,
   EyeOff,
   FolderGit2,
   FolderInput,
@@ -23,12 +25,21 @@ import {
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
-import { SidebarCollapse, type ContextMenuItem, type ContextMenuProvider } from "@lilia/ui";
+import { SidebarCollapse, openContextMenuAt, type ContextMenuItem, type ContextMenuProvider } from "@lilia/ui";
 import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
 import { isLinkedWorktree } from "../utils/repoWorktree";
 import type { RepoSummary } from "../services/workspace";
+import {
+  DEFAULT_REPO_SORT,
+  compareRepoSortItems,
+  nextRepoSort,
+  readRepoSort,
+  writeRepoSort,
+  type RepoSortOption,
+  type RepoSortState,
+} from "../utils/repoSort";
 
 const workspace = useWorkspace();
 const route = useRoute();
@@ -42,8 +53,21 @@ const renameGroupBusy = ref(false);
 const pendingDeleteGroupId = ref<string | null>(null);
 const UNGROUPED_REPO_GROUP_ID = "__ungrouped__";
 const SIDEBAR_LIST_RENDER_PAGE_SIZE = 80;
+const SIDEBAR_REPO_SORT_STORAGE_KEY = "lilia-github.sidebar.repoSort.v1";
 const remoteRepoVisibleCount = ref(SIDEBAR_LIST_RENDER_PAGE_SIZE);
 const sectionVisibleCounts = ref<Record<string, number>>({});
+
+type SidebarRepoSortKey = "updated" | "name";
+type SidebarRepoSortState = RepoSortState<SidebarRepoSortKey>;
+const sidebarRepoSortOptions: readonly (RepoSortOption<SidebarRepoSortKey> & { icon: Component })[] = [
+  { value: "name", label: "首字母", defaultDirection: "asc", icon: ArrowDownAZ },
+  { value: "updated", label: "最近更新", defaultDirection: "desc", icon: Clock },
+] as const;
+const defaultSidebarRepoSortOption = sidebarRepoSortOptions[1]!;
+type SidebarRepoSortOption = (typeof sidebarRepoSortOptions)[number];
+const sidebarRepoSort = ref<SidebarRepoSortState>(
+  readRepoSort(SIDEBAR_REPO_SORT_STORAGE_KEY, sidebarRepoSortOptions, DEFAULT_REPO_SORT),
+);
 
 const footerStatus = computed(() => {
   if (!workspace.workspaceRoot.value) {
@@ -105,6 +129,8 @@ interface RepoItem {
   ahead: number;
   behind: number;
   conflictCount: number;
+  lastCommitAt: number | null;
+  sourceIndex: number;
 }
 
 interface RepoGroupRef {
@@ -137,7 +163,9 @@ function sameRepoItem(current: RepoItem, next: RepoItem) {
     current.dirtyCount === next.dirtyCount &&
     current.ahead === next.ahead &&
     current.behind === next.behind &&
-    current.conflictCount === next.conflictCount;
+    current.conflictCount === next.conflictCount &&
+    current.lastCommitAt === next.lastCommitAt &&
+    current.sourceIndex === next.sourceIndex;
 }
 
 function repoRouteEntry(repoId: string) {
@@ -149,7 +177,7 @@ function repoRouteEntry(repoId: string) {
   return entry;
 }
 
-function repoItem(repo: RepoSummary) {
+function repoItem(repo: RepoSummary, sourceIndex: number) {
   const linkedWorktree = isLinkedWorktree(repo);
   const routeEntry = repoRouteEntry(repo.id);
   const nextItem: RepoItem = {
@@ -165,6 +193,8 @@ function repoItem(repo: RepoSummary) {
     ahead: repo.ahead,
     behind: repo.behind,
     conflictCount: repo.conflictCount,
+    lastCommitAt: repo.lastCommitAt,
+    sourceIndex,
   };
   const currentItem = repoItemCache.get(repo.id);
   if (currentItem && sameRepoItem(currentItem, nextItem)) return currentItem;
@@ -177,7 +207,7 @@ function rebuildRepoItems(repos: readonly RepoSummary[]) {
   const items = repos.map((repo, index) => {
     activeRepoIds.add(repo.id);
     repoItemIndexById.set(repo.id, index);
-    return repoItem(repo);
+    return repoItem(repo, index);
   });
   for (const repoId of repoItemCache.keys()) {
     if (!activeRepoIds.has(repoId)) {
@@ -216,7 +246,7 @@ watch(
       if (index == null) continue;
       const repo = repoById?.get(repoId) ?? workspace.state.repos.find((item) => item.id === repoId);
       if (!repo) continue;
-      const nextItem = repoItem(repo);
+      const nextItem = repoItem(repo, index);
       if (nextItems[index] !== nextItem) {
         nextItems[index] = nextItem;
         changed = true;
@@ -258,21 +288,42 @@ const ungroupedRepoItems = computed(() =>
   repoItems.value.filter((item) => !groupedRepoIds.value.has(item.id)),
 );
 
+const activeSidebarRepoSortOption = computed(() =>
+  sidebarRepoSortOptions.find((option) => option.value === sidebarRepoSort.value.sort) ?? defaultSidebarRepoSortOption,
+);
+const sidebarRepoSortLabel = computed(() =>
+  `${activeSidebarRepoSortOption.value.label} ${sidebarRepoSort.value.direction === "asc" ? "↑" : "↓"}`,
+);
+const sidebarRepoSortIcon = computed(() => activeSidebarRepoSortOption.value.icon);
+
 function sectionVisibleLimit(sectionId: string) {
   return sectionVisibleCounts.value[sectionId] ?? SIDEBAR_LIST_RENDER_PAGE_SIZE;
 }
 
 function repoSection(id: string, name: string, items: RepoItem[], group: RepoGroupRef | null): RepoSection {
-  const visibleItems = items.slice(0, sectionVisibleLimit(id));
+  const sortedItems = sortedRepoItems(items);
+  const visibleItems = sortedItems.slice(0, sectionVisibleLimit(id));
   return {
     id,
     name,
-    items,
+    items: sortedItems,
     visibleItems,
-    hiddenItemCount: Math.max(0, items.length - visibleItems.length),
+    hiddenItemCount: Math.max(0, sortedItems.length - visibleItems.length),
     collapsed: collapsedGroupIds.value.has(id),
     group,
   };
+}
+
+function sortedRepoItems(items: readonly RepoItem[]) {
+  return [...items].sort(compareSidebarRepoItems);
+}
+
+function compareSidebarRepoItems(left: RepoItem, right: RepoItem) {
+  return compareRepoSortItems(left, right, sidebarRepoSort.value, {
+    name: (item) => item.name,
+    updatedAt: (item) => item.lastCommitAt,
+    index: (item) => item.sourceIndex,
+  });
 }
 
 const localRepoSections = computed<RepoSection[]>(() => [
@@ -502,6 +553,26 @@ function sectionToggleLabel(section: RepoSection) {
   return `${section.collapsed ? "展开" : "折叠"}分组 ${section.name}`;
 }
 
+function selectSidebarRepoSort(option: SidebarRepoSortOption) {
+  sidebarRepoSort.value = nextRepoSort(sidebarRepoSort.value, option);
+  writeRepoSort(SIDEBAR_REPO_SORT_STORAGE_KEY, sidebarRepoSort.value);
+}
+
+function openSidebarRepoSortMenu(event: MouseEvent) {
+  const button = event.currentTarget as HTMLElement | null;
+  const rect = button?.getBoundingClientRect();
+  openContextMenuAt(
+    rect?.left ?? event.clientX,
+    (rect?.bottom ?? event.clientY) + 4,
+    sidebarRepoSortOptions.map((option) => ({
+      id: `sidebar.group.sort.${option.value}`,
+      label: option.label,
+      icon: option.icon,
+      onSelect: () => selectSidebarRepoSort(option),
+    })),
+  );
+}
+
 async function finishRenameGroup(group: { id: string; name: string }) {
   if (renameGroupBusy.value) return;
   const name = editingGroupName.value.trim();
@@ -635,7 +706,18 @@ async function deleteGroup(group: { id: string }) {
             </button>
           </template>
           <button
-            v-else
+            v-if="editingGroupId !== section.id && section.id === UNGROUPED_REPO_GROUP_ID"
+            type="button"
+            class="sb-icon-btn"
+            data-agent-id="sidebar.group.sort"
+            :aria-label="`侧边栏仓库排序：${sidebarRepoSortLabel}`"
+            :title="`排序：${sidebarRepoSortLabel}`"
+            @click="openSidebarRepoSortMenu"
+          >
+            <component :is="sidebarRepoSortIcon" :size="13" aria-hidden="true" />
+          </button>
+          <button
+            v-if="!section.group"
             type="button"
             class="sb-icon-btn sb-section__hover-action"
             data-agent-id="sidebar.group.create"

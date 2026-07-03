@@ -80,6 +80,15 @@ import {
   formatBytes,
   formatPercent,
 } from "../utils/languageStats";
+import {
+  DEFAULT_REPO_SORT,
+  compareRepoSortItems,
+  nextRepoSort,
+  readRepoSort,
+  writeRepoSort,
+  type RepoSortState,
+  type SortDirection,
+} from "../utils/repoSort";
 
 const workspace = useWorkspace();
 const router = useRouter();
@@ -115,11 +124,7 @@ type RepoStatusRow = {
 
 type LanguageChartMode = "language" | "project";
 type RepoStatusSortKey = "updated" | "name" | "created";
-type SortDirection = "asc" | "desc";
-type RepoStatusSortState = {
-  sort: RepoStatusSortKey;
-  direction: SortDirection;
-};
+type RepoStatusSortState = RepoSortState<RepoStatusSortKey>;
 
 type HomeCodeSlice = {
   key: string;
@@ -169,7 +174,6 @@ const HOME_PENDING_ITEM_LIMIT = 12;
 const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
 const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
 const REPO_STATUS_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
-const DEFAULT_REPO_STATUS_SORT: RepoStatusSortState = { sort: "updated", direction: "desc" };
 const repoStatusSortOptions: readonly {
   value: RepoStatusSortKey;
   label: string;
@@ -218,7 +222,9 @@ const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
-const repoStatusSort = ref<RepoStatusSortState>(readRepoStatusSort());
+const repoStatusSort = ref<RepoStatusSortState>(
+  readRepoSort(REPO_STATUS_SORT_STORAGE_KEY, repoStatusSortOptions, DEFAULT_REPO_SORT),
+);
 const homeOverviewSnapshot = shallowRef<HomeOverviewSnapshot | null>(null);
 const homeContributionSnapshot = shallowRef<GitHubContributionsState | null>(null);
 const componentEpoch = useComponentEpoch();
@@ -1122,62 +1128,24 @@ function searchResultAriaLabel(result: HomeSearchResult) {
     : `打开远程仓库 ${result.detail}`;
 }
 
-function readRepoStatusSort(): RepoStatusSortState {
-  try {
-    const raw = localStorage.getItem(REPO_STATUS_SORT_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_REPO_STATUS_SORT };
-    const parsed = JSON.parse(raw) as Partial<RepoStatusSortState>;
-    const option = repoStatusSortOption(parsed.sort);
-    if (option && isSortDirection(parsed.direction)) {
-      return { sort: option.value, direction: parsed.direction };
-    }
-  } catch {
-  }
-  return { ...DEFAULT_REPO_STATUS_SORT };
-}
-
-function writeRepoStatusSort(value: RepoStatusSortState) {
-  try {
-    localStorage.setItem(REPO_STATUS_SORT_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-  }
-}
-
 function repoStatusSortOption(value: unknown) {
   return repoStatusSortOptions.find((option) => option.value === value);
-}
-
-function isSortDirection(value: unknown): value is SortDirection {
-  return value === "asc" || value === "desc";
-}
-
-function repoStatusTimestamp(value: string) {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function compareRepoStatusRows(left: RepoStatusRow, right: RepoStatusRow) {
   const archivedCompare = Number(left.githubRepo.archived) - Number(right.githubRepo.archived);
   if (archivedCompare) return archivedCompare;
 
-  const { sort, direction } = repoStatusSort.value;
-  const directionFactor = direction === "asc" ? 1 : -1;
-  let valueCompare = 0;
-  if (sort === "name") {
-    valueCompare = left.githubRepo.fullName.localeCompare(right.githubRepo.fullName);
-  } else {
-    const key = sort === "created" ? "createdAt" : "updatedAt";
-    valueCompare = repoStatusTimestamp(left.githubRepo[key]) - repoStatusTimestamp(right.githubRepo[key]);
-  }
-  return valueCompare * directionFactor || left.githubRepo.fullName.localeCompare(right.githubRepo.fullName);
+  return compareRepoSortItems(left, right, repoStatusSort.value, {
+    name: (row) => row.githubRepo.fullName,
+    updatedAt: (row) => row.githubRepo.updatedAt,
+    createdAt: (row) => row.githubRepo.createdAt,
+  });
 }
 
 function selectRepoStatusSort(option: RepoStatusSortOption) {
-  const direction = repoStatusSort.value.sort === option.value
-    ? repoStatusSort.value.direction === "asc" ? "desc" : "asc"
-    : option.defaultDirection;
-  repoStatusSort.value = { sort: option.value, direction };
-  writeRepoStatusSort(repoStatusSort.value);
+  repoStatusSort.value = nextRepoSort(repoStatusSort.value, option);
+  writeRepoSort(REPO_STATUS_SORT_STORAGE_KEY, repoStatusSort.value);
 }
 
 function openRepoStatusSortMenu(event: MouseEvent) {

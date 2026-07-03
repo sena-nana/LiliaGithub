@@ -15,6 +15,9 @@ import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
 import { repoSummary } from "./fixtures/workspace";
 
+const SIDEBAR_REPO_SORT_STORAGE_KEY = "lilia-github.sidebar.repoSort.v1";
+const HOME_REPO_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     isMaximized: vi.fn(async () => false),
@@ -114,6 +117,16 @@ function sidebarGroupForText(container: HTMLElement, name: string, count: number
     throw new Error(`未找到侧边栏分组: ${name} ${count}`);
   }
   return group;
+}
+
+function sidebarRepoOrder(container: HTMLElement, groupName = "未分组仓库") {
+  const group = sidebarGroupForText(container, groupName, state.repos.length);
+  const section = group.closest(".sb-section");
+  if (!(section instanceof HTMLElement)) {
+    throw new Error(`未找到侧边栏分组区域: ${groupName}`);
+  }
+  return Array.from(section.querySelectorAll(".sb-tree__row .sb-tree__name"))
+    .map((node) => node.textContent ?? "");
 }
 
 function githubRepoSummary(fullName: string, overrides: Partial<GitHubRepoSummary> = {}): GitHubRepoSummary {
@@ -325,6 +338,39 @@ describe("AppShell sidebar", () => {
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "Repo-120")).toBeInTheDocument();
     });
+  });
+
+  it("侧边栏分组按独立仓库排序偏好排序且不在标题显示排序文本", async () => {
+    const repos = [
+      repoSummary("Gamma", { lastCommitAt: null }),
+      repoSummary("Alpha", { lastCommitAt: 20 }),
+      repoSummary("Beta", { lastCommitAt: 30 }),
+    ];
+    workspaceFallback.setFallbackRepoOverridesForTests(Object.fromEntries(
+      repos.map((repo) => [repo.id, repo]),
+    ));
+    state.repos = repos;
+
+    const view = await renderAppShell("/repos/Beta");
+
+    await waitFor(() => {
+      expect(sidebarRepoOrder(view.container)).toEqual(["Beta", "Alpha", "Gamma"]);
+    });
+    const group = sidebarGroupForText(view.container, "未分组仓库", 3);
+    expect(group.textContent?.replace(/\s+/g, "")).toBe("未分组仓库3");
+
+    await fireEvent.click(view.getByRole("button", { name: /侧边栏仓库排序：最近更新 ↓/ }));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "首字母" }));
+
+    await waitFor(() => {
+      expect(sidebarRepoOrder(view.container)).toEqual(["Alpha", "Beta", "Gamma"]);
+    });
+    expect(JSON.parse(localStorage.getItem(SIDEBAR_REPO_SORT_STORAGE_KEY) ?? "{}")).toEqual({
+      sort: "name",
+      direction: "asc",
+    });
+    expect(localStorage.getItem(HOME_REPO_SORT_STORAGE_KEY)).toBeNull();
+    expect(sidebarGroupForText(view.container, "未分组仓库", 3).textContent?.replace(/\s+/g, "")).toBe("未分组仓库3");
   });
 
   it("长列表中仓库行状态只影响对应行并保留分页结构", async () => {
