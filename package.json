@@ -27,6 +27,9 @@
     "tauri:build": "lilia-build tauri-build",
     "tauri:build:no-bundle": "lilia-build tauri-build --no-bundle",
     "tauri:install": "lilia-build tauri-install",
+    "liliaui:local": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs local",
+    "liliaui:remote": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs remote",
+    "liliaui:status": "yarn check:package-manager && node scripts/lilia-ui-deps.mjs status",
     "verify": "yarn test && yarn build && cargo check --manifest-path src-tauri/Cargo.toml",
     "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
   },
@@ -34,7 +37,7 @@
     "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=ed10f51023c321c1bbec799979e1047f91eb9f2f",
     "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=ed10f51023c321c1bbec799979e1047f91eb9f2f",
     "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=ed10f51023c321c1bbec799979e1047f91eb9f2f",
-    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=7e38644cbfb113f1de3a9ce8fab2430b44b509b7",
+    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=ed10f51023c321c1bbec799979e1047f91eb9f2f",
     "ansi_up": "^6.0.6",
     "yaml": "^2.9.0"
   },

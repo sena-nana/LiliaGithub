@@ -40,6 +40,33 @@ yarn tauri:install
 `yarn tauri:install` 会先用本机 CPU 优化参数打包,再打开安装程序并尝试安装;该入口面向本机安装验证,不要用它产出的包做通用分发。
 需要检查 install 打包命令但不执行构建和安装时,使用 `LILIA_GITHUB_INSTALL_DRY_RUN=1 yarn tauri:install`;这是 LiliaGithub 的唯一 install dry-run 接口。
 
+## LiliaUI 本地联调
+
+默认 `package.json` 和提交版 `yarn.lock` 固定使用 GitHub 上的 LiliaUI 依赖。普通 `yarn install` 不依赖本机存在 `C:\Files\workspace\LiliaUI`。
+
+需要同时修改 LiliaUI 时，从 LiliaGithub 仓库根目录运行：
+
+```bash
+yarn liliaui:local
+```
+
+该命令会通过 `yarn link --relative` 临时维护项目级 `resolutions`，把 `@lilia/build`、`@lilia/config`、`@lilia/tools` 和 `@lilia/ui` 切到默认的 `../LiliaUI/packages/*` `portal:` 依赖，并刷新 `node_modules`。如果 LiliaUI 不在相邻目录，可用 `LILIA_UI_LOCAL_PATH` 指定路径：
+
+```powershell
+$env:LILIA_UI_LOCAL_PATH = "C:\Files\workspace\LiliaUI"
+yarn liliaui:local
+Remove-Item Env:LILIA_UI_LOCAL_PATH
+```
+
+提交依赖或锁文件变更前，先切回固定 GitHub 依赖：
+
+```bash
+yarn liliaui:remote
+yarn liliaui:status
+```
+
+`yarn liliaui:status` 只检查当前四个 LiliaUI 包来自本地 `portal:` 还是固定 GitHub 依赖。提交策略是：默认远端 manifest 和锁文件可以入库，本地 `resolutions` / `portal:` lockfile 只作为个人联调状态，不随普通业务提交一起提交。
+
 Rust 编译缓存可在个人机器启用 `sccache`,但不要写入仓库配置。确认本机已安装后,在 `~/.cargo/config.toml` 配置:
 
 ```toml
