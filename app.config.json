@@ -1,0 +1,17 @@
+{
+  "appName": "lilia-github",
+  "productTitle": "LiliaGithub",
+  "version": "1.0.0-beta.1",
+  "identifier": "com.liliagithub.desktop",
+  "storageKeyPrefix": "lilia-github",
+  "shell": {
+    "homeTitle": "概览",
+    "homeDescription": "查看本地工作区和 GitHub 协作状态。",
+    "workspaceSectionTitle": "工作区",
+    "workspaceName": "GitHub Workspace",
+    "workspaceEmptyText": "选择工作区后显示 Git 仓库。",
+    "statusLabel": "GitHub",
+    "statusTitle": "GitHub 工作区状态。点击进入设置。",
+    "settingsDescription": "管理外观、仓库、GitHub 授权和应用信息。"
+  }
+}
