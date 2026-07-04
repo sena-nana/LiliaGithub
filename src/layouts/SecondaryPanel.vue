@@ -710,7 +710,7 @@ async function deleteGroup(group: { id: string }) {
           <button
             v-if="editingGroupId !== section.id && section.id === UNGROUPED_REPO_GROUP_ID"
             type="button"
-            class="sb-icon-btn"
+            class="sb-icon-btn sb-section__hover-action"
             data-agent-id="sidebar.group.sort"
             :aria-label="`侧边栏仓库排序：${sidebarRepoSortLabel}`"
             :title="`排序：${sidebarRepoSortLabel}`"
