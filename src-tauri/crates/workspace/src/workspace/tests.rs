@@ -63,7 +63,7 @@ use super::repos::{
 use super::settings::{
     add_managed_repo_id, create_repo_group, delete_repo_group, move_repo_to_group,
     prune_deleted_repo_settings, remove_managed_repo_path, remove_system_git_repo_id,
-    rename_repo_group, repo_path_from_id,
+    rename_repo_group, repo_path_from_id, scan_contribution_identity_recommendations,
 };
 use super::shared::{
     cached_local_contribution_count, collect_local_contribution_counts,
@@ -74,13 +74,14 @@ use super::shared::{
 use super::tasks::task_priority_rank;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{
-    BulkSyncResult, CachedRepoSummary, ContributionIdentity, GitHubBindingMetadata,
-    GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue, GitHubProjectCache,
-    GitHubPullRequest, GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest,
-    GitHubRepoWorkflowPermissionsRequest, GitHubUpdateRepoSettingsRequest,
-    LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut,
-    RepoConflictChoice, RepoPullLocalChangesMode, RepoSummary, RepoWorktree, WorkspaceRepoGroup,
-    WorkspaceSettings, WorkspaceStartupCache,
+    BulkSyncResult, CachedRepoSummary, ContributionIdentity,
+    ContributionIdentityRecommendationConfidence, GitHubBindingMetadata, GitHubContributionDay,
+    GitHubDiscussionTimelineItem, GitHubIssue, GitHubProjectCache, GitHubPullRequest,
+    GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest,
+    GitHubRepoWorkflowPermissionsRequest, GitHubUpdateRepoSettingsRequest, LanguageStat,
+    LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut, RepoConflictChoice,
+    RepoPullLocalChangesMode, RepoSummary, RepoWorktree, WorkspaceRepoGroup, WorkspaceSettings,
+    WorkspaceStartupCache,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -1505,6 +1506,172 @@ fn contribution_identity_matching_accepts_name_or_email() {
         "Same Name",
         "other@example.com",
     ));
+}
+
+#[test]
+fn contribution_identity_scan_recommends_repo_git_config_missing_from_global() {
+    let root = temp_dir("contribution-identity-scan-config");
+    let repo = root.join("app");
+    init_git_repo(&repo);
+    let settings = WorkspaceSettings {
+        managed_repo_ids: vec!["app".to_string()],
+        ..WorkspaceSettings::default()
+    };
+
+    let result = scan_contribution_identity_recommendations(&root, &settings);
+
+    assert_eq!(result.scanned_repo_count, 1);
+    assert!(result.recommendations.iter().any(|recommendation| {
+        recommendation.confidence == ContributionIdentityRecommendationConfidence::GitConfig
+            && recommendation.identity.name.as_deref() == Some("Test User")
+            && recommendation.identity.email.as_deref() == Some("test@example.com")
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn contribution_identity_scan_recommends_related_recent_authors_and_ignores_collaborators() {
+    let root = temp_dir("contribution-identity-scan-related");
+    let trusted = root.join("trusted");
+    let missed = root.join("missed");
+    init_git_repo(&trusted);
+    run_git(&trusted, &["config", "user.name", "Trusted User"]);
+    run_git(&trusted, &["config", "user.email", "trusted@example.com"]);
+    init_git_repo(&missed);
+    run_git(&missed, &["config", "user.name", "Different User"]);
+    run_git(&missed, &["config", "user.email", "different@example.com"]);
+    commit_with_author(
+        &missed,
+        "legacy.txt",
+        "legacy\n",
+        "legacy",
+        "Trusted User",
+        "legacy@example.com",
+    );
+    commit_with_author(
+        &missed,
+        "other.txt",
+        "other\n",
+        "other",
+        "Other User",
+        "other@example.com",
+    );
+    let settings = WorkspaceSettings {
+        managed_repo_ids: vec!["trusted".to_string(), "missed".to_string()],
+        ..WorkspaceSettings::default()
+    };
+
+    let result = scan_contribution_identity_recommendations(&root, &settings);
+
+    let related = result
+        .recommendations
+        .iter()
+        .find(|recommendation| recommendation.identity.email.as_deref() == Some("legacy@example.com"))
+        .expect("related author should be recommended");
+    assert_eq!(
+        related.confidence,
+        ContributionIdentityRecommendationConfidence::RelatedAuthor
+    );
+    assert_eq!(related.missed_commit_count, 1);
+    assert!(result
+        .recommendations
+        .iter()
+        .all(|recommendation| recommendation.identity.email.as_deref() != Some("other@example.com")));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn contribution_identity_scan_recommends_single_author_repo_without_git_config() {
+    let root = temp_dir("contribution-identity-scan-single-author");
+    let repo = root.join("solo");
+    init_git_repo(&repo);
+    run_git(&repo, &["config", "user.name", ""]);
+    run_git(&repo, &["config", "user.email", ""]);
+    commit_with_author(
+        &repo,
+        "solo.txt",
+        "solo\n",
+        "solo",
+        "Solo User",
+        "solo@example.com",
+    );
+    let settings = WorkspaceSettings {
+        managed_repo_ids: vec!["solo".to_string()],
+        ..WorkspaceSettings::default()
+    };
+
+    let result = scan_contribution_identity_recommendations(&root, &settings);
+
+    assert!(result.recommendations.iter().any(|recommendation| {
+        recommendation.confidence == ContributionIdentityRecommendationConfidence::SingleAuthor
+            && recommendation.identity.email.as_deref() == Some("solo@example.com")
+            && recommendation.missed_commit_count == 1
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn contribution_identity_scan_dedupes_case_insensitive_and_ignores_blank_identities() {
+    let root = temp_dir("contribution-identity-scan-dedupe");
+    let repo = root.join("app");
+    init_git_repo(&repo);
+    let settings = WorkspaceSettings {
+        managed_repo_ids: vec!["app".to_string()],
+        contribution_identities: vec![
+            ContributionIdentity {
+                name: Some(" test user ".to_string()),
+                email: Some("TEST@EXAMPLE.COM".to_string()),
+            },
+            ContributionIdentity {
+                name: Some("".to_string()),
+                email: Some(" ".to_string()),
+            },
+        ],
+        ..WorkspaceSettings::default()
+    };
+
+    let result = scan_contribution_identity_recommendations(&root, &settings);
+
+    assert!(result.recommendations.is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn contribution_identity_scan_respects_visible_home_repos_and_does_not_mutate_settings() {
+    let root = temp_dir("contribution-identity-scan-readonly");
+    let included = root.join("included");
+    let hidden = root.join("hidden");
+    let excluded = root.join("excluded");
+    init_git_repo(&included);
+    init_git_repo(&hidden);
+    init_git_repo(&excluded);
+    let settings = WorkspaceSettings {
+        managed_repo_ids: vec![
+            "included".to_string(),
+            "hidden".to_string(),
+            "excluded".to_string(),
+        ],
+        hidden_repo_ids: vec!["hidden".to_string()],
+        repo_sync_preferences: HashMap::from([(
+            "excluded".to_string(),
+            lilia_github_contracts::workspace::RepoSyncPreference {
+                include_in_home_contribution_stats: false,
+                ..Default::default()
+            },
+        )]),
+        ..WorkspaceSettings::default()
+    };
+    let before = serde_json::to_value(&settings).unwrap();
+
+    let result = scan_contribution_identity_recommendations(&root, &settings);
+
+    assert_eq!(result.scanned_repo_count, 1);
+    assert_eq!(serde_json::to_value(&settings).unwrap(), before);
+    assert!(result
+        .recommendations
+        .iter()
+        .all(|recommendation| recommendation.repos.iter().all(|repo| repo.repo_id == "included")));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

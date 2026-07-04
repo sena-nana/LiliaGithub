@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen } from "@testing-library/vue";
 import { buildContributionHeatmapModel } from "@lilia/ui";
 import { describe, expect, it } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -42,5 +42,23 @@ describe("HomeContributionCard", () => {
       "/settings?tab=repositories#contribution-identity-list-title",
     );
     expect(screen.getByRole("img", { name: "本地提交贡献图" })).toBeInTheDocument();
+  });
+
+  it("处理入口可切换为父级扫描动作", async () => {
+    const view = render(HomeContributionCard, {
+      props: {
+        loading: false,
+        error: null,
+        totalContributions: 0,
+        skippedRepoCount: 1,
+        skippedRepoActionButton: true,
+        hasContributionDays: false,
+        chartModel: buildContributionHeatmapModel([]),
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "处理" }));
+
+    expect(view.emitted("resolveSkipped")).toHaveLength(1);
   });
 });

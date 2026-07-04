@@ -1,17 +1,27 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::workspace::github::{forget_remote_repo_shortcut, remember_remote_repo_shortcut};
+use crate::workspace::github::{
+    forget_remote_repo_shortcut, remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
+};
 use crate::workspace::repos::{
-    git_command, is_git_repo, resolve_repo_worktree, ResolvedRepoWorktree,
+    canonical_repo_path, git_command, git_command_lossy, git_common_dir, is_git_repo,
+    managed_repo_paths, repo_id, resolve_repo_worktree, ResolvedRepoWorktree,
 };
 use crate::workspace::run_blocking;
-use crate::workspace::shared::{now_millis, remove_local_contribution_cache};
+use crate::workspace::shared::{
+    contribution_identity_key, contribution_identity_matches, current_utc_day_index,
+    format_day_index, local_contribution_identities, now_millis, remove_local_contribution_cache,
+    repo_git_identity,
+};
 use lilia_github_contracts::workspace::{
-    CachedContributionResult, CachedRepoSummary, ContributionIdentity, HiddenRepo,
-    RemoteRepoShortcut, RepoSummary, RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings,
-    WorkspaceStartupCache, WorkspaceStartupContributions,
+    CachedContributionResult, CachedRepoSummary, ContributionIdentity,
+    ContributionIdentityRecommendation, ContributionIdentityRecommendationConfidence,
+    ContributionIdentityRecommendationRepo, ContributionIdentityRecommendationResult,
+    ContributionIdentityRecommendationSource, HiddenRepo, RemoteRepoShortcut, RepoSummary,
+    RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
+    WorkspaceStartupContributions,
 };
 use crate::runtime::WorkspaceContext as AppHandle;
 
@@ -442,6 +452,328 @@ pub fn workspace_set_contribution_identities(
     save_settings(&app, &settings)?;
     let _ = clear_startup_cache(&app);
     Ok(settings)
+}
+
+pub async fn workspace_scan_contribution_identities(
+    app: AppHandle,
+) -> Result<ContributionIdentityRecommendationResult, String> {
+    let root = workspace_root(&app)?;
+    let settings = load_settings(&app);
+    run_blocking("扫描贡献身份推荐", move || {
+        Ok(scan_contribution_identity_recommendations(&root, &settings))
+    })
+    .await
+}
+
+const CONTRIBUTION_IDENTITY_SCAN_LOG_LIMIT: usize = 750;
+
+#[derive(Debug, Clone)]
+struct ContributionIdentityRepoScan {
+    repo_id: String,
+    repo_name: String,
+    path: PathBuf,
+    config_identity: Option<ContributionIdentity>,
+    authors: Vec<ContributionIdentityAuthorScan>,
+}
+
+#[derive(Debug, Clone)]
+struct ContributionIdentityAuthorScan {
+    identity: ContributionIdentity,
+    commit_count: usize,
+    latest_commit_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+struct ContributionIdentityRecommendationDraft {
+    identity: ContributionIdentity,
+    confidence: ContributionIdentityRecommendationConfidence,
+    missed_commit_count: usize,
+    latest_commit_at: Option<i64>,
+    repos: Vec<ContributionIdentityRecommendationRepo>,
+}
+
+pub(super) fn scan_contribution_identity_recommendations(
+    root: &Path,
+    settings: &WorkspaceSettings,
+) -> ContributionIdentityRecommendationResult {
+    let mut scanned_repo_count = 0;
+    let mut skipped_repo_count = 0;
+    let mut seen_repo_groups = HashSet::new();
+    let mut repo_scans = Vec::new();
+    let persisted_identities =
+        normalize_contribution_identities(settings.contribution_identities.clone());
+
+    for path in managed_repo_paths(root, settings) {
+        let canonical_path = canonical_repo_path(&path);
+        let repo_group_key =
+            git_common_dir(&canonical_path).unwrap_or_else(|| canonical_path.clone());
+        if !seen_repo_groups.insert(repo_group_key) {
+            continue;
+        }
+        let repo_id = repo_id(root, &canonical_path);
+        let include = settings
+            .repo_sync_preferences
+            .get(&repo_id)
+            .map(|preference| preference.include_in_home_contribution_stats)
+            .unwrap_or(true);
+        if !include {
+            continue;
+        }
+        scanned_repo_count += 1;
+        let repo_name = canonical_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&repo_id)
+            .to_string();
+        let config_identity = repo_git_identity(&canonical_path);
+        let Some(authors) = scan_recent_contribution_authors(&canonical_path) else {
+            skipped_repo_count += 1;
+            repo_scans.push(ContributionIdentityRepoScan {
+                repo_id,
+                repo_name,
+                path: canonical_path,
+                config_identity,
+                authors: Vec::new(),
+            });
+            continue;
+        };
+        repo_scans.push(ContributionIdentityRepoScan {
+            repo_id,
+            repo_name,
+            path: canonical_path,
+            config_identity,
+            authors,
+        });
+    }
+
+    let trusted_identities: Vec<_> = persisted_identities
+        .iter()
+        .cloned()
+        .chain(
+            repo_scans
+                .iter()
+                .filter_map(|repo| repo.config_identity.clone()),
+        )
+        .collect();
+    let mut recommendations: HashMap<(String, String), ContributionIdentityRecommendationDraft> =
+        HashMap::new();
+
+    for repo in &repo_scans {
+        if let Some(identity) = repo.config_identity.as_ref() {
+            if !identity_matched_by(identity, &persisted_identities) {
+                add_contribution_identity_recommendation(
+                    &mut recommendations,
+                    identity.clone(),
+                    ContributionIdentityRecommendationConfidence::GitConfig,
+                    0,
+                    None,
+                    ContributionIdentityRecommendationRepo {
+                        repo_id: repo.repo_id.clone(),
+                        repo_name: repo.repo_name.clone(),
+                        source: ContributionIdentityRecommendationSource::GitConfig,
+                        commit_count: 0,
+                        latest_commit_at: None,
+                    },
+                );
+            }
+        }
+
+        let local_identities = local_contribution_identities(&repo.path, settings);
+        let single_author_without_config = repo.config_identity.is_none() && repo.authors.len() == 1;
+        for author in &repo.authors {
+            let author_name = author.identity.name.as_deref().unwrap_or_default();
+            let author_email = author.identity.email.as_deref().unwrap_or_default();
+            if contribution_identity_matches(&local_identities, author_name, author_email) {
+                continue;
+            }
+            if identity_matched_by(&author.identity, &persisted_identities) {
+                continue;
+            }
+            let confidence = if identity_matched_by(&author.identity, &trusted_identities) {
+                ContributionIdentityRecommendationConfidence::RelatedAuthor
+            } else if single_author_without_config {
+                ContributionIdentityRecommendationConfidence::SingleAuthor
+            } else {
+                continue;
+            };
+            add_contribution_identity_recommendation(
+                &mut recommendations,
+                author.identity.clone(),
+                confidence,
+                author.commit_count,
+                author.latest_commit_at,
+                ContributionIdentityRecommendationRepo {
+                    repo_id: repo.repo_id.clone(),
+                    repo_name: repo.repo_name.clone(),
+                    source: ContributionIdentityRecommendationSource::RecentAuthor,
+                    commit_count: author.commit_count,
+                    latest_commit_at: author.latest_commit_at,
+                },
+            );
+        }
+    }
+
+    let mut recommendations: Vec<_> = recommendations
+        .into_values()
+        .map(|draft| {
+            let repo_count = draft
+                .repos
+                .iter()
+                .map(|repo| repo.repo_id.as_str())
+                .collect::<HashSet<_>>()
+                .len();
+            ContributionIdentityRecommendation {
+                identity: draft.identity,
+                confidence: draft.confidence,
+                missed_commit_count: draft.missed_commit_count,
+                repo_count,
+                latest_commit_at: draft.latest_commit_at,
+                repos: draft.repos,
+            }
+        })
+        .collect();
+    recommendations.sort_by(|a, b| {
+        contribution_identity_confidence_rank(&a.confidence)
+            .cmp(&contribution_identity_confidence_rank(&b.confidence))
+            .then_with(|| b.missed_commit_count.cmp(&a.missed_commit_count))
+            .then_with(|| b.latest_commit_at.cmp(&a.latest_commit_at))
+            .then_with(|| {
+                contribution_identity_display(&a.identity)
+                    .cmp(&contribution_identity_display(&b.identity))
+            })
+    });
+
+    ContributionIdentityRecommendationResult {
+        scanned_repo_count,
+        skipped_repo_count,
+        recommendations,
+    }
+}
+
+fn scan_recent_contribution_authors(path: &Path) -> Option<Vec<ContributionIdentityAuthorScan>> {
+    let end_day_index = current_utc_day_index();
+    let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
+    let since = format!("{}T00:00:00Z", format_day_index(start_day_index));
+    let until = format!("{}T23:59:59Z", format_day_index(end_day_index));
+    let max_count = format!("--max-count={CONTRIBUTION_IDENTITY_SCAN_LOG_LIMIT}");
+    let output = git_command_lossy(
+        path,
+        &[
+            "log",
+            &format!("--since={since}"),
+            &format!("--until={until}"),
+            &max_count,
+            "--format=%an%x1f%ae%x1f%ct",
+        ],
+    )?;
+    let mut authors: HashMap<(String, String), ContributionIdentityAuthorScan> = HashMap::new();
+    for line in output.lines() {
+        let mut parts = line.split('\x1f');
+        let name = parts
+            .next()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let email = parts
+            .next()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty());
+        if name.is_none() && email.is_none() {
+            continue;
+        }
+        let latest_commit_at = parts.next().and_then(|value| value.trim().parse().ok());
+        let identity = ContributionIdentity { name, email };
+        let Some(key) = contribution_identity_key(&identity) else {
+            continue;
+        };
+        let entry = authors
+            .entry(key)
+            .or_insert_with(|| ContributionIdentityAuthorScan {
+                identity,
+                commit_count: 0,
+                latest_commit_at: None,
+            });
+        entry.commit_count += 1;
+        entry.latest_commit_at = latest_commit_at.max(entry.latest_commit_at);
+    }
+    Some(authors.into_values().collect())
+}
+
+fn identity_matched_by(
+    identity: &ContributionIdentity,
+    identities: &[ContributionIdentity],
+) -> bool {
+    contribution_identity_matches(
+        identities,
+        identity.name.as_deref().unwrap_or_default(),
+        identity.email.as_deref().unwrap_or_default(),
+    )
+}
+
+fn add_contribution_identity_recommendation(
+    recommendations: &mut HashMap<(String, String), ContributionIdentityRecommendationDraft>,
+    identity: ContributionIdentity,
+    confidence: ContributionIdentityRecommendationConfidence,
+    missed_commit_count: usize,
+    latest_commit_at: Option<i64>,
+    repo: ContributionIdentityRecommendationRepo,
+) {
+    let Some(key) = contribution_identity_key(&identity) else {
+        return;
+    };
+    let entry =
+        recommendations
+            .entry(key)
+            .or_insert_with(|| ContributionIdentityRecommendationDraft {
+                identity,
+                confidence: confidence.clone(),
+                missed_commit_count: 0,
+                latest_commit_at: None,
+                repos: Vec::new(),
+            });
+    if contribution_identity_confidence_rank(&confidence)
+        < contribution_identity_confidence_rank(&entry.confidence)
+    {
+        entry.confidence = confidence;
+    }
+    entry.missed_commit_count += missed_commit_count;
+    entry.latest_commit_at = latest_commit_at.max(entry.latest_commit_at);
+    if let Some(existing) = entry
+        .repos
+        .iter_mut()
+        .find(|existing| existing.repo_id == repo.repo_id && existing.source == repo.source)
+    {
+        existing.commit_count += repo.commit_count;
+        existing.latest_commit_at = repo.latest_commit_at.max(existing.latest_commit_at);
+    } else {
+        entry.repos.push(repo);
+    }
+}
+
+fn contribution_identity_confidence_rank(
+    confidence: &ContributionIdentityRecommendationConfidence,
+) -> usize {
+    match confidence {
+        ContributionIdentityRecommendationConfidence::GitConfig => 0,
+        ContributionIdentityRecommendationConfidence::RelatedAuthor => 1,
+        ContributionIdentityRecommendationConfidence::SingleAuthor => 2,
+    }
+}
+
+fn contribution_identity_display(identity: &ContributionIdentity) -> String {
+    format!(
+        "{}\u{1f}{}",
+        identity
+            .name
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
+        identity
+            .email
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    )
 }
 
 pub(super) fn normalize_contribution_identities(

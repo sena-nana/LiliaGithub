@@ -139,7 +139,7 @@ pub(super) fn local_contribution_identities(
     identities
 }
 
-fn repo_git_identity(path: &Path) -> Option<ContributionIdentity> {
+pub(super) fn repo_git_identity(path: &Path) -> Option<ContributionIdentity> {
     let name = git_command_lossy(path, &["config", "user.name"])
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
@@ -153,7 +153,7 @@ fn repo_git_identity(path: &Path) -> Option<ContributionIdentity> {
     }
 }
 
-fn contribution_identity_key(identity: &ContributionIdentity) -> Option<(String, String)> {
+pub(super) fn contribution_identity_key(identity: &ContributionIdentity) -> Option<(String, String)> {
     let name = identity
         .name
         .as_deref()

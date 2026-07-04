@@ -1044,7 +1044,6 @@ pub(super) fn repo_refresh_worker_count(repo_count: usize) -> usize {
     repo_count.min(available.clamp(1, MAX_REPO_REFRESH_CONCURRENCY))
 }
 
-#[cfg(test)]
 pub(super) fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> Vec<PathBuf> {
     settings
         .managed_repo_ids

@@ -234,6 +234,12 @@ export function setContributionIdentities(identities: import("./types").Contribu
   );
 }
 
+export function scanContributionIdentities(): Promise<import("./types").ContributionIdentityRecommendationResult> {
+  return call("workspace_scan_contribution_identities", undefined, () =>
+    workspaceFallback().scanContributionIdentities()
+  );
+}
+
 export function setRepoSetting(repoId: string, key: keyof RepoSyncPreference, value: boolean): Promise<WorkspaceSettings> {
   return call("repo_set_preference", { repoId, key, value }, () => workspaceFallback().setRepoSetting(repoId, key, value));
 }

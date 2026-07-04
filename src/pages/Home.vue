@@ -46,6 +46,8 @@ import {
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubRepoSummary,
+  type ContributionIdentityRecommendation,
+  type ContributionIdentityRecommendationResult,
   type BulkOperation,
   type RepoPullLocalChangesMode,
   type RepoSummary,
@@ -58,6 +60,7 @@ import {
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
 import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
+import ContributionIdentityRecommendations from "../components/ContributionIdentityRecommendations.vue";
 import HomeContributionCard from "../components/home/HomeContributionCard.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
@@ -91,6 +94,10 @@ import {
   type RepoSortState,
   type SortDirection,
 } from "../utils/repoSort";
+import {
+  contributionIdentityKey,
+  mergeContributionIdentity,
+} from "../utils/contributionIdentities";
 
 const workspace = useWorkspace();
 const router = useRouter();
@@ -234,6 +241,11 @@ const repoStatusSort = ref<RepoStatusSortState>(
 );
 const homeOverviewSnapshot = shallowRef<HomeOverviewSnapshot | null>(null);
 const homeContributionSnapshot = shallowRef<GitHubContributionsState | null>(null);
+const homeContributionIdentityRecommendations = ref<ContributionIdentityRecommendationResult | null>(null);
+const homeContributionIdentityScanning = ref(false);
+const homeContributionIdentitySavingKey = ref<string | null>(null);
+const homeContributionIdentityError = ref<string | null>(null);
+const homeContributionIdentityPanelOpen = ref(false);
 const componentEpoch = useComponentEpoch();
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
@@ -343,12 +355,12 @@ function commitHomeContributionSnapshot() {
   homeContributionSnapshot.value = cloneContributions(workspace.state.githubContributions);
 }
 
-async function refreshHomeContributionSnapshot() {
+async function refreshHomeContributionSnapshot(options: { requireReady?: boolean } = {}) {
   const generation = ++homeContributionRefreshGeneration;
   await workspace.refreshRepoContributions();
   await nextTick();
   await waitForOverviewContributionRefresh();
-  if (generation !== homeContributionRefreshGeneration || !workspace.isReady.value) {
+  if (generation !== homeContributionRefreshGeneration || (options.requireReady !== false && !workspace.isReady.value)) {
     return;
   }
   commitHomeContributionSnapshot();
@@ -399,6 +411,14 @@ const totalContributions = computed(() =>
 const hasContributionDays = computed(() => overviewContributions.value.days.length > 0);
 const skippedContributionRepoCount = computed(() =>
   overviewContributions.value.meta?.skippedRepoCount ?? 0,
+);
+const homeContributionIdentityPanelVisible = computed(() =>
+  homeContributionIdentityPanelOpen.value
+  && (
+    homeContributionIdentityScanning.value
+    || homeContributionIdentityError.value !== null
+    || homeContributionIdentityRecommendations.value !== null
+  ),
 );
 const homeRepoById = computed(() =>
   new Map(overviewCodeRepos.value.map((repo) => [repo.id, repo])),
@@ -1277,6 +1297,52 @@ async function refreshOverviewContributions() {
   await refreshHomeContributionSnapshot();
 }
 
+async function scanHomeContributionIdentities() {
+  if (homeContributionIdentityScanning.value || homeContributionIdentitySavingKey.value) return;
+  homeContributionIdentityPanelOpen.value = true;
+  homeContributionIdentityScanning.value = true;
+  homeContributionIdentityError.value = null;
+  try {
+    const result = await workspace.scanContributionIdentities();
+    if (!componentEpoch.assertAlive()) return;
+    homeContributionIdentityRecommendations.value = result;
+  } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
+    homeContributionIdentityError.value = String(err);
+  } finally {
+    if (componentEpoch.assertAlive()) homeContributionIdentityScanning.value = false;
+  }
+}
+
+async function adoptHomeContributionIdentity(recommendation: ContributionIdentityRecommendation) {
+  const key = contributionIdentityKey(recommendation.identity);
+  if (homeContributionIdentityScanning.value || homeContributionIdentitySavingKey.value) return;
+  homeContributionIdentitySavingKey.value = key;
+  homeContributionIdentityError.value = null;
+  try {
+    const current = workspace.state.settings?.contributionIdentities ?? [];
+    await workspace.setContributionIdentities(mergeContributionIdentity(current, recommendation.identity));
+    if (!componentEpoch.assertAlive()) return;
+    if (homeContributionIdentityRecommendations.value) {
+      homeContributionIdentityRecommendations.value = {
+        ...homeContributionIdentityRecommendations.value,
+        recommendations: homeContributionIdentityRecommendations.value.recommendations.filter(
+          (item) => contributionIdentityKey(item.identity) !== key,
+        ),
+      };
+    }
+    if (!workspace.state.repos.length) {
+      await workspace.refreshRepos();
+    }
+    await refreshHomeContributionSnapshot({ requireReady: false });
+  } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
+    homeContributionIdentityError.value = String(err);
+  } finally {
+    if (componentEpoch.assertAlive()) homeContributionIdentitySavingKey.value = null;
+  }
+}
+
 function waitForOverviewContributionRefresh() {
   if (!workspace.state.githubContributions.loading) return Promise.resolve();
   return new Promise<void>((resolve) => {
@@ -1635,16 +1701,29 @@ function bulkOperationDescription(operation: BulkOperation) {
       </div>
 
       <div class="overview-grid">
-        <HomeContributionCard
-          :loading="overviewContributions.loading"
-          :error="overviewContributions.error"
-          :total-contributions="totalContributions"
-          :skipped-repo-count="skippedContributionRepoCount"
-          :skipped-repo-action-to="CONTRIBUTION_SETTINGS_ROUTE"
-          :has-contribution-days="hasContributionDays"
-          :chart-model="contributionHeatmapModel"
-          @retry="refreshOverviewContributions"
-        />
+        <div class="contribution-stack">
+          <HomeContributionCard
+            :loading="overviewContributions.loading"
+            :error="overviewContributions.error"
+            :total-contributions="totalContributions"
+            :skipped-repo-count="skippedContributionRepoCount"
+            skipped-repo-action-button
+            :skipped-repo-action-disabled="homeContributionIdentityScanning || Boolean(homeContributionIdentitySavingKey)"
+            :has-contribution-days="hasContributionDays"
+            :chart-model="contributionHeatmapModel"
+            @retry="refreshOverviewContributions"
+            @resolve-skipped="scanHomeContributionIdentities"
+          />
+          <ContributionIdentityRecommendations
+            v-if="homeContributionIdentityPanelVisible"
+            :result="homeContributionIdentityRecommendations"
+            :loading="homeContributionIdentityScanning"
+            :saving-key="homeContributionIdentitySavingKey"
+            :error="homeContributionIdentityError"
+            :settings-to="CONTRIBUTION_SETTINGS_ROUTE"
+            @adopt="adoptHomeContributionIdentity"
+          />
+        </div>
 
         <div class="card language-card">
           <div class="card-heading">
@@ -2068,6 +2147,15 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .overview-grid > .card {
   margin-bottom: 0;
+}
+
+.contribution-stack {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
 }
 
 .setup-step {

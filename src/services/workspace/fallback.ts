@@ -11,6 +11,7 @@ import type {
   CommitDetail,
   CommitFileChange,
   CommitSummary,
+  ContributionIdentityRecommendationResult,
   GitHubActionNotification,
   GitHubAccountIssueItem,
   GitHubAttachWorkflowArtifactAssetRequest,
@@ -2391,6 +2392,7 @@ let fallbackRepoOverrides: Record<string, RepoSummary> = {};
 let fallbackTaskIndex = 1;
 let fallbackTasks: WorkspaceTask[] = [];
 let fallbackStartupCache: WorkspaceStartupCache | null = null;
+let fallbackContributionIdentityRecommendations: ContributionIdentityRecommendationResult | null = null;
 
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
@@ -2463,6 +2465,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackTaskIndex = 1;
   fallbackTasks = [];
   fallbackStartupCache = null;
+  fallbackContributionIdentityRecommendations = null;
   for (const key of Object.keys(fallbackLaunchStatuses)) {
     delete fallbackLaunchStatuses[key];
   }
@@ -2495,6 +2498,12 @@ export function setFallbackRepoContributionOverrideForTests(
   override: ((repoFullName: string) => GitHubContributionResult) | null,
 ) {
   fallbackRepoContributionOverride = override;
+}
+
+export function setFallbackContributionIdentityRecommendationsForTests(
+  result: ContributionIdentityRecommendationResult | null,
+) {
+  fallbackContributionIdentityRecommendations = result ? cloneContributionIdentityRecommendationResult(result) : null;
 }
 
 export function setFallbackGitHubWorkflowRunsOverrideForTests(
@@ -2914,6 +2923,23 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
   };
 }
 
+function cloneContributionIdentityRecommendationResult(
+  result: ContributionIdentityRecommendationResult,
+): ContributionIdentityRecommendationResult {
+  return {
+    scannedRepoCount: result.scannedRepoCount,
+    skippedRepoCount: result.skippedRepoCount,
+    recommendations: result.recommendations.map((recommendation) => ({
+      identity: { ...recommendation.identity },
+      confidence: recommendation.confidence,
+      missedCommitCount: recommendation.missedCommitCount,
+      repoCount: recommendation.repoCount,
+      latestCommitAt: recommendation.latestCommitAt,
+      repos: recommendation.repos.map((repo) => ({ ...repo })),
+    })),
+  };
+}
+
 export function setFallbackRepoFilesForTests(filesByRepo: Record<string, Record<string, RepoFileTreeEntry[]>>) {
   fallbackRepoFiles = Object.fromEntries(
     Object.entries(filesByRepo).map(([repoId, directories]) => [
@@ -3101,6 +3127,18 @@ export function setContributionIdentities(
     fallbackStartupCache = null;
     return cloneWorkspaceSettings(fallbackSettings);
   });
+}
+
+export function scanContributionIdentities(): Promise<ContributionIdentityRecommendationResult> {
+  return call("workspace_scan_contribution_identities", undefined, () =>
+    cloneContributionIdentityRecommendationResult(
+      fallbackContributionIdentityRecommendations ?? {
+        scannedRepoCount: visibleManagedFallbackRepos().length,
+        skippedRepoCount: 0,
+        recommendations: [],
+      },
+    ),
+  );
 }
 
 export function setRepoSetting(

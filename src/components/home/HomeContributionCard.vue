@@ -9,12 +9,15 @@ defineProps<{
   totalContributions: number;
   skippedRepoCount: number;
   skippedRepoActionTo?: RouteLocationRaw;
+  skippedRepoActionButton?: boolean;
+  skippedRepoActionDisabled?: boolean;
   hasContributionDays: boolean;
   chartModel: ContributionHeatmapModel;
 }>();
 
 defineEmits<{
   retry: [];
+  resolveSkipped: [];
 }>();
 </script>
 
@@ -34,9 +37,19 @@ defineEmits<{
         <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
         <p v-if="skippedRepoCount > 0" class="contribution-notice">
           已跳过 {{ skippedRepoCount }} 个不可读取仓库
-          <template v-if="skippedRepoActionTo">
+          <template v-if="skippedRepoActionButton || skippedRepoActionTo">
             <span aria-hidden="true"> · </span>
+            <button
+              v-if="skippedRepoActionButton"
+              type="button"
+              class="contribution-notice__action contribution-notice__button"
+              :disabled="skippedRepoActionDisabled"
+              @click="$emit('resolveSkipped')"
+            >
+              处理
+            </button>
             <RouterLink
+              v-else-if="skippedRepoActionTo"
               class="contribution-notice__action"
               :to="skippedRepoActionTo"
             >
@@ -123,6 +136,19 @@ defineEmits<{
   color: var(--accent);
   font-weight: 600;
   text-decoration: none;
+}
+
+.contribution-notice__button {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+}
+
+.contribution-notice__button:disabled {
+  color: var(--text-subtle);
+  cursor: default;
 }
 
 .contribution-notice__action:hover {

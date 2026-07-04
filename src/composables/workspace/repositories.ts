@@ -1013,6 +1013,11 @@ export async function setContributionIdentities(
   return state.settings;
 }
 
+export async function scanContributionIdentities() {
+  const service = await loadWorkspaceService();
+  return service.scanContributionIdentities();
+}
+
 export async function forgetRemoteRepo(fullName: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.forgetRemoteRepo(fullName);

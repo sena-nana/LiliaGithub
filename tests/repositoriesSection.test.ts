@@ -83,7 +83,14 @@ const workspace = vi.hoisted(() => ({
   }),
   setContributionIdentities: vi.fn(async (identities) => {
     workspace.state.settings.contributionIdentities = identities;
+    return workspace.state.settings;
   }),
+  scanContributionIdentities: vi.fn(async () => ({
+    scannedRepoCount: 1,
+    skippedRepoCount: 0,
+    recommendations: [],
+  })),
+  refreshRepoContributions: vi.fn(),
 }));
 
 vi.mock("../src/composables/useWorkspace", () => ({
@@ -117,6 +124,12 @@ describe("RepositoriesSection", () => {
     workspace.unbindGitHub.mockClear();
     workspace.chooseWorkspaceRoot.mockClear();
     workspace.setContributionIdentities.mockClear();
+    workspace.scanContributionIdentities.mockResolvedValue({
+      scannedRepoCount: 1,
+      skippedRepoCount: 0,
+      recommendations: [],
+    });
+    workspace.refreshRepoContributions.mockClear();
     workspace.listHiddenRepos.mockResolvedValue([]);
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
     vi.mocked(createGitHubRepo).mockReset();
@@ -182,6 +195,49 @@ describe("RepositoriesSection", () => {
       ]);
     });
     expect(within(panel).getByText("已保存")).toBeInTheDocument();
+  });
+
+  it("扫描贡献身份推荐并采纳到现有列表", async () => {
+    workspace.state.settings.contributionIdentities = [
+      { name: "Lilia User", email: "lilia@example.com" },
+    ];
+    workspace.scanContributionIdentities.mockResolvedValue({
+      scannedRepoCount: 2,
+      skippedRepoCount: 0,
+      recommendations: [
+        {
+          identity: { name: "Legacy Lilia", email: "LEGACY@EXAMPLE.COM" },
+          confidence: "relatedAuthor",
+          missedCommitCount: 3,
+          repoCount: 1,
+          latestCommitAt: 1_780_000_000,
+          repos: [
+            {
+              repoId: "LiliaGithub",
+              repoName: "LiliaGithub",
+              source: "recentAuthor",
+              commitCount: 3,
+              latestCommitAt: 1_780_000_000,
+            },
+          ],
+        },
+      ],
+    });
+    render(RepositoriesSection);
+
+    const panel = screen.getByRole("region", { name: "贡献身份" });
+    await fireEvent.click(within(panel).getByRole("button", { name: "扫描推荐" }));
+
+    expect(await within(panel).findByText("Legacy Lilia <LEGACY@EXAMPLE.COM>")).toBeInTheDocument();
+    await fireEvent.click(within(panel).getByRole("button", { name: "采纳" }));
+
+    await waitFor(() => {
+      expect(workspace.setContributionIdentities).toHaveBeenCalledWith([
+        { name: "Lilia User", email: "lilia@example.com" },
+        { name: "Legacy Lilia", email: "legacy@example.com" },
+      ]);
+    });
+    expect(workspace.refreshRepoContributions).toHaveBeenCalledTimes(1);
   });
 
   it("展示已切到系统 git 凭证的仓库并提供恢复默认 token 入口", async () => {

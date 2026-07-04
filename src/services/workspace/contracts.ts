@@ -6,6 +6,7 @@ import type {
   CommitDetail,
   CommitSummary,
   ContributionIdentity,
+  ContributionIdentityRecommendationResult,
   GitHubBindingStatus,
   GitHubActionNotification,
   GitHubAttachWorkflowArtifactAssetRequest,
@@ -101,6 +102,7 @@ export interface WorkspaceCommandContracts {
     { identities: ContributionIdentity[] },
     WorkspaceSettings
   >;
+  workspace_scan_contribution_identities: CommandContract<NoArgs, ContributionIdentityRecommendationResult>;
   repo_set_preference: CommandContract<{ repoId: string; key: keyof RepoSyncPreference; value: boolean }, WorkspaceSettings>;
   repo_set_auto_sync: CommandContract<{ repoId: string; autoSync: boolean }, WorkspaceSettings>;
   workspace_pick_root: CommandContract<NoArgs, Maybe<string>>;
