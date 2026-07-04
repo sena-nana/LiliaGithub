@@ -89,6 +89,50 @@ pub struct ContributionIdentity {
     pub email: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributionIdentityRecommendationResult {
+    pub scanned_repo_count: usize,
+    pub skipped_repo_count: usize,
+    pub recommendations: Vec<ContributionIdentityRecommendation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributionIdentityRecommendation {
+    pub identity: ContributionIdentity,
+    pub confidence: ContributionIdentityRecommendationConfidence,
+    pub missed_commit_count: usize,
+    pub repo_count: usize,
+    pub latest_commit_at: Option<i64>,
+    pub repos: Vec<ContributionIdentityRecommendationRepo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase")]
+pub enum ContributionIdentityRecommendationConfidence {
+    GitConfig,
+    RelatedAuthor,
+    SingleAuthor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributionIdentityRecommendationRepo {
+    pub repo_id: String,
+    pub repo_name: String,
+    pub source: ContributionIdentityRecommendationSource,
+    pub commit_count: usize,
+    pub latest_commit_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ContributionIdentityRecommendationSource {
+    GitConfig,
+    RecentAuthor,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoSyncPreference {

@@ -60,6 +60,33 @@ export interface ContributionIdentity {
   email?: string | null;
 }
 
+export interface ContributionIdentityRecommendationResult {
+  scannedRepoCount: number;
+  skippedRepoCount: number;
+  recommendations: ContributionIdentityRecommendation[];
+}
+
+export interface ContributionIdentityRecommendation {
+  identity: ContributionIdentity;
+  confidence: ContributionIdentityRecommendationConfidence;
+  missedCommitCount: number;
+  repoCount: number;
+  latestCommitAt: number | null;
+  repos: ContributionIdentityRecommendationRepo[];
+}
+
+export type ContributionIdentityRecommendationConfidence = "gitConfig" | "relatedAuthor" | "singleAuthor";
+
+export interface ContributionIdentityRecommendationRepo {
+  repoId: string;
+  repoName: string;
+  source: ContributionIdentityRecommendationSource;
+  commitCount: number;
+  latestCommitAt: number | null;
+}
+
+export type ContributionIdentityRecommendationSource = "gitConfig" | "recentAuthor";
+
 export interface ProjectLaunchConfig {
   command: string;
   cwd: string | null;

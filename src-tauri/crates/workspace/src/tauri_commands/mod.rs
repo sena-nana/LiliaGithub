@@ -126,6 +126,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         settings::workspace_write_startup_contributions,
         settings::workspace_set_root,
         settings::workspace_set_contribution_identities,
+        settings::workspace_scan_contribution_identities,
         settings::repo_set_preference,
         settings::repo_set_auto_sync,
         settings::workspace_pick_root,

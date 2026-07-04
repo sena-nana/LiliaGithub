@@ -16,12 +16,20 @@ import {
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../../composables/useWorkspace";
+import ContributionIdentityRecommendations from "../../components/ContributionIdentityRecommendations.vue";
 import RepoCreateCard from "../../components/sidebar/RepoCreateCard.vue";
 import {
   type HiddenRepo,
   type ContributionIdentity,
+  type ContributionIdentityRecommendation,
+  type ContributionIdentityRecommendationResult,
   type WorkspaceTask,
 } from "../../services/workspace";
+import {
+  contributionIdentityKey,
+  mergeContributionIdentity,
+  normalizeContributionIdentities,
+} from "../../utils/contributionIdentities";
 
 const workspace = useWorkspace();
 const hiddenRepos = ref<HiddenRepo[]>([]);
@@ -41,6 +49,10 @@ const contributionIdentityDraft = ref<ContributionIdentity[]>([]);
 const editingContributionIdentityIndex = ref<number | null>(null);
 const savingContributionIdentities = ref(false);
 const contributionIdentitySaved = ref(false);
+const contributionIdentityRecommendations = ref<ContributionIdentityRecommendationResult | null>(null);
+const scanningContributionIdentities = ref(false);
+const adoptingContributionIdentityKey = ref<string | null>(null);
+const contributionRecommendationError = ref<string | null>(null);
 const componentEpoch = useComponentEpoch();
 const hiddenReposLoader = createLatestAsyncLoader({ componentEpoch });
 
@@ -92,12 +104,7 @@ function cloneContributionIdentities(identities: readonly ContributionIdentity[]
 }
 
 function normalizeContributionIdentityDraft() {
-  return contributionIdentityDraft.value
-    .map((identity) => ({
-      name: identity.name?.trim() || null,
-      email: identity.email?.trim().toLowerCase() || null,
-    }))
-    .filter((identity) => identity.name || identity.email);
+  return normalizeContributionIdentities(contributionIdentityDraft.value);
 }
 
 function isContributionIdentityEditing(index: number) {
@@ -151,6 +158,57 @@ async function saveContributionIdentity(index: number) {
   if (!canSaveContributionIdentity(index)) return;
   if (await saveContributionIdentities()) {
     editingContributionIdentityIndex.value = null;
+  }
+}
+
+async function scanContributionIdentities() {
+  if (scanningContributionIdentities.value || savingContributionIdentities.value) return;
+  scanningContributionIdentities.value = true;
+  contributionRecommendationError.value = null;
+  try {
+    const result = await workspace.scanContributionIdentities();
+    if (!componentEpoch.assertAlive()) return;
+    contributionIdentityRecommendations.value = result;
+  } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
+    contributionRecommendationError.value = String(err);
+  } finally {
+    if (componentEpoch.assertAlive()) scanningContributionIdentities.value = false;
+  }
+}
+
+async function adoptContributionIdentityRecommendation(recommendation: ContributionIdentityRecommendation) {
+  const key = contributionIdentityKey(recommendation.identity);
+  if (scanningContributionIdentities.value || savingContributionIdentities.value || adoptingContributionIdentityKey.value) {
+    return;
+  }
+  adoptingContributionIdentityKey.value = key;
+  savingContributionIdentities.value = true;
+  contributionIdentitySaved.value = false;
+  contributionRecommendationError.value = null;
+  try {
+    const identities = mergeContributionIdentity(normalizeContributionIdentityDraft(), recommendation.identity);
+    const settings = await workspace.setContributionIdentities(identities);
+    if (!componentEpoch.assertAlive()) return;
+    contributionIdentityDraft.value = cloneContributionIdentities(settings.contributionIdentities);
+    contributionIdentitySaved.value = true;
+    contributionIdentityRecommendations.value = contributionIdentityRecommendations.value
+      ? {
+        ...contributionIdentityRecommendations.value,
+        recommendations: contributionIdentityRecommendations.value.recommendations.filter(
+          (item) => contributionIdentityKey(item.identity) !== key,
+        ),
+      }
+      : null;
+    void workspace.refreshRepoContributions();
+  } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
+    contributionRecommendationError.value = String(err);
+  } finally {
+    if (componentEpoch.assertAlive()) {
+      adoptingContributionIdentityKey.value = null;
+      savingContributionIdentities.value = false;
+    }
   }
 }
 
@@ -416,15 +474,35 @@ onUnmounted(() => {
             <h3 id="contribution-identity-list-title" tabindex="-1">贡献身份</h3>
             <p>热度图只统计这些名称或邮箱对应的本地提交。</p>
           </div>
-          <button
-            type="button"
-            class="ghost"
-            data-agent-id="settings.repositories.contribution-identities.add"
-            @click="addContributionIdentity"
-          >
-            添加身份
-          </button>
+          <div class="contribution-identity-list__head-actions">
+            <button
+              type="button"
+              class="ghost"
+              :disabled="scanningContributionIdentities || savingContributionIdentities || Boolean(adoptingContributionIdentityKey)"
+              @click="scanContributionIdentities"
+            >
+              <LoaderCircle v-if="scanningContributionIdentities" :size="14" aria-hidden="true" class="sb-spin" />
+              <Radar v-else :size="14" aria-hidden="true" />
+              扫描推荐
+            </button>
+            <button
+              type="button"
+              class="ghost"
+              data-agent-id="settings.repositories.contribution-identities.add"
+              @click="addContributionIdentity"
+            >
+              添加身份
+            </button>
+          </div>
         </div>
+        <ContributionIdentityRecommendations
+          v-if="contributionIdentityRecommendations || scanningContributionIdentities || contributionRecommendationError"
+          :result="contributionIdentityRecommendations"
+          :loading="scanningContributionIdentities"
+          :saving-key="adoptingContributionIdentityKey"
+          :error="contributionRecommendationError"
+          @adopt="adoptContributionIdentityRecommendation"
+        />
         <div class="contribution-identity-list__rows">
           <div
             v-for="(identity, index) in contributionIdentityDraft"
@@ -736,6 +814,20 @@ onUnmounted(() => {
   margin: 2px 0 0;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.contribution-identity-list__head-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.contribution-identity-list__head-actions .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .contribution-identity-list__rows {
