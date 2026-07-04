@@ -84,6 +84,8 @@ import {
   DEFAULT_REPO_SORT,
   compareRepoSortItems,
   nextRepoSort,
+  nextRepoSortDisplayLabel,
+  repoSortDisplayLabel,
   readRepoSort,
   writeRepoSort,
   type RepoSortState,
@@ -481,7 +483,7 @@ const activeRepoStatusSortOption = computed(() =>
   repoStatusSortOption(repoStatusSort.value.sort) ?? defaultRepoStatusSortOption,
 );
 const repoStatusSortLabel = computed(() =>
-  `${activeRepoStatusSortOption.value.label} ${repoStatusSort.value.direction === "asc" ? "↑" : "↓"}`,
+  repoSortDisplayLabel(activeRepoStatusSortOption.value, repoStatusSort.value.direction),
 );
 const repoStatusSortIcon = computed(() => activeRepoStatusSortOption.value.icon);
 const repoStatusHeadingSummary = computed(() =>
@@ -1161,7 +1163,7 @@ function openRepoStatusSortMenu(event: MouseEvent) {
     (rect?.bottom ?? event.clientY) + 4,
     repoStatusSortOptions.map((option) => ({
       id: `home.repo-status.sort.${option.value}`,
-      label: option.label,
+      label: nextRepoSortDisplayLabel(repoStatusSort.value, option),
       icon: option.icon,
       onSelect: () => selectRepoStatusSort(option),
     })),

@@ -230,8 +230,8 @@ describe("Home cold start pending items", () => {
       "sena-nana/ZetaArchive",
     ]);
 
-    await fireEvent.click(screen.getByRole("button", { name: /仓库排序：最近更新 ↓/ }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: "首字母" }));
+    await fireEvent.click(screen.getByRole("button", { name: /仓库排序：最近更新 新到旧/ }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "首字母 A-Z" }));
 
     await expectRepoStatusOrder([
       "sena-nana/Alpha",
@@ -240,8 +240,8 @@ describe("Home cold start pending items", () => {
       "sena-nana/ZetaArchive",
     ]);
 
-    await fireEvent.click(screen.getByRole("button", { name: /仓库排序：首字母 ↑/ }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: "首字母" }));
+    await fireEvent.click(screen.getByRole("button", { name: /仓库排序：首字母 A-Z/ }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "首字母 Z-A" }));
 
     await expectRepoStatusOrder([
       "sena-nana/Gamma",
