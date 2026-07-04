@@ -1798,6 +1798,18 @@ describe("基础路由", () => {
     expect(screen.getByRole("img", { name: "本地提交贡献图" })).toBeInTheDocument();
   });
 
+  it("设置页仓库 tab 支持贡献身份 hash 定位", async () => {
+    const { router } = await renderAt("/settings?tab=repositories#contribution-identity-list-title");
+
+    expect(router.currentRoute.value.fullPath).toBe(
+      "/settings?tab=repositories#contribution-identity-list-title",
+    );
+    expect(await screen.findByRole("heading", { level: 1, name: "仓库" })).toBeInTheDocument();
+    const contributionHeading = await screen.findByRole("heading", { level: 3, name: "贡献身份" });
+    expect(screen.getByRole("region", { name: "贡献身份" })).toBeInTheDocument();
+    await waitFor(() => expect(contributionHeading).toHaveFocus());
+  });
+
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
     await renderAt("/");
 

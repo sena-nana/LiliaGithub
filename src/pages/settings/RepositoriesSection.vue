@@ -316,7 +316,7 @@ onUnmounted(() => {
       <section class="contribution-identity-list" aria-labelledby="contribution-identity-list-title">
         <div class="contribution-identity-list__head">
           <div>
-            <h3 id="contribution-identity-list-title">贡献身份</h3>
+            <h3 id="contribution-identity-list-title" tabindex="-1">贡献身份</h3>
             <p>热度图只统计这些名称或邮箱对应的本地提交。</p>
           </div>
           <button
