@@ -66,6 +66,11 @@ const workspace = vi.hoisted(() => ({
   deviceFlow: { value: null },
   authRemainingText: { value: null },
   startAuthFlow: vi.fn(),
+  unbindGitHub: vi.fn(async () => {
+    workspace.githubBinding.value = null;
+    workspace.state.settings.githubBinding = null;
+  }),
+  chooseWorkspaceRoot: vi.fn(async () => "D:\\NewWorkspace"),
   listHiddenRepos: vi.fn(async () => []),
   unhideRepo: vi.fn(),
   addLocalRepo: vi.fn(),
@@ -107,10 +112,59 @@ describe("RepositoriesSection", () => {
     workspace.state.authNotice = null;
     workspace.githubBinding.value = null;
     workspace.deviceFlow.value = null;
+    workspace.authBindingStatusText.value = "尚未绑定 GitHub";
+    workspace.workspaceRoot.value = "C:\\\\Files\\\\workspace";
+    workspace.unbindGitHub.mockClear();
+    workspace.chooseWorkspaceRoot.mockClear();
     workspace.setContributionIdentities.mockClear();
     workspace.listHiddenRepos.mockResolvedValue([]);
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
     vi.mocked(createGitHubRepo).mockReset();
+  });
+
+  it("展示当前工作区并提供更换入口", async () => {
+    render(RepositoriesSection);
+
+    expect(screen.getByText("C:\\\\Files\\\\workspace")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "更换工作区" }));
+
+    await waitFor(() => {
+      expect(workspace.chooseWorkspaceRoot).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("已绑定 GitHub 时通过二次确认解绑", async () => {
+    workspace.githubBinding.value = {
+      login: "lilia-user",
+      avatarUrl: null,
+      boundAt: 1,
+      scopes: ["repo"],
+      clientIdSource: "bundled",
+    };
+    workspace.state.settings.githubBinding = workspace.githubBinding.value;
+    workspace.authBindingStatusText.value = "GitHub 已授权";
+
+    render(RepositoriesSection);
+
+    await fireEvent.click(screen.getByRole("button", { name: "解绑 GitHub" }));
+    expect(screen.getByRole("button", { name: "确认解绑" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "确认解绑" }));
+
+    await waitFor(() => {
+      expect(workspace.unbindGitHub).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "确认解绑" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("未绑定 GitHub 时不显示解绑入口", () => {
+    render(RepositoriesSection);
+
+    expect(screen.getByRole("button", { name: "绑定 GitHub" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "解绑 GitHub" })).not.toBeInTheDocument();
   });
 
   it("保存贡献身份映射", async () => {

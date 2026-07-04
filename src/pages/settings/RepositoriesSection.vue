@@ -5,6 +5,7 @@ import {
   GitBranchPlus,
   KeyRound,
   LoaderCircle,
+  LogOut,
   Pencil,
   Radar,
   RotateCcw,
@@ -29,6 +30,9 @@ const restoringRepoId = ref<string | null>(null);
 const resettingSystemGitRepoId = ref<string | null>(null);
 const discovering = ref(false);
 const addingRepo = ref(false);
+const choosingWorkspaceRoot = ref(false);
+const confirmingGitHubUnbind = ref(false);
+const unbindingGitHub = ref(false);
 const createDialogOpen = ref(false);
 const error = ref<string | null>(null);
 const cancellingTaskIds = ref<string[]>([]);
@@ -223,6 +227,35 @@ async function discoverRepos() {
   }
 }
 
+async function chooseWorkspaceRoot() {
+  choosingWorkspaceRoot.value = true;
+  error.value = null;
+  try {
+    await workspace.chooseWorkspaceRoot();
+  } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
+    error.value = String(err);
+  } finally {
+    if (componentEpoch.assertAlive()) choosingWorkspaceRoot.value = false;
+  }
+}
+
+async function confirmGitHubUnbind() {
+  if (unbindingGitHub.value) return;
+  unbindingGitHub.value = true;
+  error.value = null;
+  try {
+    await workspace.unbindGitHub();
+    if (!componentEpoch.assertAlive()) return;
+    confirmingGitHubUnbind.value = false;
+  } catch (err) {
+    if (!componentEpoch.assertAlive()) return;
+    error.value = String(err);
+  } finally {
+    if (componentEpoch.assertAlive()) unbindingGitHub.value = false;
+  }
+}
+
 function openCreateDialog() {
   createDialogOpen.value = true;
 }
@@ -260,6 +293,13 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => workspace.githubBinding.value,
+  (binding) => {
+    if (!binding) confirmingGitHubUnbind.value = false;
+  },
+);
+
 onUnmounted(() => {
   hiddenReposLoader.invalidate();
 });
@@ -269,15 +309,35 @@ onUnmounted(() => {
   <div class="card">
     <h2>仓库</h2>
     <div class="repo-settings">
-      <div class="github-binding-panel">
-        <div class="github-binding-panel__body">
+      <div class="settings-panel">
+        <div class="settings-panel__body">
+          <strong>工作区</strong>
+          <span :title="workspace.workspaceRoot.value ?? undefined">
+            {{ workspace.workspaceRoot.value ?? "尚未选择工作区" }}
+          </span>
+          <p>应用会扫描该文件夹下的 Git 仓库。</p>
+        </div>
+        <button
+          type="button"
+          class="ghost"
+          data-agent-id="settings.repositories.workspace-root.change"
+          :disabled="choosingWorkspaceRoot"
+          @click="chooseWorkspaceRoot"
+        >
+          <LoaderCircle v-if="choosingWorkspaceRoot" :size="14" aria-hidden="true" class="sb-spin" />
+          <FolderGit2 v-else :size="14" aria-hidden="true" />
+          更换工作区
+        </button>
+      </div>
+      <div class="settings-panel">
+        <div class="settings-panel__body">
           <strong>{{ workspace.githubBinding.value?.login ?? "GitHub 授权" }}</strong>
           <span>{{ workspace.authBindingStatusText.value }}</span>
           <p v-if="workspace.deviceFlow.value">
             设备码 <code>{{ workspace.deviceFlow.value.userCode }}</code>
             <template v-if="workspace.authRemainingText.value"> · 剩余 {{ workspace.authRemainingText.value }}</template>
           </p>
-          <p v-if="workspace.state.authNotice" class="github-binding-panel__notice">
+          <p v-if="workspace.state.authNotice" class="settings-panel__notice">
             {{ workspace.state.authNotice }}
           </p>
           <p v-else-if="workspace.githubBinding.value">
@@ -285,17 +345,54 @@ onUnmounted(() => {
           </p>
           <p v-else>绑定后可加载账号仓库、创建仓库并执行 GitHub 同步操作。</p>
         </div>
-        <button
-          type="button"
-          class="primary"
-          data-agent-id="settings.repositories.github.bind"
-          :disabled="workspace.state.authLoading"
-          @click="workspace.startAuthFlow"
-        >
-          <LoaderCircle v-if="workspace.state.authLoading" :size="14" aria-hidden="true" class="sb-spin" />
-          <ShieldCheck v-else :size="14" aria-hidden="true" />
-          {{ workspace.githubBinding.value || workspace.deviceFlow.value ? "重新绑定 GitHub" : "绑定 GitHub" }}
-        </button>
+        <div class="settings-panel__actions">
+          <button
+            type="button"
+            class="primary"
+            data-agent-id="settings.repositories.github.bind"
+            :disabled="workspace.state.authLoading || unbindingGitHub"
+            @click="workspace.startAuthFlow"
+          >
+            <LoaderCircle v-if="workspace.state.authLoading" :size="14" aria-hidden="true" class="sb-spin" />
+            <ShieldCheck v-else :size="14" aria-hidden="true" />
+            {{ workspace.githubBinding.value || workspace.deviceFlow.value ? "重新绑定 GitHub" : "绑定 GitHub" }}
+          </button>
+          <template v-if="workspace.githubBinding.value">
+            <button
+              v-if="confirmingGitHubUnbind"
+              type="button"
+              class="ghost danger"
+              data-agent-id="settings.repositories.github.unbind.confirm"
+              :disabled="unbindingGitHub"
+              @click="confirmGitHubUnbind"
+            >
+              <LoaderCircle v-if="unbindingGitHub" :size="14" aria-hidden="true" class="sb-spin" />
+              <LogOut v-else :size="14" aria-hidden="true" />
+              确认解绑
+            </button>
+            <button
+              v-else
+              type="button"
+              class="ghost"
+              data-agent-id="settings.repositories.github.unbind"
+              :disabled="workspace.state.authLoading || unbindingGitHub"
+              @click="confirmingGitHubUnbind = true"
+            >
+              <LogOut :size="14" aria-hidden="true" />
+              解绑 GitHub
+            </button>
+            <button
+              v-if="confirmingGitHubUnbind"
+              type="button"
+              class="ghost"
+              data-agent-id="settings.repositories.github.unbind.cancel"
+              :disabled="unbindingGitHub"
+              @click="confirmingGitHubUnbind = false"
+            >
+              取消
+            </button>
+          </template>
+        </div>
       </div>
       <div class="repo-settings__actions">
         <button type="button" class="ghost" data-agent-id="settings.repositories.add-local" :disabled="addingRepo" @click="addLocalRepo">
@@ -525,7 +622,7 @@ onUnmounted(() => {
   margin: 4px 0;
 }
 
-.github-binding-panel {
+.settings-panel {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -537,13 +634,13 @@ onUnmounted(() => {
   background: var(--bg-subtle);
 }
 
-.github-binding-panel__body {
+.settings-panel__body {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-.github-binding-panel__body strong {
+.settings-panel__body strong {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
@@ -553,20 +650,44 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.github-binding-panel__body span,
-.github-binding-panel__body p {
+.settings-panel__body span,
+.settings-panel__body p {
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 
-.github-binding-panel__notice {
+.settings-panel__body span {
+  color: var(--text);
+}
+
+.settings-panel__notice {
   color: var(--accent);
 }
 
-.github-binding-panel .primary {
+.settings-panel > .ghost,
+.settings-panel__actions {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-panel__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.settings-panel__actions .primary,
+.settings-panel__actions .ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-panel__actions .danger {
+  color: var(--err);
 }
 
 .repo-settings__actions {

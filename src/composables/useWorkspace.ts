@@ -19,6 +19,7 @@ import {
 import {
   startAuthFlow,
   pollAuthFlow,
+  unbindGitHub,
 } from "./workspace/auth";
 import {
   abortConflictOperation,
@@ -146,6 +147,7 @@ export function useWorkspace() {
     listHiddenRepos,
     startAuthFlow,
     pollAuthFlow,
+    unbindGitHub,
     loadRepoDetail,
     clearRepoLocalCache,
     loadLaunch,
