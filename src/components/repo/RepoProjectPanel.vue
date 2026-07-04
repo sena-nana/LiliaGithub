@@ -58,6 +58,7 @@ import {
   getGitHubIssueFilterMetadata,
   getGitHubPullRequestDiscussion,
   getGitHubRepoManagement,
+  listGitHubBranches,
   listRepoFiles,
   listGitHubIssues,
   listGitHubReleases,
@@ -78,6 +79,7 @@ import {
   isGitHubBindingExpiredError,
 } from "../../services/workspace/client";
 import type {
+  BranchSummary,
   CommitSummary,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubDiscussionTimelineItem,
@@ -93,6 +95,7 @@ import type {
   GitHubRelease,
   GitHubReleaseAsset,
   GitHubRepoManagement,
+  GitHubRepoSettingsSectionKey,
   GitHubUpdateReleaseRequest,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
@@ -135,6 +138,7 @@ import {
   preloadRepoProjectSection,
   type RepoProjectSectionKey,
 } from "./repoProjectSectionModules";
+import RepoSettingsApiSection from "./settings/RepoSettingsApiSection.vue";
 import {
   blankIssueTemplate,
   blankPullRequestTemplate,
@@ -437,8 +441,15 @@ const remoteDeleted = ref(false);
 const deleteDialogTarget = ref<DeleteTarget | null>(null);
 const deleteConfirmInput = ref("");
 const deleteError = ref<string | null>(null);
+const archiveDialogOpen = ref(false);
+const archiveConfirmInput = ref("");
+const archiveError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
+const activeSettingsApiSection = ref<GitHubRepoSettingsSectionKey | null>(null);
+const settingsBranches = ref<BranchSummary[]>([]);
+const settingsBranchesLoading = ref(false);
+const settingsBranchesError = ref<string | null>(null);
 const issues = ref<GitHubIssue[]>([]);
 const milestoneIssues = ref<GitHubIssue[]>([]);
 const milestonePulls = ref<GitHubPullRequest[]>([]);
@@ -540,7 +551,9 @@ const releaseAssetUploadTracker = createPendingTaskTracker();
 const releaseAssetDeleteTracker = createPendingTaskTracker();
 const remoteDeleteTracker = createPendingTaskTracker();
 const localDeleteTracker = createPendingTaskTracker();
+const archiveSettingsTracker = createPendingTaskTracker();
 const savingSettings = settingsSaveTracker.running;
+const archivingSettings = archiveSettingsTracker.running;
 const creatingIssue = issueCreateTracker.running;
 const updatingIssue = issueUpdateTracker.running;
 const creatingPullRequest = pullCreateTracker.running;
@@ -577,25 +590,36 @@ const settingsForm = reactive({
   homepage: "",
   topics: [] as string[],
   private: false,
+  visibility: "public",
+  defaultBranch: "",
+  isTemplate: false,
   hasIssues: true,
   hasWiki: false,
   hasProjects: true,
   hasDiscussions: false,
+  hasPullRequests: true,
+  pullRequestCreationPolicy: "all",
   allowMergeCommit: true,
   allowSquashMerge: true,
   allowRebaseMerge: true,
   allowAutoMerge: false,
   deleteBranchOnMerge: false,
+  allowUpdateBranch: false,
   allowForking: true,
   webCommitSignoffRequired: false,
+  squashMergeCommitTitle: "COMMIT_OR_PR_TITLE",
+  squashMergeCommitMessage: "COMMIT_MESSAGES",
+  mergeCommitTitle: "MERGE_MESSAGE",
+  mergeCommitMessage: "PR_TITLE",
 });
 type SettingsSwitchKey = keyof Pick<
   typeof settingsForm,
-  | "private"
+  | "isTemplate"
   | "hasIssues"
   | "hasWiki"
   | "hasProjects"
   | "hasDiscussions"
+  | "hasPullRequests"
   | "allowForking"
   | "webCommitSignoffRequired"
   | "allowMergeCommit"
@@ -603,6 +627,7 @@ type SettingsSwitchKey = keyof Pick<
   | "allowRebaseMerge"
   | "allowAutoMerge"
   | "deleteBranchOnMerge"
+  | "allowUpdateBranch"
 >;
 type SettingsSwitchItem = { key: SettingsSwitchKey; label: string; hint: string };
 type SettingsSwitchGroup = {
@@ -618,9 +643,9 @@ const settingsSwitchGroups: readonly SettingsSwitchGroup[] = [
     titleId: "project-settings-access-title",
     agentPrefix: "feature",
     items: [
-      { key: "private", label: "Private", hint: "限制仓库访问范围。" },
-      { key: "allowForking", label: "Forking", hint: "允许其他用户 fork。" },
-      { key: "webCommitSignoffRequired", label: "Web signoff", hint: "要求网页提交签署。" },
+      { key: "isTemplate", label: "模板仓库", hint: "允许从该仓库生成新仓库。" },
+      { key: "allowForking", label: "允许 Fork", hint: "允许其他用户 fork。" },
+      { key: "webCommitSignoffRequired", label: "网页提交签署", hint: "要求网页提交签署。" },
     ],
   },
   {
@@ -630,20 +655,66 @@ const settingsSwitchGroups: readonly SettingsSwitchGroup[] = [
     items: [
       { key: "hasIssues", label: "Issues", hint: "启用问题跟踪。" },
       { key: "hasWiki", label: "Wiki", hint: "启用仓库 Wiki。" },
-      { key: "hasProjects", label: "Projects", hint: "启用项目看板。" },
-      { key: "hasDiscussions", label: "Discussions", hint: "启用社区讨论。" },
+      { key: "hasProjects", label: "项目看板", hint: "启用项目看板。" },
+      { key: "hasDiscussions", label: "讨论", hint: "启用社区讨论。" },
+      { key: "hasPullRequests", label: "拉取请求", hint: "允许创建 Pull Request。" },
     ],
   },
   {
-    title: "Pull Request / Merge",
+    title: "拉取请求与合并",
     titleId: "project-settings-merge-title",
     agentPrefix: "merge",
     items: [
-      { key: "allowMergeCommit", label: "Merge commit", hint: "允许创建 merge commit。" },
-      { key: "allowSquashMerge", label: "Squash", hint: "允许 squash 合并。" },
-      { key: "allowRebaseMerge", label: "Rebase", hint: "允许 rebase 合并。" },
-      { key: "allowAutoMerge", label: "Auto merge", hint: "允许满足条件后自动合并。" },
+      { key: "allowMergeCommit", label: "合并提交", hint: "允许创建 merge commit。" },
+      { key: "allowSquashMerge", label: "Squash 合并", hint: "允许 squash 合并。" },
+      { key: "allowRebaseMerge", label: "Rebase 合并", hint: "允许 rebase 合并。" },
+      { key: "allowAutoMerge", label: "自动合并", hint: "允许满足条件后自动合并。" },
       { key: "deleteBranchOnMerge", label: "合并后删分支", hint: "合并 Pull Request 后删除来源分支。" },
+      { key: "allowUpdateBranch", label: "更新分支", hint: "允许在 Pull Request 中更新分支。" },
+    ],
+  },
+];
+
+type SettingsApiSectionConfig = { key: GitHubRepoSettingsSectionKey; title: string; id: string };
+type SettingsApiGroupConfig = { title: string; sections: readonly SettingsApiSectionConfig[] };
+type SettingsNavigationSection = { id: string; label: string; agentId: string; apiKey?: GitHubRepoSettingsSectionKey };
+type SettingsNavigationCard = { id: string; title: string; sections: readonly SettingsNavigationSection[] };
+
+const settingsApiGroups: readonly SettingsApiGroupConfig[] = [
+  {
+    title: "访问权限",
+    sections: [
+      { key: "collaborators", title: "协作者", id: "project-settings-api-collaborators-title" },
+      { key: "moderation", title: "互动限制", id: "project-settings-api-moderation-title" },
+    ],
+  },
+  {
+    title: "代码与自动化",
+    sections: [
+      { key: "branches", title: "分支", id: "project-settings-api-branches-title" },
+      { key: "tags", title: "标签", id: "project-settings-api-tags-title" },
+      { key: "rules", title: "规则", id: "project-settings-api-rules-title" },
+      { key: "actions", title: "Actions", id: "project-settings-api-actions-title" },
+      { key: "webhooks", title: "Webhooks", id: "project-settings-api-webhooks-title" },
+      { key: "copilot", title: "Copilot", id: "project-settings-api-copilot-title" },
+      { key: "environments", title: "环境", id: "project-settings-api-environments-title" },
+      { key: "codespaces", title: "Codespaces", id: "project-settings-api-codespaces-title" },
+      { key: "pages", title: "Pages", id: "project-settings-api-pages-title" },
+    ],
+  },
+  {
+    title: "安全与质量",
+    sections: [
+      { key: "security", title: "高级安全", id: "project-settings-api-security-title" },
+      { key: "deployKeys", title: "部署密钥", id: "project-settings-api-deploy-keys-title" },
+      { key: "secretsVariables", title: "密钥与变量", id: "project-settings-api-secrets-variables-title" },
+    ],
+  },
+  {
+    title: "集成",
+    sections: [
+      { key: "githubApps", title: "GitHub Apps", id: "project-settings-api-github-apps-title" },
+      { key: "emailNotifications", title: "邮件通知", id: "project-settings-api-email-notifications-title" },
     ],
   },
 ];
@@ -760,25 +831,52 @@ const canDeleteLocal = computed(() => resolvedRepoContext.value.capabilities.del
 const canDeleteRemote = computed(() => resolvedRepoContext.value.capabilities.deleteRemote.available);
 const hasSettingsDangerSection = computed(() =>
   (canDeleteLocal.value && Boolean(props.repoPath)) ||
-  (canDeleteRemote.value && Boolean(settings.value)),
+  (canDeleteRemote.value && Boolean(settings.value)) ||
+  Boolean(settings.value),
 );
-const settingsNavigationItems = computed(() => {
-  const items = settings.value
+const settingsBranchOptions = computed(() => {
+  const names = settingsBranches.value.map((branch) => branch.name);
+  if (settingsForm.defaultBranch && !names.includes(settingsForm.defaultBranch)) names.unshift(settingsForm.defaultBranch);
+  return names;
+});
+const settingsNavigationCards = computed(() => {
+  const cards: SettingsNavigationCard[] = settings.value
     ? [
-        { id: "project-settings-name-title", label: "仓库信息", agentId: "repo.settings.nav.info" },
-        ...settingsSwitchGroups.map((group) => ({
-          id: group.titleId,
-          label: group.title,
-          agentId: `repo.settings.nav.${group.titleId
-            .replace("project-settings-", "")
-            .replace("-title", "")}`,
+        {
+          id: "project-settings-nav-card-general",
+          title: "常规",
+          sections: [
+            { id: "project-settings-name-title", label: "仓库信息", agentId: "repo.settings.nav.info" },
+            ...settingsSwitchGroups.map((group) => ({
+              id: group.titleId,
+              label: group.title,
+              agentId: `repo.settings.nav.${group.titleId
+                .replace("project-settings-", "")
+                .replace("-title", "")}`,
+            })),
+            { id: "project-settings-merge-defaults-title", label: "合并默认值", agentId: "repo.settings.nav.merge-defaults" },
+          ],
+        },
+        ...settingsApiGroups.map((group) => ({
+          id: `project-settings-nav-card-${group.title.toLowerCase().replace(/\s+/g, "-")}`,
+          title: group.title,
+          sections: group.sections.map((section) => ({
+            id: section.id,
+            label: section.title,
+            agentId: `repo.settings.nav.${section.key}`,
+            apiKey: section.key,
+          })),
         })),
       ]
     : [];
   if (hasSettingsDangerSection.value) {
-    items.push({ id: "project-settings-danger-title", label: "危险操作", agentId: "repo.settings.nav.danger" });
+    cards.push({
+      id: "project-settings-nav-card-danger",
+      title: "危险区域",
+      sections: [{ id: "project-settings-danger-title", label: "危险操作", agentId: "repo.settings.nav.danger" }],
+    });
   }
-  return items;
+  return cards;
 });
 const showCommitDetail = computed(() =>
   activeSection.value === "history" && Boolean(props.selectedCommitHash),
@@ -1875,17 +1973,27 @@ function applySettingsForm(next: GitHubRepoManagement) {
   settingsForm.homepage = next.homepage ?? "";
   settingsForm.topics = [...next.topics];
   settingsForm.private = next.private;
+  settingsForm.visibility = next.visibility ?? (next.private ? "private" : "public");
+  settingsForm.defaultBranch = next.defaultBranch;
+  settingsForm.isTemplate = next.isTemplate ?? false;
   settingsForm.hasIssues = next.hasIssues;
   settingsForm.hasWiki = next.hasWiki;
   settingsForm.hasProjects = next.hasProjects;
   settingsForm.hasDiscussions = next.hasDiscussions;
+  settingsForm.hasPullRequests = next.hasPullRequests ?? true;
+  settingsForm.pullRequestCreationPolicy = next.pullRequestCreationPolicy ?? "all";
   settingsForm.allowMergeCommit = next.allowMergeCommit;
   settingsForm.allowSquashMerge = next.allowSquashMerge;
   settingsForm.allowRebaseMerge = next.allowRebaseMerge;
   settingsForm.allowAutoMerge = next.allowAutoMerge;
   settingsForm.deleteBranchOnMerge = next.deleteBranchOnMerge;
+  settingsForm.allowUpdateBranch = next.allowUpdateBranch ?? false;
   settingsForm.allowForking = next.allowForking;
   settingsForm.webCommitSignoffRequired = next.webCommitSignoffRequired;
+  settingsForm.squashMergeCommitTitle = next.squashMergeCommitTitle ?? "COMMIT_OR_PR_TITLE";
+  settingsForm.squashMergeCommitMessage = next.squashMergeCommitMessage ?? "COMMIT_MESSAGES";
+  settingsForm.mergeCommitTitle = next.mergeCommitTitle ?? "MERGE_MESSAGE";
+  settingsForm.mergeCommitMessage = next.mergeCommitMessage ?? "PR_TITLE";
 }
 
 async function startEditAbout() {
@@ -1941,6 +2049,21 @@ async function loadReadme(force = false) {
   }, { reusePending: !force });
 }
 
+async function loadSettingsBranches(force = false) {
+  const repoFullName = props.repoFullName;
+  if (!repoFullName || remoteDeleted.value) return;
+  if (!force && settingsBranches.value.length) return;
+  settingsBranchesLoading.value = true;
+  settingsBranchesError.value = null;
+  try {
+    settingsBranches.value = await listGitHubBranches(repoFullName);
+  } catch (err) {
+    settingsBranchesError.value = String(err);
+  } finally {
+    settingsBranchesLoading.value = false;
+  }
+}
+
 async function loadSettings(force = false) {
   const repoFullName = props.repoFullName;
   if (!resolvedRepoContext.value.capabilities.settings.available) {
@@ -1965,6 +2088,7 @@ async function loadSettings(force = false) {
       applySettingsForm(nextSettings);
       preparePullRequestDefaults();
       settingsLoaded.value = true;
+      void loadSettingsBranches(force);
     } catch (err) {
       githubError.value = String(err);
     } finally {
@@ -2342,18 +2466,28 @@ function changedSettingsRequest(current: GitHubRepoManagement) {
   maybeSet("description", settingsForm.description, current.description ?? "");
   maybeSet("homepage", settingsForm.homepage, current.homepage ?? "");
   if (!sameStringList(settingsForm.topics, current.topics)) request.topics = [...settingsForm.topics];
-  maybeSet("private", settingsForm.private, current.private);
+  maybeSet("visibility", settingsForm.visibility, current.visibility ?? (current.private ? "private" : "public"));
+  maybeSet("private", settingsForm.visibility === "private", current.private);
+  maybeSet("defaultBranch", settingsForm.defaultBranch, current.defaultBranch);
+  maybeSet("isTemplate", settingsForm.isTemplate, current.isTemplate ?? false);
   maybeSet("hasIssues", settingsForm.hasIssues, current.hasIssues);
   maybeSet("hasWiki", settingsForm.hasWiki, current.hasWiki);
   maybeSet("hasProjects", settingsForm.hasProjects, current.hasProjects);
   maybeSet("hasDiscussions", settingsForm.hasDiscussions, current.hasDiscussions);
+  maybeSet("hasPullRequests", settingsForm.hasPullRequests, current.hasPullRequests ?? true);
+  maybeSet("pullRequestCreationPolicy", settingsForm.pullRequestCreationPolicy, current.pullRequestCreationPolicy ?? "all");
   maybeSet("allowMergeCommit", settingsForm.allowMergeCommit, current.allowMergeCommit);
   maybeSet("allowSquashMerge", settingsForm.allowSquashMerge, current.allowSquashMerge);
   maybeSet("allowRebaseMerge", settingsForm.allowRebaseMerge, current.allowRebaseMerge);
   maybeSet("allowAutoMerge", settingsForm.allowAutoMerge, current.allowAutoMerge);
   maybeSet("deleteBranchOnMerge", settingsForm.deleteBranchOnMerge, current.deleteBranchOnMerge);
+  maybeSet("allowUpdateBranch", settingsForm.allowUpdateBranch, current.allowUpdateBranch ?? false);
   maybeSet("allowForking", settingsForm.allowForking, current.allowForking);
   maybeSet("webCommitSignoffRequired", settingsForm.webCommitSignoffRequired, current.webCommitSignoffRequired);
+  maybeSet("squashMergeCommitTitle", settingsForm.squashMergeCommitTitle, current.squashMergeCommitTitle ?? "COMMIT_OR_PR_TITLE");
+  maybeSet("squashMergeCommitMessage", settingsForm.squashMergeCommitMessage, current.squashMergeCommitMessage ?? "COMMIT_MESSAGES");
+  maybeSet("mergeCommitTitle", settingsForm.mergeCommitTitle, current.mergeCommitTitle ?? "MERGE_MESSAGE");
+  maybeSet("mergeCommitMessage", settingsForm.mergeCommitMessage, current.mergeCommitMessage ?? "PR_TITLE");
   return request;
 }
 
@@ -2388,6 +2522,13 @@ function resetGitHubSectionState() {
   invalidateGitHubMutations();
   settings.value = null;
   settingsLoaded.value = false;
+  activeSettingsApiSection.value = null;
+  settingsBranches.value = [];
+  settingsBranchesLoading.value = false;
+  settingsBranchesError.value = null;
+  archiveDialogOpen.value = false;
+  archiveConfirmInput.value = "";
+  archiveError.value = null;
   issues.value = [];
   milestoneIssues.value = [];
   milestonePulls.value = [];
@@ -2515,6 +2656,60 @@ async function saveSettings(closeAboutOnSuccess = false) {
   if (closeAboutOnSuccess) aboutEditing.value = false;
   clearHomeGitHubOverviewSnapshot();
   return true;
+}
+
+function openArchiveDialog() {
+  archiveConfirmInput.value = "";
+  archiveError.value = null;
+  archiveDialogOpen.value = true;
+}
+
+function closeArchiveDialog() {
+  if (archivingSettings.value) return;
+  archiveDialogOpen.value = false;
+  archiveConfirmInput.value = "";
+  archiveError.value = null;
+}
+
+async function toggleArchivedSetting() {
+  const repoFullName = props.repoFullName;
+  const current = settings.value;
+  if (!repoFullName || !current) return;
+  if (!sameRepoFullName(archiveConfirmInput.value, current.fullName)) {
+    archiveError.value = "完整仓库名不匹配";
+    return;
+  }
+  const result = await runGitHubMutation(repoFullName, archiveSettingsTracker, () =>
+    updateGitHubRepoSettings(repoFullName, { archived: !(current.archived ?? false) })
+  );
+  if (!result.ok) {
+    archiveError.value = githubError.value;
+    return;
+  }
+  const next = result.value;
+  settings.value = next;
+  applySettingsForm(next);
+  if (!await syncRenamedSettingsIdentity(repoFullName, next)) return;
+  const currentRemoteFullName = parseRemoteRepoId(props.repoId);
+  const currentShortcut = workspace.state.settings?.remoteRepoShortcuts.find((repo) =>
+    sameRepoFullName(repo.fullName, next.fullName)
+  ) ?? null;
+  if (currentRemoteFullName && sameRepoFullName(currentRemoteFullName, next.fullName)) {
+    await workspace.rememberRemoteRepo({
+      fullName: next.fullName,
+      name: next.name,
+      private: next.private,
+      archived: next.archived ?? false,
+      defaultBranch: next.defaultBranch || (currentShortcut?.defaultBranch ?? null),
+      htmlUrl: next.htmlUrl,
+      cloneUrl: renamedRemoteCloneUrl(next.fullName, next.fullName, currentShortcut?.cloneUrl),
+      openedAt: Date.now(),
+    });
+  }
+  archiveDialogOpen.value = false;
+  archiveConfirmInput.value = "";
+  archiveError.value = null;
+  clearHomeGitHubOverviewSnapshot();
 }
 
 function sameRepoFullName(left: string, right: string) {
@@ -3150,6 +3345,11 @@ function scrollToSettingsSection(sectionId: string) {
   document.getElementById(sectionId)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
 }
 
+function selectSettingsNavigation(item: SettingsNavigationSection) {
+  if (item.apiKey) activeSettingsApiSection.value = item.apiKey;
+  scrollToSettingsSection(item.id);
+}
+
 function focusActionRun(runId: number | null) {
   focusedRunId.value = runId;
   focusedJobId.value = null;
@@ -3707,7 +3907,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                 <div class="project-settings-section__head">
                   <h4 id="project-settings-name-title">仓库信息</h4>
                 </div>
-                <div class="project-settings-fields project-settings-fields--single">
+                <div class="project-settings-fields">
                   <label class="project-settings-field">
                     <span>仓库名</span>
                     <input
@@ -3718,6 +3918,59 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                       :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
                     />
                   </label>
+                  <label class="project-settings-field">
+                    <span>描述</span>
+                    <input
+                      v-model="settingsForm.description"
+                      type="text"
+                      autocomplete="off"
+                      data-agent-id="repo.settings.description"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                    />
+                  </label>
+                  <label class="project-settings-field">
+                    <span>主页</span>
+                    <input
+                      v-model="settingsForm.homepage"
+                      type="url"
+                      autocomplete="off"
+                      data-agent-id="repo.settings.homepage"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                    />
+                  </label>
+                  <label class="project-settings-field">
+                    <span>可见性</span>
+                    <select
+                      v-model="settingsForm.visibility"
+                      data-agent-id="repo.settings.visibility"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                    >
+                      <option value="public">公开</option>
+                      <option value="private">私有</option>
+                      <option value="internal">内部</option>
+                    </select>
+                  </label>
+                  <label class="project-settings-field">
+                    <span>默认分支</span>
+                    <select
+                      v-model="settingsForm.defaultBranch"
+                      data-agent-id="repo.settings.default-branch"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading || settingsBranchesLoading"
+                    >
+                      <option v-for="branch in settingsBranchOptions" :key="branch" :value="branch">
+                        {{ branch }}
+                      </option>
+                    </select>
+                    <em v-if="settingsBranchesError">{{ settingsBranchesError }}</em>
+                  </label>
+                  <div class="project-settings-field project-settings-field--wide">
+                    <span>主题</span>
+                    <RepoTopicEditor
+                      v-model="settingsForm.topics"
+                      v-model:draft="aboutTopicDraft"
+                      agent-id-prefix="repo.settings.topics"
+                    />
+                  </div>
                 </div>
               </section>
               <section
@@ -3747,6 +4000,69 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   </UiSwitch>
                 </div>
               </section>
+              <section class="project-settings-section" aria-labelledby="project-settings-merge-defaults-title">
+                <div class="project-settings-section__head">
+                  <h4 id="project-settings-merge-defaults-title">合并默认值</h4>
+                </div>
+                <div class="project-settings-fields">
+                  <label class="project-settings-field">
+                    <span>拉取请求创建</span>
+                    <select v-model="settingsForm.pullRequestCreationPolicy" data-agent-id="repo.settings.pr.creation-policy" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
+                      <option value="all">所有用户</option>
+                      <option value="collaborators_only">仅协作者</option>
+                    </select>
+                  </label>
+                  <label class="project-settings-field">
+                    <span>Squash 标题</span>
+                    <select v-model="settingsForm.squashMergeCommitTitle" data-agent-id="repo.settings.merge.squash-title" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
+                      <option value="PR_TITLE">拉取请求标题</option>
+                      <option value="COMMIT_OR_PR_TITLE">提交或拉取请求标题</option>
+                    </select>
+                  </label>
+                  <label class="project-settings-field">
+                    <span>Squash 正文</span>
+                    <select v-model="settingsForm.squashMergeCommitMessage" data-agent-id="repo.settings.merge.squash-message" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
+                      <option value="PR_BODY">拉取请求正文</option>
+                      <option value="COMMIT_MESSAGES">提交消息</option>
+                      <option value="BLANK">空白</option>
+                    </select>
+                  </label>
+                  <label class="project-settings-field">
+                    <span>合并标题</span>
+                    <select v-model="settingsForm.mergeCommitTitle" data-agent-id="repo.settings.merge.title" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
+                      <option value="PR_TITLE">拉取请求标题</option>
+                      <option value="MERGE_MESSAGE">合并消息</option>
+                    </select>
+                  </label>
+                  <label class="project-settings-field">
+                    <span>合并正文</span>
+                    <select v-model="settingsForm.mergeCommitMessage" data-agent-id="repo.settings.merge.message" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
+                      <option value="PR_BODY">拉取请求正文</option>
+                      <option value="PR_TITLE">拉取请求标题</option>
+                      <option value="BLANK">空白</option>
+                    </select>
+                  </label>
+                </div>
+              </section>
+              <template v-for="apiGroup in settingsApiGroups" :key="apiGroup.title">
+                <div class="project-settings-api-group">
+                  <span>{{ apiGroup.title }}</span>
+                </div>
+                <section
+                  v-for="apiSection in apiGroup.sections"
+                  :id="apiSection.id"
+                  :key="apiSection.key"
+                  class="project-settings-section"
+                  :aria-label="apiSection.title"
+                >
+                  <RepoSettingsApiSection
+                    :repo-full-name="settings.fullName"
+                    :section="apiSection.key"
+                    :title="apiSection.title"
+                    :active="activeSettingsApiSection === apiSection.key"
+                  />
+                </section>
+              </template>
             </template>
             <section
               v-if="hasSettingsDangerSection"
@@ -3779,6 +4095,24 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   >
                     <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
                     <Trash2 v-else :size="14" aria-hidden="true" />
+                  </button>
+                </section>
+                <section v-if="settings" class="project-danger-zone" aria-label="归档操作">
+                  <div>
+                    <strong>{{ settings.archived ? "取消归档 GitHub 仓库" : "归档 GitHub 仓库" }}</strong>
+                    <span>{{ settings.archived ? "恢复仓库写入能力。" : "将仓库设为只读归档状态。" }}</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="ghost danger project-icon-action"
+                    data-agent-id="repo.settings.archive"
+                    :disabled="archivingSettings || githubLoading || !settings || !repoFullName"
+                    :aria-label="settings.archived ? '取消归档' : '归档'"
+                    :title="settings.archived ? '取消归档' : '归档'"
+                    @click="openArchiveDialog"
+                  >
+                    <LoaderCircle v-if="archivingSettings" :size="14" aria-hidden="true" class="sb-spin" />
+                    <Package v-else :size="14" aria-hidden="true" />
                   </button>
                 </section>
                 <section v-if="canDeleteRemote && settings" class="project-danger-zone" aria-label="远端危险操作">
@@ -3862,6 +4196,56 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               </div>
             </Transition>
           </Teleport>
+          <Teleport to="body">
+            <Transition name="modal">
+              <div
+                v-if="archiveDialogOpen && settings"
+                class="project-delete-overlay"
+                role="dialog"
+                aria-modal="true"
+                :aria-label="settings.archived ? '取消归档 GitHub 仓库' : '归档 GitHub 仓库'"
+                @click.self="closeArchiveDialog"
+              >
+                <div class="project-delete-dialog">
+                  <div class="project-delete-dialog__head">
+                    <Package :size="15" aria-hidden="true" />
+                    <strong>{{ settings.archived ? "取消归档 GitHub 仓库" : "归档 GitHub 仓库" }}</strong>
+                  </div>
+                  <p>
+                    {{ settings.archived ? "这会恢复仓库写入能力：" : "这会将仓库设为只读归档状态：" }}
+                    <strong>{{ settings.fullName }}</strong>
+                  </p>
+                  <p v-if="archiveError" class="error-line">{{ archiveError }}</p>
+                  <label>
+                    <span>输入完整仓库名以确认</span>
+                    <input
+                      v-model="archiveConfirmInput"
+                      type="text"
+                      data-agent-id="repo.archive.confirm-input"
+                      :placeholder="settings.fullName"
+                      :disabled="archivingSettings"
+                    />
+                  </label>
+                  <div class="project-delete-dialog__actions">
+                    <button type="button" class="ghost" data-agent-id="repo.archive.cancel" :disabled="archivingSettings" @click="closeArchiveDialog">
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      class="ghost danger"
+                      data-agent-id="repo.archive.confirm"
+                      :disabled="archivingSettings || !sameRepoFullName(archiveConfirmInput, settings.fullName)"
+                      @click="toggleArchivedSetting"
+                    >
+                      <LoaderCircle v-if="archivingSettings" :size="14" aria-hidden="true" class="sb-spin" />
+                      <Package v-else :size="14" aria-hidden="true" />
+                      {{ settings.archived ? "确认取消归档" : "确认归档" }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </Transition>
+          </Teleport>
         </form>
       </main>
 
@@ -3905,6 +4289,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           </button>
         </div>
 
+        <div class="project-sidebar__scroll">
         <section
           v-if="hasProjectSidebarErrors"
           class="project-sidebar-error-card"
@@ -4208,24 +4593,28 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <nav
-          v-if="projectSidebarMode === 'settings' && settingsNavigationItems.length"
+          v-if="projectSidebarMode === 'settings' && settingsNavigationCards.length"
           class="project-settings-nav"
-          aria-label="Settings 分类"
+          aria-label="设置分类"
         >
-          <div class="project-settings-nav__head">
-            <Settings2 :size="14" aria-hidden="true" />
-            <strong>Settings</strong>
-          </div>
-          <button
-            v-for="item in settingsNavigationItems"
-            :key="item.id"
-            type="button"
-            class="project-settings-nav__item"
-            :data-agent-id="item.agentId"
-            @click="scrollToSettingsSection(item.id)"
+          <section
+            v-for="card in settingsNavigationCards"
+            :key="card.id"
+            class="project-settings-nav-card"
+            :aria-labelledby="`${card.id}-title`"
           >
-            {{ item.label }}
-          </button>
+            <h4 :id="`${card.id}-title`">{{ card.title }}</h4>
+            <button
+              v-for="item in card.sections"
+              :key="item.id"
+              type="button"
+              class="project-settings-nav__item"
+              :data-agent-id="item.agentId"
+              @click="selectSettingsNavigation(item)"
+            >
+              {{ item.label }}
+            </button>
+          </section>
         </nav>
 
         <RepoLanguageStatsCard
@@ -4235,6 +4624,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           :loading="languageStatsLoading"
         />
         </template>
+        </div>
 
       </aside>
     </div>
@@ -4316,7 +4706,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   min-height: 0;
   height: 100%;
   max-height: 100%;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .project-layout--with-commit-detail {
@@ -4395,17 +4785,39 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: grid;
   grid-column: 2;
   grid-row: 1;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
   min-height: 0;
-  align-content: start;
-  align-self: start;
+  height: 100%;
+  max-height: 100%;
+  align-content: stretch;
+  align-self: stretch;
+  overflow: hidden;
 }
 
 .project-sidebar--fill {
   grid-template-rows: minmax(0, 1fr);
   align-content: stretch;
   align-self: stretch;
+  height: 100%;
+}
+
+.project-sidebar__scroll {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.project-sidebar--fill .project-sidebar__scroll {
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
   height: 100%;
 }
 
@@ -4700,10 +5112,16 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-settings-nav {
   display: grid;
-  gap: 3px;
+  gap: 8px;
   justify-items: stretch;
   justify-self: stretch;
   width: 100%;
+  min-width: 0;
+}
+
+.project-settings-nav-card {
+  display: grid;
+  gap: 3px;
   min-width: 0;
   padding: 6px;
   border: 1px solid var(--border);
@@ -4711,23 +5129,16 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   background: var(--bg-elev);
 }
 
-.project-settings-nav__head {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 7px;
+.project-settings-nav-card h4 {
   min-width: 0;
-  padding: 4px 6px 8px;
+  margin: 0;
+  padding: 4px 6px 7px;
   border-bottom: 1px solid var(--border-soft);
   color: var(--text);
-  font-size: 12px;
-}
-
-.project-settings-nav__head strong {
-  min-width: 0;
   overflow: hidden;
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5349,6 +5760,19 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   border-bottom: 0;
 }
 
+.project-settings-api-group {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.project-settings-api-group span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .project-settings-section__head {
   display: flex;
   align-items: center;
@@ -5383,8 +5807,22 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   font-weight: 600;
 }
 
-.project-settings-field input {
+.project-settings-field input,
+.project-settings-field select,
+.project-settings-field textarea {
   width: 100%;
+}
+
+.project-settings-field em {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.project-settings-field--wide {
+  grid-column: 1 / -1;
 }
 
 .project-settings-switches {
@@ -5560,6 +5998,16 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
   .project-sidebar {
     order: -1;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .project-sidebar__scroll {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .project-section__head--compact,

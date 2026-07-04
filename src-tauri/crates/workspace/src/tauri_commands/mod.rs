@@ -162,6 +162,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_create_repo,
         github::github_get_repo_management,
         github::github_update_repo_settings,
+        github::github_get_repo_settings_section,
         github::github_delete_repo,
         github::github_list_branches,
         github::github_delete_branch,

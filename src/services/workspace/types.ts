@@ -245,18 +245,29 @@ export interface GitHubRepoManagement {
   homepage: string | null;
   topics: string[];
   private: boolean;
+  visibility?: "public" | "private" | string;
   defaultBranch: string;
+  archived?: boolean;
+  isTemplate?: boolean;
   hasIssues: boolean;
   hasWiki: boolean;
   hasProjects: boolean;
   hasDiscussions: boolean;
+  hasPullRequests?: boolean;
+  pullRequestCreationPolicy?: "all" | "collaborators_only" | string | null;
   allowMergeCommit: boolean;
   allowSquashMerge: boolean;
   allowRebaseMerge: boolean;
   allowAutoMerge: boolean;
   deleteBranchOnMerge: boolean;
+  allowUpdateBranch?: boolean;
   allowForking: boolean;
   webCommitSignoffRequired: boolean;
+  squashMergeCommitTitle?: "PR_TITLE" | "COMMIT_OR_PR_TITLE" | string | null;
+  squashMergeCommitMessage?: "PR_BODY" | "COMMIT_MESSAGES" | "BLANK" | string | null;
+  mergeCommitTitle?: "PR_TITLE" | "MERGE_MESSAGE" | string | null;
+  mergeCommitMessage?: "PR_BODY" | "PR_TITLE" | "BLANK" | string | null;
+  securityAndAnalysis?: Record<string, unknown> | null;
   stargazersCount: number;
   watchersCount: number;
   forksCount: number;
@@ -265,6 +276,42 @@ export interface GitHubRepoManagement {
 }
 
 export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "htmlUrl" | "license">>;
+
+export type GitHubRepoSettingsSectionKey =
+  | "collaborators"
+  | "moderation"
+  | "security"
+  | "branches"
+  | "tags"
+  | "rules"
+  | "actions"
+  | "copilot"
+  | "environments"
+  | "codespaces"
+  | "pages"
+  | "webhooks"
+  | "deployKeys"
+  | "secretsVariables"
+  | "githubApps"
+  | "emailNotifications";
+
+export interface GitHubRepoSettingsEndpointItem {
+  key: string;
+  label: string;
+  method: "GET" | "PUT" | "POST" | "PATCH" | "DELETE" | string;
+  path: string;
+  value: unknown | null;
+  error: string | null;
+  mutable: boolean;
+  dangerous: boolean;
+}
+
+export interface GitHubRepoSettingsSection {
+  key: GitHubRepoSettingsSectionKey;
+  title: string;
+  fetchedAt: number;
+  items: GitHubRepoSettingsEndpointItem[];
+}
 
 export interface GitHubIssue {
   number: number;

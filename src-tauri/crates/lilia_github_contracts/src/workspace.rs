@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -729,18 +730,40 @@ pub struct GitHubRepoManagement {
     #[serde(default)]
     pub topics: Vec<String>,
     pub private: bool,
+    #[serde(default)]
+    pub visibility: String,
     pub default_branch: String,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub is_template: bool,
     pub has_issues: bool,
     pub has_wiki: bool,
     pub has_projects: bool,
     pub has_discussions: bool,
+    #[serde(default)]
+    pub has_pull_requests: bool,
+    #[serde(default)]
+    pub pull_request_creation_policy: Option<String>,
     pub allow_merge_commit: bool,
     pub allow_squash_merge: bool,
     pub allow_rebase_merge: bool,
     pub allow_auto_merge: bool,
     pub delete_branch_on_merge: bool,
+    #[serde(default)]
+    pub allow_update_branch: bool,
     pub allow_forking: bool,
     pub web_commit_signoff_required: bool,
+    #[serde(default)]
+    pub squash_merge_commit_title: Option<String>,
+    #[serde(default)]
+    pub squash_merge_commit_message: Option<String>,
+    #[serde(default)]
+    pub merge_commit_title: Option<String>,
+    #[serde(default)]
+    pub merge_commit_message: Option<String>,
+    #[serde(default)]
+    pub security_and_analysis: Option<JsonValue>,
     pub stargazers_count: u64,
     pub watchers_count: u64,
     pub forks_count: u64,
@@ -763,7 +786,13 @@ pub struct GitHubUpdateRepoSettingsRequest {
     #[serde(default)]
     pub private: Option<bool>,
     #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
     pub default_branch: Option<String>,
+    #[serde(default)]
+    pub archived: Option<bool>,
+    #[serde(default)]
+    pub is_template: Option<bool>,
     #[serde(default)]
     pub has_issues: Option<bool>,
     #[serde(default)]
@@ -772,6 +801,10 @@ pub struct GitHubUpdateRepoSettingsRequest {
     pub has_projects: Option<bool>,
     #[serde(default)]
     pub has_discussions: Option<bool>,
+    #[serde(default)]
+    pub has_pull_requests: Option<bool>,
+    #[serde(default)]
+    pub pull_request_creation_policy: Option<String>,
     #[serde(default)]
     pub allow_merge_commit: Option<bool>,
     #[serde(default)]
@@ -783,9 +816,45 @@ pub struct GitHubUpdateRepoSettingsRequest {
     #[serde(default)]
     pub delete_branch_on_merge: Option<bool>,
     #[serde(default)]
+    pub allow_update_branch: Option<bool>,
+    #[serde(default)]
     pub allow_forking: Option<bool>,
     #[serde(default)]
     pub web_commit_signoff_required: Option<bool>,
+    #[serde(default)]
+    pub squash_merge_commit_title: Option<String>,
+    #[serde(default)]
+    pub squash_merge_commit_message: Option<String>,
+    #[serde(default)]
+    pub merge_commit_title: Option<String>,
+    #[serde(default)]
+    pub merge_commit_message: Option<String>,
+    #[serde(default)]
+    pub security_and_analysis: Option<JsonValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoSettingsEndpointItem {
+    pub key: String,
+    pub label: String,
+    pub method: String,
+    pub path: String,
+    #[serde(default)]
+    pub value: Option<JsonValue>,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub mutable: bool,
+    pub dangerous: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoSettingsSection {
+    pub key: String,
+    pub title: String,
+    pub fetched_at: i64,
+    pub items: Vec<GitHubRepoSettingsEndpointItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

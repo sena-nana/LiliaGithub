@@ -32,7 +32,8 @@ use lilia_github_contracts::workspace::{
     GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest,
     GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
     GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
-    GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage, GitHubRepoSummary,
+    GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage,
+    GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
     GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
     GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry,
     GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
@@ -107,9 +108,13 @@ pub(super) struct GitHubRepoResponse {
     pub(super) full_name: String,
     pub(super) private: bool,
     #[serde(default)]
+    pub(super) visibility: Option<String>,
+    #[serde(default)]
     pub(super) disabled: bool,
     #[serde(default)]
     pub(super) archived: bool,
+    #[serde(default)]
+    pub(super) is_template: bool,
     pub(super) description: Option<String>,
     pub(super) default_branch: Option<String>,
     pub(super) created_at: String,
@@ -128,6 +133,10 @@ pub(super) struct GitHubRepoResponse {
     #[serde(default)]
     pub(super) has_discussions: bool,
     #[serde(default)]
+    pub(super) has_pull_requests: bool,
+    #[serde(default)]
+    pub(super) pull_request_creation_policy: Option<String>,
+    #[serde(default)]
     pub(super) allow_merge_commit: bool,
     #[serde(default)]
     pub(super) allow_squash_merge: bool,
@@ -138,9 +147,21 @@ pub(super) struct GitHubRepoResponse {
     #[serde(default)]
     pub(super) delete_branch_on_merge: bool,
     #[serde(default)]
+    pub(super) allow_update_branch: bool,
+    #[serde(default)]
     pub(super) allow_forking: bool,
     #[serde(default)]
     pub(super) web_commit_signoff_required: bool,
+    #[serde(default)]
+    pub(super) squash_merge_commit_title: Option<String>,
+    #[serde(default)]
+    pub(super) squash_merge_commit_message: Option<String>,
+    #[serde(default)]
+    pub(super) merge_commit_title: Option<String>,
+    #[serde(default)]
+    pub(super) merge_commit_message: Option<String>,
+    #[serde(default)]
+    pub(super) security_and_analysis: Option<serde_json::Value>,
     #[serde(default)]
     pub(super) stargazers_count: u64,
     #[serde(default)]
@@ -1215,18 +1236,35 @@ pub(super) fn github_repo_management_from_response(
         homepage: repo.homepage,
         topics,
         private: repo.private,
+        visibility: repo.visibility.unwrap_or_else(|| {
+            if repo.private {
+                "private".to_string()
+            } else {
+                "public".to_string()
+            }
+        }),
         default_branch: repo.default_branch.unwrap_or_default(),
+        archived: repo.archived,
+        is_template: repo.is_template,
         has_issues: repo.has_issues,
         has_wiki: repo.has_wiki,
         has_projects: repo.has_projects,
         has_discussions: repo.has_discussions,
+        has_pull_requests: repo.has_pull_requests,
+        pull_request_creation_policy: repo.pull_request_creation_policy,
         allow_merge_commit: repo.allow_merge_commit,
         allow_squash_merge: repo.allow_squash_merge,
         allow_rebase_merge: repo.allow_rebase_merge,
         allow_auto_merge: repo.allow_auto_merge,
         delete_branch_on_merge: repo.delete_branch_on_merge,
+        allow_update_branch: repo.allow_update_branch,
         allow_forking: repo.allow_forking,
         web_commit_signoff_required: repo.web_commit_signoff_required,
+        squash_merge_commit_title: repo.squash_merge_commit_title,
+        squash_merge_commit_message: repo.squash_merge_commit_message,
+        merge_commit_title: repo.merge_commit_title,
+        merge_commit_message: repo.merge_commit_message,
+        security_and_analysis: repo.security_and_analysis,
         stargazers_count: repo.stargazers_count,
         watchers_count: repo.subscribers_count,
         forks_count: repo.forks_count,
@@ -1573,11 +1611,20 @@ pub(super) fn github_update_repo_settings_payload(
     if let Some(value) = request.private {
         payload.insert("private".to_string(), serde_json::Value::Bool(value));
     }
+    if let Some(value) = normalize_optional_string(request.visibility.clone()) {
+        payload.insert("visibility".to_string(), serde_json::Value::String(value));
+    }
     if let Some(value) = normalize_optional_string(request.default_branch.clone()) {
         payload.insert(
             "default_branch".to_string(),
             serde_json::Value::String(value),
         );
+    }
+    if let Some(value) = request.archived {
+        payload.insert("archived".to_string(), serde_json::Value::Bool(value));
+    }
+    if let Some(value) = request.is_template {
+        payload.insert("is_template".to_string(), serde_json::Value::Bool(value));
     }
     if let Some(value) = request.has_issues {
         payload.insert("has_issues".to_string(), serde_json::Value::Bool(value));
@@ -1592,6 +1639,18 @@ pub(super) fn github_update_repo_settings_payload(
         payload.insert(
             "has_discussions".to_string(),
             serde_json::Value::Bool(value),
+        );
+    }
+    if let Some(value) = request.has_pull_requests {
+        payload.insert(
+            "has_pull_requests".to_string(),
+            serde_json::Value::Bool(value),
+        );
+    }
+    if let Some(value) = normalize_optional_string(request.pull_request_creation_policy.clone()) {
+        payload.insert(
+            "pull_request_creation_policy".to_string(),
+            serde_json::Value::String(value),
         );
     }
     if let Some(value) = request.allow_merge_commit {
@@ -1624,6 +1683,12 @@ pub(super) fn github_update_repo_settings_payload(
             serde_json::Value::Bool(value),
         );
     }
+    if let Some(value) = request.allow_update_branch {
+        payload.insert(
+            "allow_update_branch".to_string(),
+            serde_json::Value::Bool(value),
+        );
+    }
     if let Some(value) = request.allow_forking {
         payload.insert("allow_forking".to_string(), serde_json::Value::Bool(value));
     }
@@ -1632,6 +1697,33 @@ pub(super) fn github_update_repo_settings_payload(
             "web_commit_signoff_required".to_string(),
             serde_json::Value::Bool(value),
         );
+    }
+    if let Some(value) = normalize_optional_string(request.squash_merge_commit_title.clone()) {
+        payload.insert(
+            "squash_merge_commit_title".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = normalize_optional_string(request.squash_merge_commit_message.clone()) {
+        payload.insert(
+            "squash_merge_commit_message".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = normalize_optional_string(request.merge_commit_title.clone()) {
+        payload.insert(
+            "merge_commit_title".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = normalize_optional_string(request.merge_commit_message.clone()) {
+        payload.insert(
+            "merge_commit_message".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = request.security_and_analysis.clone() {
+        payload.insert("security_and_analysis".to_string(), value);
     }
     payload
 }
@@ -3631,6 +3723,218 @@ pub async fn github_update_repo_settings(
             repo_cache.management = Some(management.clone());
         })?;
         Ok(management)
+    })
+    .await
+}
+
+fn github_repo_settings_path_url(repo_full_name: &str, path: &str) -> Result<String, String> {
+    let base = github_repo_api_url(repo_full_name)?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(base);
+    }
+    Ok(format!("{base}/{}", trimmed.trim_start_matches('/')))
+}
+
+fn github_json_value(prefix: &str, response: Response) -> Result<serde_json::Value, String> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(github_http_error(prefix, response));
+    }
+    if status == StatusCode::NO_CONTENT {
+        return Ok(serde_json::json!({ "status": "ok" }));
+    }
+    response
+        .json::<serde_json::Value>()
+        .map_err(|e| format!("{prefix}：解析响应失败：{e}"))
+}
+
+fn github_repo_settings_get_item(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    repo_full_name: &str,
+    key: &str,
+    label: &str,
+    path: &str,
+    mutable: bool,
+    dangerous: bool,
+) -> GitHubRepoSettingsEndpointItem {
+    if let Some(reason) = path.strip_prefix("unavailable:") {
+        return GitHubRepoSettingsEndpointItem {
+            key: key.to_string(),
+            label: label.to_string(),
+            method: "GET".to_string(),
+            path: path.to_string(),
+            value: None,
+            error: Some(reason.to_string()),
+            mutable: false,
+            dangerous: false,
+        };
+    }
+    let value = github_repo_settings_path_url(repo_full_name, path)
+        .and_then(|url| {
+            let response = github_send(
+                app,
+                &format!("读取 {label} 失败"),
+                github_headers(client.get(url), Some(token)),
+            )?;
+            github_json_value(&format!("读取 {label} 失败"), response)
+        });
+    match value {
+        Ok(value) => GitHubRepoSettingsEndpointItem {
+            key: key.to_string(),
+            label: label.to_string(),
+            method: "GET".to_string(),
+            path: path.to_string(),
+            value: Some(value),
+            error: None,
+            mutable,
+            dangerous,
+        },
+        Err(error) => GitHubRepoSettingsEndpointItem {
+            key: key.to_string(),
+            label: label.to_string(),
+            method: "GET".to_string(),
+            path: path.to_string(),
+            value: None,
+            error: Some(error),
+            mutable,
+            dangerous,
+        },
+    }
+}
+
+fn github_repo_settings_section_title(section: &str) -> Result<&'static str, String> {
+    match section {
+        "collaborators" => Ok("协作者"),
+        "moderation" => Ok("互动限制"),
+        "security" => Ok("高级安全"),
+        "branches" => Ok("分支"),
+        "tags" => Ok("标签"),
+        "rules" => Ok("规则"),
+        "actions" => Ok("Actions"),
+        "copilot" => Ok("Copilot"),
+        "environments" => Ok("环境"),
+        "codespaces" => Ok("Codespaces"),
+        "pages" => Ok("Pages"),
+        "webhooks" => Ok("Webhooks"),
+        "deployKeys" => Ok("部署密钥"),
+        "secretsVariables" => Ok("密钥与变量"),
+        "githubApps" => Ok("GitHub Apps"),
+        "emailNotifications" => Ok("邮件通知"),
+        _ => Err(format!("未知 GitHub 设置分区：{section}")),
+    }
+}
+
+fn github_repo_settings_section_items(section: &str) -> Result<Vec<(&'static str, &'static str, &'static str, bool, bool)>, String> {
+    match section {
+        "collaborators" => Ok(vec![
+            ("collaborators", "协作者", "collaborators?per_page=100", true, true),
+            ("teams", "仓库团队", "teams?per_page=100", false, false),
+        ]),
+        "moderation" => Ok(vec![
+            ("interactionLimits", "互动限制", "interaction-limits", true, false),
+        ]),
+        "security" => Ok(vec![
+            ("repository", "仓库安全与分析", "", true, false),
+            ("vulnerabilityAlerts", "漏洞警报", "vulnerability-alerts", true, false),
+            ("dependabotSecurityUpdates", "Dependabot 安全更新", "automated-security-fixes", true, false),
+            ("privateVulnerabilityReporting", "私有漏洞报告", "private-vulnerability-reporting", true, false),
+            ("immutableReleases", "不可变 Release", "immutable-releases", true, false),
+        ]),
+        "branches" => Ok(vec![
+            ("branches", "分支", "branches?per_page=100", false, false),
+        ]),
+        "tags" => Ok(vec![
+            ("tags", "标签", "tags?per_page=100", false, false),
+        ]),
+        "rules" => Ok(vec![
+            ("rulesets", "仓库规则集", "rulesets", true, true),
+        ]),
+        "actions" => Ok(vec![
+            ("permissions", "Actions permissions", "actions/permissions", true, false),
+            ("workflowPermissions", "工作流默认权限", "actions/permissions/workflow", true, false),
+            ("workflows", "工作流", "actions/workflows?per_page=100", true, false),
+        ]),
+        "copilot" => Ok(vec![(
+            "copilot",
+            "Copilot repository settings",
+            "unavailable:GitHub REST API does not expose a general repository-owned Copilot settings endpoint for this app.",
+            false,
+            false,
+        )]),
+        "environments" => Ok(vec![
+            ("environments", "环境", "environments", true, true),
+        ]),
+        "codespaces" => Ok(vec![
+            ("codespaces", "仓库 Codespaces", "codespaces?per_page=100", false, false),
+            ("codespacesSecrets", "Codespaces 仓库密钥", "codespaces/secrets", true, true),
+        ]),
+        "pages" => Ok(vec![
+            ("pages", "GitHub Pages 站点", "pages", true, false),
+            ("pagesBuilds", "GitHub Pages 构建", "pages/builds?per_page=20", true, false),
+        ]),
+        "webhooks" => Ok(vec![
+            ("webhooks", "Webhooks", "hooks", true, true),
+        ]),
+        "deployKeys" => Ok(vec![
+            ("deployKeys", "部署密钥", "keys?per_page=100", true, true),
+        ]),
+        "secretsVariables" => Ok(vec![
+            ("actionsVariables", "Actions 仓库变量", "actions/variables", true, false),
+            ("actionsSecrets", "Actions 仓库密钥", "actions/secrets", true, true),
+        ]),
+        "githubApps" => Ok(vec![
+            ("installations", "仓库 GitHub App 安装", "installations", false, false),
+        ]),
+        "emailNotifications" => Ok(vec![
+            ("subscription", "仓库通知订阅", "subscription", true, false),
+        ]),
+        _ => Err(format!("未知 GitHub 设置分区：{section}")),
+    }
+}
+
+fn github_get_repo_settings_section_sync(
+    app: &AppHandle,
+    repo_full_name: &str,
+    section: &str,
+) -> Result<GitHubRepoSettingsSection, String> {
+    let (_binding, token) = github_require_token(app)?;
+    let client = build_client()?;
+    let title = github_repo_settings_section_title(section)?;
+    let items = github_repo_settings_section_items(section)?
+        .into_iter()
+        .map(|(key, label, path, mutable, dangerous)| {
+            github_repo_settings_get_item(
+                app,
+                &client,
+                &token,
+                repo_full_name,
+                key,
+                label,
+                path,
+                mutable,
+                dangerous,
+            )
+        })
+        .collect();
+    Ok(GitHubRepoSettingsSection {
+        key: section.to_string(),
+        title: title.to_string(),
+        fetched_at: now_millis(),
+        items,
+    })
+}
+
+pub async fn github_get_repo_settings_section(
+    app: AppHandle,
+    repo_full_name: String,
+    section: String,
+    _force_refresh: Option<bool>,
+) -> Result<GitHubRepoSettingsSection, String> {
+    run_blocking("读取 GitHub 仓库设置分区", move || {
+        github_get_repo_settings_section_sync(&app, &repo_full_name, &section)
     })
     .await
 }
