@@ -758,6 +758,28 @@ const canShowChanges = computed(() => resolvedRepoContext.value.capabilities.cha
 const historyReadOnly = computed(() => !resolvedRepoContext.value.capabilities.commit.available);
 const canDeleteLocal = computed(() => resolvedRepoContext.value.capabilities.deleteLocal.available);
 const canDeleteRemote = computed(() => resolvedRepoContext.value.capabilities.deleteRemote.available);
+const hasSettingsDangerSection = computed(() =>
+  (canDeleteLocal.value && Boolean(props.repoPath)) ||
+  (canDeleteRemote.value && Boolean(settings.value)),
+);
+const settingsNavigationItems = computed(() => {
+  const items = settings.value
+    ? [
+        { id: "project-settings-name-title", label: "仓库信息", agentId: "repo.settings.nav.info" },
+        ...settingsSwitchGroups.map((group) => ({
+          id: group.titleId,
+          label: group.title,
+          agentId: `repo.settings.nav.${group.titleId
+            .replace("project-settings-", "")
+            .replace("-title", "")}`,
+        })),
+      ]
+    : [];
+  if (hasSettingsDangerSection.value) {
+    items.push({ id: "project-settings-danger-title", label: "危险操作", agentId: "repo.settings.nav.danger" });
+  }
+  return items;
+});
 const showCommitDetail = computed(() =>
   activeSection.value === "history" && Boolean(props.selectedCommitHash),
 );
@@ -3124,6 +3146,10 @@ async function activateProjectSidebarButton(tab: ProjectSidebarButtonMode) {
   await activateProjectTab(tab);
 }
 
+function scrollToSettingsSection(sectionId: string) {
+  document.getElementById(sectionId)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+}
+
 function focusActionRun(runId: number | null) {
   focusedRunId.value = runId;
   focusedJobId.value = null;
@@ -3675,10 +3701,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <div v-if="settings || (canDeleteLocal && repoPath)" class="project-settings-cards">
+          <div v-if="settings || (canDeleteLocal && repoPath)" class="project-settings-sections">
             <template v-if="settings">
-              <section class="project-settings-card" aria-labelledby="project-settings-name-title">
-                <div class="project-settings-card__head">
+              <section class="project-settings-section" aria-labelledby="project-settings-name-title">
+                <div class="project-settings-section__head">
                   <h4 id="project-settings-name-title">仓库信息</h4>
                 </div>
                 <div class="project-settings-fields project-settings-fields--single">
@@ -3697,10 +3723,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               <section
                 v-for="group in settingsSwitchGroups"
                 :key="group.titleId"
-                class="project-settings-card"
+                class="project-settings-section"
                 :aria-labelledby="group.titleId"
               >
-                <div class="project-settings-card__head">
+                <div class="project-settings-section__head">
                   <h4 :id="group.titleId">{{ group.title }}</h4>
                 </div>
                 <div class="project-settings-switches">
@@ -3723,11 +3749,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               </section>
             </template>
             <section
-              v-if="(canDeleteLocal && repoPath) || (canDeleteRemote && settings)"
-              class="project-settings-card project-settings-card--danger"
+              v-if="hasSettingsDangerSection"
+              class="project-settings-section project-settings-section--danger"
               aria-labelledby="project-settings-danger-title"
             >
-              <div class="project-settings-card__head">
+              <div class="project-settings-section__head">
                 <h4 id="project-settings-danger-title">危险操作</h4>
               </div>
               <div class="project-settings-danger-list">
@@ -4181,30 +4207,26 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           </template>
         </section>
 
-        <section
-          v-if="projectSidebarMode === 'settings'"
-          class="project-sidebar-summary-card"
-          aria-label="Settings 摘要"
+        <nav
+          v-if="projectSidebarMode === 'settings' && settingsNavigationItems.length"
+          class="project-settings-nav"
+          aria-label="Settings 分类"
         >
-          <div class="project-sidebar-summary-card__head">
+          <div class="project-settings-nav__head">
             <Settings2 :size="14" aria-hidden="true" />
             <strong>Settings</strong>
           </div>
-          <dl class="project-sidebar-summary-card__stats">
-            <div>
-              <dt>仓库</dt>
-              <dd>{{ settings ? settings.fullName : repoFullName || repoId }}</dd>
-            </div>
-            <div v-if="settings">
-              <dt>可见性</dt>
-              <dd>{{ settings.private ? "Private" : "Public" }}</dd>
-            </div>
-            <div v-if="settings">
-              <dt>Default</dt>
-              <dd>{{ settings.defaultBranch }}</dd>
-            </div>
-          </dl>
-        </section>
+          <button
+            v-for="item in settingsNavigationItems"
+            :key="item.id"
+            type="button"
+            class="project-settings-nav__item"
+            :data-agent-id="item.agentId"
+            @click="scrollToSettingsSection(item.id)"
+          >
+            {{ item.label }}
+          </button>
+        </nav>
 
         <RepoLanguageStatsCard
           v-if="projectSidebarMode === 'repo'"
@@ -4674,6 +4696,68 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-layout--with-commit-detail .project-sidebar {
   grid-row: 1 / span 2;
+}
+
+.project-settings-nav {
+  display: grid;
+  gap: 3px;
+  justify-items: stretch;
+  justify-self: stretch;
+  width: 100%;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+}
+
+.project-settings-nav__head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  min-width: 0;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.project-settings-nav__head strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-settings-nav__item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.project-settings-nav__item:hover,
+.project-settings-nav__item:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .project-sidebar-summary-card {
@@ -5246,38 +5330,37 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   background: color-mix(in srgb, var(--accent-soft) 28%, transparent);
 }
 
-.project-settings-cards {
+.project-settings-sections {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px;
+  gap: 24px;
 }
 
-.project-settings-card {
+.project-settings-section {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  padding: 0 0 24px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
-.project-settings-card--danger {
-  grid-column: 1 / -1;
+.project-settings-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
-.project-settings-card__head {
+.project-settings-section__head {
   display: flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 28px;
 }
 
-.project-settings-card__head h4 {
+.project-settings-section__head h4 {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 600;
+  line-height: 1.3;
 }
 
 .project-settings-fields {
@@ -5287,16 +5370,17 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-settings-fields--single {
-  grid-template-columns: minmax(0, 360px);
+  grid-template-columns: minmax(220px, 420px);
 }
 
 .project-settings-field {
   display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .project-settings-field input {
@@ -5306,13 +5390,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-settings-switches {
   display: grid;
   gap: 0;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 
 .project-settings-switch {
-  gap: 8px;
-  min-height: 36px;
-  padding: 5px 0;
+  align-items: start;
+  gap: 16px;
+  min-height: 60px;
+  padding: 13px 0;
   color: var(--text);
   border-bottom: 1px solid var(--border-soft);
 }
@@ -5325,7 +5410,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-settings-switch strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.25;
 }
@@ -5333,7 +5418,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-settings-switch em {
   min-width: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 12.5px;
   font-style: normal;
   line-height: 1.35;
 }
@@ -5341,16 +5426,16 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-settings-danger-list {
   display: grid;
   gap: 6px;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--border);
 }
 
 .project-danger-zone {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  min-height: 44px;
-  padding: 7px 0;
+  gap: 16px;
+  min-height: 60px;
+  padding: 13px 0;
   border-bottom: 1px solid var(--border-soft);
 }
 
