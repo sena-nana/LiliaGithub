@@ -359,8 +359,8 @@ describe("AppShell sidebar", () => {
     const group = sidebarGroupForText(view.container, "未分组仓库", 3);
     expect(group.textContent?.replace(/\s+/g, "")).toBe("未分组仓库3");
 
-    await fireEvent.click(view.getByRole("button", { name: /侧边栏仓库排序：最近更新 ↓/ }));
-    await fireEvent.click(await view.findByRole("menuitem", { name: "首字母" }));
+    await fireEvent.click(view.getByRole("button", { name: /侧边栏仓库排序：最近更新 新到旧/ }));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "首字母 A-Z" }));
 
     await waitFor(() => {
       expect(sidebarRepoOrder(view.container)).toEqual(["Alpha", "Beta", "Gamma"]);

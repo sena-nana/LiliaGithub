@@ -59,6 +59,23 @@ export function nextRepoSort<K extends RepoSortKey>(
   return { sort: option.value, direction };
 }
 
+export function repoSortDisplayLabel<K extends RepoSortKey>(
+  option: RepoSortOption<K>,
+  direction: SortDirection,
+) {
+  if (option.value === "name") {
+    return `${option.label} ${direction === "asc" ? "A-Z" : "Z-A"}`;
+  }
+  return `${option.label} ${direction === "asc" ? "旧到新" : "新到旧"}`;
+}
+
+export function nextRepoSortDisplayLabel<K extends RepoSortKey>(
+  current: RepoSortState<K>,
+  option: RepoSortOption<K>,
+) {
+  return repoSortDisplayLabel(option, nextRepoSort(current, option).direction);
+}
+
 export function compareRepoSortItems<T, K extends RepoSortKey>(
   left: T,
   right: T,

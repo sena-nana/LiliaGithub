@@ -35,6 +35,8 @@ import {
   DEFAULT_REPO_SORT,
   compareRepoSortItems,
   nextRepoSort,
+  nextRepoSortDisplayLabel,
+  repoSortDisplayLabel,
   readRepoSort,
   writeRepoSort,
   type RepoSortOption,
@@ -292,7 +294,7 @@ const activeSidebarRepoSortOption = computed(() =>
   sidebarRepoSortOptions.find((option) => option.value === sidebarRepoSort.value.sort) ?? defaultSidebarRepoSortOption,
 );
 const sidebarRepoSortLabel = computed(() =>
-  `${activeSidebarRepoSortOption.value.label} ${sidebarRepoSort.value.direction === "asc" ? "↑" : "↓"}`,
+  repoSortDisplayLabel(activeSidebarRepoSortOption.value, sidebarRepoSort.value.direction),
 );
 const sidebarRepoSortIcon = computed(() => activeSidebarRepoSortOption.value.icon);
 
@@ -566,7 +568,7 @@ function openSidebarRepoSortMenu(event: MouseEvent) {
     (rect?.bottom ?? event.clientY) + 4,
     sidebarRepoSortOptions.map((option) => ({
       id: `sidebar.group.sort.${option.value}`,
-      label: option.label,
+      label: nextRepoSortDisplayLabel(sidebarRepoSort.value, option),
       icon: option.icon,
       onSelect: () => selectSidebarRepoSort(option),
     })),
