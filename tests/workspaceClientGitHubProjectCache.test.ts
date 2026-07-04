@@ -9,6 +9,7 @@ import {
   getRepoFilePreview,
   getGitHubRepoCommitDetail,
   getGitHubRepoManagement,
+  getGitHubRepoSettingsSection,
   listRepoFiles,
   listGitHubRepoCommits,
   listGitHubIssues,
@@ -255,6 +256,17 @@ describe("workspace GitHub project cache", () => {
     const cached = await listGitHubIssues(repoFullName, "open");
     expect(cached[0]?.title).toBe("缓存前 Issue");
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+  });
+
+  it("仓库设置分区按 section 缓存并隔离外部污染", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [githubRepoSummary()], nextPage: null }]);
+
+    const first = await getGitHubRepoSettingsSection(repoFullName, "actions");
+    expect(first.key).toBe("actions");
+    first.title = "外部污染";
+
+    const cached = await getGitHubRepoSettingsSection(repoFullName, "actions");
+    expect(cached.title).toBe("Actions");
   });
 
   it("仓库改名后迁移项目缓存和 fallback 仓库身份", async () => {

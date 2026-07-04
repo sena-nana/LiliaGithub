@@ -35,6 +35,7 @@ import {
   listGitHubIssueAssignees,
   listGitHubIssueLabels,
   listGitHubRepoFiles,
+  listGitHubBranches,
   listGitHubWorkflowRuns,
   listGitHubReleases,
   listRepoFiles,
@@ -532,6 +533,8 @@ vi.mock("../src/services/workspace/client", () => ({
   mergeGitHubPullRequest: vi.fn(),
   pickFiles: vi.fn(),
   listRepoFiles: vi.fn(async () => []),
+  listGitHubBranches: vi.fn(async () => [{ name: "main", remote: true, current: false }]),
+  getGitHubRepoSettingsSection: vi.fn(),
   openPath: vi.fn(),
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
@@ -669,6 +672,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubIssueAssignees).mockReset();
     vi.mocked(listGitHubIssueLabels).mockReset();
     vi.mocked(listGitHubRepoFiles).mockReset();
+    vi.mocked(listGitHubBranches).mockReset();
     vi.mocked(listGitHubReleases).mockReset();
     vi.mocked(listRepoFiles).mockReset();
     vi.mocked(pickFiles).mockReset();
@@ -750,6 +754,7 @@ describe("RepoProjectPanel", () => {
     ));
     vi.mocked(deleteGitHubReleaseAsset).mockResolvedValue(undefined);
     vi.mocked(listGitHubRepoFiles).mockResolvedValue([]);
+    vi.mocked(listGitHubBranches).mockResolvedValue([{ name: "main", remote: true, current: false }]);
     vi.mocked(listRepoFiles).mockResolvedValue(localRootFiles);
     vi.mocked(getRepoFilePreview).mockResolvedValue(localReadmePreview);
     vi.mocked(listGitHubIssueLabels).mockResolvedValue(["bug", "needs triage", "documentation"]);
@@ -1093,7 +1098,7 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
     expect(await view.findByRole("region", { name: "GitHub 功能" })).toBeInTheDocument();
-    const settingsNav = view.getByRole("navigation", { name: "Settings 分类" });
+    const settingsNav = view.getByRole("navigation", { name: "设置分类" });
     expect(within(settingsNav).getByRole("button", { name: "仓库信息" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "GitHub 功能" })).toBeInTheDocument();
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
@@ -2515,32 +2520,46 @@ describe("RepoProjectPanel", () => {
     const infoCard = await view.findByRole("region", { name: "仓库信息" });
     const accessCard = view.getByRole("region", { name: "协作与访问" });
     const featureCard = view.getByRole("region", { name: "GitHub 功能" });
-    const mergeCard = view.getByRole("region", { name: "Pull Request / Merge" });
+    const mergeCard = view.getByRole("region", { name: "拉取请求与合并" });
     const dangerCard = view.getByRole("region", { name: "危险操作" });
-    const settingsNav = view.getByRole("navigation", { name: "Settings 分类" });
+    const settingsNav = view.getByRole("navigation", { name: "设置分类" });
     expect(within(settingsNav).getByRole("button", { name: "仓库信息" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "协作与访问" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "GitHub 功能" })).toBeInTheDocument();
-    expect(within(settingsNav).getByRole("button", { name: "Pull Request / Merge" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "拉取请求与合并" })).toBeInTheDocument();
+    expect(within(settingsNav).getByText("常规")).toBeInTheDocument();
+    expect(within(settingsNav).getByText("访问权限")).toBeInTheDocument();
+    expect(within(settingsNav).getByText("代码与自动化")).toBeInTheDocument();
+    expect(within(settingsNav).getByText("安全与质量")).toBeInTheDocument();
+    expect(within(settingsNav).getByText("集成")).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "协作者" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "规则" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Actions" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "高级安全" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "密钥与变量" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "危险操作" })).toBeInTheDocument();
     const nameInput = within(infoCard).getByLabelText("仓库名") as HTMLInputElement;
     expect(nameInput.value).toBe("remote-repo");
-    expect(within(accessCard).getByRole("switch", { name: /Private/ })).toBeInTheDocument();
-    expect(within(accessCard).getByRole("switch", { name: /Forking/ })).toBeInTheDocument();
-    expect(within(accessCard).getByRole("switch", { name: /Web signoff/ })).toBeInTheDocument();
+    expect(within(infoCard).getByLabelText("可见性")).toBeInTheDocument();
+    expect(within(infoCard).getByLabelText("默认分支")).toBeInTheDocument();
+    expect(within(accessCard).getByRole("switch", { name: /模板仓库/ })).toBeInTheDocument();
+    expect(within(accessCard).getByRole("switch", { name: /允许 Fork/ })).toBeInTheDocument();
+    expect(within(accessCard).getByRole("switch", { name: /网页提交签署/ })).toBeInTheDocument();
     expect(within(accessCard).queryByRole("switch", { name: /Issues/ })).toBeNull();
     expect(within(featureCard).getByRole("switch", { name: /Issues/ })).toBeInTheDocument();
     expect(within(featureCard).getByRole("switch", { name: /Wiki/ })).toBeInTheDocument();
-    expect(within(featureCard).getByRole("switch", { name: /Projects/ })).toBeInTheDocument();
-    expect(within(featureCard).getByRole("switch", { name: /Discussions/ })).toBeInTheDocument();
-    expect(within(mergeCard).getByRole("switch", { name: /Merge commit/ })).toBeInTheDocument();
-    expect(within(mergeCard).getByRole("switch", { name: /Squash/ })).toBeInTheDocument();
-    expect(within(mergeCard).getByRole("switch", { name: /Rebase/ })).toBeInTheDocument();
-    expect(within(mergeCard).getByRole("switch", { name: /Auto merge/ })).toBeInTheDocument();
+    expect(within(featureCard).getByRole("switch", { name: /项目看板/ })).toBeInTheDocument();
+    expect(within(featureCard).getByRole("switch", { name: /讨论/ })).toBeInTheDocument();
+    expect(within(featureCard).getByRole("switch", { name: /拉取请求/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /合并提交/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /Squash 合并/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /Rebase 合并/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /自动合并/ })).toBeInTheDocument();
     expect(within(mergeCard).getByRole("switch", { name: /合并后删分支/ })).toBeInTheDocument();
+    expect(within(mergeCard).getByRole("switch", { name: /更新分支/ })).toBeInTheDocument();
     expect(within(dangerCard).getByRole("region", { name: "本地危险操作" })).toBeInTheDocument();
+    expect(within(dangerCard).getByRole("region", { name: "归档操作" })).toBeInTheDocument();
     expect(within(dangerCard).getByRole("region", { name: "远端危险操作" })).toBeInTheDocument();
-    expect(view.queryByText("默认分支")).toBeNull();
 
     const wikiSwitch = within(featureCard).getByRole("switch", { name: /Wiki/ });
     await fireEvent.click(wikiSwitch);
@@ -2553,6 +2572,25 @@ describe("RepoProjectPanel", () => {
       );
     });
     expect(vi.mocked(updateGitHubRepoSettings).mock.calls[0][1]).not.toHaveProperty("defaultBranch");
+  });
+
+  it("归档仓库需要完整仓库名确认并走独立 mutation", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const dangerCard = await view.findByRole("region", { name: "危险操作" });
+    await fireEvent.click(within(dangerCard).getByRole("button", { name: "归档" }));
+
+    const dialog = await view.findByRole("dialog", { name: "归档 GitHub 仓库" });
+    expect(within(dialog).getByRole("button", { name: /确认归档/ })).toBeDisabled();
+    await fireEvent.update(within(dialog).getByLabelText("输入完整仓库名以确认"), "sena-nana/remote-repo");
+    await fireEvent.click(within(dialog).getByRole("button", { name: /确认归档/ }));
+
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith("sena-nana/remote-repo", { archived: true });
+    });
   });
 
   it("修改远程仓库名后同步 shortcut 并跳转到新仓库路由", async () => {
@@ -2582,7 +2620,7 @@ describe("RepoProjectPanel", () => {
       expect(view.router.currentRoute.value.path).toBe("/repos/github%3Asena-nana%2Frenamed-repo");
     });
     expect(view.router.currentRoute.value.query.projectTab).toBe("settings");
-    expect(view.getByRole("navigation", { name: "Settings 分类" })).toBeInTheDocument();
+    expect(view.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect((view.getByLabelText("仓库名") as HTMLInputElement).value).toBe("renamed-repo");
   });
 
@@ -2605,7 +2643,7 @@ describe("RepoProjectPanel", () => {
       projectTab: "settings",
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByRole("navigation", { name: "Settings 分类" })).toBeInTheDocument();
+    expect(await view.findByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(view.getByLabelText("仓库名")).toHaveValue("remote-repo");
 
     await fireEvent.click(view.getByRole("switch", { name: /Wiki/ }));
@@ -2654,7 +2692,7 @@ describe("RepoProjectPanel", () => {
       projectTab: "settings",
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByRole("navigation", { name: "Settings 分类" })).toBeInTheDocument();
+    expect(await view.findByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
     expect(view.getByLabelText("仓库名")).toHaveValue("remote-repo");
 
     await fireEvent.click(view.getByRole("button", { name: "删除仓库" }));

@@ -29,6 +29,8 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepoSettingsSection,
+  GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
   GitHubUpdateIssueRequest,
   GitHubUpdatePullRequestRequest,
@@ -148,6 +150,10 @@ export interface WorkspaceCommandContracts {
   github_update_repo_settings: CommandContract<
     RepoFullNameArg & { request: GitHubUpdateRepoSettingsRequest },
     GitHubRepoManagement
+  >;
+  github_get_repo_settings_section: CommandContract<
+    RepoFullNameArg & { section: GitHubRepoSettingsSectionKey; forceRefresh: Maybe<boolean> },
+    GitHubRepoSettingsSection
   >;
   github_delete_repo: CommandContract<RepoFullNameArg, void>;
   github_list_branches: CommandContract<RepoFullNameArg, BranchSummary[]>;

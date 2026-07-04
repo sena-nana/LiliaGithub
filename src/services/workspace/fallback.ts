@@ -40,6 +40,8 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepoSettingsSection,
+  GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
@@ -514,6 +516,11 @@ function cloneGitHubRepoManagement(repo: GitHubRepoManagement): GitHubRepoManage
     ...repo,
     topics: [...repo.topics],
   };
+}
+
+function cloneFallbackData<T>(value: T): T {
+  if (typeof globalThis.structuredClone === "function") return globalThis.structuredClone(value);
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function cloneRepoSummary(repo: RepoSummary): RepoSummary {
@@ -3853,6 +3860,180 @@ export function updateGitHubRepoSettings(
     }
     fallbackGitHubRepoManagement[nextFullName] = updated;
     return cloneGitHubRepoManagement(updated);
+  });
+}
+
+function createFallbackSettingsSection(
+  repoFullName: string,
+  section: GitHubRepoSettingsSectionKey,
+): GitHubRepoSettingsSection {
+  const repo = fallbackRepoManagement(repoFullName);
+  const baseItem = (
+    key: string,
+    label: string,
+    path: string,
+    value: unknown,
+    mutable = true,
+    dangerous = false,
+  ) => ({
+    key,
+    label,
+    method: "GET",
+    path,
+    value,
+    error: null,
+    mutable,
+    dangerous,
+  });
+  const sections: Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection> = {
+    collaborators: {
+      key: "collaborators",
+      title: "协作者",
+      fetchedAt: Date.now(),
+      items: [
+        baseItem("collaborators", "协作者", "collaborators?per_page=100", [], true, true),
+        baseItem("teams", "仓库团队", "teams?per_page=100", [], false),
+      ],
+    },
+    moderation: {
+      key: "moderation",
+      title: "互动限制",
+      fetchedAt: Date.now(),
+      items: [baseItem("interactionLimits", "互动限制", "interaction-limits", null)],
+    },
+    security: {
+      key: "security",
+      title: "高级安全",
+      fetchedAt: Date.now(),
+      items: [
+        baseItem("repository", "仓库安全与分析", "", {
+          security_and_analysis: repo.securityAndAnalysis ?? {},
+        }),
+        baseItem("vulnerabilityAlerts", "漏洞警报", "vulnerability-alerts", { status: "enabled" }),
+        baseItem("dependabotSecurityUpdates", "Dependabot 安全更新", "automated-security-fixes", { status: "enabled" }),
+        baseItem("privateVulnerabilityReporting", "私有漏洞报告", "private-vulnerability-reporting", null),
+        baseItem("immutableReleases", "不可变 Release", "immutable-releases", null),
+      ],
+    },
+    branches: {
+      key: "branches",
+      title: "分支",
+      fetchedAt: Date.now(),
+      items: [
+        baseItem("branches", "分支", "branches?per_page=100", [{ name: repo.defaultBranch, protected: true }], false),
+      ],
+    },
+    tags: {
+      key: "tags",
+      title: "标签",
+      fetchedAt: Date.now(),
+      items: [baseItem("tags", "标签", "tags?per_page=100", [], false)],
+    },
+    rules: {
+      key: "rules",
+      title: "规则",
+      fetchedAt: Date.now(),
+      items: [baseItem("rulesets", "仓库规则集", "rulesets", [], true, true)],
+    },
+    actions: {
+      key: "actions",
+      title: "Actions",
+      fetchedAt: Date.now(),
+      items: [
+        baseItem("permissions", "Actions permissions", "actions/permissions", { enabled: true, allowed_actions: "all" }),
+        baseItem("workflowPermissions", "工作流默认权限", "actions/permissions/workflow", {
+          default_workflow_permissions: "read",
+          can_approve_pull_request_reviews: false,
+        }),
+        baseItem("workflows", "工作流", "actions/workflows?per_page=100", { total_count: 0, workflows: [] }),
+      ],
+    },
+    copilot: {
+      key: "copilot",
+      title: "Copilot",
+      fetchedAt: Date.now(),
+      items: [{
+        key: "copilot",
+        label: "Copilot repository settings",
+        method: "GET",
+        path: "unavailable:GitHub REST API does not expose a general repository-owned Copilot settings endpoint for this app.",
+        value: null,
+        error: "GitHub REST API does not expose a general repository-owned Copilot settings endpoint for this app.",
+        mutable: false,
+        dangerous: false,
+      }],
+    },
+    environments: {
+      key: "environments",
+      title: "环境",
+      fetchedAt: Date.now(),
+      items: [baseItem("environments", "环境", "environments", { total_count: 0, environments: [] }, true, true)],
+    },
+    codespaces: {
+      key: "codespaces",
+      title: "Codespaces",
+      fetchedAt: Date.now(),
+      items: [
+        baseItem("codespaces", "仓库 Codespaces", "codespaces?per_page=100", { total_count: 0, codespaces: [] }, false),
+        baseItem("codespacesSecrets", "Codespaces 仓库密钥", "codespaces/secrets", { total_count: 0, secrets: [] }, true, true),
+      ],
+    },
+    pages: {
+      key: "pages",
+      title: "Pages",
+      fetchedAt: Date.now(),
+      items: [
+        baseItem("pages", "GitHub Pages 站点", "pages", null),
+        baseItem("pagesBuilds", "GitHub Pages 构建", "pages/builds?per_page=20", { builds: [] }),
+      ],
+    },
+    webhooks: {
+      key: "webhooks",
+      title: "Webhooks",
+      fetchedAt: Date.now(),
+      items: [baseItem("webhooks", "Webhooks", "hooks", [], true, true)],
+    },
+    deployKeys: {
+      key: "deployKeys",
+      title: "部署密钥",
+      fetchedAt: Date.now(),
+      items: [baseItem("deployKeys", "部署密钥", "keys?per_page=100", [], true, true)],
+    },
+    secretsVariables: {
+      key: "secretsVariables",
+      title: "密钥与变量",
+      fetchedAt: Date.now(),
+      items: [
+        baseItem("actionsVariables", "Actions 仓库变量", "actions/variables", { total_count: 0, variables: [] }),
+        baseItem("actionsSecrets", "Actions 仓库密钥", "actions/secrets", { total_count: 0, secrets: [] }, true, true),
+      ],
+    },
+    githubApps: {
+      key: "githubApps",
+      title: "GitHub Apps",
+      fetchedAt: Date.now(),
+      items: [baseItem("installations", "仓库 GitHub App 安装", "installations", [], false)],
+    },
+    emailNotifications: {
+      key: "emailNotifications",
+      title: "邮件通知",
+      fetchedAt: Date.now(),
+      items: [baseItem("subscription", "仓库通知订阅", "subscription", null)],
+    },
+  };
+  return sections[section];
+}
+
+const fallbackGitHubRepoSettingsSections: Record<string, Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>> = {};
+
+export function getGitHubRepoSettingsSection(
+  repoFullName: string,
+  section: GitHubRepoSettingsSectionKey,
+): Promise<GitHubRepoSettingsSection> {
+  return call("github_get_repo_settings_section", { repoFullName, section }, () => {
+    const repoSections = (fallbackGitHubRepoSettingsSections[repoFullName] ??= {});
+    repoSections[section] ??= createFallbackSettingsSection(repoFullName, section);
+    return cloneFallbackData(repoSections[section]);
   });
 }
 

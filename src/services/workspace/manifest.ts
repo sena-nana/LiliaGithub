@@ -53,6 +53,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_create_repo",
     "github_get_repo_management",
     "github_update_repo_settings",
+    "github_get_repo_settings_section",
     "github_delete_repo",
     "github_list_branches",
     "github_delete_branch",

@@ -35,6 +35,8 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepoSettingsSection,
+  GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
@@ -109,6 +111,7 @@ type GitHubProjectRepoClientCache = {
   workflowArtifactEntries: Record<number, GitHubWorkflowArtifactEntry[] | undefined>;
   workflowArtifactPreviews: Record<string, RepoFilePreview | undefined>;
   releases?: GitHubRelease[];
+  settingsSections: Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>;
 };
 
 let githubRepoCache: {
@@ -311,6 +314,7 @@ function githubProjectRepoCache(repoFullName: string) {
       workflowArtifactEntries: {},
       workflowArtifactPreviews: {},
       releases: undefined,
+      settingsSections: {},
     };
     githubProjectCache.set(key, cache);
   }
@@ -782,8 +786,34 @@ export function updateGitHubRepoSettings(
       githubRepoCache = null;
       githubRepoPreloadPromise = null;
     }
-    githubProjectRepoCache(repo.fullName).management = cloneProjectData(repo);
+    const cache = githubProjectRepoCache(repo.fullName);
+    cache.management = cloneProjectData(repo);
+    if ("securityAndAnalysis" in request || "archived" in request) {
+      cache.settingsSections.security = undefined;
+    }
     return cloneProjectData(repo);
+  });
+}
+
+export function getGitHubRepoSettingsSection(
+  repoFullName: string,
+  section: GitHubRepoSettingsSectionKey,
+  options: { forceRefresh?: boolean } = {},
+): Promise<GitHubRepoSettingsSection> {
+  const cache = githubProjectRepoCache(repoFullName);
+  if (!options.forceRefresh && cache.settingsSections[section]) {
+    return Promise.resolve(cloneProjectData(cache.settingsSections[section]));
+  }
+  const args = {
+    repoFullName,
+    section,
+    forceRefresh: options.forceRefresh ?? null,
+  };
+  return cachedCall("github_get_repo_settings_section", args, () =>
+    workspaceFallback().getGitHubRepoSettingsSection(repoFullName, section),
+  ).then((result) => {
+    githubProjectRepoCache(repoFullName).settingsSections[section] = cloneProjectData(result);
+    return cloneProjectData(result);
   });
 }
 
