@@ -16,6 +16,8 @@ import {
   listGitHubPullRequests,
   listGitHubReleases,
   updateGitHubIssue,
+  updateGitHubRepoActionsPermissions,
+  updateGitHubRepoWorkflowPermissions,
   updateGitHubRelease,
   updateGitHubRepoSettings,
   uploadGitHubReleaseAsset,
@@ -267,6 +269,30 @@ describe("workspace GitHub project cache", () => {
 
     const cached = await getGitHubRepoSettingsSection(repoFullName, "actions");
     expect(cached.title).toBe("Actions");
+  });
+
+  it("Actions 权限更新后刷新设置分区缓存", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [githubRepoSummary()], nextPage: null }]);
+    await getGitHubRepoSettingsSection(repoFullName, "actions");
+
+    await updateGitHubRepoActionsPermissions(repoFullName, {
+      enabled: false,
+      allowedActions: "local_only",
+      shaPinningRequired: true,
+    });
+    await updateGitHubRepoWorkflowPermissions(repoFullName, {
+      defaultWorkflowPermissions: "write",
+      canApprovePullRequestReviews: true,
+    });
+
+    const section = await getGitHubRepoSettingsSection(repoFullName, "actions");
+    const permissions = section.items.find((item) => item.key === "permissions")?.value as Record<string, unknown>;
+    const workflow = section.items.find((item) => item.key === "workflowPermissions")?.value as Record<string, unknown>;
+    expect(permissions.enabled).toBe(false);
+    expect(permissions.allowed_actions).toBe("local_only");
+    expect(permissions.sha_pinning_required).toBe(true);
+    expect(workflow.default_workflow_permissions).toBe("write");
+    expect(workflow.can_approve_pull_request_reviews).toBe(true);
   });
 
   it("仓库改名后迁移项目缓存和 fallback 仓库身份", async () => {

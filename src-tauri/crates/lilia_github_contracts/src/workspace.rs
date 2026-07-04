@@ -857,6 +857,24 @@ pub struct GitHubRepoSettingsSection {
     pub items: Vec<GitHubRepoSettingsEndpointItem>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoActionsPermissionsRequest {
+    pub enabled: bool,
+    #[serde(default)]
+    pub allowed_actions: Option<String>,
+    #[serde(default)]
+    pub sha_pinning_required: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepoWorkflowPermissionsRequest {
+    pub default_workflow_permissions: String,
+    #[serde(default)]
+    pub can_approve_pull_request_reviews: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubIssue {

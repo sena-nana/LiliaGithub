@@ -54,6 +54,8 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_get_repo_management",
     "github_update_repo_settings",
     "github_get_repo_settings_section",
+    "github_update_repo_actions_permissions",
+    "github_update_repo_workflow_permissions",
     "github_delete_repo",
     "github_list_branches",
     "github_delete_branch",

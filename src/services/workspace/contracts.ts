@@ -27,6 +27,7 @@ import type {
   GitHubRelease,
   GitHubReleaseAsset,
   GitHubRepoManagement,
+  GitHubRepoActionsPermissionsRequest,
   GitHubRepoOwner,
   GitHubRepoPage,
   GitHubRepoSettingsSection,
@@ -36,6 +37,7 @@ import type {
   GitHubUpdatePullRequestRequest,
   GitHubUpdateReleaseRequest,
   GitHubUpdateRepoSettingsRequest,
+  GitHubRepoWorkflowPermissionsRequest,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
   GitHubWorkflowRun,
@@ -154,6 +156,14 @@ export interface WorkspaceCommandContracts {
   github_get_repo_settings_section: CommandContract<
     RepoFullNameArg & { section: GitHubRepoSettingsSectionKey; forceRefresh: Maybe<boolean> },
     GitHubRepoSettingsSection
+  >;
+  github_update_repo_actions_permissions: CommandContract<
+    RepoFullNameArg & { request: GitHubRepoActionsPermissionsRequest },
+    void
+  >;
+  github_update_repo_workflow_permissions: CommandContract<
+    RepoFullNameArg & { request: GitHubRepoWorkflowPermissionsRequest },
+    void
   >;
   github_delete_repo: CommandContract<RepoFullNameArg, void>;
   github_list_branches: CommandContract<RepoFullNameArg, BranchSummary[]>;

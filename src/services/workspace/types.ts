@@ -313,6 +313,17 @@ export interface GitHubRepoSettingsSection {
   items: GitHubRepoSettingsEndpointItem[];
 }
 
+export interface GitHubRepoActionsPermissionsRequest {
+  enabled: boolean;
+  allowedActions?: "all" | "local_only" | "selected" | string | null;
+  shaPinningRequired?: boolean | null;
+}
+
+export interface GitHubRepoWorkflowPermissionsRequest {
+  defaultWorkflowPermissions: "read" | "write" | string;
+  canApprovePullRequestReviews?: boolean | null;
+}
+
 export interface GitHubIssue {
   number: number;
   title: string;
