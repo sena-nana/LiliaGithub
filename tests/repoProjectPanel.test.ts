@@ -1093,8 +1093,9 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
     expect(await view.findByRole("region", { name: "GitHub 功能" })).toBeInTheDocument();
-    expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
-    expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("main");
+    const settingsNav = view.getByRole("navigation", { name: "Settings 分类" });
+    expect(within(settingsNav).getByRole("button", { name: "仓库信息" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "GitHub 功能" })).toBeInTheDocument();
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
@@ -2516,6 +2517,12 @@ describe("RepoProjectPanel", () => {
     const featureCard = view.getByRole("region", { name: "GitHub 功能" });
     const mergeCard = view.getByRole("region", { name: "Pull Request / Merge" });
     const dangerCard = view.getByRole("region", { name: "危险操作" });
+    const settingsNav = view.getByRole("navigation", { name: "Settings 分类" });
+    expect(within(settingsNav).getByRole("button", { name: "仓库信息" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "协作与访问" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "GitHub 功能" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Pull Request / Merge" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "危险操作" })).toBeInTheDocument();
     const nameInput = within(infoCard).getByLabelText("仓库名") as HTMLInputElement;
     expect(nameInput.value).toBe("remote-repo");
     expect(within(accessCard).getByRole("switch", { name: /Private/ })).toBeInTheDocument();
@@ -2575,7 +2582,7 @@ describe("RepoProjectPanel", () => {
       expect(view.router.currentRoute.value.path).toBe("/repos/github%3Asena-nana%2Frenamed-repo");
     });
     expect(view.router.currentRoute.value.query.projectTab).toBe("settings");
-    expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/renamed-repo");
+    expect(view.getByRole("navigation", { name: "Settings 分类" })).toBeInTheDocument();
     expect((view.getByLabelText("仓库名") as HTMLInputElement).value).toBe("renamed-repo");
   });
 
@@ -2598,7 +2605,8 @@ describe("RepoProjectPanel", () => {
       projectTab: "settings",
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
+    expect(await view.findByRole("navigation", { name: "Settings 分类" })).toBeInTheDocument();
+    expect(view.getByLabelText("仓库名")).toHaveValue("remote-repo");
 
     await fireEvent.click(view.getByRole("switch", { name: /Wiki/ }));
     await fireEvent.click(view.getByRole("button", { name: "保存" }));
@@ -2611,7 +2619,9 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/next-repo",
       projectTab: "settings",
     });
-    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
+    await waitFor(() => {
+      expect(view.getByLabelText("仓库名")).toHaveValue("next-repo");
+    });
 
     saveResult.resolve({
       ...githubSettings,
@@ -2620,7 +2630,7 @@ describe("RepoProjectPanel", () => {
     });
 
     await waitFor(() => {
-      expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
+      expect(view.getByLabelText("仓库名")).toHaveValue("next-repo");
     });
     expect(view.queryByText("Old saved description")).toBeNull();
   });
@@ -2644,7 +2654,8 @@ describe("RepoProjectPanel", () => {
       projectTab: "settings",
     });
     await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
-    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/remote-repo");
+    expect(await view.findByRole("navigation", { name: "Settings 分类" })).toBeInTheDocument();
+    expect(view.getByLabelText("仓库名")).toHaveValue("remote-repo");
 
     await fireEvent.click(view.getByRole("button", { name: "删除仓库" }));
     const dialog = await view.findByRole("dialog", { name: "删除 GitHub 仓库" });
@@ -2656,12 +2667,14 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/next-repo",
       projectTab: "settings",
     });
-    expect(await view.findByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
+    await waitFor(() => {
+      expect(view.getByLabelText("仓库名")).toHaveValue("next-repo");
+    });
 
     deleteResult.resolve();
 
     await waitFor(() => {
-      expect(view.getByLabelText("Settings 摘要")).toHaveTextContent("sena-nana/next-repo");
+      expect(view.getByLabelText("仓库名")).toHaveValue("next-repo");
     });
     expect(view.queryByText("GitHub 远端仓库已删除，本地目录仍保留。")).toBeNull();
   });
