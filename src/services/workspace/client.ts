@@ -32,6 +32,7 @@ import type {
   GitHubPullRequestListOptions,
   GitHubRelease,
   GitHubReleaseAsset,
+  GitHubRepoActionsPermissionsRequest,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -47,6 +48,7 @@ import type {
   GitHubUpdateReleaseRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
+  GitHubRepoWorkflowPermissionsRequest,
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchCandidate,
@@ -815,6 +817,26 @@ export function getGitHubRepoSettingsSection(
     githubProjectRepoCache(repoFullName).settingsSections[section] = cloneProjectData(result);
     return cloneProjectData(result);
   });
+}
+
+export async function updateGitHubRepoActionsPermissions(
+  repoFullName: string,
+  request: GitHubRepoActionsPermissionsRequest,
+): Promise<void> {
+  await call("github_update_repo_actions_permissions", { repoFullName, request }, () =>
+    workspaceFallback().updateGitHubRepoActionsPermissions(repoFullName, request),
+  );
+  githubProjectRepoCache(repoFullName).settingsSections.actions = undefined;
+}
+
+export async function updateGitHubRepoWorkflowPermissions(
+  repoFullName: string,
+  request: GitHubRepoWorkflowPermissionsRequest,
+): Promise<void> {
+  await call("github_update_repo_workflow_permissions", { repoFullName, request }, () =>
+    workspaceFallback().updateGitHubRepoWorkflowPermissions(repoFullName, request),
+  );
+  githubProjectRepoCache(repoFullName).settingsSections.actions = undefined;
 }
 
 export async function deleteGitHubRepo(repoFullName: string): Promise<void> {

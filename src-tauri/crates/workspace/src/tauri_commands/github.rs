@@ -10,6 +10,8 @@ delegate_command!(async github; fn github_create_repo(app: AppHandle, request: G
 delegate_command!(async github; fn github_get_repo_management(app: AppHandle, repo_full_name: String, force_refresh: Option<bool>,) -> Result<GitHubRepoManagement, String>);
 delegate_command!(async github; fn github_update_repo_settings(app: AppHandle, repo_full_name: String, request: GitHubUpdateRepoSettingsRequest,) -> Result<GitHubRepoManagement, String>);
 delegate_command!(async github; fn github_get_repo_settings_section(app: AppHandle, repo_full_name: String, section: String, force_refresh: Option<bool>,) -> Result<GitHubRepoSettingsSection, String>);
+delegate_command!(async github; fn github_update_repo_actions_permissions(app: AppHandle, repo_full_name: String, request: GitHubRepoActionsPermissionsRequest,) -> Result<(), String>);
+delegate_command!(async github; fn github_update_repo_workflow_permissions(app: AppHandle, repo_full_name: String, request: GitHubRepoWorkflowPermissionsRequest,) -> Result<(), String>);
 delegate_command!(async github; fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Result<(), String>);
 delegate_command!(async github; fn github_list_branches(app: AppHandle, repo_full_name: String,) -> Result<Vec<BranchSummary>, String>);
 delegate_command!(async github; fn github_delete_branch(app: AppHandle, repo_full_name: String, branch_name: String,) -> Result<(), String>);

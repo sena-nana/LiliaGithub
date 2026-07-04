@@ -95,7 +95,6 @@ import type {
   GitHubRelease,
   GitHubReleaseAsset,
   GitHubRepoManagement,
-  GitHubRepoSettingsSectionKey,
   GitHubUpdateReleaseRequest,
   GitHubUpdateRepoSettingsRequest,
   GitHubWorkflowRun,
@@ -138,7 +137,8 @@ import {
   preloadRepoProjectSection,
   type RepoProjectSectionKey,
 } from "./repoProjectSectionModules";
-import RepoSettingsApiSection from "./settings/RepoSettingsApiSection.vue";
+import RepoSettingsDetailSection from "./settings/RepoSettingsDetailSection.vue";
+import type { RepoSettingsDetailKind } from "./settings/repoSettingsDisplay";
 import {
   blankIssueTemplate,
   blankPullRequestTemplate,
@@ -446,7 +446,6 @@ const archiveConfirmInput = ref("");
 const archiveError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
-const activeSettingsApiSection = ref<GitHubRepoSettingsSectionKey | null>(null);
 const settingsBranches = ref<BranchSummary[]>([]);
 const settingsBranchesLoading = ref(false);
 const settingsBranchesError = ref<string | null>(null);
@@ -675,48 +674,17 @@ const settingsSwitchGroups: readonly SettingsSwitchGroup[] = [
   },
 ];
 
-type SettingsApiSectionConfig = { key: GitHubRepoSettingsSectionKey; title: string; id: string };
-type SettingsApiGroupConfig = { title: string; sections: readonly SettingsApiSectionConfig[] };
-type SettingsNavigationSection = { id: string; label: string; agentId: string; apiKey?: GitHubRepoSettingsSectionKey };
+type SettingsDetailSectionConfig = { kind: RepoSettingsDetailKind; title: string; id: string };
+type SettingsNavigationSection = { id: string; label: string; agentId: string };
 type SettingsNavigationCard = { id: string; title: string; sections: readonly SettingsNavigationSection[] };
 
-const settingsApiGroups: readonly SettingsApiGroupConfig[] = [
-  {
-    title: "访问权限",
-    sections: [
-      { key: "collaborators", title: "协作者", id: "project-settings-api-collaborators-title" },
-      { key: "moderation", title: "互动限制", id: "project-settings-api-moderation-title" },
-    ],
-  },
-  {
-    title: "代码与自动化",
-    sections: [
-      { key: "branches", title: "分支", id: "project-settings-api-branches-title" },
-      { key: "tags", title: "标签", id: "project-settings-api-tags-title" },
-      { key: "rules", title: "规则", id: "project-settings-api-rules-title" },
-      { key: "actions", title: "Actions", id: "project-settings-api-actions-title" },
-      { key: "webhooks", title: "Webhooks", id: "project-settings-api-webhooks-title" },
-      { key: "copilot", title: "Copilot", id: "project-settings-api-copilot-title" },
-      { key: "environments", title: "环境", id: "project-settings-api-environments-title" },
-      { key: "codespaces", title: "Codespaces", id: "project-settings-api-codespaces-title" },
-      { key: "pages", title: "Pages", id: "project-settings-api-pages-title" },
-    ],
-  },
-  {
-    title: "安全与质量",
-    sections: [
-      { key: "security", title: "高级安全", id: "project-settings-api-security-title" },
-      { key: "deployKeys", title: "部署密钥", id: "project-settings-api-deploy-keys-title" },
-      { key: "secretsVariables", title: "密钥与变量", id: "project-settings-api-secrets-variables-title" },
-    ],
-  },
-  {
-    title: "集成",
-    sections: [
-      { key: "githubApps", title: "GitHub Apps", id: "project-settings-api-github-apps-title" },
-      { key: "emailNotifications", title: "邮件通知", id: "project-settings-api-email-notifications-title" },
-    ],
-  },
+const settingsDetailSections: readonly SettingsDetailSectionConfig[] = [
+  { kind: "security", title: "Security", id: "project-settings-security-title" },
+  { kind: "branches", title: "Branches", id: "project-settings-branches-title" },
+  { kind: "actions", title: "Actions", id: "project-settings-actions-title" },
+  { kind: "environments", title: "Environments", id: "project-settings-environments-title" },
+  { kind: "webhooks", title: "Webhooks", id: "project-settings-webhooks-title" },
+  { kind: "access", title: "Access", id: "project-settings-access-title" },
 ];
 
 const githubAuthLoading = computed(() => workspace.state.authLoading);
@@ -857,16 +825,15 @@ const settingsNavigationCards = computed(() => {
             { id: "project-settings-merge-defaults-title", label: "合并默认值", agentId: "repo.settings.nav.merge-defaults" },
           ],
         },
-        ...settingsApiGroups.map((group) => ({
-          id: `project-settings-nav-card-${group.title.toLowerCase().replace(/\s+/g, "-")}`,
-          title: group.title,
-          sections: group.sections.map((section) => ({
+        {
+          id: "project-settings-nav-card-repository-controls",
+          title: "仓库控制",
+          sections: settingsDetailSections.map((section) => ({
             id: section.id,
             label: section.title,
-            agentId: `repo.settings.nav.${section.key}`,
-            apiKey: section.key,
+            agentId: `repo.settings.nav.${section.kind}`,
           })),
-        })),
+        },
       ]
     : [];
   if (hasSettingsDangerSection.value) {
@@ -2522,7 +2489,6 @@ function resetGitHubSectionState() {
   invalidateGitHubMutations();
   settings.value = null;
   settingsLoaded.value = false;
-  activeSettingsApiSection.value = null;
   settingsBranches.value = [];
   settingsBranchesLoading.value = false;
   settingsBranchesError.value = null;
@@ -2656,6 +2622,19 @@ async function saveSettings(closeAboutOnSuccess = false) {
   if (closeAboutOnSuccess) aboutEditing.value = false;
   clearHomeGitHubOverviewSnapshot();
   return true;
+}
+
+async function applyUpdatedSettingsManagement(next: GitHubRepoManagement) {
+  const repoFullName = props.repoFullName;
+  settings.value = next;
+  applySettingsForm(next);
+  if (repoFullName && !await syncRenamedSettingsIdentity(repoFullName, next)) return;
+  clearHomeGitHubOverviewSnapshot();
+}
+
+function handleSettingsBranchDeleted(branchName: string) {
+  settingsBranches.value = settingsBranches.value.filter((branch) => branch.name !== branchName);
+  void loadSettingsBranches(true);
 }
 
 function openArchiveDialog() {
@@ -3346,7 +3325,6 @@ function scrollToSettingsSection(sectionId: string) {
 }
 
 function selectSettingsNavigation(item: SettingsNavigationSection) {
-  if (item.apiKey) activeSettingsApiSection.value = item.apiKey;
   scrollToSettingsSection(item.id);
 }
 
@@ -4044,25 +4022,24 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   </label>
                 </div>
               </section>
-              <template v-for="apiGroup in settingsApiGroups" :key="apiGroup.title">
-                <div class="project-settings-api-group">
-                  <span>{{ apiGroup.title }}</span>
-                </div>
-                <section
-                  v-for="apiSection in apiGroup.sections"
-                  :id="apiSection.id"
-                  :key="apiSection.key"
-                  class="project-settings-section"
-                  :aria-label="apiSection.title"
-                >
-                  <RepoSettingsApiSection
-                    :repo-full-name="settings.fullName"
-                    :section="apiSection.key"
-                    :title="apiSection.title"
-                    :active="activeSettingsApiSection === apiSection.key"
-                  />
-                </section>
-              </template>
+              <section
+                v-for="detailSection in settingsDetailSections"
+                :id="detailSection.id"
+                :key="detailSection.kind"
+                class="project-settings-section"
+                :aria-label="detailSection.title"
+              >
+                <RepoSettingsDetailSection
+                  :repo-full-name="settings.fullName"
+                  :kind="detailSection.kind"
+                  :title="detailSection.title"
+                  :default-branch="settingsForm.defaultBranch"
+                  :branches="settingsBranches"
+                  :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                  @updated-management="applyUpdatedSettingsManagement"
+                  @branch-deleted="handleSettingsBranchDeleted"
+                />
+              </section>
             </template>
             <section
               v-if="hasSettingsDangerSection"
@@ -5758,19 +5735,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-settings-section:last-child {
   padding-bottom: 0;
   border-bottom: 0;
-}
-
-.project-settings-api-group {
-  display: flex;
-  align-items: center;
-  min-height: 24px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.project-settings-api-group span {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .project-settings-section__head {

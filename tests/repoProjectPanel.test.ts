@@ -16,6 +16,7 @@ import {
   createGitHubIssue,
   createGitHubRelease,
   attachGitHubWorkflowArtifactAsset,
+  deleteGitHubBranch,
   deleteGitHubRepo,
   deleteGitHubRelease,
   deleteGitHubReleaseAsset,
@@ -24,6 +25,7 @@ import {
   getGitHubRepoFilePreview,
   getGitHubPullRequestDiscussion,
   getGitHubRepoManagement,
+  getGitHubRepoSettingsSection,
   getRepoFilePreview,
   getGitHubWorkflowArtifactFilePreview,
   getGitHubWorkflowJobLog,
@@ -43,6 +45,8 @@ import {
   openUrl,
   pickFiles,
   updateGitHubRelease,
+  updateGitHubRepoActionsPermissions,
+  updateGitHubRepoWorkflowPermissions,
   updateGitHubRepoSettings,
   uploadGitHubReleaseAsset,
 } from "../src/services/workspace/client";
@@ -57,6 +61,8 @@ import type {
   GitHubRelease,
   GitHubReleaseAsset,
   GitHubRepoManagement,
+  GitHubRepoSettingsSection,
+  GitHubRepoSettingsSectionKey,
   GitHubWorkflowRun,
   GitHubWorkflowRunDetail,
   ProjectLaunchConfig,
@@ -496,11 +502,95 @@ function filePreview(path: string, content: string, overrides: Partial<RepoFileP
   };
 }
 
+function settingsSection(section: GitHubRepoSettingsSectionKey): GitHubRepoSettingsSection {
+  const item = (key: string, label: string, value: unknown) => ({
+    key,
+    label,
+    method: "GET",
+    path: "",
+    value,
+    error: null,
+    mutable: true,
+    dangerous: false,
+  });
+  const sections: Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>> = {
+    security: {
+      key: "security",
+      title: "Security",
+      fetchedAt: 1,
+      items: [
+        item("repository", "仓库安全与分析", {
+          security_and_analysis: {
+            advanced_security: { status: "enabled" },
+            secret_scanning: { status: "enabled" },
+          },
+        }),
+        item("vulnerabilityAlerts", "漏洞警报", { status: "enabled" }),
+        item("dependabotSecurityUpdates", "Dependabot 安全更新", { status: "enabled" }),
+      ],
+    },
+    branches: {
+      key: "branches",
+      title: "Branches",
+      fetchedAt: 1,
+      items: [item("branches", "分支", [{ name: "main", protected: true }, { name: "feature/settings", protected: false }])],
+    },
+    actions: {
+      key: "actions",
+      title: "Actions",
+      fetchedAt: 1,
+      items: [
+        item("permissions", "Actions permissions", { enabled: true, allowed_actions: "all" }),
+        item("workflowPermissions", "工作流默认权限", {
+          default_workflow_permissions: "read",
+          can_approve_pull_request_reviews: false,
+        }),
+        item("workflows", "工作流", { total_count: 2, workflows: [] }),
+      ],
+    },
+    environments: {
+      key: "environments",
+      title: "Environments",
+      fetchedAt: 1,
+      items: [item("environments", "环境", { total_count: 1, environments: [{ id: 1, name: "production" }] })],
+    },
+    webhooks: {
+      key: "webhooks",
+      title: "Webhooks",
+      fetchedAt: 1,
+      items: [item("webhooks", "Webhooks", [{ id: 1, name: "Deploy", active: true, events: ["push"] }])],
+    },
+    collaborators: {
+      key: "collaborators",
+      title: "协作者",
+      fetchedAt: 1,
+      items: [
+        item("collaborators", "协作者", [{ login: "sena" }]),
+        item("teams", "仓库团队", [{ name: "maintainers" }]),
+      ],
+    },
+    deployKeys: {
+      key: "deployKeys",
+      title: "部署密钥",
+      fetchedAt: 1,
+      items: [item("deployKeys", "部署密钥", [{ id: 1, title: "CI" }])],
+    },
+    githubApps: {
+      key: "githubApps",
+      title: "GitHub Apps",
+      fetchedAt: 1,
+      items: [item("installations", "仓库 GitHub App 安装", [{ id: 1, name: "Lilia Bot" }])],
+    },
+  };
+  return sections[section] ?? { key: section, title: section, fetchedAt: 1, items: [] };
+}
+
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
   createGitHubRelease: vi.fn(),
   attachGitHubWorkflowArtifactAsset: vi.fn(),
+  deleteGitHubBranch: vi.fn(),
   deleteGitHubRepo: vi.fn(),
   deleteGitHubRelease: vi.fn(),
   deleteGitHubReleaseAsset: vi.fn(),
@@ -539,6 +629,8 @@ vi.mock("../src/services/workspace/client", () => ({
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
   updateGitHubRelease: vi.fn(),
+  updateGitHubRepoActionsPermissions: vi.fn(),
+  updateGitHubRepoWorkflowPermissions: vi.fn(),
   updateGitHubRepoSettings: vi.fn(async (_repoFullName: string, request: Partial<GitHubRepoManagement>) => ({
     ...githubSettings,
     ...request,
@@ -660,6 +752,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(createGitHubIssue).mockReset();
     vi.mocked(createGitHubRelease).mockReset();
     vi.mocked(attachGitHubWorkflowArtifactAsset).mockReset();
+    vi.mocked(deleteGitHubBranch).mockReset();
     vi.mocked(deleteGitHubRepo).mockReset();
     vi.mocked(deleteGitHubRelease).mockReset();
     vi.mocked(deleteGitHubReleaseAsset).mockReset();
@@ -669,6 +762,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(getRepoFilePreview).mockReset();
     vi.mocked(getGitHubIssueFilterMetadata).mockReset();
     vi.mocked(getGitHubRepoManagement).mockReset();
+    vi.mocked(getGitHubRepoSettingsSection).mockReset();
     vi.mocked(listGitHubIssueAssignees).mockReset();
     vi.mocked(listGitHubIssueLabels).mockReset();
     vi.mocked(listGitHubRepoFiles).mockReset();
@@ -677,6 +771,8 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listRepoFiles).mockReset();
     vi.mocked(pickFiles).mockReset();
     vi.mocked(updateGitHubRelease).mockReset();
+    vi.mocked(updateGitHubRepoActionsPermissions).mockReset();
+    vi.mocked(updateGitHubRepoWorkflowPermissions).mockReset();
     vi.mocked(updateGitHubRepoSettings).mockReset();
     vi.mocked(uploadGitHubReleaseAsset).mockReset();
     vi.mocked(createGitHubIssue).mockImplementation(async (_repoFullName, request) => ({
@@ -754,7 +850,10 @@ describe("RepoProjectPanel", () => {
     ));
     vi.mocked(deleteGitHubReleaseAsset).mockResolvedValue(undefined);
     vi.mocked(listGitHubRepoFiles).mockResolvedValue([]);
-    vi.mocked(listGitHubBranches).mockResolvedValue([{ name: "main", remote: true, current: false }]);
+    vi.mocked(listGitHubBranches).mockResolvedValue([
+      { name: "main", remote: true, current: false, upstream: null, ahead: 0, behind: 0, protected: true, tipTimestamp: null, checkedOutWorktreePaths: [] },
+      { name: "feature/settings", remote: true, current: false, upstream: null, ahead: 0, behind: 0, protected: false, tipTimestamp: null, checkedOutWorktreePaths: [] },
+    ]);
     vi.mocked(listRepoFiles).mockResolvedValue(localRootFiles);
     vi.mocked(getRepoFilePreview).mockResolvedValue(localReadmePreview);
     vi.mocked(listGitHubIssueLabels).mockResolvedValue(["bug", "needs triage", "documentation"]);
@@ -768,6 +867,10 @@ describe("RepoProjectPanel", () => {
     });
     vi.mocked(getGitHubRepoFilePreview).mockRejectedValue(new Error("not found"));
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
+    vi.mocked(getGitHubRepoSettingsSection).mockImplementation(async (_repoFullName, section) => settingsSection(section));
+    vi.mocked(deleteGitHubBranch).mockResolvedValue(undefined);
+    vi.mocked(updateGitHubRepoActionsPermissions).mockResolvedValue(undefined);
+    vi.mocked(updateGitHubRepoWorkflowPermissions).mockResolvedValue(undefined);
     vi.mocked(updateGitHubRepoSettings).mockImplementation(async (_repoFullName, request) => ({
       ...githubSettings,
       ...request,
@@ -2528,15 +2631,13 @@ describe("RepoProjectPanel", () => {
     expect(within(settingsNav).getByRole("button", { name: "GitHub 功能" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "拉取请求与合并" })).toBeInTheDocument();
     expect(within(settingsNav).getByText("常规")).toBeInTheDocument();
-    expect(within(settingsNav).getByText("访问权限")).toBeInTheDocument();
-    expect(within(settingsNav).getByText("代码与自动化")).toBeInTheDocument();
-    expect(within(settingsNav).getByText("安全与质量")).toBeInTheDocument();
-    expect(within(settingsNav).getByText("集成")).toBeInTheDocument();
-    expect(within(settingsNav).getByRole("button", { name: "协作者" })).toBeInTheDocument();
-    expect(within(settingsNav).getByRole("button", { name: "规则" })).toBeInTheDocument();
+    expect(within(settingsNav).getByText("仓库控制")).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Security" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Branches" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "Actions" })).toBeInTheDocument();
-    expect(within(settingsNav).getByRole("button", { name: "高级安全" })).toBeInTheDocument();
-    expect(within(settingsNav).getByRole("button", { name: "密钥与变量" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Environments" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Webhooks" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Access" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "危险操作" })).toBeInTheDocument();
     const nameInput = within(infoCard).getByLabelText("仓库名") as HTMLInputElement;
     expect(nameInput.value).toBe("remote-repo");
@@ -2560,6 +2661,22 @@ describe("RepoProjectPanel", () => {
     expect(within(dangerCard).getByRole("region", { name: "本地危险操作" })).toBeInTheDocument();
     expect(within(dangerCard).getByRole("region", { name: "归档操作" })).toBeInTheDocument();
     expect(within(dangerCard).getByRole("region", { name: "远端危险操作" })).toBeInTheDocument();
+    expect(await view.findByRole("region", { name: "Security" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "Branches" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "Actions" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "Environments" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "Webhooks" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "Access" })).toBeInTheDocument();
+    const branchesSection = view.getByRole("region", { name: "Branches" });
+    await waitFor(() => {
+      expect(view.getByText("Secret scanning")).toBeInTheDocument();
+      expect(within(branchesSection).getByText("feature/settings")).toBeInTheDocument();
+      expect(view.getByText("production")).toBeInTheDocument();
+      expect(view.getByText("Deploy")).toBeInTheDocument();
+      expect(view.getByText("部署密钥")).toBeInTheDocument();
+    });
+    expect(view.queryByText(/\/repos\/\{owner\}\/\{repo\}/)).toBeNull();
+    expect(view.queryByText(/allowed_actions/)).toBeNull();
 
     const wikiSwitch = within(featureCard).getByRole("switch", { name: /Wiki/ });
     await fireEvent.click(wikiSwitch);
@@ -2590,6 +2707,84 @@ describe("RepoProjectPanel", () => {
 
     await waitFor(() => {
       expect(updateGitHubRepoSettings).toHaveBeenCalledWith("sena-nana/remote-repo", { archived: true });
+    });
+  });
+
+  it("关闭安全能力需要完整仓库名确认", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const securityCard = await view.findByRole("region", { name: "Security" });
+    await waitFor(() => {
+      expect(within(securityCard).getByRole("switch", { name: "Secret scanning" })).toBeInTheDocument();
+    });
+    await fireEvent.click(within(securityCard).getByRole("switch", { name: "Secret scanning" }));
+
+    const dialog = await view.findByRole("dialog", { name: "关闭安全能力" });
+    expect(within(dialog).getByRole("button", { name: "确认关闭" })).toBeDisabled();
+    await fireEvent.update(within(dialog).getByLabelText("输入 sena-nana/remote-repo 以确认"), "sena-nana/remote-repo");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认关闭" }));
+
+    await waitFor(() => {
+      expect(updateGitHubRepoSettings).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        securityAndAnalysis: expect.objectContaining({
+          secret_scanning: expect.objectContaining({ status: "disabled" }),
+        }),
+      });
+    });
+  });
+
+  it("关闭 Actions 需要完整仓库名确认并调用权限命令", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const actionsCard = await view.findByRole("region", { name: "Actions" });
+    await waitFor(() => {
+      expect(within(actionsCard).getByRole("switch", { name: "Actions" })).toBeInTheDocument();
+    });
+    await fireEvent.click(within(actionsCard).getByRole("switch", { name: "Actions" }));
+
+    const dialog = await view.findByRole("dialog", { name: "关闭 Actions" });
+    expect(within(dialog).getByRole("button", { name: "确认关闭" })).toBeDisabled();
+    await fireEvent.update(within(dialog).getByLabelText("输入 sena-nana/remote-repo 以确认"), "sena-nana/remote-repo");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认关闭" }));
+
+    await waitFor(() => {
+      expect(updateGitHubRepoActionsPermissions).toHaveBeenCalledWith("sena-nana/remote-repo", {
+        enabled: false,
+        allowedActions: "all",
+        shaPinningRequired: false,
+      });
+    });
+  });
+
+  it("删除远端分支需要输入分支名确认", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const branchesCard = await view.findByRole("region", { name: "Branches" });
+    await waitFor(() => {
+      expect(within(branchesCard).getByRole("button", { name: "删除 feature/settings" })).toBeInTheDocument();
+    });
+    expect(within(branchesCard).queryByRole("button", { name: "删除 main" })).toBeNull();
+    await fireEvent.click(within(branchesCard).getByRole("button", { name: "删除 feature/settings" }));
+
+    const dialog = await view.findByRole("dialog", { name: "删除远端分支" });
+    expect(within(dialog).getByRole("button", { name: "确认删除" })).toBeDisabled();
+    await fireEvent.update(within(dialog).getByLabelText("输入 feature/settings 以确认"), "feature/settings");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => {
+      expect(deleteGitHubBranch).toHaveBeenCalledWith("sena-nana/remote-repo", "feature/settings");
     });
   });
 

@@ -32,11 +32,11 @@ use lilia_github_contracts::workspace::{
     GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest,
     GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
     GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
-    GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage,
+    GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage,
     GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
     GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
-    GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry,
-    GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
+    GitHubUpdateRepoSettingsRequest, GitHubRepoWorkflowPermissionsRequest, GitHubWorkflowArtifact,
+    GitHubWorkflowArtifactEntry, GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
     GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview,
     RepoFileTreeEntry,
 };
@@ -1724,6 +1724,45 @@ pub(super) fn github_update_repo_settings_payload(
     }
     if let Some(value) = request.security_and_analysis.clone() {
         payload.insert("security_and_analysis".to_string(), value);
+    }
+    payload
+}
+
+pub(super) fn github_actions_permissions_payload(
+    request: &GitHubRepoActionsPermissionsRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("enabled".to_string(), serde_json::Value::Bool(request.enabled));
+    if let Some(value) = normalize_optional_string(request.allowed_actions.clone()) {
+        payload.insert(
+            "allowed_actions".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = request.sha_pinning_required {
+        payload.insert(
+            "sha_pinning_required".to_string(),
+            serde_json::Value::Bool(value),
+        );
+    }
+    payload
+}
+
+pub(super) fn github_workflow_permissions_payload(
+    request: &GitHubRepoWorkflowPermissionsRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut payload = serde_json::Map::new();
+    if let Some(value) = normalize_optional_string(Some(request.default_workflow_permissions.clone())) {
+        payload.insert(
+            "default_workflow_permissions".to_string(),
+            serde_json::Value::String(value),
+        );
+    }
+    if let Some(value) = request.can_approve_pull_request_reviews {
+        payload.insert(
+            "can_approve_pull_request_reviews".to_string(),
+            serde_json::Value::Bool(value),
+        );
     }
     payload
 }
@@ -3935,6 +3974,61 @@ pub async fn github_get_repo_settings_section(
 ) -> Result<GitHubRepoSettingsSection, String> {
     run_blocking("读取 GitHub 仓库设置分区", move || {
         github_get_repo_settings_section_sync(&app, &repo_full_name, &section)
+    })
+    .await
+}
+
+pub async fn github_update_repo_actions_permissions(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubRepoActionsPermissionsRequest,
+) -> Result<(), String> {
+    run_blocking("更新 GitHub Actions 权限", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "更新 GitHub Actions 权限失败",
+            github_headers(
+                client
+                    .put(format!("{}/actions/permissions", github_repo_api_url(&repo_full_name)?))
+                    .json(&github_actions_permissions_payload(&request)),
+                Some(&token),
+            ),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error("更新 GitHub Actions 权限失败", response));
+        }
+        Ok(())
+    })
+    .await
+}
+
+pub async fn github_update_repo_workflow_permissions(
+    app: AppHandle,
+    repo_full_name: String,
+    request: GitHubRepoWorkflowPermissionsRequest,
+) -> Result<(), String> {
+    run_blocking("更新 GitHub 工作流权限", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "更新 GitHub 工作流权限失败",
+            github_headers(
+                client
+                    .put(format!(
+                        "{}/actions/permissions/workflow",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
+                    .json(&github_workflow_permissions_payload(&request)),
+                Some(&token),
+            ),
+        )?;
+        if !response.status().is_success() {
+            return Err(github_http_error("更新 GitHub 工作流权限失败", response));
+        }
+        Ok(())
     })
     .await
 }

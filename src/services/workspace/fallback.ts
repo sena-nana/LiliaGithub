@@ -37,6 +37,7 @@ import type {
   GitHubPullRequestListOptions,
   GitHubRelease,
   GitHubReleaseAsset,
+  GitHubRepoActionsPermissionsRequest,
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
@@ -52,6 +53,7 @@ import type {
   GitHubUpdateReleaseRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
+  GitHubRepoWorkflowPermissionsRequest,
   HiddenRepo,
   ProjectLaunchConfig,
   ProjectLaunchCandidate,
@@ -521,6 +523,10 @@ function cloneGitHubRepoManagement(repo: GitHubRepoManagement): GitHubRepoManage
 function cloneFallbackData<T>(value: T): T {
   if (typeof globalThis.structuredClone === "function") return globalThis.structuredClone(value);
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function cloneRepoSummary(repo: RepoSummary): RepoSummary {
@@ -4034,6 +4040,60 @@ export function getGitHubRepoSettingsSection(
     const repoSections = (fallbackGitHubRepoSettingsSections[repoFullName] ??= {});
     repoSections[section] ??= createFallbackSettingsSection(repoFullName, section);
     return cloneFallbackData(repoSections[section]);
+  });
+}
+
+function fallbackRepoSettingsSection(repoFullName: string, section: GitHubRepoSettingsSectionKey) {
+  const repoSections = (fallbackGitHubRepoSettingsSections[repoFullName] ??= {});
+  repoSections[section] ??= createFallbackSettingsSection(repoFullName, section);
+  return repoSections[section];
+}
+
+function updateFallbackRepoSettingsItem(
+  repoFullName: string,
+  section: GitHubRepoSettingsSectionKey,
+  itemKey: string,
+  value: unknown,
+) {
+  const settingsSection = fallbackRepoSettingsSection(repoFullName, section);
+  const item = settingsSection.items.find((entry) => entry.key === itemKey);
+  if (item) {
+    item.value = cloneFallbackData(value);
+    item.error = null;
+  }
+  settingsSection.fetchedAt = Date.now();
+}
+
+export function updateGitHubRepoActionsPermissions(
+  repoFullName: string,
+  request: GitHubRepoActionsPermissionsRequest,
+): Promise<void> {
+  return call("github_update_repo_actions_permissions", { repoFullName, request }, () => {
+    fallbackRepoManagement(repoFullName);
+    const current = fallbackRepoSettingsSection(repoFullName, "actions")
+      .items.find((entry) => entry.key === "permissions")?.value;
+    updateFallbackRepoSettingsItem(repoFullName, "actions", "permissions", {
+      ...(isPlainObject(current) ? current : {}),
+      enabled: request.enabled,
+      allowed_actions: request.allowedActions ?? "all",
+      ...(request.shaPinningRequired == null ? {} : { sha_pinning_required: request.shaPinningRequired }),
+    });
+  });
+}
+
+export function updateGitHubRepoWorkflowPermissions(
+  repoFullName: string,
+  request: GitHubRepoWorkflowPermissionsRequest,
+): Promise<void> {
+  return call("github_update_repo_workflow_permissions", { repoFullName, request }, () => {
+    fallbackRepoManagement(repoFullName);
+    const current = fallbackRepoSettingsSection(repoFullName, "actions")
+      .items.find((entry) => entry.key === "workflowPermissions")?.value;
+    updateFallbackRepoSettingsItem(repoFullName, "actions", "workflowPermissions", {
+      ...(isPlainObject(current) ? current : {}),
+      default_workflow_permissions: request.defaultWorkflowPermissions,
+      can_approve_pull_request_reviews: request.canApprovePullRequestReviews ?? false,
+    });
   });
 }
 

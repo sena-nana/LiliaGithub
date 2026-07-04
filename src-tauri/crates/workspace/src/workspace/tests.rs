@@ -18,7 +18,8 @@ use super::github::{
     github_release_upload_base_url, github_release_validate_asset_file_size,
     github_repo_management_from_response, github_require_scope,
     github_review_comment_timeline_item_from_response, github_review_timeline_item_from_response,
-    github_timeline_item_from_response, github_update_repo_settings_payload,
+    github_actions_permissions_payload, github_timeline_item_from_response,
+    github_update_repo_settings_payload, github_workflow_permissions_payload,
     github_validate_release_for_artifact_asset, github_workflow_artifact_from_response,
     github_workflow_definition_from_file, github_workflow_job_from_response,
     github_workflow_run_from_response, github_workflow_runs_cache_key,
@@ -75,7 +76,8 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{
     BulkSyncResult, CachedRepoSummary, ContributionIdentity, GitHubBindingMetadata,
     GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue, GitHubProjectCache,
-    GitHubPullRequest, GitHubRelease, GitHubReleaseAsset, GitHubUpdateRepoSettingsRequest,
+    GitHubPullRequest, GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest,
+    GitHubRepoWorkflowPermissionsRequest, GitHubUpdateRepoSettingsRequest,
     LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut,
     RepoConflictChoice, RepoPullLocalChangesMode, RepoSummary, RepoWorktree, WorkspaceRepoGroup,
     WorkspaceSettings, WorkspaceStartupCache,
@@ -408,8 +410,10 @@ fn github_repo_management_maps_license() {
             name: "repo".to_string(),
             full_name: "a/repo".to_string(),
             private: false,
+            visibility: Some("public".to_string()),
             disabled: false,
             archived: false,
+            is_template: false,
             description: Some("Repository".to_string()),
             default_branch: Some("main".to_string()),
             created_at: "2026-06-18T08:00:00Z".to_string(),
@@ -424,13 +428,21 @@ fn github_repo_management_maps_license() {
             has_wiki: false,
             has_projects: true,
             has_discussions: false,
+            has_pull_requests: true,
+            pull_request_creation_policy: None,
             allow_merge_commit: true,
             allow_squash_merge: true,
             allow_rebase_merge: true,
             allow_auto_merge: false,
             delete_branch_on_merge: false,
+            allow_update_branch: false,
             allow_forking: true,
             web_commit_signoff_required: false,
+            squash_merge_commit_title: None,
+            squash_merge_commit_message: None,
+            merge_commit_title: None,
+            merge_commit_message: None,
+            security_and_analysis: None,
             stargazers_count: 78,
             subscribers_count: 2,
             forks_count: 16,
@@ -3002,6 +3014,7 @@ fn builds_github_repo_settings_patch_with_changed_fields_only() {
         delete_branch_on_merge: Some(true),
         allow_forking: None,
         web_commit_signoff_required: None,
+        ..Default::default()
     };
     let payload = github_update_repo_settings_payload(&request);
 
@@ -3025,6 +3038,31 @@ fn builds_github_repo_settings_patch_with_changed_fields_only() {
             ..Default::default()
         });
     assert!(blank_name_payload.get("name").is_none());
+}
+
+#[test]
+fn builds_github_actions_permission_payloads() {
+    let actions = github_actions_permissions_payload(&GitHubRepoActionsPermissionsRequest {
+        enabled: false,
+        allowed_actions: Some("selected".to_string()),
+        sha_pinning_required: Some(true),
+    });
+    assert_eq!(actions.get("enabled").unwrap(), false);
+    assert_eq!(actions.get("allowed_actions").unwrap(), "selected");
+    assert_eq!(actions.get("sha_pinning_required").unwrap(), true);
+
+    let workflow = github_workflow_permissions_payload(&GitHubRepoWorkflowPermissionsRequest {
+        default_workflow_permissions: "write".to_string(),
+        can_approve_pull_request_reviews: Some(true),
+    });
+    assert_eq!(
+        workflow.get("default_workflow_permissions").unwrap(),
+        "write"
+    );
+    assert_eq!(
+        workflow.get("can_approve_pull_request_reviews").unwrap(),
+        true
+    );
 }
 
 #[test]
