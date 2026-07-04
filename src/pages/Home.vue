@@ -485,10 +485,6 @@ const activeRepoStatusSortOption = computed(() =>
 const repoStatusSortLabel = computed(() =>
   repoSortDisplayLabel(activeRepoStatusSortOption.value, repoStatusSort.value.direction),
 );
-const repoStatusSortIcon = computed(() => activeRepoStatusSortOption.value.icon);
-const repoStatusHeadingSummary = computed(() =>
-  `${repoStatusRows.value.length} 个 GitHub 项目 · ${repoStatusSortLabel.value}`,
-);
 
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   overviewGitHubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
@@ -1767,10 +1763,10 @@ function bulkOperationDescription(operation: BulkOperation) {
           <div class="repo-status-heading">
             <h2>
               仓库状态
+              <span class="repo-status-heading__count">{{ repoStatusRows.length }}</span>
               <LoaderCircle v-if="githubReposLoading" :size="13" aria-hidden="true" class="card-title-loader" />
             </h2>
             <div class="repo-status-heading__tools">
-              <span class="repo-status-heading__summary">{{ repoStatusHeadingSummary }}</span>
               <button
                 type="button"
                 class="overview-actions__btn repo-status-sort-button"
@@ -1779,7 +1775,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 :aria-label="`仓库排序：${repoStatusSortLabel}`"
                 @click="openRepoStatusSortMenu"
               >
-                <component :is="repoStatusSortIcon" :size="15" aria-hidden="true" />
+                <span>{{ activeRepoStatusSortOption.label }} {{ repoStatusSort.direction === "asc" ? "↑" : "↓" }}</span>
               </button>
             </div>
           </div>
@@ -2397,7 +2393,17 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .repo-status-heading h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   margin: 0;
+}
+
+.repo-status-heading__count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .repo-status-heading__tools {
@@ -2408,21 +2414,18 @@ function bulkOperationDescription(operation: BulkOperation) {
   min-width: 0;
 }
 
-.repo-status-heading__summary {
-  color: var(--text-muted);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .repo-status-sort-button {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
+  width: auto;
+  min-width: 0;
   height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .repo-status-list {
