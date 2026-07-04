@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
 import { ContributionHeatmap, type ContributionHeatmapModel } from "@lilia/ui";
+import { RouterLink, type RouteLocationRaw } from "vue-router";
 
 defineProps<{
   loading: boolean;
   error: string | null;
   totalContributions: number;
   skippedRepoCount: number;
+  skippedRepoActionTo?: RouteLocationRaw;
   hasContributionDays: boolean;
   chartModel: ContributionHeatmapModel;
 }>();
@@ -32,6 +34,15 @@ defineEmits<{
         <p class="contribution-total">{{ totalContributions }} 次提交，最近一年</p>
         <p v-if="skippedRepoCount > 0" class="contribution-notice">
           已跳过 {{ skippedRepoCount }} 个不可读取仓库
+          <template v-if="skippedRepoActionTo">
+            <span aria-hidden="true"> · </span>
+            <RouterLink
+              class="contribution-notice__action"
+              :to="skippedRepoActionTo"
+            >
+              处理
+            </RouterLink>
+          </template>
         </p>
       </div>
       <button
@@ -106,6 +117,17 @@ defineEmits<{
   margin: 2px 0 0;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.contribution-notice__action {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.contribution-notice__action:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
 }
 
 .contribution-retry {

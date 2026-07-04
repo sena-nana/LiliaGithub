@@ -174,6 +174,11 @@ const HOME_PENDING_ITEM_LIMIT = 12;
 const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
 const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
 const REPO_STATUS_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
+const CONTRIBUTION_SETTINGS_ROUTE = {
+  path: "/settings",
+  query: { tab: "repositories" },
+  hash: "#contribution-identity-list-title",
+} as const;
 const repoStatusSortOptions: readonly {
   value: RepoStatusSortKey;
   label: string;
@@ -1637,6 +1642,7 @@ function bulkOperationDescription(operation: BulkOperation) {
           :error="overviewContributions.error"
           :total-contributions="totalContributions"
           :skipped-repo-count="skippedContributionRepoCount"
+          :skipped-repo-action-to="CONTRIBUTION_SETTINGS_ROUTE"
           :has-contribution-days="hasContributionDays"
           :chart-model="contributionHeatmapModel"
           @retry="refreshOverviewContributions"

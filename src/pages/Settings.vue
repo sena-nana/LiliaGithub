@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   SETTINGS_TABS,
@@ -13,6 +13,26 @@ const activeTabSection = computed(() => SETTINGS_SECTIONS[activeTab.value]);
 const activeTabLabel = computed(
   () => SETTINGS_TABS.find((tab) => tab.key === activeTab.value)?.label ?? "设置",
 );
+
+async function focusRouteHashTarget() {
+  const id = route.hash ? decodeURIComponent(route.hash.slice(1)) : "";
+  if (!id) return;
+
+  await nextTick();
+  const target = document.getElementById(id);
+  if (target) {
+    target.scrollIntoView?.({ block: "start" });
+    target.focus({ preventScroll: true });
+  }
+}
+
+watch(
+  () => route.fullPath,
+  () => {
+    void focusRouteHashTarget();
+  },
+  { immediate: true, flush: "post" },
+);
 </script>
 
 <template>
@@ -24,6 +44,6 @@ const activeTabLabel = computed(
       </div>
     </div>
 
-    <component :is="activeTabSection" />
+    <component :is="activeTabSection" @vue:mounted="focusRouteHashTarget" />
   </section>
 </template>
