@@ -40,7 +40,7 @@ watch(
     <div class="page-header">
       <div>
         <h1>{{ activeTabLabel }}</h1>
-        <p>这里只保留模板级偏好，业务配置由具体项目添加。</p>
+        <p>管理 LiliaGithub 的工作区、仓库、GitHub 授权和应用偏好。</p>
       </div>
     </div>
 

@@ -160,6 +160,33 @@ export async function pollAuthFlow() {
   }
 }
 
+export async function unbindGitHub() {
+  const currentVersion = ++authFlowVersion;
+  clearAuthTimers();
+  state.authLoading = true;
+  state.error = null;
+  state.authNotice = null;
+  state.authFlowStatus = "idle";
+  state.authRemainingSeconds = null;
+  deviceFlow.value = null;
+  try {
+    const service = await loadWorkspaceService();
+    await service.unbindGitHub();
+    if (currentVersion !== authFlowVersion) return;
+    const bindingStatus = await service.getGitHubBindingStatus();
+    if (currentVersion !== authFlowVersion) return;
+    applyBindingStatus(bindingStatus);
+  } catch (err) {
+    if (currentVersion !== authFlowVersion) return;
+    state.error = String(err);
+    stopAuthFlow("error");
+  } finally {
+    if (currentVersion === authFlowVersion) {
+      state.authLoading = false;
+    }
+  }
+}
+
 export function resetAuthFlowRuntimeForTests() {
   authFlowVersion += 1;
   clearAuthTimers();

@@ -3622,12 +3622,41 @@ export function pollGitHubDeviceFlow(
   deviceCode: string,
   intervalSeconds?: number | null,
 ): Promise<GitHubDeviceFlowPollResult> {
-  return call("github_poll_device_flow", { deviceCode, intervalSeconds: intervalSeconds ?? null }, () => ({
-    status: "authorized",
-    intervalSeconds: 5,
-    bindingStatus: fallbackBinding,
-    error: null,
-  }));
+  return call("github_poll_device_flow", { deviceCode, intervalSeconds: intervalSeconds ?? null }, () => {
+    if (fallbackBinding.state !== "bound") {
+      fallbackBinding = {
+        ...defaultFallbackBinding,
+        binding: defaultFallbackBinding.binding
+          ? { ...defaultFallbackBinding.binding, scopes: [...defaultFallbackBinding.binding.scopes] }
+          : null,
+      };
+      fallbackSettings = {
+        ...fallbackSettings,
+        githubBinding: fallbackBinding.binding,
+      };
+    }
+    return {
+      status: "authorized",
+      intervalSeconds: 5,
+      bindingStatus: fallbackBinding,
+      error: null,
+    };
+  });
+}
+
+export function unbindGitHub(): Promise<void> {
+  return call("github_unbind", undefined, () => {
+    fallbackBinding = {
+      state: "unbound",
+      clientIdConfigured: true,
+      clientIdSource: defaultFallbackBinding.clientIdSource,
+      binding: null,
+    };
+    fallbackSettings = {
+      ...fallbackSettings,
+      githubBinding: null,
+    };
+  });
 }
 
 export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {

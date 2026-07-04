@@ -652,6 +652,11 @@ export function pollGitHubDeviceFlow(
   );
 }
 
+export async function unbindGitHub(): Promise<void> {
+  await call("github_unbind", undefined, () => workspaceFallback().unbindGitHub());
+  clearGitHubRepoCache();
+}
+
 export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {
   return call("github_list_repo_contribution", { repoFullName: repoScope }, () =>
     workspaceFallback().listRepoContribution(repoScope),
