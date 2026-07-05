@@ -4,12 +4,15 @@ import {
   clearRepoLocalCache,
   clearGitHubRepoCache,
   createGitHubRelease,
+  deleteGitHubBranch,
   deleteGitHubRelease,
   deleteGitHubReleaseAsset,
   getRepoFilePreview,
   getGitHubRepoCommitDetail,
   getGitHubRepoManagement,
   getGitHubRepoSettingsSection,
+  listGitHubBranches,
+  listGitHubRepos,
   listRepoFiles,
   listGitHubRepoCommits,
   listGitHubIssues,
@@ -24,6 +27,7 @@ import {
   workspaceFallbackForTests,
 } from "../src/services/workspace/client";
 import type {
+  BranchSummary,
   CommitDetail,
   CommitSummary,
   GitHubIssue,
@@ -156,6 +160,21 @@ function githubRepoSummary(overrides: Partial<GitHubRepoSummary> = {}): GitHubRe
     updatedAt: "2026-06-18T08:00:00Z",
     cloneUrl: "https://github.com/sena-nana/remote-repo.git",
     htmlUrl: "https://github.com/sena-nana/remote-repo",
+    ...overrides,
+  };
+}
+
+function branch(name: string, overrides: Partial<BranchSummary> = {}): BranchSummary {
+  return {
+    name,
+    remote: true,
+    current: false,
+    upstream: null,
+    ahead: 0,
+    behind: 0,
+    protected: false,
+    tipTimestamp: null,
+    checkedOutWorktreePaths: [],
     ...overrides,
   };
 }
@@ -293,6 +312,48 @@ describe("workspace GitHub project cache", () => {
     expect(permissions.sha_pinning_required).toBe(true);
     expect(workflow.default_workflow_permissions).toBe("write");
     expect(workflow.can_approve_pull_request_reviews).toBe(true);
+  });
+
+  it("仓库资料保存后刷新仓库列表缓存", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [githubRepoSummary()], nextPage: null }]);
+
+    expect((await listGitHubRepos()).items[0]?.description).toBe("Remote repository tools");
+
+    await updateGitHubRepoSettings(repoFullName, {
+      description: "Updated repository tools",
+      defaultBranch: "release",
+    });
+
+    const refreshed = await listGitHubRepos();
+    expect(refreshed.items[0]?.description).toBe("Updated repository tools");
+    expect(refreshed.items[0]?.defaultBranch).toBe("release");
+  });
+
+  it("默认分支和分支删除保存后刷新 branches 设置分区", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{ items: [githubRepoSummary()], nextPage: null }]);
+    workspaceFallback.setFallbackGitHubBranchesForTests({
+      [repoFullName]: [
+        branch("main", { protected: true }),
+        branch("release", { protected: true }),
+        branch("feature/settings"),
+      ],
+    });
+
+    const initial = await getGitHubRepoSettingsSection(repoFullName, "branches");
+    expect((initial.items[0]?.value as Array<Record<string, unknown>>).map((item) => item.name)).toEqual([
+      "main",
+      "release",
+      "feature/settings",
+    ]);
+
+    await updateGitHubRepoSettings(repoFullName, { defaultBranch: "release" });
+    await deleteGitHubBranch(repoFullName, "feature/settings");
+
+    const refreshed = await getGitHubRepoSettingsSection(repoFullName, "branches");
+    const branchNames = (refreshed.items[0]?.value as Array<Record<string, unknown>>).map((item) => item.name);
+    expect(branchNames).toEqual(["main", "release"]);
+    expect((await listGitHubBranches(repoFullName)).map((item) => item.name)).toEqual(["main", "release"]);
+    expect((await getGitHubRepoManagement(repoFullName)).defaultBranch).toBe("release");
   });
 
   it("仓库改名后迁移项目缓存和 fallback 仓库身份", async () => {

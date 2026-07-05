@@ -2433,6 +2433,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubCommits = createFallbackGitHubCommits();
   fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
   fallbackGitHubBranches = createFallbackGitHubBranches();
+  fallbackGitHubRepoSettingsSections = {};
   fallbackRepoStashes = createFallbackRepoStashes();
   fallbackRepoRemotes = createFallbackRepoRemotes();
   fallbackRepoBranches = createFallbackRepoBranches();
@@ -2591,6 +2592,9 @@ export function setFallbackGitHubBranchesForTests(branchesByRepo: Record<string,
       branches.map(cloneBranchSummary),
     ]),
   );
+  for (const repoFullName of Object.keys(branchesByRepo)) {
+    clearFallbackGitHubRepoSettingsSection(repoFullName, "branches");
+  }
 }
 
 export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueListCall[] {
@@ -3777,6 +3781,16 @@ function moveFallbackGitHubRepoBucket(bucket: Record<string, unknown>, fromFullN
   delete bucket[fromFullName];
 }
 
+function updateFallbackGitHubRepoSummary(repoFullName: string, update: Partial<GitHubRepoSummary>) {
+  const apply = (repo: GitHubRepoSummary) =>
+    repo.fullName === repoFullName ? { ...repo, ...update } : repo;
+  fallbackGitHubRepos = fallbackGitHubRepos.map(apply);
+  fallbackGitHubRepoPagesOverride = fallbackGitHubRepoPagesOverride?.map((page) => ({
+    ...page,
+    items: page.items.map(apply),
+  })) ?? null;
+}
+
 function renameFallbackGitHubRepoReferences(fromFullName: string, toFullName: string, toName: string) {
   if (fromFullName === toFullName) return;
   fallbackGitHubRepos = fallbackGitHubRepos.map((repo) =>
@@ -3805,6 +3819,7 @@ function renameFallbackGitHubRepoReferences(fromFullName: string, toFullName: st
     fallbackGitHubBranches,
     fallbackGitHubRepoFiles,
     fallbackGitHubRepoFilePreviews,
+    fallbackGitHubRepoSettingsSections,
   ];
   buckets.forEach((bucket) => moveFallbackGitHubRepoBucket(bucket, fromFullName, toFullName));
 }
@@ -3903,6 +3918,23 @@ export function updateGitHubRepoSettings(
       renameFallbackGitHubRepoReferences(repoFullName, nextFullName, nextName);
     }
     fallbackGitHubRepoManagement[nextFullName] = updated;
+    updateFallbackGitHubRepoSummary(nextFullName, {
+      name: nextName,
+      fullName: nextFullName,
+      ownerLogin: owner,
+      private: updated.private,
+      archived: updated.archived ?? false,
+      description: updated.description,
+      defaultBranch: updated.defaultBranch,
+      cloneUrl: `https://github.com/${nextFullName}.git`,
+      htmlUrl: updated.htmlUrl,
+    });
+    if ("securityAndAnalysis" in request || "archived" in request) {
+      clearFallbackGitHubRepoSettingsSection(nextFullName, "security");
+    }
+    if ("defaultBranch" in request) {
+      clearFallbackGitHubRepoSettingsSection(nextFullName, "branches");
+    }
     return cloneGitHubRepoManagement(updated);
   });
 }
@@ -3964,7 +3996,16 @@ function createFallbackSettingsSection(
       title: "分支",
       fetchedAt: Date.now(),
       items: [
-        baseItem("branches", "分支", "branches?per_page=100", [{ name: repo.defaultBranch, protected: true }], false),
+        baseItem(
+          "branches",
+          "分支",
+          "branches?per_page=100",
+          (
+            fallbackGitHubBranches[repoFullName] ??
+            [buildBranchSummary({ name: repo.defaultBranch, protected: true })]
+          ).map((branch) => ({ name: branch.name, protected: branch.protected })),
+          false,
+        ),
       ],
     },
     tags: {
@@ -4068,7 +4109,14 @@ function createFallbackSettingsSection(
   return sections[section];
 }
 
-const fallbackGitHubRepoSettingsSections: Record<string, Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>> = {};
+let fallbackGitHubRepoSettingsSections: Record<string, Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>> = {};
+
+function clearFallbackGitHubRepoSettingsSection(
+  repoFullName: string,
+  section: GitHubRepoSettingsSectionKey,
+) {
+  delete fallbackGitHubRepoSettingsSections[repoFullName]?.[section];
+}
 
 export function getGitHubRepoSettingsSection(
   repoFullName: string,
@@ -4179,6 +4227,7 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
     if (!target) throw new Error(`未找到 GitHub 分支：${branch}`);
     if (target.protected) throw new Error("受保护分支不能删除");
     fallbackGitHubBranches[repoFullName] = branches.filter((item) => item.name !== branch);
+    clearFallbackGitHubRepoSettingsSection(repoFullName, "branches");
   });
 }
 

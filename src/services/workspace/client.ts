@@ -789,15 +789,18 @@ export function updateGitHubRepoSettings(
   return call("github_update_repo_settings", { repoFullName, request }, () =>
     workspaceFallback().updateGitHubRepoSettings(repoFullName, request),
   ).then((repo) => {
+    githubRepoCache = null;
+    githubRepoPreloadPromise = null;
     if (githubProjectRepoKey(repo.fullName) !== githubProjectRepoKey(repoFullName)) {
       clearGitHubProjectRepoCache(repoFullName);
-      githubRepoCache = null;
-      githubRepoPreloadPromise = null;
     }
     const cache = githubProjectRepoCache(repo.fullName);
     cache.management = cloneProjectData(repo);
     if ("securityAndAnalysis" in request || "archived" in request) {
       cache.settingsSections.security = undefined;
+    }
+    if ("defaultBranch" in request) {
+      cache.settingsSections.branches = undefined;
     }
     return cloneProjectData(repo);
   });
@@ -858,7 +861,9 @@ export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[
 export function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
   return call("github_delete_branch", { repoFullName, branchName }, () =>
     workspaceFallback().deleteGitHubBranch(repoFullName, branchName)
-  );
+  ).then(() => {
+    githubProjectRepoCache(repoFullName).settingsSections.branches = undefined;
+  });
 }
 
 export function listGitHubPullRequests(
