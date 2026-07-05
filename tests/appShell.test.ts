@@ -181,6 +181,16 @@ type AppShellView = Awaited<ReturnType<typeof renderAppShell>>;
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
 let workspaceFallback: WorkspaceFallbackForTests;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 async function createSidebarRepoGroup(view: AppShellView, name: string) {
   await fireEvent.click(view.getByRole("button", { name: "创建仓库分组" }));
   const input = await view.findByRole("textbox", { name: "重命名分组" });
@@ -1016,6 +1026,39 @@ describe("AppShell sidebar", () => {
       expect(results.getByRole("option", { name: "打开本地仓库 InstantSearchRepo" })).toBeInTheDocument();
       expect(results.queryByRole("option", { name: "打开远程仓库 sena-nana/InstantSearchRepo" })).toBeNull();
     });
+  });
+
+  it("首页远端仓库 clone 失败后恢复按钮可用", async () => {
+    const remoteRepo = githubRepoSummary("sena-nana/RemoteClone");
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [remoteRepo],
+        nextPage: null,
+      },
+    ]);
+    const repositories = await import("../src/composables/workspace/repositories");
+    const clone = deferred<Awaited<ReturnType<typeof repositories.cloneRepo>>>();
+    const cloneRepo = vi.spyOn(repositories, "cloneRepo").mockReturnValue(clone.promise);
+    const view = await renderAppShell("/");
+    try {
+      const row = await waitFor(() => repoStatusRowForText(view.container, remoteRepo.fullName));
+      const cloneButton = within(row).getByRole("button", { name: "clone" });
+      await fireEvent.click(cloneButton);
+
+      await waitFor(() => {
+        expect(cloneRepo).toHaveBeenCalledWith(remoteRepo.cloneUrl, remoteRepo.name);
+        expect(cloneButton).toBeDisabled();
+      });
+
+      clone.reject(new Error("clone failed"));
+
+      await waitFor(() => {
+        expect(cloneButton).not.toBeDisabled();
+        expect(view.getByText(`克隆 ${remoteRepo.fullName} 失败：Error: clone failed`)).toBeInTheDocument();
+      });
+    } finally {
+      cloneRepo.mockRestore();
+    }
   });
 
   it("总览页搜索打开时侧边栏保持分组仓库树", async () => {
