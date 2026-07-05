@@ -447,8 +447,6 @@ const archiveError = ref<string | null>(null);
 const settings = ref<GitHubRepoManagement | null>(null);
 const settingsLoaded = ref(false);
 const settingsBranches = ref<BranchSummary[]>([]);
-const settingsBranchesLoading = ref(false);
-const settingsBranchesError = ref<string | null>(null);
 const issues = ref<GitHubIssue[]>([]);
 const milestoneIssues = ref<GitHubIssue[]>([]);
 const milestonePulls = ref<GitHubPullRequest[]>([]);
@@ -611,6 +609,70 @@ const settingsForm = reactive({
   mergeCommitTitle: "MERGE_MESSAGE",
   mergeCommitMessage: "PR_TITLE",
 });
+
+type SettingsDropdownKey = keyof Pick<
+  typeof settingsForm,
+  | "pullRequestCreationPolicy"
+  | "squashMergeCommitTitle"
+  | "squashMergeCommitMessage"
+  | "mergeCommitTitle"
+  | "mergeCommitMessage"
+>;
+type SettingsDropdownConfig = {
+  key: SettingsDropdownKey;
+  label: string;
+  agentId: string;
+  options: readonly { value: string; label: string }[];
+};
+const settingsDropdowns: readonly SettingsDropdownConfig[] = [
+  {
+    key: "pullRequestCreationPolicy",
+    label: "拉取请求创建",
+    agentId: "repo.settings.pr.creation-policy",
+    options: [
+      { value: "all", label: "所有用户" },
+      { value: "collaborators_only", label: "仅协作者" },
+    ],
+  },
+  {
+    key: "squashMergeCommitTitle",
+    label: "Squash 标题",
+    agentId: "repo.settings.merge.squash-title",
+    options: [
+      { value: "PR_TITLE", label: "拉取请求标题" },
+      { value: "COMMIT_OR_PR_TITLE", label: "提交或拉取请求标题" },
+    ],
+  },
+  {
+    key: "squashMergeCommitMessage",
+    label: "Squash 正文",
+    agentId: "repo.settings.merge.squash-message",
+    options: [
+      { value: "PR_BODY", label: "拉取请求正文" },
+      { value: "COMMIT_MESSAGES", label: "提交消息" },
+      { value: "BLANK", label: "空白" },
+    ],
+  },
+  {
+    key: "mergeCommitTitle",
+    label: "合并标题",
+    agentId: "repo.settings.merge.title",
+    options: [
+      { value: "PR_TITLE", label: "拉取请求标题" },
+      { value: "MERGE_MESSAGE", label: "合并消息" },
+    ],
+  },
+  {
+    key: "mergeCommitMessage",
+    label: "合并正文",
+    agentId: "repo.settings.merge.message",
+    options: [
+      { value: "PR_BODY", label: "拉取请求正文" },
+      { value: "PR_TITLE", label: "拉取请求标题" },
+      { value: "BLANK", label: "空白" },
+    ],
+  },
+] as const;
 type SettingsSwitchKey = keyof Pick<
   typeof settingsForm,
   | "isTemplate"
@@ -802,11 +864,6 @@ const hasSettingsDangerSection = computed(() =>
   (canDeleteRemote.value && Boolean(settings.value)) ||
   Boolean(settings.value),
 );
-const settingsBranchOptions = computed(() => {
-  const names = settingsBranches.value.map((branch) => branch.name);
-  if (settingsForm.defaultBranch && !names.includes(settingsForm.defaultBranch)) names.unshift(settingsForm.defaultBranch);
-  return names;
-});
 const settingsNavigationCards = computed(() => {
   const cards: SettingsNavigationCard[] = settings.value
     ? [
@@ -814,7 +871,6 @@ const settingsNavigationCards = computed(() => {
           id: "project-settings-nav-card-general",
           title: "常规",
           sections: [
-            { id: "project-settings-name-title", label: "仓库信息", agentId: "repo.settings.nav.info" },
             ...settingsSwitchGroups.map((group) => ({
               id: group.titleId,
               label: group.title,
@@ -2020,14 +2076,10 @@ async function loadSettingsBranches(force = false) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || remoteDeleted.value) return;
   if (!force && settingsBranches.value.length) return;
-  settingsBranchesLoading.value = true;
-  settingsBranchesError.value = null;
   try {
     settingsBranches.value = await listGitHubBranches(repoFullName);
   } catch (err) {
-    settingsBranchesError.value = String(err);
-  } finally {
-    settingsBranchesLoading.value = false;
+    settingsBranches.value = [];
   }
 }
 
@@ -2490,8 +2542,6 @@ function resetGitHubSectionState() {
   settings.value = null;
   settingsLoaded.value = false;
   settingsBranches.value = [];
-  settingsBranchesLoading.value = false;
-  settingsBranchesError.value = null;
   archiveDialogOpen.value = false;
   archiveConfirmInput.value = "";
   archiveError.value = null;
@@ -2857,6 +2907,10 @@ function dropdownOptions(options: readonly string[]) {
     { value: "", label: "Select an option" },
     ...options.map((option) => ({ value: option, label: option })),
   ];
+}
+
+function updateSettingsDropdown(key: SettingsDropdownKey, value: string) {
+  settingsForm[key] = value;
 }
 
 async function openIssueCreateView() {
@@ -3881,76 +3935,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           />
           <div v-if="settings || (canDeleteLocal && repoPath)" class="project-settings-sections">
             <template v-if="settings">
-              <section class="project-settings-section" aria-labelledby="project-settings-name-title">
-                <div class="project-settings-section__head">
-                  <h4 id="project-settings-name-title">仓库信息</h4>
-                </div>
-                <div class="project-settings-fields">
-                  <label class="project-settings-field">
-                    <span>仓库名</span>
-                    <input
-                      v-model="settingsForm.name"
-                      type="text"
-                      autocomplete="off"
-                      data-agent-id="repo.settings.name"
-                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                    />
-                  </label>
-                  <label class="project-settings-field">
-                    <span>描述</span>
-                    <input
-                      v-model="settingsForm.description"
-                      type="text"
-                      autocomplete="off"
-                      data-agent-id="repo.settings.description"
-                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                    />
-                  </label>
-                  <label class="project-settings-field">
-                    <span>主页</span>
-                    <input
-                      v-model="settingsForm.homepage"
-                      type="url"
-                      autocomplete="off"
-                      data-agent-id="repo.settings.homepage"
-                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                    />
-                  </label>
-                  <label class="project-settings-field">
-                    <span>可见性</span>
-                    <select
-                      v-model="settingsForm.visibility"
-                      data-agent-id="repo.settings.visibility"
-                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                    >
-                      <option value="public">公开</option>
-                      <option value="private">私有</option>
-                      <option value="internal">内部</option>
-                    </select>
-                  </label>
-                  <label class="project-settings-field">
-                    <span>默认分支</span>
-                    <select
-                      v-model="settingsForm.defaultBranch"
-                      data-agent-id="repo.settings.default-branch"
-                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading || settingsBranchesLoading"
-                    >
-                      <option v-for="branch in settingsBranchOptions" :key="branch" :value="branch">
-                        {{ branch }}
-                      </option>
-                    </select>
-                    <em v-if="settingsBranchesError">{{ settingsBranchesError }}</em>
-                  </label>
-                  <div class="project-settings-field project-settings-field--wide">
-                    <span>主题</span>
-                    <RepoTopicEditor
-                      v-model="settingsForm.topics"
-                      v-model:draft="aboutTopicDraft"
-                      agent-id-prefix="repo.settings.topics"
-                    />
-                  </div>
-                </div>
-              </section>
               <section
                 v-for="group in settingsSwitchGroups"
                 :key="group.titleId"
@@ -3983,42 +3967,23 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   <h4 id="project-settings-merge-defaults-title">合并默认值</h4>
                 </div>
                 <div class="project-settings-fields">
-                  <label class="project-settings-field">
-                    <span>拉取请求创建</span>
-                    <select v-model="settingsForm.pullRequestCreationPolicy" data-agent-id="repo.settings.pr.creation-policy" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
-                      <option value="all">所有用户</option>
-                      <option value="collaborators_only">仅协作者</option>
-                    </select>
-                  </label>
-                  <label class="project-settings-field">
-                    <span>Squash 标题</span>
-                    <select v-model="settingsForm.squashMergeCommitTitle" data-agent-id="repo.settings.merge.squash-title" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
-                      <option value="PR_TITLE">拉取请求标题</option>
-                      <option value="COMMIT_OR_PR_TITLE">提交或拉取请求标题</option>
-                    </select>
-                  </label>
-                  <label class="project-settings-field">
-                    <span>Squash 正文</span>
-                    <select v-model="settingsForm.squashMergeCommitMessage" data-agent-id="repo.settings.merge.squash-message" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
-                      <option value="PR_BODY">拉取请求正文</option>
-                      <option value="COMMIT_MESSAGES">提交消息</option>
-                      <option value="BLANK">空白</option>
-                    </select>
-                  </label>
-                  <label class="project-settings-field">
-                    <span>合并标题</span>
-                    <select v-model="settingsForm.mergeCommitTitle" data-agent-id="repo.settings.merge.title" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
-                      <option value="PR_TITLE">拉取请求标题</option>
-                      <option value="MERGE_MESSAGE">合并消息</option>
-                    </select>
-                  </label>
-                  <label class="project-settings-field">
-                    <span>合并正文</span>
-                    <select v-model="settingsForm.mergeCommitMessage" data-agent-id="repo.settings.merge.message" :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading">
-                      <option value="PR_BODY">拉取请求正文</option>
-                      <option value="PR_TITLE">拉取请求标题</option>
-                      <option value="BLANK">空白</option>
-                    </select>
+                  <label
+                    v-for="dropdown in settingsDropdowns"
+                    :key="dropdown.key"
+                    class="project-settings-field"
+                  >
+                    <span>{{ dropdown.label }}</span>
+                    <Dropdown
+                      :model-value="settingsForm[dropdown.key]"
+                      :options="dropdown.options"
+                      block
+                      size="large"
+                      placement="bottom"
+                      :agent-id="dropdown.agentId"
+                      :menu-label="dropdown.label"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                      @update:model-value="updateSettingsDropdown(dropdown.key, $event)"
+                    />
                   </label>
                 </div>
               </section>
@@ -5769,7 +5734,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-settings-field input,
-.project-settings-field select,
 .project-settings-field textarea {
   width: 100%;
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { AlertCircle, LoaderCircle, RotateCw, Trash2 } from "@lucide/vue";
-import { UiSwitch } from "@lilia/ui";
+import { Dropdown, UiSwitch } from "@lilia/ui";
 import {
   deleteGitHubBranch,
   getGitHubRepoSettingsSection,
@@ -115,6 +115,15 @@ const allowedActions = computed(() => String(actionsPermissions.value.allowed_ac
 const shaPinningRequired = computed(() => asBoolean(actionsPermissions.value.sha_pinning_required) === true);
 const workflowDefaultPermission = computed(() => String(workflowPermissions.value.default_workflow_permissions ?? "read"));
 const workflowCanApprove = computed(() => asBoolean(workflowPermissions.value.can_approve_pull_request_reviews) === true);
+const allowedActionOptions = [
+  { value: "all", label: "全部" },
+  { value: "local_only", label: "仅本仓库" },
+  { value: "selected", label: "选定范围" },
+] as const;
+const workflowPermissionOptions = [
+  { value: "read", label: "只读" },
+  { value: "write", label: "读写" },
+] as const;
 const workflowCount = computed(() => {
   const record = itemRecord(sectionItem(primarySection.value, "workflows"));
   return Number(record.total_count ?? namedRecords(record.workflows).length ?? 0);
@@ -284,13 +293,11 @@ async function saveWorkflowPermissions(next: {
   });
 }
 
-function onAllowedActionsChange(event: Event) {
-  const value = event.target instanceof HTMLSelectElement ? event.target.value : allowedActions.value;
+function onAllowedActionsChange(value: string) {
   void saveActionsPermissions({ allowedActions: value });
 }
 
-function onWorkflowPermissionChange(event: Event) {
-  const value = event.target instanceof HTMLSelectElement ? event.target.value : workflowDefaultPermission.value;
+function onWorkflowPermissionChange(value: string) {
   void saveWorkflowPermissions({ defaultWorkflowPermissions: value });
 }
 
@@ -434,28 +441,31 @@ function recordName(record: Record<string, unknown>) {
       <div class="project-settings-fields">
         <label class="project-settings-field">
           <span>允许的 Actions</span>
-          <select
-            :value="allowedActions"
-            data-agent-id="repo.settings.actions.allowed-actions"
+          <Dropdown
+            :model-value="allowedActions"
+            :options="allowedActionOptions"
+            block
+            size="large"
+            placement="bottom"
+            agent-id="repo.settings.actions.allowed-actions"
+            menu-label="允许的 Actions"
             :disabled="saving || disabled || !actionsEnabled"
-            @change="onAllowedActionsChange"
-          >
-            <option value="all">全部</option>
-            <option value="local_only">仅本仓库</option>
-            <option value="selected">选定范围</option>
-          </select>
+            @update:model-value="onAllowedActionsChange"
+          />
         </label>
         <label class="project-settings-field">
           <span>默认工作流权限</span>
-          <select
-            :value="workflowDefaultPermission"
-            data-agent-id="repo.settings.actions.workflow-permission"
+          <Dropdown
+            :model-value="workflowDefaultPermission"
+            :options="workflowPermissionOptions"
+            block
+            size="large"
+            placement="bottom"
+            agent-id="repo.settings.actions.workflow-permission"
+            menu-label="默认工作流权限"
             :disabled="saving || disabled || !actionsEnabled"
-            @change="onWorkflowPermissionChange"
-          >
-            <option value="read">只读</option>
-            <option value="write">读写</option>
-          </select>
+            @update:model-value="onWorkflowPermissionChange"
+          />
         </label>
         <label class="project-settings-field">
           <span>工作流数量</span>
@@ -628,8 +638,7 @@ function recordName(record: Record<string, unknown>) {
   font-size: 12px;
 }
 
-.project-settings-field input,
-.project-settings-field select {
+.project-settings-field input {
   width: 100%;
   min-width: 0;
   height: 32px;
