@@ -1868,7 +1868,6 @@ function bulkOperationDescription(operation: BulkOperation) {
             <div
               class="repo-status-list"
               aria-label="仓库状态列表"
-              v-memo="[visibleRepoStatusRows, workspace.state.bulkRunning, syncingRepoId]"
             >
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
               <div
