@@ -5720,7 +5720,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-settings-sections {
   display: grid;
-  gap: 24px;
+  gap: 12px;
 }
 
 .project-settings-section {
@@ -5728,25 +5728,22 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   align-content: start;
   gap: 12px;
   min-width: 0;
-  padding: 0 0 24px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.project-settings-section:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
 }
 
 .project-settings-section__head {
   display: flex;
   align-items: center;
-  min-height: 28px;
+  min-height: 24px;
 }
 
 .project-settings-section__head h4 {
   margin: 0;
   color: var(--text);
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.3;
 }
@@ -5792,16 +5789,19 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-settings-switches {
   display: grid;
   gap: 0;
-  border-top: 1px solid var(--border);
 }
 
 .project-settings-switch {
   align-items: start;
   gap: 16px;
-  min-height: 60px;
-  padding: 13px 0;
+  min-height: 56px;
+  padding: 10px 0;
   color: var(--text);
   border-bottom: 1px solid var(--border-soft);
+}
+
+.project-settings-switch:last-child {
+  border-bottom: 0;
 }
 
 .project-settings-switch__content {
