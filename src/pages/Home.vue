@@ -401,6 +401,9 @@ const overviewContributions = computed(() => homeContributionSnapshot.value ?? e
 
 const contributionHeatmapModel = computed(() =>
   buildContributionHeatmapModel(overviewContributions.value.days, {
+    cellSize: 13,
+    cellGap: 3,
+    cellRadius: 3,
     formatTitle: (day) => `${day.date}：${day.count} 次提交`,
   })
 );
