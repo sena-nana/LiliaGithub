@@ -8,6 +8,7 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  SquareTerminal,
   Trash2,
 } from "@lucide/vue";
 import type { ContextMenuItem } from "@lilia/ui";
@@ -20,14 +21,15 @@ const props = defineProps<{
 
 const {
   canUseLocalFileActions,
-  copyTreeFileAbsolutePath,
-  copyTreeFilePath,
+  copyTreeEntryAbsolutePath,
+  copyTreeEntryPath,
   deleteTreeFile,
   isDirectoryExpanded,
   isDirectoryLoading,
   isTreeItemActive,
+  openTreeEntryFolder,
+  openTreeEntryTarget,
   openTreeFile,
-  openTreeFileFolder,
   repoLocationLabel,
   selectFile,
   toggleDirectory,
@@ -36,9 +38,47 @@ const {
   visibleEntries,
 } = props.browser;
 
+const localOpenTargets = [
+  { id: "terminal", label: "在终端打开", icon: SquareTerminal },
+  { id: "vscode", label: "用 VSCode 打开", icon: ExternalLink },
+  { id: "liliacode", label: "用 LiliaCode 打开", icon: ExternalLink },
+] as const;
+
 function fileMenu(entry: RepoFileTreeEntry): () => ContextMenuItem[] {
   return () => {
-    if (entry.kind !== "file" || !canUseLocalFileActions.value) return [];
+    if (!canUseLocalFileActions.value) return [];
+    const targetActions: ContextMenuItem[] = localOpenTargets.map((target) => ({
+      id: `open-${target.id}:${entry.path}`,
+      label: target.label,
+      icon: target.icon,
+      onSelect: () => void openTreeEntryTarget(entry, target.id),
+    }));
+    const copyActions: ContextMenuItem[] = [
+      {
+        id: `copy-relative:${entry.path}`,
+        label: "复制相对路径",
+        icon: Copy,
+        onSelect: () => void copyTreeEntryPath(entry),
+      },
+      {
+        id: `copy-absolute:${entry.path}`,
+        label: "复制完整路径",
+        icon: Copy,
+        onSelect: () => void copyTreeEntryAbsolutePath(entry),
+      },
+    ];
+    if (entry.kind === "dir") {
+      return [
+        {
+          id: `open-folder:${entry.path}`,
+          label: "打开文件夹",
+          icon: FolderOpen,
+          onSelect: () => void openTreeEntryFolder(entry),
+        },
+        ...targetActions,
+        ...copyActions,
+      ];
+    }
     return [
       {
         id: `open:${entry.path}`,
@@ -50,20 +90,10 @@ function fileMenu(entry: RepoFileTreeEntry): () => ContextMenuItem[] {
         id: `open-folder:${entry.path}`,
         label: "打开所在文件夹",
         icon: FolderOpen,
-        onSelect: () => void openTreeFileFolder(entry.path),
+        onSelect: () => void openTreeEntryFolder(entry),
       },
-      {
-        id: `copy-relative:${entry.path}`,
-        label: "复制相对路径",
-        icon: Copy,
-        onSelect: () => void copyTreeFilePath(entry.path),
-      },
-      {
-        id: `copy-absolute:${entry.path}`,
-        label: "复制完整路径",
-        icon: Copy,
-        onSelect: () => void copyTreeFileAbsolutePath(entry.path),
-      },
+      ...targetActions,
+      ...copyActions,
       {
         id: `delete:${entry.path}`,
         label: "删除",

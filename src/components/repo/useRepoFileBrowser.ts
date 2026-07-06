@@ -10,7 +10,7 @@ import {
   openPathTarget,
   openUrl,
 } from "../../services/workspace/client";
-import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../../services/workspace/types";
+import type { RepoChange, RepoFilePreview, RepoFileTreeEntry, SystemOpenTarget } from "../../services/workspace/types";
 import {
   diffCodeLanguageLabel,
   inferDiffCodeLanguage,
@@ -334,29 +334,43 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     return absoluteRepoPath(repoPath.value, path);
   }
 
+  function absoluteEntryPath(entry: RepoFileTreeEntry) {
+    return absoluteRepoPath(repoPath.value, entry.path);
+  }
+
+  function absoluteEntryTargetDirectory(entry: RepoFileTreeEntry) {
+    return absoluteRepoPath(repoPath.value, entry.kind === "dir" ? entry.path : fileParentPath(entry.path));
+  }
+
   async function openTreeFile(path: string) {
     await runFileAction(async () => {
+      if (!canUseLocalFileActions.value) return;
       const absolutePath = absoluteFilePath(path);
       if (!absolutePath) return;
       await openPath(absolutePath);
     });
   }
 
-  async function openTreeFileFolder(path: string) {
+  async function openTreeEntryFolder(entry: RepoFileTreeEntry) {
+    await openTreeEntryTarget(entry, "folder");
+  }
+
+  async function openTreeEntryTarget(entry: RepoFileTreeEntry, target: SystemOpenTarget) {
     await runFileAction(async () => {
-      const absolutePath = absoluteRepoPath(repoPath.value, fileParentPath(path));
+      if (!canUseLocalFileActions.value) return;
+      const absolutePath = absoluteEntryTargetDirectory(entry);
       if (!absolutePath) return;
-      await openPathTarget(absolutePath, "folder");
+      await openPathTarget(absolutePath, target);
     });
   }
 
-  async function copyTreeFilePath(path: string) {
-    await runFileAction(() => copyText(path));
+  async function copyTreeEntryPath(entry: RepoFileTreeEntry) {
+    await runFileAction(() => copyText(entry.path));
   }
 
-  async function copyTreeFileAbsolutePath(path: string) {
+  async function copyTreeEntryAbsolutePath(entry: RepoFileTreeEntry) {
     await runFileAction(async () => {
-      const absolutePath = absoluteFilePath(path);
+      const absolutePath = absoluteEntryPath(entry);
       if (!absolutePath) return;
       await copyText(absolutePath);
     });
@@ -439,14 +453,15 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     treeLoading,
     visibleEntries,
     canUseLocalFileActions,
-    copyTreeFileAbsolutePath,
-    copyTreeFilePath,
+    copyTreeEntryAbsolutePath,
+    copyTreeEntryPath,
     deleteTreeFile,
     isDirectoryExpanded,
     isDirectoryLoading,
     isTreeItemActive,
+    openTreeEntryFolder,
+    openTreeEntryTarget,
     openTreeFile,
-    openTreeFileFolder,
     openPreviewFile,
     openPreviewLink,
     selectFile,
