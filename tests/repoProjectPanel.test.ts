@@ -42,6 +42,7 @@ import {
   listGitHubReleases,
   listRepoFiles,
   mergeGitHubPullRequest,
+  openPathTarget,
   openUrl,
   pickFiles,
   updateGitHubRelease,
@@ -106,6 +107,11 @@ const githubSettings: GitHubRepoManagement = {
 
 const localRootFiles: RepoFileTreeEntry[] = [repoFile("README.md")];
 const localReadmePreview = filePreview("README.md", "# Project README");
+const localOpenTargetCases = [
+  ["在终端打开", "terminal"],
+  ["用 VSCode 打开", "vscode"],
+  ["用 LiliaCode 打开", "liliacode"],
+] as const;
 
 const githubIssues: GitHubIssue[] = [{
   number: 12,
@@ -488,6 +494,15 @@ function repoFile(path: string): RepoFileTreeEntry {
   };
 }
 
+function repoDir(path: string): RepoFileTreeEntry {
+  return {
+    path,
+    name: path.split("/").pop() ?? path,
+    kind: "dir",
+    hasChildren: true,
+  };
+}
+
 function filePreview(path: string, content: string, overrides: Partial<RepoFilePreview> = {}): RepoFilePreview {
   return {
     path,
@@ -585,6 +600,18 @@ function settingsSection(section: GitHubRepoSettingsSectionKey): GitHubRepoSetti
   return sections[section] ?? { key: section, title: section, fetchedAt: 1, items: [] };
 }
 
+async function expectTreeOpenTarget(row: HTMLElement, label: string, target: string, path: string) {
+  const contextMenu = useContextMenu();
+  closeContextMenu();
+  await fireEvent.contextMenu(row);
+  const item = contextMenu.state.items.find((menuItem) => menuItem.label === label);
+  expect(item).toBeTruthy();
+  await selectContextMenuItem(item!);
+  await waitFor(() => {
+    expect(openPathTarget).toHaveBeenLastCalledWith(path, target);
+  });
+}
+
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
@@ -626,6 +653,7 @@ vi.mock("../src/services/workspace/client", () => ({
   listGitHubBranches: vi.fn(async () => [{ name: "main", remote: true, current: false }]),
   getGitHubRepoSettingsSection: vi.fn(),
   openPath: vi.fn(),
+  openPathTarget: vi.fn(),
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
   updateGitHubRelease: vi.fn(),
@@ -769,6 +797,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(listGitHubBranches).mockReset();
     vi.mocked(listGitHubReleases).mockReset();
     vi.mocked(listRepoFiles).mockReset();
+    vi.mocked(openPathTarget).mockReset();
     vi.mocked(pickFiles).mockReset();
     vi.mocked(updateGitHubRelease).mockReset();
     vi.mocked(updateGitHubRepoActionsPermissions).mockReset();
@@ -1096,6 +1125,45 @@ describe("RepoProjectPanel", () => {
     expect(getGitHubRepoManagement).toHaveBeenCalledTimes(1);
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+  });
+
+  it("文件树右键菜单把目录入口接到本地打开目标", async () => {
+    vi.mocked(listRepoFiles).mockImplementation(async (_repoId, parentPath) => (
+      parentPath === "src"
+        ? [repoFile("src/App.vue")]
+        : [repoDir("src"), repoFile("README.md")]
+    ));
+    vi.mocked(getRepoFilePreview).mockImplementation(async (_repoId, path) => filePreview(path, "content"));
+
+    const view = await renderProjectPanel({}, "/repos/local-repo/files");
+    const srcRow = await view.findByRole("button", { name: "src" });
+    const srcPath = "C:\\Files\\workspace\\local-repo\\src";
+
+    for (const [label, target] of localOpenTargetCases) {
+      await expectTreeOpenTarget(srcRow, label, target, srcPath);
+    }
+
+    await fireEvent.click(srcRow);
+    const appFileRow = await view.findByRole("button", { name: "App.vue" });
+
+    for (const [label, target] of localOpenTargetCases) {
+      await expectTreeOpenTarget(appFileRow, label, target, srcPath);
+    }
+  });
+
+  it("文件树右键菜单在没有本地路径时不显示本地打开入口", async () => {
+    vi.mocked(listRepoFiles).mockResolvedValue([repoFile("README.md")]);
+    vi.mocked(getRepoFilePreview).mockImplementation(async (_repoId, path) => filePreview(path, "content"));
+
+    const view = await renderProjectPanel({ repoPath: "" }, "/repos/local-repo/files");
+    const readmeRow = await view.findByRole("button", { name: "README.md" });
+    const contextMenu = useContextMenu();
+
+    closeContextMenu();
+    await fireEvent.contextMenu(readmeRow);
+
+    expect(contextMenu.state.open).toBe(false);
+    expect(openPathTarget).not.toHaveBeenCalled();
   });
 
   it("仓库设置读取失败时右侧错误卡不替换仓库侧栏", async () => {
