@@ -293,6 +293,7 @@ export interface WorkspaceCommandContracts {
   repo_refresh_language_stats: CommandContract<RepoArg, RepoSummary>;
   repo_list_files: CommandContract<RepoArg & { parentPath: Maybe<string> }, RepoFileTreeEntry[]>;
   repo_get_file_preview: CommandContract<RepoFileArg, RepoFilePreview>;
+  repo_delete_file: CommandContract<RepoFileArg, RepoSummary>;
   repo_get_changes: CommandContract<RepoArg, RepoChange[]>;
   repo_get_history: CommandContract<RepoArg, CommitSummary[]>;
   repo_get_commit_detail: CommandContract<RepoArg & CommitHashArg, CommitDetail>;

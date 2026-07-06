@@ -2,21 +2,32 @@
 import {
   ChevronDown,
   ChevronRight,
+  Copy,
+  ExternalLink,
   FileImage,
   FileText,
   Folder,
   FolderOpen,
+  Trash2,
 } from "@lucide/vue";
+import type { ContextMenuItem } from "@lilia/ui";
 import type { RepoFileBrowser } from "./useRepoFileBrowser";
+import type { RepoFileTreeEntry } from "../../services/workspace/types";
 
 const props = defineProps<{
   browser: RepoFileBrowser;
 }>();
 
 const {
+  canUseLocalFileActions,
+  copyTreeFileAbsolutePath,
+  copyTreeFilePath,
+  deleteTreeFile,
   isDirectoryExpanded,
   isDirectoryLoading,
   isTreeItemActive,
+  openTreeFile,
+  openTreeFileFolder,
   repoLocationLabel,
   selectFile,
   toggleDirectory,
@@ -24,6 +35,46 @@ const {
   treeLoading,
   visibleEntries,
 } = props.browser;
+
+function fileMenu(entry: RepoFileTreeEntry): () => ContextMenuItem[] {
+  return () => {
+    if (entry.kind !== "file" || !canUseLocalFileActions.value) return [];
+    return [
+      {
+        id: `open:${entry.path}`,
+        label: "打开",
+        icon: ExternalLink,
+        onSelect: () => void openTreeFile(entry.path),
+      },
+      {
+        id: `open-folder:${entry.path}`,
+        label: "打开所在文件夹",
+        icon: FolderOpen,
+        onSelect: () => void openTreeFileFolder(entry.path),
+      },
+      {
+        id: `copy-relative:${entry.path}`,
+        label: "复制相对路径",
+        icon: Copy,
+        onSelect: () => void copyTreeFilePath(entry.path),
+      },
+      {
+        id: `copy-absolute:${entry.path}`,
+        label: "复制完整路径",
+        icon: Copy,
+        onSelect: () => void copyTreeFileAbsolutePath(entry.path),
+      },
+      {
+        id: `delete:${entry.path}`,
+        label: "删除",
+        icon: Trash2,
+        danger: true,
+        confirmLabel: "确认删除？再点一次",
+        onSelect: () => void deleteTreeFile(entry.path),
+      },
+    ];
+  };
+}
 </script>
 
 <template>
@@ -44,6 +95,7 @@ const {
           :style="{ '--tree-indent': `${depth * 10}px` }"
           :aria-expanded="entry.kind === 'dir' ? isDirectoryExpanded(entry.path) : undefined"
           :aria-selected="isTreeItemActive(entry)"
+          v-context-menu="fileMenu(entry)"
           @click="entry.kind === 'dir' ? toggleDirectory(entry) : selectFile(entry.path)"
         >
           <span class="files-tree__toggle" aria-hidden="true">

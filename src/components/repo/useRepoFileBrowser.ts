@@ -1,10 +1,13 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from "vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
+import { copyText } from "../../composables/workspace/system";
 import {
+  deleteRepoFile,
   getRepoFilePreview,
   listRepoFiles,
   openPath,
+  openPathTarget,
   openUrl,
 } from "../../services/workspace/client";
 import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../../services/workspace/types";
@@ -29,6 +32,7 @@ export interface RepoFileBrowserInput {
   targetPath: Ref<string | null | undefined>;
   targetHash: Ref<string | null | undefined>;
   enabled?: Ref<boolean | undefined>;
+  deleteFile?: (path: string) => Promise<unknown>;
 }
 
 const ROOT_KEY = "";
@@ -104,11 +108,8 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     if (preview.value.previewKind === "image") return `图片 · ${formatFileSize(preview.value.size)}`;
     return `${preview.value.previewKind} · ${formatFileSize(preview.value.size)}`;
   });
-  const absolutePreviewPath = computed(() => {
-    if (!preview.value || !repoPath.value) return null;
-    const separator = repoPath.value.includes("\\") ? "\\" : "/";
-    return `${repoPath.value.replace(/[\\/]+$/, "")}${separator}${preview.value.path.replace(/\//g, separator)}`;
-  });
+  const absolutePreviewPath = computed(() => preview.value ? absoluteFilePath(preview.value.path) : null);
+  const canUseLocalFileActions = computed(() => Boolean(repoPath.value) && !currentRepoRef());
 
   onMounted(() => {
     if (isEnabled()) void initializePanel();
@@ -329,6 +330,79 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     return fileChangeBadges.value.get(entry.path) ?? null;
   }
 
+  function absoluteFilePath(path: string) {
+    return absoluteRepoPath(repoPath.value, path);
+  }
+
+  async function openTreeFile(path: string) {
+    await runFileAction(async () => {
+      const absolutePath = absoluteFilePath(path);
+      if (!absolutePath) return;
+      await openPath(absolutePath);
+    });
+  }
+
+  async function openTreeFileFolder(path: string) {
+    await runFileAction(async () => {
+      const absolutePath = absoluteRepoPath(repoPath.value, fileParentPath(path));
+      if (!absolutePath) return;
+      await openPathTarget(absolutePath, "folder");
+    });
+  }
+
+  async function copyTreeFilePath(path: string) {
+    await runFileAction(() => copyText(path));
+  }
+
+  async function copyTreeFileAbsolutePath(path: string) {
+    await runFileAction(async () => {
+      const absolutePath = absoluteFilePath(path);
+      if (!absolutePath) return;
+      await copyText(absolutePath);
+    });
+  }
+
+  async function deleteTreeFile(path: string) {
+    await runFileAction(async () => {
+      if (!canUseLocalFileActions.value) return;
+      const repoId = input.repoId.value;
+      const repoRef = currentRepoRef();
+      const selectedDeletedFile = selectedPath.value === path;
+      await (input.deleteFile ?? ((targetPath: string) => deleteRepoFile(repoId, targetPath)))(path);
+      if (!isCurrentRepoRequest(repoId, repoRef)) return;
+      const refreshedEntries = await refreshDirectoriesForFile(path, repoId, repoRef);
+      if (!isCurrentRepoRequest(repoId, repoRef) || !selectedDeletedFile) return;
+      previewLoader.invalidate();
+      selectedPath.value = null;
+      preview.value = null;
+      textPreviewTargetLine.value = null;
+      previewError.value = null;
+      previewLoading.value = false;
+      const nextFile = refreshedEntries.find((entry) => entry.kind === "file") ?? null;
+      if (nextFile) await selectFile(nextFile.path);
+    });
+  }
+
+  async function refreshDirectoriesForFile(path: string, repoId: string, repoRef: string | null) {
+    let entries = await loadDirectory(null, { force: true, repoId, repoRef });
+    let current = "";
+    for (const segment of fileParentPath(path).split("/").filter(Boolean)) {
+      if (!isCurrentRepoRequest(repoId, repoRef)) return [];
+      current = current ? `${current}/${segment}` : segment;
+      entries = await loadDirectory(current, { force: true, repoId, repoRef });
+    }
+    return entries;
+  }
+
+  async function runFileAction(action: () => Promise<unknown>) {
+    treeError.value = null;
+    try {
+      await action();
+    } catch (err) {
+      treeError.value = String(err);
+    }
+  }
+
   function currentRepoRef() {
     return input.repoRef.value ?? null;
   }
@@ -364,9 +438,15 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     treeError,
     treeLoading,
     visibleEntries,
+    canUseLocalFileActions,
+    copyTreeFileAbsolutePath,
+    copyTreeFilePath,
+    deleteTreeFile,
     isDirectoryExpanded,
     isDirectoryLoading,
     isTreeItemActive,
+    openTreeFile,
+    openTreeFileFolder,
     openPreviewFile,
     openPreviewLink,
     selectFile,
@@ -387,4 +467,16 @@ function lineHashNumber(hash?: string | null) {
   if (!match) return null;
   const line = Number.parseInt(match[1], 10);
   return Number.isFinite(line) && line > 0 ? line : null;
+}
+
+function fileParentPath(path: string) {
+  return path.split("/").slice(0, -1).join("/");
+}
+
+function absoluteRepoPath(repoPath: string | null, path: string) {
+  if (!repoPath) return null;
+  const root = repoPath.replace(/[\\/]+$/, "");
+  if (!path) return root;
+  const separator = repoPath.includes("\\") ? "\\" : "/";
+  return `${root}${separator}${path.replace(/\//g, separator)}`;
 }

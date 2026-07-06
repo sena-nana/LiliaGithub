@@ -1,31 +1,53 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ContextMenuHost, closeContextMenu, installContextMenu, uninstallContextMenu, vContextMenu } from "@lilia/ui";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defineComponent } from "vue";
 import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
 import RepoFilesPanel from "../src/components/repo/RepoFilesPanel.vue";
-import type { RepoChange, RepoFilePreview, RepoFileTreeEntry } from "../src/services/workspace/types";
+import type { RepoChange, RepoFilePreview, RepoFileTreeEntry, RepoSummary } from "../src/services/workspace/types";
 
 const clientMocks = vi.hoisted(() => ({
   listRepoFiles: vi.fn<(repoId: string, parentPath?: string | null, repoRef?: string | null) => Promise<RepoFileTreeEntry[]>>(),
   getRepoFilePreview: vi.fn<(repoId: string, path: string, repoRef?: string | null) => Promise<RepoFilePreview>>(),
+  deleteRepoFile: vi.fn<(repoId: string, path: string) => Promise<RepoSummary>>(),
+  refreshRepoDetailPatch: vi.fn(),
   openPath: vi.fn<(path: string) => Promise<void>>(),
+  openPathTarget: vi.fn<(path: string, target: string) => Promise<void>>(),
   openUrl: vi.fn<(url: string) => Promise<void>>(),
 }));
 
-const { listRepoFiles, getRepoFilePreview, openPath, openUrl } = clientMocks;
+const { listRepoFiles, getRepoFilePreview, deleteRepoFile, refreshRepoDetailPatch, openPath, openPathTarget, openUrl } = clientMocks;
 
 vi.mock("../src/services/workspace/client", () => ({
   listRepoFiles: clientMocks.listRepoFiles,
   getRepoFilePreview: clientMocks.getRepoFilePreview,
+  deleteRepoFile: clientMocks.deleteRepoFile,
+  refreshRepoDetailPatch: clientMocks.refreshRepoDetailPatch,
   openPath: clientMocks.openPath,
+  openPathTarget: clientMocks.openPathTarget,
   openUrl: clientMocks.openUrl,
 }));
 
 async function renderFilesPanel(props: Record<string, unknown> = {}) {
-  return render(RepoFilesPanel, {
-    props: {
-      repoId: "LiliaGithub",
-      repoPath: "C:\\Files\\workspace\\LiliaGithub",
-      ...props,
+  const panelProps = {
+    repoId: "LiliaGithub",
+    repoPath: "C:\\Files\\workspace\\LiliaGithub",
+    ...props,
+  };
+  const Wrapper = defineComponent({
+    components: { ContextMenuHost, RepoFilesPanel },
+    props: ["repoId", "repoPath", "repoRef", "changes", "targetPath", "targetHash"],
+    template: "<RepoFilesPanel v-bind=\"$props\" /><ContextMenuHost />",
+  });
+  return render(Wrapper, {
+    props: panelProps,
+    global: {
+      directives: {
+        contextMenu: vContextMenu,
+      },
+      stubs: {
+        transition: false,
+      },
     },
   });
 }
@@ -74,10 +96,63 @@ function change(overrides: Partial<RepoChange> & Pick<RepoChange, "path">): Repo
   };
 }
 
+function summary(overrides: Partial<RepoSummary> = {}): RepoSummary {
+  return {
+    id: "LiliaGithub",
+    name: "LiliaGithub",
+    path: "C:\\Files\\workspace\\LiliaGithub",
+    relativePath: "LiliaGithub",
+    currentBranch: "main",
+    remoteUrl: null,
+    githubFullName: null,
+    ahead: 0,
+    behind: 0,
+    stagedCount: 0,
+    unstagedCount: 0,
+    untrackedCount: 0,
+    conflictCount: 0,
+    lastCommitAt: null,
+    lastCommitMessage: null,
+    languageStats: [],
+    languageStatsUpdatedAt: 0,
+    worktree: {
+      role: "standalone",
+      sharedRepoKey: "LiliaGithub",
+      mainRepoId: null,
+    },
+    ...overrides,
+  };
+}
+
 describe("RepoFilesPanel", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    closeContextMenu();
+    installContextMenu();
     resetSessionContextForTests();
+    openPath.mockResolvedValue(undefined);
+    openPathTarget.mockResolvedValue(undefined);
+    deleteRepoFile.mockResolvedValue(summary());
+    refreshRepoDetailPatch.mockResolvedValue({
+      summary: summary(),
+      changes: [],
+      conflicts: {
+        operation: "none",
+        files: [],
+        allResolved: true,
+      },
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
+  afterEach(() => {
+    closeContextMenu();
+    uninstallContextMenu();
   });
 
   it("根目录为空时显示空状态", async () => {
@@ -226,6 +301,95 @@ describe("RepoFilesPanel", () => {
     expect(screen.getByRole("button", { name: /App\.vue/ })).toHaveTextContent("W");
     expect(screen.getByRole("button", { name: /README\.md/ })).toHaveTextContent("U");
     expect(screen.getByRole("button", { name: /pnpm-workspace\.yaml/ })).toBeInTheDocument();
+  });
+
+  it("本地文件右键菜单执行打开和复制操作", async () => {
+    listRepoFiles.mockResolvedValueOnce([file("README.md", "README.md")]);
+    getRepoFilePreview.mockResolvedValueOnce(preview({
+      path: "README.md",
+      name: "README.md",
+      previewKind: "markdown",
+      content: "# Guide",
+      size: 7,
+    }));
+
+    await renderFilesPanel();
+    const row = await screen.findByRole("button", { name: /README\.md/ });
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "打开" }));
+    await waitFor(() => expect(openPath).toHaveBeenCalledWith("C:\\Files\\workspace\\LiliaGithub\\README.md"));
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "打开所在文件夹" }));
+    await waitFor(() => expect(openPathTarget).toHaveBeenCalledWith("C:\\Files\\workspace\\LiliaGithub", "folder"));
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "复制相对路径" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("README.md"));
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "复制完整路径" }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith("C:\\Files\\workspace\\LiliaGithub\\README.md"));
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  it("确认删除当前文件后刷新文件树并选择同目录下一个文件", async () => {
+    listRepoFiles
+      .mockResolvedValueOnce([file("README.md", "README.md"), file("package.json", "package.json")])
+      .mockResolvedValueOnce([file("package.json", "package.json")]);
+    getRepoFilePreview
+      .mockResolvedValueOnce(preview({
+        path: "README.md",
+        name: "README.md",
+        previewKind: "markdown",
+        content: "# Guide",
+        size: 7,
+      }))
+      .mockResolvedValueOnce(preview({
+        path: "package.json",
+        name: "package.json",
+        previewKind: "text",
+        content: "{\"name\":\"demo\"}",
+        size: 15,
+      }));
+
+    await renderFilesPanel();
+    const row = await screen.findByRole("button", { name: /README\.md/ });
+
+    await fireEvent.contextMenu(row);
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "删除" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "确认删除？再点一次" }));
+
+    await waitFor(() => expect(deleteRepoFile).toHaveBeenCalledWith("LiliaGithub", "README.md"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /README\.md/ })).toBeNull());
+    expect(screen.getByRole("button", { name: /package\.json/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.querySelector(".files-main__code-content")).toHaveTextContent("{\"name\":\"demo\"}");
+    });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  });
+
+  it("远程文件树不显示本地文件操作菜单", async () => {
+    listRepoFiles.mockResolvedValueOnce([file("README.md", "README.md")]);
+    getRepoFilePreview.mockResolvedValueOnce(preview({
+      path: "README.md",
+      name: "README.md",
+      previewKind: "markdown",
+      content: "# Remote",
+      size: 8,
+    }));
+
+    await renderFilesPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoPath: null,
+      repoRef: "main",
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+    await fireEvent.contextMenu(await screen.findByRole("button", { name: /README\.md/ }));
+
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(deleteRepoFile).not.toHaveBeenCalled();
   });
 
   it("文本文件显示原始文本预览", async () => {

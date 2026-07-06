@@ -1072,6 +1072,11 @@ export async function discardChanges(repoId: string, files: string[]) {
   await applyRepoMutation(repoId, () => service.discardFiles(repoId, files));
 }
 
+export async function deleteRepoFile(repoId: string, path: string) {
+  const service = await loadWorkspaceService();
+  await applyRepoMutation(repoId, () => service.deleteRepoFile(repoId, path));
+}
+
 export async function addFilesToGitignore(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
   await applyRepoMutation(repoId, () => service.addFilesToGitignore(repoId, files));

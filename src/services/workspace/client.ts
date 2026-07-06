@@ -1466,6 +1466,13 @@ export function getRepoFilePreview(repoId: string, path: string, repoRef?: strin
   );
 }
 
+export function deleteRepoFile(repoId: string, path: string): Promise<RepoSummary> {
+  if (parseRemoteRepoId(repoId)) {
+    return Promise.reject(new Error("远程仓库文件不能从本地删除"));
+  }
+  return call("repo_delete_file", { repoId, path }, () => workspaceFallback().deleteRepoFile(repoId, path));
+}
+
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
   return call("repo_refresh_language_stats", { repoId }, () => workspaceFallback().refreshRepoLanguageStats(repoId));
 }
