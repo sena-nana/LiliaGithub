@@ -420,25 +420,15 @@ const homeContributionIdentityPanelVisible = computed(() =>
     || homeContributionIdentityRecommendations.value !== null
   ),
 );
-const homeRepoById = computed(() =>
-  new Map(overviewCodeRepos.value.map((repo) => [repo.id, repo])),
-);
-
 const languageOverview = computed<HomeCodeOverview>(() => {
   const overview = buildLanguageOverviewFromRepos(overviewCodeRepos.value);
-  const slices = overview.slices.map((slice) => {
-    const primaryRepoId = slice.repoIds[0] ?? null;
-    const target = homeRepoById.value.get(primaryRepoId ?? "")?.name ?? primaryRepoId;
-    return {
-      ...slice,
-      key: `language:${slice.language}`,
-      label: slice.language,
-      to: primaryRepoId ? repoRoute(primaryRepoId) : null,
-      linkTitle: target
-        ? `${slice.title}，点击进入 ${target}${slice.repoIds.length > 1 ? ` 等 ${slice.repoIds.length} 个仓库` : ""}`
-        : slice.title,
-    };
-  });
+  const slices = overview.slices.map((slice) => ({
+    ...slice,
+    key: `language:${slice.language}`,
+    label: slice.language,
+    to: null,
+    linkTitle: slice.title,
+  }));
   return { ...overview, slices };
 });
 

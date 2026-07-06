@@ -1724,34 +1724,6 @@ describe("基础路由", () => {
     expect(screen.queryByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeNull();
   });
 
-  it("总览页语言列表可跳转到对应仓库，饼图仅展示占比", async () => {
-    const { router } = await renderAt("/");
-
-    expect(screen.queryByRole("link", { name: /TypeScript：50%/ })).toBeNull();
-
-    const languageName = await screen.findByText("TypeScript", { selector: ".language-list__link .language-name" });
-    const listLink = languageName.closest("a");
-    expect(listLink).toBeInTheDocument();
-    await fireEvent.click(listLink);
-
-    await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    });
-    expect((await screen.findAllByRole("heading", { level: 1, name: "LiliaGithub" })).length).toBeGreaterThanOrEqual(1);
-
-    await router.push("/");
-    await fireEvent.click(await screen.findByRole("button", { name: "按项目" }));
-    const projectChart = await screen.findByLabelText("编程语言占比图");
-    const projectName = await within(projectChart).findByText("LiliaGithub", { selector: ".language-list__link .language-name" });
-    const projectLink = projectName.closest("a");
-    expect(projectLink).toBeInTheDocument();
-    await fireEvent.click(projectLink as Element);
-
-    await waitFor(() => {
-      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub");
-    });
-  });
-
   it("首页本地提交贡献图支持空状态和错误重试", async () => {
     const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackRepoContributionOverrideForTests(() => ({

@@ -8,7 +8,6 @@ export type LanguageSlice = {
   percent: number;
   color: string;
   offset: number;
-  repoIds: string[];
   title: string;
 };
 
@@ -39,7 +38,6 @@ type LanguageTotal = {
   language: string;
   bytes: number;
   lines: number;
-  repoBytes: Map<string, number>;
 };
 
 type ProjectCodeTotal = {
@@ -68,10 +66,9 @@ export function buildLanguageOverviewFromRepos(
   const totals = new Map<string, Omit<LanguageTotal, "language">>();
   for (const repo of repos) {
     for (const stat of repo.languageStats) {
-      const total = totals.get(stat.language) ?? { bytes: 0, lines: 0, repoBytes: new Map<string, number>() };
+      const total = totals.get(stat.language) ?? { bytes: 0, lines: 0 };
       total.bytes += stat.bytes;
       total.lines += stat.lines;
-      total.repoBytes.set(repo.id, (total.repoBytes.get(repo.id) ?? 0) + stat.bytes);
       totals.set(stat.language, total);
     }
   }
@@ -142,7 +139,6 @@ export function buildLanguageOverviewFromStats(
     language: stat.language,
     bytes: stat.bytes,
     lines: stat.lines,
-    repoBytes: new Map<string, number>(),
   }));
   return buildLanguageOverviewFromTotals(totals, sliceLimit);
 }
@@ -182,17 +178,13 @@ function buildLanguageOverviewFromTotals(totals: LanguageTotal[], sliceLimit: nu
 
 function mergeLanguageTotals(totals: LanguageTotal[]) {
   if (!totals.length) return null;
-  const repoBytes = new Map<string, number>();
   let bytes = 0;
   let lines = 0;
   for (const total of totals) {
     bytes += total.bytes;
     lines += total.lines;
-    for (const [repoId, repoSliceBytes] of total.repoBytes) {
-      repoBytes.set(repoId, (repoBytes.get(repoId) ?? 0) + repoSliceBytes);
-    }
   }
-  return { language: "Other", bytes, lines, repoBytes };
+  return { language: "Other", bytes, lines };
 }
 
 function buildLanguageSlice(
@@ -200,9 +192,6 @@ function buildLanguageSlice(
   percent: number,
   offset: number,
 ): LanguageSlice {
-  const repoIds = [...total.repoBytes.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([repoId]) => repoId);
   const title = `${total.language}：${formatPercent(percent)}，${formatBytes(total.bytes)}`;
   return {
     language: total.language,
@@ -211,7 +200,6 @@ function buildLanguageSlice(
     percent,
     color: githubLanguageColor(total.language),
     offset,
-    repoIds,
     title,
   };
 }
