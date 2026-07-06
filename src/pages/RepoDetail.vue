@@ -47,7 +47,6 @@ const {
   toolbarTabs,
   launchCommandOptions,
   activeLaunchValue,
-  launchCommandText,
   pullStrategyOptions,
   activePullStrategyValue,
   openTargetOptions,
@@ -75,7 +74,7 @@ const {
   pushCurrentBranchWithUpstream,
   setCurrentBranchUpstream,
   useDefaultTokenAuth,
-  startLaunch,
+  runLaunchCommand,
   stopLaunch,
   selectLaunchCandidateByValue,
   checkout,
@@ -111,7 +110,6 @@ const {
         :launch-running="launchRunning"
         :launch-command-options="launchCommandOptions"
         :active-launch-value="activeLaunchValue"
-        :launch-command-text="launchCommandText"
         :repo-setting-values="repoSettingValues"
         :active-open-target-value="activeOpenTargetValue"
         :active-pull-strategy-value="activePullStrategyValue"
@@ -134,7 +132,7 @@ const {
         @push-with-upstream="pushCurrentBranchWithUpstream"
         @set-upstream="setCurrentBranchUpstream"
         @select-launch-candidate="selectLaunchCandidateByValue"
-        @start-launch="startLaunch"
+        @run-launch-command="runLaunchCommand"
         @stop-launch="stopLaunch"
         @update-setting="setRepoSetting"
         @use-default-token-auth="useDefaultTokenAuth"
@@ -333,15 +331,6 @@ const {
   padding: 0 7px;
 }
 
-.repo-toolbar__command-select {
-  justify-content: flex-start;
-  gap: 6px;
-  width: auto;
-  min-width: 32px;
-  max-width: 280px;
-  padding: 0 7px;
-}
-
 .repo-toolbar__open-main,
 .repo-toolbar__pull-main {
   width: 28px;
@@ -450,12 +439,106 @@ const {
   font-weight: 600;
 }
 
-.repo-toolbar__command-select .dd__button-label {
-  max-width: 180px;
+.repo-toolbar__command-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
 }
 
-.repo-toolbar__launch .repo-toolbar__command-select {
-  flex: 1 1 auto;
+.repo-toolbar__command-picker:hover,
+.repo-toolbar__command-picker:focus-within,
+.repo-toolbar__command-picker.is-open {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.repo-toolbar__command-picker.is-disabled {
+  color: var(--text-faint);
+}
+
+.repo-toolbar__command-input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.repo-toolbar__command-input::placeholder {
+  color: var(--text-faint);
+}
+
+.repo-toolbar__command-input:disabled {
+  cursor: default;
+}
+
+.repo-toolbar__command-menu {
+  position: absolute;
+  z-index: var(--z-dropdown, 1900);
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(280px, calc(100vw - 24px));
+  max-height: 280px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-lg);
+}
+
+.repo-toolbar__command-option {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.repo-toolbar__command-option:hover,
+.repo-toolbar__command-option.is-active {
+  background: var(--bg-hover);
+}
+
+.repo-toolbar__command-option-label,
+.repo-toolbar__command-option-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-toolbar__command-option-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.repo-toolbar__command-option-hint,
+.repo-toolbar__command-empty {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.repo-toolbar__command-empty {
+  margin: 0;
+  padding: 8px;
 }
 
 .repo-toolbar__badge {
@@ -1017,7 +1100,7 @@ const {
     margin-left: 0;
   }
 
-  .repo-toolbar__command-select {
+  .repo-toolbar__command-picker {
     max-width: 100%;
   }
 

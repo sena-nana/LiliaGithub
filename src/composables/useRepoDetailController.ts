@@ -227,6 +227,7 @@ export function useRepoDetailController() {
     return options.map((candidate) => ({
       value: launchOptionValue(candidate.command, candidate.cwd),
       label: candidate.label || candidate.command,
+      command: candidate.command,
       hint: [candidate.kind, candidate.hint, candidate.cwd].filter(Boolean).join(" · "),
       candidate,
     }));
@@ -234,7 +235,6 @@ export function useRepoDetailController() {
   const activeLaunchValue = computed(() =>
     launchOptionValue(launchConfig.value?.command ?? "", launchConfig.value?.cwd ?? null),
   );
-  const launchCommandText = computed(() => launchConfig.value?.command?.trim() || "选择启动指令");
   const pullStrategyOptions = [
     { value: "pull", label: "仅快进拉取" },
     { value: "merge", label: "抓取后合并上游" },
@@ -830,11 +830,17 @@ export function useRepoDetailController() {
     void runAction(() => workspace.useDefaultTokenAuthForRepo(repoId.value));
   }
 
-  function startLaunch() {
+  function runLaunchCommand(command: string) {
     const targetRepoId = repoId.value;
-    if (!targetRepoId) return;
+    const trimmedCommand = command.trim();
+    if (!targetRepoId || !trimmedCommand || launchRunning.value) return;
     void runLaunchAction(async () => {
-      await workspace.loadLaunch(targetRepoId);
+      const currentCommand = launchConfig.value?.command.trim() ?? "";
+      if (currentCommand !== trimmedCommand) {
+        await workspace.saveLaunchConfig(targetRepoId, trimmedCommand, null);
+      } else {
+        await workspace.loadLaunch(targetRepoId);
+      }
       await workspace.startLaunch(targetRepoId);
       if (repoId.value !== targetRepoId) return;
       launchTerminalVisible.value = true;
@@ -1023,7 +1029,6 @@ export function useRepoDetailController() {
       toolbarTabs,
       launchCommandOptions,
       activeLaunchValue,
-      launchCommandText,
       pullStrategyOptions,
       activePullStrategyValue,
       openTargetOptions,
@@ -1052,7 +1057,7 @@ export function useRepoDetailController() {
       pushCurrentBranchWithUpstream,
       setCurrentBranchUpstream,
       useDefaultTokenAuth,
-      startLaunch,
+      runLaunchCommand,
       stopLaunch,
       selectLaunchCandidateByValue,
       checkout,

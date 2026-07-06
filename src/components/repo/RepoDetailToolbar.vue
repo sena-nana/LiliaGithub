@@ -17,6 +17,7 @@ import {
   TriangleAlert,
 } from "@lucide/vue";
 import { Dropdown } from "@lilia/ui";
+import { computed, ref, watch } from "vue";
 import RepoBranchPicker from "./RepoBranchPicker.vue";
 import type { RepoSettingKey } from "../../config/repoSettingsManifest";
 import { createCachedAsyncComponent } from "../../utils/asyncComponent";
@@ -27,6 +28,7 @@ type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "hist
 type DropdownOption<T extends string = string> = {
   value: T;
   label: string;
+  command?: string;
   hint?: string;
   disabled?: boolean;
 };
@@ -54,7 +56,7 @@ type RepoBranchPickerItem = {
 const repoToolbarSettingsMenuModule = createCachedAsyncComponent(() => import("./RepoToolbarSettingsMenu.vue"));
 const RepoToolbarSettingsMenu = repoToolbarSettingsMenuModule.component;
 
-defineProps<{
+const props = defineProps<{
   activeTab: RepoRouteTab;
   repoId: string;
   repoTitle: string;
@@ -68,7 +70,6 @@ defineProps<{
   launchRunning: boolean;
   launchCommandOptions: readonly DropdownOption[];
   activeLaunchValue: string;
-  launchCommandText: string;
   repoSettingValues: Record<RepoSettingKey, boolean>;
   activeOpenTargetValue: string;
   activePullStrategyValue: string;
@@ -93,7 +94,7 @@ const emit = defineEmits<{
   pushWithUpstream: [];
   setUpstream: [];
   selectLaunchCandidate: [value: string];
-  startLaunch: [];
+  runLaunchCommand: [command: string];
   stopLaunch: [];
   refreshProjectCache: [];
   updateSetting: [key: RepoSettingKey, value: boolean];
@@ -104,6 +105,78 @@ const emit = defineEmits<{
   selectPullStrategy: [value: string];
   push: [];
 }>();
+
+const launchPickerRef = ref<HTMLElement | null>(null);
+const launchCommandDraft = ref("");
+const launchPickerOpen = ref(false);
+
+const launchCommandDisabled = computed(() => props.actionRunning || props.launchRunning);
+const launchCommandRunnable = computed(() => launchCommandDraft.value.trim().length > 0);
+const filteredLaunchCommandOptions = computed(() => {
+  const query = launchCommandDraft.value.trim().toLowerCase();
+  if (!query) return props.launchCommandOptions;
+  return props.launchCommandOptions.filter((option) =>
+    [option.command, option.label, option.hint]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
+});
+
+watch(
+  () => [props.repoId, props.launchCommand] as const,
+  () => {
+    launchCommandDraft.value = props.launchCommand?.trim() ?? "";
+    launchPickerOpen.value = false;
+  },
+  { immediate: true },
+);
+
+function openLaunchPicker() {
+  if (launchCommandDisabled.value) return;
+  launchPickerOpen.value = true;
+}
+
+function closeLaunchPicker() {
+  launchPickerOpen.value = false;
+}
+
+function selectLaunchCommandOption(option: DropdownOption) {
+  if (launchCommandDisabled.value || option.disabled) return;
+  launchCommandDraft.value = option.command?.trim() || option.label;
+  closeLaunchPicker();
+  emit("selectLaunchCandidate", option.value);
+}
+
+function runLaunchCommandDraft() {
+  if (props.launchRunning) {
+    emit("stopLaunch");
+    return;
+  }
+  if (props.actionRunning) return;
+  const command = launchCommandDraft.value.trim();
+  if (!command) return;
+  closeLaunchPicker();
+  emit("runLaunchCommand", command);
+}
+
+function handleLaunchCommandKeydown(event: KeyboardEvent) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    runLaunchCommandDraft();
+  } else if (event.key === "Escape") {
+    closeLaunchPicker();
+  } else if (event.key === "ArrowDown") {
+    openLaunchPicker();
+  }
+}
+
+function handleLaunchPickerFocusout(event: FocusEvent) {
+  const nextTarget = event.relatedTarget;
+  if (nextTarget instanceof Node && launchPickerRef.value?.contains(nextTarget)) return;
+  closeLaunchPicker();
+}
 </script>
 
 <template>
@@ -161,28 +234,62 @@ const emit = defineEmits<{
         </nav>
 
         <div v-if="repoContext.capabilities.launch.available" class="repo-toolbar__group repo-toolbar__launch" role="group" aria-label="命令执行">
-          <Dropdown
-            :model-value="activeLaunchValue"
-            :options="launchCommandOptions"
-            :icon="SquareTerminal"
-            :display-label="launchCommandText"
-            placeholder="选择启动指令"
-            placement="bottom"
-            button-class="repo-toolbar__btn repo-toolbar__command-select"
-            agent-id="repo.toolbar.launch.select"
-            menu-width="280px"
-            menu-label="启动指令候选"
-            :disabled="actionRunning || launchRunning || !launchCommandOptions.length"
-            @update:model-value="emit('selectLaunchCandidate', $event)"
-          />
+          <div
+            ref="launchPickerRef"
+            class="repo-toolbar__command-picker"
+            :class="{ 'is-open': launchPickerOpen, 'is-disabled': launchCommandDisabled }"
+            @focusout="handleLaunchPickerFocusout"
+          >
+            <SquareTerminal :size="15" aria-hidden="true" />
+            <input
+              v-model="launchCommandDraft"
+              class="repo-toolbar__command-input"
+              role="combobox"
+              aria-label="启动命令"
+              aria-controls="repo-toolbar-launch-options"
+              :aria-expanded="launchPickerOpen"
+              aria-autocomplete="list"
+              placeholder="输入或选择启动指令"
+              autocomplete="off"
+              spellcheck="false"
+              data-agent-id="repo.toolbar.launch.input"
+              :disabled="launchCommandDisabled"
+              @focus="openLaunchPicker"
+              @input="openLaunchPicker"
+              @keydown="handleLaunchCommandKeydown"
+            />
+            <div
+              v-if="launchPickerOpen"
+              id="repo-toolbar-launch-options"
+              class="repo-toolbar__command-menu"
+              role="listbox"
+              aria-label="启动指令候选"
+            >
+              <button
+                v-for="option in filteredLaunchCommandOptions"
+                :key="option.value"
+                type="button"
+                class="repo-toolbar__command-option"
+                :class="{ 'is-active': option.value === activeLaunchValue }"
+                role="option"
+                :aria-selected="option.value === activeLaunchValue"
+                :disabled="option.disabled"
+                @click="selectLaunchCommandOption(option)"
+              >
+                <span class="repo-toolbar__command-option-label">{{ option.label }}</span>
+                <span v-if="option.hint" class="repo-toolbar__command-option-hint">{{ option.hint }}</span>
+              </button>
+              <p v-if="!filteredLaunchCommandOptions.length" class="repo-toolbar__command-empty">无匹配命令</p>
+            </div>
+          </div>
           <button
             type="button"
             class="repo-toolbar__btn"
             :aria-label="launchRunning ? '停止' : '运行'"
             data-agent-id="repo.toolbar.launch.toggle"
             :title="launchRunning ? '停止' : '运行'"
-            :disabled="!launchRunning && (actionRunning || !launchCommand?.trim())"
-            @click="launchRunning ? emit('stopLaunch') : emit('startLaunch')"
+            :disabled="!launchRunning && (actionRunning || !launchCommandRunnable)"
+            @click="runLaunchCommandDraft"
           >
             <Square v-if="launchRunning" :size="17" aria-hidden="true" />
             <Play v-else :size="17" aria-hidden="true" />

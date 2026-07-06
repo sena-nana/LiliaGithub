@@ -2767,8 +2767,9 @@ describe("基础路由", () => {
     expect(within(viewTabs).getByRole("button", { name: "main" })).toBeInTheDocument();
 
     const launchGroup = screen.getByRole("group", { name: "命令执行" });
-    expect(await within(launchGroup).findByRole("button", { name: /yarn tauri:dev/ })).toBeInTheDocument();
+    const launchInput = await within(launchGroup).findByRole("combobox", { name: "启动命令" });
     await waitFor(() => {
+      expect(launchInput).toHaveValue("yarn tauri:dev");
       expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
     await fireEvent.click(within(launchGroup).getByRole("link", { name: "日志" }));
@@ -2782,13 +2783,14 @@ describe("基础路由", () => {
     const launchTerminal = screen.getByLabelText("启动终端");
     const launchCard = launchTerminal.closest(".project-terminal-card");
     if (!(launchCard instanceof HTMLElement)) throw new Error("未找到启动终端卡片");
-    await fireEvent.click(within(launchGroup).getByRole("button", { name: /yarn tauri:dev/ }));
+    await fireEvent.update(launchInput, "ver");
     expect(await screen.findByRole("listbox", { name: "启动指令候选" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: /^preview/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /^preview/ })).toBeNull();
     expect(screen.getByRole("option", { name: /^verify/ })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("option", { name: /^verify/ }));
     await waitFor(() => {
-      expect(within(launchGroup).getByRole("button", { name: /yarn verify/ })).toBeInTheDocument();
+      expect(launchInput).toHaveValue("yarn verify");
+      expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeEnabled();
     });
     const idleTerminal = screen.getByLabelText("启动终端");
     expect(idleTerminal).toHaveTextContent("暂无输出。");
@@ -2814,6 +2816,18 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("启动终端")).toHaveTextContent("已停止快速启动进程");
     });
+
+    await fireEvent.update(launchInput, "   ");
+    expect(within(launchGroup).getByRole("button", { name: "运行" })).toBeDisabled();
+    await fireEvent.update(launchInput, "yarn test --watch");
+    await fireEvent.click(within(launchGroup).getByRole("button", { name: "运行" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("启动终端")).toHaveTextContent("启动命令：yarn test --watch");
+    });
+    await waitFor(() => {
+      expect(within(launchGroup).getByRole("button", { name: "停止" })).toBeEnabled();
+    });
+    await fireEvent.click(within(launchGroup).getByRole("button", { name: "停止" }));
   });
 
   it("运行失败信息显示在命令卡片内而不是页头状态区", async () => {
