@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { AlertCircle, LoaderCircle, RotateCw, Trash2 } from "@lucide/vue";
-import { Dropdown, UiSwitch } from "@lilia/ui";
+import { Dropdown, SettingsRow, UiSwitch } from "@lilia/ui";
 import {
   deleteGitHubBranch,
   getGitHubRepoSettingsSection,
@@ -352,43 +352,41 @@ function recordName(record: Record<string, unknown>) {
 
     <div v-if="kind === 'security' && primarySection" class="repo-settings-detail-section__body">
       <div v-if="securityFeatures.length" class="repo-settings-display-list">
-        <UiSwitch
+        <SettingsRow
           v-for="feature in securityFeatures"
           :key="feature.key"
-          :model-value="feature.enabled === true"
           class="project-settings-switch"
-          control-position="end"
-          block
-          :aria-label="feature.label"
-          :agent-id="`repo.settings.security.${feature.key}`"
-          :disabled="saving || disabled || feature.enabled === null"
-          @update:model-value="requestSecurityToggle(feature.key, $event)"
+          :label="feature.label"
+          :hint="feature.valueLabel"
         >
-          <span class="project-settings-switch__content">
-            <strong>{{ feature.label }}</strong>
-            <em>{{ feature.valueLabel }}</em>
-          </span>
-        </UiSwitch>
+          <UiSwitch
+            :model-value="feature.enabled === true"
+            :aria-label="feature.label"
+            :agent-id="`repo.settings.security.${feature.key}`"
+            :disabled="saving || disabled || feature.enabled === null"
+            @update:model-value="requestSecurityToggle(feature.key, $event)"
+          />
+        </SettingsRow>
       </div>
       <p v-else class="muted repo-empty project-empty">没有返回安全分析状态。</p>
       <div class="repo-settings-display-grid">
-        <article v-for="row in vulnerabilityRows" :key="row.key" class="repo-settings-display-row">
-          <strong>{{ row.label }}</strong>
-          <span>{{ row.error ?? row.valueLabel }}</span>
-        </article>
+        <SettingsRow v-for="row in vulnerabilityRows" :key="row.key" class="repo-settings-display-row" :label="row.label">
+          <span class="settings-row__status-text">{{ row.error ?? row.valueLabel }}</span>
+        </SettingsRow>
       </div>
     </div>
 
     <div v-else-if="kind === 'branches' && primarySection" class="repo-settings-detail-section__body">
       <p v-if="!branchRows.length" class="muted repo-empty project-empty">没有可显示的远端分支。</p>
       <div v-else class="repo-settings-table" role="table" aria-label="远端分支">
-        <article v-for="branch in branchRows" :key="branch.name" class="repo-settings-table__row" role="row">
-          <div>
-            <strong>{{ branch.name }}</strong>
-            <span>
-              {{ branch.defaultBranch ? "默认分支" : branch.protected ? "受保护" : "可管理" }}
-            </span>
-          </div>
+        <SettingsRow
+          v-for="branch in branchRows"
+          :key="branch.name"
+          class="repo-settings-table__row"
+          :label="branch.name"
+          :hint="branch.defaultBranch ? '默认分支' : branch.protected ? '受保护' : '可管理'"
+          role="row"
+        >
           <button
             v-if="!branch.defaultBranch && !branch.protected"
             type="button"
@@ -401,117 +399,116 @@ function recordName(record: Record<string, unknown>) {
           >
             <Trash2 :size="14" aria-hidden="true" />
           </button>
-        </article>
+        </SettingsRow>
       </div>
     </div>
 
     <div v-else-if="kind === 'actions' && primarySection" class="repo-settings-detail-section__body">
       <div class="repo-settings-display-list">
-        <UiSwitch
-          :model-value="actionsEnabled"
+        <SettingsRow class="project-settings-switch" label="Actions" :hint="actionsEnabled ? '允许运行工作流' : '已关闭'">
+          <UiSwitch
+            :model-value="actionsEnabled"
+            aria-label="Actions"
+            agent-id="repo.settings.actions.enabled"
+            :disabled="saving || disabled"
+            @update:model-value="requestActionsEnabled"
+          />
+        </SettingsRow>
+        <SettingsRow
           class="project-settings-switch"
-          control-position="end"
-          block
-          aria-label="Actions"
-          agent-id="repo.settings.actions.enabled"
-          :disabled="saving || disabled"
-          @update:model-value="requestActionsEnabled"
+          label="允许工作流审批 Pull Request"
+          :hint="workflowCanApprove ? '已允许' : '未允许'"
         >
-          <span class="project-settings-switch__content">
-            <strong>Actions</strong>
-            <em>{{ actionsEnabled ? "允许运行工作流" : "已关闭" }}</em>
-          </span>
-        </UiSwitch>
-        <UiSwitch
-          :model-value="workflowCanApprove"
-          class="project-settings-switch"
-          control-position="end"
-          block
-          aria-label="允许工作流审批 Pull Request"
-          agent-id="repo.settings.actions.approve-pr"
-          :disabled="saving || disabled || !actionsEnabled"
-          @update:model-value="saveWorkflowPermissions({ canApprovePullRequestReviews: $event })"
-        >
-          <span class="project-settings-switch__content">
-            <strong>允许工作流审批 Pull Request</strong>
-            <em>{{ workflowCanApprove ? "已允许" : "未允许" }}</em>
-          </span>
-        </UiSwitch>
+          <UiSwitch
+            :model-value="workflowCanApprove"
+            aria-label="允许工作流审批 Pull Request"
+            agent-id="repo.settings.actions.approve-pr"
+            :disabled="saving || disabled || !actionsEnabled"
+            @update:model-value="saveWorkflowPermissions({ canApprovePullRequestReviews: $event })"
+          />
+        </SettingsRow>
       </div>
       <div class="project-settings-fields">
-        <label class="project-settings-field">
-          <span>允许的 Actions</span>
-          <Dropdown
-            :model-value="allowedActions"
-            :options="allowedActionOptions"
-            block
-            size="large"
-            placement="bottom"
-            agent-id="repo.settings.actions.allowed-actions"
-            menu-label="允许的 Actions"
-            :disabled="saving || disabled || !actionsEnabled"
-            @update:model-value="onAllowedActionsChange"
-          />
-        </label>
-        <label class="project-settings-field">
-          <span>默认工作流权限</span>
-          <Dropdown
-            :model-value="workflowDefaultPermission"
-            :options="workflowPermissionOptions"
-            block
-            size="large"
-            placement="bottom"
-            agent-id="repo.settings.actions.workflow-permission"
-            menu-label="默认工作流权限"
-            :disabled="saving || disabled || !actionsEnabled"
-            @update:model-value="onWorkflowPermissionChange"
-          />
-        </label>
-        <label class="project-settings-field">
-          <span>工作流数量</span>
-          <input type="text" :value="countLabel(workflowCount, '个')" disabled />
-        </label>
+        <SettingsRow class="project-settings-field" label="允许的 Actions">
+          <span class="project-settings-field__control">
+            <Dropdown
+              :model-value="allowedActions"
+              :options="allowedActionOptions"
+              block
+              size="large"
+              placement="bottom"
+              agent-id="repo.settings.actions.allowed-actions"
+              menu-label="允许的 Actions"
+              :disabled="saving || disabled || !actionsEnabled"
+              @update:model-value="onAllowedActionsChange"
+            />
+          </span>
+        </SettingsRow>
+        <SettingsRow class="project-settings-field" label="默认工作流权限">
+          <span class="project-settings-field__control">
+            <Dropdown
+              :model-value="workflowDefaultPermission"
+              :options="workflowPermissionOptions"
+              block
+              size="large"
+              placement="bottom"
+              agent-id="repo.settings.actions.workflow-permission"
+              menu-label="默认工作流权限"
+              :disabled="saving || disabled || !actionsEnabled"
+              @update:model-value="onWorkflowPermissionChange"
+            />
+          </span>
+        </SettingsRow>
+        <SettingsRow class="project-settings-field" label="工作流数量">
+          <span class="settings-row__status-text">{{ countLabel(workflowCount, "个") }}</span>
+        </SettingsRow>
       </div>
     </div>
 
     <div v-else-if="kind === 'environments' && primarySection" class="repo-settings-detail-section__body">
       <p v-if="!environmentRows.length" class="muted repo-empty project-empty">没有环境。</p>
       <div v-else class="repo-settings-display-grid">
-        <article v-for="environment in environmentRows" :key="String(environment.id ?? environment.name)" class="repo-settings-display-row">
-          <strong>{{ recordName(environment) }}</strong>
-          <span>{{ Number(environment.protection_rules_count ?? 0) }} 条保护规则</span>
-        </article>
+        <SettingsRow
+          v-for="environment in environmentRows"
+          :key="String(environment.id ?? environment.name)"
+          class="repo-settings-display-row"
+          :label="recordName(environment)"
+        >
+          <span class="settings-row__status-text">{{ Number(environment.protection_rules_count ?? 0) }} 条保护规则</span>
+        </SettingsRow>
       </div>
     </div>
 
     <div v-else-if="kind === 'webhooks' && primarySection" class="repo-settings-detail-section__body">
       <p v-if="!webhookRows.length" class="muted repo-empty project-empty">没有 Webhook。</p>
       <div v-else class="repo-settings-display-grid">
-        <article v-for="hook in webhookRows" :key="String(hook.id ?? hook.name)" class="repo-settings-display-row">
-          <strong>{{ recordName(hook) }}</strong>
-          <span>{{ asBoolean(hook.active) === false ? "已停用" : "运行中" }} · {{ Array.isArray(hook.events) ? hook.events.length : 0 }} 个事件</span>
-        </article>
+        <SettingsRow
+          v-for="hook in webhookRows"
+          :key="String(hook.id ?? hook.name)"
+          class="repo-settings-display-row"
+          :label="recordName(hook)"
+        >
+          <span class="settings-row__status-text">
+            {{ asBoolean(hook.active) === false ? "已停用" : "运行中" }} · {{ Array.isArray(hook.events) ? hook.events.length : 0 }} 个事件
+          </span>
+        </SettingsRow>
       </div>
     </div>
 
     <div v-else-if="kind === 'access' && primarySection" class="repo-settings-detail-section__body">
       <div class="repo-settings-display-grid">
-        <article class="repo-settings-display-row">
-          <strong>协作者</strong>
-          <span>{{ countLabel(collaboratorRows.length, "人") }}</span>
-        </article>
-        <article class="repo-settings-display-row">
-          <strong>团队</strong>
-          <span>{{ countLabel(teamRows.length, "个") }}</span>
-        </article>
-        <article class="repo-settings-display-row">
-          <strong>部署密钥</strong>
-          <span>{{ countLabel(deployKeyRows.length, "个") }}</span>
-        </article>
-        <article class="repo-settings-display-row">
-          <strong>GitHub Apps</strong>
-          <span>{{ countLabel(appRows.length, "个") }}</span>
-        </article>
+        <SettingsRow class="repo-settings-display-row" label="协作者">
+          <span class="settings-row__status-text">{{ countLabel(collaboratorRows.length, "人") }}</span>
+        </SettingsRow>
+        <SettingsRow class="repo-settings-display-row" label="团队">
+          <span class="settings-row__status-text">{{ countLabel(teamRows.length, "个") }}</span>
+        </SettingsRow>
+        <SettingsRow class="repo-settings-display-row" label="部署密钥">
+          <span class="settings-row__status-text">{{ countLabel(deployKeyRows.length, "个") }}</span>
+        </SettingsRow>
+        <SettingsRow class="repo-settings-display-row" label="GitHub Apps">
+          <span class="settings-row__status-text">{{ countLabel(appRows.length, "个") }}</span>
+        </SettingsRow>
       </div>
     </div>
 
@@ -567,18 +564,26 @@ function recordName(record: Record<string, unknown>) {
 <style scoped>
 .repo-settings-detail-section {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .repo-settings-detail-section__head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  min-height: 28px;
 }
 
 .repo-settings-detail-section__head h4 {
+  min-width: 0;
   margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .repo-settings-detail-section__head span {
@@ -590,63 +595,24 @@ function recordName(record: Record<string, unknown>) {
 .repo-settings-display-list,
 .repo-settings-table {
   display: grid;
-  gap: 10px;
+  gap: 0;
 }
 
 .project-settings-switch {
-  gap: 12px;
-  min-height: 44px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-}
-
-.project-settings-switch__content {
-  display: grid;
   min-width: 0;
-  gap: 3px;
-}
-
-.project-settings-switch__content strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.project-settings-switch__content em {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-style: normal;
-  line-height: 1.35;
 }
 
 .project-settings-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
+  gap: 0;
 }
 
 .project-settings-field {
-  display: grid;
   min-width: 0;
-  gap: 6px;
 }
 
-.project-settings-field span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.project-settings-field input {
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-  color: var(--text);
-  font-size: 13px;
+.project-settings-field__control {
+  width: min(260px, 100%);
 }
 
 .repo-settings-detail-section__error {
@@ -660,48 +626,17 @@ function recordName(record: Record<string, unknown>) {
 
 .repo-settings-display-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
+  gap: 0;
 }
 
 .repo-settings-display-row,
 .repo-settings-table__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-}
-
-.repo-settings-display-row {
-  align-items: flex-start;
-}
-
-.repo-settings-table__row > div,
-.repo-settings-display-row {
   min-width: 0;
 }
 
-.repo-settings-display-row strong,
-.repo-settings-table__row strong {
-  display: block;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.repo-settings-display-row span,
-.repo-settings-table__row span {
-  display: block;
-  margin-top: 3px;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.35;
+.repo-settings-detail-section :deep(.settings-row__label) {
+  flex: 1 1 auto;
+  white-space: normal;
 }
 
 .project-delete-overlay {
