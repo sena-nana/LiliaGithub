@@ -4262,7 +4262,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         <div class="project-sidebar__scroll">
         <section
           v-if="hasProjectSidebarErrors"
-          class="project-sidebar-error-card"
+          class="card project-sidebar-error-card"
           aria-label="仓库错误"
         >
           <div
@@ -4294,7 +4294,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <template v-if="!projectSidebarContentUnavailable">
-        <section v-if="repoFullName && projectSidebarMode === 'repo'" class="project-about-card" aria-label="仓库描述">
+        <section v-if="repoFullName && projectSidebarMode === 'repo'" class="card project-about-card" aria-label="仓库描述">
           <button
             v-if="!aboutEditing"
             type="button"
@@ -4392,7 +4392,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
         <section
           v-else-if="projectSidebarMode === 'files'"
-          class="project-sidebar-summary-card"
+          class="card project-sidebar-summary-card"
           aria-label="文件树摘要"
         >
           <div class="project-sidebar-summary-card__head">
@@ -4487,7 +4487,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
         <section
           v-if="projectSidebarMode === 'release'"
-          class="project-sidebar-summary-card project-release-filters-card"
+          class="card project-sidebar-summary-card project-release-filters-card"
           aria-label="Release 筛选"
         >
           <div class="project-sidebar-summary-card__head">
@@ -4534,6 +4534,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               <Dropdown
                 :model-value="releaseTypeFilter"
                 :options="releaseTypeFilters"
+                button-class="project-release-type-dropdown"
                 menu-width="180px"
                 menu-label="Release 类型筛选"
                 placement="bottom"
@@ -4752,11 +4753,19 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-sidebar {
+  --repo-sidebar-header-height: 36px;
+  --repo-sidebar-control-height: 30px;
+  --repo-sidebar-icon-button-size: 28px;
+  --repo-sidebar-card-padding: 10px;
+  --repo-sidebar-card-gap: 10px;
+  --repo-sidebar-list-gap: 4px;
+  --repo-sidebar-label-width: 72px;
+
   display: grid;
   grid-column: 2;
   grid-row: 1;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -4775,7 +4784,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-sidebar__scroll {
   display: grid;
-  gap: 14px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
   min-height: 0;
   align-content: start;
@@ -4796,7 +4805,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   align-items: center;
   gap: 2px;
   min-width: 0;
-  height: 36px;
+  height: var(--repo-sidebar-header-height);
   padding: 3px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
@@ -4809,7 +4818,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   justify-content: center;
   flex: 1 1 0;
   min-width: 0;
-  height: 28px;
+  height: var(--repo-sidebar-icon-button-size);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -4836,9 +4845,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-sidebar-error-card {
   display: grid;
-  gap: 8px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
-  padding: 10px;
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
   border: 1px solid var(--err-soft);
   border-radius: var(--radius-md);
   background: var(--err-soft);
@@ -4886,6 +4896,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-sidebar-error-card__retry {
+  width: var(--repo-sidebar-icon-button-size);
+  height: var(--repo-sidebar-icon-button-size);
+  padding: 0;
   color: var(--err);
 }
 
@@ -4896,12 +4909,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-about-card {
   position: relative;
   display: grid;
-  gap: 9px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
 }
 
 .project-about-edit {
@@ -4921,7 +4932,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-about-summary,
 .project-about-form {
   display: grid;
-  gap: 10px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
 }
 
@@ -4940,7 +4951,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-about-stats {
   display: grid;
-  gap: 9px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
   padding-top: 5px;
 }
@@ -4950,6 +4961,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: var(--repo-sidebar-control-height);
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.25;
@@ -5010,13 +5022,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-about-form__actions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--repo-sidebar-list-gap);
 }
 
 .project-topic-block {
   position: relative;
   display: grid;
-  gap: 6px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
 }
 
@@ -5024,7 +5036,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
   margin-top: 1px;
 }
@@ -5060,7 +5072,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  height: 22px;
+  height: 24px;
   padding: 0 6px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -5143,12 +5155,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-sidebar-summary-card {
   display: grid;
-  gap: 10px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
 }
 
 .project-sidebar-summary-card__head {
@@ -5156,6 +5166,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   align-items: center;
   gap: 7px;
   min-width: 0;
+  min-height: var(--repo-sidebar-header-height);
   color: var(--text);
   font-size: 12px;
 }
@@ -5178,7 +5189,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-sidebar-summary-card__stats {
   display: grid;
-  gap: 7px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
   margin: 0;
 }
@@ -5188,6 +5199,8 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   grid-template-columns: minmax(58px, max-content) minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
+  min-height: var(--repo-sidebar-control-height);
+  align-items: center;
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -5215,7 +5228,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: var(--repo-sidebar-control-height);
   padding: 0 9px;
   font-size: 12px;
 }
@@ -5223,13 +5236,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-sidebar-summary-card__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
 }
 
 .project-release-tag-list {
   display: grid;
-  gap: 4px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
 }
 
@@ -5237,7 +5250,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 28px;
+  height: var(--repo-sidebar-control-height);
   padding: 0 8px;
   border-color: var(--border-soft);
   color: var(--text-muted);
@@ -5258,9 +5271,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 .project-release-filter-group {
   display: grid;
-  gap: 7px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
-  padding-top: 10px;
+  padding-top: var(--repo-sidebar-card-padding);
   border-top: 1px solid var(--border-soft);
 }
 
@@ -5271,13 +5284,20 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   font-weight: 700;
 }
 
+.project-release-filter-group :deep(.project-release-type-dropdown) {
+  width: 100%;
+  min-width: 0;
+  height: var(--repo-sidebar-control-height);
+  justify-content: space-between;
+}
+
 .project-release-tag {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  min-height: 28px;
+  height: var(--repo-sidebar-control-height);
   padding: 0 7px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);

@@ -206,7 +206,7 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
 </script>
 
 <template>
-  <section v-if="issue || pull" class="project-sidebar-detail-card" :aria-label="sidebarLabel">
+  <section v-if="issue || pull" class="card project-sidebar-detail-card" :aria-label="sidebarLabel">
     <div class="project-sidebar-detail-card__head">
       <div class="project-sidebar-detail-card__title">
         <CircleDot v-if="issue" :size="14" aria-hidden="true" />
@@ -276,10 +276,8 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
   display: grid;
   gap: 0;
   min-width: 0;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  margin: 0;
+  padding: 0 var(--repo-sidebar-card-padding);
 }
 
 .project-sidebar-detail-card__head,
@@ -293,7 +291,7 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
+  min-height: var(--repo-sidebar-header-height);
   color: var(--text);
 }
 
@@ -315,7 +313,7 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
 .project-sidebar-detail-card__actions {
   display: flex;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
 }
 
@@ -323,22 +321,24 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--repo-sidebar-icon-button-size);
+  height: var(--repo-sidebar-icon-button-size);
   padding: 0;
 }
 
 .project-sidebar-detail-card__section {
   display: grid;
-  gap: 5px;
-  padding: 10px 0;
+  gap: var(--repo-sidebar-list-gap);
+  min-height: var(--repo-sidebar-control-height);
+  padding: var(--repo-sidebar-card-padding) 0;
 }
 
 .project-sidebar-detail-card__section--inline {
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: var(--repo-sidebar-label-width) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  height: var(--repo-sidebar-control-height);
+  padding: 0;
 }
 
 .project-sidebar-detail-card__section:last-child {
@@ -373,7 +373,7 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
 .project-sidebar-detail-card__chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
 }
 
@@ -388,7 +388,7 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
   align-items: center;
   max-width: 100%;
   min-width: 0;
-  min-height: 22px;
+  min-height: 24px;
   padding: 2px 7px;
   overflow: hidden;
   border: 1px solid var(--border-soft);

@@ -215,7 +215,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 </script>
 
 <template>
-  <section class="actions-info-card" aria-label="Actions 信息">
+  <section class="card actions-info-card" aria-label="Actions 信息">
     <p v-if="!focusedRunId" class="muted actions-empty">选择一个 run 查看摘要和产物。</p>
     <p v-else-if="!detailRun && !detailLoading" class="muted actions-empty">选择的 run 不在当前筛选结果中。</p>
     <template v-else>
@@ -373,15 +373,13 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 .actions-artifacts,
 .actions-artifact-detail {
   display: grid;
-  gap: 10px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
 }
 
 .actions-info-card {
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
 }
 
 .actions-info-head,
@@ -391,6 +389,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
+  min-height: var(--repo-sidebar-header-height);
 }
 
 .actions-info-title {
@@ -431,9 +430,9 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 .actions-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--repo-sidebar-card-gap);
   margin: 0;
-  padding: 8px 0;
+  padding: var(--repo-sidebar-card-padding) 0;
   border-block: 1px solid var(--border-soft);
 }
 
@@ -476,7 +475,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 .actions-artifact {
   grid-template-columns: 18px minmax(0, 1fr);
   min-height: 44px;
-  padding: 8px;
+  padding: var(--repo-sidebar-list-gap) 8px;
 }
 
 .actions-artifact:hover,
@@ -516,7 +515,8 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 }
 
 .actions-artifact-detail {
-  padding: 8px;
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
@@ -524,14 +524,14 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 
 .actions-artifact-browser {
   display: grid;
-  gap: 8px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
 }
 
 .actions-artifact-files {
   display: grid;
   align-content: start;
-  gap: 4px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
   max-height: 220px;
   overflow: auto;
@@ -539,14 +539,15 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 
 .actions-artifact-file-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) var(--repo-sidebar-icon-button-size);
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
 }
 
 .actions-artifact-file-select {
   grid-template-columns: 16px minmax(0, 1fr);
-  padding: 7px;
+  min-height: var(--repo-sidebar-control-height);
+  padding: 0 7px;
 }
 
 .actions-artifact-file-select:disabled {
@@ -572,14 +573,14 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
+  width: var(--repo-sidebar-icon-button-size);
+  min-width: var(--repo-sidebar-icon-button-size);
+  height: var(--repo-sidebar-icon-button-size);
   padding: 0;
 }
 
 .actions-artifact-release-target {
-  padding: 8px;
+  padding: var(--repo-sidebar-card-padding);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -593,7 +594,7 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 .actions-artifact-release-target select {
   width: 100%;
   min-width: 0;
-  height: 28px;
+  height: var(--repo-sidebar-control-height);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-elev);
@@ -659,8 +660,8 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: var(--repo-sidebar-icon-button-size);
+  height: var(--repo-sidebar-icon-button-size);
   padding: 0;
 }
 

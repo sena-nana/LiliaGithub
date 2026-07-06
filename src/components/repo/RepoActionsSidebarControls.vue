@@ -137,7 +137,7 @@ function updateSort(value: string) {
       @sort="updateSort"
     />
 
-    <section class="actions-filter-summary" aria-label="Actions 摘要">
+    <section class="card actions-filter-summary" aria-label="Actions 摘要">
       <dl>
         <div>
           <dt>已加载</dt>
@@ -159,23 +159,21 @@ function updateSort(value: string) {
 <style scoped>
 .actions-sidebar-controls {
   display: grid;
-  gap: 10px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
 }
 
 .actions-filter-summary {
   display: grid;
-  gap: 8px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
 }
 
 .actions-filter-summary dl {
   display: grid;
-  gap: 7px;
+  gap: var(--repo-sidebar-list-gap);
   margin: 0;
 }
 
@@ -185,6 +183,7 @@ function updateSort(value: string) {
   justify-content: space-between;
   gap: 10px;
   min-width: 0;
+  min-height: var(--repo-sidebar-control-height);
 }
 
 .actions-filter-summary dt {
