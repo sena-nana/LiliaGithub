@@ -318,6 +318,41 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("首页代码占比按语言展示不跳转，按项目展示仍可进入仓库", async () => {
+    state.repos = [
+      repoSummary("Alpha", {
+        languageStats: [
+          { language: "TypeScript", bytes: 1000, lines: 100 },
+          { language: "Vue", bytes: 500, lines: 50 },
+        ],
+      }),
+      repoSummary("Beta", {
+        languageStats: [
+          { language: "TypeScript", bytes: 500, lines: 60 },
+        ],
+      }),
+    ];
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(view.getByText("TypeScript")).toBeInTheDocument();
+    });
+
+    expect(view.queryByRole("link", { name: /TypeScript/ })).toBeNull();
+    const languageEntry = view.getByText("TypeScript").closest(".language-list__link");
+    expect(languageEntry).toBeInstanceOf(HTMLElement);
+    await fireEvent.click(languageEntry as HTMLElement);
+    expect(view.router.currentRoute.value.fullPath).toBe("/");
+
+    await fireEvent.click(view.getByRole("button", { name: "按项目" }));
+    const projectLink = await view.findByRole("link", { name: /Alpha/ });
+    await fireEvent.click(projectLink);
+
+    await waitFor(() => {
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/Alpha");
+    });
+  });
+
   it("侧边栏用固定顶部、滚动仓库区和固定底部承载长列表", async () => {
     state.repos = Array.from({ length: 120 }, (_, index) =>
       repoSummary(`Repo-${String(index + 1).padStart(3, "0")}`),
