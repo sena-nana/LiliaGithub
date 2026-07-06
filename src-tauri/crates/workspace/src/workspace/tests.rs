@@ -3,7 +3,7 @@ use super::bulk::{
     build_bulk_sync_preview_with_lookup_and_mode, bulk_error_result, merge_pull_block_reason,
     run_bulk_sync_parallel, should_retry_push_with_system_git,
 };
-use super::file_browser::{repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES};
+use super::file_browser::{delete_repo_file, repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES};
 use super::github::{
     add_pull_request_reviewers_from_reviews, forget_remote_repo_shortcut,
     github_artifact_entry_path, github_artifact_file_bytes_from_zip,
@@ -3574,6 +3574,47 @@ fn repo_file_browser_rejects_paths_outside_repo() {
         repo_file_preview(&repo, "../outside.txt").unwrap_err(),
         "文件路径必须位于仓库内"
     );
+}
+
+#[test]
+fn repo_file_browser_deletes_repo_file() {
+    let repo = temp_dir("repo-file-delete");
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join("src").join("main.ts"), "export {};\n").unwrap();
+
+    delete_repo_file(&repo, "src/main.ts").unwrap();
+
+    assert!(!repo.join("src").join("main.ts").exists());
+}
+
+#[test]
+fn repo_file_browser_delete_rejects_unsafe_or_non_file_paths() {
+    let repo = temp_dir("repo-file-delete-guard");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(repo.join("src")).unwrap();
+    fs::write(repo.join(".git").join("config"), "[core]\n").unwrap();
+    fs::write(repo.join("README.md"), "# Main\n").unwrap();
+
+    assert_eq!(
+        delete_repo_file(&repo, "../outside.txt").unwrap_err(),
+        "文件路径必须位于仓库内"
+    );
+    assert_eq!(
+        delete_repo_file(&repo, ".git/config").unwrap_err(),
+        "不能删除 Git 内部文件"
+    );
+    assert!(
+        delete_repo_file(&repo, "src")
+            .unwrap_err()
+            .starts_with("只能删除文件：")
+    );
+    assert!(
+        delete_repo_file(&repo, "missing.txt")
+            .unwrap_err()
+            .starts_with("文件不存在：")
+    );
+    assert!(repo.join(".git").join("config").exists());
+    assert!(repo.join("README.md").exists());
 }
 
 #[test]

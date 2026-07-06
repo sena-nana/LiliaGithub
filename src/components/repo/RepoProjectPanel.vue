@@ -406,6 +406,7 @@ const fileBrowser = useRepoFileBrowser({
   targetPath: toRef(props, "fileTargetPath"),
   targetHash: toRef(props, "fileTargetHash"),
   enabled: fileBrowserEnabled,
+  deleteFile: (path: string) => workspace.deleteRepoFile(props.repoId, path),
 });
 const markdownReadme = ref<MarkdownReadmeInstance | null>(null);
 const projectMainRef = ref<HTMLElement | null>(null);

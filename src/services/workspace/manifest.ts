@@ -98,6 +98,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "repo_refresh_language_stats",
     "repo_list_files",
     "repo_get_file_preview",
+    "repo_delete_file",
     "repo_get_changes",
     "repo_get_history",
     "repo_get_commit_detail",

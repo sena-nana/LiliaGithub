@@ -205,6 +205,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         repos::repo_refresh_language_stats,
         file_browser::repo_list_files,
         file_browser::repo_get_file_preview,
+        file_browser::repo_delete_file,
         repos::repo_get_changes,
         repos::repo_get_history,
         repos::repo_get_commit_detail,

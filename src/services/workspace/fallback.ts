@@ -5207,6 +5207,20 @@ export function getRepoFilePreview(repoId: string, path: string, _repoRef?: stri
   });
 }
 
+export function deleteRepoFile(repoId: string, path: string): Promise<RepoSummary> {
+  return call("repo_delete_file", { repoId, path }, () => {
+    const summary = fallbackRepo(repoId);
+    const parentPath = path.split("/").slice(0, -1).join("/");
+    const parentKey = parentPath || "";
+    const entries = fallbackRepoFiles[repoId]?.[parentKey];
+    if (entries) {
+      fallbackRepoFiles[repoId][parentKey] = entries.filter((entry) => entry.path !== path);
+    }
+    delete fallbackRepoFilePreviews[repoId]?.[path];
+    return cloneRepoSummary(summary);
+  });
+}
+
 function emptyConflictState(): RepoConflictState {
   return {
     operation: "none",
