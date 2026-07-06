@@ -104,7 +104,7 @@ defineEmits<{
   max-width: 760px;
   contain: layout paint style;
   content-visibility: auto;
-  contain-intrinsic-size: 180px;
+  contain-intrinsic-size: 196px;
 }
 
 .card-heading {
@@ -176,7 +176,6 @@ defineEmits<{
 
 .contribution-chart {
   display: flex;
-  padding-bottom: 2px;
   min-width: 0;
   contain: layout paint;
 }
