@@ -25,7 +25,7 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
-import { Dropdown, UiSwitch } from "@lilia/ui";
+import { Dropdown, SettingsRow, UiSwitch } from "@lilia/ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
@@ -696,14 +696,16 @@ type SettingsSwitchGroup = {
   title: string;
   titleId: string;
   agentPrefix: "feature" | "merge";
+  saveAgentId: string;
   items: readonly SettingsSwitchItem[];
 };
 
 const settingsSwitchGroups: readonly SettingsSwitchGroup[] = [
   {
     title: "协作与访问",
-    titleId: "project-settings-access-title",
+    titleId: "project-settings-collaboration-title",
     agentPrefix: "feature",
+    saveAgentId: "repo.settings.collaboration.save",
     items: [
       { key: "isTemplate", label: "模板仓库", hint: "允许从该仓库生成新仓库。" },
       { key: "allowForking", label: "允许 Fork", hint: "允许其他用户 fork。" },
@@ -714,6 +716,7 @@ const settingsSwitchGroups: readonly SettingsSwitchGroup[] = [
     title: "GitHub 功能",
     titleId: "project-settings-features-title",
     agentPrefix: "feature",
+    saveAgentId: "repo.settings.features.save",
     items: [
       { key: "hasIssues", label: "Issues", hint: "启用问题跟踪。" },
       { key: "hasWiki", label: "Wiki", hint: "启用仓库 Wiki。" },
@@ -726,6 +729,7 @@ const settingsSwitchGroups: readonly SettingsSwitchGroup[] = [
     title: "拉取请求与合并",
     titleId: "project-settings-merge-title",
     agentPrefix: "merge",
+    saveAgentId: "repo.settings.pull-requests.save",
     items: [
       { key: "allowMergeCommit", label: "合并提交", hint: "允许创建 merge commit。" },
       { key: "allowSquashMerge", label: "Squash 合并", hint: "允许 squash 合并。" },
@@ -2511,6 +2515,22 @@ function changedSettingsRequest(current: GitHubRepoManagement) {
   return request;
 }
 
+const pendingSettingsRequest = computed<GitHubUpdateRepoSettingsRequest>(() => (
+  settings.value ? changedSettingsRequest(settings.value) : {}
+));
+
+function hasPendingSettingsChange(keys: readonly (keyof GitHubUpdateRepoSettingsRequest)[]) {
+  return keys.some((key) => Object.prototype.hasOwnProperty.call(pendingSettingsRequest.value, key));
+}
+
+function settingsSwitchGroupChanged(group: SettingsSwitchGroup) {
+  return hasPendingSettingsChange(group.items.map((item) => item.key));
+}
+
+function mergeDefaultsChanged() {
+  return hasPendingSettingsChange(settingsDropdowns.map((dropdown) => dropdown.key));
+}
+
 function clearBlockedGitHubState() {
   resetGitHubSectionState();
   githubLoading.value = false;
@@ -3494,7 +3514,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       <main
         ref="projectMainRef"
         class="project-main"
-        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'milestones' || activeSection === 'release' }"
+        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'milestones' || activeSection === 'release' || activeSection === 'settings' }"
       >
         <RepoLaunchTerminalPanel
           v-if="canUseLaunchWorkflow && activeSection === 'launch'"
@@ -3905,27 +3925,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </section>
 
         <form v-else-if="activeSection === 'settings'" class="project-section project-settings project-github-section" data-agent-id="repo.settings.form" @submit.prevent="saveSettings()">
-          <div class="project-section__head project-section__head--compact">
-            <div class="project-section__title">
-              <h3>仓库设置</h3>
-              <span>{{ settings ? settings.fullName : "GitHub Settings" }}</span>
-            </div>
-            <div class="project-toolbar">
-              <Settings2 :size="14" aria-hidden="true" />
-              <button
-                v-if="settings"
-                type="submit"
-                class="primary project-icon-action project-icon-action--primary"
-                data-agent-id="repo.settings.save"
-                :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                aria-label="保存"
-                title="保存"
-              >
-                <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
-                <Save v-else :size="14" aria-hidden="true" />
-              </button>
-            </div>
-          </div>
           <p v-if="githubUnavailableMessage" class="muted repo-empty project-empty">{{ githubUnavailableMessage }}</p>
           <RepoGitHubUnavailableNotice
             v-if="settingsAccessUnavailable"
@@ -3944,48 +3943,76 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               >
                 <div class="project-settings-section__head">
                   <h4 :id="group.titleId">{{ group.title }}</h4>
+                  <span class="project-settings-section__actions">
+                    <button
+                      v-if="settingsSwitchGroupChanged(group)"
+                      type="submit"
+                      class="primary project-icon-action project-icon-action--primary"
+                      :data-agent-id="group.saveAgentId"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                      aria-label="保存"
+                      title="保存"
+                    >
+                      <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
+                      <Save v-else :size="14" aria-hidden="true" />
+                    </button>
+                  </span>
                 </div>
                 <div class="project-settings-switches">
-                  <UiSwitch
+                  <SettingsRow
                     v-for="switchItem in group.items"
                     :key="switchItem.key"
-                    v-model="settingsForm[switchItem.key]"
                     class="project-settings-switch"
-                    control-position="end"
-                    block
-                    :aria-label="switchItem.label"
-                    :agent-id="`repo.settings.${group.agentPrefix}.${switchItem.key}`"
+                    :label="switchItem.label"
+                    :hint="switchItem.hint"
                   >
-                    <span class="project-settings-switch__content">
-                      <strong>{{ switchItem.label }}</strong>
-                      <em>{{ switchItem.hint }}</em>
-                    </span>
-                  </UiSwitch>
+                    <UiSwitch
+                      v-model="settingsForm[switchItem.key]"
+                      :aria-label="switchItem.label"
+                      :agent-id="`repo.settings.${group.agentPrefix}.${switchItem.key}`"
+                    />
+                  </SettingsRow>
                 </div>
               </section>
               <section class="project-settings-section" aria-labelledby="project-settings-merge-defaults-title">
                 <div class="project-settings-section__head">
                   <h4 id="project-settings-merge-defaults-title">合并默认值</h4>
+                  <span class="project-settings-section__actions">
+                    <button
+                      v-if="mergeDefaultsChanged()"
+                      type="submit"
+                      class="primary project-icon-action project-icon-action--primary"
+                      data-agent-id="repo.settings.merge-defaults.save"
+                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                      aria-label="保存"
+                      title="保存"
+                    >
+                      <LoaderCircle v-if="savingSettings" :size="14" aria-hidden="true" class="sb-spin" />
+                      <Save v-else :size="14" aria-hidden="true" />
+                    </button>
+                  </span>
                 </div>
                 <div class="project-settings-fields">
-                  <label
+                  <SettingsRow
                     v-for="dropdown in settingsDropdowns"
                     :key="dropdown.key"
                     class="project-settings-field"
+                    :label="dropdown.label"
                   >
-                    <span>{{ dropdown.label }}</span>
-                    <Dropdown
-                      :model-value="settingsForm[dropdown.key]"
-                      :options="dropdown.options"
-                      block
-                      size="large"
-                      placement="bottom"
-                      :agent-id="dropdown.agentId"
-                      :menu-label="dropdown.label"
-                      :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
-                      @update:model-value="updateSettingsDropdown(dropdown.key, $event)"
-                    />
-                  </label>
+                    <span class="project-settings-field__control">
+                      <Dropdown
+                        :model-value="settingsForm[dropdown.key]"
+                        :options="dropdown.options"
+                        block
+                        size="large"
+                        placement="bottom"
+                        :agent-id="dropdown.agentId"
+                        :menu-label="dropdown.label"
+                        :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
+                        @update:model-value="updateSettingsDropdown(dropdown.key, $event)"
+                      />
+                    </span>
+                  </SettingsRow>
                 </div>
               </section>
               <section
@@ -4016,17 +4043,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                 <h4 id="project-settings-danger-title">危险操作</h4>
               </div>
               <div class="project-settings-danger-list">
-                <section v-if="canDeleteLocal && repoPath" class="project-danger-zone" aria-label="本地危险操作">
-                  <div>
-                    <strong>{{ linkedWorktree ? "删除工作树" : "删除本地仓库" }}</strong>
-                    <span>
-                      {{
-                        linkedWorktree
-                          ? "从当前共享仓库移除该工作树，并从工作区仓库列表移除。"
-                          : "删除工作区内的本地目录，并从本地仓库列表移除。"
-                      }}
-                    </span>
-                  </div>
+                <SettingsRow
+                  v-if="canDeleteLocal && repoPath"
+                  class="project-danger-zone"
+                  :label="linkedWorktree ? '删除工作树' : '删除本地仓库'"
+                  :hint="linkedWorktree ? '从当前共享仓库移除该工作树，并从工作区仓库列表移除。' : '删除工作区内的本地目录，并从本地仓库列表移除。'"
+                  aria-label="本地危险操作"
+                >
                   <button
                     type="button"
                     class="ghost danger project-icon-action"
@@ -4039,12 +4062,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <LoaderCircle v-if="deletingLocalRepo" :size="14" aria-hidden="true" class="sb-spin" />
                     <Trash2 v-else :size="14" aria-hidden="true" />
                   </button>
-                </section>
-                <section v-if="settings" class="project-danger-zone" aria-label="归档操作">
-                  <div>
-                    <strong>{{ settings.archived ? "取消归档 GitHub 仓库" : "归档 GitHub 仓库" }}</strong>
-                    <span>{{ settings.archived ? "恢复仓库写入能力。" : "将仓库设为只读归档状态。" }}</span>
-                  </div>
+                </SettingsRow>
+                <SettingsRow
+                  v-if="settings"
+                  class="project-danger-zone"
+                  :label="settings.archived ? '取消归档 GitHub 仓库' : '归档 GitHub 仓库'"
+                  :hint="settings.archived ? '恢复仓库写入能力。' : '将仓库设为只读归档状态。'"
+                  aria-label="归档操作"
+                >
                   <button
                     type="button"
                     class="ghost danger project-icon-action"
@@ -4057,12 +4082,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <LoaderCircle v-if="archivingSettings" :size="14" aria-hidden="true" class="sb-spin" />
                     <Package v-else :size="14" aria-hidden="true" />
                   </button>
-                </section>
-                <section v-if="canDeleteRemote && settings" class="project-danger-zone" aria-label="远端危险操作">
-                  <div>
-                    <strong>删除 GitHub 远端仓库</strong>
-                    <span>只删除 GitHub 上的远端仓库，不删除本地目录。</span>
-                  </div>
+                </SettingsRow>
+                <SettingsRow
+                  v-if="canDeleteRemote && settings"
+                  class="project-danger-zone"
+                  label="删除 GitHub 远端仓库"
+                  hint="只删除 GitHub 上的远端仓库，不删除本地目录。"
+                  aria-label="远端危险操作"
+                >
                   <button
                     type="button"
                     class="ghost danger project-icon-action"
@@ -4075,7 +4102,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                     <LoaderCircle v-if="deletingRepo" :size="14" aria-hidden="true" class="sb-spin" />
                     <Trash2 v-else :size="14" aria-hidden="true" />
                   </button>
-                </section>
+                </SettingsRow>
               </div>
             </section>
           </div>
@@ -5692,63 +5719,54 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-settings-section {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
-  padding: 12px;
+  padding: 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-elev);
+  overflow: hidden;
 }
 
 .project-settings-section__head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 24px;
+  gap: 12px;
+  min-height: 28px;
 }
 
 .project-settings-section__head h4 {
+  min-width: 0;
   margin: 0;
-  color: var(--text);
-  font-size: 15px;
+  color: var(--text-muted);
+  font-size: 13px;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.project-settings-section__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
 }
 
 .project-settings-fields {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
-  gap: 8px;
-}
-
-.project-settings-fields--single {
-  grid-template-columns: minmax(220px, 420px);
+  gap: 0;
 }
 
 .project-settings-field {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 7px;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
+  min-width: 0;
 }
 
-.project-settings-field input,
-.project-settings-field textarea {
-  width: 100%;
-}
-
-.project-settings-field em {
-  color: var(--text-muted);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 400;
-  line-height: 1.4;
-}
-
-.project-settings-field--wide {
-  grid-column: 1 / -1;
+.project-settings-field__control {
+  width: min(260px, 100%);
 }
 
 .project-settings-switches {
@@ -5757,76 +5775,26 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-settings-switch {
-  align-items: start;
-  gap: 16px;
-  min-height: 56px;
-  padding: 10px 0;
-  color: var(--text);
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.project-settings-switch:last-child {
-  border-bottom: 0;
-}
-
-.project-settings-switch__content {
-  display: grid;
-  gap: 2px;
   min-width: 0;
 }
 
-.project-settings-switch strong {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
-.project-settings-switch em {
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: 12.5px;
-  font-style: normal;
-  line-height: 1.35;
+.project-settings :deep(.settings-row__label) {
+  flex: 1 1 auto;
+  white-space: normal;
 }
 
 .project-settings-danger-list {
   display: grid;
-  gap: 6px;
-  border-top: 1px solid var(--border);
+  gap: 0;
 }
 
 .project-danger-zone {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 16px;
-  min-height: 60px;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.project-danger-zone div {
-  display: grid;
-  gap: 2px;
   min-width: 0;
 }
 
-.project-danger-zone strong {
+.project-danger-zone :deep(.settings-row__label > div:first-child) {
   color: var(--err);
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.project-danger-zone span {
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.project-danger-zone:last-child {
-  border-bottom: 0;
+  font-weight: 600;
 }
 
 .project-danger-zone button,
