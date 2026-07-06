@@ -109,7 +109,7 @@ function fileMenu(entry: RepoFileTreeEntry): () => ContextMenuItem[] {
 
 <template>
   <aside class="files-sidebar" aria-label="仓库文件树">
-    <div class="files-sidebar__card">
+    <div class="card files-sidebar__card">
       <div v-if="repoLocationLabel" class="files-sidebar__head" :title="repoLocationLabel">{{ repoLocationLabel }}</div>
       <p v-if="treeError" class="error-line files-sidebar__empty">{{ treeError }}</p>
       <p v-else-if="treeLoading" class="muted files-sidebar__empty">正在读取文件树。</p>
@@ -172,16 +172,18 @@ function fileMenu(entry: RepoFileTreeEntry): () => ContextMenuItem[] {
   min-width: 0;
   min-height: 0;
   height: 100%;
+  margin: 0;
+  padding: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
 }
 
 .files-sidebar__head {
+  display: flex;
+  align-items: center;
   min-width: 0;
+  height: var(--repo-sidebar-header-height);
   overflow: hidden;
-  padding: 8px 10px;
+  padding: 0 var(--repo-sidebar-card-padding);
   border-bottom: 1px solid var(--border-soft);
   color: var(--text-muted);
   font-size: 12px;
@@ -193,7 +195,7 @@ function fileMenu(entry: RepoFileTreeEntry): () => ContextMenuItem[] {
 .files-sidebar__empty {
   grid-row: 2;
   margin: 0;
-  padding: 14px;
+  padding: var(--repo-sidebar-card-padding);
 }
 
 .files-tree {
@@ -202,10 +204,11 @@ function fileMenu(entry: RepoFileTreeEntry): () => ContextMenuItem[] {
   align-content: start;
   min-height: 0;
   overflow: auto;
-  padding: 6px;
+  padding: var(--repo-sidebar-list-gap);
 }
 
 .files-tree__item {
+  height: var(--repo-sidebar-control-height);
   padding-left: calc(10px + var(--tree-indent, 0px));
 }
 

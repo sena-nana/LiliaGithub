@@ -57,7 +57,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <section class="project-sidebar-filter-card" :aria-label="panelLabel">
+  <section class="card project-sidebar-filter-card" :aria-label="panelLabel">
     <div class="project-sidebar-filter-card__head">
       <div class="project-sidebar-filter-card__title">
         <component :is="icon" :size="14" aria-hidden="true" />
@@ -144,12 +144,10 @@ const emit = defineEmits<{
 <style scoped>
 .project-sidebar-filter-card {
   display: grid;
-  gap: 12px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
 }
 
 .project-sidebar-filter-card__head {
@@ -158,6 +156,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: var(--repo-sidebar-header-height);
 }
 
 .project-sidebar-filter-card__title {
@@ -183,7 +182,7 @@ const emit = defineEmits<{
   justify-content: center;
   gap: 6px;
   min-width: 0;
-  height: 30px;
+  height: var(--repo-sidebar-control-height);
   padding: 0 9px;
   font-size: 12px;
   white-space: nowrap;
@@ -202,7 +201,7 @@ const emit = defineEmits<{
 
 .project-sidebar-filter-card__states button {
   min-width: 0;
-  height: 28px;
+  height: var(--repo-sidebar-control-height);
   padding: 0 6px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -230,7 +229,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   min-width: 0;
-  height: 34px;
+  height: var(--repo-sidebar-control-height);
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -240,7 +239,7 @@ const emit = defineEmits<{
 
 .project-sidebar-filter-card__search input {
   min-width: 0;
-  height: 30px;
+  height: 100%;
   padding: 0;
   border: 0;
   background: transparent;
@@ -249,12 +248,12 @@ const emit = defineEmits<{
 .project-sidebar-filter-card__filters,
 .project-sidebar-filter-card__filter {
   display: grid;
-  gap: 8px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
 }
 
 .project-sidebar-filter-card__filter {
-  gap: 5px;
+  gap: var(--repo-sidebar-list-gap);
 }
 
 .project-sidebar-filter-card__filter > span {
@@ -273,7 +272,7 @@ const emit = defineEmits<{
 .project-sidebar-filter-card__filter :deep(.action-filter-dropdown) {
   width: 100%;
   min-width: 0;
-  height: 30px;
+  height: var(--repo-sidebar-control-height);
   justify-content: space-between;
   border-color: var(--border);
   color: var(--text);

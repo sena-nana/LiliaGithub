@@ -47,7 +47,7 @@ const emit = defineEmits<{
 <template>
   <div class="milestones-sidebar" aria-label="Milestones filters">
     <section
-      class="milestones-sidebar-card milestones-sidebar-card--summary"
+      class="card milestones-sidebar-card milestones-sidebar-card--summary"
       aria-label="Milestones 摘要"
       :title="`${visibleItemCount} items · ${issueCount} issues · ${pullCount} PRs · ${milestoneCountTotal} milestones`"
     >
@@ -69,7 +69,7 @@ const emit = defineEmits<{
       </button>
     </section>
 
-    <section class="milestones-sidebar-card" aria-label="事项类型">
+    <section class="card milestones-sidebar-card" aria-label="事项类型">
       <div class="milestones-sidebar-card__head">
         <strong>Type</strong>
       </div>
@@ -88,7 +88,7 @@ const emit = defineEmits<{
       </div>
     </section>
 
-    <section class="milestones-sidebar-card" aria-label="事项状态">
+    <section class="card milestones-sidebar-card" aria-label="事项状态">
       <div class="milestones-sidebar-card__head">
         <strong>Status</strong>
       </div>
@@ -107,7 +107,7 @@ const emit = defineEmits<{
       </div>
     </section>
 
-    <section class="milestones-sidebar-card" aria-label="Milestone filters">
+    <section class="card milestones-sidebar-card" aria-label="Milestone filters">
       <div class="milestones-sidebar-card__head">
         <strong>Milestones</strong>
       </div>
@@ -141,18 +141,16 @@ const emit = defineEmits<{
 .milestones-sidebar {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
 }
 
 .milestones-sidebar-card {
   display: grid;
-  gap: 8px;
+  gap: var(--repo-sidebar-card-gap);
   min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  margin: 0;
+  padding: var(--repo-sidebar-card-padding);
 }
 
 .milestones-sidebar-card--summary {
@@ -165,6 +163,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 7px;
   min-width: 0;
+  min-height: var(--repo-sidebar-header-height);
   color: var(--text);
   font-size: 12px;
 }
@@ -198,8 +197,8 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: 28px;
-  height: 28px;
+  width: var(--repo-sidebar-icon-button-size);
+  height: var(--repo-sidebar-icon-button-size);
   padding: 0;
   font-size: 12px;
 }
@@ -207,7 +206,7 @@ const emit = defineEmits<{
 .milestones-sidebar__segments {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
   padding: 2px;
   border: 1px solid var(--border-soft);
@@ -216,7 +215,7 @@ const emit = defineEmits<{
 }
 
 .milestones-sidebar__segments button {
-  height: 28px;
+  height: var(--repo-sidebar-control-height);
   min-width: 0;
   padding: 0 6px;
   overflow: hidden;
@@ -235,7 +234,7 @@ const emit = defineEmits<{
 
 .milestones-sidebar__milestone-list {
   display: grid;
-  gap: 2px;
+  gap: var(--repo-sidebar-list-gap);
   min-width: 0;
 }
 
@@ -245,7 +244,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 30px;
+  height: var(--repo-sidebar-control-height);
   padding: 0 7px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);

@@ -478,6 +478,7 @@ onUnmounted(() => {
             <button
               type="button"
               class="ghost"
+              data-agent-id="settings.repositories.contribution-identities.scan"
               :disabled="scanningContributionIdentities || savingContributionIdentities || Boolean(adoptingContributionIdentityKey)"
               @click="scanContributionIdentities"
             >
