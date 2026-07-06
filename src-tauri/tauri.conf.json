@@ -30,7 +30,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "shortDescription": "Local GitHub workspace and repository management.",
     "longDescription": "LiliaGithub is a Tauri desktop app for managing local GitHub workspaces, repository status, single-repository operations, quick launch commands, and queued pull/push workflows.",
     "windows": {
