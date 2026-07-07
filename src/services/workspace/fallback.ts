@@ -4781,9 +4781,10 @@ export function updateGitHubIssue(
     const issues = fallbackGitHubIssues[repoFullName] ?? [];
     const current = issues.find((issue) => issue.number === issueNumber);
     if (!current) throw new Error(`未找到 Issue #${issueNumber}`);
+    const { stateReason: _stateReason, ...issueRequest } = request;
     const updated: GitHubIssue = {
       ...current,
-      ...request,
+      ...issueRequest,
       title: request.title ?? current.title,
       body: request.body ?? current.body,
       labels: request.labels ? [...request.labels] : [...current.labels],

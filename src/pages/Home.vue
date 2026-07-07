@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, shallowRef, watch, type Component } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
   ArrowDownAZ,
+  ArrowRight,
   CalendarDays,
   CheckCircle2,
   CircleDot,
@@ -11,6 +12,7 @@ import {
   FolderOpen,
   FolderGit2,
   GitBranchPlus,
+  GitMerge,
   GitPullRequestArrow,
   Info,
   Plus,
@@ -40,7 +42,10 @@ import {
   listGitHubRepos,
   listGitHubAccountIssues,
   listGitHubActionNotifications,
+  mergeGitHubPullRequest,
   preloadGitHubRepos,
+  updateGitHubIssue,
+  updateGitHubPullRequest,
   type GitHubAccountIssueItem,
   type GitHubActionNotification,
   type GitHubIssue,
@@ -59,7 +64,6 @@ import {
   readHomeGitHubOverviewSnapshot,
   writeHomeGitHubOverviewSnapshot,
 } from "./homeOverviewCache";
-import GitHubTimelineList, { type TimelineDisplayNode, type TimelineNodeLink } from "../components/GitHubTimelineList.vue";
 import ContributionIdentityRecommendations from "../components/ContributionIdentityRecommendations.vue";
 import HomeContributionCard from "../components/home/HomeContributionCard.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
@@ -163,6 +167,24 @@ type HomeSearchResult = {
   { kind: "remote"; repo: GitHubRepoSummary }
 );
 
+type HomePendingLink = {
+  kind: "route";
+  to: string;
+} | {
+  kind: "none";
+};
+
+type HomePendingAction = "issue-complete" | "issue-close" | "pull-merge" | "pull-close";
+
+type HomePendingRow = {
+  item: HomePendingItem;
+  icon: Component;
+  repoFullName: string;
+  link: HomePendingLink;
+  actions: HomePendingAction[];
+  actionError: string | null;
+};
+
 type HomeOverviewSettingsSnapshot = Pick<WorkspaceSettings, "repoSyncPreferences"> | null;
 
 type HomeOverviewSnapshot = {
@@ -234,6 +256,8 @@ const githubAccountIssuesLoading = ref(false);
 const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotification[] | undefined>>({});
 const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
+const homePendingActionKey = ref<string | null>(null);
+const homePendingActionErrors = ref<Record<string, string | undefined>>({});
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
@@ -557,9 +581,9 @@ function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
     });
 }
 
-const homePendingNodes = computed<TimelineDisplayNode[]>(() =>
+const homePendingRows = computed<HomePendingRow[]>(() =>
   buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot(), HOME_PENDING_ITEM_LIMIT)
-    .map(toHomePendingDisplayNode),
+    .map(toHomePendingRow),
 );
 const githubTimelineBusy = computed(() =>
   githubReposLoading.value ||
@@ -879,6 +903,18 @@ function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
   };
 }
 
+function cloneGitHubPullRequest(pullRequest: GitHubPullRequest): GitHubPullRequest {
+  return {
+    ...pullRequest,
+    labels: [...pullRequest.labels],
+    assignees: [...pullRequest.assignees],
+    milestone: pullRequest.milestone ? { ...pullRequest.milestone } : null,
+    projectItems: pullRequest.projectItems?.map((project) => ({ ...project })) ?? [],
+    reviewers: pullRequest.reviewers?.map((reviewer) => ({ ...reviewer })) ?? [],
+    developmentItems: pullRequest.developmentItems?.map((item) => ({ ...item })) ?? [],
+  };
+}
+
 function clearGitHubPendingItems() {
   githubAccountIssuesLoading.value = false;
   githubActionNotificationsLoading.value = false;
@@ -1032,41 +1068,42 @@ function repoSyncIssueForTimeline(githubRepo: GitHubRepoSummary) {
   return localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null;
 }
 
-function toHomePendingDisplayNode(item: HomePendingItem): TimelineDisplayNode {
-  const date = new Date(item.timestamp);
+function toHomePendingRow(item: HomePendingItem): HomePendingRow {
   return {
-    id: item.id,
+    item,
     icon: homePendingItemIcon(item.kind),
-    title: item.title,
-    detail: item.detail,
-    summary: item.summary,
-    timestamp: item.timestamp,
-    datetime: date.toISOString(),
-    timeLabel: formatTimelineTime(item.timestamp),
+    repoFullName: homePendingItemRepoFullName(item),
     link: homePendingItemLink(item),
-    tone: item.tone,
+    actions: homePendingActions(item),
+    actionError: homePendingActionErrors.value[item.id] ?? null,
   };
 }
 
-function homePendingItemLink(item: HomePendingItem): TimelineNodeLink {
+function homePendingItemRepoFullName(item: HomePendingItem) {
   const target = item.target;
-  if (target.kind === "repo") return timelineNodeLink(repoDetailPath({ id: target.repoId }));
+  if (target.kind === "repo") return item.summary;
+  return target.repoFullName;
+}
+
+function homePendingItemLink(item: HomePendingItem): HomePendingLink {
+  const target = item.target;
+  if (target.kind === "repo") return homePendingRouteLink(repoDetailPath({ id: target.repoId }));
   if (target.kind === "issue") {
     const href = target.localRepoId
       ? repoProjectPath({ id: target.localRepoId }, "issues", target.number)
       : remoteRepoProjectPath({ fullName: target.repoFullName }, "issues", target.number);
-    return timelineNodeLink(href);
+    return homePendingRouteLink(href);
   }
   if (target.kind === "pull") {
     const href = target.localRepoId
       ? repoProjectPath({ id: target.localRepoId }, "pulls", target.number)
       : remoteRepoProjectPath({ fullName: target.repoFullName }, "pulls", target.number);
-    return timelineNodeLink(href);
+    return homePendingRouteLink(href);
   }
   const href = target.localRepoId
     ? repoProjectPath({ id: target.localRepoId }, "actions", target.runId)
     : remoteRepoProjectPath({ fullName: target.repoFullName }, "actions", target.runId);
-  return timelineNodeLink(href);
+  return homePendingRouteLink(href);
 }
 
 function homePendingItemIcon(kind: HomePendingItem["kind"]) {
@@ -1076,21 +1113,135 @@ function homePendingItemIcon(kind: HomePendingItem["kind"]) {
   return RefreshCw;
 }
 
-function timelineNodeLink(href: string | undefined, preload?: () => Promise<unknown>): TimelineNodeLink {
+function homePendingRouteLink(href: string | undefined): HomePendingLink {
   if (!href) return { kind: "none" };
-  if (href.startsWith("http")) return { kind: "external", href };
-  return { kind: "route", to: href, preload };
+  return { kind: "route", to: href };
 }
 
-const timelineTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
+function homePendingItemHref(link: HomePendingLink) {
+  if (link.kind === "route") return router.resolve(link.to).href;
+  return undefined;
+}
 
-function formatTimelineTime(timestamp: number) {
-  return timelineTimeFormatter.format(new Date(timestamp));
+async function openHomePendingLink(event: MouseEvent, link: HomePendingLink) {
+  if (link.kind !== "route" || event.defaultPrevented || event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  await router.push(link.to);
+}
+
+function homePendingActionLabel(action: HomePendingAction) {
+  if (action === "issue-complete") return "完成";
+  if (action === "issue-close") return "关闭";
+  if (action === "pull-merge") return "合并";
+  return "关闭";
+}
+
+function homePendingActionIcon(action: HomePendingAction) {
+  if (action === "issue-complete") return CheckCircle2;
+  if (action === "pull-merge") return GitMerge;
+  return X;
+}
+
+function homePendingActions(item: HomePendingItem): HomePendingAction[] {
+  if (item.target.kind === "issue") return ["issue-complete", "issue-close"];
+  if (item.target.kind === "pull") return ["pull-merge", "pull-close"];
+  return [];
+}
+
+function homePendingActionAgentId(item: HomePendingItem, action: HomePendingAction) {
+  return `home.pending.${item.id}.${action}`;
+}
+
+function homePendingActionRunKey(item: HomePendingItem, action: HomePendingAction) {
+  return `${item.id}:${action}`;
+}
+
+function isHomePendingActionRunning(item: HomePendingItem, action: HomePendingAction) {
+  return homePendingActionKey.value === homePendingActionRunKey(item, action);
+}
+
+function clearHomePendingActionError(item: HomePendingItem) {
+  if (!homePendingActionErrors.value[item.id]) return;
+  const { [item.id]: _removed, ...next } = homePendingActionErrors.value;
+  homePendingActionErrors.value = next;
+}
+
+function setHomePendingActionError(item: HomePendingItem, error: unknown) {
+  homePendingActionErrors.value = {
+    ...homePendingActionErrors.value,
+    [item.id]: String(error),
+  };
+}
+
+async function runHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
+  const runKey = homePendingActionRunKey(item, action);
+  if (homePendingActionKey.value) return;
+  homePendingActionKey.value = runKey;
+  clearHomePendingActionError(item);
+  try {
+    if (action === "issue-complete" || action === "issue-close") {
+      await updateHomePendingIssue(item, action);
+    } else {
+      await updateHomePendingPullRequest(item, action);
+    }
+  } catch (err) {
+    setHomePendingActionError(item, err);
+  } finally {
+    if (homePendingActionKey.value === runKey) {
+      homePendingActionKey.value = null;
+    }
+  }
+}
+
+async function updateHomePendingIssue(item: HomePendingItem, action: Extract<HomePendingAction, "issue-complete" | "issue-close">) {
+  const target = item.target;
+  if (target.kind !== "issue") return;
+  const updated = await updateGitHubIssue(target.repoFullName, target.number, {
+    state: "closed",
+    stateReason: action === "issue-complete" ? "completed" : "not_planned",
+  });
+  replaceHomePendingIssue(target.repoFullName, updated);
+}
+
+async function updateHomePendingPullRequest(item: HomePendingItem, action: Extract<HomePendingAction, "pull-merge" | "pull-close">) {
+  const target = item.target;
+  if (target.kind !== "pull") return;
+  const updated = action === "pull-merge"
+    ? await mergeGitHubPullRequest(target.repoFullName, target.number, { method: "merge" })
+    : await updateGitHubPullRequest(target.repoFullName, target.number, { state: "closed" });
+  replaceHomePendingPullRequest(target.repoFullName, updated);
+}
+
+function replaceHomePendingIssue(repoFullName: string, updated: GitHubIssue) {
+  const current = githubIssuesByRepo.value[repoFullName] ?? overviewIssuesByRepo.value[repoFullName] ?? [];
+  const nextItems = updated.state === "open"
+    ? upsertByNumber(current, cloneGitHubIssue(updated))
+    : current.filter((item) => item.number !== updated.number);
+  githubIssuesByRepo.value = {
+    ...githubIssuesByRepo.value,
+    [repoFullName]: nextItems,
+  };
+  commitHomeOverviewSnapshotFromGitHubState();
+}
+
+function replaceHomePendingPullRequest(repoFullName: string, updated: GitHubPullRequest) {
+  const current = githubPullRequestsByRepo.value[repoFullName] ?? overviewPullRequestsByRepo.value[repoFullName] ?? [];
+  const visible = updated.state === "open" && !updated.merged && !updated.draft;
+  const nextItems = visible
+    ? upsertByNumber(current, cloneGitHubPullRequest(updated))
+    : current.filter((item) => item.number !== updated.number);
+  githubPullRequestsByRepo.value = {
+    ...githubPullRequestsByRepo.value,
+    [repoFullName]: nextItems,
+  };
+  commitHomeOverviewSnapshotFromGitHubState();
+}
+
+function upsertByNumber<T extends { number: number }>(items: readonly T[], updated: T): T[] {
+  const existing = items.some((item) => item.number === updated.number);
+  if (existing) return items.map((item) => item.number === updated.number ? updated : item);
+  return [updated, ...items];
 }
 
 function valueMatchesHomeSearch(value: string | null | undefined, query: string) {
@@ -1816,18 +1967,96 @@ function bulkOperationDescription(operation: BulkOperation) {
               </button>
             </p>
             <p
-              v-if="githubTimelineBusy && !homePendingNodes.length && !githubTimelineError"
+              v-if="githubTimelineBusy && !homePendingRows.length && !githubTimelineError"
               class="repo-status-empty"
             >
               正在加载待处理事项...
             </p>
-            <p v-else-if="!homePendingNodes.length && !githubTimelineError" class="repo-status-empty">暂无待处理事项</p>
-            <GitHubTimelineList
-              v-if="homePendingNodes.length"
-              :nodes="homePendingNodes"
+            <p v-else-if="!homePendingRows.length && !githubTimelineError" class="repo-status-empty">暂无待处理事项</p>
+            <ol
+              v-if="homePendingRows.length"
+              class="home-pending-list"
               aria-label="待处理事项列表"
-              v-memo="[homePendingNodes]"
-            />
+              v-memo="[homePendingRows, homePendingActionKey]"
+            >
+              <li
+                v-for="row in homePendingRows"
+                :key="row.item.id"
+                class="home-pending-row"
+                :class="{ 'has-hover-controls': row.actions.length || row.link.kind !== 'none' }"
+                :aria-label="`${row.item.title} ${row.item.detail}，${row.repoFullName}`"
+                tabindex="0"
+              >
+                <span class="home-pending-row__icon" :class="row.item.tone ? `is-${row.item.tone}` : null" aria-hidden="true">
+                  <component :is="row.icon" :size="14" aria-hidden="true" />
+                </span>
+                <span class="home-pending-row__main">
+                  <strong>{{ row.item.title }}</strong>
+                  <span>{{ row.item.detail }}</span>
+                </span>
+                <span class="home-pending-row__side">
+                  <span
+                    v-if="row.actionError"
+                    class="home-pending-row__error"
+                    :title="row.actionError"
+                  >
+                    {{ row.actionError }}
+                  </span>
+                  <span
+                    v-else
+                    class="home-pending-row__repo"
+                    :title="row.repoFullName"
+                  >
+                    {{ row.repoFullName }}
+                  </span>
+                  <span
+                    v-if="row.actions.length || row.link.kind !== 'none'"
+                    class="home-pending-row__actions"
+                    aria-label="快捷操作"
+                  >
+                    <button
+                      v-for="action in row.actions"
+                      :key="action"
+                      type="button"
+                      class="home-pending-action"
+                      :class="{
+                        'home-pending-action--ok': action === 'issue-complete' || action === 'pull-merge',
+                        'home-pending-action--danger': action === 'issue-close' || action === 'pull-close',
+                      }"
+                      :aria-label="homePendingActionLabel(action)"
+                      :title="homePendingActionLabel(action)"
+                      :data-agent-id="homePendingActionAgentId(row.item, action)"
+                      :disabled="Boolean(homePendingActionKey)"
+                      @click.stop="runHomePendingAction(row.item, action)"
+                    >
+                      <LoaderCircle
+                        v-if="isHomePendingActionRunning(row.item, action)"
+                        :size="11"
+                        aria-hidden="true"
+                        class="sb-spin"
+                      />
+                      <component
+                        v-else
+                        :is="homePendingActionIcon(action)"
+                        :size="13"
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <a
+                      v-if="row.link.kind !== 'none'"
+                      class="home-pending-row__jump"
+                      :href="homePendingItemHref(row.link)"
+                      :aria-label="`打开 ${row.item.title}`"
+                      title="打开"
+                      :data-agent-id="`home.pending.${row.item.id}.open`"
+                      @click="openHomePendingLink($event, row.link)"
+                    >
+                      <ArrowRight :size="13" aria-hidden="true" />
+                    </a>
+                  </span>
+                </span>
+              </li>
+            </ol>
           </div>
         </div>
 
@@ -2467,6 +2696,186 @@ function bulkOperationDescription(operation: BulkOperation) {
   contain: layout paint style;
 }
 
+.home-pending-list {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-pending-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) minmax(104px, 32%);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.home-pending-row:hover {
+  background: var(--bg-hover);
+}
+
+.home-pending-row:focus-visible,
+.home-pending-row:focus-within {
+  outline: 0;
+  border-color: var(--border-strong);
+  background: var(--bg-active);
+}
+
+.home-pending-row__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.home-pending-row__icon.is-error {
+  color: var(--err);
+}
+
+.home-pending-row__icon.is-warn {
+  color: var(--warn);
+}
+
+.home-pending-row__icon.is-ok {
+  color: var(--ok);
+}
+
+.home-pending-row__icon.is-muted {
+  color: var(--text-muted);
+}
+
+.home-pending-row__main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.home-pending-row__main strong {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.home-pending-row__main span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-pending-row__side {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  height: 24px;
+}
+
+.home-pending-row__repo,
+.home-pending-row__error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 0.12s ease;
+}
+
+.home-pending-row__repo {
+  color: var(--text-faint);
+  font-weight: 600;
+}
+
+.home-pending-row__error {
+  color: var(--err);
+  font-weight: 700;
+}
+
+.home-pending-row__actions {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, visibility 0.12s ease;
+}
+
+.home-pending-row.has-hover-controls:hover .home-pending-row__repo,
+.home-pending-row.has-hover-controls:focus-within .home-pending-row__repo,
+.home-pending-row.has-hover-controls:hover .home-pending-row__error,
+.home-pending-row.has-hover-controls:focus-within .home-pending-row__error {
+  opacity: 0;
+}
+
+.home-pending-row.has-hover-controls:hover .home-pending-row__actions,
+.home-pending-row.has-hover-controls:focus-within .home-pending-row__actions {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.home-pending-action,
+.home-pending-row__jump {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  line-height: 1;
+  text-decoration: none;
+  background: transparent;
+}
+
+.home-pending-action {
+  padding: 0;
+  color: var(--text);
+}
+
+.home-pending-action--ok {
+  color: var(--ok);
+}
+
+.home-pending-action--danger {
+  color: var(--err);
+}
+
+.home-pending-action:hover,
+.home-pending-action:focus-visible,
+.home-pending-row__jump:hover,
+.home-pending-row__jump:focus-visible {
+  background: var(--bg-hover);
+  outline: 0;
+}
+
+.home-pending-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.home-pending-row__jump {
+  color: var(--text-muted);
+}
+
 .repo-status-heading {
   flex: 0 0 auto;
   display: flex;
@@ -2826,12 +3235,17 @@ function bulkOperationDescription(operation: BulkOperation) {
     grid-template-columns: 1fr;
   }
 
-.repo-status-row {
-  grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 4px 8px;
-  align-items: center;
-  padding: 6px;
-}
+  .repo-status-row {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    gap: 4px 8px;
+    align-items: center;
+    padding: 6px;
+  }
+
+  .home-pending-row {
+    grid-template-columns: 18px minmax(0, 1fr) minmax(82px, 30%);
+    gap: 5px;
+  }
 
   .repo-status-row__name {
     grid-column: 1;

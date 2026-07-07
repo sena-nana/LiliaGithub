@@ -1399,6 +1399,8 @@ pub struct GitHubUpdateIssueRequest {
     #[serde(default)]
     pub state: Option<String>,
     #[serde(default)]
+    pub state_reason: Option<String>,
+    #[serde(default)]
     pub labels: Option<Vec<String>>,
     #[serde(default)]
     pub assignees: Option<Vec<String>>,

@@ -507,6 +507,21 @@ describe("workspace GitHub project cache", () => {
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
   });
 
+  it("Issue 关闭原因请求会同步 open 缓存状态", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({ [repoFullName]: [issue()] });
+
+    await listGitHubIssues(repoFullName, "open");
+    const updated = await updateGitHubIssue(repoFullName, 12, {
+      state: "closed",
+      stateReason: "not_planned",
+    });
+    const cachedOpenIssues = await listGitHubIssues(repoFullName, "open");
+
+    expect(updated.state).toBe("closed");
+    expect(cachedOpenIssues).toEqual([]);
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+  });
+
   it("缓存远程提交列表，forceRefresh 才重新读取", async () => {
     workspaceFallback.setFallbackGitHubCommitsForTests({ [repoFullName]: [commit()] });
 

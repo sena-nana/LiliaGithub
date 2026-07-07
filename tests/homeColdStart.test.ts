@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { ContextMenuHost } from "@lilia/ui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import {
   type GitHubAccountIssueItem,
   type GitHubActionNotification,
   type GitHubIssue,
+  type GitHubPullRequest,
   type GitHubRepoSummary,
 } from "../src/services/workspace";
 import {
@@ -68,6 +69,27 @@ function issue(number: number, title: string): GitHubIssue {
     htmlUrl: `https://github.com/${repoFullName}/issues/${number}`,
     updatedAt: "2026-06-25T12:00:00Z",
     createdAt: "2026-06-01T00:00:00Z",
+  };
+}
+
+function pullRequest(number: number, title: string): GitHubPullRequest {
+  return {
+    number,
+    title,
+    state: "open",
+    draft: false,
+    body: null,
+    labels: [],
+    assignees: [],
+    author: "sena",
+    htmlUrl: `https://github.com/${repoFullName}/pull/${number}`,
+    updatedAt: "2026-06-25T12:00:00Z",
+    createdAt: "2026-06-01T00:00:00Z",
+    baseBranch: "main",
+    headBranch: `branch-${number}`,
+    merged: false,
+    mergeable: true,
+    mergeableState: "clean",
   };
 }
 
@@ -286,9 +308,17 @@ describe("Home cold start pending items", () => {
     ]);
     actionNotifications.resolve([actionNotification("90")]);
 
-    const issueLink = await screen.findByRole("link", { name: "Issue #12" });
-    const pullLink = await screen.findByRole("link", { name: "PR #7" });
-    const actionLink = await screen.findByRole("link", { name: "Actions 报错" });
+    const issueRow = await screen.findByLabelText(/Issue #12 Fix cold start issue/);
+    await fireEvent.focus(issueRow);
+    const issueLink = within(issueRow).getByRole("link", { name: "打开 Issue #12" });
+
+    const pullRow = await screen.findByLabelText(/PR #7 Fix cold start PR/);
+    await fireEvent.focus(pullRow);
+    const pullLink = within(pullRow).getByRole("link", { name: "打开 PR #7" });
+
+    const actionRow = await screen.findByRole("listitem", { name: /Actions 报错 CI failed/ });
+    await fireEvent.focus(actionRow);
+    const actionLink = within(actionRow).getByRole("link", { name: "打开 Actions 报错" });
 
     expect(issueLink).toHaveAttribute("href", "/repos/LiliaGithub?projectTab=issues&issue=12");
     expect(pullLink).toHaveAttribute("href", "/repos/LiliaGithub?projectTab=pulls&pr=7");
@@ -304,7 +334,10 @@ describe("Home cold start pending items", () => {
 
     await renderHomeFromStoredSnapshot(Date.now() - HOME_GITHUB_OVERVIEW_SNAPSHOT_REFRESH_MS - 1);
 
-    expect(await screen.findByRole("link", { name: "Issue #12" })).toHaveAttribute(
+    const issueRow = await screen.findByLabelText(/Issue #12 Fix cold start issue/);
+    await fireEvent.focus(issueRow);
+
+    expect(within(issueRow).getByRole("link", { name: "打开 Issue #12" })).toHaveAttribute(
       "href",
       "/repos/LiliaGithub?projectTab=issues&issue=12",
     );
@@ -314,5 +347,57 @@ describe("Home cold start pending items", () => {
     });
     expect(screen.getByRole("link", { name: `打开 ${repoFullName}` })).toBeInTheDocument();
     expect(screen.queryByText("暂无待处理事项")).toBeNull();
+  });
+
+  it("runs Issue pending quick actions and removes completed rows", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      [repoFullName]: [
+        issue(12, "Complete issue"),
+        issue(13, "Close issue"),
+      ],
+    });
+    workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => [
+      accountIssueItem(12, "Complete issue"),
+      accountIssueItem(13, "Close issue"),
+    ]);
+    workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
+
+    await renderHomeFromStoredSnapshot();
+
+    const completeRow = await screen.findByLabelText(/Issue #12 Complete issue/);
+    await fireEvent.focus(completeRow);
+    await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
+    await waitFor(() => expect(screen.queryByLabelText(/Issue #12 Complete issue/)).toBeNull());
+
+    const closeRow = await screen.findByLabelText(/Issue #13 Close issue/);
+    await fireEvent.focus(closeRow);
+    await fireEvent.click(within(closeRow).getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(screen.queryByLabelText(/Issue #13 Close issue/)).toBeNull());
+  });
+
+  it("runs pull request pending quick actions and removes handled rows", async () => {
+    workspaceFallback.setFallbackGitHubPullRequestsForTests({
+      [repoFullName]: [
+        pullRequest(7, "Merge PR"),
+        pullRequest(8, "Close PR"),
+      ],
+    });
+    workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => [
+      accountIssueItem(7, "Merge PR", true),
+      accountIssueItem(8, "Close PR", true),
+    ]);
+    workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
+
+    await renderHomeFromStoredSnapshot();
+
+    const mergeRow = await screen.findByLabelText(/PR #7 Merge PR/);
+    await fireEvent.focus(mergeRow);
+    await fireEvent.click(within(mergeRow).getByRole("button", { name: "合并" }));
+    await waitFor(() => expect(screen.queryByLabelText(/PR #7 Merge PR/)).toBeNull());
+
+    const closeRow = await screen.findByLabelText(/PR #8 Close PR/);
+    await fireEvent.focus(closeRow);
+    await fireEvent.click(within(closeRow).getByRole("button", { name: "关闭" }));
+    await waitFor(() => expect(screen.queryByLabelText(/PR #8 Close PR/)).toBeNull());
   });
 });
