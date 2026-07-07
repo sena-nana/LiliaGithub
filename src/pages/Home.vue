@@ -264,6 +264,7 @@ const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotificat
 const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
 const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
+const homePendingConfirmAction = ref<{ item: HomePendingItem; action: HomePendingAction } | null>(null);
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
@@ -1129,11 +1130,17 @@ function homePendingItemHref(link: HomePendingLink) {
   return undefined;
 }
 
-async function openHomePendingLink(event: MouseEvent, link: HomePendingLink) {
-  if (link.kind !== "route" || event.defaultPrevented || event.button !== 0) return;
+async function openHomePendingLink(event: MouseEvent | KeyboardEvent, link: HomePendingLink) {
+  if (link.kind !== "route" || event.defaultPrevented) return;
+  if ("button" in event && event.button !== 0) return;
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
   await router.push(link.to);
+}
+
+async function openHomePendingLinkFromKeyboard(event: KeyboardEvent, link: HomePendingLink) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  await openHomePendingLink(event, link);
 }
 
 function homePendingActionLabel(action: HomePendingAction) {
@@ -1157,6 +1164,41 @@ function homePendingActions(item: HomePendingItem): HomePendingAction[] {
 
 function homePendingActionAgentId(item: HomePendingItem, action: HomePendingAction) {
   return `home.pending.${item.id}.${action}`;
+}
+
+function homePendingConfirmAgentId(action: NonNullable<typeof homePendingConfirmAction.value>) {
+  return `${homePendingActionAgentId(action.item, action.action)}.confirm`;
+}
+
+function homePendingActionTargetLabel(item: HomePendingItem) {
+  const target = item.target;
+  if (target.kind === "issue") return `Issue #${target.number}`;
+  if (target.kind === "pull") return `PR #${target.number}`;
+  return item.title;
+}
+
+function homePendingConfirmTitle(action: NonNullable<typeof homePendingConfirmAction.value>) {
+  return `确认${homePendingActionLabel(action.action)} ${homePendingActionTargetLabel(action.item)}`;
+}
+
+function homePendingConfirmBody(action: NonNullable<typeof homePendingConfirmAction.value>) {
+  return `确认后将处理「${action.item.title} ${action.item.detail}」。`;
+}
+
+function requestHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
+  if (homePendingRunningActions.value[item.id]) return;
+  homePendingConfirmAction.value = { item, action };
+}
+
+function closeHomePendingConfirm() {
+  homePendingConfirmAction.value = null;
+}
+
+async function confirmHomePendingAction() {
+  const action = homePendingConfirmAction.value;
+  if (!action) return;
+  homePendingConfirmAction.value = null;
+  await runHomePendingAction(action.item, action.action);
 }
 
 async function runHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
@@ -1984,9 +2026,15 @@ function bulkOperationDescription(operation: BulkOperation) {
                 v-for="row in homePendingRows"
                 :key="row.item.id"
                 class="home-pending-row"
-                :class="{ 'has-hover-controls': row.actions.length || row.link.kind !== 'none' }"
+                :class="{
+                  'has-hover-controls': row.actions.length || row.link.kind !== 'none',
+                  'is-clickable': row.link.kind !== 'none',
+                }"
+                :role="row.link.kind === 'route' ? 'link' : undefined"
                 :aria-label="`${row.item.title} ${row.item.detail}，${row.repoFullName}`"
-                tabindex="0"
+                :tabindex="row.link.kind === 'route' ? 0 : undefined"
+                @click="openHomePendingLink($event, row.link)"
+                @keydown.self="openHomePendingLinkFromKeyboard($event, row.link)"
               >
                 <span class="home-pending-row__icon" :class="row.item.tone ? `is-${row.item.tone}` : null" aria-hidden="true">
                   <component :is="row.icon" :size="14" aria-hidden="true" />
@@ -2020,7 +2068,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       :title="homePendingActionLabel(action)"
                       :data-agent-id="homePendingActionAgentId(row.item, action)"
                       :disabled="Boolean(row.runningAction)"
-                      @click.stop="runHomePendingAction(row.item, action)"
+                      @click.stop="requestHomePendingAction(row.item, action)"
                     >
                       <LoaderCircle
                         v-if="row.runningAction === action"
@@ -2042,7 +2090,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       :aria-label="`打开 ${row.item.title}`"
                       title="打开"
                       :data-agent-id="`home.pending.${row.item.id}.open`"
-                      @click="openHomePendingLink($event, row.link)"
+                      @click.stop="openHomePendingLink($event, row.link)"
                     >
                       <ArrowRight :size="13" aria-hidden="true" />
                     </a>
@@ -2209,6 +2257,35 @@ function bulkOperationDescription(operation: BulkOperation) {
         </div>
       </div>
     </template>
+
+    <div
+      v-if="homePendingConfirmAction"
+      class="modal-backdrop"
+      role="presentation"
+    >
+      <div class="modal home-pending-confirm" role="dialog" aria-modal="true" :aria-label="homePendingConfirmTitle(homePendingConfirmAction)">
+        <div class="modal__header">
+          <div>
+            <h2>{{ homePendingConfirmTitle(homePendingConfirmAction) }}</h2>
+            <p class="muted">{{ homePendingConfirmBody(homePendingConfirmAction) }}</p>
+          </div>
+          <button type="button" class="ghost" aria-label="关闭" @click="closeHomePendingConfirm">
+            <X :size="14" aria-hidden="true" />
+          </button>
+        </div>
+        <div class="modal__footer">
+          <button type="button" class="ghost" @click="closeHomePendingConfirm">取消</button>
+          <button
+            type="button"
+            class="primary"
+            :data-agent-id="homePendingConfirmAgentId(homePendingConfirmAction)"
+            @click="confirmHomePendingAction"
+          >
+            确认{{ homePendingActionLabel(homePendingConfirmAction.action) }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div
       v-if="workspace.state.bulkPreview && workspace.state.bulkPreview.operation !== 'sync'"
@@ -2711,6 +2788,10 @@ function bulkOperationDescription(operation: BulkOperation) {
   font-size: 12px;
 }
 
+.home-pending-row.is-clickable {
+  cursor: pointer;
+}
+
 .home-pending-row:hover {
   background: var(--bg-hover);
 }
@@ -2719,7 +2800,6 @@ function bulkOperationDescription(operation: BulkOperation) {
 .home-pending-row:focus-within {
   outline: 0;
   border-color: var(--border-strong);
-  background: var(--bg-active);
 }
 
 .home-pending-row__icon {
