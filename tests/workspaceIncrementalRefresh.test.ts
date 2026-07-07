@@ -548,24 +548,9 @@ describe("workspace incremental refresh", () => {
     expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
   });
 
-  it("自动刷新遇到未提交变更时跳过自动同步并记录仓库错误", async () => {
-    state.settings = {
-      ...workspaceSettings(),
-      repoSyncPreferences: { Repo1: { autoSync: true } },
-    };
-    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
-    service.refreshRepoSummary.mockResolvedValue(repoSummary("Repo1", { ahead: 1, unstagedCount: 1 }));
-
-    await refreshRepoSummaries();
-
-    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
-    expect(repoActionErrorForRepo("Repo1")).toBe("存在未提交变更，已跳过自动同步");
-    expect(state.recentSync).toBeNull();
-  });
-
-  it("自动刷新遇到本地修改且落后远端时使用 stash 策略同步", async () => {
-    const stale = repoSummary("Repo1", { behind: 1, unstagedCount: 1 });
-    const synced = repoSummary("Repo1", { behind: 0, unstagedCount: 1 });
+  it("自动刷新遇到未提交变更且仅本地领先时只推送", async () => {
+    const stale = repoSummary("Repo1", { ahead: 1, unstagedCount: 1 });
+    const synced = repoSummary("Repo1", { ahead: 0, unstagedCount: 1 });
     state.settings = {
       ...workspaceSettings(),
       repoSyncPreferences: { Repo1: { autoSync: true } },
@@ -578,13 +563,29 @@ describe("workspace incremental refresh", () => {
 
     await refreshRepoSummaries();
 
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash");
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", ["Repo1"], "reject");
     expect(repoActionErrorForRepo("Repo1")).toBeNull();
-    expect(state.repos[0]).toMatchObject({ behind: 0, unstagedCount: 1 });
+    expect(state.repos[0]).toMatchObject({ ahead: 0, unstagedCount: 1 });
+  });
+
+  it("自动刷新遇到本地修改且落后远端时跳过自动同步", async () => {
+    const stale = repoSummary("Repo1", { behind: 1, unstagedCount: 1 });
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    service.listManagedRepos.mockResolvedValue([repoSummary("Repo1")]);
+    service.refreshRepoSummary.mockResolvedValue(stale);
+
+    await refreshRepoSummaries();
+
+    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
+    expect(repoActionErrorForRepo("Repo1")).toBe("存在未提交变更且远端有更新，已跳过自动同步");
+    expect(state.recentSync).toBeNull();
   });
 
   it("自动刷新执行自动同步时暴露同步中状态并保存最近失败", async () => {
-    const stale = repoSummary("Repo1", { ahead: 1 });
+    const stale = repoSummary("Repo1", { ahead: 1, unstagedCount: 1 });
     const execution = deferred<typeof state.bulkResults>();
     state.settings = {
       ...workspaceSettings(),
@@ -595,7 +596,7 @@ describe("workspace incremental refresh", () => {
     service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
 
     const refreshing = refreshRepoSummaries();
-    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash"));
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", ["Repo1"], "reject"));
 
     expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
 
@@ -606,7 +607,7 @@ describe("workspace incremental refresh", () => {
 
     expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(false);
     expect(repoActionErrorForRepo("Repo1")).toBe("认证失败");
-    expect(state.recentSync?.preview.operation).toBe("sync");
+    expect(state.recentSync?.preview.operation).toBe("push");
     expect(state.recentSync?.preview.eligible).toEqual([{ repo: stale, reason: "有本地提交待推送" }]);
     expect(recentSyncErrorForRepo("Repo1")).toEqual({ message: "认证失败", retrying: false });
   });
