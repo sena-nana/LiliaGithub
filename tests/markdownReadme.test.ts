@@ -87,6 +87,28 @@ describe("MarkdownReadme", () => {
     );
   });
 
+  it("renders GitHub-style README tables with inline markdown and alignment", () => {
+    render(MarkdownReadme, {
+      props: {
+        content: `| Name | Status | Notes |
+| :--- | :---: | ---: |
+| Core | [ready](https://example.com/ready) | \`stable\` |
+| Shell | pending | needs review |`,
+      },
+    });
+
+    const table = screen.getByRole("table");
+    const headers = screen.getAllByRole("columnheader");
+    expect(table).toBeInTheDocument();
+    expect(headers.map((header) => header.textContent)).toEqual(["Name", "Status", "Notes"]);
+    expect(headers[0]).toHaveAttribute("align", "left");
+    expect(headers[1]).toHaveAttribute("align", "center");
+    expect(headers[2]).toHaveAttribute("align", "right");
+    expect(screen.getByRole("link", { name: "ready" })).toHaveAttribute("href", "https://example.com/ready");
+    expect(screen.getByText("stable").tagName.toLowerCase()).toBe("code");
+    expect(screen.getByRole("cell", { name: "needs review" })).toBeInTheDocument();
+  });
+
   it("removes unsafe tags, attributes, and urls", () => {
     const { container } = render(MarkdownReadme, {
       props: {
