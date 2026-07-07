@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { ListChecks, Settings } from "@lucide/vue";
+import { CheckCircle2, Clock3, ListChecks, LoaderCircle, Settings, XCircle } from "@lucide/vue";
 import { RouterLink } from "vue-router";
 import { SB_MENU_POP_TRANSITION_MS, useAnchoredMenuMotion, type LiliaSidebarConfigInput } from "@lilia/ui";
 import { useBackgroundTasks } from "../../composables/useBackgroundTasks";
@@ -19,21 +19,15 @@ const menuMotion = useAnchoredMenuMotion(tasksOpen, placement);
 const menuStyle = computed(() => menuMotion.overlayStyle.value);
 let closeTimer: number | null = null;
 
+const taskStatusDisplay = {
+  success: { label: "已完成", icon: CheckCircle2 },
+  failed: { label: "失败", icon: XCircle },
+  pending: { label: "等待中", icon: Clock3 },
+  running: { label: "进行中", icon: LoaderCircle },
+};
+
 function taskAgentId(taskId: string) {
   return `sidebar.footer.tasks.item.${taskId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-}
-
-function elapsedLabel(startedAt: number) {
-  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-function taskStatusLabel(status: string) {
-  if (status === "success") return "已完成";
-  if (status === "failed") return "失败";
-  if (status === "pending") return "等待中";
-  return "进行中";
 }
 
 function clearCloseTimer() {
@@ -155,12 +149,21 @@ onBeforeUnmount(() => {
                 role="menuitem"
                 :data-agent-id="taskAgentId(task.id)"
               >
-                <div class="sb-tasks__item-head">
-                  <strong>{{ task.title }}</strong>
-                  <span>{{ taskStatusLabel(task.status) }} · {{ elapsedLabel(task.startedAt) }}</span>
-                </div>
-                <p v-if="task.repoName" class="sb-tasks__repo">{{ task.repoName }}</p>
-                <p v-if="task.detail" class="sb-tasks__detail">{{ task.detail }}</p>
+                <strong class="sb-tasks__title">{{ task.title }}</strong>
+                <span class="sb-tasks__source">{{ task.repoName || "工作区" }}</span>
+                <span
+                  class="sb-tasks__status"
+                  :title="taskStatusDisplay[task.status].label"
+                  :aria-label="taskStatusDisplay[task.status].label"
+                  role="img"
+                >
+                  <component
+                    :is="taskStatusDisplay[task.status].icon"
+                    :size="13"
+                    aria-hidden="true"
+                    :class="{ 'sb-spin': task.status === 'running' }"
+                  />
+                </span>
               </article>
             </template>
           </div>
@@ -290,9 +293,12 @@ onBeforeUnmount(() => {
 
 .sb-tasks__item {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) minmax(42px, max-content) 16px;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  padding: 7px 8px;
+  min-height: 30px;
+  padding: 5px 7px 5px 8px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--bg-subtle);
@@ -306,54 +312,58 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--err) 36%, var(--border-soft));
 }
 
-.sb-tasks__item-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.sb-tasks__item-head strong {
+.sb-tasks__title {
   overflow: hidden;
   color: var(--text);
   font-size: 12px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sb-tasks__item-head span,
-.sb-tasks__repo,
-.sb-tasks__detail {
-  margin: 0;
-  color: var(--text-faint);
+.sb-tasks__source {
+  min-width: 0;
+  max-width: 104px;
+  overflow: hidden;
+  color: var(--text-muted);
   font-size: 11px;
-  line-height: 1.35;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sb-tasks__item--success .sb-tasks__item-head span {
+.sb-tasks__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
+.sb-tasks__item--running .sb-tasks__status {
+  color: var(--accent);
+}
+
+.sb-tasks__item--success .sb-tasks__status {
   color: var(--ok);
 }
 
-.sb-tasks__item--failed .sb-tasks__item-head span {
+.sb-tasks__item--failed .sb-tasks__status {
   color: var(--err);
 }
 
-.sb-tasks__repo {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sb-spin {
+  animation: sb-spin 0.9s linear infinite;
 }
 
-.sb-tasks__detail {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+@keyframes sb-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .sb-conn {

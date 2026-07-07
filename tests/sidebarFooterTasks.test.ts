@@ -9,6 +9,7 @@ import {
   completeBackgroundTask,
   failBackgroundTask,
 } from "../src/composables/useBackgroundTasks";
+import { resetWorkspaceStateForTests, setWorkspaceTasks } from "../src/composables/workspace/state";
 
 function testRouter() {
   return createRouter({
@@ -44,6 +45,7 @@ async function renderFooter() {
 describe("SidebarFooter tasks", () => {
   afterEach(() => {
     clearFrontendBackgroundTasksForTests();
+    resetWorkspaceStateForTests();
   });
 
   it("没有后台任务时不显示计数，悬浮时显示空状态", async () => {
@@ -58,7 +60,7 @@ describe("SidebarFooter tasks", () => {
     expect(within(menu).getByText("暂无后台任务")).toBeInTheDocument();
   });
 
-  it("显示后台任务计数并在悬浮时渲染任务卡片", async () => {
+  it("显示后台任务计数并在悬浮时渲染单行任务", async () => {
     beginBackgroundTask({
       kind: "git",
       title: "推送当前分支",
@@ -76,7 +78,8 @@ describe("SidebarFooter tasks", () => {
     const menu = await screen.findByRole("menu", { name: "后台任务" });
     expect(within(menu).getByText("推送当前分支")).toBeInTheDocument();
     expect(within(menu).getByText("LiliaGithub")).toBeInTheDocument();
-    expect(within(menu).getByText("main")).toBeInTheDocument();
+    expect(within(menu).getByRole("img", { name: "进行中" })).toBeInTheDocument();
+    expect(within(menu).queryByText("main")).not.toBeInTheDocument();
 
     await fireEvent.keyDown(document, { key: "Escape" });
 
@@ -85,7 +88,7 @@ describe("SidebarFooter tasks", () => {
     });
   });
 
-  it("显示任务完成和失败状态", async () => {
+  it("显示任务完成、失败和等待状态", async () => {
     const completedTaskId = beginBackgroundTask({
       kind: "git",
       title: "提交变更",
@@ -100,6 +103,15 @@ describe("SidebarFooter tasks", () => {
       priority: "high",
     });
     failBackgroundTask(failedTaskId, "远端拒绝推送");
+    setWorkspaceTasks([{
+      id: "pending-task",
+      kind: "discoverRepos",
+      priority: "normal",
+      repoId: null,
+      status: "pending",
+      message: "等待发现",
+      updatedAt: Date.now(),
+    }]);
     await renderFooter();
 
     const button = screen.getByRole("button", { name: "后台任务" });
@@ -110,8 +122,13 @@ describe("SidebarFooter tasks", () => {
 
     const menu = await screen.findByRole("menu", { name: "后台任务" });
     expect(within(menu).getByText("提交变更")).toBeInTheDocument();
-    expect(within(menu).getAllByText(/已完成/).length).toBeGreaterThan(0);
+    expect(within(menu).getByRole("img", { name: "已完成" })).toBeInTheDocument();
     expect(within(menu).getByText("推送当前分支")).toBeInTheDocument();
-    expect(within(menu).getByText("失败：远端拒绝推送")).toBeInTheDocument();
+    expect(within(menu).getByRole("img", { name: "失败" })).toBeInTheDocument();
+    expect(within(menu).queryByText("失败：远端拒绝推送")).not.toBeInTheDocument();
+    expect(within(menu).getByText("发现工作区仓库")).toBeInTheDocument();
+    expect(within(menu).getByText("工作区")).toBeInTheDocument();
+    expect(within(menu).getByRole("img", { name: "等待中" })).toBeInTheDocument();
+    expect(within(menu).queryByText("等待发现")).not.toBeInTheDocument();
   });
 });
