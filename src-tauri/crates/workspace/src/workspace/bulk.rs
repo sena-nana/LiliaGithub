@@ -362,6 +362,15 @@ pub(super) fn sync_repo(
     summary: &RepoSummary,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> BulkSyncResult {
+    if summary.ahead <= 0 && summary.behind <= 0 {
+        return BulkSyncResult {
+            summary: Some(summary.clone()),
+            repo_id,
+            status: "success".to_string(),
+            message: "完成".to_string(),
+        };
+    }
+
     let has_upstream = current_branch_upstream(path).is_some();
     let dirty = repo_dirty_count(summary);
     let skip = |message: &str| bulk_error_result_for(&repo_id, message);
@@ -395,7 +404,7 @@ pub(super) fn sync_repo(
                 })
                 .map_err(|err| bulk_error_result_for(&repo_id, err))
         }
-    } else if summary.ahead > 0 {
+    } else {
         if let Some(reason) = push_block_reason(summary, has_upstream) {
             Err(bulk_error_result_for(
                 &repo_id,
@@ -405,8 +414,6 @@ pub(super) fn sync_repo(
             run_push_with_system_git_fallback(app, path)
                 .map_err(|err| bulk_error_result_for(&repo_id, err))
         }
-    } else {
-        Err(skip("没有需要同步的更新，已跳过同步"))
     };
 
     match run {

@@ -1,7 +1,7 @@
 use super::bulk::{
     build_bulk_preview, build_bulk_push_preview_with_lookup, build_bulk_sync_preview_with_lookup,
     build_bulk_sync_preview_with_lookup_and_mode, bulk_error_result, merge_pull_block_reason,
-    run_bulk_sync_parallel, should_retry_push_with_system_git,
+    run_bulk_sync_parallel, should_retry_push_with_system_git, sync_repo,
 };
 use super::file_browser::{delete_repo_file, repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES};
 use super::github::{
@@ -73,6 +73,7 @@ use super::shared::{
     remove_local_contribution_cache, write_local_contribution_cache,
 };
 use super::tasks::task_priority_rank;
+use crate::runtime::{WorkspaceContext, WorkspaceRuntime};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{
     BulkSyncResult, CachedRepoSummary, ContributionIdentity,
@@ -93,6 +94,51 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{mpsc, Arc, Mutex as TestMutex};
 use std::thread;
 use std::time::Duration as TestDuration;
+
+struct NoopWorkspaceRuntime;
+
+impl WorkspaceRuntime for NoopWorkspaceRuntime {
+    fn store_get(&self, _file: &str, _key: &str) -> Result<Option<serde_json::Value>, String> {
+        Ok(None)
+    }
+
+    fn store_set(
+        &self,
+        _file: &str,
+        _key: &str,
+        _value: serde_json::Value,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn store_delete(&self, _file: &str, _key: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn store_save(&self, _file: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn pick_folder(&self, _title: Option<&str>) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    fn pick_files(&self, _title: Option<&str>) -> Result<Option<Vec<String>>, String> {
+        Ok(None)
+    }
+
+    fn open_path(&self, _path: &str, _with: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn open_url(&self, _url: &str, _with: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn emit(&self, _event: &str, _payload: serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
+}
 
 fn temp_dir(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("lilia-github-{name}-{}", now_millis()));
@@ -3044,6 +3090,29 @@ fn sync_preview_allows_dirty_pull_when_local_changes_mode_is_stash() {
     assert!(preview.eligible.iter().any(|item| {
         item.repo.id == "dirty" && item.reason == "需处理本地修改后拉取远端更新"
     }));
+}
+
+#[test]
+fn sync_repo_returns_success_when_repo_has_no_sync_work() {
+    let summary = test_repo_summary(|summary| {
+        summary.id = "idle".to_string();
+    });
+
+    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
+    let result = sync_repo(
+        &app,
+        Path::new("."),
+        summary.id.clone(),
+        Path::new("."),
+        &summary,
+        RepoPullLocalChangesMode::Reject,
+    );
+
+    assert_eq!(result.status, "success");
+    let result_summary = result.summary.expect("sync should return current summary");
+    assert_eq!(result_summary.id, summary.id);
+    assert_eq!(result_summary.ahead, 0);
+    assert_eq!(result_summary.behind, 0);
 }
 
 #[test]
