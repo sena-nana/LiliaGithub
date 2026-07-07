@@ -48,14 +48,15 @@ use super::repos::{
     commit_file_change_from_status, commit_file_changes_from_outputs, commit_file_numstats,
     commit_file_patches, commit_file_statuses, conflict_operation_args, create_branch_at,
     current_branch_upstream, delete_branch_at, discard_all_repo_local_changes, discard_repo_files,
-    filter_hidden_repos, git_worktree_entries, infer_clone_directory_name, is_conflict_status,
-    language_for_path, lightweight_managed_repos, local_branch_exists, managed_repo_paths,
-    managed_repo_paths_and_prune_stale, merge_branch_at, normalize_clone_directory_name,
-    normalize_git_remote_error, normalize_stash_id, parse_conflict_hunks, parse_github_remote,
-    parse_status_snapshot, prepare_pull_local_changes, refresh_managed_repo_remotes,
-    rename_branch_at, repo_branches, repo_changes, repo_head_language_stats, repo_history, repo_id,
-    repo_refresh_partial_failure_message, repo_refresh_success_message, repo_refresh_worker_count,
-    repo_status_entries, resolve_conflict_content, resolve_repo_worktree,
+    expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_worktree_entries,
+    infer_clone_directory_name, is_conflict_status, language_for_path, lightweight_managed_repos,
+    local_branch_exists, managed_repo_paths, managed_repo_paths_and_prune_stale, merge_branch_at,
+    normalize_clone_directory_name, normalize_git_remote_error, normalize_stash_id,
+    parse_conflict_hunks, parse_github_remote, parse_status_snapshot, prepare_pull_local_changes,
+    refresh_managed_repo_remotes, rename_branch_at, repo_branches, repo_changes,
+    repo_head_language_stats, repo_history, repo_id, repo_refresh_partial_failure_message,
+    repo_refresh_success_message, repo_refresh_worker_count, repo_status_entries,
+    resolve_conflict_content, resolve_repo_worktree,
     restore_pull_local_changes, selected_repo_files, should_retry_clone_with_system_git,
     should_skip_language_path, status_pair, summarize_repo, validate_clone_directory_name,
     RepoFetchFailure, RepoStatusEntry,
@@ -2292,6 +2293,61 @@ fn repo_id_uses_canonical_root_and_repo_paths() {
     );
 
     assert_eq!(id, "nested/repo");
+}
+
+#[test]
+fn repo_path_expansion_includes_root_worktrees_only_once() {
+    let root = temp_dir("repo-root-worktree-expansion");
+    let main = root.join("main-repo");
+    init_git_repo(&main);
+    fs::write(main.join("file.txt"), "main").unwrap();
+    run_git(&main, &["add", "file.txt"]);
+    run_git(&main, &["commit", "-m", "main"]);
+    run_git(&main, &["branch", "-M", "main"]);
+    run_git(&main, &["checkout", "-b", "feature/root-worktree"]);
+    fs::write(main.join("root-worktree.txt"), "root worktree").unwrap();
+    run_git(&main, &["add", "root-worktree.txt"]);
+    run_git(&main, &["commit", "-m", "root worktree"]);
+    run_git(&main, &["checkout", "main"]);
+    run_git(&main, &["checkout", "-b", "feature/outside-worktree"]);
+    fs::write(main.join("outside-worktree.txt"), "outside worktree").unwrap();
+    run_git(&main, &["add", "outside-worktree.txt"]);
+    run_git(&main, &["commit", "-m", "outside worktree"]);
+    run_git(&main, &["checkout", "main"]);
+
+    let linked = root.join("linked-worktree");
+    run_git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            linked.to_string_lossy().as_ref(),
+            "feature/root-worktree",
+        ],
+    );
+    let outside = temp_dir("outside-linked-worktree");
+    run_git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            outside.to_string_lossy().as_ref(),
+            "feature/outside-worktree",
+        ],
+    );
+
+    let paths =
+        expand_repo_paths_with_root_worktrees(&root, vec![main.clone(), linked.clone()]);
+    let ids = paths
+        .iter()
+        .map(|path| repo_id(&root, path))
+        .collect::<Vec<_>>();
+
+    assert_eq!(ids, vec!["main-repo", "linked-worktree"]);
+    assert_eq!(
+        paths,
+        vec![canonical_repo_path(&main), canonical_repo_path(&linked)]
+    );
 }
 
 #[test]
