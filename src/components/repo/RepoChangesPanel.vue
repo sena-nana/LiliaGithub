@@ -198,7 +198,6 @@ function selectChange(change: RepoChange, group: ChangeGroupBase, event: MouseEv
 
 function changeContextMenu(change: RepoChange, group: ChangeGroupBase): ContextMenuItem[] {
   if (isDiscardingChange(change, group.key)) return [];
-  const mutationDisabled = props.actionRunning;
   const staged = group.key === "staged";
   const targets = isSelectedChange(change, group.key) ? selectedGroupChanges(group) : [];
   const actionTargets = targets.length ? targets : [change];
@@ -209,7 +208,6 @@ function changeContextMenu(change: RepoChange, group: ChangeGroupBase): ContextM
       id: `${group.key}-stage-${change.path}`,
       label: staged ? "移出暂存" : "暂存",
       icon: staged ? ArrowUpFromLine : ArrowDownToLine,
-      disabled: mutationDisabled,
       onSelect: () => {
         emit("changeAction", staged ? "unstage" : "stage", change, paths);
         clearSelectedPaths(paths);
@@ -220,7 +218,7 @@ function changeContextMenu(change: RepoChange, group: ChangeGroupBase): ContextM
       label: "放弃更改",
       icon: RotateCcw,
       danger: true,
-      disabled: mutationDisabled || staged,
+      disabled: props.actionRunning || staged,
       confirmLabel: "确认放弃？再点一次",
       onSelect: () => {
         emit("changeAction", "discard", change, paths);
@@ -231,7 +229,7 @@ function changeContextMenu(change: RepoChange, group: ChangeGroupBase): ContextM
       id: `${group.key}-gitignore-${change.path}`,
       label: "添加到 gitignore",
       icon: ListPlus,
-      disabled: mutationDisabled || !hasUntrackedTarget,
+      disabled: props.actionRunning || !hasUntrackedTarget,
       onSelect: () => {
         emit("changeAction", "gitignore", change, paths);
         clearSelectedPaths(paths);
@@ -294,7 +292,7 @@ function submitCommit(pushAfter: boolean) {
                 type="button"
                 class="changes-group__arrow"
                 :data-agent-id="`repo.changes.group.${group.key}.action`"
-                :disabled="!group.changes.length || actionRunning"
+                :disabled="!group.changes.length"
                 :aria-label="group.actionLabel"
                 :title="group.actionLabel"
                 @click="runGroupAction(group)"
@@ -345,7 +343,7 @@ function submitCommit(pushAfter: boolean) {
                 type="button"
                 class="primary commit-box__submit commit-box__submit--push"
                 data-agent-id="repo.changes.commit.push"
-                :disabled="!canCommit || actionRunning || hasConflicts"
+                :disabled="!canCommit || hasConflicts"
                 @click="submitCommit(true)"
               >
                 <CloudUpload :size="14" aria-hidden="true" />
@@ -355,7 +353,7 @@ function submitCommit(pushAfter: boolean) {
                 type="button"
                 class="commit-box__submit commit-box__submit--commit"
                 data-agent-id="repo.changes.commit.only"
-                :disabled="!canCommit || actionRunning || hasConflicts"
+                :disabled="!canCommit || hasConflicts"
                 @click="submitCommit(false)"
               >
                 <GitCommitHorizontal :size="14" aria-hidden="true" />

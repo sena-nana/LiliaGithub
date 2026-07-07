@@ -253,7 +253,7 @@ export function useRepoDetailController() {
     openTargetOptions.find((option) => option.value === openTarget.value)?.label ?? "文件夹",
   );
   const branchActionRunning = computed(() =>
-    actionRunning.value || githubBranchLoading.value || deletingRemoteBranchName.value !== null,
+    githubBranchLoading.value || deletingRemoteBranchName.value !== null,
   );
   const branchItems = computed<RepoBranchPickerItem[]>(() =>
     [...(branchBrowseUsesGitHub.value ? githubBranches.value : (detail.value?.branches ?? []))]
@@ -751,19 +751,27 @@ export function useRepoDetailController() {
     const targetPaths = stagedChangePaths.value;
     const message = commitMessage.value.trim();
     if (!targetRepoId || !targetPaths.length || !message) return;
+    commitMessage.value = "";
     void runAction(async () => {
       const commitAction = () =>
         workspace.commit(targetRepoId, targetPaths, message, pushAfter);
       if (pushAfter) await runPushWithFallback(targetRepoId, commitAction);
       else await commitAction();
-      if (repoId.value !== targetRepoId) return;
-      commitMessage.value = "";
     }, repoTask({
       kind: "git",
       title: pushAfter ? "提交并推送" : "提交变更",
       detail: fileCountDetail(targetPaths),
       priority: "high",
-    }));
+    })).then((success) => {
+      if (
+        !success &&
+        repoId.value === targetRepoId &&
+        stagedChangePaths.value.length > 0 &&
+        !commitMessage.value.trim()
+      ) {
+        commitMessage.value = message;
+      }
+    });
   }
 
   function mergePull() {

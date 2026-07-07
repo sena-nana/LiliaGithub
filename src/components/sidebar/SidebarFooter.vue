@@ -28,6 +28,13 @@ function elapsedLabel(startedAt: number) {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+function taskStatusLabel(status: string) {
+  if (status === "success") return "已完成";
+  if (status === "failed") return "失败";
+  if (status === "pending") return "等待中";
+  return "进行中";
+}
+
 function clearCloseTimer() {
   if (closeTimer !== null) {
     window.clearTimeout(closeTimer);
@@ -134,12 +141,13 @@ onBeforeUnmount(() => {
             v-for="task in tasks"
             :key="task.id"
             class="sb-tasks__item"
+            :class="`sb-tasks__item--${task.status}`"
             role="menuitem"
             :data-agent-id="taskAgentId(task.id)"
           >
             <div class="sb-tasks__item-head">
               <strong>{{ task.title }}</strong>
-              <span>{{ elapsedLabel(task.startedAt) }}</span>
+              <span>{{ taskStatusLabel(task.status) }} · {{ elapsedLabel(task.startedAt) }}</span>
             </div>
             <p v-if="task.repoName" class="sb-tasks__repo">{{ task.repoName }}</p>
             <p v-if="task.detail" class="sb-tasks__detail">{{ task.detail }}</p>
@@ -258,6 +266,14 @@ onBeforeUnmount(() => {
   background: var(--bg-subtle);
 }
 
+.sb-tasks__item--success {
+  border-color: color-mix(in srgb, var(--ok) 32%, var(--border-soft));
+}
+
+.sb-tasks__item--failed {
+  border-color: color-mix(in srgb, var(--err) 36%, var(--border-soft));
+}
+
 .sb-tasks__item-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
@@ -283,6 +299,14 @@ onBeforeUnmount(() => {
   color: var(--text-faint);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.sb-tasks__item--success .sb-tasks__item-head span {
+  color: var(--ok);
+}
+
+.sb-tasks__item--failed .sb-tasks__item-head span {
+  color: var(--err);
 }
 
 .sb-tasks__repo {

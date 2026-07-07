@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useBackgroundTasks } from "../src/composables/useBackgroundTasks";
 import { createPendingTaskTracker } from "../src/composables/usePendingTaskTracker";
 
@@ -11,6 +11,10 @@ function deferred() {
 }
 
 describe("createPendingTaskTracker", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("多个任务重叠时直到最后一个完成才结束 running", async () => {
     const tracker = createPendingTaskTracker();
     const first = deferred();
@@ -56,6 +60,7 @@ describe("createPendingTaskTracker", () => {
   });
 
   it("带任务描述运行时进入后台任务列表并在完成后移除", async () => {
+    vi.useFakeTimers();
     const tracker = createPendingTaskTracker();
     const pending = deferred();
     const backgroundTasks = useBackgroundTasks();
@@ -78,10 +83,45 @@ describe("createPendingTaskTracker", () => {
     pending.resolve();
     await run;
 
+    expect(tracker.running.value).toBe(false);
+    expect(backgroundTasks.runningTaskCount.value).toBe(1);
+    expect(backgroundTasks.tasks.value[0]).toMatchObject({
+      title: "推送当前分支",
+      repoName: "LiliaGithub",
+      status: "success",
+      detail: "已完成",
+    });
+
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(backgroundTasks.runningTaskCount.value).toBe(0);
+  });
+
+  it("任务失败时保留失败状态并标记已回滚", async () => {
+    vi.useFakeTimers();
+    const tracker = createPendingTaskTracker();
+    const backgroundTasks = useBackgroundTasks();
+
+    await expect(tracker.run(() => Promise.reject(new Error("推送失败")), {
+      kind: "git",
+      title: "推送当前分支",
+      repoName: "LiliaGithub",
+      priority: "high",
+    })).rejects.toThrow("推送失败");
+
+    expect(tracker.running.value).toBe(false);
+    expect(backgroundTasks.runningTaskCount.value).toBe(1);
+    expect(backgroundTasks.tasks.value[0]).toMatchObject({
+      title: "推送当前分支",
+      status: "failed",
+      detail: "已回滚：Error: 推送失败",
+    });
+
+    await vi.advanceTimersByTimeAsync(9000);
     expect(backgroundTasks.runningTaskCount.value).toBe(0);
   });
 
   it("reset 会清理当前 tracker 创建的后台任务", async () => {
+    vi.useFakeTimers();
     const tracker = createPendingTaskTracker();
     const oldTask = deferred();
     const newTask = deferred();

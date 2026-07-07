@@ -29,6 +29,7 @@ import type {
   GitHubContributionRepository,
   GitHubContributionResult,
   RemoteRepoShortcut,
+  RepoChange,
   RepoConflictChoice,
   RepoPullLocalChangesMode,
   RepoDetailPatch,
@@ -80,6 +81,123 @@ type RepoStatusRefreshEntry = {
   timer: ReturnType<typeof setTimeout> | null;
 };
 const repoStatusRefreshEntries = new Map<string, RepoStatusRefreshEntry>();
+
+type RepoDetailState = NonNullable<typeof state.repoDetails[string]>;
+type OptimisticRepoState = {
+  changes: RepoChange[];
+  summary: RepoSummary;
+};
+
+function targetPathSet(files: readonly string[]) {
+  return new Set(files.map((file) => file.trim()).filter(Boolean));
+}
+
+function summaryWithChanges(summary: RepoSummary, changes: readonly RepoChange[]): RepoSummary {
+  const counts = changes.reduce(
+    (next, change) => {
+      if (change.staged) next.stagedCount += 1;
+      if (change.unstaged || change.untracked) next.unstagedCount += 1;
+      if (change.untracked) next.untrackedCount += 1;
+      if (change.conflicted) next.conflictCount += 1;
+      return next;
+    },
+    { stagedCount: 0, unstagedCount: 0, untrackedCount: 0, conflictCount: 0 },
+  );
+  return {
+    ...summary,
+    ...counts,
+  };
+}
+
+function setOptimisticRepoState(
+  repoId: string,
+  update: (current: RepoDetailState) => OptimisticRepoState,
+) {
+  const current = state.repoDetails[repoId];
+  if (!current) return false;
+  const next = update(current);
+  state.repoDetails[repoId] = {
+    ...current,
+    summary: next.summary,
+    changes: next.changes,
+  };
+  upsertRepo(next.summary);
+  clearRepoActionError(repoId);
+  return true;
+}
+
+function applyOptimisticStageState(repoId: string, files: readonly string[], staged: boolean) {
+  const targetPaths = targetPathSet(files);
+  if (!targetPaths.size) return false;
+  return setOptimisticRepoState(repoId, (current) => {
+    const changes = current.changes.map((change) =>
+      targetPaths.has(change.path)
+        ? {
+            ...change,
+            staged,
+            unstaged: !staged,
+            ...(staged ? { untracked: false, conflicted: false } : {}),
+          }
+        : change
+    );
+    return {
+      changes,
+      summary: summaryWithChanges(current.summary, changes),
+    };
+  });
+}
+
+function applyOptimisticCommit(
+  repoId: string,
+  files: readonly string[],
+  message: string,
+  pushAfter: boolean,
+) {
+  const targetPaths = targetPathSet(files);
+  if (!targetPaths.size) return false;
+  return setOptimisticRepoState(repoId, (current) => {
+    const changes = current.changes.flatMap((change) => {
+      if (!targetPaths.has(change.path) || !change.staged) return [change];
+      if (change.unstaged || change.untracked || change.conflicted) {
+        return [{
+          ...change,
+          staged: false,
+        }];
+      }
+      return [];
+    });
+    const summary = summaryWithChanges(current.summary, changes);
+    return {
+      changes,
+      summary: {
+        ...summary,
+        ahead: pushAfter ? 0 : summary.ahead + 1,
+        lastCommitAt: Math.floor(Date.now() / 1000),
+        lastCommitMessage: message,
+      },
+    };
+  });
+}
+
+function applyOptimisticPush(repoId: string) {
+  const detail = state.repoDetails[repoId];
+  const summary = detail?.summary ?? state.repos.find((repo) => repo.id === repoId);
+  if (!summary) return false;
+  upsertRepo({
+    ...summary,
+    ahead: 0,
+  });
+  clearRepoActionError(repoId);
+  return true;
+}
+
+async function rollbackOptimisticRepoState(repoId: string, scope: RepoDetailPatchRequest = {}) {
+  try {
+    await requestRepoStatusRefresh(repoId, scope, { immediate: true });
+  } catch {
+    // Keep the original mutation failure as the reported error.
+  }
+}
 
 async function applyRepoMutation(
   repoId: string,
@@ -1068,16 +1186,28 @@ export async function clearRepoLocalCache(repoId: string, repoFullName?: string 
 
 export async function stage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
-  await service.stageFiles(repoId, files);
-  clearRepoActionError(repoId);
-  await requestRepoStatusRefresh(repoId, {}, { immediate: true });
+  applyOptimisticStageState(repoId, files, true);
+  try {
+    await service.stageFiles(repoId, files);
+    clearRepoActionError(repoId);
+    await requestRepoStatusRefresh(repoId, {}, { immediate: true });
+  } catch (err) {
+    await rollbackOptimisticRepoState(repoId);
+    throw err;
+  }
 }
 
 export async function unstage(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
-  await service.unstageFiles(repoId, files);
-  clearRepoActionError(repoId);
-  await requestRepoStatusRefresh(repoId, {}, { immediate: true });
+  applyOptimisticStageState(repoId, files, false);
+  try {
+    await service.unstageFiles(repoId, files);
+    clearRepoActionError(repoId);
+    await requestRepoStatusRefresh(repoId, {}, { immediate: true });
+  } catch (err) {
+    await rollbackOptimisticRepoState(repoId);
+    throw err;
+  }
 }
 
 export async function discardChanges(repoId: string, files: string[]) {
@@ -1097,11 +1227,17 @@ export async function addFilesToGitignore(repoId: string, files: string[]) {
 
 export async function commit(repoId: string, files: string[], message: string, pushAfter: boolean) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(
-    repoId,
-    () => service.commitRepo(repoId, files, message, pushAfter),
-    { includeCommits: true },
-  );
+  applyOptimisticCommit(repoId, files, message, pushAfter);
+  try {
+    await applyRepoMutation(
+      repoId,
+      () => service.commitRepo(repoId, files, message, pushAfter),
+      { includeCommits: true },
+    );
+  } catch (err) {
+    await rollbackOptimisticRepoState(repoId, { includeCommits: true });
+    throw err;
+  }
 }
 
 export async function pull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
@@ -1161,6 +1297,7 @@ export async function startRebase(
 
 async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSummary>) {
   const updateRecentSync = beginRecentSyncRetry(repoId);
+  applyOptimisticPush(repoId);
   try {
     await applyRepoMutation(repoId, async () => {
       const summary = await pushRepo();
@@ -1175,6 +1312,7 @@ async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSumma
       return summary;
     }, { includeCommits: true });
   } catch (err) {
+    await rollbackOptimisticRepoState(repoId, { includeCommits: true });
     if (updateRecentSync) {
       finishRecentSyncRetry({
         repoId,
