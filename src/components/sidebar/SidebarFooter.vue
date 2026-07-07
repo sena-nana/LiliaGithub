@@ -1,13 +1,85 @@
 <script setup lang="ts">
-import { Settings } from "@lucide/vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { ListChecks, Settings } from "@lucide/vue";
 import { RouterLink } from "vue-router";
-import type { LiliaSidebarConfigInput } from "@lilia/ui";
+import { SB_MENU_POP_TRANSITION_MS, useAnchoredMenuMotion, type LiliaSidebarConfigInput } from "@lilia/ui";
+import { useBackgroundTasks } from "../../composables/useBackgroundTasks";
 
 type SidebarFooterStatus = NonNullable<LiliaSidebarConfigInput["footerStatus"]>;
 
 defineProps<{
   status: SidebarFooterStatus;
 }>();
+
+const { tasks, runningTaskCount } = useBackgroundTasks();
+const tasksOpen = ref(false);
+const placement = computed(() => "top" as const);
+const menuMotion = useAnchoredMenuMotion(tasksOpen, placement);
+const menuStyle = computed(() => menuMotion.overlayStyle.value);
+let closeTimer: number | null = null;
+
+function taskAgentId(taskId: string) {
+  return `sidebar.footer.tasks.item.${taskId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function elapsedLabel(startedAt: number) {
+  const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function clearCloseTimer() {
+  if (closeTimer !== null) {
+    window.clearTimeout(closeTimer);
+    closeTimer = null;
+  }
+}
+
+async function openTasks(event?: MouseEvent) {
+  if (!runningTaskCount.value) return;
+  clearCloseTimer();
+  if (event) menuMotion.captureAnchor(event);
+  tasksOpen.value = true;
+  await nextTick();
+  await menuMotion.updatePosition();
+}
+
+function scheduleClose() {
+  clearCloseTimer();
+  closeTimer = window.setTimeout(() => {
+    tasksOpen.value = false;
+  }, 120);
+}
+
+function closeTasks() {
+  clearCloseTimer();
+  tasksOpen.value = false;
+}
+
+function onTaskKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  closeTasks();
+  event.stopPropagation();
+}
+
+watch(runningTaskCount, (count) => {
+  if (!count) closeTasks();
+});
+
+watch(tasksOpen, async (open) => {
+  if (open) {
+    await menuMotion.updatePosition();
+    document.addEventListener("keydown", onTaskKeydown);
+  } else {
+    menuMotion.clearAnchor();
+    document.removeEventListener("keydown", onTaskKeydown);
+  }
+});
+
+onBeforeUnmount(() => {
+  clearCloseTimer();
+  document.removeEventListener("keydown", onTaskKeydown);
+});
 </script>
 
 <template>
@@ -22,6 +94,59 @@ defineProps<{
     >
       <Settings :size="14" aria-hidden="true" />
     </RouterLink>
+
+    <div
+      class="sb-tasks"
+      @mouseenter="openTasks($event)"
+      @mouseleave="scheduleClose"
+      @focusin="openTasks()"
+      @focusout="scheduleClose"
+    >
+      <button
+        :ref="menuMotion.triggerEl"
+        type="button"
+        class="sb-footer__btn sb-tasks__btn"
+        data-agent-id="sidebar.footer.tasks"
+        title="后台任务"
+        aria-label="后台任务"
+        :aria-expanded="tasksOpen"
+        aria-haspopup="menu"
+        @mouseenter="openTasks($event)"
+        @click="openTasks($event)"
+      >
+        <ListChecks :size="14" aria-hidden="true" />
+        <span v-if="runningTaskCount" class="sb-tasks__badge">{{ runningTaskCount }}</span>
+      </button>
+
+      <Transition name="sb-menu-pop" :duration="SB_MENU_POP_TRANSITION_MS">
+        <div
+          v-if="tasksOpen && runningTaskCount"
+          :ref="menuMotion.menuEl"
+          class="sb-tasks__menu"
+          role="menu"
+          aria-label="后台任务"
+          data-agent-id="sidebar.footer.tasks.menu"
+          :style="menuStyle"
+          @mouseenter="clearCloseTimer"
+          @mouseleave="scheduleClose"
+        >
+          <article
+            v-for="task in tasks"
+            :key="task.id"
+            class="sb-tasks__item"
+            role="menuitem"
+            :data-agent-id="taskAgentId(task.id)"
+          >
+            <div class="sb-tasks__item-head">
+              <strong>{{ task.title }}</strong>
+              <span>{{ elapsedLabel(task.startedAt) }}</span>
+            </div>
+            <p v-if="task.repoName" class="sb-tasks__repo">{{ task.repoName }}</p>
+            <p v-if="task.detail" class="sb-tasks__detail">{{ task.detail }}</p>
+          </article>
+        </div>
+      </Transition>
+    </div>
 
     <RouterLink
       :to="status.to"
@@ -49,6 +174,7 @@ defineProps<{
 }
 
 .sb-footer__btn {
+  position: relative;
   width: 26px;
   height: 26px;
   border: 0;
@@ -80,6 +206,98 @@ defineProps<{
 .sb-footer__btn.is-active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.sb-tasks {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sb-tasks__badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+}
+
+.sb-tasks__menu {
+  position: fixed;
+  z-index: var(--z-dropdown, 1900);
+  display: grid;
+  gap: 5px;
+  width: 280px;
+  max-width: min(280px, calc(100vw - 16px));
+  max-height: min(360px, calc(100vh - 24px));
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  transform-origin: var(--sb-menu-origin-x, 0) var(--sb-menu-origin-y, 100%);
+  will-change: transform, opacity;
+}
+
+.sb-tasks__item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+}
+
+.sb-tasks__item-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sb-tasks__item-head strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-tasks__item-head span,
+.sb-tasks__repo,
+.sb-tasks__detail {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.sb-tasks__repo {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-tasks__detail {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .sb-conn {

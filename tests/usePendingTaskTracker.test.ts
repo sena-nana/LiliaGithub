@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { useBackgroundTasks } from "../src/composables/useBackgroundTasks";
 import { createPendingTaskTracker } from "../src/composables/usePendingTaskTracker";
 
 function deferred() {
@@ -52,5 +53,62 @@ describe("createPendingTaskTracker", () => {
     await newRun;
 
     expect(tracker.running.value).toBe(false);
+  });
+
+  it("带任务描述运行时进入后台任务列表并在完成后移除", async () => {
+    const tracker = createPendingTaskTracker();
+    const pending = deferred();
+    const backgroundTasks = useBackgroundTasks();
+
+    const run = tracker.run(() => pending.promise, {
+      kind: "git",
+      title: "推送当前分支",
+      repoId: "repo-1",
+      repoName: "LiliaGithub",
+      priority: "high",
+    });
+
+    expect(backgroundTasks.runningTaskCount.value).toBe(1);
+    expect(backgroundTasks.tasks.value[0]).toMatchObject({
+      title: "推送当前分支",
+      repoName: "LiliaGithub",
+      status: "running",
+    });
+
+    pending.resolve();
+    await run;
+
+    expect(backgroundTasks.runningTaskCount.value).toBe(0);
+  });
+
+  it("reset 会清理当前 tracker 创建的后台任务", async () => {
+    const tracker = createPendingTaskTracker();
+    const oldTask = deferred();
+    const newTask = deferred();
+    const backgroundTasks = useBackgroundTasks();
+
+    const oldRun = tracker.run(() => oldTask.promise, {
+      kind: "git",
+      title: "旧任务",
+      repoName: "Repo",
+    });
+    expect(backgroundTasks.tasks.value.map((task) => task.title)).toEqual(["旧任务"]);
+
+    tracker.reset();
+    expect(backgroundTasks.runningTaskCount.value).toBe(0);
+
+    const newRun = tracker.run(() => newTask.promise, {
+      kind: "git",
+      title: "新任务",
+      repoName: "Repo",
+    });
+
+    oldTask.resolve();
+    await oldRun;
+
+    expect(backgroundTasks.tasks.value.map((task) => task.title)).toEqual(["新任务"]);
+
+    newTask.resolve();
+    await newRun;
   });
 });
