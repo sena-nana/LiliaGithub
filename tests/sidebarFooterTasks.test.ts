@@ -85,7 +85,7 @@ describe("SidebarFooter tasks", () => {
     });
   });
 
-  it("显示任务完成和失败回滚状态", async () => {
+  it("显示任务完成和失败状态", async () => {
     const completedTaskId = beginBackgroundTask({
       kind: "git",
       title: "提交变更",
@@ -111,7 +111,6 @@ describe("SidebarFooter tasks", () => {
     expect(within(menu).getByText("提交变更")).toBeInTheDocument();
     expect(within(menu).getAllByText(/已完成/).length).toBeGreaterThan(0);
     expect(within(menu).getByText("推送当前分支")).toBeInTheDocument();
-    expect(within(menu).getByText(/失败/)).toBeInTheDocument();
-    expect(within(menu).getByText("已回滚：远端拒绝推送")).toBeInTheDocument();
+    expect(within(menu).getByText("失败：远端拒绝推送")).toBeInTheDocument();
   });
 });
