@@ -112,7 +112,8 @@ function renderMarkdown(content: string): string {
     quoteLines = null;
   };
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (htmlLines) {
       htmlLines.push(line);
       if (!htmlEndTag || htmlEndTag.test(line)) {
@@ -190,6 +191,16 @@ function renderMarkdown(content: string): string {
       continue;
     }
 
+    const table = parseTable(lines, index);
+    if (table) {
+      flushParagraph();
+      flushList();
+      flushQuote();
+      blocks.push(table.html);
+      index = table.endIndex;
+      continue;
+    }
+
     const listItem = /^(\s*)([-*+]|\d+\.)\s+(.+)$/.exec(line);
     if (listItem) {
       flushParagraph();
@@ -212,6 +223,12 @@ function renderMarkdown(content: string): string {
   flushQuote();
   return blocks.join("");
 }
+
+type TableAlign = "left" | "center" | "right" | null;
+type ParsedTable = {
+  html: string;
+  endIndex: number;
+};
 
 function renderInline(text: string): string {
   const pattern = /(`[^`]+`)|(\*\*([^*]+)\*\*)|(!\[([^\]]*)\]\(([^)]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(<\/?[A-Za-z][^>]*>)/g;
@@ -237,6 +254,99 @@ function renderInline(text: string): string {
 
   if (cursor < text.length) html += escapeHtml(text.slice(cursor));
   return html;
+}
+
+function parseTable(lines: string[], index: number): ParsedTable | null {
+  const headerLine = lines[index];
+  const separatorLine = lines[index + 1];
+  if (!separatorLine || !headerLine.includes("|") || !separatorLine.includes("|")) return null;
+
+  const headers = splitTableRow(headerLine);
+  const separators = splitTableRow(separatorLine);
+  if (!headers.length || headers.length !== separators.length) return null;
+
+  const alignments: TableAlign[] = [];
+  for (const separator of separators) {
+    const alignment = tableAlignment(separator);
+    if (alignment === false) return null;
+    alignments.push(alignment);
+  }
+
+  const rows: string[][] = [];
+  let endIndex = index + 1;
+  for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
+    const rowLine = lines[rowIndex];
+    if (!rowLine.includes("|")) break;
+    rows.push(normalizeTableRow(splitTableRow(rowLine), headers.length));
+    endIndex = rowIndex;
+  }
+
+  const header = headers.map((cell, cellIndex) => renderTableCell("th", cell, alignments[cellIndex])).join("");
+  const body = rows
+    .map((row) => `<tr>${row.map((cell, cellIndex) => renderTableCell("td", cell, alignments[cellIndex])).join("")}</tr>`)
+    .join("");
+
+  return {
+    html: `<table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`,
+    endIndex,
+  };
+}
+
+function splitTableRow(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  let escaped = false;
+  let codeSpan = false;
+
+  for (const char of line.trim()) {
+    if (escaped) {
+      cell += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "`") {
+      codeSpan = !codeSpan;
+      cell += char;
+      continue;
+    }
+    if (char === "|" && !codeSpan) {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  if (escaped) cell += "\\";
+  cells.push(cell.trim());
+
+  if (cells[0] === "") cells.shift();
+  if (cells[cells.length - 1] === "") cells.pop();
+  return cells;
+}
+
+function tableAlignment(cell: string): TableAlign | false {
+  const marker = cell.replace(/\s+/g, "");
+  if (!/^:?-{3,}:?$/.test(marker)) return false;
+  const left = marker.startsWith(":");
+  const right = marker.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  if (left) return "left";
+  return null;
+}
+
+function normalizeTableRow(cells: string[], size: number): string[] {
+  if (cells.length >= size) return cells.slice(0, size);
+  return [...cells, ...Array.from({ length: size - cells.length }, () => "")];
+}
+
+function renderTableCell(tag: "td" | "th", cell: string, align: TableAlign): string {
+  const alignment = align ? ` align="${align}"` : "";
+  return `<${tag}${alignment}>${renderInline(cell)}</${tag}>`;
 }
 
 function trimEmptyLines(lines: string[]): string[] {
@@ -548,6 +658,40 @@ onBeforeUnmount(() => {
   border-left: 3px solid var(--border-strong);
   color: var(--text-muted);
   background: var(--bg-subtle);
+}
+
+.readme-render :deep(table) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 12px 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  color: var(--text);
+}
+
+.readme-render :deep(th),
+.readme-render :deep(td) {
+  min-width: 80px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  line-height: 1.45;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.readme-render :deep(th) {
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+
+.readme-render :deep(:where(th, td)[align="center"]) {
+  text-align: center;
+}
+
+.readme-render :deep(:where(th, td)[align="right"]) {
+  text-align: right;
 }
 
 .readme-render :deep(a) {
