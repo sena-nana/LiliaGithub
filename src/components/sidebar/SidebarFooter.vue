@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { ListChecks, Settings } from "@lucide/vue";
 import { RouterLink } from "vue-router";
 import { SB_MENU_POP_TRANSITION_MS, useAnchoredMenuMotion, type LiliaSidebarConfigInput } from "@lilia/ui";
@@ -42,13 +42,10 @@ function clearCloseTimer() {
   }
 }
 
-async function openTasks(event?: MouseEvent) {
-  if (!runningTaskCount.value) return;
+function openTasks(event?: MouseEvent) {
   clearCloseTimer();
   if (event) menuMotion.captureAnchor(event);
   tasksOpen.value = true;
-  await nextTick();
-  await menuMotion.updatePosition();
 }
 
 function scheduleClose() {
@@ -68,10 +65,6 @@ function onTaskKeydown(event: KeyboardEvent) {
   closeTasks();
   event.stopPropagation();
 }
-
-watch(runningTaskCount, (count) => {
-  if (!count) closeTasks();
-});
 
 watch(tasksOpen, async (open) => {
   if (open) {
@@ -125,35 +118,42 @@ onBeforeUnmount(() => {
         <span v-if="runningTaskCount" class="sb-tasks__badge">{{ runningTaskCount }}</span>
       </button>
 
-      <Transition name="sb-menu-pop" :duration="SB_MENU_POP_TRANSITION_MS">
-        <div
-          v-if="tasksOpen && runningTaskCount"
-          :ref="menuMotion.menuEl"
-          class="sb-tasks__menu"
-          role="menu"
-          aria-label="后台任务"
-          data-agent-id="sidebar.footer.tasks.menu"
-          :style="menuStyle"
-          @mouseenter="clearCloseTimer"
-          @mouseleave="scheduleClose"
-        >
-          <article
-            v-for="task in tasks"
-            :key="task.id"
-            class="sb-tasks__item"
-            :class="`sb-tasks__item--${task.status}`"
-            role="menuitem"
-            :data-agent-id="taskAgentId(task.id)"
+      <Teleport to="body">
+        <Transition name="sb-menu-pop" :duration="SB_MENU_POP_TRANSITION_MS">
+          <div
+            v-if="tasksOpen"
+            :ref="menuMotion.menuEl"
+            class="sb-tasks__menu"
+            role="menu"
+            aria-label="后台任务"
+            data-agent-id="sidebar.footer.tasks.menu"
+            :style="menuStyle"
+            @mouseenter="clearCloseTimer"
+            @mouseleave="scheduleClose"
           >
-            <div class="sb-tasks__item-head">
-              <strong>{{ task.title }}</strong>
-              <span>{{ taskStatusLabel(task.status) }} · {{ elapsedLabel(task.startedAt) }}</span>
+            <div v-if="!tasks.length" class="sb-tasks__item sb-tasks__empty">
+              暂无后台任务
             </div>
-            <p v-if="task.repoName" class="sb-tasks__repo">{{ task.repoName }}</p>
-            <p v-if="task.detail" class="sb-tasks__detail">{{ task.detail }}</p>
-          </article>
-        </div>
-      </Transition>
+            <template v-else>
+              <article
+                v-for="task in tasks"
+                :key="task.id"
+                class="sb-tasks__item"
+                :class="`sb-tasks__item--${task.status}`"
+                role="menuitem"
+                :data-agent-id="taskAgentId(task.id)"
+              >
+                <div class="sb-tasks__item-head">
+                  <strong>{{ task.title }}</strong>
+                  <span>{{ taskStatusLabel(task.status) }} · {{ elapsedLabel(task.startedAt) }}</span>
+                </div>
+                <p v-if="task.repoName" class="sb-tasks__repo">{{ task.repoName }}</p>
+                <p v-if="task.detail" class="sb-tasks__detail">{{ task.detail }}</p>
+              </article>
+            </template>
+          </div>
+        </Transition>
+      </Teleport>
     </div>
 
     <RouterLink
@@ -224,8 +224,8 @@ onBeforeUnmount(() => {
 
 .sb-tasks__badge {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: -2px;
+  right: -2px;
   min-width: 13px;
   height: 13px;
   padding: 0 3px;
@@ -235,11 +235,14 @@ onBeforeUnmount(() => {
   font-size: 9px;
   font-weight: 700;
   line-height: 13px;
+  pointer-events: none;
   text-align: center;
 }
 
 .sb-tasks__menu {
   position: fixed;
+  left: 0;
+  top: 0;
   z-index: var(--z-dropdown, 1900);
   display: grid;
   gap: 5px;
@@ -252,8 +255,15 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-md);
   background: var(--bg-elev);
   box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  contain: layout paint style;
   transform-origin: var(--sb-menu-origin-x, 0) var(--sb-menu-origin-y, 100%);
   will-change: transform, opacity;
+}
+
+.sb-tasks__empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .sb-tasks__item {
