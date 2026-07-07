@@ -15,6 +15,7 @@ import {
 } from "@lucide/vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
+import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import ContributionIdentityRecommendations from "../../components/ContributionIdentityRecommendations.vue";
 import RepoCreateCard from "../../components/sidebar/RepoCreateCard.vue";
@@ -55,6 +56,7 @@ const adoptingContributionIdentityKey = ref<string | null>(null);
 const contributionRecommendationError = ref<string | null>(null);
 const componentEpoch = useComponentEpoch();
 const hiddenReposLoader = createLatestAsyncLoader({ componentEpoch });
+const settingsActionTracker = createPendingTaskTracker();
 
 const systemGitRepos = computed(() => {
   const reposById = new Map(workspace.state.repos.map((repo) => [repo.id, repo]));
@@ -141,7 +143,10 @@ async function saveContributionIdentities() {
   contributionIdentitySaved.value = false;
   error.value = null;
   try {
-    await workspace.setContributionIdentities(normalizeContributionIdentityDraft());
+    await settingsActionTracker.run(
+      () => workspace.setContributionIdentities(normalizeContributionIdentityDraft()),
+      { kind: "workspace", title: "保存贡献身份", priority: "normal" },
+    );
     if (!componentEpoch.assertAlive()) return;
     contributionIdentitySaved.value = true;
     return true;
@@ -166,7 +171,10 @@ async function scanContributionIdentities() {
   scanningContributionIdentities.value = true;
   contributionRecommendationError.value = null;
   try {
-    const result = await workspace.scanContributionIdentities();
+    const result = await settingsActionTracker.run(
+      () => workspace.scanContributionIdentities(),
+      { kind: "workspace", title: "扫描贡献身份", priority: "normal" },
+    );
     if (!componentEpoch.assertAlive()) return;
     contributionIdentityRecommendations.value = result;
   } catch (err) {
@@ -188,7 +196,11 @@ async function adoptContributionIdentityRecommendation(recommendation: Contribut
   contributionRecommendationError.value = null;
   try {
     const identities = mergeContributionIdentity(normalizeContributionIdentityDraft(), recommendation.identity);
-    const settings = await workspace.setContributionIdentities(identities);
+    const identityLabel = contributionIdentityKey(recommendation.identity);
+    const settings = await settingsActionTracker.run(
+      () => workspace.setContributionIdentities(identities),
+      { kind: "workspace", title: "采纳贡献身份", detail: identityLabel, priority: "normal" },
+    );
     if (!componentEpoch.assertAlive()) return;
     contributionIdentityDraft.value = cloneContributionIdentities(settings.contributionIdentities);
     contributionIdentitySaved.value = true;
@@ -235,9 +247,14 @@ async function restoreRepo(repoId: string) {
   restoringRepoId.value = repoId;
   error.value = null;
   try {
-    await workspace.unhideRepo(repoId);
-    if (!componentEpoch.assertAlive()) return;
-    await loadHiddenRepos();
+    await settingsActionTracker.run(
+      async () => {
+        await workspace.unhideRepo(repoId);
+        if (!componentEpoch.assertAlive()) return;
+        await loadHiddenRepos();
+      },
+      { kind: "workspace", title: "恢复隐藏仓库", repoId, priority: "normal" },
+    );
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -250,7 +267,10 @@ async function useDefaultTokenAuth(repoId: string) {
   resettingSystemGitRepoId.value = repoId;
   error.value = null;
   try {
-    await workspace.useDefaultTokenAuthForRepo(repoId);
+    await settingsActionTracker.run(
+      () => workspace.useDefaultTokenAuthForRepo(repoId),
+      { kind: "github", title: "恢复默认凭证", repoId, priority: "normal" },
+    );
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -263,7 +283,10 @@ async function addLocalRepo() {
   addingRepo.value = true;
   error.value = null;
   try {
-    await workspace.addLocalRepo();
+    await settingsActionTracker.run(
+      () => workspace.addLocalRepo(),
+      { kind: "workspace", title: "添加本地仓库", priority: "normal" },
+    );
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -276,7 +299,10 @@ async function discoverRepos() {
   discovering.value = true;
   error.value = null;
   try {
-    await workspace.discoverRepos();
+    await settingsActionTracker.run(
+      () => workspace.discoverRepos(),
+      { kind: "workspace", title: "发现工作区仓库", priority: "normal" },
+    );
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -289,7 +315,10 @@ async function chooseWorkspaceRoot() {
   choosingWorkspaceRoot.value = true;
   error.value = null;
   try {
-    await workspace.chooseWorkspaceRoot();
+    await settingsActionTracker.run(
+      () => workspace.chooseWorkspaceRoot(),
+      { kind: "workspace", title: "更换工作区", priority: "high" },
+    );
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -303,7 +332,10 @@ async function confirmGitHubUnbind() {
   unbindingGitHub.value = true;
   error.value = null;
   try {
-    await workspace.unbindGitHub();
+    await settingsActionTracker.run(
+      () => workspace.unbindGitHub(),
+      { kind: "github", title: "解绑 GitHub", priority: "high" },
+    );
     if (!componentEpoch.assertAlive()) return;
     confirmingGitHubUnbind.value = false;
   } catch (err) {
@@ -327,7 +359,10 @@ async function cancelTask(taskId: string) {
   cancellingTaskIds.value.push(taskId);
   delete taskCancelErrors.value[taskId];
   try {
-    await workspace.cancelWorkspaceTask(taskId);
+    await settingsActionTracker.run(
+      () => workspace.cancelWorkspaceTask(taskId),
+      { kind: "workspace", title: "取消后台任务", priority: "normal" },
+    );
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     taskCancelErrors.value[taskId] = String(err);
@@ -360,6 +395,7 @@ watch(
 
 onUnmounted(() => {
   hiddenReposLoader.invalidate();
+  settingsActionTracker.reset();
 });
 </script>
 

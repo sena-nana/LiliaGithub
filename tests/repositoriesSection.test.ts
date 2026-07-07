@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepositoriesSection from "../src/pages/settings/RepositoriesSection.vue";
+import { useBackgroundTasks } from "../src/composables/useBackgroundTasks";
 import { createGitHubRepo, listGitHubRepoOwners, type GitHubRepoSummary } from "../src/services/workspace";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
@@ -143,6 +144,31 @@ describe("RepositoriesSection", () => {
 
     await waitFor(() => {
       expect(workspace.chooseWorkspaceRoot).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("更换工作区期间登记侧边栏后台任务并在完成后移除", async () => {
+    const changeWorkspace = deferred<string>();
+    workspace.chooseWorkspaceRoot.mockReturnValue(changeWorkspace.promise);
+    const backgroundTasks = useBackgroundTasks();
+
+    render(RepositoriesSection);
+
+    await fireEvent.click(screen.getByRole("button", { name: "更换工作区" }));
+
+    await waitFor(() => {
+      expect(backgroundTasks.tasks.value).toEqual([
+        expect.objectContaining({
+          kind: "workspace",
+          status: "running",
+        }),
+      ]);
+    });
+
+    changeWorkspace.resolve("D:\\NewWorkspace");
+
+    await waitFor(() => {
+      expect(backgroundTasks.runningTaskCount.value).toBe(0);
     });
   });
 
