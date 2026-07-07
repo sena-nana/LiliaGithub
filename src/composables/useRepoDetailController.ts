@@ -836,8 +836,9 @@ export function useRepoDetailController() {
     if (!targetRepoId || !trimmedCommand || launchRunning.value) return;
     void runLaunchAction(async () => {
       const currentCommand = launchConfig.value?.command.trim() ?? "";
+      const currentCwd = launchConfig.value?.cwd ?? null;
       if (currentCommand !== trimmedCommand) {
-        await workspace.saveLaunchConfig(targetRepoId, trimmedCommand, null);
+        await workspace.saveLaunchConfig(targetRepoId, trimmedCommand, currentCwd);
       } else {
         await workspace.loadLaunch(targetRepoId);
       }
