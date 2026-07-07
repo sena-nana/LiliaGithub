@@ -147,6 +147,18 @@ function applyOptimisticStageState(repoId: string, files: readonly string[], sta
   });
 }
 
+function applyOptimisticDiscardState(repoId: string, files: readonly string[]) {
+  const targetPaths = targetPathSet(files);
+  if (!targetPaths.size) return false;
+  return setOptimisticRepoState(repoId, (current) => {
+    const changes = current.changes.filter((change) => !targetPaths.has(change.path));
+    return {
+      changes,
+      summary: summaryWithChanges(current.summary, changes),
+    };
+  });
+}
+
 function applyOptimisticCommit(
   repoId: string,
   files: readonly string[],
@@ -1212,7 +1224,13 @@ export async function unstage(repoId: string, files: string[]) {
 
 export async function discardChanges(repoId: string, files: string[]) {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.discardFiles(repoId, files));
+  const optimistic = applyOptimisticDiscardState(repoId, files);
+  try {
+    await applyRepoMutation(repoId, () => service.discardFiles(repoId, files));
+  } catch (err) {
+    if (optimistic) await rollbackOptimisticRepoState(repoId);
+    throw err;
+  }
 }
 
 export async function deleteRepoFile(repoId: string, path: string) {
