@@ -2143,11 +2143,15 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .contribution-stack {
   display: grid;
-  align-content: start;
+  align-content: stretch;
   gap: 8px;
   width: 100%;
   max-width: 760px;
   min-width: 0;
+}
+
+.contribution-stack > :first-child {
+  height: 100%;
 }
 
 .setup-step {
