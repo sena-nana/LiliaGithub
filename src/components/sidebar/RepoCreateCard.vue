@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { FolderGit2, FolderInput, GitBranchPlus, LoaderCircle, X } from "@lucide/vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
+import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { Dropdown } from "@lilia/ui";
 import {
@@ -41,6 +42,7 @@ const workspace = useWorkspace();
 const componentEpoch = useComponentEpoch();
 const repoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
 const createRepoLoader = createLatestAsyncLoader({ componentEpoch });
+const createActionTracker = createPendingTaskTracker();
 const firstInput = ref<HTMLInputElement | null>(null);
 const repoOwners = ref<GitHubRepoOwner[]>([]);
 const activeCreateAction = ref<RepoCreateAction | null>(null);
@@ -211,13 +213,17 @@ async function submitLocalRepo() {
     activeCreateAction.value = "local";
     createError.value = null;
     try {
-      const repo = await workspace.createLocalRepo({
-        name: form.value.name,
-        description: form.value.description || null,
-        addReadme: form.value.addReadme,
-        gitignoreTemplate: form.value.gitignoreTemplate || null,
-        licenseTemplate: form.value.licenseTemplate || null,
-      });
+      const repoName = form.value.name.trim();
+      const repo = await createActionTracker.run(
+        () => workspace.createLocalRepo({
+          name: form.value.name,
+          description: form.value.description || null,
+          addReadme: form.value.addReadme,
+          gitignoreTemplate: form.value.gitignoreTemplate || null,
+          licenseTemplate: form.value.licenseTemplate || null,
+        }),
+        { kind: "workspace", title: "创建本地仓库", detail: repoName, priority: "high" },
+      );
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
       emit("localCreated", repo, selectedGroupId.value);
       emit("close");
@@ -236,12 +242,17 @@ async function cloneCreatedRepo() {
   cloningCreatedRepo.value = true;
   createError.value = null;
   try {
-    const localRepo = await workspace.cloneRepo(repo.cloneUrl, repo.name);
-    if (!componentEpoch.assertAlive() || !props.open) return;
-    await workspace.refreshRepos();
-    if (!componentEpoch.assertAlive() || !props.open) return;
-    emit("remoteCloned", localRepo, repo, selectedGroupId.value);
-    emit("close");
+    await createActionTracker.run(
+      async () => {
+        const clonedRepo = await workspace.cloneRepo(repo.cloneUrl, repo.name);
+        if (!componentEpoch.assertAlive() || !props.open) return clonedRepo;
+        emit("remoteCloned", clonedRepo, repo, selectedGroupId.value);
+        emit("close");
+        await workspace.refreshRepos();
+        return clonedRepo;
+      },
+      { kind: "git", title: "克隆仓库", detail: repo.fullName, priority: "high" },
+    );
   } catch (err) {
     if (!componentEpoch.assertAlive() || !props.open) return;
     createError.value = String(err);
@@ -260,7 +271,11 @@ async function submitRemoteRepo(cloneAfterCreate = true) {
     createError.value = null;
     syncOwnerKind();
     try {
-      const repo = await createGitHubRepo(buildGitHubCreateRepoRequest());
+      const request = buildGitHubCreateRepoRequest();
+      const repo = await createActionTracker.run(
+        () => createGitHubRepo(request),
+        { kind: "github", title: "创建 GitHub 仓库", detail: `${request.owner}/${request.name}`, priority: "high" },
+      );
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
       if (!cloneAfterCreate) {
         emit("close");
@@ -299,6 +314,7 @@ watch(
 onUnmounted(() => {
   repoOwnersLoader.invalidate();
   createRepoLoader.invalidate();
+  createActionTracker.reset();
 });
 </script>
 
