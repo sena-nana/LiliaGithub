@@ -103,7 +103,8 @@ describe("SidebarFooter tasks", () => {
     await renderFooter();
 
     const button = screen.getByRole("button", { name: "后台任务" });
-    expect(within(button).getByText("2")).toBeInTheDocument();
+    expect(within(button).queryByText("2")).not.toBeInTheDocument();
+    expect(button.querySelector(".sb-tasks__badge--failed")).toBeInstanceOf(HTMLElement);
 
     await fireEvent.mouseEnter(button);
 
