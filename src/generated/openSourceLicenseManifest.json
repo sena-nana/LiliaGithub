@@ -2,7 +2,7 @@
   "generatedAt": "2026-07-02T06:59:53.260Z",
   "app": {
     "name": "lilia-github",
-    "version": "1.0.0-beta.1",
+    "version": "1.0.0",
     "license": "MIT",
     "licenseUrl": "https://github.com/sena-nana/LiliaGithub/blob/main/LICENSE"
   },
@@ -121,12 +121,12 @@
   "rustDependencies": [
     {
       "name": "lilia_github_agent_debug",
-      "version": "1.0.0-beta.1",
+      "version": "1.0.0",
       "license": "未声明"
     },
     {
       "name": "lilia_github_workspace",
-      "version": "1.0.0-beta.1",
+      "version": "1.0.0",
       "license": "未声明"
     },
     {

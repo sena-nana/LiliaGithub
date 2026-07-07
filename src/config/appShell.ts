@@ -83,7 +83,7 @@ export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
 export const LILIA_UI_CONFIG = {
   appName: "lilia-github",
   productTitle: APP_TITLE,
-  version: "1.0.0-beta.1",
+  version: "1.0.0",
   identifier: "com.lilia.github",
   storageKeyPrefix: "lilia-github",
   shell: {

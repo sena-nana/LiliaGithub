@@ -2135,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "lilia_github"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "lilia_github_agent_debug",
  "lilia_github_workspace",
@@ -2150,7 +2150,7 @@ dependencies = [
 
 [[package]]
 name = "lilia_github_agent_debug"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2159,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "lilia_github_contracts"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2167,14 +2167,14 @@ dependencies = [
 
 [[package]]
 name = "lilia_github_git"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "lilia_github_contracts",
 ]
 
 [[package]]
 name = "lilia_github_github"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "lilia_github_contracts",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "lilia_github_workspace"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "keyring",
