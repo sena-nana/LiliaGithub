@@ -26,6 +26,7 @@ import {
   refreshWorkspaceTasks,
   resolveConflictFile,
   resetRepositoryRuntimeForTests,
+  discardChanges,
   stage,
   unhideRepo,
   unstage,
@@ -73,6 +74,10 @@ function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChan
   };
 }
 
+function repoChangePaths(repoId: string) {
+  return state.repoDetails[repoId]?.changes.map((change) => change.path);
+}
+
 const service = {
   getWorkspaceSettings: vi.fn(),
   readStartupCache: vi.fn(),
@@ -97,6 +102,7 @@ const service = {
   refreshRepoLanguageStats: vi.fn(),
   stageFiles: vi.fn(),
   unstageFiles: vi.fn(),
+  discardFiles: vi.fn(),
   commitRepo: vi.fn(),
   pullRepo: vi.fn(),
   mergePullRepo: vi.fn(),
@@ -1802,6 +1808,70 @@ describe("workspace incremental refresh", () => {
     await expect(run).rejects.toThrow("暂存失败");
     expect(state.repoDetails[initial.id]?.changes[0]).toMatchObject({ staged: false, unstaged: true });
     expect(state.repos[0]).toMatchObject({ stagedCount: 0, unstagedCount: 1 });
+  });
+
+  it("丢弃变更会立即从仓库详情移除并在成功后校准", async () => {
+    const initial = repoSummary("LiliaGithub", { unstagedCount: 3, untrackedCount: 1 });
+    const untrackedChange = repoChange("src/scratch.ts", {
+      indexStatus: "?",
+      worktreeStatus: "?",
+      untracked: true,
+    });
+    const remainingChange = repoChange("src/keep.ts");
+    state.repos = [initial];
+    state.repoDetails[initial.id] = repoDetail(initial, {
+      changes: [repoChange("src/main.ts"), untrackedChange, remainingChange],
+    });
+    const pending = deferred<ReturnType<typeof repoSummary>>();
+    const refreshedSummary = repoSummary(initial.id, { unstagedCount: 1 });
+    service.discardFiles.mockReturnValue(pending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValueOnce(repoDetailPatch(refreshedSummary, {
+      changes: [remainingChange],
+    }));
+
+    const run = discardChanges(initial.id, ["src/main.ts", "src/scratch.ts"]);
+
+    await waitFor(() => {
+      expect(repoChangePaths(initial.id)).toEqual(["src/keep.ts"]);
+    });
+    expect(state.repos[0]).toMatchObject({ unstagedCount: 1, untrackedCount: 0 });
+
+    pending.resolve(refreshedSummary);
+    await run;
+
+    expect(service.discardFiles).toHaveBeenCalledWith(initial.id, ["src/main.ts", "src/scratch.ts"]);
+  });
+
+  it("丢弃变更失败后刷新真实状态回滚乐观移除", async () => {
+    const initial = repoSummary("LiliaGithub", { unstagedCount: 2, untrackedCount: 1 });
+    const untrackedChange = repoChange("src/scratch.ts", {
+      indexStatus: "?",
+      worktreeStatus: "?",
+      untracked: true,
+    });
+    const remainingChange = repoChange("src/keep.ts");
+    state.repos = [initial];
+    state.repoDetails[initial.id] = repoDetail(initial, {
+      changes: [untrackedChange, remainingChange],
+    });
+    const pending = deferred<ReturnType<typeof repoSummary>>();
+    service.discardFiles.mockReturnValue(pending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(initial, {
+      changes: [untrackedChange, remainingChange],
+    }));
+
+    const run = discardChanges(initial.id, ["src/scratch.ts"]);
+
+    await waitFor(() => {
+      expect(repoChangePaths(initial.id)).toEqual(["src/keep.ts"]);
+    });
+    expect(state.repos[0]).toMatchObject({ unstagedCount: 1, untrackedCount: 0 });
+
+    pending.reject(new Error("丢弃失败"));
+
+    await expect(run).rejects.toThrow("丢弃失败");
+    expect(repoChangePaths(initial.id)).toEqual(["src/scratch.ts", "src/keep.ts"]);
+    expect(state.repos[0]).toMatchObject({ unstagedCount: 2, untrackedCount: 1 });
   });
 
   it("提交会立即移除已暂存变更并更新提交摘要", async () => {
