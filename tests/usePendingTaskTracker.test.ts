@@ -96,7 +96,7 @@ describe("createPendingTaskTracker", () => {
     expect(backgroundTasks.runningTaskCount.value).toBe(0);
   });
 
-  it("任务失败时保留失败状态并标记已回滚", async () => {
+  it("任务失败时保留失败状态并记录失败原因", async () => {
     vi.useFakeTimers();
     const tracker = createPendingTaskTracker();
     const backgroundTasks = useBackgroundTasks();
@@ -113,7 +113,7 @@ describe("createPendingTaskTracker", () => {
     expect(backgroundTasks.tasks.value[0]).toMatchObject({
       title: "推送当前分支",
       status: "failed",
-      detail: "已回滚：Error: 推送失败",
+      detail: "失败：Error: 推送失败",
     });
 
     await vi.advanceTimersByTimeAsync(9000);

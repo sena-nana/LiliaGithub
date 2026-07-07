@@ -31,6 +31,7 @@ import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
 import { buildContributionHeatmapModel } from "@lilia/ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
+import { runBackgroundTask } from "../composables/useBackgroundTasks";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   repoSyncIssuesByRepoId,
@@ -182,6 +183,7 @@ type HomePendingRow = {
   repoFullName: string;
   link: HomePendingLink;
   actions: HomePendingAction[];
+  runningAction: HomePendingAction | null;
   actionError: string | null;
 };
 
@@ -220,6 +222,12 @@ const repoStatusSortOptions: readonly {
   { value: "created", label: "创建时间", defaultDirection: "desc", icon: CalendarDays },
   { value: "updated", label: "最近更新", defaultDirection: "desc", icon: Clock },
 ];
+const homePendingTaskTitles: Record<HomePendingAction, string> = {
+  "issue-complete": "完成 Issue",
+  "issue-close": "关闭 Issue",
+  "pull-merge": "合并 PR",
+  "pull-close": "关闭 PR",
+};
 const defaultRepoStatusSortOption = repoStatusSortOptions[2]!;
 type RepoStatusSortOption = (typeof repoStatusSortOptions)[number];
 
@@ -256,7 +264,7 @@ const githubAccountIssuesLoading = ref(false);
 const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotification[] | undefined>>({});
 const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
-const homePendingActionKey = ref<string | null>(null);
+const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
 const homePendingActionErrors = ref<Record<string, string | undefined>>({});
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
@@ -1075,6 +1083,7 @@ function toHomePendingRow(item: HomePendingItem): HomePendingRow {
     repoFullName: homePendingItemRepoFullName(item),
     link: homePendingItemLink(item),
     actions: homePendingActions(item),
+    runningAction: homePendingRunningActions.value[item.id] ?? null,
     actionError: homePendingActionErrors.value[item.id] ?? null,
   };
 }
@@ -1153,14 +1162,6 @@ function homePendingActionAgentId(item: HomePendingItem, action: HomePendingActi
   return `home.pending.${item.id}.${action}`;
 }
 
-function homePendingActionRunKey(item: HomePendingItem, action: HomePendingAction) {
-  return `${item.id}:${action}`;
-}
-
-function isHomePendingActionRunning(item: HomePendingItem, action: HomePendingAction) {
-  return homePendingActionKey.value === homePendingActionRunKey(item, action);
-}
-
 function clearHomePendingActionError(item: HomePendingItem) {
   if (!homePendingActionErrors.value[item.id]) return;
   const { [item.id]: _removed, ...next } = homePendingActionErrors.value;
@@ -1175,23 +1176,40 @@ function setHomePendingActionError(item: HomePendingItem, error: unknown) {
 }
 
 async function runHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
-  const runKey = homePendingActionRunKey(item, action);
-  if (homePendingActionKey.value) return;
-  homePendingActionKey.value = runKey;
+  if (homePendingRunningActions.value[item.id]) return;
+  homePendingRunningActions.value = {
+    ...homePendingRunningActions.value,
+    [item.id]: action,
+  };
   clearHomePendingActionError(item);
   try {
-    if (action === "issue-complete" || action === "issue-close") {
-      await updateHomePendingIssue(item, action);
-    } else {
-      await updateHomePendingPullRequest(item, action);
-    }
+    await runBackgroundTask(homePendingBackgroundTask(item, action), async () => {
+      if (action === "issue-complete" || action === "issue-close") {
+        await updateHomePendingIssue(item, action);
+      } else {
+        await updateHomePendingPullRequest(item, action);
+      }
+    });
   } catch (err) {
     setHomePendingActionError(item, err);
   } finally {
-    if (homePendingActionKey.value === runKey) {
-      homePendingActionKey.value = null;
+    if (homePendingRunningActions.value[item.id] === action) {
+      const { [item.id]: _removed, ...next } = homePendingRunningActions.value;
+      homePendingRunningActions.value = next;
     }
   }
+}
+
+function homePendingBackgroundTask(item: HomePendingItem, action: HomePendingAction) {
+  const target = item.target;
+  return {
+    kind: "github" as const,
+    title: homePendingTaskTitles[action],
+    repoId: target.kind === "repo" ? target.repoId : target.localRepoId,
+    repoName: homePendingItemRepoFullName(item),
+    detail: item.title,
+    priority: "normal" as const,
+  };
 }
 
 async function updateHomePendingIssue(item: HomePendingItem, action: Extract<HomePendingAction, "issue-complete" | "issue-close">) {
@@ -1977,7 +1995,7 @@ function bulkOperationDescription(operation: BulkOperation) {
               v-if="homePendingRows.length"
               class="home-pending-list"
               aria-label="待处理事项列表"
-              v-memo="[homePendingRows, homePendingActionKey]"
+              v-memo="[homePendingRows]"
             >
               <li
                 v-for="row in homePendingRows"
@@ -2026,11 +2044,11 @@ function bulkOperationDescription(operation: BulkOperation) {
                       :aria-label="homePendingActionLabel(action)"
                       :title="homePendingActionLabel(action)"
                       :data-agent-id="homePendingActionAgentId(row.item, action)"
-                      :disabled="Boolean(homePendingActionKey)"
+                      :disabled="Boolean(row.runningAction)"
                       @click.stop="runHomePendingAction(row.item, action)"
                     >
                       <LoaderCircle
-                        v-if="isHomePendingActionRunning(row.item, action)"
+                        v-if="row.runningAction === action"
                         :size="11"
                         aria-hidden="true"
                         class="sb-spin"

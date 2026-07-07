@@ -163,7 +163,7 @@ export function completeBackgroundTask(taskId: string | null | undefined, detail
 }
 
 export function failBackgroundTask(taskId: string | null | undefined, message: string) {
-  markFrontendTask(taskId, "failed", message ? `已回滚：${message}` : "已回滚");
+  markFrontendTask(taskId, "failed", message ? `失败：${message}` : "失败");
 }
 
 export async function runBackgroundTask<T>(

@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { ContextMenuHost } from "@lilia/ui";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../src/composables/useWorkspace";
 import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
+import { clearFrontendBackgroundTasksForTests, useBackgroundTasks } from "../src/composables/useBackgroundTasks";
 import {
   clearGitHubRepoCache,
   resetWorkspaceFallbacksForTests,
@@ -209,6 +210,10 @@ beforeEach(async () => {
   localStorage.clear();
 });
 
+afterEach(() => {
+  clearFrontendBackgroundTasksForTests();
+});
+
 describe("Home cold start pending items", () => {
   it("sorts repo status rows from a persisted local preference", async () => {
     const repos = [
@@ -350,6 +355,8 @@ describe("Home cold start pending items", () => {
   });
 
   it("runs Issue pending quick actions and removes completed rows", async () => {
+    const workspaceService = await import("../src/services/workspace");
+    const pendingIssueUpdate = deferred<GitHubIssue>();
     workspaceFallback.setFallbackGitHubIssuesForTests({
       [repoFullName]: [
         issue(12, "Complete issue"),
@@ -361,12 +368,51 @@ describe("Home cold start pending items", () => {
       accountIssueItem(13, "Close issue"),
     ]);
     workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
+    vi.spyOn(workspaceService, "updateGitHubIssue").mockImplementation((currentRepoFullName, issueNumber, request) => {
+      if (issueNumber === 12) return pendingIssueUpdate.promise;
+      return Promise.resolve({
+        ...issue(issueNumber, issueNumber === 13 ? "Close issue" : "Issue"),
+        state: request.state ?? "open",
+        updatedAt: "2026-06-25T13:00:00Z",
+        htmlUrl: `https://github.com/${currentRepoFullName}/issues/${issueNumber}`,
+      });
+    });
+    const { tasks } = useBackgroundTasks();
 
     await renderHomeFromStoredSnapshot();
 
     const completeRow = await screen.findByLabelText(/Issue #12 Complete issue/);
     await fireEvent.focus(completeRow);
     await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
+
+    await waitFor(() => {
+      expect(tasks.value).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: "github",
+          title: "完成 Issue",
+          repoName: repoFullName,
+          status: "running",
+        }),
+      ]));
+    });
+    await waitFor(() => {
+      const runningRow = screen.getByLabelText(/Issue #12 Complete issue/);
+      const completeButton = within(runningRow).getByRole("button", { name: "完成" });
+      const closeButton = within(runningRow).getByRole("button", { name: "关闭" });
+      expect(completeButton).toBeDisabled();
+      expect(closeButton).toBeDisabled();
+      expect(completeButton.querySelector(".sb-spin")).toBeInTheDocument();
+      expect(closeButton.querySelector(".sb-spin")).toBeNull();
+    });
+    const otherRow = screen.getByLabelText(/Issue #13 Close issue/);
+    expect(within(otherRow).getByRole("button", { name: "完成" })).toBeEnabled();
+    expect(within(otherRow).getByRole("button", { name: "关闭" })).toBeEnabled();
+
+    pendingIssueUpdate.resolve({
+      ...issue(12, "Complete issue"),
+      state: "closed",
+      updatedAt: "2026-06-25T13:00:00Z",
+    });
     await waitFor(() => expect(screen.queryByLabelText(/Issue #12 Complete issue/)).toBeNull());
 
     const closeRow = await screen.findByLabelText(/Issue #13 Close issue/);
