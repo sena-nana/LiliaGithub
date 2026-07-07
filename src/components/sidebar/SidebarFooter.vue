@@ -137,11 +137,11 @@ onBeforeUnmount(() => {
             @mouseenter="clearCloseTimer"
             @mouseleave="scheduleClose"
           >
-            <div v-if="!tasks.length" class="sb-tasks__item sb-tasks__empty">
+            <div v-if="!tasks.length" class="sb-tasks__empty">
               暂无后台任务
             </div>
             <template v-else>
-              <article
+              <div
                 v-for="task in tasks"
                 :key="task.id"
                 class="sb-tasks__item"
@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
                     :class="{ 'sb-spin': task.status === 'running' }"
                   />
                 </span>
-              </article>
+              </div>
             </template>
           </div>
         </Transition>
@@ -276,13 +276,11 @@ onBeforeUnmount(() => {
   left: 0;
   top: 0;
   z-index: var(--z-dropdown, 1900);
-  display: grid;
-  gap: 5px;
   width: 280px;
   max-width: min(280px, calc(100vw - 16px));
   max-height: min(360px, calc(100vh - 24px));
   overflow: auto;
-  padding: 6px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elev);
@@ -293,6 +291,7 @@ onBeforeUnmount(() => {
 }
 
 .sb-tasks__empty {
+  padding: 7px 8px;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
@@ -304,19 +303,18 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  min-height: 30px;
-  padding: 5px 7px 5px 8px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
+  min-height: 29px;
+  padding: 5px 6px 5px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  transition: background-color 0.12s ease;
 }
 
-.sb-tasks__item--success {
-  border-color: color-mix(in srgb, var(--ok) 32%, var(--border-soft));
+.sb-tasks__item:last-child {
+  border-bottom-color: transparent;
 }
 
-.sb-tasks__item--failed {
-  background: color-mix(in srgb, var(--err-soft) 72%, var(--bg-subtle));
+.sb-tasks__item:hover {
+  background: var(--bg-hover);
 }
 
 .sb-tasks__title {
