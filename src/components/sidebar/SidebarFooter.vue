@@ -109,7 +109,7 @@ onBeforeUnmount(() => {
         @mouseenter="openTasks($event)"
         @click="openTasks($event)"
       >
-        <ListChecks :size="14" aria-hidden="true" />
+        <ListChecks class="sb-tasks__icon" :size="14" aria-hidden="true" />
         <span
           v-if="hasFailedTask"
           class="sb-tasks__badge sb-tasks__badge--failed"
@@ -237,10 +237,17 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.sb-tasks__icon {
+  flex: 0 0 auto;
+}
+
 .sb-tasks__badge {
   position: absolute;
-  top: -2px;
-  right: -2px;
+  top: -3px;
+  right: -5px;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
   min-width: 13px;
   height: 13px;
   padding: 0 3px;
@@ -249,14 +256,13 @@ onBeforeUnmount(() => {
   color: var(--accent-text);
   font-size: 9px;
   font-weight: 700;
-  line-height: 13px;
+  line-height: 1;
   pointer-events: none;
-  text-align: center;
 }
 
 .sb-tasks__badge--failed {
-  top: 1px;
-  right: 1px;
+  top: -1px;
+  right: -1px;
   width: 8px;
   min-width: 8px;
   height: 8px;
