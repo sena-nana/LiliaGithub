@@ -1,7 +1,7 @@
 {
   "appName": "lilia-github",
   "productTitle": "LiliaGithub",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0",
   "identifier": "com.liliagithub.desktop",
   "storageKeyPrefix": "lilia-github",
   "shell": {

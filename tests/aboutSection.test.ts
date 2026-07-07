@@ -44,7 +44,7 @@ describe("AboutSection", () => {
   });
 
   it("发现 GitHub 新版本后打开 Release 下载页", async () => {
-    mockLatestRelease("v1.0.0-beta.2");
+    mockLatestRelease("1.0.1");
     render(AboutSection);
 
     await fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
@@ -56,7 +56,7 @@ describe("AboutSection", () => {
   });
 
   it("GitHub 最新版本不高于当前版本时显示已是最新", async () => {
-    mockLatestRelease("v1.0.0-beta.1");
+    mockLatestRelease("1.0.0");
     render(AboutSection);
 
     await fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
