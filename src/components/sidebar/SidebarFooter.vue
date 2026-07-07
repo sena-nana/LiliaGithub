@@ -148,6 +148,7 @@ onBeforeUnmount(() => {
                 :class="`sb-tasks__item--${task.status}`"
                 role="menuitem"
                 :data-agent-id="taskAgentId(task.id)"
+                :title="task.status === 'failed' ? task.detail || taskStatusDisplay.failed.label : undefined"
               >
                 <strong class="sb-tasks__title">{{ task.title }}</strong>
                 <span class="sb-tasks__source">{{ task.repoName || "工作区" }}</span>
@@ -315,7 +316,7 @@ onBeforeUnmount(() => {
 }
 
 .sb-tasks__item--failed {
-  border-color: color-mix(in srgb, var(--err) 36%, var(--border-soft));
+  background: color-mix(in srgb, var(--err-soft) 72%, var(--bg-subtle));
 }
 
 .sb-tasks__title {

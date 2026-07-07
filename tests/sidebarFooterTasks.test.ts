@@ -76,7 +76,8 @@ describe("SidebarFooter tasks", () => {
     await fireEvent.mouseEnter(button);
 
     const menu = await screen.findByRole("menu", { name: "后台任务" });
-    expect(within(menu).getByText("推送当前分支")).toBeInTheDocument();
+    const runningTask = within(menu).getByText("推送当前分支").closest('[role="menuitem"]');
+    expect(runningTask).not.toHaveAttribute("title");
     expect(within(menu).getByText("LiliaGithub")).toBeInTheDocument();
     expect(within(menu).getByRole("img", { name: "进行中" })).toBeInTheDocument();
     expect(within(menu).queryByText("main")).not.toBeInTheDocument();
@@ -123,7 +124,8 @@ describe("SidebarFooter tasks", () => {
     const menu = await screen.findByRole("menu", { name: "后台任务" });
     expect(within(menu).getByText("提交变更")).toBeInTheDocument();
     expect(within(menu).getByRole("img", { name: "已完成" })).toBeInTheDocument();
-    expect(within(menu).getByText("推送当前分支")).toBeInTheDocument();
+    const failedTask = within(menu).getByText("推送当前分支").closest('[role="menuitem"]');
+    expect(failedTask).toHaveAttribute("title", "失败：远端拒绝推送");
     expect(within(menu).getByRole("img", { name: "失败" })).toBeInTheDocument();
     expect(within(menu).queryByText("失败：远端拒绝推送")).not.toBeInTheDocument();
     expect(within(menu).getByText("发现工作区仓库")).toBeInTheDocument();
