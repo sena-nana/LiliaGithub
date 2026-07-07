@@ -915,6 +915,44 @@ pub(super) fn collect_repos(root: &Path) -> Vec<PathBuf> {
     repos
 }
 
+pub(super) fn expand_repo_paths_with_root_worktrees(
+    root: &Path,
+    paths: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let canonical_root = canonical_repo_path(root);
+    let mut expanded = Vec::new();
+    let mut seen = HashSet::new();
+
+    fn add_root_repo_path(
+        canonical_root: &Path,
+        path: &Path,
+        seen: &mut HashSet<PathBuf>,
+        expanded: &mut Vec<PathBuf>,
+    ) -> Option<PathBuf> {
+        let path = canonical_repo_path(path);
+        if path.starts_with(canonical_root) && path.is_dir() && is_git_repo(&path) {
+            if seen.insert(path.clone()) {
+                expanded.push(path.clone());
+            }
+            return Some(path);
+        }
+        None
+    }
+
+    for path in paths {
+        let Some(canonical_path) =
+            add_root_repo_path(&canonical_root, &path, &mut seen, &mut expanded)
+        else {
+            continue;
+        };
+        for entry in git_worktree_entries(&canonical_path) {
+            add_root_repo_path(&canonical_root, &entry.path, &mut seen, &mut expanded);
+        }
+    }
+
+    expanded
+}
+
 pub(super) fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
     thread::scope(|scope| {
         let handles: Vec<_> = paths
@@ -1172,7 +1210,7 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
             "running",
             Some("后台发现工作区仓库".to_string()),
         );
-        let paths = collect_repos(&root);
+        let paths = expand_repo_paths_with_root_worktrees(&root, collect_repos(&root));
         let mut settings = load_settings(&app);
         for path in &paths {
             add_managed_repo_id(&mut settings, repo_id(&root, path));
@@ -1195,17 +1233,19 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
     run_blocking("添加仓库", move || {
         let root = workspace_root(&app)?;
         let path = normalize_repo_path(&root, &repo_path)?;
-        let repo_id = repo_id(&root, &path);
+        let selected_repo_id = repo_id(&root, &path);
         let task = record_workspace_task(
             "repoStatus",
             "high",
-            Some(repo_id.clone()),
+            Some(selected_repo_id.clone()),
             "running",
             Some("添加本地仓库".to_string()),
         );
         let mut settings = load_settings(&app);
-        add_managed_repo_id(&mut settings, repo_id.clone());
-        settings.hidden_repo_ids.retain(|id| id != &repo_id);
+        for managed_path in expand_repo_paths_with_root_worktrees(&root, vec![path.clone()]) {
+            add_managed_repo_id(&mut settings, repo_id(&root, &managed_path));
+        }
+        settings.hidden_repo_ids.retain(|id| id != &selected_repo_id);
         save_settings(&app, &settings)?;
         let summary = summarize_repo(&root, &path);
         let _ = write_startup_repo_summary(&app, &settings, &summary);

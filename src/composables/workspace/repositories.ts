@@ -526,7 +526,8 @@ export async function addLocalRepo() {
   const picked = await service.pickRepo();
   if (!picked) return null;
   const summary = await service.addRepo(picked);
-  upsertRepo(summary);
+  const repos = await loadManagedRepoList();
+  if (!repos) upsertRepo(summary);
   scheduleLowPriorityRefresh([summary.id]);
   return summary;
 }
