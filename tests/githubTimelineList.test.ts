@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { CircleDot } from "@lucide/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
@@ -53,11 +53,15 @@ describe("GitHubTimelineList", () => {
       node({
         id: "external",
         title: "外链节点",
+        detail: "外链详情",
+        summary: "外链摘要",
         link: { kind: "external", href: "https://github.com/sena-nana/LiliaGithub" },
       }),
       node({
         id: "route",
         title: "路由节点",
+        detail: "路由详情",
+        summary: "路由摘要",
         link: { kind: "route", to: "/repos/LiliaGithub" },
         tone: "ok",
       }),
@@ -67,15 +71,22 @@ describe("GitHubTimelineList", () => {
       }),
     ]);
 
-    const external = screen.getByRole("link", { name: "外链节点" });
+    const external = screen.getByText("外链节点").closest("a");
+    expect(external).not.toBeNull();
     expect(external).toHaveAttribute("href", "https://github.com/sena-nana/LiliaGithub");
     expect(external).toHaveAttribute("target", "_blank");
     expect(external).toHaveAttribute("rel", "noreferrer");
+    expect(within(external as HTMLElement).getByText("外链详情")).toBeInTheDocument();
+    expect(within(external as HTMLElement).getByText("外链摘要")).toBeInTheDocument();
 
-    const route = screen.getByRole("link", { name: "路由节点" });
+    const route = screen.getByText("路由节点").closest("a");
+    expect(route).not.toBeNull();
     expect(route).toHaveAttribute("href", "/repos/LiliaGithub");
+    expect(within(route as HTMLElement).getByText("路由详情")).toBeInTheDocument();
+    expect(within(route as HTMLElement).getByText("路由摘要")).toBeInTheDocument();
 
     expect(screen.getByText("纯文本节点")).toBeInTheDocument();
+    expect(screen.getByText("纯文本节点").closest("a")).toBeNull();
   });
 
   it("preloads and pushes route links on primary click", async () => {
@@ -84,11 +95,13 @@ describe("GitHubTimelineList", () => {
       node({
         id: "route",
         title: "路由节点",
+        detail: "路由详情",
+        summary: "路由摘要",
         link: { kind: "route", to: "/repos/LiliaGithub", preload },
       }),
     ]);
 
-    await fireEvent.click(screen.getByRole("link", { name: "路由节点" }));
+    await fireEvent.click(screen.getByText("路由摘要"));
 
     await waitFor(() => {
       expect(preload).toHaveBeenCalledTimes(1);

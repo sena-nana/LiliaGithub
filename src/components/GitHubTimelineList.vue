@@ -27,7 +27,7 @@ export type TimelineDisplayNode = {
 </script>
 
 <script setup lang="ts">
-import { RouterLink, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 
 defineProps<{
   nodes: readonly TimelineDisplayNode[];
@@ -43,6 +43,12 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
   await link.preload?.();
   await router.push(link.to);
 }
+
+function timelineNodeHref(link: TimelineNodeLink) {
+  if (link.kind === "external") return link.href;
+  if (link.kind === "route") return router.resolve(link.to).href;
+  return undefined;
+}
 </script>
 
 <template>
@@ -51,45 +57,35 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
       v-for="node in nodes"
       :key="node.id"
       class="github-timeline-row"
+      :class="{ 'is-link': node.link.kind !== 'none' }"
     >
-      <span class="github-timeline-row__rail" aria-hidden="true">
-        <span class="github-timeline-row__node" :class="node.tone ? `is-${node.tone}` : null">
-          <component :is="node.icon" :size="14" aria-hidden="true" />
+      <component
+        :is="node.link.kind === 'none' ? 'div' : 'a'"
+        class="github-timeline-row__content"
+        :data-agent-id="node.link.kind === 'none' ? undefined : `github.timeline.${node.id}`"
+        :href="timelineNodeHref(node.link)"
+        :target="node.link.kind === 'external' ? '_blank' : undefined"
+        :rel="node.link.kind === 'external' ? 'noreferrer' : undefined"
+        @click="openRouteLink($event, node.link)"
+      >
+        <span class="github-timeline-row__rail" aria-hidden="true">
+          <span class="github-timeline-row__node" :class="node.tone ? `is-${node.tone}` : null">
+            <component :is="node.icon" :size="14" aria-hidden="true" />
+          </span>
         </span>
-      </span>
-      <div class="github-timeline-row__body">
-        <div class="github-timeline-row__head">
-          <a
-            v-if="node.link.kind === 'external'"
-            class="github-timeline-row__title"
-            :data-agent-id="`github.timeline.${node.id}`"
-            :href="node.link.href"
-            target="_blank"
-            rel="noreferrer"
-          >
-            {{ node.title }}
-          </a>
-          <RouterLink
-            v-else-if="node.link.kind === 'route'"
-            :to="node.link.to"
-            custom
-            v-slot="{ href }"
-          >
-            <a
-              class="github-timeline-row__title"
-              :data-agent-id="`github.timeline.${node.id}`"
-              :href="href"
-              @click="openRouteLink($event, node.link)"
-            >
+        <span class="github-timeline-row__body">
+          <span class="github-timeline-row__head">
+            <component :is="node.link.kind === 'none' ? 'strong' : 'span'" class="github-timeline-row__title">
               {{ node.title }}
-            </a>
-          </RouterLink>
-          <strong v-else class="github-timeline-row__title">{{ node.title }}</strong>
-          <span class="github-timeline-row__detail">{{ node.detail }}</span>
-          <time :datetime="node.datetime">{{ node.timeLabel }}</time>
-        </div>
-        <p>{{ node.summary }}</p>
-      </div>
+            </component>
+            <span class="github-timeline-row__detail">{{ node.detail }}</span>
+            <time :datetime="node.datetime">{{ node.timeLabel }}</time>
+          </span>
+          <component :is="node.link.kind === 'none' ? 'p' : 'span'" class="github-timeline-row__summary">
+            {{ node.summary }}
+          </component>
+        </span>
+      </component>
     </li>
   </ol>
 </template>
@@ -106,17 +102,33 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
 }
 
 .github-timeline-row {
+  min-height: 56px;
+  font-size: 13px;
+}
+
+.github-timeline-row__content {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);
   gap: 8px;
   min-height: 56px;
   padding: 0 4px;
   border-radius: 6px;
-  font-size: 13px;
+  color: inherit;
+  text-decoration: none;
 }
 
-.github-timeline-row:hover {
+.github-timeline-row.is-link .github-timeline-row__content {
+  cursor: pointer;
+}
+
+.github-timeline-row.is-link .github-timeline-row__content:hover,
+.github-timeline-row.is-link .github-timeline-row__content:focus-visible {
   background: var(--bg-hover);
+}
+
+.github-timeline-row.is-link .github-timeline-row__content:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .github-timeline-row__rail {
@@ -156,7 +168,8 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
   border-radius: 4px;
 }
 
-.github-timeline-row:hover .github-timeline-row__node {
+.github-timeline-row.is-link .github-timeline-row__content:hover .github-timeline-row__node,
+.github-timeline-row.is-link .github-timeline-row__content:focus-visible .github-timeline-row__node {
   background: var(--bg-hover);
 }
 
@@ -206,8 +219,8 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
   white-space: nowrap;
 }
 
-.github-timeline-row__title:hover,
-.github-timeline-row__title:focus-visible {
+.github-timeline-row.is-link .github-timeline-row__content:hover .github-timeline-row__title,
+.github-timeline-row.is-link .github-timeline-row__content:focus-visible .github-timeline-row__title {
   color: var(--accent);
 }
 
@@ -230,7 +243,8 @@ async function openRouteLink(event: MouseEvent, link: TimelineNodeLink) {
   white-space: nowrap;
 }
 
-.github-timeline-row__body p {
+.github-timeline-row__summary {
+  display: block;
   min-width: 0;
   margin: 3px 0 2px;
   overflow: hidden;
