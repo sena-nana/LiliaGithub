@@ -13,6 +13,7 @@ defineProps<{
 
 const { tasks, runningTaskCount } = useBackgroundTasks();
 const tasksOpen = ref(false);
+const hasFailedTask = computed(() => tasks.value.some((task) => task.status === "failed"));
 const placement = computed(() => "top" as const);
 const menuMotion = useAnchoredMenuMotion(tasksOpen, placement);
 const menuStyle = computed(() => menuMotion.overlayStyle.value);
@@ -115,7 +116,18 @@ onBeforeUnmount(() => {
         @click="openTasks($event)"
       >
         <ListChecks :size="14" aria-hidden="true" />
-        <span v-if="runningTaskCount" class="sb-tasks__badge">{{ runningTaskCount }}</span>
+        <span
+          v-if="hasFailedTask"
+          class="sb-tasks__badge sb-tasks__badge--failed"
+          aria-hidden="true"
+        />
+        <span
+          v-else-if="runningTaskCount"
+          class="sb-tasks__badge"
+          aria-hidden="true"
+        >
+          {{ runningTaskCount }}
+        </span>
       </button>
 
       <Teleport to="body">
@@ -237,6 +249,16 @@ onBeforeUnmount(() => {
   line-height: 13px;
   pointer-events: none;
   text-align: center;
+}
+
+.sb-tasks__badge--failed {
+  top: 1px;
+  right: 1px;
+  width: 8px;
+  min-width: 8px;
+  height: 8px;
+  padding: 0;
+  background: var(--err);
 }
 
 .sb-tasks__menu {

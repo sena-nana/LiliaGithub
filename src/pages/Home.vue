@@ -184,7 +184,6 @@ type HomePendingRow = {
   link: HomePendingLink;
   actions: HomePendingAction[];
   runningAction: HomePendingAction | null;
-  actionError: string | null;
 };
 
 type HomeOverviewSettingsSnapshot = Pick<WorkspaceSettings, "repoSyncPreferences"> | null;
@@ -265,7 +264,6 @@ const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotificat
 const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
 const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
-const homePendingActionErrors = ref<Record<string, string | undefined>>({});
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
@@ -1084,7 +1082,6 @@ function toHomePendingRow(item: HomePendingItem): HomePendingRow {
     link: homePendingItemLink(item),
     actions: homePendingActions(item),
     runningAction: homePendingRunningActions.value[item.id] ?? null,
-    actionError: homePendingActionErrors.value[item.id] ?? null,
   };
 }
 
@@ -1162,26 +1159,12 @@ function homePendingActionAgentId(item: HomePendingItem, action: HomePendingActi
   return `home.pending.${item.id}.${action}`;
 }
 
-function clearHomePendingActionError(item: HomePendingItem) {
-  if (!homePendingActionErrors.value[item.id]) return;
-  const { [item.id]: _removed, ...next } = homePendingActionErrors.value;
-  homePendingActionErrors.value = next;
-}
-
-function setHomePendingActionError(item: HomePendingItem, error: unknown) {
-  homePendingActionErrors.value = {
-    ...homePendingActionErrors.value,
-    [item.id]: String(error),
-  };
-}
-
 async function runHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
   if (homePendingRunningActions.value[item.id]) return;
   homePendingRunningActions.value = {
     ...homePendingRunningActions.value,
     [item.id]: action,
   };
-  clearHomePendingActionError(item);
   try {
     await runBackgroundTask(homePendingBackgroundTask(item, action), async () => {
       if (action === "issue-complete" || action === "issue-close") {
@@ -1190,8 +1173,8 @@ async function runHomePendingAction(item: HomePendingItem, action: HomePendingAc
         await updateHomePendingPullRequest(item, action);
       }
     });
-  } catch (err) {
-    setHomePendingActionError(item, err);
+  } catch {
+    return;
   } finally {
     if (homePendingRunningActions.value[item.id] === action) {
       const { [item.id]: _removed, ...next } = homePendingRunningActions.value;
@@ -2014,14 +1997,6 @@ function bulkOperationDescription(operation: BulkOperation) {
                 </span>
                 <span class="home-pending-row__side">
                   <span
-                    v-if="row.actionError"
-                    class="home-pending-row__error"
-                    :title="row.actionError"
-                  >
-                    {{ row.actionError }}
-                  </span>
-                  <span
-                    v-else
                     class="home-pending-row__repo"
                     :title="row.repoFullName"
                   >
@@ -2804,8 +2779,7 @@ function bulkOperationDescription(operation: BulkOperation) {
   height: 24px;
 }
 
-.home-pending-row__repo,
-.home-pending-row__error {
+.home-pending-row__repo {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2816,11 +2790,6 @@ function bulkOperationDescription(operation: BulkOperation) {
 .home-pending-row__repo {
   color: var(--text-faint);
   font-weight: 600;
-}
-
-.home-pending-row__error {
-  color: var(--err);
-  font-weight: 700;
 }
 
 .home-pending-row__actions {
@@ -2837,9 +2806,7 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .home-pending-row.has-hover-controls:hover .home-pending-row__repo,
-.home-pending-row.has-hover-controls:focus-within .home-pending-row__repo,
-.home-pending-row.has-hover-controls:hover .home-pending-row__error,
-.home-pending-row.has-hover-controls:focus-within .home-pending-row__error {
+.home-pending-row.has-hover-controls:focus-within .home-pending-row__repo {
   opacity: 0;
 }
 
