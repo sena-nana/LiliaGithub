@@ -680,6 +680,7 @@ export interface GitHubUpdateIssueRequest {
   title?: string;
   body?: string | null;
   state?: "open" | "closed";
+  stateReason?: "completed" | "not_planned" | null;
   labels?: string[];
   assignees?: string[];
 }

@@ -5099,6 +5099,12 @@ pub async fn github_update_issue(
             }
             payload.insert("state".to_string(), serde_json::Value::String(value));
         }
+        if let Some(value) = normalize_optional_string(request.state_reason) {
+            if value != "completed" && value != "not_planned" {
+                return Err("Issue 关闭原因只能是 completed 或 not_planned".to_string());
+            }
+            payload.insert("state_reason".to_string(), serde_json::Value::String(value));
+        }
         if let Some(value) = request.labels {
             payload.insert("labels".to_string(), serde_json::json!(value));
         }
