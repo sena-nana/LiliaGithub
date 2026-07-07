@@ -43,6 +43,7 @@ import {
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { invalidateSessionContextSnapshot } from "../../composables/sessionContext";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
+import type { BackgroundTaskDescriptor } from "../../composables/useBackgroundTasks";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
@@ -2653,15 +2654,33 @@ function isRepoMutationCurrent(generation: number, repoId: string) {
   return generation === repoMutationGeneration && props.repoId === repoId;
 }
 
+function remoteTask(descriptor: BackgroundTaskDescriptor): BackgroundTaskDescriptor {
+  return {
+    repoId: props.repoId,
+    repoName: props.repoTitle || props.repoFullName || props.repoId,
+    ...descriptor,
+  };
+}
+
 async function runGitHubMutation<T>(
   repoFullName: string,
   tracker: PendingTaskTracker,
   task: () => Promise<T>,
+  descriptor?: BackgroundTaskDescriptor,
 ): Promise<GitHubMutationResult<T>> {
   const generation = githubMutationGeneration;
   githubError.value = null;
   try {
-    const value = await tracker.run(task);
+    const value = await tracker.run(
+      task,
+      descriptor
+        ? {
+            ...descriptor,
+            repoId: descriptor.repoId ?? props.repoId,
+            repoName: descriptor.repoName ?? props.repoTitle ?? repoFullName,
+          }
+        : undefined,
+    );
     if (!isGitHubMutationCurrent(generation, repoFullName)) return { ok: false };
     return { ok: true, value };
   } catch (err) {
@@ -2681,8 +2700,11 @@ async function saveSettings(closeAboutOnSuccess = false) {
     if (closeAboutOnSuccess) aboutEditing.value = false;
     return true;
   }
-  const result = await runGitHubMutation(repoFullName, settingsSaveTracker, () =>
-    updateGitHubRepoSettings(repoFullName, request)
+  const result = await runGitHubMutation(
+    repoFullName,
+    settingsSaveTracker,
+    () => updateGitHubRepoSettings(repoFullName, request),
+    remoteTask({ kind: "github", title: "保存仓库设置", priority: "normal" }),
   );
   if (!result.ok) return false;
   const next = result.value;
@@ -2729,8 +2751,11 @@ async function toggleArchivedSetting() {
     archiveError.value = "完整仓库名不匹配";
     return;
   }
-  const result = await runGitHubMutation(repoFullName, archiveSettingsTracker, () =>
-    updateGitHubRepoSettings(repoFullName, { archived: !(current.archived ?? false) })
+  const result = await runGitHubMutation(
+    repoFullName,
+    archiveSettingsTracker,
+    () => updateGitHubRepoSettings(repoFullName, { archived: !(current.archived ?? false) }),
+    remoteTask({ kind: "github", title: current.archived ? "取消归档仓库" : "归档仓库", priority: "high" }),
   );
   if (!result.ok) {
     archiveError.value = githubError.value;
@@ -2843,7 +2868,10 @@ async function confirmDeleteLocalRepo() {
   const generation = repoMutationGeneration;
   deleteError.value = null;
   try {
-    await localDeleteTracker.run(() => workspace.deleteLocalRepo(repoId));
+    await localDeleteTracker.run(
+      () => workspace.deleteLocalRepo(repoId),
+      remoteTask({ kind: "workspace", title: "删除本地仓库", priority: "high" }),
+    );
     if (!isRepoMutationCurrent(generation, repoId)) return;
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
@@ -2866,7 +2894,7 @@ async function confirmDeleteRepo() {
     await remoteDeleteTracker.run(async () => {
       await deleteGitHubRepo(repoFullName);
       await workspace.forgetRemoteRepo(repoFullName);
-    });
+    }, remoteTask({ kind: "github", title: "删除远程仓库", priority: "high" }));
     if (!isGitHubMutationCurrent(generation, repoFullName)) return;
     clearHomeGitHubOverviewSnapshot();
     workspace.refreshRepoStatusList();
@@ -3138,8 +3166,11 @@ async function saveIssueEdit(issue: GitHubIssue) {
     labels: splitList(editingIssueLabels.value),
     assignees: splitList(editingIssueAssignees.value),
   };
-  const result = await runGitHubMutation(repoFullName, issueUpdateTracker, () =>
-    updateGitHubIssue(repoFullName, issue.number, request)
+  const result = await runGitHubMutation(
+    repoFullName,
+    issueUpdateTracker,
+    () => updateGitHubIssue(repoFullName, issue.number, request),
+    remoteTask({ kind: "github", title: "更新 Issue", detail: `#${issue.number}`, priority: "normal" }),
   );
   if (!result.ok) return;
   const updated = result.value;
@@ -3159,8 +3190,11 @@ async function createIssue() {
     labels: [...issueLabels.value],
     assignees: [...issueAssignees.value],
   };
-  const result = await runGitHubMutation(repoFullName, issueCreateTracker, () =>
-    createGitHubIssue(repoFullName, request)
+  const result = await runGitHubMutation(
+    repoFullName,
+    issueCreateTracker,
+    () => createGitHubIssue(repoFullName, request),
+    remoteTask({ kind: "github", title: "创建 Issue", detail: title, priority: "normal" }),
   );
   if (!result.ok) return;
   const issue = result.value;
@@ -3178,10 +3212,18 @@ async function createIssue() {
 async function toggleIssue(issue: GitHubIssue) {
   const repoFullName = props.repoFullName;
   if (!repoFullName) return;
-  const result = await runGitHubMutation(repoFullName, issueUpdateTracker, () =>
-    updateGitHubIssue(repoFullName, issue.number, {
+  const result = await runGitHubMutation(
+    repoFullName,
+    issueUpdateTracker,
+    () => updateGitHubIssue(repoFullName, issue.number, {
       state: issue.state === "open" ? "closed" : "open",
-    })
+    }),
+    remoteTask({
+      kind: "github",
+      title: issue.state === "open" ? "关闭 Issue" : "重新打开 Issue",
+      detail: `#${issue.number}`,
+      priority: "normal",
+    }),
   );
   if (!result.ok) return;
   const updated = result.value;
@@ -3215,8 +3257,11 @@ async function createPullRequest() {
     base,
     draft: pullRequestDraft.value,
   };
-  const result = await runGitHubMutation(repoFullName, pullCreateTracker, () =>
-    createGitHubPullRequest(repoFullName, request)
+  const result = await runGitHubMutation(
+    repoFullName,
+    pullCreateTracker,
+    () => createGitHubPullRequest(repoFullName, request),
+    remoteTask({ kind: "github", title: "创建 Pull Request", detail: title, priority: "normal" }),
   );
   if (!result.ok) return;
   const pull = result.value;
@@ -3238,10 +3283,18 @@ async function createPullRequest() {
 async function togglePullRequestState(pull: GitHubPullRequest) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || updatingPullRequest.value) return;
-  const result = await runGitHubMutation(repoFullName, pullUpdateTracker, () =>
-    updateGitHubPullRequest(repoFullName, pull.number, {
+  const result = await runGitHubMutation(
+    repoFullName,
+    pullUpdateTracker,
+    () => updateGitHubPullRequest(repoFullName, pull.number, {
       state: pull.state === "open" ? "closed" : "open",
-    })
+    }),
+    remoteTask({
+      kind: "github",
+      title: pull.state === "open" ? "关闭 Pull Request" : "重新打开 Pull Request",
+      detail: `#${pull.number}`,
+      priority: "normal",
+    }),
   );
   if (!result.ok) return;
   const updated = result.value;
@@ -3255,10 +3308,13 @@ async function mergePullRequest(pull: GitHubPullRequest) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || updatingPullRequest.value) return;
   const method = pullRequestMergeMethod.value;
-  const result = await runGitHubMutation(repoFullName, pullUpdateTracker, () =>
-    mergeGitHubPullRequest(repoFullName, pull.number, {
+  const result = await runGitHubMutation(
+    repoFullName,
+    pullUpdateTracker,
+    () => mergeGitHubPullRequest(repoFullName, pull.number, {
       method,
-    })
+    }),
+    remoteTask({ kind: "github", title: "合并 Pull Request", detail: `#${pull.number}`, priority: "high" }),
   );
   if (!result.ok) return;
   const updated = result.value;
@@ -3426,8 +3482,11 @@ function updateReleaseAssetsInView(releaseId: number, update: (assets: GitHubRel
 async function createRelease(request: GitHubCreateReleaseRequest) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || releaseCreateTracker.running.value) return;
-  const result = await runGitHubMutation(repoFullName, releaseCreateTracker, () =>
-    createGitHubRelease(repoFullName, request)
+  const result = await runGitHubMutation(
+    repoFullName,
+    releaseCreateTracker,
+    () => createGitHubRelease(repoFullName, request),
+    remoteTask({ kind: "github", title: "创建 Release", detail: request.tagName, priority: "normal" }),
   );
   if (!result.ok) return;
   upsertReleaseInView(result.value);
@@ -3439,8 +3498,11 @@ async function createRelease(request: GitHubCreateReleaseRequest) {
 async function updateRelease(releaseId: number, request: GitHubUpdateReleaseRequest) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || releaseUpdateTracker.running.value) return;
-  const result = await runGitHubMutation(repoFullName, releaseUpdateTracker, () =>
-    updateGitHubRelease(repoFullName, releaseId, request)
+  const result = await runGitHubMutation(
+    repoFullName,
+    releaseUpdateTracker,
+    () => updateGitHubRelease(repoFullName, releaseId, request),
+    remoteTask({ kind: "github", title: "更新 Release", detail: request.tagName ?? null, priority: "normal" }),
   );
   if (!result.ok) return;
   upsertReleaseInView(result.value);
@@ -3451,8 +3513,11 @@ async function updateRelease(releaseId: number, request: GitHubUpdateReleaseRequ
 async function removeRelease(release: GitHubRelease) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || releaseDeleteTracker.running.value) return;
-  const result = await runGitHubMutation(repoFullName, releaseDeleteTracker, () =>
-    deleteGitHubRelease(repoFullName, release.id)
+  const result = await runGitHubMutation(
+    repoFullName,
+    releaseDeleteTracker,
+    () => deleteGitHubRelease(repoFullName, release.id),
+    remoteTask({ kind: "github", title: "删除 Release", detail: release.tagName, priority: "high" }),
   );
   if (!result.ok) return;
   releases.value = releases.value.filter((item) => item.id !== release.id);
@@ -3465,8 +3530,11 @@ async function uploadReleaseAssets(release: GitHubRelease) {
   if (!repoFullName || releaseAssetUploadTracker.running.value) return;
   const paths = await pickFiles();
   for (const filePath of paths) {
-    const result = await runGitHubMutation(repoFullName, releaseAssetUploadTracker, () =>
-      uploadGitHubReleaseAsset(repoFullName, release.id, filePath)
+    const result = await runGitHubMutation(
+      repoFullName,
+      releaseAssetUploadTracker,
+      () => uploadGitHubReleaseAsset(repoFullName, release.id, filePath),
+      remoteTask({ kind: "github", title: "上传 Release 资源", detail: release.tagName, priority: "normal" }),
     );
     if (!result.ok) return;
     updateReleaseAssetsInView(release.id, (assets) => [
@@ -3479,8 +3547,16 @@ async function uploadReleaseAssets(release: GitHubRelease) {
 async function attachWorkflowArtifactAsset(request: GitHubAttachWorkflowArtifactAssetRequest) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || releaseAssetUploadTracker.running.value) return;
-  const result = await runGitHubMutation(repoFullName, releaseAssetUploadTracker, () =>
-    attachGitHubWorkflowArtifactAsset(repoFullName, request)
+  const result = await runGitHubMutation(
+    repoFullName,
+    releaseAssetUploadTracker,
+    () => attachGitHubWorkflowArtifactAsset(repoFullName, request),
+    remoteTask({
+      kind: "github",
+      title: "挂载工作流产物",
+      detail: request.label ?? request.artifactName ?? request.expectedTagName,
+      priority: "normal",
+    }),
   );
   if (!result.ok) return;
   updateReleaseAssetsInView(request.releaseId, (assets) => [
@@ -3493,8 +3569,11 @@ async function attachWorkflowArtifactAsset(request: GitHubAttachWorkflowArtifact
 async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAsset) {
   const repoFullName = props.repoFullName;
   if (!repoFullName || releaseAssetDeleteTracker.running.value) return;
-  const result = await runGitHubMutation(repoFullName, releaseAssetDeleteTracker, () =>
-    deleteGitHubReleaseAsset(repoFullName, release.id, asset.id)
+  const result = await runGitHubMutation(
+    repoFullName,
+    releaseAssetDeleteTracker,
+    () => deleteGitHubReleaseAsset(repoFullName, release.id, asset.id),
+    remoteTask({ kind: "github", title: "删除 Release 资源", detail: asset.name, priority: "normal" }),
   );
   if (!result.ok) return;
   updateReleaseAssetsInView(release.id, (assets) => assets.filter((candidate) => candidate.id !== asset.id));

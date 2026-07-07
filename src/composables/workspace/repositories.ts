@@ -16,6 +16,7 @@ import {
   upsertReposBatch,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
+import { runBackgroundTask } from "../useBackgroundTasks";
 import {
   repoAutoSyncEnabled,
   repoIncludedInHomeContributionStats,
@@ -262,36 +263,47 @@ export async function autoSyncRepoIfNeeded(
   autoSyncRunningRepoIds.add(summary.id);
   beginRepoSync(summary.id);
   try {
-    let result: BulkSyncResult | undefined;
-    try {
-      const service = await loadWorkspaceService();
-      [result] = await service.bulkSyncExecute("sync", [summary.id], "stash");
-    } catch (err) {
-      const failedResult: BulkSyncResult = {
+    return await runBackgroundTask(
+      {
+        kind: "sync",
+        title: "自动同步仓库",
         repoId: summary.id,
-        status: "error",
-        message: String(err),
-        summary: null,
-      };
-      rememberAutoSyncFailure(summary, failedResult);
-      setRepoActionError(summary.id, failedResult.message);
-      if (options.throwOnError) throw err;
-      return null;
-    }
-    if (!result) return null;
-    applyAutoSyncResult(result);
-    if (result.status !== "success") {
-      rememberAutoSyncFailure(summary, result);
-      if (options.throwOnError) throw new Error(result.message);
-      return result;
-    }
-    const syncedRepoId = result.summary?.id ?? summary.id;
-    if (options.refreshDetail || state.repoDetails[syncedRepoId]) {
-      await requestRepoStatusRefresh(syncedRepoId, { includeCommits: true }, { immediate: true })
-        .catch(() => undefined);
-    }
-    void refreshRepoLanguageStats(syncedRepoId, { silent: true });
-    return result;
+        repoName: summary.name,
+        priority: "normal",
+      },
+      async () => {
+        let result: BulkSyncResult | undefined;
+        try {
+          const service = await loadWorkspaceService();
+          [result] = await service.bulkSyncExecute("sync", [summary.id], "stash");
+        } catch (err) {
+          const failedResult: BulkSyncResult = {
+            repoId: summary.id,
+            status: "error",
+            message: String(err),
+            summary: null,
+          };
+          rememberAutoSyncFailure(summary, failedResult);
+          setRepoActionError(summary.id, failedResult.message);
+          if (options.throwOnError) throw err;
+          return null;
+        }
+        if (!result) return null;
+        applyAutoSyncResult(result);
+        if (result.status !== "success") {
+          rememberAutoSyncFailure(summary, result);
+          if (options.throwOnError) throw new Error(result.message);
+          return result;
+        }
+        const syncedRepoId = result.summary?.id ?? summary.id;
+        if (options.refreshDetail || state.repoDetails[syncedRepoId]) {
+          await requestRepoStatusRefresh(syncedRepoId, { includeCommits: true }, { immediate: true })
+            .catch(() => undefined);
+        }
+        void refreshRepoLanguageStats(syncedRepoId, { silent: true });
+        return result;
+      },
+    );
   } finally {
     autoSyncRunningRepoIds.delete(summary.id);
     finishRepoSync(summary.id);
