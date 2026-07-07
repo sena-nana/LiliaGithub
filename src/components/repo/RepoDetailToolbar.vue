@@ -411,7 +411,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             title="推送"
             aria-label="推送"
             data-agent-id="repo.toolbar.push"
-            :disabled="actionRunning || !aheadCount"
+            :disabled="!aheadCount"
             @click="emit('push')"
           >
             <CloudUpload :size="17" aria-hidden="true" />

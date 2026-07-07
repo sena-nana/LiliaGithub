@@ -3,7 +3,7 @@ import { Settings } from "@lucide/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { describe, expect, it } from "vitest";
 import SidebarFooter from "../src/components/sidebar/SidebarFooter.vue";
-import { beginBackgroundTask } from "../src/composables/useBackgroundTasks";
+import { beginBackgroundTask, completeBackgroundTask, failBackgroundTask } from "../src/composables/useBackgroundTasks";
 
 function testRouter() {
   return createRouter({
@@ -73,5 +73,35 @@ describe("SidebarFooter tasks", () => {
     await waitFor(() => {
       expect(screen.queryByRole("menu", { name: "后台任务" })).not.toBeInTheDocument();
     });
+  });
+
+  it("显示任务完成和失败回滚状态", async () => {
+    const completedTaskId = beginBackgroundTask({
+      kind: "git",
+      title: "提交变更",
+      repoName: "LiliaGithub",
+      priority: "high",
+    });
+    completeBackgroundTask(completedTaskId);
+    const failedTaskId = beginBackgroundTask({
+      kind: "git",
+      title: "推送当前分支",
+      repoName: "LiliaGithub",
+      priority: "high",
+    });
+    failBackgroundTask(failedTaskId, "远端拒绝推送");
+    await renderFooter();
+
+    const button = screen.getByRole("button", { name: "后台任务" });
+    expect(within(button).getByText("2")).toBeInTheDocument();
+
+    await fireEvent.mouseEnter(button);
+
+    const menu = await screen.findByRole("menu", { name: "后台任务" });
+    expect(within(menu).getByText("提交变更")).toBeInTheDocument();
+    expect(within(menu).getAllByText(/已完成/).length).toBeGreaterThan(0);
+    expect(within(menu).getByText("推送当前分支")).toBeInTheDocument();
+    expect(within(menu).getByText(/失败/)).toBeInTheDocument();
+    expect(within(menu).getByText("已回滚：远端拒绝推送")).toBeInTheDocument();
   });
 });

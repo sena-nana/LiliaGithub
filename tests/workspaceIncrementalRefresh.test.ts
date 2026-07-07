@@ -45,15 +45,32 @@ import {
   state,
 } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
-import type { BulkSyncPreview, GitHubContributionResult, WorkspaceStartupCache } from "../src/services/workspace";
+import type { BulkSyncPreview, GitHubContributionResult, RepoChange, WorkspaceStartupCache } from "../src/services/workspace";
 import { conflictState, repoDetail, repoDetailPatch, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
+}
+
+function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChange {
+  return {
+    path,
+    oldPath: null,
+    indexStatus: " ",
+    worktreeStatus: "M",
+    staged: false,
+    unstaged: true,
+    untracked: false,
+    conflicted: false,
+    diff: "@@ -1 +1 @@\n-old\n+new",
+    ...overrides,
+  };
 }
 
 const service = {
@@ -1718,6 +1735,180 @@ describe("workspace incremental refresh", () => {
     expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: true, includeBranches: true });
     expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith(initial.id, { includeCommits: false, includeBranches: true });
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
+  });
+
+  it("暂存和取消暂存会立即更新仓库详情并在成功后校准", async () => {
+    const initial = repoSummary("LiliaGithub", { unstagedCount: 1 });
+    const unstagedChange = repoChange("src/main.ts");
+    state.repos = [initial];
+    state.repoDetails[initial.id] = repoDetail(initial, { changes: [unstagedChange] });
+    const stagePending = deferred<void>();
+    const stagedChange = { ...unstagedChange, staged: true, unstaged: false };
+    const stagedSummary = repoSummary(initial.id, { stagedCount: 1 });
+    service.stageFiles.mockReturnValue(stagePending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValueOnce(repoDetailPatch(stagedSummary, {
+      changes: [stagedChange],
+    }));
+
+    const stageRun = stage(initial.id, ["src/main.ts"]);
+
+    await waitFor(() => {
+      expect(state.repoDetails[initial.id]?.changes[0]).toMatchObject({ staged: true, unstaged: false });
+    });
+    expect(state.repos[0]).toMatchObject({ stagedCount: 1, unstagedCount: 0 });
+
+    stagePending.resolve();
+    await stageRun;
+
+    expect(service.refreshRepoDetailPatch).toHaveBeenLastCalledWith(initial.id, {
+      includeCommits: false,
+      includeBranches: false,
+    });
+    const unstagePending = deferred<void>();
+    const restoredSummary = repoSummary(initial.id, { unstagedCount: 1 });
+    service.unstageFiles.mockReturnValue(unstagePending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValueOnce(repoDetailPatch(restoredSummary, {
+      changes: [unstagedChange],
+    }));
+
+    const unstageRun = unstage(initial.id, ["src/main.ts"]);
+
+    await waitFor(() => {
+      expect(state.repoDetails[initial.id]?.changes[0]).toMatchObject({ staged: false, unstaged: true });
+    });
+    expect(state.repos[0]).toMatchObject({ stagedCount: 0, unstagedCount: 1 });
+
+    unstagePending.resolve();
+    await unstageRun;
+  });
+
+  it("暂存失败后刷新真实状态回滚乐观变更", async () => {
+    const initial = repoSummary("LiliaGithub", { unstagedCount: 1 });
+    const change = repoChange("src/main.ts");
+    state.repos = [initial];
+    state.repoDetails[initial.id] = repoDetail(initial, { changes: [change] });
+    const pending = deferred<void>();
+    service.stageFiles.mockReturnValue(pending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(initial, { changes: [change] }));
+
+    const run = stage(initial.id, ["src/main.ts"]);
+
+    await waitFor(() => {
+      expect(state.repoDetails[initial.id]?.changes[0]).toMatchObject({ staged: true, unstaged: false });
+    });
+
+    pending.reject(new Error("暂存失败"));
+
+    await expect(run).rejects.toThrow("暂存失败");
+    expect(state.repoDetails[initial.id]?.changes[0]).toMatchObject({ staged: false, unstaged: true });
+    expect(state.repos[0]).toMatchObject({ stagedCount: 0, unstagedCount: 1 });
+  });
+
+  it("提交会立即移除已暂存变更并更新提交摘要", async () => {
+    const initial = repoSummary("LiliaGithub", { stagedCount: 2, ahead: 1 });
+    const stagedOnly = repoChange("src/main.ts", {
+      indexStatus: "M",
+      worktreeStatus: " ",
+      staged: true,
+      unstaged: false,
+    });
+    const partiallyStaged = repoChange("src/partial.ts", {
+      indexStatus: "M",
+      worktreeStatus: "M",
+      staged: true,
+      unstaged: true,
+    });
+    state.repos = [initial];
+    state.repoDetails[initial.id] = repoDetail(initial, { changes: [stagedOnly, partiallyStaged] });
+    const pending = deferred<ReturnType<typeof repoSummary>>();
+    const refreshedSummary = repoSummary(initial.id, {
+      ahead: 2,
+      unstagedCount: 1,
+      lastCommitMessage: "提交说明",
+    });
+    service.commitRepo.mockReturnValue(pending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(refreshedSummary, {
+      changes: [{ ...partiallyStaged, staged: false, unstaged: true }],
+      commits: [],
+    }));
+
+    const run = commit(initial.id, ["src/main.ts", "src/partial.ts"], "提交说明", false);
+
+    await waitFor(() => {
+      expect(state.repoDetails[initial.id]?.changes.map((change) => change.path)).toEqual(["src/partial.ts"]);
+    });
+    expect(state.repoDetails[initial.id]?.changes[0]).toMatchObject({ staged: false, unstaged: true });
+    expect(state.repos[0]).toMatchObject({
+      ahead: 2,
+      stagedCount: 0,
+      unstagedCount: 1,
+      lastCommitMessage: "提交说明",
+    });
+
+    pending.resolve(refreshedSummary);
+    await run;
+  });
+
+  it("提交并推送失败后刷新真实状态回滚乐观推送结果", async () => {
+    const initial = repoSummary("LiliaGithub", { stagedCount: 1, ahead: 1 });
+    const stagedChange = repoChange("src/main.ts", {
+      indexStatus: "M",
+      worktreeStatus: " ",
+      staged: true,
+      unstaged: false,
+    });
+    const actualAfterFailure = repoSummary(initial.id, { stagedCount: 1, ahead: 1 });
+    state.repos = [initial];
+    state.repoDetails[initial.id] = repoDetail(initial, { changes: [stagedChange] });
+    const pending = deferred<ReturnType<typeof repoSummary>>();
+    service.commitRepo.mockReturnValue(pending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(actualAfterFailure, {
+      changes: [stagedChange],
+      commits: [],
+    }));
+
+    const run = commit(initial.id, ["src/main.ts"], "提交并推送", true);
+
+    await waitFor(() => {
+      expect(state.repoDetails[initial.id]?.changes).toEqual([]);
+      expect(state.repos[0]).toMatchObject({ ahead: 0, stagedCount: 0 });
+    });
+
+    pending.reject(new Error("推送失败"));
+
+    await expect(run).rejects.toThrow("推送失败");
+    expect(state.repoDetails[initial.id]?.changes[0]).toMatchObject({ path: "src/main.ts", staged: true });
+    expect(state.repos[0]).toMatchObject({ ahead: 1, stagedCount: 1 });
+    expect(service.refreshRepoDetailPatch).toHaveBeenLastCalledWith(initial.id, {
+      includeCommits: true,
+      includeBranches: false,
+    });
+  });
+
+  it("推送失败后刷新真实 ahead 作为回滚结果", async () => {
+    const initial = repoSummary("LiliaGithub", { ahead: 2 });
+    state.repos = [initial];
+    state.repoDetails[initial.id] = repoDetail(initial);
+    const pending = deferred<ReturnType<typeof repoSummary>>();
+    service.pushRepo.mockReturnValue(pending.promise);
+    service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(initial, { commits: [] }));
+
+    const run = push(initial.id);
+
+    await waitFor(() => {
+      expect(state.repos[0]).toMatchObject({ ahead: 0 });
+      expect(state.repoDetails[initial.id]?.summary).toMatchObject({ ahead: 0 });
+    });
+
+    pending.reject(new Error("推送失败"));
+
+    await expect(run).rejects.toThrow("推送失败");
+    expect(state.repos[0]).toMatchObject({ ahead: 2 });
+    expect(state.repoDetails[initial.id]?.summary).toMatchObject({ ahead: 2 });
+    expect(service.refreshRepoDetailPatch).toHaveBeenLastCalledWith(initial.id, {
+      includeCommits: true,
+      includeBranches: false,
+    });
   });
 
   it("单仓库操作继续只刷新当前仓库详情，不触发全量扫描", async () => {

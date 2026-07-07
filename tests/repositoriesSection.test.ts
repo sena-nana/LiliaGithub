@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RepositoriesSection from "../src/pages/settings/RepositoriesSection.vue";
 import { useBackgroundTasks } from "../src/composables/useBackgroundTasks";
 import { createGitHubRepo, listGitHubRepoOwners, type GitHubRepoSummary } from "../src/services/workspace";
@@ -108,6 +108,10 @@ vi.mock("../src/services/workspace", async () => {
 });
 
 describe("RepositoriesSection", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     workspace.state.settings = {
@@ -148,6 +152,7 @@ describe("RepositoriesSection", () => {
   });
 
   it("更换工作区期间登记侧边栏后台任务并在完成后移除", async () => {
+    vi.useFakeTimers();
     const changeWorkspace = deferred<string>();
     workspace.chooseWorkspaceRoot.mockReturnValue(changeWorkspace.promise);
     const backgroundTasks = useBackgroundTasks();
@@ -168,8 +173,20 @@ describe("RepositoriesSection", () => {
     changeWorkspace.resolve("D:\\NewWorkspace");
 
     await waitFor(() => {
+      expect(backgroundTasks.tasks.value).toEqual([
+        expect.objectContaining({
+          kind: "workspace",
+          status: "success",
+        }),
+      ]);
+    });
+
+    await vi.advanceTimersByTimeAsync(1600);
+
+    await waitFor(() => {
       expect(backgroundTasks.runningTaskCount.value).toBe(0);
     });
+    vi.useRealTimers();
   });
 
   it("已绑定 GitHub 时通过二次确认解绑", async () => {
