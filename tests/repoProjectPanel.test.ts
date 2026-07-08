@@ -1206,6 +1206,12 @@ describe("RepoProjectPanel", () => {
     const errorCard = view.getByRole("region", { name: "仓库错误" });
     expect(errorCard).toHaveTextContent("最近同步失败");
     expect(errorCard).toHaveTextContent("认证失败");
+    expect(errorCard).toHaveTextContent("状态");
+    expect(errorCard).toHaveTextContent("认证或权限失效");
+    expect(errorCard).toHaveTextContent("原因");
+    expect(errorCard).toHaveTextContent("GitHub 凭证失效、权限不足或当前账号无法访问该仓库。");
+    expect(errorCard).toHaveTextContent("下一步");
+    expect(errorCard).toHaveTextContent("重新绑定 GitHub");
     expect(errorCard).toHaveTextContent("操作失败");
     expect(errorCard).toHaveTextContent("操作失败：无法提交");
     expect(errorCard).toHaveTextContent("仓库错误：自动同步失败");

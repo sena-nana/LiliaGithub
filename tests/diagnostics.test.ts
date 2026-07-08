@@ -36,9 +36,22 @@ function workflowJob(overrides: Partial<GitHubWorkflowJob> = {}): GitHubWorkflow
 }
 
 describe("diagnostics helpers", () => {
-  it("按错误文本给 Git 恢复指引分类", () => {
-    expect(recoveryGuidanceForMessage("merge conflict in README").title).toBe("处理冲突后继续");
-    expect(recoveryGuidanceForMessage("HTTP 403 permission denied").title).toBe("恢复 GitHub 权限");
+  it("按同步失败文本给出状态、原因和下一步", () => {
+    const cases = [
+      ["merge conflict in README", "同步冲突待处理"],
+      ["存在未提交变更，已阻止 pull", "未提交变更阻塞同步"],
+      ["HTTP 403 permission denied", "认证或权限失效"],
+      ["remote: Repository not found", "认证或权限失效"],
+      ["failed to push some refs: non-fast-forward", "远端拒绝同步"],
+    ] as const;
+
+    for (const [message, title] of cases) {
+      const guidance = recoveryGuidanceForMessage(message);
+      expect(guidance.title).toBe(title);
+      expect(guidance.summary).not.toBe("");
+      expect(guidance.steps.length).toBeGreaterThan(1);
+    }
+
     expect(recoveryGuidanceForMessage("unknown failure").title).toBe("查看错误并重试");
   });
 

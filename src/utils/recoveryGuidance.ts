@@ -14,25 +14,25 @@ const guidanceRules: Array<{
   {
     match: /冲突|conflict|merge failed|rebase/i,
     guidance: {
-      title: "处理冲突后继续",
+      title: "同步冲突待处理",
       tone: "danger",
-      summary: "当前操作已停在冲突状态，需要先完成文件处理再继续 Git 操作。",
-      steps: ["进入变更页的冲突处理", "逐文件选择分段或整文件采用一侧", "全部暂存后继续当前合并或 rebase"],
+      summary: "pull 或合并已停在冲突状态，需要先完成文件处理。",
+      steps: ["进入变更页处理冲突文件", "逐文件选择分段或整文件采用一侧", "全部暂存后继续当前合并或 rebase"],
     },
   },
   {
     match: /未提交变更|local changes|dirty|would be overwritten|stash/i,
     guidance: {
-      title: "保护本地修改",
+      title: "未提交变更阻塞同步",
       tone: "warn",
-      summary: "同步被本地未提交内容阻止，先决定保留、暂存还是放弃这些修改。",
-      steps: ["检查变更列表", "提交或 stash 需要保留的内容", "确认无误后重新执行 pull / sync"],
+      summary: "pull 或自动同步会覆盖本地未提交内容，因此已被阻止。",
+      steps: ["检查变更列表", "提交、stash 或放弃需要处理的内容", "确认工作区干净后重新同步"],
     },
   },
   {
     match: /upstream|上游/i,
     guidance: {
-      title: "设置 upstream",
+      title: "缺少 upstream",
       tone: "warn",
       summary: "当前分支缺少可同步的远端跟踪分支。",
       steps: ["确认当前分支应推送到哪个 remote", "使用推送当前分支或设置 upstream", "再次执行同步"],
@@ -41,19 +41,37 @@ const guidanceRules: Array<{
   {
     match: /认证|权限|permission|auth|403|401|credential|token/i,
     guidance: {
-      title: "恢复 GitHub 权限",
+      title: "认证或权限失效",
       tone: "danger",
-      summary: "GitHub 凭证或权限不足导致操作失败。",
-      steps: ["重新绑定 GitHub", "检查仓库访问权限和 token scope", "必要时切换为系统 Git 推送"],
+      summary: "GitHub 凭证失效、权限不足或当前账号无法访问该仓库。",
+      steps: ["重新绑定 GitHub", "检查仓库访问权限和 token scope", "处理权限后重新执行同步"],
     },
   },
   {
-    match: /origin remote|remote.*not|没有 origin/i,
+    match: /repository not found|仓库不存在|无法访问 GitHub 仓库/i,
     guidance: {
-      title: "补齐 remote",
+      title: "认证或权限失效",
+      tone: "danger",
+      summary: "当前账号无法访问远端仓库，或远端仓库已不存在。",
+      steps: ["确认远端仓库地址", "重新绑定有访问权限的 GitHub 账号", "刷新仓库状态后重新同步"],
+    },
+  },
+  {
+    match: /origin remote|remote ['"]?origin['"]? not|没有 origin|no such remote/i,
+    guidance: {
+      title: "缺少 origin remote",
       tone: "warn",
       summary: "仓库缺少可用于同步的 origin remote。",
       steps: ["在终端或 Git 工具中添加 origin", "刷新仓库状态", "重新执行同步操作"],
+    },
+  },
+  {
+    match: /rejected|failed to push some refs|non-fast-forward|fetch first|pre-receive hook declined|protected branch|remote rejected|GH006|GH013/i,
+    guidance: {
+      title: "远端拒绝同步",
+      tone: "danger",
+      summary: "远端拒绝了 push，通常是分支落后、分支保护或服务端规则阻止写入。",
+      steps: ["先拉取并合并远端更新", "检查分支保护和必需检查", "满足远端规则后重新推送"],
     },
   },
 ];
