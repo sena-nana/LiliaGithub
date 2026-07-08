@@ -4354,7 +4354,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               <strong>{{ error.title }}</strong>
               <p>{{ error.message }}</p>
               <p class="project-sidebar-error-card__guidance">
-                {{ error.guidance.title }}：{{ error.guidance.steps.join(" / ") }}
+                状态：{{ error.guidance.title }}。原因：{{ error.guidance.summary }}。下一步：{{ error.guidance.steps.join(" / ") }}
               </p>
             </div>
             <button
