@@ -1,12 +1,5 @@
 <script setup lang="ts">
-import {
-  CircleDot,
-  GitPullRequestArrow,
-  MessageSquare,
-  PencilLine,
-  Text,
-} from "@lucide/vue";
-import type { Component } from "vue";
+import { PencilLine } from "@lucide/vue";
 import { computed } from "vue";
 import { openUrl } from "../../services/workspace/client";
 import type { GitHubDiscussionTimelineItem } from "../../services/workspace/types";
@@ -32,13 +25,6 @@ function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
-}
-
-function timelineIcon(item: GitHubDiscussionTimelineItem): Component {
-  if (item.kind === "body") return Text;
-  if (item.kind === "comment") return MessageSquare;
-  if (item.kind === "review" || item.kind === "reviewComment") return GitPullRequestArrow;
-  return CircleDot;
 }
 
 function itemTitle(item: GitHubDiscussionTimelineItem) {
@@ -94,9 +80,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
         :class="`is-${item.kind}`"
       >
         <span class="discussion-timeline__rail" aria-hidden="true">
-          <span class="discussion-timeline__node">
-            <component :is="timelineIcon(item)" :size="14" aria-hidden="true" />
-          </span>
+          <span class="discussion-timeline__node"></span>
         </span>
         <div class="discussion-timeline__body">
           <article v-if="item.kind !== 'event'" class="discussion-timeline__entry">
@@ -161,10 +145,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   gap: 0;
   min-width: 0;
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
+  padding: 0;
   list-style: none;
 }
 
@@ -182,7 +163,8 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   display: flex;
   justify-content: center;
   min-height: 100%;
-  padding-top: 14px;
+  padding-top: 18px;
+  color: var(--text-muted);
 }
 
 .discussion-timeline__rail::before {
@@ -191,44 +173,42 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
   bottom: 0;
   width: 2px;
   content: "";
-  background: color-mix(in srgb, var(--text-muted) 34%, transparent);
+  background: color-mix(in srgb, currentColor 46%, transparent);
 }
 
 .discussion-timeline__item:first-child .discussion-timeline__rail::before {
-  top: 18px;
+  top: 20px;
 }
 
 .discussion-timeline__item:last-child .discussion-timeline__rail::before {
-  bottom: calc(100% - 18px);
+  bottom: calc(100% - 20px);
 }
 
 .discussion-timeline__node {
   position: relative;
   z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  color: var(--text-muted);
-  background: var(--bg-elev);
-  border: 1px solid color-mix(in srgb, currentColor 30%, var(--border));
-  border-radius: 4px;
+  display: block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 22%, transparent);
 }
 
-.discussion-timeline__item.is-body .discussion-timeline__node,
-.discussion-timeline__item.is-comment .discussion-timeline__node {
+.discussion-timeline__item.is-body .discussion-timeline__rail,
+.discussion-timeline__item.is-comment .discussion-timeline__rail {
   color: var(--accent);
 }
 
-.discussion-timeline__item.is-review .discussion-timeline__node,
-.discussion-timeline__item.is-reviewComment .discussion-timeline__node {
-  color: var(--success);
+.discussion-timeline__item.is-review .discussion-timeline__rail,
+.discussion-timeline__item.is-reviewComment .discussion-timeline__rail {
+  color: var(--ok);
 }
 
 .discussion-timeline__body {
   min-width: 0;
-  padding: 10px 0 14px;
+  padding: 14px 4px 18px 0;
   border-bottom: 1px solid var(--border-soft);
 }
 
