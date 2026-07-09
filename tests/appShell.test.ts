@@ -135,6 +135,14 @@ function sidebarRowForText(container: HTMLElement, text: string): HTMLElement {
   return row;
 }
 
+function sidebarRepoIconForText(container: HTMLElement, text: string): SVGElement {
+  const icon = sidebarRowForText(container, text).querySelector(".sb-tree__repo-icon");
+  if (!(icon instanceof SVGElement)) {
+    throw new Error(`未找到侧边栏仓库图标: ${text}`);
+  }
+  return icon;
+}
+
 function repoStatusRowForText(container: HTMLElement, text: string): HTMLElement {
   const label = Array.from(container.querySelectorAll(".repo-status-row__name")).find(
     (node) => node.textContent === text,
@@ -682,7 +690,7 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("仓库行优先显示 GitHub repo 名称，缺失时回退本地目录名", async () => {
+  it("仓库行按工作树、远端仓库、本地目录来源显示名称和图标", async () => {
     const view = await renderAppShell("/repos/LiliaGithub");
 
     await waitFor(() => {
@@ -690,6 +698,17 @@ describe("AppShell sidebar", () => {
     });
 
     state.repos = [
+      repoSummary("workspace/local-worktree", {
+        name: "feature-worktree",
+        path: "C:\\Files\\workspace\\local-worktree",
+        relativePath: "workspace/local-worktree",
+        githubFullName: "sena-nana/remote-repo",
+        worktree: {
+          role: "linked",
+          sharedRepoKey: "shared:remote-repo",
+          mainRepoId: "workspace/local-folder",
+        },
+      }),
       repoSummary("workspace/local-folder", {
         name: "local-folder",
         path: "C:\\Files\\workspace\\local-folder",
@@ -705,11 +724,18 @@ describe("AppShell sidebar", () => {
     ];
 
     await waitFor(() => {
+      expect(sidebarRowForText(view.container, "feature-worktree")).toHaveAttribute(
+        "title",
+        "sena-nana/remote-repo · C:\\Files\\workspace\\local-worktree",
+      );
       expect(sidebarRowForText(view.container, "remote-repo")).toHaveAttribute(
         "title",
         "sena-nana/remote-repo · C:\\Files\\workspace\\local-folder",
       );
       expect(sidebarRowForText(view.container, "local-only")).toBeInTheDocument();
+      expect(sidebarRepoIconForText(view.container, "feature-worktree")).toHaveClass("is-worktree");
+      expect(sidebarRepoIconForText(view.container, "remote-repo")).toHaveClass("is-remote");
+      expect(sidebarRepoIconForText(view.container, "local-only")).toHaveClass("is-local");
     });
   });
 
@@ -739,6 +765,7 @@ describe("AppShell sidebar", () => {
     await waitFor(() => {
       expect(view.getByText("远程仓库 1")).toBeInTheDocument();
       expect(sidebarRowForText(view.container, "RemoteOnly")).toHaveAttribute("title", "sena-nana/RemoteOnly");
+      expect(sidebarRepoIconForText(view.container, "RemoteOnly")).toHaveClass("is-remote");
     });
 
     await fireEvent.click(sidebarRowForText(view.container, "RemoteOnly"));
