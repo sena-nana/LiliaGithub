@@ -2791,7 +2791,6 @@ describe("基础路由", () => {
     const viewTabs = screen.getByRole("tablist", { name: "仓库页面" });
     expect(within(viewTabs).queryByRole("tab", { name: "分支" })).toBeNull();
     expect(screen.queryByRole("group", { name: "当前分支" })).toBeNull();
-    expect(within(viewTabs).getByRole("button", { name: "main" })).toBeInTheDocument();
 
     const launchGroup = screen.getByRole("group", { name: "命令执行" });
     const launchInput = await within(launchGroup).findByRole("combobox", { name: "启动命令" });

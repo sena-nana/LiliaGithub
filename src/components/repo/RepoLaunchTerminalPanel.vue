@@ -97,7 +97,7 @@ async function scrollTerminalToEnd() {
 
 <template>
   <section class="project-terminal-card">
-    <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端">
+    <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端" data-agent-id="repo.launch.terminal">
       <div v-if="launchError" class="project-terminal__line project-terminal__line--error">{{ launchError }}</div>
       <pre v-if="launchLogs.length" class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
       <div v-else class="project-terminal__line project-terminal__line--muted">暂无输出。</div>

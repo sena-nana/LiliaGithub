@@ -142,6 +142,10 @@ function closeLaunchPicker() {
   launchPickerOpen.value = false;
 }
 
+function launchCandidateAgentId(value: string) {
+  return `repo.toolbar.launch.candidate.${encodeURIComponent(value)}`;
+}
+
 function selectLaunchCommandOption(option: DropdownOption) {
   if (launchCommandDisabled.value || option.disabled) return;
   launchCommandDraft.value = option.command?.trim() || option.label;
@@ -274,6 +278,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
                 role="option"
                 :aria-selected="option.value === activeLaunchValue"
                 :disabled="option.disabled"
+                :data-agent-id="launchCandidateAgentId(option.value)"
                 @click="selectLaunchCommandOption(option)"
               >
                 <span class="repo-toolbar__command-option-label">{{ option.label }}</span>
