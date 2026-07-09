@@ -28,6 +28,7 @@ vi.mock("../src/composables/workspace/serviceLoader", () => ({
 beforeEach(() => {
   resetWorkspaceStateForTests();
   vi.clearAllMocks();
+  service.getRepoLaunchConfig.mockResolvedValue(null);
   service.listRepoLaunchCandidates.mockResolvedValue([]);
   service.getRepoLaunchStatus.mockImplementation(async (repoId: string) => ({
     repoId,
@@ -52,6 +53,25 @@ beforeEach(() => {
 });
 
 describe("workspace launch loading", () => {
+  it("复用同一仓库正在加载的启动命令候选请求", async () => {
+    const config = deferred<null>();
+    service.getRepoLaunchConfig.mockReturnValue(config.promise);
+    service.listRepoLaunchCandidates.mockResolvedValue([
+      { command: "yarn dev", label: "dev", hint: null, kind: "package", cwd: null },
+    ]);
+
+    const firstLoad = loadLaunch("repo-a");
+    const secondLoad = loadLaunch("repo-a");
+    config.resolve(null);
+    const [first, second] = await Promise.all([firstLoad, secondLoad]);
+
+    expect(first.candidates.map((item) => item.command)).toEqual(["yarn dev"]);
+    expect(second).toBe(first);
+    expect(service.getRepoLaunchConfig).toHaveBeenCalledTimes(1);
+    expect(service.listRepoLaunchCandidates).toHaveBeenCalledTimes(1);
+    expect(service.getRepoLaunchStatus).toHaveBeenCalledTimes(1);
+  });
+
   it("并发加载多个仓库启动信息时保持 loading 到最后一个完成", async () => {
     const first = deferred();
     const second = deferred();

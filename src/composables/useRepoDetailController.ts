@@ -455,6 +455,7 @@ export function useRepoDetailController() {
         await loadRemoteGitHubData(githubRepoFullName.value);
         return;
       }
+      const launchLoad = loadLaunchData(targetRepoId, runId);
       repoDetailLoading.value = true;
       repoDetailError.value = null;
       try {
@@ -478,20 +479,25 @@ export function useRepoDetailController() {
         await loadGitHubBranches(githubRepoFullName.value);
       }
       if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
-      try {
-        await workspace.loadLaunch(targetRepoId);
-      } catch (err) {
-        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
-        const message = String(err);
-        if (activeTab.value === "run") launchError.value = message;
-        else actionError.value ??= message;
-      }
+      await launchLoad;
       if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
       await workspace.refreshRepoLanguageStats(targetRepoId).catch((err) => {
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         actionError.value = String(err);
       });
     });
+  }
+
+  async function loadLaunchData(targetRepoId: string, runId: number) {
+    if (!repoContext.value.capabilities.launch.available) return;
+    try {
+      await workspace.loadLaunch(targetRepoId);
+    } catch (err) {
+      if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+      const message = String(err);
+      if (activeTab.value === "run") launchError.value = message;
+      else actionError.value ??= message;
+    }
   }
 
   async function loadRemoteGitHubData(repoFullName: string | null) {
