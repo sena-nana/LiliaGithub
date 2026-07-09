@@ -1118,6 +1118,7 @@ fn managed_repo_paths_and_prune_settings(
     let (paths, changed) = managed_repo_paths_and_prune_stale(root, settings);
     if changed {
         save_settings(app, settings)?;
+        crate::workspace::watcher::sync_repo_watchers(app);
     }
     Ok(paths)
 }
@@ -1191,6 +1192,7 @@ pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSumm
             .map(|path| cached_repo_summary(&cache, lightweight_repo_summary(&root, &path)))
             .collect();
         sort_repos(&mut repos);
+        crate::workspace::watcher::sync_repo_watchers(&app);
         Ok(repos)
     })
     .await
@@ -1216,6 +1218,7 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
             add_managed_repo_id(&mut settings, repo_id(&root, path));
         }
         save_settings(&app, &settings)?;
+        crate::workspace::watcher::sync_repo_watchers(&app);
         let mut repos =
             filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
         sort_repos(&mut repos);
@@ -1247,6 +1250,7 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
         }
         settings.hidden_repo_ids.retain(|id| id != &selected_repo_id);
         save_settings(&app, &settings)?;
+        crate::workspace::watcher::sync_repo_watchers(&app);
         let summary = summarize_repo(&root, &path);
         let _ = write_startup_repo_summary(&app, &settings, &summary);
         update_workspace_task(&task.id, "success", Some("已添加仓库".to_string()));
@@ -1332,6 +1336,7 @@ pub async fn workspace_create_local_repo(
         add_managed_repo_id(&mut settings, repo_id.clone());
         settings.hidden_repo_ids.retain(|id| id != &repo_id);
         save_settings(&app, &settings)?;
+        crate::workspace::watcher::sync_repo_watchers(&app);
         let summary = summarize_repo(&root, &target);
         let _ = write_startup_repo_summary(&app, &settings, &summary);
         update_workspace_task(&task.id, "success", Some("已创建本地仓库".to_string()));
@@ -1383,6 +1388,7 @@ pub async fn workspace_clone_repo(
         let mut settings = load_settings(&app);
         add_managed_repo_id(&mut settings, repo_id(&root, &target));
         save_settings(&app, &settings)?;
+        crate::workspace::watcher::sync_repo_watchers(&app);
         let summary = summarize_repo(&root, &target);
         let _ = write_startup_repo_summary(&app, &settings, &summary);
         Ok(summary)

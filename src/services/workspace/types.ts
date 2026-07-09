@@ -114,6 +114,13 @@ export interface ProjectLaunchStatus {
   error: string | null;
 }
 
+export type RepoChangedKind = "worktree" | "git-metadata";
+
+export interface RepoChangedEvent {
+  repoId: string;
+  kind: RepoChangedKind;
+}
+
 export interface ProjectLaunchLog {
   index: number;
   repoId: string;

@@ -489,6 +489,20 @@ export async function refreshRepoSummaries(options: RepoSummaryRefreshOptions = 
   }
 }
 
+export async function refreshManagedRepoSummary(repoId: string) {
+  if (!repoId) return null;
+  if (!state.repos.some((repo) => repo.id === repoId)) return null;
+  try {
+    const service = await loadWorkspaceService();
+    const summary = await service.refreshRepoSummary(repoId, { fetchRemote: false });
+    upsertRepo(summary);
+    void autoSyncRepoIfNeeded(summary.id, { summary });
+    return summary;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchAll() {
   return refreshRepoSummaries();
 }

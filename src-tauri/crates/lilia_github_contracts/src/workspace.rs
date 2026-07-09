@@ -201,6 +201,13 @@ pub struct ProjectLaunchStatus {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoChangedEvent {
+    pub repo_id: String,
+    pub kind: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectLaunchLog {

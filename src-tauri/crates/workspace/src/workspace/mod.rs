@@ -8,6 +8,7 @@ pub mod settings;
 mod shared;
 pub mod system;
 pub mod tasks;
+pub(crate) mod watcher;
 
 async fn run_blocking<T, F>(label: &'static str, task: F) -> Result<T, String>
 where
