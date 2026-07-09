@@ -15,7 +15,7 @@ defineProps<{
   title: string;
   href: string;
   icon: Component;
-  linkedWorktree: boolean;
+  iconClass: string;
   active: boolean;
   dirtyCount: number;
   ahead: number;
@@ -47,7 +47,7 @@ defineEmits<{
       :size="14"
       aria-hidden="true"
       class="sb-tree__repo-icon"
-      :class="{ 'is-worktree': linkedWorktree }"
+      :class="iconClass"
     />
     <span class="sb-tree__name">{{ name }}</span>
     <span

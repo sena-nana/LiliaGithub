@@ -1,19 +1,24 @@
 import type { GitHubWorkflowRun, RepoChange, RepoSummary } from "../services/workspace";
 
 type RepoIdentity = Pick<RepoSummary, "name" | "path" | "githubFullName" | "worktree">;
+export type RepoDisplaySource = "worktree" | "remote" | "local";
 export type WorkflowRunTone = "error" | "warn" | "ok" | "muted";
 
-export function repoDisplayName(repo: RepoIdentity | null | undefined) {
+export function repoDisplayInfo(repo: RepoIdentity | null | undefined): { name: string; source: RepoDisplaySource } {
   if (repo?.worktree?.role === "linked") {
-    return repo.name;
+    return { name: repo.name, source: "worktree" };
   }
   const githubFullName = repo?.githubFullName?.trim();
   if (githubFullName) {
     const parts = githubFullName.split("/").filter(Boolean);
     const repoName = parts[parts.length - 1];
-    if (repoName) return repoName;
+    if (repoName) return { name: repoName, source: "remote" };
   }
-  return repo?.name ?? "仓库";
+  return { name: repo?.name ?? "仓库", source: "local" };
+}
+
+export function repoDisplayName(repo: RepoIdentity | null | undefined) {
+  return repoDisplayInfo(repo).name;
 }
 
 export function repoDisplayTitle(repo: RepoIdentity) {

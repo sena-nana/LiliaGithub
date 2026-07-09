@@ -26,10 +26,9 @@ import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import { SidebarCollapse, openContextMenuAt, type ContextMenuItem, type ContextMenuProvider } from "@lilia/ui";
-import { repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
+import { repoDisplayInfo, repoDisplayTitle, type RepoDisplaySource } from "../utils/repoDisplay";
 import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
-import { isLinkedWorktree } from "../utils/repoWorktree";
 import type { RepoSummary } from "../services/workspace";
 import {
   DEFAULT_REPO_SORT,
@@ -126,7 +125,7 @@ interface RepoItem {
   href: string;
   githubFullName: string | null;
   icon: Component;
-  linkedWorktree: boolean;
+  iconClass: string;
   dirtyCount: number;
   ahead: number;
   behind: number;
@@ -161,7 +160,7 @@ function sameRepoItem(current: RepoItem, next: RepoItem) {
     current.href === next.href &&
     current.githubFullName === next.githubFullName &&
     current.icon === next.icon &&
-    current.linkedWorktree === next.linkedWorktree &&
+    current.iconClass === next.iconClass &&
     current.dirtyCount === next.dirtyCount &&
     current.ahead === next.ahead &&
     current.behind === next.behind &&
@@ -179,18 +178,24 @@ function repoRouteEntry(repoId: string) {
   return entry;
 }
 
+function repoDisplayIcon(source: RepoDisplaySource) {
+  if (source === "worktree") return GitBranch;
+  if (source === "remote") return GitPullRequestArrow;
+  return FolderGit2;
+}
+
 function repoItem(repo: RepoSummary, sourceIndex: number) {
-  const linkedWorktree = isLinkedWorktree(repo);
+  const display = repoDisplayInfo(repo);
   const routeEntry = repoRouteEntry(repo.id);
   const nextItem: RepoItem = {
     id: repo.id,
-    name: repoDisplayName(repo),
+    name: display.name,
     title: repoDisplayTitle(repo),
     to: routeEntry.to,
     href: routeEntry.href,
     githubFullName: repo.githubFullName ?? null,
-    icon: linkedWorktree ? GitBranch : FolderGit2,
-    linkedWorktree,
+    icon: repoDisplayIcon(display.source),
+    iconClass: `is-${display.source}`,
     dirtyCount: repoDirtyCount(repo),
     ahead: repo.ahead,
     behind: repo.behind,
@@ -741,7 +746,7 @@ async function deleteGroup(group: { id: string }) {
               :title="item.title"
               :href="item.href"
               :icon="item.icon"
-              :linked-worktree="item.linkedWorktree"
+              :icon-class="item.iconClass"
               :active="activeRepoId === item.id"
               :dirty-count="item.dirtyCount"
               :ahead="item.ahead"
@@ -787,7 +792,7 @@ async function deleteGroup(group: { id: string }) {
             @keydown.enter.prevent="openRemoteRepo(repo.fullName)"
             @keydown.space.prevent="openRemoteRepo(repo.fullName)"
           >
-            <FolderGit2 :size="14" aria-hidden="true" />
+            <GitPullRequestArrow :size="14" aria-hidden="true" class="sb-tree__repo-icon is-remote" />
             <span class="sb-tree__name">{{ repo.name }}</span>
             <span v-if="repo.archived" class="sb-badge">ARCH</span>
             <span v-if="repo.private" class="sb-badge">私有</span>
