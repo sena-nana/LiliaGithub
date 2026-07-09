@@ -2373,6 +2373,33 @@ async function refreshActionsPanel() {
   ]);
 }
 
+async function refreshEnteredRemoteSection(section: ProjectContentMode) {
+  if (activeSection.value !== section || remoteDeleted.value) return;
+  const tasks: Promise<unknown>[] = [];
+  if (section === "issues") {
+    tasks.push(loadIssues(true), loadIssueFilterMetadata(true));
+    if (focusedIssueNumber.value) tasks.push(loadIssueDiscussion(focusedIssueNumber.value, true));
+  } else if (section === "milestones") {
+    tasks.push(loadMilestoneItems(true), loadIssueFilterMetadata(true));
+  } else if (section === "pulls") {
+    tasks.push(loadPullRequests(true), loadIssueFilterMetadata(true));
+    if (focusedPullRequestNumber.value) tasks.push(loadPullRequestDiscussion(focusedPullRequestNumber.value, true));
+  } else if (section === "actions") {
+    tasks.push(refreshActionsPanel());
+  } else if (section === "release") {
+    tasks.push(loadReleases(true));
+  }
+  await Promise.all(tasks);
+}
+
+async function loadRemoteSectionData(section: ProjectContentMode, tasks: Promise<unknown>[]) {
+  await Promise.all([
+    preloadRepoProjectSection(section),
+    ...tasks,
+  ]);
+  void refreshEnteredRemoteSection(section);
+}
+
 async function ensureSectionData(section: ProjectContentMode) {
   const preload = preloadRepoProjectSection(section);
   if (section === "readme") {
@@ -2384,39 +2411,35 @@ async function ensureSectionData(section: ProjectContentMode) {
     return;
   }
   if (section === "issues") {
-    await Promise.all([
-      preload,
+    await loadRemoteSectionData(section, [
       loadIssues(),
       loadIssueFilterMetadata(),
     ]);
     return;
   }
   if (section === "milestones") {
-    await Promise.all([
-      preload,
+    await loadRemoteSectionData(section, [
       loadMilestoneItems(),
       loadIssueFilterMetadata(),
     ]);
     return;
   }
   if (section === "pulls") {
-    await Promise.all([
-      preload,
+    await loadRemoteSectionData(section, [
       loadPullRequests(),
       loadIssueFilterMetadata(),
     ]);
     return;
   }
   if (section === "actions") {
-    await Promise.all([
-      preload,
+    await loadRemoteSectionData(section, [
       loadActions(),
       loadReleases(),
     ]);
     return;
   }
   if (section === "release") {
-    await Promise.all([preload, loadReleases()]);
+    await loadRemoteSectionData(section, [loadReleases()]);
     return;
   }
   if (section === "settings") {
