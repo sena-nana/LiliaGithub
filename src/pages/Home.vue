@@ -1166,8 +1166,11 @@ function homePendingActionAgentId(item: HomePendingItem, action: HomePendingActi
   return `home.pending.${item.id}.${action}`;
 }
 
-function homePendingConfirmAgentId(action: NonNullable<typeof homePendingConfirmAction.value>) {
-  return `${homePendingActionAgentId(action.item, action.action)}.confirm`;
+function homePendingConfirmControlAgentId(
+  action: NonNullable<typeof homePendingConfirmAction.value>,
+  control: "close" | "cancel" | "confirm",
+) {
+  return `${homePendingActionAgentId(action.item, action.action)}.${control}`;
 }
 
 function homePendingActionTargetLabel(item: HomePendingItem) {
@@ -2270,16 +2273,29 @@ function bulkOperationDescription(operation: BulkOperation) {
             <h2>{{ homePendingConfirmTitle(homePendingConfirmAction) }}</h2>
             <p class="muted">{{ homePendingConfirmBody(homePendingConfirmAction) }}</p>
           </div>
-          <button type="button" class="ghost" aria-label="关闭" @click="closeHomePendingConfirm">
+          <button
+            type="button"
+            class="ghost"
+            aria-label="关闭"
+            :data-agent-id="homePendingConfirmControlAgentId(homePendingConfirmAction, 'close')"
+            @click="closeHomePendingConfirm"
+          >
             <X :size="14" aria-hidden="true" />
           </button>
         </div>
         <div class="modal__footer">
-          <button type="button" class="ghost" @click="closeHomePendingConfirm">取消</button>
+          <button
+            type="button"
+            class="ghost"
+            :data-agent-id="homePendingConfirmControlAgentId(homePendingConfirmAction, 'cancel')"
+            @click="closeHomePendingConfirm"
+          >
+            取消
+          </button>
           <button
             type="button"
             class="primary"
-            :data-agent-id="homePendingConfirmAgentId(homePendingConfirmAction)"
+            :data-agent-id="homePendingConfirmControlAgentId(homePendingConfirmAction, 'confirm')"
             @click="confirmHomePendingAction"
           >
             确认{{ homePendingActionLabel(homePendingConfirmAction.action) }}

@@ -455,6 +455,27 @@ async function clickAgentTarget(sessionId, target) {
   return result;
 }
 
+async function waitForVisibleAgentId(sessionId, selectSource, args, errorMessage, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const target = await execute(
+      sessionId,
+      `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+       const observe = api?.observe?.();
+       const ids = (observe?.elements ?? [])
+         .filter((element) => element.visible !== false && element.disabled !== true)
+         .map((element) => element.id || element.agentId)
+         .filter(Boolean);
+       const select = ${selectSource};
+       return select(ids, ...arguments) || null;`,
+      args,
+    ).catch(() => null);
+    if (target) return target;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(errorMessage);
+}
+
 async function observeAgentStep(sessionId, label) {
   const observe = await execute(
     sessionId,
@@ -475,6 +496,71 @@ async function observeAgentStep(sessionId, label) {
   assertNoMissingAgentIds(observe, label);
   replay.push({ type: "observe", label, route: observe.route, elementCount: observe.elements.length });
   return observe;
+}
+
+const selectHomePendingOpenTarget = `(ids) => ids
+  .find((id) => /^home\\.pending\\.(issue:|pull-request:|workflow-notification:).+\\.open$/.test(id))`;
+
+const selectHomePendingActionTarget = `(ids) => {
+  const actionSuffixes = ["pull-merge", "issue-complete", "issue-close", "pull-close"];
+  for (const suffix of actionSuffixes) {
+    const target = ids.find((id) => id.startsWith("home.pending.") && id.endsWith("." + suffix));
+    if (target) return target;
+  }
+  return null;
+}`;
+
+function homePendingRouteMarker(target) {
+  if (target.startsWith("home.pending.issue:")) return "projectTab=issues";
+  if (target.startsWith("home.pending.pull-request:")) return "projectTab=pulls";
+  if (target.startsWith("home.pending.workflow-notification:")) return "projectTab=actions";
+  throw new Error(`Unsupported home pending route target: ${target}`);
+}
+
+async function waitForHomePendingActionRemoved(sessionId, target) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     const observe = api?.observe?.();
+     return !observe?.elements?.some((element) =>
+       (element.id || element.agentId) === arguments[0] && element.visible !== false
+     );`,
+    [target],
+    `Home pending action did not leave the pending list after confirmation: ${target}`,
+  );
+}
+
+async function runHomePendingFlow(sessionId) {
+  const openTarget = await waitForVisibleAgentId(
+    sessionId,
+    selectHomePendingOpenTarget,
+    [],
+    "No actionable home pending open target became visible.",
+  );
+  await clickAgentTarget(sessionId, openTarget);
+  await waitForRouteIncludes(sessionId, homePendingRouteMarker(openTarget));
+  await observeAgentStep(sessionId, "home-pending-open");
+
+  await clickAgentTarget(sessionId, "sidebar.nav.概览");
+  await waitForAgentElement(sessionId, "home.overview.search");
+
+  const actionTarget = await waitForVisibleAgentId(
+    sessionId,
+    selectHomePendingActionTarget,
+    [],
+    "No actionable home pending operation target became visible.",
+  );
+  const confirmTarget = `${actionTarget}.confirm`;
+  await clickAgentTarget(sessionId, actionTarget);
+  await waitForAgentElement(sessionId, confirmTarget);
+  await observeAgentStep(sessionId, "home-pending-confirm");
+
+  await clickAgentTarget(sessionId, confirmTarget);
+  await clickAgentTarget(sessionId, "sidebar.footer.tasks");
+  await waitForAgentElement(sessionId, "sidebar.footer.tasks.menu");
+  await waitForAgentElementPrefix(sessionId, "sidebar.footer.tasks.item.", 10_000);
+  await observeAgentStep(sessionId, "home-pending-background-task");
+  await waitForHomePendingActionRemoved(sessionId, actionTarget);
 }
 
 async function runRepoLaunchFlow(sessionId) {
@@ -637,6 +723,7 @@ async function runRegressionFlow(sessionId) {
     if (step.observe) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;
+      if (step.observe === "home-overview") await runHomePendingFlow(sessionId);
     }
     if (step.observe === "linked-worktree-repo") await runRepoLaunchFlow(sessionId);
     for (const target of step.after ?? []) await clickAgentTarget(sessionId, target);
