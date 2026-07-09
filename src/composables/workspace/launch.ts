@@ -3,6 +3,14 @@ import { loadWorkspaceService } from "./serviceLoader";
 
 let launchLoadCount = 0;
 let launchStateGenerations = new Map<string, number>();
+type LaunchSnapshot = {
+  config: (typeof state.launchConfigs)[string];
+  candidates: NonNullable<(typeof state.launchCandidates)[string]>;
+  status: NonNullable<(typeof state.launchStatuses)[string]>;
+  logs: NonNullable<(typeof state.launchLogs)[string]>;
+  history: NonNullable<(typeof state.launchHistory)[string]>;
+};
+let pendingLaunchLoads = new Map<string, Promise<LaunchSnapshot>>();
 
 function beginLaunchLoad() {
   launchLoadCount += 1;
@@ -40,10 +48,12 @@ function mergeLaunchLogs(
 }
 
 export async function loadLaunch(repoId: string) {
+  const pending = pendingLaunchLoads.get(repoId);
+  if (pending) return pending;
   beginLaunchLoad();
   state.error = null;
   const generation = currentLaunchGeneration(repoId);
-  try {
+  const load = (async () => {
     const service = await loadWorkspaceService();
     const [config, candidates, status, logs, history] = await Promise.all([
       service.getRepoLaunchConfig(repoId),
@@ -60,10 +70,17 @@ export async function loadLaunch(repoId: string) {
       state.launchHistory[repoId] = history;
     }
     return { config, candidates, status, logs, history };
+  })();
+  pendingLaunchLoads.set(repoId, load);
+  try {
+    return await load;
   } catch (err) {
     state.error = String(err);
     throw err;
   } finally {
+    if (pendingLaunchLoads.get(repoId) === load) {
+      pendingLaunchLoads.delete(repoId);
+    }
     finishLaunchLoad();
   }
 }

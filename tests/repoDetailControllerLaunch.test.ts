@@ -36,6 +36,14 @@ const candidate: ProjectLaunchCandidate = {
   cwd: "apps/web",
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 async function renderControllerHarness(repoId: string) {
   let controller: RepoDetailController | null = null;
   const router = createRouter({
@@ -107,6 +115,24 @@ describe("repo detail launch controller", () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it("loads launch command candidates before repo detail loading finishes", async () => {
+    const summary = repoSummary("repo-a");
+    const pendingDetail = deferred<ReturnType<typeof repoDetail>>();
+    service.getRepoDetail.mockReturnValueOnce(pendingDetail.promise);
+
+    const { controller } = await renderControllerHarness("repo-a");
+
+    await waitFor(() => {
+      expect(controller.launchCommandOptions.value.some((option) => option.command === candidate.command)).toBe(true);
+    });
+    expect(service.listRepoLaunchCandidates).toHaveBeenCalledWith("repo-a");
+
+    pendingDetail.resolve(repoDetail(summary));
+    await waitFor(() => {
+      expect(service.refreshRepoLanguageStats).toHaveBeenCalledWith("repo-a");
+    });
   });
 
   it("preserves candidate cwd when an edited launch command is started", async () => {
