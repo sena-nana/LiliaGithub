@@ -198,6 +198,10 @@ function safeArtifactName(label) {
   return label.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
 }
 
+function launchCandidateAgentId(command, cwd = null) {
+  return `repo.toolbar.launch.candidate.${encodeURIComponent(JSON.stringify([command, cwd ?? null]))}`;
+}
+
 function formatMissingAgentIds(missingAgentIds) {
   return missingAgentIds
     .slice(0, 10)
@@ -397,16 +401,18 @@ async function waitForAgentDebugCondition(sessionId, script, args, errorMessage,
   throw new Error(errorMessage);
 }
 
-async function waitForAgentElement(sessionId, target, timeoutMs = 30_000) {
+async function waitForAgentElement(sessionId, target, timeoutMs = 30_000, requireEnabled = false) {
   await waitForAgentDebugCondition(
     sessionId,
     `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
      const observe = api?.observe?.();
      return Boolean(observe?.elements?.some((element) =>
-       (element.id || element.agentId) === arguments[0] && element.visible !== false
+       (element.id || element.agentId) === arguments[0] &&
+       element.visible !== false &&
+       (!arguments[1] || element.disabled !== true)
      ));`,
-    [target],
-    `Agent debug target did not become visible: ${target}`,
+    [target, requireEnabled],
+    `Agent debug target did not become ${requireEnabled ? "enabled" : "visible"}: ${target}`,
     timeoutMs,
   );
 }
@@ -469,6 +475,43 @@ async function observeAgentStep(sessionId, label) {
   assertNoMissingAgentIds(observe, label);
   replay.push({ type: "observe", label, route: observe.route, elementCount: observe.elements.length });
   return observe;
+}
+
+async function runRepoLaunchFlow(sessionId) {
+  const candidateTarget = launchCandidateAgentId("yarn dev", null);
+
+  await waitForAgentElement(sessionId, "repo.toolbar.launch.input", 30_000, true);
+  await waitForAgentElement(sessionId, "repo.toolbar.launch.toggle", 30_000, true);
+  await execute(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     return api.act({ type: 'type', target: 'repo.toolbar.launch.input', text: 'dev', clear: true });`,
+  );
+  replay.push({ type: "type", target: "repo.toolbar.launch.input", text: "dev" });
+  await waitForAgentElement(sessionId, candidateTarget);
+  await observeAgentStep(sessionId, "repo-launch-candidates");
+  await clickAgentTarget(sessionId, candidateTarget);
+
+  await waitForAgentElement(sessionId, "repo.toolbar.launch.toggle", 30_000, true);
+  await clickAgentTarget(sessionId, "repo.toolbar.tab.run");
+  await waitForRouteIncludes(sessionId, "/run");
+  await waitForAgentElement(sessionId, "repo.launch.terminal");
+  await observeAgentStep(sessionId, "repo-launch-terminal-idle");
+
+  await clickAgentTarget(sessionId, "repo.toolbar.launch.toggle");
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const terminal = document.querySelector('[data-agent-id="repo.launch.terminal"]');
+     return Boolean(terminal?.querySelector('.launch-log--system') && terminal?.querySelector('.launch-log--stdout'));`,
+    [],
+    "Launch terminal did not render system and stdout log lines",
+  );
+  await observeAgentStep(sessionId, "repo-launch-terminal-running");
+
+  await waitForAgentElement(sessionId, "repo.toolbar.launch.toggle", 30_000, true);
+  await clickAgentTarget(sessionId, "repo.toolbar.launch.toggle");
+  await clickAgentTarget(sessionId, "repo.toolbar.tab.repo");
+  await waitForRouteIncludes(sessionId, "/repos/LiliaGithub-linked-worktree");
 }
 
 async function runRegressionFlow(sessionId) {
@@ -595,6 +638,7 @@ async function runRegressionFlow(sessionId) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;
     }
+    if (step.observe === "linked-worktree-repo") await runRepoLaunchFlow(sessionId);
     for (const target of step.after ?? []) await clickAgentTarget(sessionId, target);
   }
   return firstObserve;
