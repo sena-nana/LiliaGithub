@@ -440,6 +440,7 @@ pub fn workspace_set_root(
     settings.workspace_root = Some(root.to_string_lossy().to_string());
     save_settings(&app, &settings)?;
     let _ = clear_startup_cache(&app);
+    crate::workspace::watcher::clear_repo_watchers();
     Ok(settings)
 }
 
@@ -918,6 +919,7 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
     remove_local_contribution_cache(&mut settings, normalized);
     save_settings(&app, &settings)?;
     remove_startup_cache_repo(&app, normalized)?;
+    crate::workspace::watcher::sync_repo_watchers(&app);
     Ok(settings)
 }
 
@@ -985,6 +987,7 @@ pub async fn workspace_delete_local_repo(
         prune_deleted_repo_settings(&mut settings, normalized);
         save_settings(&app, &settings)?;
         remove_startup_cache_repo(&app, normalized)?;
+        crate::workspace::watcher::sync_repo_watchers(&app);
         Ok(settings)
     })
     .await
@@ -1015,6 +1018,7 @@ pub fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<Workspac
     let mut settings = load_settings(&app);
     settings.hidden_repo_ids.retain(|id| id != normalized);
     save_settings(&app, &settings)?;
+    crate::workspace::watcher::sync_repo_watchers(&app);
     Ok(settings)
 }
 

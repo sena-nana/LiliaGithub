@@ -10,6 +10,8 @@ libc = "0.2"
 lilia_github_contracts = { path = "../lilia_github_contracts" }
 lilia_github_git = { path = "../git" }
 lilia_github_github = { path = "../github" }
+notify = "6.1"
+notify-debouncer-full = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "form", "json", "query", "rustls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
