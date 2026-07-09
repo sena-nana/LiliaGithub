@@ -202,7 +202,7 @@ type HomeOverviewSnapshot = {
 
 type ProjectTabRef = "issues" | "pulls" | "actions";
 const REPO_STATUS_RENDER_PAGE_SIZE = 60;
-const HOME_PENDING_ITEM_LIMIT = 12;
+const HOME_PENDING_ITEM_LIMIT = 20;
 const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
 const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
 const REPO_STATUS_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
@@ -2947,6 +2947,7 @@ function bulkOperationDescription(operation: BulkOperation) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  height: 22px;
   margin-bottom: 8px;
 }
 
@@ -2955,7 +2956,9 @@ function bulkOperationDescription(operation: BulkOperation) {
   align-items: center;
   gap: 7px;
   min-width: 0;
+  height: 22px;
   margin: 0;
+  line-height: 22px;
 }
 
 .repo-status-heading__count {
@@ -2970,6 +2973,7 @@ function bulkOperationDescription(operation: BulkOperation) {
   justify-content: flex-end;
   gap: 4px;
   min-width: 0;
+  height: 22px;
 }
 
 .repo-status-sort-button {
@@ -2979,9 +2983,11 @@ function bulkOperationDescription(operation: BulkOperation) {
   justify-content: center;
   width: auto;
   min-width: 0;
-  height: 26px;
-  padding: 0 6px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0 5px;
   font-size: 12px;
+  line-height: 22px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -3008,7 +3014,7 @@ function bulkOperationDescription(operation: BulkOperation) {
   border-radius: 6px;
   color: inherit;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .repo-status-row:hover {
@@ -3033,7 +3039,6 @@ function bulkOperationDescription(operation: BulkOperation) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
   font-weight: 600;
 }
 
