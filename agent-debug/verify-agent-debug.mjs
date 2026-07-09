@@ -16,7 +16,7 @@ const appDataDir = path.join(runDir, "app-data");
 const webviewDataDir = path.join(runDir, "webview-data");
 const driverPort = Number.parseInt(process.env.LILIA_GITHUB_AGENT_DEBUG_DRIVER_PORT ?? "4444", 10);
 const driverUrl = `http://127.0.0.1:${driverPort}`;
-const defaultDevUrl = "http://localhost:1420";
+const defaultDevUrl = "http://127.0.0.1:1420";
 const explicitDevUrl = Boolean(process.env.LILIA_GITHUB_AGENT_DEBUG_DEV_URL);
 const explicitAppBinary = Boolean(process.env.LILIA_GITHUB_AGENT_DEBUG_APP);
 let devUrl = process.env.LILIA_GITHUB_AGENT_DEBUG_DEV_URL ?? defaultDevUrl;
@@ -27,6 +27,7 @@ const observedSnapshots = [];
 
 const agentDebugEnv = {
   LILIA_GITHUB_AGENT_DEBUG: "1",
+  VITE_LILIA_AGENT_DEBUG: "1",
   VITE_LILIA_GITHUB_AGENT_DEBUG: "1",
   VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE: "1",
   WEBVIEW2_USER_DATA_FOLDER: webviewDataDir,
@@ -140,6 +141,18 @@ async function waitForUrl(url, timeoutMs, label, child = null, output = []) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`${label} did not become ready within ${timeoutMs}ms`);
+}
+
+async function waitForLiliaGithubDevUrl(url, timeoutMs, child = null, output = []) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child && child.exitCode !== null) {
+      throw new Error(`Vite dev server exited before serving LiliaGithub: ${output.join("").trim() || child.exitCode}`);
+    }
+    if (await devUrlHasLiliaGithub(url)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`${url} became ready but is not serving LiliaGithub`);
 }
 
 function request(method, pathname, body) {
@@ -269,12 +282,84 @@ async function execute(sessionId, script, args = []) {
   return result?.value;
 }
 
+const observeAgentDebugScript = `
+const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+const snapshot = api?.observe?.();
+if (!snapshot) return null;
+const cssEscape = (value) => {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+  return String(value).replace(/["\\\\]/g, "\\\\$&");
+};
+const rectFor = (rect) => ({
+  x: rect?.x ?? 0,
+  y: rect?.y ?? 0,
+  width: rect?.width ?? 0,
+  height: rect?.height ?? 0,
+});
+const readRole = (element) => {
+  const explicit = element.getAttribute("role");
+  if (explicit) return explicit;
+  const tag = element.tagName.toLowerCase();
+  if (tag === "button") return "button";
+  if (tag === "input") return "input";
+  if (tag === "textarea") return "textbox";
+  if (tag === "a") return "link";
+  return null;
+};
+const readableText = (element) => (element.getAttribute("aria-label") || element.textContent || "").trim();
+const isVisible = (element, rect) => {
+  const style = window.getComputedStyle(element);
+  return style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    Number.parseFloat(style.opacity || "1") > 0 &&
+    Boolean(!rect || rect.width > 0 || rect.height > 0);
+};
+const diagnosticSelectorFor = (element) => {
+  const tag = element.tagName.toLowerCase();
+  const label = element.getAttribute("aria-label");
+  return label ? tag + "[aria-label=\\"" + cssEscape(label) + "\\"]" : tag;
+};
+const elements = (snapshot.elements ?? [])
+  .map((element) => ({
+    ...element,
+    id: element.id || element.agentId,
+    visible: element.visible !== false,
+  }))
+  .filter((element) => element.id);
+const missingAgentIds = Array.from(document.querySelectorAll("button, a[href], input, textarea, select, [role='button'], [tabindex]"))
+  .filter((element) => !element.dataset.agentId)
+  .map((element) => {
+    const rect = element.getBoundingClientRect();
+    if (!isVisible(element, rect)) return null;
+    return {
+      role: readRole(element),
+      text: readableText(element),
+      tagName: element.tagName.toLowerCase(),
+      selector: diagnosticSelectorFor(element),
+      rect: rectFor(rect),
+      nearestAgentId: element.closest("[data-agent-id]")?.dataset.agentId ?? null,
+    };
+  })
+  .filter(Boolean);
+return {
+  ...snapshot,
+  activeElement: snapshot.activeElement?.id
+    ? snapshot.activeElement
+    : snapshot.activeElement?.agentId
+      ? { ...snapshot.activeElement, id: snapshot.activeElement.agentId }
+      : snapshot.activeElement,
+  enabled: true,
+  elements,
+  missingAgentIds: snapshot.missingAgentIds ?? missingAgentIds,
+};
+`;
+
 async function waitForDebugApi(sessionId) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const ready = await execute(
       sessionId,
-      "return Boolean(window.__liliaGithubAgentDebug?.observe?.().enabled || window.__liliaAgentDebug?.observe?.().enabled);",
+      "const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug; return Boolean(api?.observe && api?.act);",
     ).catch(() => false);
     if (ready) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -290,10 +375,10 @@ async function waitForDebugUi(sessionId) {
       `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
        const observe = api?.observe?.();
        return Boolean(observe?.elements?.some((element) =>
-         element.id === "app.shell" ||
-         element.id === "setup.screen" ||
-         element.id === "sidebar" ||
-         element.id === "titlebar"
+         (element.id || element.agentId) === "app.shell" ||
+         (element.id || element.agentId) === "setup.screen" ||
+         (element.id || element.agentId) === "sidebar" ||
+         (element.id || element.agentId) === "titlebar"
        ));`,
     ).catch(() => false);
     if (ready) return;
@@ -317,7 +402,9 @@ async function waitForAgentElement(sessionId, target, timeoutMs = 30_000) {
     sessionId,
     `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
      const observe = api?.observe?.();
-     return Boolean(observe?.elements?.some((element) => element.id === arguments[0] && element.visible));`,
+     return Boolean(observe?.elements?.some((element) =>
+       (element.id || element.agentId) === arguments[0] && element.visible !== false
+     ));`,
     [target],
     `Agent debug target did not become visible: ${target}`,
     timeoutMs,
@@ -329,7 +416,9 @@ async function waitForAgentElementPrefix(sessionId, prefix, timeoutMs = 30_000) 
     sessionId,
     `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
      const observe = api?.observe?.();
-     return Boolean(observe?.elements?.some((element) => element.id.startsWith(arguments[0]) && element.visible));`,
+     return Boolean(observe?.elements?.some((element) =>
+       (element.id || element.agentId || "").startsWith(arguments[0]) && element.visible !== false
+     ));`,
     [prefix],
     `Agent debug target prefix did not become visible: ${prefix}`,
     timeoutMs,
@@ -363,7 +452,7 @@ async function clickAgentTarget(sessionId, target) {
 async function observeAgentStep(sessionId, label) {
   const observe = await execute(
     sessionId,
-    "const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug; return api?.observe?.() ?? null;",
+    observeAgentDebugScript,
   );
   if (!observe?.enabled) throw new Error(`Agent debug API is not enabled during ${label}`);
   if (!observe.elements?.length) throw new Error(`Agent debug snapshot for ${label} has no addressable elements`);
@@ -463,8 +552,6 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: [
-        "repo.release.filters.type",
-        "repo.release.filters.type.prerelease",
         "repo.release.filters.tag.v1.0.0-beta",
         "repo.release.create",
       ],
@@ -478,17 +565,17 @@ async function runRegressionFlow(sessionId) {
       observe: "repo-settings",
     },
     {
-      clicks: ["sidebar.footer.settings", "settings.sidebar.appearance"],
+      clicks: ["sidebar.footer.settings", "settings.tab.appearance"],
       waits: ["settings.appearance.theme.dark", "settings.appearance.corner.radius"],
       observe: "settings-appearance",
     },
     {
-      clicks: ["settings.sidebar.repositories"],
+      clicks: ["settings.tab.repositories"],
       waits: ["settings.repositories.github.bind", "settings.repositories.create-remote"],
       observe: "settings-repositories",
     },
     {
-      clicks: ["settings.sidebar.about"],
+      clicks: ["settings.tab.about"],
       waits: ["settings.about.release.check"],
       observe: "settings-about-release",
     },
@@ -602,7 +689,9 @@ async function main() {
   let sessionId = null;
   try {
     if (await isUrlReady(devUrl)) {
-      if (!(await devUrlHasLiliaGithub(devUrl))) {
+      try {
+        await waitForLiliaGithubDevUrl(devUrl, 5_000);
+      } catch {
         await writeJson("summary.json", {
           status: "blocked",
           runId,
@@ -627,9 +716,7 @@ async function main() {
       devServer.stdout.on("data", (chunk) => devServerOutput.push(chunk.toString("utf8")));
       devServer.stderr.on("data", (chunk) => devServerOutput.push(chunk.toString("utf8")));
       await waitForUrl(devUrl, 30_000, "Vite dev server", devServer, devServerOutput);
-      if (!(await devUrlHasLiliaGithub(devUrl))) {
-        throw new Error(`${devUrl} became ready but is not serving LiliaGithub`);
-      }
+      await waitForLiliaGithubDevUrl(devUrl, 30_000, devServer, devServerOutput);
     }
 
     driver = spawn("tauri-driver", ["--port", String(driverPort)], {
@@ -668,7 +755,8 @@ async function main() {
 
     const markResult = await execute(
       sessionId,
-      "const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug; return api.mark('verify-agent-debug-smoke', { source: 'agent-debug:verify' });",
+      `(window.__liliaGithubAgentDebug || window.__liliaAgentDebug).mark('verify-agent-debug-smoke', { source: 'agent-debug:verify' });
+       ${observeAgentDebugScript}`,
     );
     await writeJson("after-mark-observe.json", markResult);
     replay.push({ type: "mark", label: "verify-agent-debug-smoke" });

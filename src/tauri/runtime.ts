@@ -2,7 +2,7 @@ import { convertFileSrc, invoke as rawInvoke } from "@tauri-apps/api/core";
 import {
   recordAgentDebugInvokeEnd,
   recordAgentDebugInvokeStart,
-} from "../agentDebug/harness";
+} from "../agentDebug/compat";
 
 export { convertFileSrc };
 

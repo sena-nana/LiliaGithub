@@ -73,6 +73,9 @@ export const DEFAULT_SETTINGS_TAB: SettingsTabKey = "appearance";
 const appearanceSection = createCachedAsyncComponent(() => import("../pages/settings/AppearanceSection.vue"));
 const repositoriesSection = createCachedAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue"));
 const aboutSection = createCachedAsyncComponent(() => import("../pages/settings/AboutSection.vue"));
+const agentDebugEnabled = import.meta.env.VITE_LILIA_AGENT_DEBUG === "1" ||
+  import.meta.env.VITE_LILIA_GITHUB_AGENT_DEBUG === "1" ||
+  import.meta.env.MODE === "agent-debug";
 
 export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
   appearance: appearanceSection.component,
@@ -86,6 +89,9 @@ export const LILIA_UI_CONFIG = {
   version: "1.0.0",
   identifier: "com.lilia.github",
   storageKeyPrefix: "lilia-github",
+  runtime: {
+    agentDebug: agentDebugEnabled,
+  },
   shell: {
     homeTitle: "概览",
     homeDescription: "查看本地工作区和 GitHub 协作状态。",
@@ -100,6 +106,11 @@ export const LILIA_UI_CONFIG = {
     ...SIDEBAR_CONFIG,
     nav: SIDEBAR_NAV,
     footerStatus,
+  },
+  settings: {
+    defaultTab: DEFAULT_SETTINGS_TAB,
+    tabs: SETTINGS_TABS,
+    sections: SETTINGS_SECTIONS,
   },
 } satisfies LiliaAppConfig;
 
