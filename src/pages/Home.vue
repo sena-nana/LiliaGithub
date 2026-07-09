@@ -2031,6 +2031,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                   'is-clickable': row.link.kind !== 'none',
                 }"
                 :role="row.link.kind === 'route' ? 'link' : undefined"
+                :data-agent-id="row.link.kind === 'route' ? `home.pending.${row.item.id}` : undefined"
                 :aria-label="`${row.item.title} ${row.item.detail}，${row.repoFullName}`"
                 :tabindex="row.link.kind === 'route' ? 0 : undefined"
                 @click="openHomePendingLink($event, row.link)"

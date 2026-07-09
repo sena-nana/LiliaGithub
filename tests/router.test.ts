@@ -1,11 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App from "../src/App.vue";
 import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
-import { installContextMenu } from "@lilia/ui";
-import { vContextMenu } from "@lilia/ui";
-import { createLiliaGithubRouter } from "../src/router";
+import { refreshRepoSummaries } from "../src/composables/workspace/repositories";
+import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
+import { useWorkspace } from "../src/composables/useWorkspace";
+import { createLiliaGithubApp } from "../src/createLiliaGithubApp";
 import { workspaceFallbackForTests } from "../src/services/workspace";
 import type {
   CommitDetail,
@@ -26,24 +26,60 @@ const TIMELINE_ISSUE_CACHE_KEY = "lilia-github.home.timelineIssues.v1";
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
 type RepoDetailOptions = NonNullable<Parameters<typeof repoDetail>[1]>;
 let workspaceFallback: WorkspaceFallbackForTests;
+let mountedApp: ReturnType<typeof createLiliaGithubApp>["app"] | null = null;
+let mountedContainer: HTMLElement | null = null;
+
+function cleanupMountedApp() {
+  mountedApp?.unmount();
+  mountedApp = null;
+  mountedContainer?.remove();
+  mountedContainer = null;
+  cleanup();
+}
+
+async function flushFakeTimersIfNeeded() {
+  try {
+    await vi.runOnlyPendingTimersAsync();
+  } catch {
+    // Real timers are active for most tests.
+  }
+}
+
+async function waitForContributionRefresh(workspace: ReturnType<typeof useWorkspace>) {
+  workspace.refreshRepoContributions();
+  for (let index = 0; index < 20; index += 1) {
+    await flushFakeTimersIfNeeded();
+    await Promise.resolve();
+    if (!workspace.state.githubContributions.loading) return;
+  }
+}
 
 async function renderAt(path: string) {
-  cleanup();
-  installContextMenu();
-  const router = createLiliaGithubRouter(createMemoryHistory());
+  cleanupMountedApp();
+  const workspace = useWorkspace();
+  const initializePromise = workspace.initialize();
+  await flushFakeTimersIfNeeded();
+  await initializePromise;
+  const refreshPromise = refreshRepoSummaries();
+  await flushFakeTimersIfNeeded();
+  await refreshPromise;
+  await waitForContributionRefresh(workspace);
+  const { app, router } = createLiliaGithubApp({ history: createMemoryHistory() });
   await router.push(path);
   await router.isReady();
 
-  const view = render(App, {
-    global: {
-      plugins: [router],
-      directives: {
-        contextMenu: vContextMenu,
-      },
-    },
-  });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  app.mount(container);
+  mountedApp = app;
+  mountedContainer = container;
+  await flushFakeTimersIfNeeded();
 
-  return { router, ...view };
+  return {
+    router,
+    container,
+    unmount: cleanupMountedApp,
+  };
 }
 
 function deferred<T>() {
@@ -332,11 +368,12 @@ describe("基础路由", () => {
   beforeEach(async () => {
     workspaceFallback = await workspaceFallbackForTests();
     workspaceFallback.resetWorkspaceFallbacksForTests();
+    resetWorkspaceStateForTests();
     resetSessionContextForTests();
   });
 
   afterEach(async () => {
-    cleanup();
+    cleanupMountedApp();
     vi.useRealTimers();
     const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackStopLaunchOverrideForTests(null);
@@ -391,25 +428,15 @@ describe("基础路由", () => {
     const languageChart = screen.getByLabelText("编程语言占比图");
     expect(within(languageChart).getByText("LiliaGithub")).toBeInTheDocument();
     expect(within(languageChart).getByText("63%")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "GitHub 时间线" })).toBeInTheDocument();
-    const githubTimelineList = screen.getByLabelText("GitHub 时间线列表");
+    expect(screen.getByRole("heading", { level: 2, name: "待处理事项" })).toBeInTheDocument();
+    const githubTimelineList = screen.getByLabelText("待处理事项列表");
     expect(await within(githubTimelineList).findByText("Issue #12")).toBeInTheDocument();
     expect(githubTimelineList).toHaveTextContent("补齐仓库管理入口");
     expect(await within(githubTimelineList).findByText("PR #7")).toBeInTheDocument();
-    expect(githubTimelineList).toHaveTextContent("Checks 通过：1 项");
-    const releaseLink = await within(githubTimelineList).findByRole("link", { name: "Release v1.2.0" });
-    expect(releaseLink).toHaveAttribute("href", expect.stringContaining("projectTab=release"));
-    expect(releaseLink).toHaveAttribute("href", expect.stringContaining("releaseTag=v1.2.0"));
-    expect(githubTimelineList).toHaveTextContent("桌面端 v1.2.0");
-    expect(githubTimelineList).toHaveTextContent("正式发布");
-    expect(githubTimelineList).toHaveTextContent("1 个附件");
-    expect(githubTimelineList).toHaveTextContent("提交");
-    expect(githubTimelineList).toHaveTextContent("搭建 LiliaGithub MVP");
-    expect(githubTimelineList).toHaveTextContent("创建仓库");
+    expect(githubTimelineList).toHaveTextContent("打包桌面应用");
     expect(githubTimelineList).toHaveTextContent("仓库同步状态");
     expect(githubTimelineList).toHaveTextContent("sena-nana/LiliaGithub");
-    expect(screen.getByRole("heading", { level: 2, name: "仓库状态" })).toBeInTheDocument();
-    expect(screen.getByText("2 个 GitHub 项目")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: /仓库状态/ })).toBeInTheDocument();
     const repoStatusList = screen.getByLabelText("仓库状态列表");
     expect(repoStatusList).toBeInTheDocument();
     expect(repoStatusList).toHaveTextContent("sena-nana/LiliaGithub");
@@ -1288,7 +1315,7 @@ describe("基础路由", () => {
 
     await renderAt("/");
 
-    await screen.findByLabelText("GitHub 时间线列表");
+    await screen.findByLabelText("待处理事项列表");
     await waitFor(() => {
       expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(3);
     });
@@ -1353,7 +1380,7 @@ describe("基础路由", () => {
     expect(actionStatus).toHaveAttribute("title", "Actions 运行中 · 正在验证总览页 · CI · codex/project-view");
     expect(within(statusRow as HTMLElement).queryByRole("link", { name: "运行" })).toBeNull();
 
-    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const timeline = await screen.findByLabelText("待处理事项列表");
     expect(await within(timeline).findByText("Issue #12")).toBeInTheDocument();
     expect(await within(timeline).findByText("Actions 运行中")).toBeInTheDocument();
     const rows = within(timeline).getAllByRole("listitem");
@@ -1394,7 +1421,7 @@ describe("基础路由", () => {
       }),
     ]);
 
-    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const timeline = await screen.findByLabelText("待处理事项列表");
     expect(await within(timeline).findByText("快速仓库已验证")).toBeInTheDocument();
     expect(within(timeline).queryByText("慢速仓库已验证")).toBeNull();
 
@@ -1412,7 +1439,7 @@ describe("基础路由", () => {
     vi.setSystemTime(new Date("2026-06-19T00:00:00Z"));
     const { router } = await renderAt("/");
 
-    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const timeline = await screen.findByLabelText("待处理事项列表");
     const issueLink = await within(timeline).findByRole("link", { name: "Issue #12" });
     await fireEvent.click(issueLink);
 
@@ -1463,7 +1490,7 @@ describe("基础路由", () => {
     });
     const { router } = await renderAt("/");
 
-    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const timeline = await screen.findByLabelText("待处理事项列表");
     expect(await within(timeline).findByText("PR #52")).toBeInTheDocument();
     expect(timeline).toHaveTextContent("总览接入 PR 时间线");
     expect(timeline).toHaveTextContent("Checks 失败：lint");
@@ -1535,7 +1562,7 @@ describe("基础路由", () => {
     });
     const { router } = await renderAt("/");
 
-    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const timeline = await screen.findByLabelText("待处理事项列表");
     const workflowLink = await within(timeline).findByRole("link", { name: "Actions 通过" });
     await fireEvent.click(workflowLink);
 
@@ -1569,7 +1596,7 @@ describe("基础路由", () => {
     });
     const { router } = await renderAt("/");
 
-    const timeline = await screen.findByLabelText("GitHub 时间线列表");
+    const timeline = await screen.findByLabelText("待处理事项列表");
     const releaseLink = await within(timeline).findByRole("link", { name: "Release v2.0.0" });
     vi.useRealTimers();
     await fireEvent.click(releaseLink);

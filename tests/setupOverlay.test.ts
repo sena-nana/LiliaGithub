@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/vue";
-import { reactive, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
 
@@ -52,7 +52,9 @@ vi.mock("../src/composables/useWorkspace", () => ({
   }),
 }));
 
-const { default: AppShell } = await import("../src/layouts/AppShell.vue");
+const { LiliaDesktopShell, liliaShellOptionsKey, setLiliaAppConfig } = await import("@lilia/ui");
+const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
+const { default: SecondaryPanel } = await import("../src/layouts/SecondaryPanel.vue");
 const { default: Home } = await import("../src/pages/Home.vue");
 
 async function renderSetupHome() {
@@ -68,9 +70,16 @@ async function renderSetupHome() {
   await router.push("/");
   await router.isReady();
 
-  return render(AppShell, {
+  setLiliaAppConfig(LILIA_UI_CONFIG);
+  return render(LiliaDesktopShell, {
     global: {
       plugins: [router],
+      provide: {
+        [liliaShellOptionsKey as symbol]: {
+          mainSidebar: SecondaryPanel,
+          setupOverlayActive: computed(() => !isReady.value),
+        },
+      },
     },
   });
 }

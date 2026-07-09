@@ -1,19 +1,30 @@
 import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent } from "vue";
-import { SIDEBAR_CONFIG } from "../src/config/appShell";
-import { ContextMenuHost } from "@lilia/ui";
-import { closeContextMenu, installContextMenu } from "@lilia/ui";
+import { computed, defineComponent, onMounted, onUnmounted } from "vue";
+import { LILIA_UI_CONFIG, SIDEBAR_CONFIG } from "../src/config/appShell";
+import {
+  ContextMenuHost,
+  LiliaDesktopShell,
+  closeContextMenu,
+  installContextMenu,
+  liliaShellOptionsKey,
+  setLiliaAppConfig,
+} from "@lilia/ui";
 import { useWorkspace } from "../src/composables/useWorkspace";
 import { resetWorkspaceStateForTests, setRepoActionError, state, upsertRepo } from "../src/composables/workspace/state";
 import { refreshRepoContributions } from "../src/composables/workspace/repositories";
-import { REPO_LAUNCH_STATUS_EVENT } from "../src/composables/workspace/launchEvents";
-import { workspaceFallbackForTests, type GitHubContributionResult, type GitHubRepoSummary } from "../src/services/workspace";
+import { REPO_LAUNCH_STATUS_EVENT, installLaunchStatusEvents } from "../src/composables/workspace/launchEvents";
+import {
+  workspaceFallbackForTests,
+  type GitHubBindingMetadata,
+  type GitHubContributionResult,
+  type GitHubRepoSummary,
+} from "../src/services/workspace";
 import { vContextMenu } from "@lilia/ui";
-import AppShell from "../src/layouts/AppShell.vue";
+import SecondaryPanel from "../src/layouts/SecondaryPanel.vue";
 import Home from "../src/pages/Home.vue";
-import { repoSummary } from "./fixtures/workspace";
+import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const SIDEBAR_REPO_SORT_STORAGE_KEY = "lilia-github.sidebar.repoSort.v1";
 const HOME_REPO_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
@@ -29,10 +40,31 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 async function renderAppShell(initialRoute = "/") {
-  const Wrapper = defineComponent({
-    components: { AppShell, ContextMenuHost },
-    template: "<AppShell /><ContextMenuHost />",
+  const TestAppEffects = defineComponent({
+    setup() {
+      let cleanup: (() => void) | null = null;
+      onMounted(() => {
+        void installLaunchStatusEvents().then((installedCleanup) => {
+          cleanup = installedCleanup;
+        });
+      });
+      onUnmounted(() => {
+        cleanup?.();
+      });
+      return () => null;
+    },
   });
+  const Wrapper = defineComponent({
+    components: { LiliaDesktopShell, ContextMenuHost, TestAppEffects },
+    template: "<TestAppEffects /><LiliaDesktopShell /><ContextMenuHost />",
+  });
+  setLiliaAppConfig(LILIA_UI_CONFIG);
+  const workspace = useWorkspace();
+  if (state.repos.length === 0) {
+    await workspace.initialize();
+  } else if (!workspace.isReady.value) {
+    markWorkspaceReadyForManualRepos();
+  }
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -58,6 +90,12 @@ async function renderAppShell(initialRoute = "/") {
   const view = render(Wrapper, {
     global: {
       plugins: [router],
+      provide: {
+        [liliaShellOptionsKey as symbol]: {
+          mainSidebar: SecondaryPanel,
+          setupOverlayActive: computed(() => router.currentRoute.value.path === "/" && !workspace.isReady.value),
+        },
+      },
       directives: {
         contextMenu: vContextMenu,
       },
@@ -106,6 +144,14 @@ function repoStatusRowForText(container: HTMLElement, text: string): HTMLElement
     throw new Error(`未找到首页仓库状态行: ${text}`);
   }
   return row;
+}
+
+function homeContent(container: HTMLElement): HTMLElement {
+  const home = container.querySelector(".home-page");
+  if (!(home instanceof HTMLElement)) {
+    throw new Error("未找到首页内容区域");
+  }
+  return home;
 }
 
 function sidebarGroupForText(container: HTMLElement, name: string, count: number): HTMLElement {
@@ -170,6 +216,26 @@ function contributionTotal() {
 
 function contributionSummaryText(total: number) {
   return `${total} 次提交，最近一年`;
+}
+
+function markWorkspaceReadyForManualRepos() {
+  const binding: GitHubBindingMetadata = {
+    login: "lilia-user",
+    avatarUrl: null,
+    boundAt: 1_780_000_000_000,
+    scopes: ["repo"],
+    clientIdSource: "bundled",
+  };
+  state.settings = {
+    ...workspaceSettings(),
+    githubBinding: binding,
+  };
+  state.bindingStatus = {
+    state: "bound",
+    clientIdConfigured: true,
+    clientIdSource: "bundled",
+    binding,
+  };
 }
 
 function readDisplayedContributionTotal(view: AppShellView) {
@@ -345,7 +411,7 @@ describe("AppShell sidebar", () => {
     expect(view.router.currentRoute.value.fullPath).toBe("/");
 
     await fireEvent.click(view.getByRole("button", { name: "按项目" }));
-    const projectLink = await view.findByRole("link", { name: /Alpha/ });
+    const projectLink = await within(homeContent(view.container)).findByRole("link", { name: /Alpha/ });
     await fireEvent.click(projectLink);
 
     await waitFor(() => {
@@ -759,16 +825,12 @@ describe("AppShell sidebar", () => {
   });
 
   it("首页仓库行显示最近同步失败并提供就地重试", async () => {
-    const view = await renderAppShell("/");
-
-    await waitFor(() => {
-      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
-    });
-
+    const localRepo = repoSummary("LiliaGithub", { ahead: 1 });
+    state.repos = [localRepo];
     state.recentSync = {
       preview: {
         operation: "sync",
-        eligible: [{ repo: state.repos[0], reason: "有本地提交待推送" }],
+        eligible: [{ repo: localRepo, reason: "有本地提交待推送" }],
         blocked: [],
         warnings: [],
       },
@@ -783,6 +845,11 @@ describe("AppShell sidebar", () => {
       retryingRepoIds: [],
       updatedAt: 2,
     };
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
 
     await waitFor(() => {
       const row = repoStatusRowForText(view.container, "sena-nana/LiliaGithub");
@@ -943,6 +1010,7 @@ describe("AppShell sidebar", () => {
   });
 
   it("总览页搜索可过滤本地仓库并回车跳转首个结果", async () => {
+    state.repos = [repoSummary("LiliaGithub"), repoSummary("Lilia")];
     const view = await renderAppShell("/");
 
     await waitFor(() => {
