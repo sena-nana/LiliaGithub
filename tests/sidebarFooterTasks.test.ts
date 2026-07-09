@@ -8,6 +8,7 @@ import {
   clearFrontendBackgroundTasksForTests,
   completeBackgroundTask,
   failBackgroundTask,
+  finishBackgroundTask,
 } from "../src/composables/useBackgroundTasks";
 import { resetWorkspaceStateForTests, setWorkspaceTasks } from "../src/composables/workspace/state";
 
@@ -40,6 +41,39 @@ async function renderFooter() {
       plugins: [router],
     },
   });
+}
+
+function fixedRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+function setElementBox(element: HTMLElement, box: { width: number; height: () => number }) {
+  Object.defineProperty(element, "offsetWidth", {
+    configurable: true,
+    get: () => box.width,
+  });
+  Object.defineProperty(element, "offsetHeight", {
+    configurable: true,
+    get: box.height,
+  });
+  element.getBoundingClientRect = () => fixedRect(0, 0, box.width, box.height());
+}
+
+function translateY(element: HTMLElement) {
+  const translate = element.style.getPropertyValue("translate");
+  const match = /(-?\d+(?:\.\d+)?)px\s+(-?\d+(?:\.\d+)?)px/.exec(translate);
+  if (!match) throw new Error(`Missing translate style: ${translate}`);
+  return Number(match[2]);
 }
 
 describe("SidebarFooter tasks", () => {
@@ -132,5 +166,49 @@ describe("SidebarFooter tasks", () => {
     expect(within(menu).getByText("工作区")).toBeInTheDocument();
     expect(within(menu).getByRole("img", { name: "等待中" })).toBeInTheDocument();
     expect(within(menu).queryByText("等待发现")).not.toBeInTheDocument();
+  });
+
+  it("任务项删除后弹层按底部锚点向下收缩", async () => {
+    beginBackgroundTask({
+      kind: "git",
+      title: "推送当前分支",
+      repoName: "LiliaGithub",
+      priority: "high",
+    });
+    const secondTaskId = beginBackgroundTask({
+      kind: "sync",
+      title: "刷新仓库状态",
+      repoName: "LiliaGithub",
+      priority: "normal",
+    });
+    await renderFooter();
+
+    const button = screen.getByRole("button", { name: "后台任务" });
+    button.getBoundingClientRect = () => fixedRect(24, 320, 26, 26);
+
+    await fireEvent.mouseEnter(button);
+
+    const menu = await screen.findByRole("menu", { name: "后台任务" });
+    setElementBox(menu, {
+      width: 280,
+      height: () => 8 + menu.querySelectorAll('[role="menuitem"]').length * 34,
+    });
+    window.dispatchEvent(new Event("resize"));
+
+    await waitFor(() => {
+      expect(translateY(menu)).toBeLessThan(320);
+    });
+    const initialHeight = menu.offsetHeight;
+    const initialTop = translateY(menu);
+    const initialBottom = translateY(menu) + initialHeight;
+
+    finishBackgroundTask(secondTaskId);
+
+    await waitFor(() => {
+      expect(within(menu).queryByText("刷新仓库状态")).not.toBeInTheDocument();
+      expect(translateY(menu)).toBeGreaterThan(initialTop);
+    });
+    expect(within(menu).getByText("推送当前分支")).toBeInTheDocument();
+    expect(translateY(menu) + menu.offsetHeight).toBeCloseTo(initialBottom);
   });
 });

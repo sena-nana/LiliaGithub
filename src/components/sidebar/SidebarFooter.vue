@@ -71,6 +71,14 @@ watch(tasksOpen, async (open) => {
   }
 });
 
+watch(
+  () => tasks.value.length,
+  () => {
+    if (!tasksOpen.value) return;
+    void menuMotion.updatePosition();
+  },
+);
+
 onBeforeUnmount(() => {
   clearCloseTimer();
   document.removeEventListener("keydown", onTaskKeydown);
