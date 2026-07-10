@@ -97,6 +97,7 @@ function renderPicker(handlers: Record<string, unknown> = {}, pickerProps: Recor
     onRefreshBranches: vi.fn(),
     onPushWithUpstream: vi.fn(),
     onSetUpstream: vi.fn(),
+    onOpened: vi.fn(),
     ...handlers,
   };
   const resolvedProps = {
@@ -126,6 +127,7 @@ function renderPicker(handlers: Record<string, unknown> = {}, pickerProps: Recor
         @refresh-branches="onRefreshBranches"
         @push-with-upstream="onPushWithUpstream"
         @set-upstream="onSetUpstream"
+        @opened="onOpened"
       />
       <ContextMenuHost />
     `,
@@ -150,6 +152,19 @@ describe("RepoBranchPicker", () => {
   afterEach(() => {
     closeContextMenu();
     vi.restoreAllMocks();
+  });
+
+  it("只在打开分支控件时请求补充远端分支信息", async () => {
+    const onOpened = vi.fn();
+    renderPicker({ onOpened });
+    const trigger = screen.getByRole("button", { name: "main" });
+
+    expect(onOpened).not.toHaveBeenCalled();
+    await fireEvent.click(trigger);
+    expect(onOpened).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(trigger);
+    expect(onOpened).toHaveBeenCalledTimes(1);
   });
 
   it("显示分组、搜索和 worktree 标记", async () => {

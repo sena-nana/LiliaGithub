@@ -1145,7 +1145,6 @@ const routedActionFilterState = computed(() => JSON.stringify({
 
 onMounted(() => {
   void applyProjectRouteState();
-  prefetchGitHubProjectMetadata();
   measureAboutTopicOverflow();
   window.addEventListener("resize", measureAboutTopicOverflow);
 });
@@ -1182,7 +1181,6 @@ watch(() => props.repoFullName, () => {
   remoteDeleted.value = false;
   resetGitHubSectionState();
   closeDeleteDialog();
-  prefetchGitHubProjectMetadata();
   if (props.activeGitTab === "repo" && !routedProjectTab.value && isGitHubProjectSection(currentSection)) {
     activeSection.value = currentSection;
     void ensureSectionData(currentSection);
@@ -1843,10 +1841,7 @@ async function focusRun(runId: number | null | undefined) {
   focusedReleaseTag.value = null;
   if (!runId) {
     clearProjectTargets();
-    await Promise.all([
-      loadActions(),
-      loadReleases(),
-    ]);
+    await loadActions();
     return;
   }
   if (!hasRun(runId)) {
@@ -1982,19 +1977,6 @@ async function applyProjectCreateForm(targetTab: ProjectTab) {
   } else if (targetTab === "pulls" && createFlow === "pull" && !pullsAccessUnavailable.value) {
     await openPullRequestCreateView();
   }
-}
-
-function prefetchGitHubProjectMetadata() {
-  const repoFullName = props.repoFullName;
-  if (!repoFullName || remoteDeleted.value) return;
-  const canUseIssues = resolvedRepoContext.value.capabilities.issues.available;
-  const canUsePulls = resolvedRepoContext.value.capabilities.pulls.available;
-  if (!canUseIssues && !canUsePulls) return;
-  void Promise.allSettled([
-    loadIssueFilterMetadata(false, false),
-    ...(canUseIssues ? [loadIssueMetadata(), loadIssueTemplates()] : []),
-    ...(canUsePulls ? [loadPullRequestTemplates()] : []),
-  ]);
 }
 
 function applySettingsForm(next: GitHubRepoManagement) {
@@ -2368,29 +2350,7 @@ async function loadReleases(force = false) {
 }
 
 async function refreshActionsPanel() {
-  await Promise.all([
-    loadActions(true),
-    loadReleases(true),
-  ]);
-}
-
-async function refreshEnteredRemoteSection(section: ProjectContentMode) {
-  if (activeSection.value !== section || remoteDeleted.value) return;
-  const tasks: Promise<unknown>[] = [];
-  if (section === "issues") {
-    tasks.push(loadIssues(true), loadIssueFilterMetadata(true));
-    if (focusedIssueNumber.value) tasks.push(loadIssueDiscussion(focusedIssueNumber.value, true));
-  } else if (section === "milestones") {
-    tasks.push(loadMilestoneItems(true), loadIssueFilterMetadata(true));
-  } else if (section === "pulls") {
-    tasks.push(loadPullRequests(true), loadIssueFilterMetadata(true));
-    if (focusedPullRequestNumber.value) tasks.push(loadPullRequestDiscussion(focusedPullRequestNumber.value, true));
-  } else if (section === "actions") {
-    tasks.push(refreshActionsPanel());
-  } else if (section === "release") {
-    tasks.push(loadReleases(true));
-  }
-  await Promise.all(tasks);
+  await loadActions(true);
 }
 
 async function loadRemoteSectionData(section: ProjectContentMode, tasks: Promise<unknown>[]) {
@@ -2398,7 +2358,6 @@ async function loadRemoteSectionData(section: ProjectContentMode, tasks: Promise
     preloadRepoProjectSection(section),
     ...tasks,
   ]);
-  void refreshEnteredRemoteSection(section);
 }
 
 async function ensureSectionData(section: ProjectContentMode) {
@@ -2433,10 +2392,7 @@ async function ensureSectionData(section: ProjectContentMode) {
     return;
   }
   if (section === "actions") {
-    await loadRemoteSectionData(section, [
-      loadActions(),
-      loadReleases(),
-    ]);
+    await loadRemoteSectionData(section, [loadActions()]);
     return;
   }
   if (section === "release") {
@@ -2899,7 +2855,6 @@ async function confirmDeleteLocalRepo() {
     if (!isRepoMutationCurrent(generation, repoId)) return;
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
-    workspace.refreshRepoStatusList();
     await router.push("/");
   } catch (err) {
     if (isRepoMutationCurrent(generation, repoId)) {
@@ -2921,7 +2876,6 @@ async function confirmDeleteRepo() {
     }, remoteTask({ kind: "github", title: "删除远程仓库", priority: "high" }));
     if (!isGitHubMutationCurrent(generation, repoFullName)) return;
     clearHomeGitHubOverviewSnapshot();
-    workspace.refreshRepoStatusList();
     remoteDeleted.value = true;
     settings.value = null;
     issues.value = [];
@@ -3486,7 +3440,6 @@ function selectSettingsNavigation(item: SettingsNavigationSection) {
 function focusActionRun(runId: number | null) {
   focusedRunId.value = runId;
   focusedJobId.value = null;
-  if (runId) void loadReleases();
   if (activeSection.value === "actions") void pushProjectTabRoute("actions");
 }
 

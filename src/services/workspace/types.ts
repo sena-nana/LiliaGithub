@@ -24,6 +24,7 @@ export interface WorkspaceStartupCache {
 export interface CachedRepoSummary {
   summary: RepoSummary;
   cachedAt: number;
+  remoteCheckedAt?: number | null;
 }
 
 export interface CachedContributionResult {
@@ -112,13 +113,6 @@ export interface ProjectLaunchStatus {
   startedAt: number | null;
   exitCode: number | null;
   error: string | null;
-}
-
-export type RepoChangedKind = "worktree" | "git-metadata";
-
-export interface RepoChangedEvent {
-  repoId: string;
-  kind: RepoChangedKind;
 }
 
 export interface ProjectLaunchLog {
@@ -942,7 +936,29 @@ export type RepoPullStrategy = "pull" | "merge" | "rebase";
 export type RepoPullLocalChangesMode = "reject" | "stash" | "discard";
 export type WorkspaceTaskPriority = "high" | "normal" | "low";
 export type WorkspaceTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
-export type WorkspaceTaskKind = "repoStatus" | "repoDetail" | "discoverRepos" | "languageStats" | "contributions";
+export type WorkspaceTaskKind = "repoStatus" | "repoRemote" | "repoDetail" | "discoverRepos" | "languageStats" | "contributions";
+
+export type RepoRefreshMode = "local" | "remote";
+export type RepoRefreshDetailScope = "auto" | "summary" | "detail";
+
+export interface WorkspaceRepoRefreshRequest {
+  repoId: string;
+  mode: RepoRefreshMode;
+  priority: WorkspaceTaskPriority;
+  force?: boolean;
+  detailScope?: RepoRefreshDetailScope;
+  includeCommits?: boolean;
+  includeBranches?: boolean;
+  trigger: string;
+}
+
+export interface WorkspaceRepoRefreshedEvent {
+  repoId: string;
+  mode: RepoRefreshMode;
+  summary: RepoSummary;
+  detailPatch?: RepoDetailPatch | null;
+  remoteCheckedAt?: number | null;
+}
 
 export interface WorkspaceTask {
   id: string;
@@ -952,4 +968,5 @@ export interface WorkspaceTask {
   status: WorkspaceTaskStatus;
   message: string | null;
   updatedAt: number;
+  cancellable: boolean;
 }

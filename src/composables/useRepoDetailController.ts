@@ -12,6 +12,11 @@ import type { BackgroundTaskDescriptor } from "./useBackgroundTasks";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
+import {
+  markActiveRepoLocalReady,
+  requestManualRepoRemoteRefresh,
+  setActiveRepoForRefresh,
+} from "./workspace/repoRefreshEvents";
 import type {
   BranchSummary,
   CommitSummary,
@@ -340,6 +345,7 @@ export function useRepoDetailController() {
   });
 
   onUnmounted(() => {
+    void setActiveRepoForRefresh(null);
     repoDetailLoader.invalidate();
     githubBranchesLoader.invalidate();
     githubCommitsLoader.invalidate();
@@ -384,7 +390,11 @@ export function useRepoDetailController() {
 
   watch(activeTab, (tab) => {
     if (tab !== "history") selectedCommitHash.value = null;
-    if (!hasLocalRepo.value) return;
+    if (!hasLocalRepo.value) {
+      if (tab === "files") void loadGitHubBranches(githubRepoFullName.value);
+      else if (tab === "history") void loadGitHubCommits(githubRepoFullName.value);
+      return;
+    }
     if (tab === "history") {
       void workspace.requestRepoStatusRefresh(repoId.value, { includeCommits: true }, { immediate: true });
     } else if (tab === "changes" && canShowChanges.value) {
@@ -459,19 +469,23 @@ export function useRepoDetailController() {
       actionError.value = null;
       launchError.value = null;
       if (!hasLocalRepo.value) {
+        await setActiveRepoForRefresh(null);
         repoDetailLoading.value = false;
         repoDetailError.value = null;
         if (!remoteContextRestored.value) return;
-        await loadRemoteGitHubData(githubRepoFullName.value);
+        await loadVisibleRemoteGitHubData(githubRepoFullName.value);
         return;
       }
       const launchLoad = loadLaunchData(targetRepoId, runId);
       repoDetailLoading.value = true;
       repoDetailError.value = null;
       try {
+        await setActiveRepoForRefresh(targetRepoId);
+        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         await workspace.loadRepoDetail(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         syncFocusedChange();
+        markActiveRepoLocalReady(targetRepoId);
       } catch (err) {
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         const message = String(err);
@@ -483,18 +497,8 @@ export function useRepoDetailController() {
         }
       }
       if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
-      if (!canUseGitHubData.value) {
-        resetGitHubRemoteState();
-      } else {
-        await loadGitHubBranches(githubRepoFullName.value);
-      }
-      if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+      resetGitHubRemoteState();
       await launchLoad;
-      if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
-      await workspace.refreshRepoLanguageStats(targetRepoId).catch((err) => {
-        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
-        actionError.value = String(err);
-      });
     });
   }
 
@@ -515,6 +519,15 @@ export function useRepoDetailController() {
       loadGitHubBranches(repoFullName),
       loadGitHubCommits(repoFullName),
     ]);
+  }
+
+  async function loadVisibleRemoteGitHubData(repoFullName: string | null) {
+    if (activeTab.value === "files") await loadGitHubBranches(repoFullName);
+    else if (activeTab.value === "history") await loadGitHubCommits(repoFullName);
+  }
+
+  function requestGitHubBranches() {
+    void loadGitHubBranches(githubRepoFullName.value);
   }
 
   async function loadGitHubBranches(repoFullName: string | null) {
@@ -801,18 +814,20 @@ export function useRepoDetailController() {
   function refreshAndFetchRepo() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
+    const localRepo = hasLocalRepo.value;
 
     void runAction(async () => {
-      if (!hasLocalRepo.value) {
+      if (!localRepo) {
         await loadRemoteGitHubData(githubRepoFullName.value);
         projectRefreshToken.value += 1;
         return;
       }
-      await workspace.fetch(targetRepoId);
-      await load();
-      await workspace.autoSyncRepoIfNeeded(targetRepoId, { refreshDetail: true, throwOnError: true });
+      await requestManualRepoRemoteRefresh(targetRepoId, {
+        includeCommits: activeTab.value === "history",
+        includeBranches: true,
+      });
       projectRefreshToken.value += 1;
-    }, repoTask({ kind: "sync", title: "刷新仓库", priority: "normal" }));
+    }, localRepo ? undefined : repoTask({ kind: "sync", title: "刷新仓库", priority: "normal" }));
   }
 
   function refreshProjectCache() {
@@ -1183,6 +1198,7 @@ export function useRepoDetailController() {
       runChangeAction,
       commitSelected,
       refreshAndFetchRepo,
+      requestGitHubBranches,
       refreshProjectCache,
       selectPullStrategy,
       setRepoSetting,

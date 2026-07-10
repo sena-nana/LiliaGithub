@@ -2,10 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::thread;
 
+use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::bulk::{merge_pull_block_reason_with_mode, repo_dirty_count};
 use crate::workspace::github::{
     clear_github_project_repo_cache, github_auth_header, normalize_github_repo_input,
@@ -16,6 +15,7 @@ use crate::workspace::settings::{
     add_managed_repo_id, cached_repo_summary, load_settings, matching_startup_cache,
     prune_deleted_repo_settings, remove_startup_cache_repo, repo_path_by_id, repo_path_from_id,
     save_settings, sort_dedup, workspace_root, write_startup_repo_summary,
+    write_startup_repo_summary_after_fetch,
 };
 use crate::workspace::shared::{configure_background_command, now_millis};
 use crate::workspace::tasks::{record_workspace_task, update_workspace_task};
@@ -23,16 +23,13 @@ use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
     LanguageStat, RepoChange, RepoConflictChoice, RepoConflictFile, RepoConflictHunk,
     RepoConflictState, RepoDetail, RepoDetailPatch, RepoDetailPatchRequest, RepoMergePullResult,
-    RepoOperationResult, RepoPullLocalChangesMode, RepoRefreshSummaryOptions, RepoRemote,
-    RepoStashDetail, RepoStashEntry, RepoSummary, RepoWorktree, WorkspaceCreateLocalRepoRequest,
-    WorkspaceSettings,
+    RepoOperationResult, RepoPullLocalChangesMode, RepoRefreshRequest, RepoRefreshSummaryOptions,
+    RepoRemote, RepoStashDetail, RepoStashEntry, RepoSummary, RepoWorktree,
+    WorkspaceCreateLocalRepoRequest, WorkspaceSettings,
 };
-use crate::runtime::WorkspaceContext as AppHandle;
 
 #[cfg(test)]
 use lilia_github_contracts::workspace::WorkspaceStartupCache;
-
-pub(super) const MAX_REPO_REFRESH_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RepoStatusEntry {
@@ -48,12 +45,6 @@ pub(super) struct RepoStatusSnapshot {
     pub(super) ahead: i32,
     pub(super) behind: i32,
     pub(super) entries: Vec<RepoStatusEntry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RepoFetchFailure {
-    pub(super) repo_name: String,
-    pub(super) error: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -993,95 +984,6 @@ pub(super) fn cached_managed_repos(
     repos
 }
 
-pub(super) fn repo_refresh_success_message(repo_count: usize) -> String {
-    format!("已刷新 {repo_count} 个仓库并同步远端状态")
-}
-
-pub(super) fn repo_refresh_partial_failure_message(
-    repo_count: usize,
-    failures: &[RepoFetchFailure],
-) -> String {
-    let repo_names = failures
-        .iter()
-        .take(3)
-        .map(|failure| failure.repo_name.as_str())
-        .collect::<Vec<_>>()
-        .join("、");
-    let repo_label = if failures.len() > 3 {
-        format!("{repo_names} 等")
-    } else {
-        repo_names
-    };
-    format!(
-        "已刷新 {repo_count} 个仓库，{} 个仓库 fetch 失败：{}（{}）",
-        failures.len(),
-        repo_label,
-        failures[0].error
-    )
-}
-
-pub(super) fn refresh_managed_repo_remotes(
-    paths: &[PathBuf],
-    fetch_repo: impl Fn(&Path) -> Result<(), String> + Sync,
-) -> Vec<RepoFetchFailure> {
-    let remote_repos = paths
-        .iter()
-        .enumerate()
-        .filter_map(|(index, path)| {
-            git_command_lossy(path, &["remote", "get-url", "origin"])?;
-            Some((
-                index,
-                path.clone(),
-                path.file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("repo")
-                    .to_string(),
-            ))
-        })
-        .collect::<Vec<_>>();
-    if remote_repos.is_empty() {
-        return Vec::new();
-    }
-
-    let next_index = AtomicUsize::new(0);
-    let failures = Mutex::new(Vec::<(usize, RepoFetchFailure)>::new());
-    let worker_count = repo_refresh_worker_count(remote_repos.len());
-    thread::scope(|scope| {
-        for _ in 0..worker_count {
-            let remote_repos = &remote_repos;
-            let next_index = &next_index;
-            let failures = &failures;
-            let fetch_repo = &fetch_repo;
-            scope.spawn(move || loop {
-                let item_index = next_index.fetch_add(1, Ordering::Relaxed);
-                let Some((repo_index, path, repo_name)) = remote_repos.get(item_index) else {
-                    break;
-                };
-                if let Err(error) = fetch_repo(path) {
-                    failures.lock().unwrap().push((
-                        *repo_index,
-                        RepoFetchFailure {
-                            repo_name: repo_name.clone(),
-                            error,
-                        },
-                    ));
-                }
-            });
-        }
-    });
-
-    let mut failures = failures.into_inner().unwrap();
-    failures.sort_by_key(|(index, _)| *index);
-    failures.into_iter().map(|(_, failure)| failure).collect()
-}
-
-pub(super) fn repo_refresh_worker_count(repo_count: usize) -> usize {
-    let available = thread::available_parallelism()
-        .map(|value| value.get())
-        .unwrap_or(1);
-    repo_count.min(available.clamp(1, MAX_REPO_REFRESH_CONCURRENCY))
-}
-
 pub(super) fn managed_repo_paths(root: &Path, settings: &WorkspaceSettings) -> Vec<PathBuf> {
     settings
         .managed_repo_ids
@@ -1154,35 +1056,27 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
             "high",
             None,
             "running",
-            Some("刷新已管理仓库并同步远端状态".to_string()),
+            Some("刷新已管理仓库本地状态".to_string()),
         );
         let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
-        let failures = refresh_managed_repo_remotes(&paths, |path| run_fetch(&app, path));
         let mut repos = summarize_repos(&root, paths);
         sort_repos(&mut repos);
         for summary in &repos {
             let _ = write_startup_repo_summary(&app, &settings, summary);
         }
-        if failures.is_empty() {
-            update_workspace_task(
-                &task.id,
-                "success",
-                Some(repo_refresh_success_message(repos.len())),
-            );
-        } else {
-            update_workspace_task(
-                &task.id,
-                "error",
-                Some(repo_refresh_partial_failure_message(repos.len(), &failures)),
-            );
-        }
+        update_workspace_task(
+            &task.id,
+            "success",
+            Some(format!("已刷新 {} 个仓库的本地状态", repos.len())),
+        );
         Ok(repos)
     })
     .await
 }
 
 pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    run_blocking("读取已管理仓库", move || {
+    let refresh_app = app.clone();
+    let repos = run_blocking("读取已管理仓库", move || {
         let root = workspace_root(&app)?;
         let mut settings = load_settings(&app);
         let cache = matching_startup_cache(&app, &settings);
@@ -1195,7 +1089,12 @@ pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSumm
         crate::workspace::watcher::sync_repo_watchers(&app);
         Ok(repos)
     })
-    .await
+    .await?;
+    crate::workspace::refresh::enqueue_baseline_repo_refreshes(
+        refresh_app,
+        repos.iter().map(|repo| repo.id.clone()),
+    );
+    Ok(repos)
 }
 
 pub async fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
@@ -1248,7 +1147,9 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
         for managed_path in expand_repo_paths_with_root_worktrees(&root, vec![path.clone()]) {
             add_managed_repo_id(&mut settings, repo_id(&root, &managed_path));
         }
-        settings.hidden_repo_ids.retain(|id| id != &selected_repo_id);
+        settings
+            .hidden_repo_ids
+            .retain(|id| id != &selected_repo_id);
         save_settings(&app, &settings)?;
         crate::workspace::watcher::sync_repo_watchers(&app);
         let summary = summarize_repo(&root, &path);
@@ -1439,7 +1340,8 @@ pub async fn repo_refresh_summary(
             "running",
             Some("刷新仓库状态".to_string()),
         );
-        let fetch_error = if options.map(|value| value.fetch_remote).unwrap_or(false) {
+        let fetched_remote = options.map(|value| value.fetch_remote).unwrap_or(false);
+        let fetch_error = if fetched_remote {
             summarize_repo(&root, &path)
                 .remote_url
                 .as_ref()
@@ -1449,7 +1351,11 @@ pub async fn repo_refresh_summary(
         };
         let summary = summarize_repo(&root, &path);
         let settings = load_settings(&app);
-        let _ = write_startup_repo_summary(&app, &settings, &summary);
+        if fetched_remote && fetch_error.is_none() {
+            let _ = write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis());
+        } else {
+            let _ = write_startup_repo_summary(&app, &settings, &summary);
+        }
         if let Some(error) = fetch_error {
             update_workspace_task(
                 &task.id,
@@ -1585,34 +1491,76 @@ pub async fn repo_refresh_detail_patch(
     run_blocking("刷新仓库状态", move || {
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
-        let status = repo_status_snapshot(&path);
-        let change_entries = status.entries.clone();
-        let conflict_entries = conflict_status_entries(&status.entries);
-        let changes_path = path.as_path();
-        let conflicts_path = path.as_path();
-        let (summary, changes, conflicts) = thread::scope(|scope| {
-            let summary = scope.spawn(|| summarize_repo_from_status(&root, &path, &status));
-            let changes =
-                scope.spawn(move || repo_changes_from_entries(changes_path, change_entries));
-            let conflicts =
-                scope.spawn(move || repo_conflicts_from_entries(conflicts_path, conflict_entries));
-            (
-                summary.join().expect("repo summary worker panicked"),
-                changes.join().expect("repo changes worker panicked"),
-                conflicts.join().expect("repo conflicts worker panicked"),
-            )
-        });
-        let commits = request.include_commits.then(|| repo_history(&path));
-        let branches = request.include_branches.then(|| repo_branches(&path));
-        Ok(RepoDetailPatch {
-            summary,
-            changes,
-            conflicts,
-            commits,
-            branches,
-        })
+        Ok(build_repo_detail_patch(&root, &path, &request))
     })
     .await
+}
+
+fn build_repo_detail_patch(
+    root: &Path,
+    path: &Path,
+    request: &RepoDetailPatchRequest,
+) -> RepoDetailPatch {
+    let status = repo_status_snapshot(path);
+    let change_entries = status.entries.clone();
+    let conflict_entries = conflict_status_entries(&status.entries);
+    let (summary, changes, conflicts) = thread::scope(|scope| {
+        let summary = scope.spawn(|| summarize_repo_from_status(root, path, &status));
+        let changes = scope.spawn(|| repo_changes_from_entries(path, change_entries));
+        let conflicts = scope.spawn(|| repo_conflicts_from_entries(path, conflict_entries));
+        (
+            summary.join().expect("repo summary worker panicked"),
+            changes.join().expect("repo changes worker panicked"),
+            conflicts.join().expect("repo conflicts worker panicked"),
+        )
+    });
+    let commits = request.include_commits.then(|| repo_history(path));
+    let branches = request.include_branches.then(|| repo_branches(path));
+    RepoDetailPatch {
+        summary,
+        changes,
+        conflicts,
+        commits,
+        branches,
+    }
+}
+
+pub(super) fn refresh_repo_for_scheduler(
+    app: &AppHandle,
+    request: &RepoRefreshRequest,
+    include_detail: bool,
+) -> Result<(RepoSummary, Option<RepoDetailPatch>, Option<i64>), String> {
+    let root = workspace_root(app)?;
+    let path = repo_path_by_id(app, &request.repo_id)?;
+    let remote_checked_at = if request.mode == "remote" {
+        if origin_remote_url(&path).is_none() {
+            return Err("仓库没有可抓取的远端".to_string());
+        }
+        run_fetch(app, &path)?;
+        Some(now_millis())
+    } else {
+        None
+    };
+    let patch_request = RepoDetailPatchRequest {
+        include_commits: request.include_commits,
+        include_branches: request.include_branches,
+    };
+    let detail_patch =
+        include_detail.then(|| build_repo_detail_patch(&root, &path, &patch_request));
+    let summary = detail_patch
+        .as_ref()
+        .map(|patch| patch.summary.clone())
+        .unwrap_or_else(|| summarize_repo(&root, &path));
+    let settings = load_settings(app);
+    if settings.workspace_root.as_deref().map(Path::new) != Some(root.as_path()) {
+        return Err("工作区已切换，已丢弃刷新结果".to_string());
+    }
+    if let Some(checked_at) = remote_checked_at {
+        write_startup_repo_summary_after_fetch(app, &settings, &summary, checked_at)?;
+    } else {
+        write_startup_repo_summary(app, &settings, &summary)?;
+    }
+    Ok((summary, detail_patch, remote_checked_at))
 }
 
 pub async fn repo_stage_files(
@@ -1798,7 +1746,10 @@ pub async fn repo_fetch(app: AppHandle, repo_id: String) -> Result<RepoSummary, 
         let root = workspace_root(&app)?;
         let path = repo_path_by_id(&app, &repo_id)?;
         run_fetch(&app, &path)?;
-        Ok(summarize_repo(&root, &path))
+        let summary = summarize_repo(&root, &path);
+        let settings = load_settings(&app);
+        write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis())?;
+        Ok(summary)
     })
     .await
 }

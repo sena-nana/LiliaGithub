@@ -3,6 +3,7 @@ pub mod file_browser;
 pub mod github;
 pub mod launch;
 pub(crate) mod readme;
+pub(crate) mod refresh;
 pub mod repos;
 pub mod settings;
 mod shared;

@@ -3,25 +3,27 @@ use super::bulk::{
     build_bulk_sync_preview_with_lookup_and_mode, bulk_error_result, merge_pull_block_reason,
     run_bulk_sync_parallel, should_retry_push_with_system_git, sync_repo,
 };
-use super::file_browser::{delete_repo_file, repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES};
+use super::file_browser::{
+    delete_repo_file, repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES,
+};
 use super::github::{
     add_pull_request_reviewers_from_reviews, forget_remote_repo_shortcut,
-    github_artifact_entry_path, github_artifact_file_bytes_from_zip,
-    github_artifact_preview_from_bytes, github_branch_from_response, github_commit_file_changes,
-    github_content_items_to_file_entries, github_contribution_result,
-    github_development_items_from_timeline, github_file_preview_from_content,
-    github_graphql_errors_require_read_project, github_issue_cache_key, github_issue_from_response,
-    github_issue_project_items_from_graphql, github_project_cache_repo_key,
-    github_pull_request_cache_key, github_pull_request_reviewers_from_requested,
-    github_pull_request_search_query, github_pull_request_search_required,
-    github_release_asset_bytes, github_release_asset_name, github_release_from_response,
-    github_release_upload_base_url, github_release_validate_asset_file_size,
-    github_repo_management_from_response, github_require_scope,
-    github_review_comment_timeline_item_from_response, github_review_timeline_item_from_response,
-    github_actions_permissions_payload, github_timeline_item_from_response,
-    github_update_repo_settings_payload, github_workflow_permissions_payload,
-    github_validate_release_for_artifact_asset, github_workflow_artifact_from_response,
-    github_workflow_definition_from_file, github_workflow_job_from_response,
+    github_actions_permissions_payload, github_artifact_entry_path,
+    github_artifact_file_bytes_from_zip, github_artifact_preview_from_bytes,
+    github_branch_from_response, github_commit_file_changes, github_content_items_to_file_entries,
+    github_contribution_result, github_development_items_from_timeline,
+    github_file_preview_from_content, github_graphql_errors_require_read_project,
+    github_issue_cache_key, github_issue_from_response, github_issue_project_items_from_graphql,
+    github_project_cache_repo_key, github_pull_request_cache_key,
+    github_pull_request_reviewers_from_requested, github_pull_request_search_query,
+    github_pull_request_search_required, github_release_asset_bytes, github_release_asset_name,
+    github_release_from_response, github_release_upload_base_url,
+    github_release_validate_asset_file_size, github_repo_management_from_response,
+    github_require_scope, github_review_comment_timeline_item_from_response,
+    github_review_timeline_item_from_response, github_timeline_item_from_response,
+    github_update_repo_settings_payload, github_validate_release_for_artifact_asset,
+    github_workflow_artifact_from_response, github_workflow_definition_from_file,
+    github_workflow_job_from_response, github_workflow_permissions_payload,
     github_workflow_run_from_response, github_workflow_runs_cache_key,
     normalize_github_content_path, normalize_github_repo_input, normalize_github_topics,
     normalize_scope_list, parse_github_datetime, parse_next_page, remember_remote_repo_shortcut,
@@ -53,13 +55,11 @@ use super::repos::{
     local_branch_exists, managed_repo_paths, managed_repo_paths_and_prune_stale, merge_branch_at,
     normalize_clone_directory_name, normalize_git_remote_error, normalize_stash_id,
     parse_conflict_hunks, parse_github_remote, parse_status_snapshot, prepare_pull_local_changes,
-    refresh_managed_repo_remotes, rename_branch_at, repo_branches, repo_changes,
-    repo_head_language_stats, repo_history, repo_id, repo_refresh_partial_failure_message,
-    repo_refresh_success_message, repo_refresh_worker_count, repo_status_entries,
-    resolve_conflict_content, resolve_repo_worktree,
+    rename_branch_at, repo_branches, repo_changes, repo_head_language_stats, repo_history, repo_id,
+    repo_status_entries, resolve_conflict_content, resolve_repo_worktree,
     restore_pull_local_changes, selected_repo_files, should_retry_clone_with_system_git,
     should_skip_language_path, status_pair, summarize_repo, validate_clone_directory_name,
-    RepoFetchFailure, RepoStatusEntry,
+    RepoStatusEntry,
 };
 use super::settings::{
     add_managed_repo_id, create_repo_group, delete_repo_group, move_repo_to_group,
@@ -91,23 +91,17 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{mpsc, Arc, Mutex as TestMutex};
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration as TestDuration;
 
-struct NoopWorkspaceRuntime;
+pub(super) struct NoopWorkspaceRuntime;
 
 impl WorkspaceRuntime for NoopWorkspaceRuntime {
     fn store_get(&self, _file: &str, _key: &str) -> Result<Option<serde_json::Value>, String> {
         Ok(None)
     }
 
-    fn store_set(
-        &self,
-        _file: &str,
-        _key: &str,
-        _value: serde_json::Value,
-    ) -> Result<(), String> {
+    fn store_set(&self, _file: &str, _key: &str, _value: serde_json::Value) -> Result<(), String> {
         Ok(())
     }
 
@@ -1613,7 +1607,9 @@ fn contribution_identity_scan_recommends_related_recent_authors_and_ignores_coll
     let related = result
         .recommendations
         .iter()
-        .find(|recommendation| recommendation.identity.email.as_deref() == Some("legacy@example.com"))
+        .find(|recommendation| {
+            recommendation.identity.email.as_deref() == Some("legacy@example.com")
+        })
         .expect("related author should be recommended");
     assert_eq!(
         related.confidence,
@@ -1623,7 +1619,9 @@ fn contribution_identity_scan_recommends_related_recent_authors_and_ignores_coll
     assert!(result
         .recommendations
         .iter()
-        .all(|recommendation| recommendation.identity.email.as_deref() != Some("other@example.com")));
+        .all(
+            |recommendation| recommendation.identity.email.as_deref() != Some("other@example.com")
+        ));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1717,7 +1715,10 @@ fn contribution_identity_scan_respects_visible_home_repos_and_does_not_mutate_se
     assert!(result
         .recommendations
         .iter()
-        .all(|recommendation| recommendation.repos.iter().all(|repo| repo.repo_id == "included")));
+        .all(|recommendation| recommendation
+            .repos
+            .iter()
+            .all(|repo| repo.repo_id == "included")));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2382,8 +2383,7 @@ fn repo_path_expansion_includes_root_worktrees_only_once() {
         ],
     );
 
-    let paths =
-        expand_repo_paths_with_root_worktrees(&root, vec![main.clone(), linked.clone()]);
+    let paths = expand_repo_paths_with_root_worktrees(&root, vec![main.clone(), linked.clone()]);
     let ids = paths
         .iter()
         .map(|path| repo_id(&root, path))
@@ -3736,16 +3736,12 @@ fn repo_file_browser_delete_rejects_unsafe_or_non_file_paths() {
         delete_repo_file(&repo, ".git/config").unwrap_err(),
         "不能删除 Git 内部文件"
     );
-    assert!(
-        delete_repo_file(&repo, "src")
-            .unwrap_err()
-            .starts_with("只能删除文件：")
-    );
-    assert!(
-        delete_repo_file(&repo, "missing.txt")
-            .unwrap_err()
-            .starts_with("文件不存在：")
-    );
+    assert!(delete_repo_file(&repo, "src")
+        .unwrap_err()
+        .starts_with("只能删除文件："));
+    assert!(delete_repo_file(&repo, "missing.txt")
+        .unwrap_err()
+        .starts_with("文件不存在："));
     assert!(repo.join(".git").join("config").exists());
     assert!(repo.join("README.md").exists());
 }
@@ -4085,6 +4081,7 @@ fn cached_managed_repos_merges_cached_metadata_with_current_repo_identity() {
             CachedRepoSummary {
                 summary: cached,
                 cached_at: 1,
+                remote_checked_at: None,
             },
         )]),
         ..WorkspaceStartupCache::default()
@@ -4149,153 +4146,6 @@ fn prune_deleted_repo_settings_clears_all_repo_scoped_state() {
     assert_eq!(settings.repo_groups[0].repo_ids, vec!["other".to_string()]);
     assert!(settings.project_launch_configs.is_empty());
     assert!(settings.local_contribution_cache.is_empty());
-}
-
-#[test]
-fn refresh_managed_repo_remotes_fetches_only_repos_with_origin() {
-    let root = temp_dir("managed-fetch");
-    let with_origin = root.join("with-origin");
-    let local_only = root.join("local-only");
-    init_git_repo(&with_origin);
-    init_git_repo(&local_only);
-    run_git(
-        &with_origin,
-        &["remote", "add", "origin", "https://github.com/a/repo.git"],
-    );
-    let paths = vec![with_origin.clone(), local_only];
-    let fetched = TestMutex::new(Vec::new());
-
-    let failures = refresh_managed_repo_remotes(&paths, |path| {
-        fetched.lock().unwrap().push(repo_id(&root, path));
-        Ok(())
-    });
-
-    let mut fetched = fetched.into_inner().unwrap();
-    fetched.sort();
-    assert!(failures.is_empty());
-    assert_eq!(fetched, vec!["with-origin"]);
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn refresh_managed_repo_remotes_keeps_going_after_fetch_failure() {
-    let root = temp_dir("managed-fetch-failure");
-    let failing = root.join("failing");
-    let succeeding = root.join("succeeding");
-    init_git_repo(&failing);
-    init_git_repo(&succeeding);
-    run_git(
-        &failing,
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/a/failing.git",
-        ],
-    );
-    run_git(
-        &succeeding,
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/a/succeeding.git",
-        ],
-    );
-    let paths = vec![failing.clone(), succeeding.clone()];
-    let fetched = TestMutex::new(Vec::new());
-
-    let failures = refresh_managed_repo_remotes(&paths, |path| {
-        let id = repo_id(&root, path);
-        fetched.lock().unwrap().push(id.clone());
-        if id == "failing" {
-            Err("network unavailable".to_string())
-        } else {
-            Ok(())
-        }
-    });
-
-    let mut fetched = fetched.into_inner().unwrap();
-    fetched.sort();
-    assert_eq!(fetched, vec!["failing", "succeeding"]);
-    assert_eq!(
-        failures,
-        vec![RepoFetchFailure {
-            repo_name: "failing".to_string(),
-            error: "network unavailable".to_string(),
-        }]
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn refresh_managed_repo_remotes_starts_other_repos_while_one_fetch_is_blocked() {
-    if repo_refresh_worker_count(2) < 2 {
-        return;
-    }
-
-    let root = temp_dir("managed-fetch-parallel");
-    let blocking = root.join("blocking");
-    let other = root.join("other");
-    init_git_repo(&blocking);
-    init_git_repo(&other);
-    run_git(
-        &blocking,
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/a/blocking.git",
-        ],
-    );
-    run_git(
-        &other,
-        &["remote", "add", "origin", "https://github.com/a/other.git"],
-    );
-    let paths = vec![blocking, other];
-    let (started_tx, started_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel();
-    let release_rx = Arc::new(TestMutex::new(release_rx));
-    let root_for_fetch = root.clone();
-
-    let handle = thread::spawn(move || {
-        refresh_managed_repo_remotes(&paths, |path| {
-            let id = repo_id(&root_for_fetch, path);
-            started_tx.send(id.clone()).unwrap();
-            if id == "blocking" {
-                release_rx.lock().unwrap().recv().unwrap();
-            }
-            Ok(())
-        })
-    });
-
-    let first = started_rx.recv_timeout(TestDuration::from_secs(5)).unwrap();
-    let second = started_rx.recv_timeout(TestDuration::from_secs(5)).unwrap();
-    let mut started = vec![first, second];
-    started.sort();
-    assert_eq!(started, vec!["blocking", "other"]);
-
-    release_tx.send(()).unwrap();
-    let failures = handle.join().unwrap();
-    assert!(failures.is_empty());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn repo_refresh_task_messages_cover_success_and_partial_failure() {
-    assert_eq!(
-        repo_refresh_success_message(2),
-        "已刷新 2 个仓库并同步远端状态"
-    );
-
-    let failures = vec![RepoFetchFailure {
-        repo_name: "repo".to_string(),
-        error: "network unavailable".to_string(),
-    }];
-    assert_eq!(
-        repo_refresh_partial_failure_message(3, &failures),
-        "已刷新 3 个仓库，1 个仓库 fetch 失败：repo（network unavailable）"
-    );
 }
 
 #[test]

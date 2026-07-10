@@ -810,7 +810,9 @@ describe("基础路由", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "main" }));
-    await fireEvent.click(within(await screen.findByRole("listbox", { name: "分支候选" })).getByRole("button", { name: "dev" }));
+    await fireEvent.click(await within(
+      await screen.findByRole("listbox", { name: "分支候选" }),
+    ).findByRole("button", { name: "dev" }));
 
     await waitFor(() => {
       expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toContainEqual({

@@ -48,6 +48,7 @@ const priorityRank: Record<WorkspaceTaskPriority, number> = {
 
 const workspaceKindTitles: Record<WorkspaceTask["kind"], string> = {
   repoStatus: "刷新仓库状态",
+  repoRemote: "检查远端更新",
   repoDetail: "读取仓库详情",
   discoverRepos: "发现工作区仓库",
   languageStats: "更新代码统计",

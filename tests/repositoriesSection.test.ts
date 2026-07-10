@@ -297,16 +297,17 @@ describe("RepositoriesSection", () => {
     });
   });
 
-  it("后台任务区展示状态并为执行中任务提供取消入口", async () => {
+  it("后台任务区只为真实可取消的 pending 任务提供取消入口", async () => {
     workspace.state.tasks = [
       {
-        id: "task-running",
+        id: "task-pending",
         kind: "repoStatus",
         priority: "high",
         repoId: null,
-        status: "running",
-        message: "同步远端状态",
+        status: "pending",
+        message: "等待检查远端状态",
         updatedAt: 1,
+        cancellable: true,
       },
       {
         id: "task-error",
@@ -316,6 +317,7 @@ describe("RepositoriesSection", () => {
         status: "error",
         message: "扫描失败",
         updatedAt: 2,
+        cancellable: false,
       },
       {
         id: "task-cancelled",
@@ -325,6 +327,7 @@ describe("RepositoriesSection", () => {
         status: "cancelled",
         message: "已取消",
         updatedAt: 3,
+        cancellable: false,
       },
     ];
 
@@ -344,7 +347,7 @@ describe("RepositoriesSection", () => {
 
     const taskPanel = screen.getByText("后台任务").closest(".workspace-task-list");
     if (!(taskPanel instanceof HTMLElement)) throw new Error("未找到后台任务区");
-    expect(within(taskPanel).getByText("执行中")).toBeInTheDocument();
+    expect(within(taskPanel).getByText("等待中")).toBeInTheDocument();
     expect(within(taskPanel).getByText("失败")).toBeInTheDocument();
     expect(within(taskPanel).getAllByText("已取消").length).toBeGreaterThan(0);
     expect(within(taskPanel).getAllByRole("button", { name: "取消" })).toHaveLength(1);
@@ -352,7 +355,7 @@ describe("RepositoriesSection", () => {
     const cancelButton = within(taskPanel).getByRole("button", { name: "取消" });
     await fireEvent.click(cancelButton);
 
-    expect(workspace.cancelWorkspaceTask).toHaveBeenCalledWith("task-running");
+    expect(workspace.cancelWorkspaceTask).toHaveBeenCalledWith("task-pending");
     expect(within(taskPanel).getByRole("button", { name: "取消中" })).toBeDisabled();
 
     resolveCancel?.();
@@ -365,13 +368,14 @@ describe("RepositoriesSection", () => {
 
   it("后台任务取消失败时仅在任务行内显示错误", async () => {
     workspace.state.tasks = [{
-      id: "task-running",
+      id: "task-pending",
       kind: "repoStatus",
       priority: "high",
       repoId: null,
-      status: "running",
-      message: "同步远端状态",
+      status: "pending",
+      message: "等待检查远端状态",
       updatedAt: 1,
+      cancellable: true,
     }];
     workspace.cancelWorkspaceTask.mockRejectedValue(new Error("取消失败：任务已结束"));
 

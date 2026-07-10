@@ -66,6 +66,7 @@ const {
   runChangeAction,
   commitSelected,
   refreshAndFetchRepo,
+  requestGitHubBranches,
   refreshProjectCache,
   selectOpenTarget,
   selectPullStrategy,
@@ -131,6 +132,7 @@ const {
         @merge-branch="mergeBranch"
         @delete-branch="deleteBranch"
         @refresh-branches="refreshAndFetchRepo"
+        @request-branches="requestGitHubBranches"
         @push-with-upstream="pushCurrentBranchWithUpstream"
         @set-upstream="setCurrentBranchUpstream"
         @select-launch-candidate="selectLaunchCandidateByValue"

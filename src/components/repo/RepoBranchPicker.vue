@@ -58,6 +58,7 @@ const emit = defineEmits<{
   "merge-branch": [branch: string];
   "delete-branch": [branch: string];
   "refresh-branches": [];
+  opened: [];
   "push-with-upstream": [];
   "set-upstream": [];
 }>();
@@ -112,6 +113,7 @@ function branchAriaLabel(branch: RepoBranchPickerItem) {
 function toggle() {
   if (props.disabled || props.actionRunning) return;
   open.value = !open.value;
+  if (open.value) emit("opened");
 }
 
 function closePicker() {

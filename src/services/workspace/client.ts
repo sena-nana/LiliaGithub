@@ -75,6 +75,7 @@ import type {
   RemoteRepoShortcut,
   SystemOpenTarget,
   WorkspaceTask,
+  WorkspaceRepoRefreshRequest,
   WorkspaceSettings,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
@@ -643,6 +644,18 @@ export function listWorkspaceTasks(): Promise<WorkspaceTask[]> {
 
 export function cancelWorkspaceTask(taskId: string): Promise<void> {
   return call("workspace_cancel_task", { taskId }, () => workspaceFallback().cancelWorkspaceTask(taskId));
+}
+
+export function setActiveWorkspaceRepo(repoId: string | null): Promise<void> {
+  return call("workspace_set_active_repo", { repoId }, () => workspaceFallback().setActiveWorkspaceRepo(repoId));
+}
+
+export function setWorkspaceRefreshPaused(paused: boolean): Promise<void> {
+  return call("workspace_set_refresh_paused", { paused }, () => workspaceFallback().setWorkspaceRefreshPaused(paused));
+}
+
+export function enqueueRepoRefresh(request: WorkspaceRepoRefreshRequest): Promise<string> {
+  return call("workspace_enqueue_repo_refresh", { request }, () => workspaceFallback().enqueueRepoRefresh(request));
 }
 
 export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {

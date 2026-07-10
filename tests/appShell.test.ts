@@ -496,7 +496,16 @@ describe("AppShell sidebar", () => {
     state.repos = Array.from({ length: 120 }, (_, index) =>
       repoSummary(`Repo-${String(index + 1).padStart(3, "0")}`),
     );
-    state.refreshingRepoIds = ["Repo-001"];
+    state.tasks = [{
+      id: "refresh-1",
+      kind: "repoStatus",
+      priority: "low",
+      repoId: "Repo-001",
+      status: "running",
+      message: null,
+      updatedAt: Date.now(),
+      cancellable: false,
+    }];
     state.syncingRepoIds = ["Repo-002"];
 
     const view = await renderAppShell("/repos/Repo-003");
@@ -516,7 +525,7 @@ describe("AppShell sidebar", () => {
     expect(within(secondRow).queryByLabelText("正在刷新仓库")).toBeNull();
     expect(within(thirdRow).queryByLabelText("正在同步")).toBeNull();
 
-    state.refreshingRepoIds = ["Repo-003"];
+    state.tasks = [{ ...state.tasks[0], repoId: "Repo-003" }];
 
     await waitFor(() => {
       expect(within(sidebarRowForText(view.container, "Repo-001")).queryByLabelText("正在刷新仓库")).toBeNull();
@@ -530,7 +539,6 @@ describe("AppShell sidebar", () => {
       repoSummary(`Repo-${String(index + 1).padStart(3, "0")}`),
     );
     state.scanning = true;
-    state.refreshingRepoIds = [];
 
     const view = await renderAppShell("/");
 

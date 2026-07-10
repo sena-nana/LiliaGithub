@@ -4,6 +4,7 @@ import { defineComponent, h } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { useRepoDetailController } from "../src/composables/useRepoDetailController";
 import { resetRepositoryRuntimeForTests } from "../src/composables/workspace/repositories";
+import { resetRepoRefreshRuntimeForTests } from "../src/composables/workspace/repoRefreshEvents";
 import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
 import type { ProjectLaunchCandidate, ProjectLaunchConfig } from "../src/services/workspace";
@@ -20,6 +21,8 @@ const service = {
   listRepoLaunchHistory: vi.fn(),
   saveRepoLaunchConfig: vi.fn(),
   startRepoLaunch: vi.fn(),
+  setActiveWorkspaceRepo: vi.fn(),
+  enqueueRepoRefresh: vi.fn(),
 };
 
 vi.mock("../src/composables/workspace/serviceLoader", () => ({
@@ -74,6 +77,7 @@ describe("repo detail launch controller", () => {
   beforeEach(() => {
     resetWorkspaceStateForTests();
     resetRepositoryRuntimeForTests();
+    resetRepoRefreshRuntimeForTests();
     vi.clearAllMocks();
 
     const summary = repoSummary("repo-a");
@@ -111,13 +115,15 @@ describe("repo detail launch controller", () => {
       exitCode: null,
       error: null,
     }));
+    service.setActiveWorkspaceRepo.mockResolvedValue(undefined);
+    service.enqueueRepoRefresh.mockResolvedValue("remote-task");
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it("loads launch command candidates before repo detail loading finishes", async () => {
+  it("loads launch command candidates before repo detail loading finishes without starting statistics", async () => {
     const summary = repoSummary("repo-a");
     const pendingDetail = deferred<ReturnType<typeof repoDetail>>();
     service.getRepoDetail.mockReturnValueOnce(pendingDetail.promise);
@@ -131,8 +137,9 @@ describe("repo detail launch controller", () => {
 
     pendingDetail.resolve(repoDetail(summary));
     await waitFor(() => {
-      expect(service.refreshRepoLanguageStats).toHaveBeenCalledWith("repo-a");
+      expect(state.repoDetails["repo-a"]?.summary.id).toBe("repo-a");
     });
+    expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
   });
 
   it("preserves candidate cwd when an edited launch command is started", async () => {

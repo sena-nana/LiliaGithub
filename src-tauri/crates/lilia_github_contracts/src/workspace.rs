@@ -46,6 +46,8 @@ pub struct WorkspaceStartupCache {
 pub struct CachedRepoSummary {
     pub summary: RepoSummary,
     pub cached_at: i64,
+    #[serde(default)]
+    pub remote_checked_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +409,39 @@ pub struct RepoRefreshSummaryOptions {
     pub fetch_remote: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoRefreshRequest {
+    pub repo_id: String,
+    pub mode: String,
+    pub priority: String,
+    #[serde(default)]
+    pub force: bool,
+    #[serde(default = "default_repo_refresh_detail_scope")]
+    pub detail_scope: String,
+    #[serde(default)]
+    pub include_commits: bool,
+    #[serde(default)]
+    pub include_branches: bool,
+    pub trigger: String,
+}
+
+fn default_repo_refresh_detail_scope() -> String {
+    "auto".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoRefreshedEvent {
+    pub repo_id: String,
+    pub mode: String,
+    pub summary: RepoSummary,
+    #[serde(default)]
+    pub detail_patch: Option<RepoDetailPatch>,
+    #[serde(default)]
+    pub remote_checked_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoDetailPatchRequest {
@@ -708,6 +743,8 @@ pub struct WorkspaceTask {
     pub status: String,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub cancellable: bool,
     pub updated_at: i64,
 }
 

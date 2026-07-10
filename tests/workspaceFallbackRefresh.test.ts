@@ -18,7 +18,7 @@ describe("workspace fallback refresh", () => {
     workspaceFallback = await workspaceFallbackForTests();
   });
 
-  it("刷新仓库时使用远端状态同步语义记录成功任务", async () => {
+  it("刷新仓库默认只读取本地状态", async () => {
     const repos = await refreshRepos();
     const tasks = await listWorkspaceTasks();
 
@@ -28,11 +28,11 @@ describe("workspace fallback refresh", () => {
       priority: "high",
       repoId: null,
       status: "success",
-      message: "已刷新 2 个仓库并同步远端状态",
+      message: "已读取 2 个仓库的本地状态",
     });
   });
 
-  it("远端同步部分失败时保留仓库刷新结果并记录 error 任务", async () => {
+  it("本地刷新不受远端同步失败影响", async () => {
     workspaceFallback.setFallbackRepoRemoteSyncOverrideForTests((repo) => (
       repo.id === "LiliaGithub" ? "认证失败" : null
     ));
@@ -45,8 +45,8 @@ describe("workspace fallback refresh", () => {
       kind: "repoStatus",
       priority: "high",
       repoId: null,
-      status: "error",
-      message: "已刷新 2 个仓库，1 个仓库 fetch 失败：LiliaGithub（认证失败）",
+      status: "success",
+      message: "已读取 2 个仓库的本地状态",
     });
   });
 

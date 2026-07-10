@@ -6,6 +6,11 @@ import {
   installWorkspaceFocusRefresh,
 } from "../src/composables/workspace/lifecycle";
 import { refreshRepoSummaries, resetRepositoryRuntimeForTests } from "../src/composables/workspace/repositories";
+import {
+  applyWorkspaceRepoRefreshed,
+  applyWorkspaceTaskChanged,
+  resetRepoRefreshRuntimeForTests,
+} from "../src/composables/workspace/repoRefreshEvents";
 import { recentSyncErrorForRepo, resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { resetLowPrioritySchedulerForTests } from "../src/utils/lowPriorityScheduler";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
@@ -27,6 +32,8 @@ const service = vi.hoisted(() => ({
   listWorkspaceTasks: vi.fn(),
   refreshRepoLanguageStats: vi.fn(),
   bulkSyncExecute: vi.fn(),
+  setActiveWorkspaceRepo: vi.fn(),
+  enqueueRepoRefresh: vi.fn(),
 }));
 
 vi.mock("../src/composables/workspace/serviceLoader", () => ({
@@ -62,6 +69,7 @@ describe("workspace focus refresh", () => {
     vi.setSystemTime(new Date("2026-06-12T00:00:00Z"));
     resetWorkspaceStateForTests();
     resetRepositoryRuntimeForTests();
+    resetRepoRefreshRuntimeForTests();
     resetLowPrioritySchedulerForTests();
     vi.clearAllMocks();
     const settings = workspaceSettings();
@@ -114,6 +122,41 @@ describe("workspace focus refresh", () => {
       languageStats: [{ language: "TypeScript", bytes: 1, lines: 1 }],
       languageStatsUpdatedAt: Date.now(),
     }));
+    let taskIndex = 0;
+    service.setActiveWorkspaceRepo.mockResolvedValue(undefined);
+    service.enqueueRepoRefresh.mockImplementation(async (request) => {
+      const taskId = `focus-refresh-${++taskIndex}`;
+      const kind = request.mode === "remote" ? "repoRemote" : "repoStatus";
+      const summary = await service.refreshRepoSummary(request.repoId, {
+        fetchRemote: request.mode === "remote",
+      });
+      const detailPatch = request.detailScope === "detail"
+        ? await service.refreshRepoDetailPatch(request.repoId, {
+            includeCommits: Boolean(request.includeCommits),
+            includeBranches: Boolean(request.includeBranches),
+          })
+        : null;
+      applyWorkspaceRepoRefreshed({
+        taskId,
+        repoId: request.repoId,
+        mode: request.mode,
+        summary,
+        detailPatch,
+        remoteCheckedAt: request.mode === "remote" ? Date.now() : null,
+        trigger: request.trigger,
+      });
+      applyWorkspaceTaskChanged({
+        id: taskId,
+        kind,
+        priority: request.priority,
+        repoId: request.repoId,
+        status: "success",
+        message: null,
+        updatedAt: Date.now(),
+        cancellable: false,
+      });
+      return taskId;
+    });
   });
 
   afterEach(() => {
@@ -123,7 +166,7 @@ describe("workspace focus refresh", () => {
     vi.useRealTimers();
   });
 
-  it("失焦超过 5 分钟后回焦点只同步仓库摘要和远端状态", async () => {
+  it("失焦超过 5 分钟后回焦点只入队本地校准，不获取远端", async () => {
     const initial = repoSummary("LiliaGithub", {
       ahead: 1,
       languageStats: [{ language: "Vue", bytes: 10, lines: 10 }],
@@ -144,18 +187,19 @@ describe("workspace focus refresh", () => {
     vi.advanceTimersByTime(16);
     await flushPromises();
 
-    expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: true });
-    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+    expect(service.refreshRepoSummary).toHaveBeenCalledWith("LiliaGithub", { fetchRemote: false });
+    expect(service.refreshRepoSummary.mock.calls.every(([, options]) => options.fetchRemote === false)).toBe(true);
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
     expect(service.discoverRepos).not.toHaveBeenCalled();
     expect(service.listRepoContribution).not.toHaveBeenCalled();
     expect(service.refreshRepoLanguageStats).not.toHaveBeenCalled();
-    expect(service.listWorkspaceTasks).toHaveBeenCalledTimes(1);
+    expect(service.listWorkspaceTasks).not.toHaveBeenCalled();
     expect(state.repos[0].ahead).toBe(2);
     expect(state.repos[0].languageStats).toEqual(initial.languageStats);
     expect(state.repos[0].languageStatsUpdatedAt).toBe(1);
   });
 
-  it("仓库状态刚刷新过时回焦点只刷新当前仓库状态", async () => {
+  it("仓库状态刚刷新过时回焦点仍只执行本地补偿", async () => {
     const initial = repoSummary("LiliaGithub");
     state.repos = [initial];
     service.listManagedRepos.mockResolvedValue([initial]);
@@ -171,7 +215,7 @@ describe("workspace focus refresh", () => {
     await flushPromises();
 
     expect(service.listManagedRepos).not.toHaveBeenCalled();
-    expect(service.refreshRepoSummary).not.toHaveBeenCalled();
+    expect(service.refreshRepoSummary.mock.calls.every(([, options]) => options.fetchRemote === false)).toBe(true);
     expect(service.refreshRepoDetailPatch).toHaveBeenCalledWith("LiliaGithub", {
       includeCommits: false,
       includeBranches: false,
@@ -192,7 +236,7 @@ describe("workspace focus refresh", () => {
     expect(service.refreshRepoSummary).not.toHaveBeenCalled();
   });
 
-  it("回焦点刷新触发自动同步失败时保存最近同步失败", async () => {
+  it("回焦点本地校准不会在未检查远端前启动自动同步", async () => {
     const initial = repoSummary("LiliaGithub", { ahead: 1 });
     const refreshed = repoSummary("LiliaGithub", { ahead: 2 });
     state.settings = {
@@ -214,8 +258,8 @@ describe("workspace focus refresh", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["LiliaGithub"], "stash");
-    expect(recentSyncErrorForRepo("LiliaGithub")).toEqual({ message: "认证失败", retrying: false });
+    expect(service.bulkSyncExecute).not.toHaveBeenCalled();
+    expect(recentSyncErrorForRepo("LiliaGithub")).toBeNull();
   });
 
   it("选择工作区会阻止旧初始化结果覆盖当前设置", async () => {
