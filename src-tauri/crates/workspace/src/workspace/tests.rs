@@ -67,7 +67,7 @@ use super::settings::{
     rename_repo_group, repo_path_from_id, scan_contribution_identity_recommendations,
 };
 use super::shared::{
-    cached_local_contribution_count, collect_local_contribution_counts,
+    cached_local_contribution_count, collect_local_contribution_counts, compatible_path_text,
     contribution_identity_matches, current_utc_day_index, days_from_civil, format_day_index,
     local_contribution_identities, normalize_local_contribution_repo_id, now_millis,
     remove_local_contribution_cache, write_local_contribution_cache,
@@ -2241,33 +2241,13 @@ fn repo_branches_reports_checked_out_worktrees() {
         .iter()
         .find(|branch| branch.name == "feature/worktree")
         .unwrap();
-    let normalize_display_path = |value: String| {
-        value
-            .strip_prefix(r"\\?\")
-            .unwrap_or(value.as_str())
-            .to_string()
-    };
-
     assert_eq!(
-        main.checked_out_worktree_paths
-            .iter()
-            .cloned()
-            .map(normalize_display_path)
-            .collect::<Vec<_>>(),
-        vec![normalize_display_path(
-            canonical_repo_path(&path).to_string_lossy().to_string()
-        )]
+        main.checked_out_worktree_paths,
+        vec![compatible_path_text(&canonical_repo_path(&path))]
     );
     assert_eq!(
-        feature
-            .checked_out_worktree_paths
-            .iter()
-            .cloned()
-            .map(normalize_display_path)
-            .collect::<Vec<_>>(),
-        vec![normalize_display_path(
-            canonical_repo_path(&linked).to_string_lossy().to_string()
-        )]
+        feature.checked_out_worktree_paths,
+        vec![compatible_path_text(&canonical_repo_path(&linked))]
     );
 }
 
@@ -4094,8 +4074,10 @@ fn cached_managed_repos_merges_cached_metadata_with_current_repo_identity() {
     assert_eq!(repos[0].name, "visible");
     assert_eq!(
         repos[0].path,
-        canonical_repo_path(&visible).to_string_lossy().to_string()
+        compatible_path_text(&canonical_repo_path(&visible))
     );
+    #[cfg(windows)]
+    assert!(!repos[0].path.starts_with(r"\\?\"));
     assert_eq!(repos[0].relative_path, "visible");
     assert_eq!(repos[0].worktree.role, "standalone");
     assert_eq!(repos[0].current_branch.as_deref(), Some("cached-main"));

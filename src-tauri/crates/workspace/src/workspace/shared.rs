@@ -24,6 +24,10 @@ pub(super) fn configure_background_command(command: &mut Command) {
     }
 }
 
+pub(super) fn compatible_path_text(path: &Path) -> String {
+    dunce::simplified(path).to_string_lossy().into_owned()
+}
+
 pub(super) fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
