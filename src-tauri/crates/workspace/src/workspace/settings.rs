@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
+use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::github::{
     forget_remote_repo_shortcut, remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
 };
@@ -23,11 +25,15 @@ use lilia_github_contracts::workspace::{
     RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
     WorkspaceStartupContributions,
 };
-use crate::runtime::WorkspaceContext as AppHandle;
 
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
 pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
+
+fn startup_cache_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 pub(super) fn load_settings(app: &AppHandle) -> WorkspaceSettings {
     app.store(STORE_FILE)
@@ -70,6 +76,13 @@ pub(super) fn save_startup_cache(
 }
 
 pub(super) fn clear_startup_cache(app: &AppHandle) -> Result<(), String> {
+    let _guard = startup_cache_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    clear_startup_cache_unlocked(app)
+}
+
+fn clear_startup_cache_unlocked(app: &AppHandle) -> Result<(), String> {
     let store = app
         .store(STORE_FILE)
         .map_err(|e| format!("打开启动缓存失败：{e}"))?;
@@ -130,12 +143,41 @@ pub(super) fn write_startup_repo_summary(
     settings: &WorkspaceSettings,
     summary: &RepoSummary,
 ) -> Result<(), String> {
+    let _guard = startup_cache_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut cache = matching_startup_cache(app, settings);
+    let remote_checked_at = cache
+        .repos_by_id
+        .get(&summary.id)
+        .and_then(|entry| entry.remote_checked_at);
+    cache.repos_by_id.insert(
+        summary.id.clone(),
+        CachedRepoSummary {
+            summary: summary.clone(),
+            cached_at: now_millis(),
+            remote_checked_at,
+        },
+    );
+    save_startup_cache(app, &cache)
+}
+
+pub(super) fn write_startup_repo_summary_after_fetch(
+    app: &AppHandle,
+    settings: &WorkspaceSettings,
+    summary: &RepoSummary,
+    remote_checked_at: i64,
+) -> Result<(), String> {
+    let _guard = startup_cache_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut cache = matching_startup_cache(app, settings);
     cache.repos_by_id.insert(
         summary.id.clone(),
         CachedRepoSummary {
             summary: summary.clone(),
             cached_at: now_millis(),
+            remote_checked_at: Some(remote_checked_at),
         },
     );
     save_startup_cache(app, &cache)
@@ -146,6 +188,9 @@ pub(super) fn write_startup_contributions(
     settings: &WorkspaceSettings,
     contributions: WorkspaceStartupContributions,
 ) -> Result<WorkspaceStartupCache, String> {
+    let _guard = startup_cache_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut cache = matching_startup_cache(app, settings);
     cache.contributions = Some(CachedContributionResult {
         days: contributions.days,
@@ -157,12 +202,15 @@ pub(super) fn write_startup_contributions(
 }
 
 pub(super) fn remove_startup_cache_repo(app: &AppHandle, repo_id: &str) -> Result<(), String> {
+    let _guard = startup_cache_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let Some(mut cache) = load_startup_cache(app) else {
         return Ok(());
     };
     cache.repos_by_id.remove(repo_id);
     if cache.repos_by_id.is_empty() && cache.contributions.is_none() {
-        clear_startup_cache(app)
+        clear_startup_cache_unlocked(app)
     } else {
         save_startup_cache(app, &cache)
     }
@@ -439,6 +487,7 @@ pub fn workspace_set_root(
     let mut settings = load_settings(&app);
     settings.workspace_root = Some(root.to_string_lossy().to_string());
     save_settings(&app, &settings)?;
+    crate::workspace::refresh::reset_refresh_scheduler();
     let _ = clear_startup_cache(&app);
     crate::workspace::watcher::clear_repo_watchers();
     Ok(settings)
@@ -581,7 +630,8 @@ pub(super) fn scan_contribution_identity_recommendations(
         }
 
         let local_identities = local_contribution_identities(&repo.path, settings);
-        let single_author_without_config = repo.config_identity.is_none() && repo.authors.len() == 1;
+        let single_author_without_config =
+            repo.config_identity.is_none() && repo.authors.len() == 1;
         for author in &repo.authors {
             let author_name = author.identity.name.as_deref().unwrap_or_default();
             let author_email = author.identity.email.as_deref().unwrap_or_default();

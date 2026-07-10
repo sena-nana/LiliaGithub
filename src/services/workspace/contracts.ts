@@ -70,6 +70,7 @@ import type {
   RepoSyncPreference,
   SystemOpenTarget,
   WorkspaceSettings,
+  WorkspaceRepoRefreshRequest,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
   WorkspaceTask,
@@ -127,6 +128,9 @@ export interface WorkspaceCommandContracts {
   workspace_list_hidden_repos: CommandContract<NoArgs, HiddenRepo[]>;
   workspace_list_tasks: CommandContract<NoArgs, WorkspaceTask[]>;
   workspace_cancel_task: CommandContract<{ taskId: string }, void>;
+  workspace_set_active_repo: CommandContract<{ repoId: Maybe<string> }, void>;
+  workspace_set_refresh_paused: CommandContract<{ paused: boolean }, void>;
+  workspace_enqueue_repo_refresh: CommandContract<{ request: WorkspaceRepoRefreshRequest }, string>;
 
   github_get_binding_status: CommandContract<NoArgs, GitHubBindingStatus>;
   github_start_device_flow: CommandContract<NoArgs, GitHubDeviceFlowStart>;

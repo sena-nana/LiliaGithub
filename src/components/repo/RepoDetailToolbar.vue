@@ -92,6 +92,7 @@ const emit = defineEmits<{
   mergeBranch: [branch: string];
   deleteBranch: [branch: string];
   refreshBranches: [];
+  requestBranches: [];
   pushWithUpstream: [];
   setUpstream: [];
   selectLaunchCandidate: [value: string];
@@ -215,12 +216,12 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             </span>
           </RouterLink>
           <RepoBranchPicker
-            v-if="branchItems.length"
+            v-if="branchItems.length || repoContext.capabilities.branchBrowse.provider === 'github'"
             :display-label="activeBranchName"
             :branches="branchItems"
             button-class="repo-toolbar__btn repo-toolbar__branch-select"
             agent-id="repo.toolbar.branch.select"
-            :disabled="branchActionRunning || !branchItems.length"
+            :disabled="branchActionRunning"
             :action-running="branchActionRunning"
             :allow-remote-checkout="true"
             :allow-remote-create="repoContext.capabilities.branch.available"
@@ -233,6 +234,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             @merge-branch="emit('mergeBranch', $event)"
             @delete-branch="emit('deleteBranch', $event)"
             @refresh-branches="emit('refreshBranches')"
+            @opened="emit('requestBranches')"
             @push-with-upstream="emit('pushWithUpstream')"
             @set-upstream="emit('setUpstream')"
           />

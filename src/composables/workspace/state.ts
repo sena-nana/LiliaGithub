@@ -24,6 +24,7 @@ export interface WorkspaceState {
   repos: RepoSummary[];
   repoListChange: RepoListChangeState;
   repoDetails: Record<string, RepoDetail | undefined>;
+  repoRemoteCheckedAt: Record<string, number | undefined>;
   launchConfigs: Record<string, ProjectLaunchConfig | null | undefined>;
   launchCandidates: Record<string, ProjectLaunchCandidate[] | undefined>;
   launchStatuses: Record<string, ProjectLaunchStatus | undefined>;
@@ -42,11 +43,9 @@ export interface WorkspaceState {
   bulkRunning: boolean;
   recentSync: RecentBulkSyncState | null;
   repoActionErrors: Record<string, RepoActionErrorState | undefined>;
-  repoStatusListRefreshToken: number;
   githubContributions: GitHubContributionsState;
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
-  refreshingRepoIds: string[];
   syncingRepoIds: string[];
 }
 
@@ -93,6 +92,7 @@ export const state = reactive<WorkspaceState>({
     structural: true,
   },
   repoDetails: {},
+  repoRemoteCheckedAt: {},
   launchConfigs: {},
   launchCandidates: {},
   launchStatuses: {},
@@ -111,7 +111,6 @@ export const state = reactive<WorkspaceState>({
   bulkRunning: false,
   recentSync: null,
   repoActionErrors: {},
-  repoStatusListRefreshToken: 0,
   githubContributions: {
     days: [],
     meta: null,
@@ -120,7 +119,6 @@ export const state = reactive<WorkspaceState>({
   },
   tasks: [],
   languageStatsLoadingRepoIds: [],
-  refreshingRepoIds: [],
   syncingRepoIds: [],
 });
 
@@ -402,6 +400,15 @@ export function setWorkspaceTasks(tasks: WorkspaceTask[]) {
   state.tasks = [...latestById.values()].sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
+export function upsertWorkspaceTask(task: WorkspaceTask) {
+  const index = state.tasks.findIndex((item) => item.id === task.id);
+  if (index >= 0 && state.tasks[index].updatedAt > task.updatedAt) return;
+  const next = index >= 0
+    ? state.tasks.map((item, itemIndex) => itemIndex === index ? task : item)
+    : [task, ...state.tasks];
+  state.tasks = next.sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 200);
+}
+
 export function repoById(repoId: string) {
   return state.repos.find((repo) => repo.id === repoId) ?? null;
 }
@@ -621,6 +628,7 @@ export function resetWorkspaceStateForTests() {
     structural: true,
   };
   state.repoDetails = {};
+  state.repoRemoteCheckedAt = {};
   state.launchConfigs = {};
   state.launchCandidates = {};
   state.launchStatuses = {};
@@ -639,7 +647,6 @@ export function resetWorkspaceStateForTests() {
   state.bulkRunning = false;
   state.recentSync = null;
   state.repoActionErrors = {};
-  state.repoStatusListRefreshToken = 0;
   state.githubContributions = {
     days: [],
     meta: null,
@@ -648,7 +655,6 @@ export function resetWorkspaceStateForTests() {
   };
   state.tasks = [];
   state.languageStatsLoadingRepoIds = [];
-  state.refreshingRepoIds = [];
   state.syncingRepoIds = [];
   deviceFlow.value = null;
 }

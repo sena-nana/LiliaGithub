@@ -9,7 +9,6 @@ import {
   replaceRepos,
   removeRepo,
   setRepoDetail,
-  setRepoDetailPatch,
   setWorkspaceTasks,
   setRepoActionError,
   upsertRepo,
@@ -22,7 +21,7 @@ import {
   repoIncludedInHomeContributionStats,
   type RepoSettingKey,
 } from "../../config/repoSettingsManifest";
-import { scheduleLowPriorityTask, type CancelLowPriorityTask } from "../../utils/lowPriorityScheduler";
+import { scheduleLowPriorityTask } from "../../utils/lowPriorityScheduler";
 import type {
   GitHubContributionDay,
   GitHubContributionMeta,
@@ -32,22 +31,17 @@ import type {
   RepoChange,
   RepoConflictChoice,
   RepoPullLocalChangesMode,
-  RepoDetailPatch,
   RepoDetailPatchRequest,
   RepoSummary,
-  WorkspaceStartupCache,
   WorkspaceCreateLocalRepoRequest,
   BulkSyncPreview,
   BulkSyncResult,
 } from "../../services/workspace";
 import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
+import { waitForWorkspaceTask } from "./repoRefreshEvents";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 const REPO_REFRESH_CONCURRENCY = 4;
-export const REPO_STATUS_REFRESH_DEBOUNCE_MS = 300;
-export const AUTO_REPO_SUMMARY_REFRESH_FRESH_MS = 10 * 60 * 1000;
-const BACKGROUND_REPO_SUMMARY_FLUSH_TIMEOUT_MS = 700;
-const BACKGROUND_REFRESHING_STATUS_FLUSH_TIMEOUT_MS = 700;
 const LOCAL_REPO_CONTRIBUTION_SCOPE = "local:";
 type ContributionRefreshScope = {
   scope: string;
@@ -66,21 +60,10 @@ let contributionRefreshStartedAt = 0;
 let contributionRefreshError: string | null = null;
 let workspaceTaskRefreshGeneration = 0;
 let languageStatsLoadingGenerations = new Map<string, number>();
-let lastRepoSummaryRefreshAt = 0;
 const autoSyncRunningRepoIds = new Set<string>();
 type RepoStatusRefreshOptions = {
   immediate?: boolean;
 };
-type RepoStatusRefreshEntry = {
-  queuedScope: RepoDetailPatchRequest | null;
-  queuedResolvers: Array<{
-    resolve: (patch: RepoDetailPatch | null) => void;
-    reject: (err: unknown) => void;
-  }>;
-  running: boolean;
-  timer: ReturnType<typeof setTimeout> | null;
-};
-const repoStatusRefreshEntries = new Map<string, RepoStatusRefreshEntry>();
 
 type RepoDetailState = NonNullable<typeof state.repoDetails[string]>;
 type OptimisticRepoState = {
@@ -233,91 +216,25 @@ async function applyRepoOperation(
   return result;
 }
 
-function repoStatusRefreshEntry(repoId: string) {
-  let entry = repoStatusRefreshEntries.get(repoId);
-  if (!entry) {
-    entry = {
-      queuedScope: null,
-      queuedResolvers: [],
-      running: false,
-      timer: null,
-    };
-    repoStatusRefreshEntries.set(repoId, entry);
-  }
-  return entry;
-}
-
-function mergeRepoStatusRefreshScope(
-  current: RepoDetailPatchRequest | null,
-  next: RepoDetailPatchRequest,
-): RepoDetailPatchRequest {
-  return {
-    includeCommits: Boolean(current?.includeCommits || next.includeCommits),
-    includeBranches: Boolean(current?.includeBranches || next.includeBranches),
-  };
-}
-
-function clearRepoStatusRefreshTimer(entry: RepoStatusRefreshEntry) {
-  if (entry.timer == null) return;
-  clearTimeout(entry.timer);
-  entry.timer = null;
-}
-
-function scheduleRepoStatusRefresh(repoId: string, entry: RepoStatusRefreshEntry, immediate: boolean) {
-  if (entry.running) return;
-  clearRepoStatusRefreshTimer(entry);
-  if (immediate) {
-    void runQueuedRepoStatusRefresh(repoId, entry);
-    return;
-  }
-  entry.timer = setTimeout(() => {
-    entry.timer = null;
-    void runQueuedRepoStatusRefresh(repoId, entry);
-  }, REPO_STATUS_REFRESH_DEBOUNCE_MS);
-}
-
-async function runQueuedRepoStatusRefresh(repoId: string, entry: RepoStatusRefreshEntry) {
-  if (entry.running || !entry.queuedScope) return;
-  entry.running = true;
-  const scope = entry.queuedScope;
-  const resolvers = entry.queuedResolvers;
-  entry.queuedScope = null;
-  entry.queuedResolvers = [];
-  try {
-    const patch = await refreshRepoStatusNow(repoId, scope);
-    for (const resolver of resolvers) resolver.resolve(patch);
-  } catch (err) {
-    for (const resolver of resolvers) resolver.reject(err);
-  } finally {
-    entry.running = false;
-    if (entry.queuedScope) {
-      scheduleRepoStatusRefresh(repoId, entry, true);
-    } else if (!entry.timer) {
-      repoStatusRefreshEntries.delete(repoId);
-    }
-  }
-}
-
-async function refreshRepoStatusNow(repoId: string, scope: RepoDetailPatchRequest) {
-  const service = await loadWorkspaceService();
-  const patch = await service.refreshRepoDetailPatch(repoId, scope);
-  setRepoDetailPatch(patch, repoId);
-  return patch;
-}
-
-export function requestRepoStatusRefresh(
+export async function requestRepoStatusRefresh(
   repoId: string,
   scope: RepoDetailPatchRequest = {},
   options: RepoStatusRefreshOptions = {},
 ) {
-  if (!repoId) return Promise.resolve(null);
-  const entry = repoStatusRefreshEntry(repoId);
-  entry.queuedScope = mergeRepoStatusRefreshScope(entry.queuedScope, scope);
-  const promise = new Promise<RepoDetailPatch | null>((resolve, reject) => {
-    entry.queuedResolvers.push({ resolve, reject });
+  if (!repoId) return null;
+  const service = await loadWorkspaceService();
+  const taskId = await service.enqueueRepoRefresh({
+    repoId,
+    mode: "local",
+    priority: options.immediate ? "high" : "low",
+    force: options.immediate === true,
+    detailScope: "detail",
+    includeCommits: scope.includeCommits,
+    includeBranches: scope.includeBranches,
+    trigger: options.immediate ? "foreground" : "watch",
   });
-  scheduleRepoStatusRefresh(repoId, entry, options.immediate === true);
-  return promise;
+  if (options.immediate) await waitForWorkspaceTask(taskId);
+  return null;
 }
 
 function repoNeedsSync(summary: RepoSummary) {
@@ -326,10 +243,6 @@ function repoNeedsSync(summary: RepoSummary) {
 
 function repoDirtyCount(summary: RepoSummary) {
   return summary.stagedCount + summary.unstagedCount + summary.untrackedCount;
-}
-
-function repoNeedsAutomaticSummaryRefresh(summary: RepoSummary) {
-  return summary.ahead > 0 || summary.conflictCount > 0 || repoDirtyCount(summary) > 0;
 }
 
 function autoSyncBlockReason(summary: RepoSummary) {
@@ -434,7 +347,6 @@ export async function autoSyncRepoIfNeeded(
           await requestRepoStatusRefresh(syncedRepoId, { includeCommits: true }, { immediate: true })
             .catch(() => undefined);
         }
-        void refreshRepoLanguageStats(syncedRepoId, { silent: true });
         return result;
       },
     );
@@ -444,44 +356,19 @@ export async function autoSyncRepoIfNeeded(
   }
 }
 
-type RepoSummaryRefreshOptions = {
-  automatic?: boolean;
-  startupCache?: WorkspaceStartupCache | null;
-};
-type RowRefreshingMode = "none" | "single" | "all";
-
-export async function refreshRepos(options: RepoSummaryRefreshOptions = {}) {
-  const repos = await loadManagedRepoList();
-  if (repos) {
-    if (options.automatic && automaticRepoSummaryRefreshCanSkip(repos, options.startupCache)) {
-      markRepoSummaryRefreshFresh();
-      return;
-    }
-    const repoIds = repoSummaryRefreshTargetIds(repos, options.automatic === true);
-    if (options.automatic && !repoIds.length) {
-      markRepoSummaryRefreshFresh();
-      return;
-    }
-    void refreshManagedRepoSummaries(repoIds, { fetchRemote: true });
-  }
+export async function refreshRepos() {
+  await loadManagedRepoList();
 }
 
-export async function refreshRepoSummaries(options: RepoSummaryRefreshOptions = {}) {
-  if (options.automatic && repoSummaryRefreshIsFresh()) return state.repos;
-  const repos = await loadManagedRepoList();
+export async function refreshRepoSummaries(options: { automatic?: boolean } = {}) {
+  const repos = state.repos.length ? state.repos : await loadManagedRepoList();
   if (!repos) return null;
   if (!repos.length) return repos;
-  if (options.automatic && automaticRepoSummaryRefreshCanSkip(repos, options.startupCache)) {
-    markRepoSummaryRefreshFresh();
-    return repos;
-  }
-  const repoIds = repoSummaryRefreshTargetIds(repos, options.automatic === true);
-  if (options.automatic && !repoIds.length) {
-    markRepoSummaryRefreshFresh();
-    return repos;
-  }
   try {
-    await refreshManagedRepoSummaries(repoIds, { fetchRemote: true, refreshBackground: false });
+    await enqueueManagedRepoLocalRefreshes(
+      repos.map((repo) => repo.id),
+      options.automatic ? "startup" : "manualList",
+    );
     return repos;
   } catch (err) {
     state.error = String(err);
@@ -489,22 +376,19 @@ export async function refreshRepoSummaries(options: RepoSummaryRefreshOptions = 
   }
 }
 
-export async function refreshManagedRepoSummary(repoId: string) {
-  if (!repoId) return null;
-  if (!state.repos.some((repo) => repo.id === repoId)) return null;
-  try {
-    const service = await loadWorkspaceService();
-    const summary = await service.refreshRepoSummary(repoId, { fetchRemote: false });
-    upsertRepo(summary);
-    void autoSyncRepoIfNeeded(summary.id, { summary });
-    return summary;
-  } catch {
-    return null;
+async function enqueueManagedRepoLocalRefreshes(repoIds: string[], trigger: string) {
+  if (!repoIds.length) return;
+  const service = await loadWorkspaceService();
+  for (const repoId of Array.from(new Set(repoIds))) {
+    await service.enqueueRepoRefresh({
+      repoId,
+      mode: "local",
+      priority: "low",
+      force: false,
+      detailScope: "summary",
+      trigger,
+    });
   }
-}
-
-export async function fetchAll() {
-  return refreshRepoSummaries();
 }
 
 async function loadManagedRepoList() {
@@ -520,165 +404,16 @@ async function loadManagedRepoList() {
   }
 }
 
-function repoSummaryRefreshTargetIds(repos: readonly RepoSummary[], automatic: boolean) {
-  const targets = automatic ? repos.filter(repoNeedsAutomaticSummaryRefresh) : repos;
-  return targets.map((repo) => repo.id);
-}
-
-async function refreshManagedRepoSummaries(
-  repoIds: string[],
-  options: { fetchRemote?: boolean; refreshBackground?: boolean; rowRefreshing?: RowRefreshingMode } = {},
-) {
-  const generation = ++repositoryRuntimeGeneration;
-  const uniqueRepoIds = Array.from(new Set(repoIds));
-  if (!uniqueRepoIds.length) {
-    scheduleLowPriorityRefresh([]);
-    return;
-  }
-  state.scanning = true;
-  const refreshingRepoIds = initialRefreshingRepoIds(uniqueRepoIds, options.rowRefreshing ?? "none");
-  const pendingRepoSummaries = new Map<string, RepoSummary>();
-  let refreshingStatusFlushCancel: CancelLowPriorityTask | null = null;
-  let repoSummaryFlushPending = false;
-  const applyRefreshingRepoIds = () => {
-    const nextRepoIds = [...refreshingRepoIds];
-    if (
-      nextRepoIds.length === state.refreshingRepoIds.length &&
-      nextRepoIds.every((repoId, index) => state.refreshingRepoIds[index] === repoId)
-    ) {
-      return;
-    }
-    state.refreshingRepoIds = nextRepoIds;
-  };
-  const flushRefreshingRepoIds = () => {
-    refreshingStatusFlushCancel = null;
-    if (generation === repositoryRuntimeGeneration) applyRefreshingRepoIds();
-  };
-  const scheduleRefreshingRepoIdsFlush = () => {
-    if (refreshingStatusFlushCancel) return;
-    refreshingStatusFlushCancel = scheduleLowPriorityTask(flushRefreshingRepoIds, {
-      timeout: BACKGROUND_REFRESHING_STATUS_FLUSH_TIMEOUT_MS,
-    });
-  };
-  const applyPendingRepoSummaries = () => {
-    if (generation !== repositoryRuntimeGeneration || !pendingRepoSummaries.size) return;
-    const summaries = [...pendingRepoSummaries.values()];
-    pendingRepoSummaries.clear();
-    upsertReposBatch(summaries);
-  };
-  const flushPendingRepoSummaries = () => {
-    repoSummaryFlushPending = false;
-    applyPendingRepoSummaries();
-  };
-  const scheduleRepoSummaryFlush = () => {
-    if (repoSummaryFlushPending) return;
-    repoSummaryFlushPending = true;
-    scheduleLowPriorityTask(flushPendingRepoSummaries, {
-      timeout: BACKGROUND_REPO_SUMMARY_FLUSH_TIMEOUT_MS,
-    });
-  };
-  applyRefreshingRepoIds();
-  const shouldRefreshBackground = options.refreshBackground ?? true;
-  if (shouldRefreshBackground) startRepoContributionRefresh(repoContributionScopes());
-  try {
-    const service = await loadWorkspaceService();
-    const refreshedRepoIds: string[] = [];
-    await runBoundedParallel(uniqueRepoIds, REPO_REFRESH_CONCURRENCY, async (repoId) => {
-      if (generation !== repositoryRuntimeGeneration) return;
-      try {
-        const summary = await service.refreshRepoSummary(repoId, { fetchRemote: options.fetchRemote ?? false });
-        if (generation !== repositoryRuntimeGeneration) return;
-        pendingRepoSummaries.set(summary.id, summary);
-        scheduleRepoSummaryFlush();
-        refreshedRepoIds.push(summary.id);
-        const syncResult = await autoSyncRepoIfNeeded(summary.id, { summary });
-        if (syncResult?.summary) {
-          pendingRepoSummaries.delete(summary.id);
-        }
-      } catch {
-        // Per-repo failures are recorded in backend workspace tasks; keep the visible list intact.
-      } finally {
-        if (generation !== repositoryRuntimeGeneration) return;
-        refreshingRepoIds.delete(repoId);
-        scheduleRefreshingRepoIdsFlush();
-        void refreshWorkspaceTasks();
-      }
-    });
-    if (generation === repositoryRuntimeGeneration && shouldRefreshBackground) {
-      void refreshLanguageStatsForRepos(refreshedRepoIds, { background: true });
-    }
-    if (generation === repositoryRuntimeGeneration) markRepoSummaryRefreshFresh();
-  } finally {
-    if (generation === repositoryRuntimeGeneration) {
-      cancelScheduledTask(refreshingStatusFlushCancel);
-      refreshingStatusFlushCancel = null;
-      flushPendingRepoSummaries();
-      refreshingRepoIds.clear();
-      flushRefreshingRepoIds();
-      state.scanning = false;
-    }
-  }
-}
-
-function initialRefreshingRepoIds(repoIds: string[], mode: RowRefreshingMode) {
-  if (mode === "all") return new Set(repoIds);
-  if (mode === "single" && repoIds.length === 1) return new Set(repoIds);
-  return new Set<string>();
-}
-
-function cancelScheduledTask(cancel: CancelLowPriorityTask | null) {
-  if (cancel) cancel();
-}
-
-export function repoSummaryRefreshIsFresh(now = Date.now()) {
-  return lastRepoSummaryRefreshAt > 0 &&
-    now - lastRepoSummaryRefreshAt >= 0 &&
-    now - lastRepoSummaryRefreshAt < AUTO_REPO_SUMMARY_REFRESH_FRESH_MS;
-}
-
-function markRepoSummaryRefreshFresh() {
-  lastRepoSummaryRefreshAt = Date.now();
-}
-
-function automaticRepoSummaryRefreshCanSkip(
-  repos: readonly RepoSummary[],
-  startupCache: WorkspaceStartupCache | null | undefined,
-  now = Date.now(),
-) {
-  if (!repos.length) return true;
-  if (repoSummaryRefreshIsFresh(now)) return true;
-  if (!startupCache?.reposById) return false;
-  return repos.every((repo) => {
-    const entry = startupCache.reposById[repo.id];
-    if (!entry) return false;
-    const age = now - entry.cachedAt;
-    return age >= 0 &&
-      age < AUTO_REPO_SUMMARY_REFRESH_FRESH_MS &&
-      isUsableCachedRepoSummary(entry.summary);
-  });
-}
-
-function isUsableCachedRepoSummary(summary: RepoSummary) {
-  return Boolean(
-    summary.currentBranch ||
-    summary.remoteUrl ||
-    summary.githubFullName ||
-    summary.lastCommitAt ||
-    summary.lastCommitMessage ||
-    summary.ahead > 0 ||
-    summary.behind > 0 ||
-    summary.stagedCount > 0 ||
-    summary.unstagedCount > 0 ||
-    summary.untrackedCount > 0 ||
-    summary.conflictCount > 0
-  );
-}
-
 export async function discoverRepos() {
   const service = await loadWorkspaceService();
-  const repos = await service.discoverRepos();
-  applyRepoList(repos);
-  return repos;
+  state.scanning = true;
+  try {
+    const repos = await service.discoverRepos();
+    applyRepoList(repos);
+    return repos;
+  } finally {
+    state.scanning = false;
+  }
 }
 
 export async function addLocalRepo() {
@@ -688,19 +423,11 @@ export async function addLocalRepo() {
   const summary = await service.addRepo(picked);
   const repos = await loadManagedRepoList();
   if (!repos) upsertRepo(summary);
-  scheduleLowPriorityRefresh([summary.id]);
   return summary;
 }
 
 function applyRepoList(repos: RepoSummary[]) {
   replaceRepos(repos);
-  scheduleLowPriorityRefresh(repos.map((repo) => repo.id));
-}
-
-function scheduleLowPriorityRefresh(repoIds: string[]) {
-  void refreshLanguageStatsForRepos(repoIds, { background: true });
-  void refreshRepoContributions();
-  void refreshWorkspaceTasks();
 }
 
 function repoContributionScope(repo: Pick<RepoSummary, "id" | "name" | "githubFullName">): ContributionRefreshScope {
@@ -959,7 +686,6 @@ export async function refreshWorkspaceTasks() {
 export async function cancelWorkspaceTask(taskId: string) {
   const service = await loadWorkspaceService();
   await service.cancelWorkspaceTask(taskId);
-  await refreshWorkspaceTasks();
 }
 
 export async function refreshLanguageStatsForRepos(
@@ -1061,11 +787,6 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshGeneration += 1;
   languageStatsLoadingGenerations = new Map();
   autoSyncRunningRepoIds.clear();
-  for (const entry of repoStatusRefreshEntries.values()) {
-    clearRepoStatusRefreshTimer(entry);
-    for (const resolver of entry.queuedResolvers) resolver.resolve(null);
-  }
-  repoStatusRefreshEntries.clear();
   contributionRefreshPendingCount = 0;
   contributionRefreshSeenFullNames = new Set();
   contributionRefreshRequestedCount = 0;
@@ -1075,7 +796,6 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshSkippedRepoCount = 0;
   contributionRefreshStartedAt = 0;
   contributionRefreshError = null;
-  lastRepoSummaryRefreshAt = 0;
 }
 
 export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {
@@ -1152,7 +872,6 @@ export async function setRepoSetting(repoId: string, key: RepoSettingKey, value:
   const service = await loadWorkspaceService();
   state.settings = await service.setRepoSetting(repoId, key, value);
   clearRepoActionError(repoId);
-  refreshRepoStatusList();
   return state.settings;
 }
 
@@ -1183,10 +902,6 @@ export async function forgetRemoteRepo(fullName: string) {
   const service = await loadWorkspaceService();
   state.settings = await service.forgetRemoteRepo(fullName);
   return state.settings;
-}
-
-export function refreshRepoStatusList() {
-  state.repoStatusListRefreshToken += 1;
 }
 
 export async function unhideRepo(repoId: string) {
@@ -1283,11 +998,6 @@ export async function pull(repoId: string, localChangesMode: RepoPullLocalChange
     () => service.pullRepo(repoId, localChangesMode),
     { includeCommits: true },
   );
-}
-
-export async function fetch(repoId: string) {
-  const service = await loadWorkspaceService();
-  await applyRepoMutation(repoId, () => service.fetchRepo(repoId), { includeCommits: true });
 }
 
 export async function mergePull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {

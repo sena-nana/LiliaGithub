@@ -105,7 +105,11 @@ function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untr
 const bulkSyncRunningRepoIds = computed(() => {
   return getBulkSyncRunningRepoIds();
 });
-const refreshingRepoIds = computed(() => new Set(workspace.state.refreshingRepoIds));
+const refreshingRepoIds = computed(() => new Set(
+  workspace.state.tasks
+    .filter((task) => task.kind === "repoStatus" && (task.status === "pending" || task.status === "running"))
+    .flatMap((task) => task.repoId ? [task.repoId] : []),
+));
 const syncIssueByRepoId = computed(() => repoSyncIssuesByRepoId());
 
 type RepoIssue = RepoSyncIssueDisplay;

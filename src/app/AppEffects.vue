@@ -4,7 +4,7 @@ import { installLiliaGithubAgentDebugCompat } from "../agentDebug/compat";
 import { useWorkspace } from "../composables/useWorkspace";
 import { installWorkspaceFocusRefresh } from "../composables/workspace/lifecycle";
 import { installLaunchStatusEvents } from "../composables/workspace/launchEvents";
-import { installRepoChangedEvents } from "../composables/workspace/repoChangedEvents";
+import { installRepoRefreshEvents } from "../composables/workspace/repoRefreshEvents";
 
 const workspace = useWorkspace();
 if (!workspace.isReady.value && !workspace.state.loading) {
@@ -16,16 +16,16 @@ let disposed = false;
 
 onMounted(async () => {
   const cleanupDebug = installLiliaGithubAgentDebugCompat();
-  const [cleanupFocus, cleanupLaunch, cleanupRepoChanged] = await Promise.all([
+  const [cleanupFocus, cleanupLaunch, cleanupRepoRefresh] = await Promise.all([
     installWorkspaceFocusRefresh(),
     installLaunchStatusEvents(),
-    installRepoChangedEvents(),
+    installRepoRefreshEvents(),
   ]);
   const cleanup = () => {
     cleanupDebug();
     cleanupFocus();
     cleanupLaunch();
-    cleanupRepoChanged();
+    cleanupRepoRefresh();
   };
   if (disposed) {
     cleanup();

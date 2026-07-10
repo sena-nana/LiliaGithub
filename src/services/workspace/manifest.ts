@@ -40,6 +40,9 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "workspace_list_hidden_repos",
     "workspace_list_tasks",
     "workspace_cancel_task",
+    "workspace_set_active_repo",
+    "workspace_set_refresh_paused",
+    "workspace_enqueue_repo_refresh",
   ],
   github: [
     "github_get_binding_status",

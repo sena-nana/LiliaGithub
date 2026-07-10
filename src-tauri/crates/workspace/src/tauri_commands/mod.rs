@@ -41,6 +41,7 @@ mod bulk;
 mod file_browser;
 mod github;
 mod launch;
+mod refresh;
 mod repos;
 mod settings;
 mod system;
@@ -132,6 +133,9 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         settings::workspace_pick_root,
         settings::workspace_pick_repo,
         settings::workspace_pick_files,
+        refresh::workspace_set_active_repo,
+        refresh::workspace_set_refresh_paused,
+        refresh::workspace_enqueue_repo_refresh,
         repos::workspace_refresh_repos,
         repos::workspace_list_managed_repos,
         repos::workspace_scan_repos,

@@ -87,8 +87,17 @@ function taskStatusClass(status: WorkspaceTask["status"]) {
 }
 
 function isTaskCancellable(task: WorkspaceTask) {
-  return task.status === "pending" || task.status === "running";
+  return task.status === "pending" && task.cancellable;
 }
+
+const WORKSPACE_TASK_KIND_TEXT: Record<WorkspaceTask["kind"], string> = {
+  repoStatus: "本地状态",
+  repoRemote: "远端更新",
+  repoDetail: "仓库详情",
+  discoverRepos: "发现仓库",
+  languageStats: "代码统计",
+  contributions: "贡献统计",
+};
 
 function isCancellingTask(taskId: string) {
   return cancellingTaskIds.value.includes(taskId);
@@ -695,7 +704,7 @@ onUnmounted(() => {
         <h3>后台任务</h3>
         <ul>
           <li v-for="task in workspace.state.tasks.slice(0, 6)" :key="task.id" class="workspace-task-list__item">
-            <span class="workspace-task-list__kind">{{ task.kind }}</span>
+            <span class="workspace-task-list__kind">{{ WORKSPACE_TASK_KIND_TEXT[task.kind] }}</span>
             <div class="workspace-task-list__detail">
               <div class="workspace-task-list__summary">
                 <span class="workspace-task-list__status" :class="taskStatusClass(task.status)">

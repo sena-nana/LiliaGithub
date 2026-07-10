@@ -3,9 +3,13 @@ import { state } from "./state";
 import {
   refreshRepoSummaries,
   refreshRepos,
-  repoSummaryRefreshIsFresh,
   requestRepoStatusRefresh,
 } from "./repositories";
+import {
+  hydrateRepoRemoteCheckedAt,
+  ensureRepoRefreshEventsReady,
+  setRepoRefreshLifecycleFocused,
+} from "./repoRefreshEvents";
 import { loadWorkspaceService } from "./serviceLoader";
 import { hasRecentInput } from "../../utils/lowPriorityScheduler";
 
@@ -63,8 +67,11 @@ export async function initialize() {
         error: null,
       };
     }
+    hydrateRepoRemoteCheckedAt(startupCache?.reposById);
+    await ensureRepoRefreshEventsReady();
+    if (generation !== lifecycleGeneration) return;
     if (settings.workspaceRoot) {
-      await refreshRepos({ automatic: true, startupCache });
+      await refreshRepos();
     }
     if (generation !== lifecycleGeneration) return;
     if (provisionalBindingStatus && !state.bindingStatus) state.bindingStatus = provisionalBindingStatus;
@@ -98,6 +105,7 @@ export async function installWorkspaceFocusRefresh(): Promise<() => void> {
     const now = Date.now();
     const elapsed = now - lastFocusEventAt;
     lastFocusEventAt = now;
+    setRepoRefreshLifecycleFocused(focused);
 
     if (!focused || elapsed < FOCUS_REFRESH_THRESHOLD_MS) return;
     if (!state.settings?.workspaceRoot || state.loading || state.scanning || state.bulkRunning) return;
@@ -106,7 +114,6 @@ export async function installWorkspaceFocusRefresh(): Promise<() => void> {
     if (activeRepoId && state.repos.some((repo) => repo.id === activeRepoId)) {
       void requestRepoStatusRefresh(activeRepoId, {}, { immediate: true });
     }
-    if (repoSummaryRefreshIsFresh()) return;
     void refreshRepoSummaries({ automatic: true });
   };
 
