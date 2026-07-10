@@ -1,12 +1,14 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bulkSyncExecute,
   bulkSyncPreview,
   deleteGitHubRepo,
+  enqueueRepoRefresh,
   getRepoDetail,
   listGitHubRepos,
   listWorkspaceTasks,
   refreshRepos,
+  setWorkspaceRefreshPaused,
   workspaceFallbackForTests,
 } from "../src/services/workspace";
 
@@ -48,6 +50,37 @@ describe("workspace fallback refresh", () => {
       status: "success",
       message: "已读取 2 个仓库的本地状态",
     });
+  });
+
+  it("活动任务不会被终态历史淘汰，并在完成后恢复列表上限", async () => {
+    await setWorkspaceRefreshPaused(true);
+    const taskId = await enqueueRepoRefresh({
+      repoId: "LiliaGithub",
+      mode: "local",
+      priority: "low",
+      force: false,
+      detailScope: "summary",
+      trigger: "watch",
+    });
+
+    for (let index = 0; index < 200; index += 1) {
+      await refreshRepos();
+    }
+
+    const tasksWhilePaused = await listWorkspaceTasks();
+    expect(tasksWhilePaused).toHaveLength(200);
+    expect(tasksWhilePaused.find((task) => task.id === taskId)).toMatchObject({
+      status: "pending",
+      repoId: "LiliaGithub",
+    });
+
+    await setWorkspaceRefreshPaused(false);
+    await vi.waitFor(async () => {
+      const completedTask = (await listWorkspaceTasks()).find((task) => task.id === taskId);
+      expect(completedTask?.status).toBe("success");
+    });
+
+    expect(await listWorkspaceTasks()).toHaveLength(200);
   });
 
   it("删除 GitHub 远端仓库只清理远端列表并保留本地仓库", async () => {

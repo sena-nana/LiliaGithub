@@ -17,6 +17,7 @@ import type {
   WorkspaceTask,
   WorkspaceSettings,
 } from "../../services/workspace";
+import { normalizeWorkspaceTasks } from "../../services/workspace/taskRetention";
 
 export interface WorkspaceState {
   settings: WorkspaceSettings | null;
@@ -390,23 +391,11 @@ export function setRepoDetailPatch(patch: RepoDetailPatch, repoId = patch.summar
 }
 
 export function setWorkspaceTasks(tasks: WorkspaceTask[]) {
-  const latestById = new Map<string, WorkspaceTask>();
-  for (const task of tasks) {
-    const current = latestById.get(task.id);
-    if (!current || task.updatedAt >= current.updatedAt) {
-      latestById.set(task.id, task);
-    }
-  }
-  state.tasks = [...latestById.values()].sort((left, right) => right.updatedAt - left.updatedAt);
+  state.tasks = normalizeWorkspaceTasks([...tasks, ...state.tasks]);
 }
 
 export function upsertWorkspaceTask(task: WorkspaceTask) {
-  const index = state.tasks.findIndex((item) => item.id === task.id);
-  if (index >= 0 && state.tasks[index].updatedAt > task.updatedAt) return;
-  const next = index >= 0
-    ? state.tasks.map((item, itemIndex) => itemIndex === index ? task : item)
-    : [task, ...state.tasks];
-  state.tasks = next.sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 200);
+  state.tasks = normalizeWorkspaceTasks([...state.tasks, task]);
 }
 
 export function repoById(repoId: string) {
