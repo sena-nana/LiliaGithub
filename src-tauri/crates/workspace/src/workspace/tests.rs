@@ -2931,16 +2931,17 @@ fn push_preview_warns_dirty_push_and_idle_repos() {
 }
 
 #[test]
-fn push_preview_blocks_repo_without_upstream() {
+fn push_preview_publishes_repo_without_upstream_even_without_ahead_commits() {
     let repo = test_repo_summary(|summary| {
         summary.id = "no-upstream".to_string();
-        summary.ahead = 1;
     });
 
     let preview = build_bulk_push_preview_with_lookup(vec![repo], |_| false);
 
-    assert_eq!(preview.blocked.len(), 1);
-    assert_eq!(preview.blocked[0].reason, "当前分支没有 upstream");
+    assert!(preview.blocked.is_empty());
+    assert!(preview.warnings.is_empty());
+    assert_eq!(preview.eligible.len(), 1);
+    assert_eq!(preview.eligible[0].repo.id, "no-upstream");
 }
 
 #[test]
@@ -3053,11 +3054,15 @@ fn sync_preview_blocks_unsafe_merge_states() {
         summary.id = "no-upstream".to_string();
         summary.behind = 1;
     });
+    let push_no_upstream = test_repo_summary(|summary| {
+        summary.id = "push-no-upstream".to_string();
+        summary.ahead = 1;
+    });
 
-    let preview =
-        build_bulk_sync_preview_with_lookup(vec![dirty, conflicted, no_upstream], |repo| {
-            repo.id != "no-upstream"
-        });
+    let preview = build_bulk_sync_preview_with_lookup(
+        vec![dirty, conflicted, no_upstream, push_no_upstream],
+        |repo| repo.id != "no-upstream" && repo.id != "push-no-upstream",
+    );
 
     assert_eq!(preview.eligible.len(), 0);
     assert!(preview
@@ -3069,6 +3074,9 @@ fn sync_preview_blocks_unsafe_merge_states() {
     }));
     assert!(preview.blocked.iter().any(|item| {
         item.repo.id == "no-upstream" && item.reason == "当前分支没有 upstream"
+    }));
+    assert!(preview.blocked.iter().any(|item| {
+        item.repo.id == "push-no-upstream" && item.reason == "当前分支没有 upstream"
     }));
 }
 

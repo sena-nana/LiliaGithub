@@ -5156,6 +5156,45 @@ function syncFallbackRepoBranchState(repoId: string) {
   return next;
 }
 
+function fallbackPublishTarget(repoId: string, branchName?: string | null, remoteName?: string | null) {
+  const repo = fallbackRepo(repoId);
+  if (!repo.remoteUrl) throw new Error("没有 origin remote");
+  const localBranchName = branchName?.trim() || repo.currentBranch?.trim();
+  if (!localBranchName) throw new Error("当前不是命名分支");
+  const branches = syncFallbackRepoBranchState(repoId);
+  const localBranch = branches.find((branch) => !branch.remote && branch.name === localBranchName);
+  const remote = remoteName?.trim();
+  const upstream = remote
+    ? `${remote}/${localBranchName}`
+    : localBranch?.upstream?.trim() || `origin/${localBranchName}`;
+  const tipTimestamp = localBranch?.tipTimestamp ?? repo.lastCommitAt;
+  if (localBranch) {
+    localBranch.upstream = upstream;
+    localBranch.ahead = 0;
+  }
+  const remoteBranch = branches.find((branch) => branch.remote && branch.name === upstream);
+  if (remoteBranch) {
+    remoteBranch.tipTimestamp = tipTimestamp;
+  } else {
+    branches.push(buildBranchSummary({
+      name: upstream,
+      remote: true,
+      tipTimestamp,
+    }));
+  }
+  fallbackRepoBranches[repoId] = branches;
+  return updateFallbackRepo({ ...repo, ahead: 0 });
+}
+
+function fallbackRepoNeedsPublish(repo: RepoSummary) {
+  const currentBranch = repo.currentBranch?.trim();
+  if (!currentBranch) return false;
+  const branches = syncFallbackRepoBranchState(repo.id);
+  const localBranch = branches.find((branch) => !branch.remote && branch.name === currentBranch);
+  const upstream = localBranch?.upstream?.trim();
+  return !upstream || !branches.some((branch) => branch.remote && branch.name === upstream);
+}
+
 export function listGitHubRepoFiles(
   repoFullName: string,
   parentPath?: string | null,
@@ -5717,7 +5756,14 @@ export function commitRepo(
 ): Promise<RepoSummary> {
   return call("repo_commit", { repoId, files, message, pushAfter }, () => {
     const repo = fallbackRepo(repoId);
-    return { ...repo, stagedCount: 0, unstagedCount: 0, untrackedCount: 0, ahead: pushAfter ? 0 : repo.ahead + 1 };
+    const committed = updateFallbackRepo({
+      ...repo,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      ahead: pushAfter ? 0 : repo.ahead + 1,
+    });
+    return pushAfter ? fallbackPublishTarget(repoId) : committed;
   });
 }
 
@@ -5811,8 +5857,7 @@ export function startRebaseRepo(
 
 export function pushRepo(repoId: string): Promise<RepoSummary> {
   return call("repo_push", { repoId }, () => {
-    const repo = fallbackRepo(repoId);
-    return { ...repo, ahead: 0 };
+    return fallbackPublishTarget(repoId);
   });
 }
 
@@ -5822,14 +5867,7 @@ export function pushNewBranchRepo(
   branchName?: string | null,
 ): Promise<RepoSummary> {
   return call("repo_push_new_branch", { repoId, remoteName: remoteName ?? null, branchName: branchName ?? null }, () => {
-    const repo = fallbackRepo(repoId);
-    const currentBranch = branchName?.trim() || repo.currentBranch;
-    if (!currentBranch) throw new Error("分支名不能为空");
-    const upstream = `${remoteName?.trim() || "origin"}/${currentBranch}`;
-    fallbackRepoBranches[repoId] = syncFallbackRepoBranchState(repoId).map((branch) =>
-      !branch.remote && branch.name === currentBranch ? { ...branch, upstream } : branch
-    );
-    return { ...repo, ahead: 0 };
+    return fallbackPublishTarget(repoId, branchName, remoteName ?? "origin");
   });
 }
 
@@ -5838,8 +5876,7 @@ export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
     if (!fallbackSettings.systemGitRepoIds.includes(repoId)) {
       fallbackSettings.systemGitRepoIds = [...fallbackSettings.systemGitRepoIds, repoId].sort();
     }
-    const repo = fallbackRepo(repoId);
-    return { ...repo, ahead: 0 };
+    return fallbackPublishTarget(repoId);
   });
 }
 
@@ -6112,11 +6149,13 @@ export function bulkSyncPreview(
   const reposToUse = repos.length ? repos : visibleFallbackRepos();
   return call("bulk_sync_preview", { operation, localChangesMode }, () => {
     if (operation === "sync") {
+      const needsPublish = new Set(reposToUse.filter(fallbackRepoNeedsPublish).map((repo) => repo.id));
       return {
         operation,
         eligible: reposToUse
           .filter((repo) => repo.remoteUrl && repo.currentBranch && repo.conflictCount <= 0)
           .filter((repo) => {
+            if (needsPublish.has(repo.id)) return false;
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
             return (repo.behind > 0 && (dirty === 0 || localChangesMode !== "reject")) ||
               (repo.ahead > 0 && repo.behind === 0);
@@ -6138,6 +6177,9 @@ export function bulkSyncPreview(
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
             if (!repo.remoteUrl) return [{ repo: { ...repo }, reason: "没有 origin remote" }];
             if (!repo.currentBranch) return [{ repo: { ...repo }, reason: "当前不是命名分支" }];
+            if (needsPublish.has(repo.id)) {
+              return [{ repo: { ...repo }, reason: "当前分支没有可用的 upstream" }];
+            }
             if (repo.behind > 0 && repo.conflictCount > 0) return [{ repo: { ...repo }, reason: "已有冲突需要先处理" }];
             if (repo.behind > 0 && dirty > 0 && localChangesMode === "reject") {
               return [{ repo: { ...repo }, reason: "存在未提交变更" }];
@@ -6146,6 +6188,7 @@ export function bulkSyncPreview(
           }),
         warnings: reposToUse
           .flatMap((repo) => {
+            if (needsPublish.has(repo.id)) return [];
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
             if (repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl && dirty > 0) {
               return [{ repo: { ...repo }, reason: "存在未提交变更，但仍可执行 push" }];
@@ -6158,11 +6201,20 @@ export function bulkSyncPreview(
       };
     }
     if (operation === "push") {
+      const needsPublish = new Set(reposToUse.filter(fallbackRepoNeedsPublish).map((repo) => repo.id));
       return {
         operation,
         eligible: reposToUse
-          .filter((repo) => repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl)
-          .map((repo) => ({ repo: { ...repo }, reason: "有本地提交待推送" })),
+          .filter((repo) =>
+            (repo.ahead > 0 || needsPublish.has(repo.id)) &&
+            repo.behind === 0 &&
+            repo.currentBranch &&
+            repo.remoteUrl
+          )
+          .map((repo) => ({
+            repo: { ...repo },
+            reason: needsPublish.has(repo.id) ? "需要发布远端分支" : "有本地提交待推送",
+          })),
         blocked: reposToUse
           .flatMap((repo) => {
             if (!repo.remoteUrl) return [{ repo: { ...repo }, reason: "没有 origin remote" }];
@@ -6174,9 +6226,14 @@ export function bulkSyncPreview(
           .flatMap((repo) => {
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
             if (repo.ahead > 0 && repo.behind === 0 && repo.currentBranch && repo.remoteUrl && dirty > 0) {
-              return [{ repo: { ...repo }, reason: "存在未提交变更，但仍可执行 push" }];
+              return [{
+                repo: { ...repo },
+                reason: needsPublish.has(repo.id)
+                  ? "存在未提交变更，但仍可发布远端分支"
+                  : "存在未提交变更，但仍可执行 push",
+              }];
             }
-            if (repo.ahead <= 0 && repo.currentBranch && repo.remoteUrl) {
+            if (repo.ahead <= 0 && repo.currentBranch && repo.remoteUrl && !needsPublish.has(repo.id)) {
               return [{ repo: { ...repo }, reason: "没有需要推送的提交" }];
             }
             return [];
@@ -6218,15 +6275,18 @@ export function bulkSyncExecute(
     (fallbackBulkExecuteOverride?.(operation, repoIds, localChangesMode) ?? repoIds.map((repoId) => {
       const repo = fallbackRepo(repoId);
       const discardCounts = localChangesMode === "discard" && (operation === "pull" || operation === "sync");
+      const summary = operation === "push"
+        ? fallbackPublishTarget(repoId)
+        : {
+            ...repo,
+            ahead: operation === "sync" ? 0 : repo.ahead,
+            behind: operation === "pull" || operation === "sync" ? 0 : repo.behind,
+            stagedCount: discardCounts ? 0 : repo.stagedCount,
+            unstagedCount: discardCounts ? 0 : repo.unstagedCount,
+            untrackedCount: discardCounts ? 0 : repo.untrackedCount,
+          };
       return {
-        summary: {
-          ...repo,
-          ahead: operation === "push" || operation === "sync" ? 0 : repo.ahead,
-          behind: operation === "pull" || operation === "sync" ? 0 : repo.behind,
-          stagedCount: discardCounts ? 0 : repo.stagedCount,
-          unstagedCount: discardCounts ? 0 : repo.unstagedCount,
-          untrackedCount: discardCounts ? 0 : repo.untrackedCount,
-        },
+        summary,
         repoId,
         status: "success",
         message: "完成",

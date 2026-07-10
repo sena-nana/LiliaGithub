@@ -78,6 +78,7 @@ const props = defineProps<{
   openTargetLabel: string;
   summaryPath?: string | null;
   hasConflicts: boolean;
+  needsPublish: boolean;
   aheadCount: number;
   behindCount: number;
   launchCommand?: string | null;
@@ -411,12 +412,12 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             class="repo-toolbar__btn"
             :class="{
               'repo-toolbar__btn--counted': aheadCount,
-              'repo-toolbar__btn--push-ready': aheadCount,
+              'repo-toolbar__btn--push-ready': aheadCount || needsPublish,
             }"
-            title="推送"
-            aria-label="推送"
+            :title="needsPublish ? '发布' : '推送'"
+            :aria-label="needsPublish ? '发布' : '推送'"
             data-agent-id="repo.toolbar.push"
-            :disabled="!aheadCount"
+            :disabled="!aheadCount && !needsPublish"
             @click="emit('push')"
           >
             <CloudUpload :size="17" aria-hidden="true" />

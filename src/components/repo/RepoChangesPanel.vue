@@ -21,6 +21,7 @@ const props = defineProps<{
   discardingChangePaths: readonly string[];
   hasConflicts: boolean;
   canCommit: boolean;
+  needsPublish: boolean;
   actionRunning: boolean;
   previewChange: RepoChange | null;
   commitMessage: string;
@@ -347,7 +348,7 @@ function submitCommit(pushAfter: boolean) {
                 @click="submitCommit(true)"
               >
                 <CloudUpload :size="14" aria-hidden="true" />
-                提交并推送
+                {{ needsPublish ? "提交并发布" : "提交并推送" }}
               </button>
               <button
                 type="button"

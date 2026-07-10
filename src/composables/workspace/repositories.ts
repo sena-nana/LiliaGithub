@@ -1268,7 +1268,7 @@ export async function commit(repoId: string, files: string[], message: string, p
     await applyRepoMutation(
       repoId,
       () => service.commitRepo(repoId, files, message, pushAfter),
-      { includeCommits: true },
+      { includeCommits: true, includeBranches: pushAfter },
     );
   } catch (err) {
     await rollbackOptimisticRepoState(repoId, { includeCommits: true });
@@ -1346,7 +1346,7 @@ async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSumma
         });
       }
       return summary;
-    }, { includeCommits: true });
+    }, { includeCommits: true, includeBranches: true });
   } catch (err) {
     await rollbackOptimisticRepoState(repoId, { includeCommits: true });
     if (updateRecentSync) {

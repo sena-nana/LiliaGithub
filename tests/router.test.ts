@@ -1948,6 +1948,58 @@ describe("基础路由", () => {
     );
   });
 
+  it("未发布分支可在没有待推送提交时发布并恢复普通推送状态", async () => {
+    const service = await import("../src/services/workspace");
+    const { useBackgroundTasks } = await import("../src/composables/useBackgroundTasks");
+    const unpublished = repoSummary("LiliaGithub", {
+      currentBranch: "feature/publish",
+      ahead: 0,
+      behind: 0,
+    });
+    workspaceFallback.setFallbackRepoOverridesForTests({ LiliaGithub: unpublished });
+    const pushFinished = deferred<void>();
+    const pushRepo = service.pushRepo;
+    vi.spyOn(service, "pushRepo").mockImplementation(async (repoId) => {
+      const result = await pushRepo(repoId);
+      await pushFinished.promise;
+      return result;
+    });
+
+    await renderAt("/repos/LiliaGithub/changes");
+
+    const publish = await screen.findByRole("button", { name: "发布" });
+    expect(publish).toBeEnabled();
+    await fireEvent.update(await screen.findByPlaceholderText("提交说明"), "发布分支");
+    expect(screen.getByRole("button", { name: "提交并发布" })).toBeEnabled();
+
+    await fireEvent.click(publish);
+    await waitFor(() => {
+      expect(useBackgroundTasks().tasks.value).toContainEqual(expect.objectContaining({
+        kind: "git",
+        repoId: "LiliaGithub",
+        title: "发布当前分支",
+      }));
+    });
+    pushFinished.resolve();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "推送" })).toBeDisabled());
+  });
+
+  it("没有 remote 的本地分支不会暴露发布操作", async () => {
+    workspaceFallback.setFallbackRepoOverridesForTests({
+      LiliaGithub: repoSummary("LiliaGithub", {
+        currentBranch: "feature/local-only",
+        remoteUrl: null,
+        ahead: 0,
+      }),
+    });
+
+    await renderAt("/repos/LiliaGithub/changes");
+
+    expect(await screen.findByRole("button", { name: "推送" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "发布" })).toBeNull();
+  });
+
   it("仓库详情页右上角刷新项目缓存后重读当前项目页和详情", async () => {
     const service = await import("../src/services/workspace");
     const workspaceClient = await import("../src/services/workspace/client");

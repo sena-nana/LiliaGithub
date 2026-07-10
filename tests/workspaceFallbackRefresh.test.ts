@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  bulkSyncExecute,
+  bulkSyncPreview,
   deleteGitHubRepo,
+  getRepoDetail,
   listGitHubRepos,
   listWorkspaceTasks,
   refreshRepos,
@@ -57,5 +60,33 @@ describe("workspace fallback refresh", () => {
       "sena-nana/Lilia",
     ]);
     expect(localRepos.map((repo) => repo.id)).toEqual(["LiliaGithub", "Lilia"]);
+  });
+
+  it("批量 push 会纳入零 ahead 的未发布分支并补齐远端跟踪状态", async () => {
+    const [repo] = await refreshRepos();
+    const unpublished = {
+      ...repo,
+      currentBranch: "feature/bulk-publish",
+      ahead: 0,
+      behind: 0,
+    };
+    workspaceFallback.setFallbackRepoOverridesForTests({ [repo.id]: unpublished });
+
+    const pushPreview = await bulkSyncPreview("push", [unpublished]);
+    expect(pushPreview.eligible.map((item) => item.repo.id)).toEqual([repo.id]);
+    const syncPreview = await bulkSyncPreview("sync", [unpublished]);
+    expect(syncPreview.eligible).toHaveLength(0);
+    expect(syncPreview.blocked).toHaveLength(1);
+
+    const [result] = await bulkSyncExecute("push", [repo.id]);
+    expect(result).toMatchObject({ status: "success", summary: { ahead: 0 } });
+    const detail = await getRepoDetail(repo.id);
+    expect(detail.branches).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "feature/bulk-publish",
+        upstream: "origin/feature/bulk-publish",
+      }),
+      expect.objectContaining({ name: "origin/feature/bulk-publish", remote: true }),
+    ]));
   });
 });
