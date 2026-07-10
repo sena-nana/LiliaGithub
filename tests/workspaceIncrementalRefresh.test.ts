@@ -469,6 +469,32 @@ describe("workspace incremental refresh", () => {
     expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
   });
 
+  it("远端刷新结果会触发已启用仓库的自动同步", async () => {
+    const stale = repoSummary("Repo1", { behind: 1 });
+    const synced = repoSummary("Repo1", { behind: 0 });
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+    };
+    state.repos = [stale];
+    service.bulkSyncExecute.mockResolvedValue([
+      { repoId: "Repo1", status: "success", message: "完成", summary: synced },
+    ]);
+
+    applyWorkspaceRepoRefreshed({
+      taskId: "remote-1",
+      repoId: "Repo1",
+      mode: "remote",
+      summary: stale,
+      detailPatch: null,
+      remoteCheckedAt: Date.now(),
+      trigger: "autoSync",
+    });
+
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash"));
+    await waitFor(() => expect(state.repos[0].behind).toBe(0));
+  });
+
   it("自动同步重复触发时沿用运行中状态且不覆盖错误提示", async () => {
     const stale = repoSummary("Repo1", { behind: 1 });
     const synced = repoSummary("Repo1", { behind: 0 });

@@ -6,6 +6,7 @@ import type {
   WorkspaceTask,
 } from "../../services/workspace";
 import { repoAutoSyncEnabled } from "../../config/repoSettingsManifest";
+import { autoSyncRepoIfNeeded } from "./repositories";
 import { loadWorkspaceService } from "./serviceLoader";
 import {
   setRepoDetailPatch,
@@ -14,6 +15,13 @@ import {
   upsertRepo,
   upsertWorkspaceTask,
 } from "./state";
+import {
+  resetWorkspaceTaskWaitersForTests,
+  settleWorkspaceTaskWaiters,
+  waitForWorkspaceTask,
+} from "./taskWaiters";
+
+export { waitForWorkspaceTask };
 
 export const WORKSPACE_TASK_CHANGED_EVENT = "workspace://task-changed";
 export const WORKSPACE_REPO_REFRESHED_EVENT = "workspace://repo-refreshed";
@@ -32,10 +40,6 @@ let installedCleanup: (() => void) | null = null;
 let localRefreshPausedApplied: boolean | null = null;
 const remoteFailureCounts = new Map<string, number>();
 const remoteNextAttemptAt = new Map<string, number>();
-const taskWaiters = new Map<string, Set<{
-  resolve: () => void;
-  reject: (error: Error) => void;
-}>>();
 
 function isWorkspaceTask(value: unknown): value is WorkspaceTask {
   if (!value || typeof value !== "object") return false;
@@ -59,7 +63,7 @@ function isRepoRefreshedEvent(value: unknown): value is WorkspaceRepoRefreshedEv
 export function applyWorkspaceTaskChanged(payload: unknown) {
   if (!isWorkspaceTask(payload)) return;
   upsertWorkspaceTask(payload);
-  if (isTerminalTask(payload)) settleTaskWaiters(payload);
+  settleWorkspaceTaskWaiters(payload);
   if (payload.kind !== "repoRemote" || !payload.repoId) return;
 
   if (payload.status === "pending" || payload.status === "running") return;
@@ -85,9 +89,7 @@ export function applyWorkspaceRepoRefreshed(payload: unknown) {
     remoteNextAttemptAt.delete(payload.repoId);
     if (activeRepoId === payload.repoId) scheduleActiveRepoRefresh(remoteRefreshDelay(payload.repoId));
     if (repoAutoSyncEnabled(state.settings, payload.repoId)) {
-      void import("./repositories").then(({ autoSyncRepoIfNeeded }) =>
-        autoSyncRepoIfNeeded(payload.repoId, { summary: payload.summary })
-      );
+      void Promise.resolve().then(() => autoSyncRepoIfNeeded(payload.repoId, { summary: payload.summary }));
     }
     scheduleAutoSyncRepoRefreshes();
     return;
@@ -95,37 +97,6 @@ export function applyWorkspaceRepoRefreshed(payload: unknown) {
 
   if (payload.summary.remoteUrl && repoAutoSyncEnabled(state.settings, payload.repoId)) {
     scheduleAutoSyncRepoRefreshes();
-  }
-}
-
-export function waitForWorkspaceTask(taskId: string) {
-  const current = state.tasks.find((task) => task.id === taskId);
-  if (current && isTerminalTask(current)) return terminalTaskResult(current);
-  return new Promise<void>((resolve, reject) => {
-    const waiters = taskWaiters.get(taskId) ?? new Set();
-    waiters.add({ resolve, reject });
-    taskWaiters.set(taskId, waiters);
-    const latest = state.tasks.find((task) => task.id === taskId);
-    if (latest && isTerminalTask(latest)) settleTaskWaiters(latest);
-  });
-}
-
-function isTerminalTask(task: WorkspaceTask) {
-  return task.status === "success" || task.status === "error" || task.status === "cancelled";
-}
-
-function terminalTaskResult(task: WorkspaceTask): Promise<void> {
-  if (task.status === "success") return Promise.resolve();
-  return Promise.reject(new Error(task.message || (task.status === "cancelled" ? "任务已取消" : "后台任务失败")));
-}
-
-function settleTaskWaiters(task: WorkspaceTask) {
-  const waiters = taskWaiters.get(task.id);
-  if (!waiters) return;
-  taskWaiters.delete(task.id);
-  for (const waiter of waiters) {
-    if (task.status === "success") waiter.resolve();
-    else waiter.reject(new Error(task.message || (task.status === "cancelled" ? "任务已取消" : "后台任务失败")));
   }
 }
 
@@ -369,8 +340,5 @@ export function resetRepoRefreshRuntimeForTests() {
   remoteFailureCounts.clear();
   remoteNextAttemptAt.clear();
   localRefreshPausedApplied = null;
-  for (const waiters of taskWaiters.values()) {
-    for (const waiter of waiters) waiter.reject(new Error("任务监听已重置"));
-  }
-  taskWaiters.clear();
+  resetWorkspaceTaskWaitersForTests();
 }

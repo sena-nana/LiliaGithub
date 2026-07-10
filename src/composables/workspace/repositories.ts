@@ -38,7 +38,7 @@ import type {
   BulkSyncResult,
 } from "../../services/workspace";
 import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
-import { waitForWorkspaceTask } from "./repoRefreshEvents";
+import { waitForWorkspaceTask } from "./taskWaiters";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
 const REPO_REFRESH_CONCURRENCY = 4;
