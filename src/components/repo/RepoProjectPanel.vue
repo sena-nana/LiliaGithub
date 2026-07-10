@@ -348,6 +348,7 @@ const props = defineProps<{
   commitMessage: string;
   hasConflicts: boolean;
   canCommit: boolean;
+  needsPublish: boolean;
   statusCommits: readonly CommitSummary[];
   selectedCommitHash?: string | null;
   repoDetailLoading?: boolean;
@@ -3631,6 +3632,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           :discarding-change-paths="discardingChangePaths"
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
+          :needs-publish="needsPublish"
           :action-running="actionRunning"
           :preview-change="previewChange"
           :detail-loading="repoDetailLoading"

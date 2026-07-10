@@ -725,6 +725,7 @@ async function renderProjectPanel(
     commitMessage: "",
     hasConflicts: false,
     canCommit: false,
+    needsPublish: false,
     statusCommits: [],
     commitMetaTitle: () => "",
     projectTab: "readme",

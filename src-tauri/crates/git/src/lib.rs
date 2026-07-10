@@ -140,9 +140,33 @@ pub fn run_fetch(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
 }
 
 pub fn run_push(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
-    git_command(path, &["push"], auth_header)
-        .map(|_| ())
-        .map_err(|error| map_remote_git_error(path, error))
+    if git_command_lossy(path, &["rev-parse", "--verify", "@{upstream}"]).is_some() {
+        git_command(path, &["push"], auth_header)
+    } else {
+        let branch = git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "当前 HEAD 未指向命名分支，无法发布".to_string())?;
+        let branch_remote_key = format!("branch.{branch}.remote");
+        let merge_key = format!("branch.{branch}.merge");
+        let remote =
+            git_config_value(path, &branch_remote_key).unwrap_or_else(|| "origin".to_string());
+        let target_branch = git_config_value(path, &merge_key)
+            .and_then(|value| value.strip_prefix("refs/heads/").map(str::to_string))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| branch.clone());
+        let refspec = format!("HEAD:refs/heads/{target_branch}");
+        git_command(
+            path,
+            &["push", "--set-upstream", "--", &remote, &refspec],
+            auth_header,
+        )
+    }
+    .map(|_| ())
+    .map_err(|error| map_remote_git_error(path, error))
+}
+
+fn git_config_value(path: &Path, key: &str) -> Option<String> {
+    git_command_lossy(path, &["config", "--get", key]).filter(|value| !value.is_empty())
 }
 
 pub fn infer_clone_directory_name(remote_url: &str) -> Result<String, String> {
@@ -347,6 +371,67 @@ pub fn resolve_conflict_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let sequence = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "lilia-github-git-{label}-{}-{nonce}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn join(&self, path: &str) -> PathBuf {
+            self.0.join(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn run_test_git(path: &Path, args: &[&str]) -> String {
+        git_command(path, args, None).unwrap().trim().to_string()
+    }
+
+    fn init_bare_repo(path: &Path) {
+        fs::create_dir_all(path).unwrap();
+        run_test_git(path, &["init", "--bare"]);
+    }
+
+    fn init_work_repo(path: &Path, branch: &str) {
+        fs::create_dir_all(path).unwrap();
+        run_test_git(path, &["init"]);
+        run_test_git(path, &["config", "user.name", "Lilia Test"]);
+        run_test_git(path, &["config", "user.email", "lilia@example.com"]);
+        fs::write(path.join("tracked.txt"), "initial\n").unwrap();
+        run_test_git(path, &["add", "--", "tracked.txt"]);
+        run_test_git(path, &["commit", "-m", "initial"]);
+        run_test_git(path, &["branch", "-M", branch]);
+    }
+
+    fn commit_file(path: &Path, contents: &str, message: &str) -> String {
+        fs::write(path.join("tracked.txt"), contents).unwrap();
+        run_test_git(path, &["add", "--", "tracked.txt"]);
+        run_test_git(path, &["commit", "-m", message]);
+        run_test_git(path, &["rev-parse", "HEAD"])
+    }
 
     #[test]
     fn parses_github_remote_variants() {
@@ -380,6 +465,94 @@ mod tests {
             Some("../target".to_string()),
         )
         .is_err());
+    }
+
+    #[test]
+    fn push_without_upstream_publishes_branch_and_sets_upstream() {
+        let fixture = TestDirectory::new("publish");
+        let repo = fixture.join("repo");
+        let remote = fixture.join("origin.git");
+        init_work_repo(&repo, "main");
+        init_bare_repo(&remote);
+        let remote_path = remote.to_string_lossy();
+        run_test_git(&repo, &["remote", "add", "origin", remote_path.as_ref()]);
+
+        run_push(&repo, None).unwrap();
+
+        assert_eq!(
+            run_test_git(&remote, &["rev-parse", "refs/heads/main"]),
+            run_test_git(&repo, &["rev-parse", "HEAD"])
+        );
+        assert_eq!(
+            run_test_git(
+                &repo,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+            ),
+            "origin/main"
+        );
+
+        let next_head = commit_file(&repo, "next\n", "next");
+        run_push(&repo, None).unwrap();
+        assert_eq!(
+            run_test_git(&remote, &["rev-parse", "refs/heads/main"]),
+            next_head
+        );
+    }
+
+    #[test]
+    fn push_republishes_deleted_configured_remote_branch() {
+        let fixture = TestDirectory::new("republish");
+        let repo = fixture.join("repo");
+        let remote = fixture.join("fork.git");
+        init_work_repo(&repo, "topic");
+        init_bare_repo(&remote);
+        let remote_path = remote.to_string_lossy();
+        run_test_git(&repo, &["remote", "add", "fork", remote_path.as_ref()]);
+        run_test_git(
+            &repo,
+            &["push", "--set-upstream", "fork", "HEAD:refs/heads/review"],
+        );
+        run_test_git(&remote, &["update-ref", "-d", "refs/heads/review"]);
+        run_test_git(&repo, &["update-ref", "-d", "refs/remotes/fork/review"]);
+
+        run_push(&repo, None).unwrap();
+
+        assert_eq!(
+            run_test_git(&remote, &["rev-parse", "refs/heads/review"]),
+            run_test_git(&repo, &["rev-parse", "HEAD"])
+        );
+        assert_eq!(
+            run_test_git(
+                &repo,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+            ),
+            "fork/review"
+        );
+    }
+
+    #[test]
+    fn publish_path_does_not_bypass_non_fast_forward_protection() {
+        let fixture = TestDirectory::new("non-fast-forward");
+        let repo = fixture.join("repo");
+        let competing_repo = fixture.join("competing");
+        let remote = fixture.join("origin.git");
+        init_work_repo(&repo, "main");
+        init_work_repo(&competing_repo, "main");
+        init_bare_repo(&remote);
+        let remote_path = remote.to_string_lossy();
+        run_test_git(&repo, &["remote", "add", "origin", remote_path.as_ref()]);
+        run_test_git(
+            &competing_repo,
+            &["remote", "add", "origin", remote_path.as_ref()],
+        );
+        let remote_head = commit_file(&competing_repo, "remote\n", "remote change");
+        run_test_git(&competing_repo, &["push", "origin", "main"]);
+
+        assert!(run_push(&repo, None).is_err());
+        assert_eq!(
+            run_test_git(&remote, &["rev-parse", "refs/heads/main"]),
+            remote_head
+        );
     }
 
     #[test]

@@ -55,6 +55,7 @@ const {
   branchItems,
   branchActionRunning,
   activeBranchName,
+  needsPublish,
   aheadCount,
   behindCount,
   repoSettingValues,
@@ -118,6 +119,7 @@ const {
         :open-target-label="openTargetLabel"
         :summary-path="summary?.path"
         :has-conflicts="hasConflicts"
+        :needs-publish="needsPublish"
         :ahead-count="aheadCount"
         :behind-count="behindCount"
         :launch-command="launchConfig?.command"
@@ -166,6 +168,7 @@ const {
           :commit-message="commitMessage"
           :has-conflicts="hasConflicts"
           :can-commit="canCommit"
+          :needs-publish="needsPublish"
           :status-commits="statusCommits"
           :selected-commit-hash="selectedCommitHash"
           :repo-detail-loading="repoDetailLoading"

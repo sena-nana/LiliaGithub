@@ -311,6 +311,16 @@ export function useRepoDetailController() {
     if (branchBrowseUsesGitHub.value) return remoteBrowseBranch.value ?? "远程分支";
     return summary.value?.currentBranch ?? "detached";
   });
+  const needsPublish = computed(() => {
+    const currentBranch = summary.value?.currentBranch?.trim();
+    if (!hasLocalRepo.value || !summary.value?.remoteUrl || !currentBranch) return false;
+    const localBranch = branchItems.value.find((branch) =>
+      !branch.remote && branch.canonicalName === currentBranch
+    );
+    if (!localBranch) return false;
+    const upstream = localBranch.upstream?.trim();
+    return !upstream || !branchItems.value.some((branch) => branch.remote && branch.canonicalName === upstream);
+  });
   const aheadCount = computed(() => summary.value?.ahead ?? 0);
   const behindCount = computed(() => summary.value?.behind ?? 0);
   const repoSettingValues = computed(() => Object.fromEntries(
@@ -765,7 +775,7 @@ export function useRepoDetailController() {
       else await commitAction();
     }, repoTask({
       kind: "git",
-      title: pushAfter ? "提交并推送" : "提交变更",
+      title: pushAfter ? (needsPublish.value ? "提交并发布" : "提交并推送") : "提交变更",
       detail: fileCountDetail(targetPaths),
       priority: "high",
     })).then((success) => {
@@ -886,7 +896,7 @@ export function useRepoDetailController() {
     if (!targetRepoId) return;
     void runAction(
       () => runPushWithFallback(targetRepoId, () => workspace.push(targetRepoId)),
-      repoTask({ kind: "git", title: "推送当前分支", priority: "high" }),
+      repoTask({ kind: "git", title: needsPublish.value ? "发布当前分支" : "推送当前分支", priority: "high" }),
     );
   }
 
@@ -1162,6 +1172,7 @@ export function useRepoDetailController() {
       branchItems,
       branchActionRunning,
       activeBranchName,
+      needsPublish,
       aheadCount,
       behindCount,
       repoSettingValues,
