@@ -2246,6 +2246,7 @@ name = "lilia_github_workspace"
 version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
+ "dunce",
  "keyring",
  "libc",
  "lilia_github_contracts",

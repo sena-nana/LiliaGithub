@@ -54,10 +54,10 @@ pub fn system_open_url(app: AppHandle, url: String) -> Result<(), String> {
 }
 
 fn open_command_target(path: &Path, label: &str, commands: &[&str]) -> Result<(), String> {
-    let path_text = path_to_str(path)?;
+    let path = dunce::simplified(path);
     let candidates = commands.iter().map(|command_name| {
         let mut command = Command::new(command_name);
-        command.arg(path_text);
+        command.arg(path);
         configure_background_command(&mut command);
         (*command_name, command)
     });
@@ -66,17 +66,14 @@ fn open_command_target(path: &Path, label: &str, commands: &[&str]) -> Result<()
 
 #[cfg(target_os = "windows")]
 fn open_terminal_at_path(path: &Path) -> Result<(), String> {
-    let path_text = path_to_str(path)?;
+    let path = dunce::simplified(path);
     let mut wt = Command::new("wt");
-    wt.args(["-d", path_text]);
+    wt.arg("-d").arg(path);
 
-    let script = format!(
-        "Set-Location -LiteralPath '{}'",
-        powershell_single_quoted(path_text)
-    );
     let mut powershell = Command::new("powershell.exe");
     powershell
-        .args(["-NoExit", "-Command", &script])
+        .arg("-NoExit")
+        .current_dir(path)
         .creation_flags(CREATE_NEW_CONSOLE);
 
     spawn_first("终端", [("wt", wt), ("powershell.exe", powershell)])
@@ -146,12 +143,8 @@ fn spawn_external(mut command: Command) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn path_to_str(path: &Path) -> Result<&str, String> {
     path.to_str()
         .ok_or_else(|| format!("路径不是有效 UTF-8：{}", path.display()))
-}
-
-#[cfg(target_os = "windows")]
-fn powershell_single_quoted(value: &str) -> String {
-    value.replace('\'', "''")
 }

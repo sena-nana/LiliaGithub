@@ -17,7 +17,9 @@ use crate::workspace::settings::{
     save_settings, sort_dedup, workspace_root, write_startup_repo_summary,
     write_startup_repo_summary_after_fetch,
 };
-use crate::workspace::shared::{configure_background_command, now_millis};
+use crate::workspace::shared::{
+    compatible_path_text, configure_background_command, now_millis,
+};
 use crate::workspace::tasks::{record_workspace_task, update_workspace_task};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
@@ -286,7 +288,7 @@ fn repo_id_within_root(root: &Path, path: &Path) -> Option<String> {
 
 pub(super) fn resolve_repo_worktree(root: &Path, path: &Path) -> ResolvedRepoWorktree {
     let current_path = canonical_repo_path(path);
-    let shared_repo_key = normalize_worktree_display_path(
+    let shared_repo_key = compatible_path_text(
         &git_common_dir(path).unwrap_or_else(|| current_path.join(".git")),
     );
     let worktrees = git_worktree_entries(path);
@@ -735,7 +737,7 @@ fn summarize_repo_from_status(
             .and_then(|value| value.to_str())
             .unwrap_or("repo")
             .to_string(),
-        path: path.to_string_lossy().to_string(),
+        path: compatible_path_text(path),
         relative_path,
         current_branch: status.current_branch.clone(),
         github_full_name: remote_url.as_deref().and_then(github_full_name_from_remote),
@@ -764,7 +766,7 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
             .and_then(|value| value.to_str())
             .unwrap_or("repo")
             .to_string(),
-        path: path.to_string_lossy().to_string(),
+        path: compatible_path_text(path),
         relative_path,
         current_branch: None,
         remote_url: None,
@@ -3219,22 +3221,10 @@ pub(super) fn worktree_branch_paths(path: &Path) -> HashMap<String, Vec<String>>
             branches
                 .entry(branch)
                 .or_default()
-                .push(normalize_worktree_display_path(&entry.path));
+                .push(compatible_path_text(&entry.path));
         }
     }
     branches
-}
-
-fn normalize_worktree_display_path(path: &Path) -> String {
-    let raw = path.to_string_lossy().to_string();
-    #[cfg(windows)]
-    {
-        raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
-    }
-    #[cfg(not(windows))]
-    {
-        raw
-    }
 }
 
 pub(super) fn local_branch_short_name(remote_branch: &str) -> Option<String> {
