@@ -160,19 +160,49 @@ describe("workspace repo refresh events", () => {
     expect(state.repoDetails.A?.summary.behind).toBe(2);
   });
 
-  it("foreground 本地任务也会等待对应终态", async () => {
-    const pending = waitForWorkspaceTask("local-1");
+  it("超过历史上限后仍保留运行任务并在终态到达时结束等待", async () => {
     applyWorkspaceTaskChanged({
-      id: "local-1",
+      id: "long-running",
       kind: "repoStatus",
-      priority: "high",
+      priority: "low",
+      repoId: "A",
+      status: "running",
+      message: null,
+      updatedAt: 1,
+      cancellable: false,
+    });
+    const pending = waitForWorkspaceTask("long-running");
+
+    for (let index = 0; index < 200; index += 1) {
+      applyWorkspaceTaskChanged({
+        id: `completed-${index}`,
+        kind: "repoStatus",
+        priority: "normal",
+        repoId: "B",
+        status: "success",
+        message: null,
+        updatedAt: index + 2,
+        cancellable: false,
+      });
+    }
+
+    expect(state.tasks).toHaveLength(200);
+    expect(state.tasks.find((task) => task.id === "long-running")?.status).toBe("running");
+
+    applyWorkspaceTaskChanged({
+      id: "long-running",
+      kind: "repoStatus",
+      priority: "low",
       repoId: "A",
       status: "success",
       message: null,
-      updatedAt: Date.now(),
+      updatedAt: 203,
       cancellable: false,
     });
+
     await expect(pending).resolves.toBeUndefined();
+    expect(state.tasks).toHaveLength(200);
+    expect(state.tasks.find((task) => task.id === "long-running")?.status).toBe("success");
   });
 
   it("未选中的 autoSync 仓库按十分钟 TTL 低优先级检查", async () => {

@@ -1,4 +1,5 @@
 import packageJson from "../../../package.json";
+import { normalizeWorkspaceTasks } from "./taskRetention";
 import {
   withRepoAutoSyncPreference,
   withRepoSettingPreference,
@@ -3038,7 +3039,7 @@ function recordFallbackTask(
     updatedAt: Date.now(),
     cancellable,
   };
-  fallbackTasks = [task, ...fallbackTasks].slice(0, 200);
+  fallbackTasks = normalizeWorkspaceTasks([task, ...fallbackTasks]);
   return task;
 }
 
@@ -3822,6 +3823,7 @@ function updateFallbackTask(
     updated = { ...task, status, message, cancellable, updatedAt: Date.now() };
     return updated;
   });
+  fallbackTasks = normalizeWorkspaceTasks(fallbackTasks);
   if (updated) emitFallbackWorkspaceEvent("workspace://task-changed", updated);
   if (status === "success" || status === "error" || status === "cancelled") {
     fallbackRepoRefreshRequests.delete(taskId);

@@ -559,42 +559,61 @@ describe("workspace incremental refresh", () => {
     expect(state.tasks.map((task) => task.id)).toEqual(["new-task"]);
   });
 
-  it("任务列表同 ID 只保留更新时间最新的一笔", async () => {
-    service.listWorkspaceTasks.mockResolvedValueOnce([
+  it("任务快照不会覆盖请求期间到达的更新事件或移除新增活动任务", async () => {
+    const snapshot = deferred<typeof state.tasks>();
+    service.listWorkspaceTasks.mockReturnValueOnce(snapshot.promise);
+
+    const loading = refreshWorkspaceTasks();
+    await waitFor(() => expect(service.listWorkspaceTasks).toHaveBeenCalledTimes(1));
+    applyWorkspaceTaskChanged({
+      id: "existing-task",
+      kind: "repoStatus",
+      priority: "normal",
+      repoId: "Repo1",
+      status: "success",
+      message: "event result",
+      updatedAt: 20,
+      cancellable: false,
+    });
+    applyWorkspaceTaskChanged({
+      id: "new-active-task",
+      kind: "repoRemote",
+      priority: "low",
+      repoId: "Repo2",
+      status: "running",
+      message: null,
+      updatedAt: 30,
+      cancellable: false,
+    });
+
+    snapshot.resolve([
       {
-        id: "repo-task",
+        id: "existing-task",
         kind: "repoStatus",
         priority: "normal",
         repoId: "Repo1",
         status: "running",
-        message: "old",
-        updatedAt: 1,
+        message: "stale snapshot",
+        updatedAt: 10,
+        cancellable: false,
       },
       {
-        id: "repo-task",
-        kind: "repoStatus",
-        priority: "normal",
-        repoId: "Repo1",
-        status: "success",
-        message: "new",
-        updatedAt: 2,
-      },
-      {
-        id: "other-task",
+        id: "snapshot-task",
         kind: "languageStats",
         priority: "low",
-        repoId: "Repo2",
-        status: "pending",
+        repoId: "Repo3",
+        status: "success",
         message: null,
-        updatedAt: 1,
+        updatedAt: 5,
+        cancellable: false,
       },
     ]);
-
-    await refreshWorkspaceTasks();
+    await loading;
 
     expect(state.tasks.map((task) => [task.id, task.status, task.updatedAt])).toEqual([
-      ["repo-task", "success", 2],
-      ["other-task", "pending", 1],
+      ["new-active-task", "running", 30],
+      ["existing-task", "success", 20],
+      ["snapshot-task", "success", 5],
     ]);
   });
 
