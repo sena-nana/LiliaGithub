@@ -84,7 +84,7 @@ rustc-wrapper = "sccache"
 yarn agent-debug:verify
 ```
 
-该命令需要 `cargo`、`tauri-driver` 和匹配 Microsoft Edge 的 EdgeDriver,产物写入 `agent-debug-runs/<run-id>/`。详细接口、环境变量和产物说明见[Agent Debug Harness](../design/agent-debug-harness.md)。
+该命令的基础 readiness 需要 `cargo`,完整桌面 replay 需要 `tauri-driver` 和匹配 Microsoft Edge 的 EdgeDriver。缺少桌面 replay 工具时命令会绿色结束并在 summary 中标记 skipped,产物写入 `agent-debug-runs/<run-id>/`。详细接口、环境变量和产物说明见[Agent Debug Harness](../design/agent-debug-harness.md)。
 
 ## 验证
 

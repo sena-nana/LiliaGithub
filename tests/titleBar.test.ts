@@ -1,6 +1,5 @@
 import { fireEvent, render, waitFor } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { TitleBar } from "@lilia/ui";
 
 const tauriWindow = vi.hoisted(() => {
   const appWindow = {
@@ -26,6 +25,8 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 async function renderTitleBar() {
+  vi.resetModules();
+  const { TitleBar } = await import("@lilia/ui");
   const view = render(TitleBar, {
     props: {
       title: "LiliaGithub",
