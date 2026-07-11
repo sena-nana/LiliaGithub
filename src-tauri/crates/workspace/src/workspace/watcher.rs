@@ -1,6 +1,10 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::process::{Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
+use std::thread;
+use std::time::Duration;
 
 use notify::{recommended_watcher, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -10,10 +14,11 @@ use crate::workspace::repos::{
     canonical_repo_path, git_command_lossy, git_common_dir, managed_repo_paths, repo_id,
 };
 use crate::workspace::settings::{load_settings, workspace_root};
+use crate::workspace::shared::configure_background_command;
 
-const NOISE_DIR_NAMES: &[&str] = &["node_modules", "target", "dist", ".cache"];
+const REPO_WATCH_DEBOUNCE: Duration = Duration::from_secs(2);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct RepoWatchSpec {
     repo_id: String,
     worktree_path: PathBuf,
@@ -27,7 +32,7 @@ enum RepoChangeKind {
     GitMetadata,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct WatchIndex {
     repos: Vec<RepoWatchSpec>,
 }
@@ -38,7 +43,7 @@ impl WatchIndex {
     }
 
     fn affected_repos(&self, path: &Path) -> Vec<(String, RepoChangeKind)> {
-        if should_ignore_watch_path(path) || self.is_git_object_path(path) {
+        if self.is_git_object_path(path) {
             return Vec::new();
         }
 
@@ -164,21 +169,15 @@ pub(super) fn sync_repo_watchers(app: &AppHandle) {
     if manager.watcher.is_none() {
         let callback_app = app.clone();
         let callback_index = Arc::clone(&manager.index);
-        match recommended_watcher(move |result| {
-            handle_notify_result(&callback_app, &callback_index, result);
-        }) {
-            Ok(watcher) => manager.watcher = Some(watcher),
-            Err(_) => {
-                let repo_ids = manager
-                    .index
-                    .read()
-                    .unwrap_or_else(|error| error.into_inner())
-                    .repo_ids()
-                    .collect::<Vec<_>>();
-                drop(manager);
-                enqueue_uncertain_repo_refreshes(app.clone(), repo_ids);
-                return;
-            }
+        let (sender, receiver) = mpsc::channel();
+        let event_thread = thread::Builder::new()
+            .name("repo-watch-events".to_string())
+            .spawn(move || watch_event_loop(callback_app, callback_index, receiver));
+        if event_thread.is_ok() {
+            manager.watcher = recommended_watcher(move |result| {
+                let _ = sender.send(result);
+            })
+            .ok();
         }
     }
 
@@ -297,55 +296,137 @@ fn minimal_non_overlapping_roots(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
     roots
 }
 
-fn handle_notify_result(
+fn watch_event_loop(
+    app: AppHandle,
+    index: Arc<RwLock<WatchIndex>>,
+    receiver: mpsc::Receiver<notify::Result<Event>>,
+) {
+    while let Ok(first) = receiver.recv() {
+        let mut batch = vec![first];
+        loop {
+            match receiver.recv_timeout(REPO_WATCH_DEBOUNCE) {
+                Ok(result) => batch.push(result),
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+        handle_notify_batch(&app, &index, batch);
+    }
+}
+
+fn handle_notify_batch(
     app: &AppHandle,
     index: &RwLock<WatchIndex>,
-    result: notify::Result<Event>,
+    results: Vec<notify::Result<Event>>,
 ) {
-    let index = index.read().unwrap_or_else(|error| error.into_inner());
-
-    let event = match result {
-        Ok(event) => event,
-        Err(error) => {
-            let mut repo_ids = index.repo_ids_for_paths(&error.paths);
-            if repo_ids.is_empty() {
-                repo_ids.extend(index.repo_ids());
+    let index = index
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    let mut uncertain_repo_ids = HashSet::new();
+    let mut paths = Vec::new();
+    for result in results {
+        let event = match result {
+            Ok(event) => event,
+            Err(error) => {
+                let repo_ids = index.repo_ids_for_paths(&error.paths);
+                if repo_ids.is_empty() {
+                    uncertain_repo_ids.extend(index.repo_ids());
+                } else {
+                    uncertain_repo_ids.extend(repo_ids);
+                }
+                continue;
             }
-            drop(index);
-            enqueue_uncertain_repo_refreshes(app.clone(), repo_ids);
-            return;
+        };
+        if event.need_rescan() {
+            uncertain_repo_ids.extend(index.repo_ids());
+        } else if !matches!(event.kind, EventKind::Access(_)) {
+            paths.extend(event.paths);
         }
-    };
-
-    if event.need_rescan() {
-        let repo_ids = index.repo_ids().collect::<Vec<_>>();
-        drop(index);
-        enqueue_uncertain_repo_refreshes(app.clone(), repo_ids);
-        return;
-    }
-    if matches!(event.kind, EventKind::Access(_)) {
-        return;
     }
 
     let mut affected = HashMap::<String, RepoChangeKind>::new();
-    for path in event.paths {
+    let mut worktree_paths = HashMap::<String, HashSet<PathBuf>>::new();
+    for path in paths {
         for (repo_id, kind) in index.affected_repos(&path) {
-            affected
-                .entry(repo_id)
-                .and_modify(|current| {
-                    if kind == RepoChangeKind::GitMetadata {
-                        *current = kind;
-                    }
-                })
-                .or_insert(kind);
+            if kind == RepoChangeKind::GitMetadata {
+                affected.insert(repo_id, kind);
+            } else {
+                worktree_paths.entry(repo_id).or_default().insert(path.clone());
+            }
         }
     }
-    drop(index);
-
+    for (repo_id, paths) in worktree_paths {
+        if affected.get(&repo_id) == Some(&RepoChangeKind::GitMetadata) {
+            continue;
+        }
+        let Some(repo) = index.repos.iter().find(|repo| repo.repo_id == repo_id) else {
+            uncertain_repo_ids.insert(repo_id);
+            continue;
+        };
+        if repo_has_relevant_worktree_change(repo, paths.iter()) {
+            affected.insert(repo_id, RepoChangeKind::Worktree);
+        }
+    }
+    for repo_id in &uncertain_repo_ids {
+        affected.remove(repo_id);
+    }
+    enqueue_uncertain_repo_refreshes(app.clone(), uncertain_repo_ids);
     for (repo_id, kind) in affected {
         let _ =
             enqueue_watcher_repo_refresh(app.clone(), repo_id, kind == RepoChangeKind::GitMetadata);
     }
+}
+
+fn repo_has_relevant_worktree_change<'a>(
+    repo: &RepoWatchSpec,
+    paths: impl Iterator<Item = &'a PathBuf>,
+) -> bool {
+    let mut relative_paths = Vec::new();
+    for path in paths {
+        let Ok(relative) = path.strip_prefix(&repo.worktree_path) else {
+            return true;
+        };
+        if relative.file_name().is_some_and(|name| name == ".gitignore") {
+            return true;
+        }
+        let Some(relative) = relative.to_str() else {
+            return true;
+        };
+        relative_paths.push(relative.replace('\\', "/"));
+    }
+    if relative_paths.is_empty() {
+        return false;
+    }
+    git_all_paths_ignored(&repo.worktree_path, &relative_paths)
+        .map(|ignored| !ignored)
+        .unwrap_or(true)
+}
+
+fn git_all_paths_ignored(repo_path: &Path, paths: &[String]) -> Result<bool, ()> {
+    let mut command = Command::new("git");
+    command
+        .args(["check-ignore", "--stdin", "-z"])
+        .current_dir(repo_path)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_background_command(&mut command);
+    let mut child = command.spawn().map_err(|_| ())?;
+    {
+        let stdin = child.stdin.as_mut().ok_or(())?;
+        for path in paths {
+            stdin.write_all(path.as_bytes()).map_err(|_| ())?;
+            stdin.write_all(&[0]).map_err(|_| ())?;
+        }
+    }
+    let output = child.wait_with_output().map_err(|_| ())?;
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(());
+    }
+    Ok(output.stdout.iter().filter(|byte| **byte == 0).count() == paths.len())
 }
 
 fn longest_matching_repo<'a>(
@@ -390,21 +471,6 @@ fn is_private_worktree_metadata(path: &Path, common_dir: &Path) -> bool {
     )
 }
 
-fn should_ignore_watch_path(path: &Path) -> bool {
-    let components = path
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .collect::<Vec<_>>();
-
-    if components.iter().any(|name| NOISE_DIR_NAMES.contains(name)) {
-        return true;
-    }
-
-    components
-        .windows(2)
-        .any(|pair| pair == [".git", "objects"])
-}
-
 fn paths_overlap(left: &Path, right: &Path) -> bool {
     is_path_inside(left, right) || is_path_inside(right, left)
 }
@@ -416,11 +482,15 @@ fn is_path_inside(path: &Path, root: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        minimal_non_overlapping_roots, should_ignore_watch_path, watch_roots, RepoChangeKind,
-        RepoWatchSpec, WatchIndex,
+        minimal_non_overlapping_roots, repo_has_relevant_worktree_change, watch_roots,
+        RepoChangeKind, RepoWatchSpec, WatchIndex,
     };
     use std::collections::HashSet;
+    use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn repo(repo_id: &str, worktree: &str, git_dir: &str, common_dir: &str) -> RepoWatchSpec {
         RepoWatchSpec {
@@ -532,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_noise_and_objects_in_dot_git_or_external_common_dirs() {
+    fn ignores_git_objects_in_dot_git_or_external_common_dirs() {
         let index = WatchIndex {
             repos: vec![repo(
                 "external",
@@ -542,15 +612,6 @@ mod tests {
             )],
         };
 
-        assert!(should_ignore_watch_path(Path::new(
-            "C:/ws/app/node_modules/a.js"
-        )));
-        assert!(should_ignore_watch_path(Path::new(
-            "C:/ws/app/target/debug/app"
-        )));
-        assert!(should_ignore_watch_path(Path::new(
-            "C:/ws/app/.git/objects/ab/cd"
-        )));
         assert!(affected(&index, "F:/git/external/objects/ab/cd").is_empty());
         assert_eq!(
             affected(&index, "F:/git/external/refs/heads/main"),
@@ -558,6 +619,107 @@ mod tests {
                 .into_iter()
                 .collect()
         );
+    }
+
+    static NEXT_TEST_REPO: AtomicU64 = AtomicU64::new(0);
+
+    struct TestRepo(PathBuf);
+
+    impl TestRepo {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let sequence = NEXT_TEST_REPO.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "lilia-github-watcher-{}-{nonce}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            assert!(Command::new("git").arg("init").arg(&path).status().unwrap().success());
+            Self(path)
+        }
+
+        fn path(&self, relative: &str) -> PathBuf {
+            self.0.join(relative)
+        }
+
+        fn write(&self, relative: &str, contents: &str) {
+            let path = self.path(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, contents).unwrap();
+        }
+
+        fn git(&self, args: &[&str]) {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&self.0)
+                .status()
+                .unwrap()
+                .success());
+        }
+
+        fn spec(&self) -> RepoWatchSpec {
+            RepoWatchSpec {
+                repo_id: "repo".to_string(),
+                worktree_path: self.0.clone(),
+                git_dir: self.path(".git"),
+                git_common_dir: self.path(".git"),
+            }
+        }
+    }
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn filters_git_ignored_paths_with_nested_negation_and_excludes() {
+        let repo = TestRepo::new();
+        repo.write(".gitignore", "*.log\nbuild/\n!keep.log\n");
+        repo.write("nested/.gitignore", "*.tmp\n");
+        repo.write(".git/info/exclude", "private.dat\n");
+        let global_excludes = repo.path("global-excludes");
+        fs::write(&global_excludes, "global.cache\n").unwrap();
+        repo.git(&["config", "core.excludesFile", global_excludes.to_str().unwrap()]);
+
+        let spec = repo.spec();
+        for ignored in ["debug.log", "build/output.js", "nested/item.tmp", "private.dat", "global.cache"] {
+            assert!(!repo_has_relevant_worktree_change(&spec, [repo.path(ignored)].iter()));
+        }
+        for relevant in ["keep.log", "src/main.rs", ".gitignore"] {
+            assert!(
+                repo_has_relevant_worktree_change(&spec, [repo.path(relevant)].iter()),
+                "expected {relevant} to trigger a refresh"
+            );
+        }
+
+        repo.write(".gitignore", "build/\n");
+        assert!(repo_has_relevant_worktree_change(
+            &spec,
+            [repo.path("debug.log")].iter()
+        ));
+    }
+
+    #[test]
+    fn tracked_paths_and_ignore_failures_still_refresh() {
+        let repo = TestRepo::new();
+        repo.write(".gitignore", "tracked.log\n");
+        repo.write("tracked.log", "tracked");
+        repo.git(&["add", "-f", "tracked.log"]);
+        let spec = repo.spec();
+        assert!(repo_has_relevant_worktree_change(&spec, [repo.path("tracked.log")].iter()));
+
+        let missing = RepoWatchSpec {
+            worktree_path: repo.path("missing"),
+            ..spec
+        };
+        assert!(repo_has_relevant_worktree_change(&missing, [repo.path("missing/file")].iter()));
     }
 
     #[test]
