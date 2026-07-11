@@ -14,6 +14,11 @@ delegate_command!(async github; fn github_update_repo_actions_permissions(app: A
 delegate_command!(async github; fn github_update_repo_workflow_permissions(app: AppHandle, repo_full_name: String, request: GitHubRepoWorkflowPermissionsRequest,) -> Result<(), String>);
 delegate_command!(async github; fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Result<(), String>);
 delegate_command!(async github; fn github_list_branches(app: AppHandle, repo_full_name: String,) -> Result<Vec<BranchSummary>, String>);
+delegate_command!(async github; fn github_get_branch_protection(app: AppHandle, repo_full_name: String, branch_name: String,) -> Result<Option<serde_json::Value>, String>);
+delegate_command!(async github; fn github_update_branch_protection(app: AppHandle, repo_full_name: String, branch_name: String, request: serde_json::Value,) -> Result<serde_json::Value, String>);
+delegate_command!(async github; fn github_list_repo_rulesets(app: AppHandle, repo_full_name: String,) -> Result<Vec<GitHubRulesetSummary>, String>);
+delegate_command!(async github; fn github_get_repo_ruleset(app: AppHandle, repo_full_name: String, ruleset_id: u64,) -> Result<serde_json::Value, String>);
+delegate_command!(async github; fn github_update_repo_ruleset(app: AppHandle, repo_full_name: String, ruleset_id: u64, request: serde_json::Value,) -> Result<serde_json::Value, String>);
 delegate_command!(async github; fn github_delete_branch(app: AppHandle, repo_full_name: String, branch_name: String,) -> Result<(), String>);
 delegate_command!(async github; fn github_list_pull_requests(app: AppHandle, repo_full_name: String, state: Option<String>, per_page: Option<u32>, sort: Option<String>, direction: Option<String>, creator: Option<String>, assignee: Option<String>, labels: Option<Vec<String>>, milestone: Option<serde_json::Value>, project: Option<String>, review: Option<String>, query: Option<String>, force_refresh: Option<bool>,) -> Result<Vec<GitHubPullRequest>, String>);
 delegate_command!(async github; fn github_get_pull_request(app: AppHandle, repo_full_name: String, pull_number: u64,) -> Result<GitHubPullRequest, String>);

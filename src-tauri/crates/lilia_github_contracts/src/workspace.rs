@@ -822,6 +822,8 @@ pub struct GitHubRepoManagement {
     pub visibility: String,
     pub default_branch: String,
     #[serde(default)]
+    pub viewer_can_administer: Option<bool>,
+    #[serde(default)]
     pub archived: bool,
     #[serde(default)]
     pub is_template: bool,
@@ -858,6 +860,22 @@ pub struct GitHubRepoManagement {
     pub html_url: String,
     #[serde(default)]
     pub license: Option<GitHubRepoLicense>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRulesetSummary {
+    pub id: u64,
+    pub name: String,
+    pub target: String,
+    pub enforcement: String,
+    pub source_type: String,
+    pub source: String,
+    pub repository_owned: bool,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

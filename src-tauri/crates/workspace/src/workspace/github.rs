@@ -4,13 +4,13 @@ use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
+use crate::runtime::WorkspaceContext as AppHandle;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring::{Entry, Error as KeyringError};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LINK, USER_AGENT};
 use reqwest::StatusCode;
 use serde::Deserialize;
-use crate::runtime::WorkspaceContext as AppHandle;
 
 use crate::workspace::file_browser::{file_preview_mime, MAX_FILE_PREVIEW_BYTES};
 use crate::workspace::readme::image_mime_for_path;
@@ -32,13 +32,13 @@ use lilia_github_contracts::workspace::{
     GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest,
     GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
     GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
-    GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner, GitHubRepoPage,
-    GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
-    GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
-    GitHubUpdateRepoSettingsRequest, GitHubRepoWorkflowPermissionsRequest, GitHubWorkflowArtifact,
-    GitHubWorkflowArtifactEntry, GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
-    GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview,
-    RepoFileTreeEntry,
+    GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
+    GitHubRepoPage, GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
+    GitHubRepoWorkflowPermissionsRequest, GitHubRulesetSummary, GitHubUpdateIssueRequest,
+    GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest, GitHubUpdateRepoSettingsRequest,
+    GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry, GitHubWorkflowDefinition,
+    GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep, GitHubWorkflowRun,
+    GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview, RepoFileTreeEntry,
 };
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
@@ -732,6 +732,21 @@ pub(super) struct GitHubBranchResponse {
     pub(super) protected: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubRulesetSummaryResponse {
+    pub(super) id: u64,
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) target: String,
+    pub(super) enforcement: String,
+    pub(super) source_type: String,
+    pub(super) source: String,
+    #[serde(default)]
+    pub(super) created_at: Option<String>,
+    #[serde(default)]
+    pub(super) updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NormalizedGitHubRepo {
     pub(super) owner: String,
@@ -826,6 +841,10 @@ pub(super) fn github_oauth_headers(builder: RequestBuilder) -> RequestBuilder {
 pub(super) fn github_http_error(prefix: &str, response: Response) -> String {
     let status = response.status();
     let body = response.text().unwrap_or_default();
+    github_http_error_from_text(prefix, status, &body)
+}
+
+fn github_http_error_from_text(prefix: &str, status: StatusCode, body: &str) -> String {
     let trimmed = body.trim();
     if trimmed.is_empty() {
         return format!("{prefix}：HTTP {status}");
@@ -842,6 +861,31 @@ pub(super) fn github_http_error(prefix: &str, response: Response) -> String {
     }
     let detail = trimmed.chars().take(240).collect::<String>();
     format!("{prefix}：HTTP {status}：{detail}")
+}
+
+fn github_branch_protection_from_response(
+    prefix: &str,
+    response: Response,
+) -> Result<Option<serde_json::Value>, String> {
+    let status = response.status();
+    let body = response
+        .text()
+        .map_err(|error| format!("{prefix}：读取响应失败：{error}"))?;
+    if status.is_success() {
+        return serde_json::from_str(&body)
+            .map(Some)
+            .map_err(|error| format!("{prefix}：解析响应失败：{error}"));
+    }
+    if status == StatusCode::NOT_FOUND {
+        let not_protected = serde_json::from_str::<GitHubErrorResponse>(&body)
+            .ok()
+            .and_then(|error| error.message)
+            .is_some_and(|message| message.eq_ignore_ascii_case("Branch not protected"));
+        if not_protected {
+            return Ok(None);
+        }
+    }
+    Err(github_http_error_from_text(prefix, status, &body))
 }
 
 pub(super) fn github_binding_expired_status(status: reqwest::StatusCode) -> bool {
@@ -1245,6 +1289,7 @@ pub(super) fn github_repo_management_from_response(
             }
         }),
         default_branch: repo.default_branch.unwrap_or_default(),
+        viewer_can_administer: None,
         archived: repo.archived,
         is_template: repo.is_template,
         has_issues: repo.has_issues,
@@ -1277,6 +1322,22 @@ pub(super) fn github_repo_management_from_response(
             url: license.url,
         }),
     }
+}
+
+fn github_repo_management_from_value(
+    prefix: &str,
+    value: serde_json::Value,
+    topics: Vec<String>,
+) -> Result<GitHubRepoManagement, String> {
+    let viewer_can_administer = value
+        .get("permissions")
+        .and_then(|permissions| permissions.get("admin"))
+        .and_then(serde_json::Value::as_bool);
+    let repo = serde_json::from_value::<GitHubRepoResponse>(value)
+        .map_err(|error| format!("{prefix}：解析响应失败：{error}"))?;
+    let mut management = github_repo_management_from_response(repo, topics);
+    management.viewer_can_administer = viewer_can_administer;
+    Ok(management)
 }
 
 pub(super) fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -1733,7 +1794,10 @@ pub(super) fn github_actions_permissions_payload(
     request: &GitHubRepoActionsPermissionsRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut payload = serde_json::Map::new();
-    payload.insert("enabled".to_string(), serde_json::Value::Bool(request.enabled));
+    payload.insert(
+        "enabled".to_string(),
+        serde_json::Value::Bool(request.enabled),
+    );
     if let Some(value) = normalize_optional_string(request.allowed_actions.clone()) {
         payload.insert(
             "allowed_actions".to_string(),
@@ -1753,7 +1817,9 @@ pub(super) fn github_workflow_permissions_payload(
     request: &GitHubRepoWorkflowPermissionsRequest,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut payload = serde_json::Map::new();
-    if let Some(value) = normalize_optional_string(Some(request.default_workflow_permissions.clone())) {
+    if let Some(value) =
+        normalize_optional_string(Some(request.default_workflow_permissions.clone()))
+    {
         payload.insert(
             "default_workflow_permissions".to_string(),
             serde_json::Value::String(value),
@@ -3277,6 +3343,29 @@ pub(super) fn github_branch_from_response(branch: GitHubBranchResponse) -> Branc
     }
 }
 
+pub(super) fn github_ruleset_summary_from_response(
+    repo_full_name: &str,
+    ruleset: GitHubRulesetSummaryResponse,
+) -> GitHubRulesetSummary {
+    let repository_owned = ruleset.source_type.eq_ignore_ascii_case("Repository")
+        && ruleset.source.eq_ignore_ascii_case(repo_full_name);
+    GitHubRulesetSummary {
+        id: ruleset.id,
+        name: ruleset.name,
+        target: if ruleset.target.is_empty() {
+            "branch".to_string()
+        } else {
+            ruleset.target
+        },
+        enforcement: ruleset.enforcement,
+        source_type: ruleset.source_type,
+        source: ruleset.source,
+        repository_owned,
+        created_at: ruleset.created_at,
+        updated_at: ruleset.updated_at,
+    }
+}
+
 pub(super) fn github_auth_header(token: &str) -> String {
     lilia_github_github::github_auth_header(token)
 }
@@ -3671,7 +3760,7 @@ fn fetch_github_repo_management(
         "读取 GitHub 仓库设置失败",
         github_headers(client.get(&repo_url), Some(&token)),
     )?;
-    let repo = github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?;
+    let repo = github_json::<serde_json::Value>("读取 GitHub 仓库设置失败", response)?;
     let topics_response = github_send(
         app,
         "读取 GitHub 仓库 topics 失败",
@@ -3682,7 +3771,7 @@ fn fetch_github_repo_management(
     )?;
     let topics =
         github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", topics_response)?;
-    Ok(github_repo_management_from_response(repo, topics.names))
+    github_repo_management_from_value("读取 GitHub 仓库设置失败", repo, topics.names)
 }
 
 pub async fn github_get_repo_management(
@@ -3726,14 +3815,14 @@ pub async fn github_update_repo_settings(
                 "读取 GitHub 仓库设置失败",
                 github_headers(client.get(&repo_url), Some(&token)),
             )?;
-            github_json::<GitHubRepoResponse>("读取 GitHub 仓库设置失败", response)?
+            github_json::<serde_json::Value>("读取 GitHub 仓库设置失败", response)?
         } else {
             let response = github_send(
                 &app,
                 "更新 GitHub 仓库设置失败",
                 github_headers(client.patch(&repo_url).json(&payload), Some(&token)),
             )?;
-            github_json::<GitHubRepoResponse>("更新 GitHub 仓库设置失败", response)?
+            github_json::<serde_json::Value>("更新 GitHub 仓库设置失败", response)?
         };
         let topics = if let Some(topics) = request.topics {
             let response = github_send(
@@ -3758,7 +3847,8 @@ pub async fn github_update_repo_settings(
             )?;
             github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", response)?.names
         };
-        let management = github_repo_management_from_response(repo, topics);
+        let management =
+            github_repo_management_from_value("读取 GitHub 仓库设置失败", repo, topics)?;
         update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
             repo_cache.management = Some(management.clone());
         })?;
@@ -3812,15 +3902,14 @@ fn github_repo_settings_get_item(
             dangerous: false,
         };
     }
-    let value = github_repo_settings_path_url(repo_full_name, path)
-        .and_then(|url| {
-            let response = github_send(
-                app,
-                &format!("读取 {label} 失败"),
-                github_headers(client.get(url), Some(token)),
-            )?;
-            github_json_value(&format!("读取 {label} 失败"), response)
-        });
+    let value = github_repo_settings_path_url(repo_full_name, path).and_then(|url| {
+        let response = github_send(
+            app,
+            &format!("读取 {label} 失败"),
+            github_headers(client.get(url), Some(token)),
+        )?;
+        github_json_value(&format!("读取 {label} 失败"), response)
+    });
     match value {
         Ok(value) => GitHubRepoSettingsEndpointItem {
             key: key.to_string(),
@@ -3867,7 +3956,9 @@ fn github_repo_settings_section_title(section: &str) -> Result<&'static str, Str
     }
 }
 
-fn github_repo_settings_section_items(section: &str) -> Result<Vec<(&'static str, &'static str, &'static str, bool, bool)>, String> {
+fn github_repo_settings_section_items(
+    section: &str,
+) -> Result<Vec<(&'static str, &'static str, &'static str, bool, bool)>, String> {
     match section {
         "collaborators" => Ok(vec![
             ("collaborators", "协作者", "collaborators?per_page=100", true, true),
@@ -3992,7 +4083,10 @@ pub async fn github_update_repo_actions_permissions(
             "更新 GitHub Actions 权限失败",
             github_headers(
                 client
-                    .put(format!("{}/actions/permissions", github_repo_api_url(&repo_full_name)?))
+                    .put(format!(
+                        "{}/actions/permissions",
+                        github_repo_api_url(&repo_full_name)?
+                    ))
                     .json(&github_actions_permissions_payload(&request)),
                 Some(&token),
             ),
@@ -4079,6 +4173,177 @@ pub async fn github_list_branches(
             .into_iter()
             .map(github_branch_from_response)
             .collect())
+    })
+    .await
+}
+
+fn github_branch_protection_api_url(
+    repo_full_name: &str,
+    branch_name: &str,
+) -> Result<String, String> {
+    let branch = branch_name.trim();
+    if branch.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    Ok(format!(
+        "{}/branches/{}/protection",
+        github_repo_api_url(repo_full_name)?,
+        url_encode_path_segment(branch)
+    ))
+}
+
+pub async fn github_get_branch_protection(
+    app: AppHandle,
+    repo_full_name: String,
+    branch_name: String,
+) -> Result<Option<serde_json::Value>, String> {
+    run_blocking("读取 GitHub 分支保护", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 分支保护失败",
+            github_headers(
+                client.get(github_branch_protection_api_url(
+                    &repo_full_name,
+                    &branch_name,
+                )?),
+                Some(&token),
+            ),
+        )?;
+        github_branch_protection_from_response("读取 GitHub 分支保护失败", response)
+    })
+    .await
+}
+
+pub async fn github_update_branch_protection(
+    app: AppHandle,
+    repo_full_name: String,
+    branch_name: String,
+    request: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    run_blocking("更新 GitHub 分支保护", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "更新 GitHub 分支保护失败",
+            github_headers(
+                client
+                    .put(github_branch_protection_api_url(
+                        &repo_full_name,
+                        &branch_name,
+                    )?)
+                    .json(&request),
+                Some(&token),
+            ),
+        )?;
+        github_json("更新 GitHub 分支保护失败", response)
+    })
+    .await
+}
+
+fn github_ruleset_api_url(repo_full_name: &str, ruleset_id: Option<u64>) -> Result<String, String> {
+    let base = format!("{}/rulesets", github_repo_api_url(repo_full_name)?);
+    Ok(ruleset_id.map_or(base.clone(), |id| format!("{base}/{id}")))
+}
+
+fn fetch_github_ruleset(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    repo_full_name: &str,
+    ruleset_id: u64,
+) -> Result<serde_json::Value, String> {
+    let response = github_send(
+        app,
+        "读取 GitHub 规则集失败",
+        github_headers(
+            client.get(github_ruleset_api_url(repo_full_name, Some(ruleset_id))?),
+            Some(token),
+        ),
+    )?;
+    github_json("读取 GitHub 规则集失败", response)
+}
+
+pub async fn github_list_repo_rulesets(
+    app: AppHandle,
+    repo_full_name: String,
+) -> Result<Vec<GitHubRulesetSummary>, String> {
+    run_blocking("读取 GitHub 规则集", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let response = github_send(
+            &app,
+            "读取 GitHub 规则集失败",
+            github_headers(
+                client
+                    .get(github_ruleset_api_url(&repo_full_name, None)?)
+                    .query(&[
+                        ("includes_parents", "true"),
+                        ("targets", "branch"),
+                        ("per_page", "100"),
+                    ]),
+                Some(&token),
+            ),
+        )?;
+        let rulesets =
+            github_json::<Vec<GitHubRulesetSummaryResponse>>("读取 GitHub 规则集失败", response)?;
+        Ok(rulesets
+            .into_iter()
+            .map(|ruleset| github_ruleset_summary_from_response(&repo_full_name, ruleset))
+            .collect())
+    })
+    .await
+}
+
+pub async fn github_get_repo_ruleset(
+    app: AppHandle,
+    repo_full_name: String,
+    ruleset_id: u64,
+) -> Result<serde_json::Value, String> {
+    run_blocking("读取 GitHub 规则集", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)
+    })
+    .await
+}
+
+pub async fn github_update_repo_ruleset(
+    app: AppHandle,
+    repo_full_name: String,
+    ruleset_id: u64,
+    request: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    run_blocking("更新 GitHub 规则集", move || {
+        let (_binding, token) = github_require_token(&app)?;
+        let client = build_client()?;
+        let current = fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)?;
+        let source_type = current
+            .get("source_type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let source = current
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if !source_type.eq_ignore_ascii_case("Repository")
+            || !source.eq_ignore_ascii_case(&repo_full_name)
+        {
+            return Err("继承的组织或企业规则集只能查看，不能在仓库中编辑".to_string());
+        }
+        let response = github_send(
+            &app,
+            "更新 GitHub 规则集失败",
+            github_headers(
+                client
+                    .put(github_ruleset_api_url(&repo_full_name, Some(ruleset_id))?)
+                    .json(&request),
+                Some(&token),
+            ),
+        )?;
+        github_json("更新 GitHub 规则集失败", response)
     })
     .await
 }
@@ -5292,11 +5557,7 @@ pub async fn github_get_workflow_job_log(
     .await
 }
 
-fn github_rerun_workflow(
-    app: &AppHandle,
-    repo_full_name: &str,
-    path: &str,
-) -> Result<(), String> {
+fn github_rerun_workflow(app: &AppHandle, repo_full_name: &str, path: &str) -> Result<(), String> {
     let (binding, token) = github_require_token(app)?;
     github_require_scope(&binding, GITHUB_REPO_SCOPE)?;
     let client = build_client()?;

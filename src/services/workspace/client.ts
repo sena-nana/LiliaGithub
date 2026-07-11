@@ -11,6 +11,7 @@ import type {
   CommitDetail,
   CommitSummary,
   GitHubBindingStatus,
+  GitHubBranchProtection,
   GitHubActionNotification,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubAccountIssueItem,
@@ -39,6 +40,8 @@ import type {
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
+  GitHubRuleset,
+  GitHubRulesetSummary,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
   GitHubWorkflowRun,
@@ -869,6 +872,53 @@ export async function deleteGitHubRepo(repoFullName: string): Promise<void> {
 
 export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[]> {
   return call("github_list_branches", { repoFullName }, () => workspaceFallback().listGitHubBranches(repoFullName));
+}
+
+export function getGitHubBranchProtection(
+  repoFullName: string,
+  branchName: string,
+): Promise<GitHubBranchProtection | null> {
+  return call("github_get_branch_protection", { repoFullName, branchName }, () =>
+    workspaceFallback().getGitHubBranchProtection(repoFullName, branchName)
+  );
+}
+
+export function updateGitHubBranchProtection(
+  repoFullName: string,
+  branchName: string,
+  request: GitHubBranchProtection,
+): Promise<GitHubBranchProtection> {
+  return call("github_update_branch_protection", { repoFullName, branchName, request }, () =>
+    workspaceFallback().updateGitHubBranchProtection(repoFullName, branchName, request)
+  ).then((protection) => {
+    githubProjectRepoCache(repoFullName).settingsSections.branches = undefined;
+    return protection;
+  });
+}
+
+export function listGitHubRepoRulesets(repoFullName: string): Promise<GitHubRulesetSummary[]> {
+  return call("github_list_repo_rulesets", { repoFullName }, () =>
+    workspaceFallback().listGitHubRepoRulesets(repoFullName)
+  );
+}
+
+export function getGitHubRepoRuleset(repoFullName: string, rulesetId: number): Promise<GitHubRuleset> {
+  return call("github_get_repo_ruleset", { repoFullName, rulesetId }, () =>
+    workspaceFallback().getGitHubRepoRuleset(repoFullName, rulesetId)
+  );
+}
+
+export function updateGitHubRepoRuleset(
+  repoFullName: string,
+  rulesetId: number,
+  request: GitHubRuleset,
+): Promise<GitHubRuleset> {
+  return call("github_update_repo_ruleset", { repoFullName, rulesetId, request }, () =>
+    workspaceFallback().updateGitHubRepoRuleset(repoFullName, rulesetId, request)
+  ).then((ruleset) => {
+    githubProjectRepoCache(repoFullName).settingsSections.rules = undefined;
+    return ruleset;
+  });
 }
 
 export function deleteGitHubBranch(repoFullName: string, branchName: string): Promise<void> {
