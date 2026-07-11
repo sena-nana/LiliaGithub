@@ -69,4 +69,4 @@ If dependencies are missing, the summary status is `blocked` and includes the ne
 
 ## UI Marking
 
-Stable `data-agent-id` values should be added to agent-relevant controls, especially shell navigation, setup actions, command palette items, repository rows, settings tabs, and modal actions. Dynamic rows should derive IDs from stable business identifiers instead of DOM order.
+Stable `data-agent-id` values should be added to agent-relevant controls, especially shell navigation, setup actions, repository actions, repository rows, settings tabs, and modal actions. Dynamic rows should derive IDs from stable business identifiers instead of DOM order.

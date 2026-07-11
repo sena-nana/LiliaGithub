@@ -1383,8 +1383,6 @@ describe("AppShell sidebar", () => {
     expect(view.queryByLabelText("项目总览操作")).toBeNull();
     expect(view.queryByRole("navigation", { name: "主导航" })).toBeNull();
 
-    await fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    expect(view.queryByRole("dialog", { name: "命令入口" })).toBeNull();
     expect(view.queryByText("创建远程仓库")).toBeNull();
   });
 

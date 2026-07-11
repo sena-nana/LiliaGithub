@@ -115,14 +115,14 @@ LiliaGithub 聚焦 GitHub 工作区周边的仓库操作。它通过 LiliaUI 使
 - [x] 窗口位置、尺寸和最大化状态恢复。
 - [x] 浅色 / 深色主题切换。
 - [x] 仓库操作使用右键菜单和确认弹层。
-- [x] 面向重复 GitHub 操作的更完整键盘导航和命令入口。
+- [x] 面向重复 GitHub 操作的键盘导航。
 
 ### 构建和发布
 
 - [x] Windows 桌面应用打包。
 - [x] 面向贡献者的测试和构建验证命令。
 - [x] GitHub Actions CI、文档构建和 release 打包工作流。
-- [ ] 签名安装包和应用内自动更新器集成。`1.0`
+- [ ] 签名安装包集成。`1.0`
 
 ## 项目结构
 
@@ -189,7 +189,7 @@ yarn docs:preview
 - GitHub Projects 元数据在缺少 `read:project` 权限时会降级处理，不再阻断仓库协作视图。
 - 侧边栏新增创建仓库入口，创建表单从设置页拆出复用。
 
-推送 `v*` tag 后，workflow 会运行验证并为 draft release 构建 Windows Tauri 安装包。正式发布前应下载产物，并手动验证安装、启动、基础窗口行为、仓库扫描、更新检查和卸载流程。当前发布产物以 Windows 为主；应用内检查更新只检查 GitHub Releases 并打开下载页，不执行自动下载或安装。
+推送 `v*` tag 后，workflow 会运行验证并为 draft release 构建 Windows Tauri 安装包。正式发布前应下载产物，并手动验证安装、启动、基础窗口行为、仓库扫描和卸载流程。当前发布产物以 Windows 为主。
 
 发布仓库需要配置以下 GitHub Actions secrets：
 
@@ -197,7 +197,7 @@ yarn docs:preview
 - `WINDOWS_CERTIFICATE_PASSWORD`：PFX 导入密码。
 - `WINDOWS_CERTIFICATE_THUMBPRINT`：PFX 导入后的 SHA-1 证书指纹。
 
-未配置 Windows 证书时，workflow 仍会生成未签名安装包。未来如恢复应用内自动更新，需要重新接入 Tauri updater 公钥、私钥和 updater artifact 验证链路。
+未配置 Windows 证书时，workflow 仍会生成未签名安装包。
 
 Tauri 图标源文件是 [src-tauri/icons/icon.png](src-tauri/icons/icon.png)。
 
