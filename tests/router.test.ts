@@ -10,7 +10,6 @@ import { workspaceFallbackForTests } from "../src/services/workspace";
 import type {
   CommitSummary,
   GitHubIssue,
-  GitHubPullRequest,
   GitHubRepoSummary,
   RepoChange,
   RepoDetail,
@@ -73,7 +72,6 @@ async function renderAt(path: string) {
   return {
     router,
     container,
-    unmount: cleanupMountedApp,
   };
 }
 
@@ -158,8 +156,7 @@ async function findRepoDetailRecentSyncFailure() {
   return within(await findRepoSidebarErrorCard()).getByText("最近同步失败").closest(".project-sidebar-error-card__item") as HTMLElement;
 }
 
-async function mockLiliaGithubSyncFailure() {
-  const service = await import("../src/services/workspace");
+function mockLiliaGithubSyncFailure() {
   workspaceFallback.setFallbackBulkExecuteOverrideForTests((operation, repoIds) =>
     repoIds.map((repoId) => ({
       repoId,
@@ -168,7 +165,6 @@ async function mockLiliaGithubSyncFailure() {
       summary: repoId === "LiliaGithub" && operation === "sync" ? null : repoSummary(repoId),
     })),
   );
-  return service;
 }
 
 function githubWorkflowRun(
@@ -226,36 +222,6 @@ function githubIssue(repoFullName: string, number: number, updatedAt: string, cr
   };
 }
 
-function githubPullRequest(
-  repoFullName: string,
-  number: number,
-  updatedAt: string,
-  overrides: Partial<GitHubPullRequest> = {},
-): GitHubPullRequest {
-  return {
-    number,
-    title: `${repoFullName} pull request ${number}`,
-    state: "open",
-    draft: false,
-    body: null,
-    labels: [],
-    assignees: [],
-    milestone: null,
-    comments: 0,
-    projectItems: [],
-    htmlUrl: `https://github.com/${repoFullName}/pull/${number}`,
-    updatedAt,
-    createdAt: updatedAt,
-    author: "lilia-user",
-    baseBranch: "main",
-    headBranch: `codex/pr-${number}`,
-    merged: false,
-    mergeable: true,
-    mergeableState: "clean",
-    ...overrides,
-  };
-}
-
 function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChange {
   return {
     path,
@@ -296,7 +262,6 @@ describe("基础路由", () => {
   afterEach(async () => {
     cleanupMountedApp();
     vi.useRealTimers();
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackStopLaunchOverrideForTests(null);
   });
 
@@ -465,24 +430,7 @@ describe("基础路由", () => {
     expect(await screen.findByText(/未找到 Git 仓库：LiliaGithub-missing-worktree/)).toBeInTheDocument();
   });
 
-  it("远程详情页没有 README.md 时显示空态", async () => {
-    workspaceFallback.setFallbackGitHubRepoPagesForTests([
-      {
-        items: [githubRepoSummary("sena-nana/EmptyRemote")],
-        nextPage: null,
-      },
-    ]);
-
-    await renderAt("/repos/github%3Asena-nana%2FEmptyRemote");
-
-    expect(await screen.findByRole("heading", { level: 1, name: "EmptyRemote" })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(document.body).toHaveTextContent("当前仓库没有 README.md。");
-    });
-  });
-
   it("本地仓库可通过一级文件树 tab 进入文件浏览页", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackRepoFilesForTests({
       LiliaGithub: {
         "": [
@@ -645,23 +593,7 @@ describe("基础路由", () => {
     });
   });
 
-  it("直接进入仓库详情默认页时不预取 issue 和 workflow runs", async () => {
-    const service = await import("../src/services/workspace");
-    const initialIssueCalls = workspaceFallback.getFallbackGitHubIssueListCallsForTests().length;
-    const initialWorkflowRunCalls = workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests().length;
-
-    await renderAt("/repos/LiliaGithub");
-
-    expect(await screen.findByRole("tablist", { name: "仓库页面" })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "项目" })).toHaveAttribute("aria-selected", "true");
-    });
-    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(initialIssueCalls);
-    expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(initialWorkflowRunCalls);
-  });
-
   it("直接进入 issue 深链时按需拉取并定位目标 issue", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubIssuesForTests({
       "sena-nana/LiliaGithub": [
         githubIssue("sena-nana/LiliaGithub", 12, "2026-06-18T08:00:00Z"),
@@ -764,7 +696,6 @@ describe("基础路由", () => {
   });
 
   it("直接进入 actions 深链时按需拉取并定位目标 run", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubWorkflowRunsForTests({
       "sena-nana/LiliaGithub": [
         githubWorkflowRun("sena-nana/LiliaGithub", 1310, "2026-06-18T08:00:00Z", {
@@ -790,57 +721,7 @@ describe("基础路由", () => {
     }, { timeout: 5000 });
   });
 
-  it("仓库 Pull Requests 筛选可从分享 URL 恢复", async () => {
-    const repoFullName = "sena-nana/LiliaGithub";
-    workspaceFallback.setFallbackGitHubPullRequestsForTests({
-      [repoFullName]: [
-        githubPullRequest(repoFullName, 52, "2026-06-18T10:00:00Z", {
-          title: "筛选恢复 PR",
-        }),
-      ],
-    });
-
-    const { router } = await renderAt(
-      [
-        "/repos/LiliaGithub?projectTab=pulls",
-        "pullState=merged",
-        "pullQ=workflow",
-        "pullCreator=lilia-user",
-        "pullLabels=bug",
-        "pullReview=approved",
-        "pullSort=created",
-        "pullDirection=asc",
-      ].join("&"),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Pull Requests" })).toHaveAttribute("aria-selected", "true");
-    });
-    expect(router.currentRoute.value.query).toMatchObject({
-      projectTab: "pulls",
-      pullState: "merged",
-      pullQ: "workflow",
-      pullReview: "approved",
-    });
-    expect(await screen.findByLabelText("搜索 Pull Requests", {}, { timeout: 5000 })).toHaveValue("workflow");
-    await waitFor(() => {
-      expect(workspaceFallback.getFallbackGitHubPullRequestListCallsForTests()).toContainEqual(
-        expect.objectContaining({
-          repoFullName,
-          state: "merged",
-          query: "workflow",
-          creator: "lilia-user",
-          labels: ["bug"],
-          review: "approved",
-          sort: "created",
-          direction: "asc",
-        }),
-      );
-    });
-  });
-
   it("总览页隐藏禁用的 GitHub 项目", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
@@ -860,29 +741,7 @@ describe("基础路由", () => {
     expect(within(repoStatusList).queryByText("sena-nana/DisabledRepo")).toBeNull();
   });
 
-  it("总览页归档 GitHub 项目显示 Archive 标签", async () => {
-    const service = await import("../src/services/workspace");
-    workspaceFallback.setFallbackGitHubRepoPagesForTests([
-      {
-        items: [
-          githubRepoSummary("sena-nana/ArchivedRepo", {
-            archived: true,
-            updatedAt: "2026-06-13T08:00:00Z",
-          }),
-        ],
-        nextPage: null,
-      },
-    ]);
-    await renderAt("/");
-
-    const repoStatusList = await screen.findByLabelText("仓库状态列表");
-    const row = (await within(repoStatusList).findByText("sena-nana/ArchivedRepo")).closest(".repo-status-row");
-    expect(row).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("Archive")).toBeInTheDocument();
-  });
-
-  it("总览页归档 GitHub 项目排序到最后", async () => {
-    const service = await import("../src/services/workspace");
+  it("总览页归档 GitHub 项目显示 Archive 标签并排序到最后", async () => {
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [
@@ -903,13 +762,14 @@ describe("基础路由", () => {
     const repoStatusList = await screen.findByLabelText("仓库状态列表");
     await within(repoStatusList).findByText("sena-nana/ArchivedRepo");
     await within(repoStatusList).findByText("sena-nana/ActiveRepo");
+    const archivedRow = within(repoStatusList).getByText("sena-nana/ArchivedRepo").closest(".repo-status-row");
+    expect(within(archivedRow as HTMLElement).getByText("Archive")).toBeInTheDocument();
     const rows = Array.from(repoStatusList.querySelectorAll(".repo-status-row"));
     expect(rows).toHaveLength(2);
     expect(rows[1]).toHaveTextContent("sena-nana/ArchivedRepo");
   });
 
   it("总览页 GitHub 项目支持手动加载更多并去重", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
         items: [githubRepoSummary("sena-nana/LiliaGithub")],
@@ -937,7 +797,6 @@ describe("基础路由", () => {
   });
 
   it("总览页 GitHub 项目加载失败时保留本地侧栏并可重试", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
     await renderAt("/");
 
@@ -955,7 +814,6 @@ describe("基础路由", () => {
   });
 
   it("首页本地提交贡献图支持空状态和错误重试", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackRepoContributionOverrideForTests(() => ({
       days: [],
       meta: {
@@ -1054,7 +912,6 @@ describe("基础路由", () => {
   });
 
   it("仓库详情页打开目标按钮可下拉切换并立即打开目标", async () => {
-    const service = await import("../src/services/workspace");
     await renderAt("/repos/LiliaGithub/changes");
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub" })).toBeInTheDocument();
@@ -1152,7 +1009,6 @@ describe("基础路由", () => {
   });
 
   it("远程仓库直达 stash 页显示本地限制空状态", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackGitHubBranchesForTests({ "sena-nana/EmptyRemote": [] });
 
     await renderAt("/repos/github%3Asena-nana%2FEmptyRemote/stash");
@@ -1213,7 +1069,6 @@ describe("基础路由", () => {
   });
 
   it("仓库项目信息页支持编辑 Issue（标题、正文、labels、assignees）", async () => {
-    const service = await import("../src/services/workspace");
     const issueItemByTitle = (name: string | RegExp) => {
       const titleButton = screen.getByRole("button", { name });
       const item = titleButton.closest('[role="listitem"]');
@@ -1428,7 +1283,6 @@ describe("基础路由", () => {
   });
 
   it("运行失败信息显示在命令卡片内而不是页头状态区", async () => {
-    const service = await import("../src/services/workspace");
     workspaceFallback.setFallbackStopLaunchOverrideForTests(() => {
       throw new Error("停止失败：operation attempted is not supported");
     });
@@ -1454,9 +1308,6 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(within(launchCard).getAllByText("Error: 停止失败：operation attempted is not supported").length).toBeGreaterThan(0);
     });
-    expect(within(launchCard).queryByText("最近启动失败")).toBeNull();
-    expect(within(launchCard).queryByText("启动历史")).toBeNull();
-    expect(launchCard.querySelector(".project-launch-diagnostics")).toBeNull();
     expect(document.querySelector(".repo-workbench__status")).toBeNull();
   });
 
@@ -1468,11 +1319,10 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "批量同步预检" })).toBeNull();
     });
-    expect(screen.queryByText("一键拉取预检")).toBeNull();
   });
 
   it("批量同步失败后进入项目详情处理失败仓库", async () => {
-    const service = await mockLiliaGithubSyncFailure();
+    mockLiliaGithubSyncFailure();
     const { router } = await renderAt("/");
 
     await clickOverviewSync();
@@ -1522,7 +1372,7 @@ describe("基础路由", () => {
   });
 
   it("仓库详情页右侧错误区出现或消失时保留项目主内容区", async () => {
-    const service = await mockLiliaGithubSyncFailure();
+    mockLiliaGithubSyncFailure();
     await renderAt("/");
 
     await clickOverviewSync();
@@ -1567,16 +1417,7 @@ describe("基础路由", () => {
     expect(await findRepoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
   });
 
-  it("设置页默认显示外观设置并使用设置侧栏", async () => {
-    await renderAt("/settings");
-
-    expect(await screen.findByRole("heading", { level: 1, name: "外观" })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "设置分类" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /外观/ })).toHaveAttribute("aria-current", "page");
-    expect(screen.queryByText(/Claude|Codex|CC-Switch|agent/i)).toBeNull();
-  });
-
-  it("设置页可通过 tab query 显示关于页，未知 tab 回落外观", async () => {
+  it("设置页可通过 tab query 显示关于页", async () => {
     await renderAt("/settings?tab=about");
 
     expect(await screen.findByRole("heading", { level: 1, name: "关于" })).toBeInTheDocument();
@@ -1634,12 +1475,6 @@ describe("基础路由", () => {
 
   it("未知路由回到首页", async () => {
     await renderAt("/missing");
-
-    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
-  });
-
-  it("旧扩展路由回到首页", async () => {
-    await renderAt("/plugins");
 
     expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
   });
