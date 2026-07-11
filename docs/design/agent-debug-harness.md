@@ -44,7 +44,7 @@ Run:
 yarn agent-debug:verify
 ```
 
-The script expects `tauri-driver`, EdgeDriver, and `cargo`. It rebuilds the managed debug binary for the selected Tauri `devUrl` on every run so the desktop shell and Vite server cannot drift to different ports. If the default dev server port is already occupied by another app, it picks a free localhost port and starts Vite on the same port.
+The script expects `cargo` for readiness and uses `tauri-driver` plus EdgeDriver when desktop replay is available. It rebuilds the managed debug binary for the selected Tauri `devUrl` before full replay so the desktop shell and Vite server cannot drift to different ports. If the default dev server port is already occupied by another app, it picks a free localhost port and starts Vite on the same port.
 The verification server enables the development-only workspace mock through `VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE=1`, keeping the run deterministic without changing production Tauri command contracts.
 
 Useful overrides:
@@ -52,6 +52,7 @@ Useful overrides:
 - `LILIA_GITHUB_AGENT_DEBUG_DEV_URL`: force a specific Vite URL.
 - `LILIA_GITHUB_AGENT_DEBUG_APP`: use an existing debug app binary instead of the managed rebuild path.
 - `LILIA_GITHUB_AGENT_DEBUG_DRIVER_PORT`: change the `tauri-driver` WebDriver port.
+- `LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER`: use a specific native WebDriver binary when it is not on `PATH`.
 
 The script fails when any captured target-route snapshot reports non-empty `missing-agent-ids`.
 
@@ -65,7 +66,7 @@ It writes artifacts under `agent-debug-runs/<run-id>/`, including:
 - `replay.json`
 - `summary.json`
 
-If dependencies are missing, the summary status is `blocked` and includes the next required setup step.
+If readiness dependencies are missing, the summary status is `blocked` and includes the next required setup step. If only desktop replay tools are missing, the command exits successfully and records `desktopReplay.status: "skipped"` in `summary.json`.
 
 ## UI Marking
 

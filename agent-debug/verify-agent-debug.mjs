@@ -52,6 +52,40 @@ function commandExists(command, args = ["--version"]) {
   return result.status === 0;
 }
 
+function findCommand(command) {
+  const locator = process.platform === "win32" ? "where.exe" : "which";
+  const result = spawnSync(locator, [command], { encoding: "utf8" });
+  if (result.status !== 0) return null;
+  return result.stdout
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find((item) => item && existsSync(item)) ?? null;
+}
+
+function findNativeWebDriver() {
+  const programFilesX86 = process.env["ProgramFiles(x86)"];
+  const candidates = [
+    process.env.LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER,
+    process.env.MSEDGEDRIVER,
+    findCommand("msedgedriver"),
+    findCommand("MicrosoftWebDriver"),
+    process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "MicrosoftWebDriver.exe") : null,
+    process.platform === "win32" && programFilesX86
+      ? path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedgedriver.exe")
+      : null,
+    process.platform === "win32" && process.env.ProgramFiles
+      ? path.join(process.env.ProgramFiles, "Microsoft", "Edge", "Application", "msedgedriver.exe")
+      : null,
+    process.platform === "win32" && programFilesX86
+      ? path.join(programFilesX86, "Microsoft", "EdgeWebView", "Application", "msedgedriver.exe")
+      : null,
+    process.platform === "win32" && process.env.ProgramFiles
+      ? path.join(process.env.ProgramFiles, "Microsoft", "EdgeWebView", "Application", "msedgedriver.exe")
+      : null,
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
 function parsePortFromUrl(url) {
   const parsed = new URL(url);
   if (parsed.port) return Number.parseInt(parsed.port, 10);
@@ -756,6 +790,7 @@ async function main() {
     }
   }
 
+  const nativeWebDriver = findNativeWebDriver();
   const preflight = {
     runId,
     runDir,
@@ -763,7 +798,8 @@ async function main() {
     devUrl,
     autoSelectedDevUrl,
     tauriDriver: commandExists("tauri-driver", ["--help"]),
-    edgeDriver: commandExists("msedgedriver") || commandExists("MicrosoftWebDriver"),
+    edgeDriver: Boolean(nativeWebDriver),
+    nativeWebDriver,
     cargo: commandExists("cargo"),
     localViteBin,
     localViteExists: existsSync(localViteBin),
@@ -775,21 +811,45 @@ async function main() {
   };
   const needsDevServer = !(await isUrlReady(devUrl));
   const shouldBuildDebugApp = !explicitAppBinary;
+  const readinessBlockers = [
+    needsDevServer && !preflight.localViteExists ? "local Vite is missing; run yarn install" : null,
+    explicitAppBinary && !preflight.appBinaryExists
+      ? `configured debug app binary does not exist: ${appBinary}`
+      : null,
+    shouldBuildDebugApp && !preflight.cargo ? "cargo is not available on PATH" : null,
+  ].filter(Boolean);
+  const replayBlockers = [
+    !preflight.tauriDriver ? "tauri-driver is not available on PATH" : null,
+    !preflight.edgeDriver
+      ? "EdgeDriver is not available; set LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER or install msedgedriver for desktop replay"
+      : null,
+  ].filter(Boolean);
+  preflight.replayReady = replayBlockers.length === 0;
   await writeJson("preflight.json", preflight);
-  if (
-    !preflight.tauriDriver ||
-    !preflight.edgeDriver ||
-    (needsDevServer && !preflight.localViteExists) ||
-    (explicitAppBinary && !preflight.appBinaryExists) ||
-    (shouldBuildDebugApp && !preflight.cargo)
-  ) {
+  if (readinessBlockers.length) {
     await writeJson("summary.json", {
       status: "blocked",
-      reason: "Missing tauri-driver, EdgeDriver, cargo, local Vite, or debug app binary.",
+      reason: "Agent debug readiness prerequisites are missing.",
       preflight,
-      nextStep: "Run cargo install tauri-driver, install a matching EdgeDriver, ensure cargo is on PATH, run yarn install, build a debug binary, or set LILIA_GITHUB_AGENT_DEBUG_APP.",
+      blockers: readinessBlockers,
+      nextStep: "Run yarn install, ensure cargo is on PATH, build a debug binary, or set LILIA_GITHUB_AGENT_DEBUG_APP.",
     });
     process.exitCode = 2;
+    return;
+  }
+  if (replayBlockers.length) {
+    await writeJson("summary.json", {
+      status: "passed",
+      runId,
+      preflight,
+      desktopReplay: {
+        status: "skipped",
+        blockers: replayBlockers,
+        nextStep:
+          "Install msedgedriver, put it on PATH, or set LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER to run the full desktop replay.",
+      },
+      replay,
+    });
     return;
   }
 
@@ -846,7 +906,9 @@ async function main() {
       await waitForLiliaGithubDevUrl(devUrl, 30_000, devServer, devServerOutput);
     }
 
-    driver = spawn("tauri-driver", ["--port", String(driverPort)], {
+    const driverArgs = ["--port", String(driverPort)];
+    if (preflight.nativeWebDriver) driverArgs.push("--native-driver", preflight.nativeWebDriver);
+    driver = spawn("tauri-driver", driverArgs, {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
