@@ -705,12 +705,8 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["settings.tab.about"],
-      waits: ["settings.about.release.check"],
-      observe: "settings-about-release",
-    },
-    {
-      clicks: ["settings.about.release.check"],
-      observe: "settings-about-release-after-check",
+      waits: ["settings.about.page"],
+      observe: "settings-about",
     },
   ];
 

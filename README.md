@@ -115,14 +115,14 @@ The list below tracks the current real integration surface. Only capabilities th
 - [x] Window position, size, and maximized-state restoration.
 - [x] Light / dark theme switching.
 - [x] Context menus and confirmation dialogs for repository actions.
-- [ ] More complete keyboard navigation and command access for repeated GitHub work. `1.0`
+- [ ] More complete keyboard navigation for repeated GitHub work. `1.0`
 
 ### Build And Release
 
 - [x] Windows desktop app packaging.
 - [x] Contributor verification command for tests and builds.
 - [x] GitHub Actions CI, documentation build, and release packaging workflow.
-- [ ] Signed installers and in-app automatic updater integration. `1.0`
+- [ ] Signed installer integration. `1.0`
 
 ## Project Structure
 
@@ -189,9 +189,9 @@ This release documents the `v1.0.0-beta.1` milestone and version alignment updat
 - GitHub Projects metadata now degrades gracefully when `read:project` permission is unavailable instead of blocking repository collaboration views.
 - The sidebar now exposes the create-repository entry, with the repository creation form split out from settings.
 
-Pushing a `v*` tag runs verification and builds the Windows Tauri bundle for the draft release. Before publishing a release, download the artifact and manually verify install, launch, basic window behavior, repository scanning, update checks, and uninstall. Current release artifacts are Windows-first; the in-app update check only opens GitHub Releases for manual download and does not download or install updates automatically.
+Pushing a `v*` tag runs verification and builds the Windows Tauri bundle for the draft release. Before publishing a release, download the artifact and manually verify install, launch, basic window behavior, repository scanning, and uninstall. Current release artifacts are Windows-first.
 
-If Windows signing secrets are configured, the release workflow imports the PFX certificate for installer signing. Without those secrets, it still produces unsigned installers. Restoring in-app automatic updates later requires reintroducing the Tauri updater public key, private key, and updater artifact verification chain.
+If Windows signing secrets are configured, the release workflow imports the PFX certificate for installer signing. Without those secrets, it still produces unsigned installers.
 
 The Tauri icon source is [src-tauri/icons/icon.png](src-tauri/icons/icon.png).
 
