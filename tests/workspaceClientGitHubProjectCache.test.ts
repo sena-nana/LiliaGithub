@@ -11,6 +11,7 @@ import {
   getGitHubRepoCommitDetail,
   getGitHubRepoManagement,
   getGitHubRepoSettingsSection,
+  getGitHubWorkflowRunDetail,
   listGitHubBranches,
   listGitHubRepos,
   listRepoFiles,
@@ -18,6 +19,9 @@ import {
   listGitHubIssues,
   listGitHubPullRequests,
   listGitHubReleases,
+  listGitHubWorkflowRuns,
+  rerunFailedGitHubWorkflowRun,
+  rerunGitHubWorkflowJob,
   updateGitHubIssue,
   updateGitHubRepoActionsPermissions,
   updateGitHubRepoWorkflowPermissions,
@@ -617,6 +621,41 @@ describe("workspace GitHub project cache", () => {
     await deleteGitHubRelease(repoFullName, 8001);
     const afterDeleteRelease = await listGitHubReleases(repoFullName);
     expect(afterDeleteRelease.some((item) => item.id === 8001)).toBe(false);
+  });
+
+  it("重跑 run 或 job 后失效 Actions 列表和详情缓存", async () => {
+    const detail = workflowRunDetail();
+    detail.run.conclusion = "failure";
+    detail.run.runAttempt = 1;
+    detail.jobs = [{
+      id: 13101,
+      name: "test",
+      status: "completed",
+      conclusion: "failure",
+      startedAt: null,
+      completedAt: null,
+      htmlUrl: null,
+      runnerName: null,
+      steps: [],
+    }];
+    workspaceFallback.setFallbackGitHubWorkflowRunsForTests({ [repoFullName]: [detail.run] });
+    workspaceFallback.setFallbackGitHubWorkflowRunDetailsForTests({
+      [repoFullName]: { [detail.run.id]: detail },
+    });
+
+    await listGitHubWorkflowRuns(repoFullName);
+    await getGitHubWorkflowRunDetail(repoFullName, detail.run.id);
+    await rerunFailedGitHubWorkflowRun(repoFullName, detail.run.id);
+
+    const afterRunRerun = await getGitHubWorkflowRunDetail(repoFullName, detail.run.id);
+    expect(afterRunRerun.run).toMatchObject({ status: "queued", conclusion: null, runAttempt: 2 });
+    expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(1);
+    await listGitHubWorkflowRuns(repoFullName);
+    expect(workspaceFallback.getFallbackGitHubWorkflowRunListCallsForTests()).toHaveLength(2);
+
+    await rerunGitHubWorkflowJob(repoFullName, 13101);
+    const afterJobRerun = await getGitHubWorkflowRunDetail(repoFullName, detail.run.id);
+    expect(afterJobRerun.run).toMatchObject({ status: "queued", conclusion: null, runAttempt: 3 });
   });
 
   it("从 Actions artifact 附加 release asset 后同步 releases 缓存", async () => {

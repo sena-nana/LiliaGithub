@@ -192,6 +192,8 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_list_workflow_runs,
         github::github_get_workflow_run_detail,
         github::github_get_workflow_job_log,
+        github::github_rerun_failed_workflow_run,
+        github::github_rerun_workflow_job,
         github::github_list_workflow_artifact_files,
         github::github_get_workflow_artifact_file_preview,
         github::github_list_repo_commits,

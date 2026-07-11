@@ -3443,6 +3443,11 @@ function focusActionRun(runId: number | null) {
   if (activeSection.value === "actions") void pushProjectTabRoute("actions");
 }
 
+function focusActionJob(jobId: number | null) {
+  focusedJobId.value = jobId;
+  if (activeSection.value === "actions") void pushProjectTabRoute("actions");
+}
+
 function upsertReleaseInView(release: GitHubRelease) {
   releases.value = [
     release,
@@ -4536,9 +4541,12 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :repo-full-name="repoFullName"
             :runs="filteredActionRuns"
             :focused-run-id="focusedRunId"
+            :focused-job-id="focusedJobId"
             :draft-releases="draftReleases"
             :attach-asset-mutating="releaseAssetUploadTracker.running.value"
             @attach-artifact-asset="attachWorkflowArtifactAsset"
+            @focus-job="focusActionJob"
+            @refresh="loadActions(true)"
           />
         </template>
 

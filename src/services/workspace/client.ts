@@ -1212,6 +1212,20 @@ export function getGitHubWorkflowJobLog(
     });
 }
 
+export async function rerunFailedGitHubWorkflowRun(repoFullName: string, runId: number): Promise<void> {
+  await call("github_rerun_failed_workflow_run", { repoFullName, runId }, () =>
+    workspaceFallback().rerunFailedGitHubWorkflowRun(repoFullName, runId)
+  );
+  clearGitHubProjectRepoCache(repoFullName);
+}
+
+export async function rerunGitHubWorkflowJob(repoFullName: string, jobId: number): Promise<void> {
+  await call("github_rerun_workflow_job", { repoFullName, jobId }, () =>
+    workspaceFallback().rerunGitHubWorkflowJob(repoFullName, jobId)
+  );
+  clearGitHubProjectRepoCache(repoFullName);
+}
+
 export function listGitHubWorkflowArtifactFiles(
   repoFullName: string,
   artifactId: number,

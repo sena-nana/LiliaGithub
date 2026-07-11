@@ -24,5 +24,5 @@ export function errorExcerptFromLog(log: string, maxLines = 8) {
 }
 
 function isFailure(value: string | null | undefined) {
-  return value === "failure" || value === "timed_out" || value === "action_required" || value === "cancelled";
+  return value === "failure" || value === "timed_out" || value === "action_required" || value === "startup_failure";
 }

@@ -56,7 +56,10 @@ describe("diagnostics helpers", () => {
   });
 
   it("聚合失败 workflow step 并截取错误日志附近内容", () => {
-    const summary = workflowFailureSummary([workflowJob()]);
+    const summary = workflowFailureSummary([
+      workflowJob(),
+      workflowJob({ id: 2, conclusion: "cancelled", steps: [] }),
+    ]);
     const excerpt = errorExcerptFromLog(["prepare", "compile", "::error file=src/main.ts::boom", "after"].join("\n"));
 
     expect(summary.failedJobs).toHaveLength(1);
