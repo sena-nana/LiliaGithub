@@ -37,17 +37,21 @@ import {
   workflowStateText,
 } from "./actionsDisplay";
 import MarkdownReadme from "./MarkdownReadme.vue";
+import RepoWorkflowRunDiagnostics from "./RepoWorkflowRunDiagnostics.vue";
 
 const props = defineProps<{
   repoFullName: string;
   runs: readonly GitHubWorkflowRun[];
   focusedRunId?: number | null;
+  focusedJobId?: number | null;
   draftReleases?: readonly GitHubRelease[];
   attachAssetMutating?: boolean;
 }>();
 
 const emit = defineEmits<{
   attachArtifactAsset: [request: GitHubAttachWorkflowArtifactAssetRequest];
+  focusJob: [jobId: number | null];
+  refresh: [];
 }>();
 
 const selectedArtifactId = ref<number | null>(null);
@@ -142,7 +146,13 @@ async function loadDetail(runId: number, force = false) {
   }, { reusePending: !force });
 }
 
+function refreshDiagnostics() {
+  if (detailRun.value) void loadDetail(detailRun.value.id, true);
+  emit("refresh");
+}
+
 async function selectArtifact(artifact: GitHubWorkflowArtifact) {
+  if (artifact.expired) return;
   selectedArtifactId.value = selectedArtifactId.value === artifact.id ? null : artifact.id;
   selectedArtifactPath.value = null;
   artifactPreview.value = null;
@@ -279,6 +289,16 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
         </div>
       </dl>
 
+      <RepoWorkflowRunDiagnostics
+        v-if="detail"
+        :repo-full-name="repoFullName"
+        :detail="detail"
+        :focused-job-id="focusedJobId"
+        :refreshing="detailLoading"
+        @focus-job="emit('focusJob', $event)"
+        @refresh="refreshDiagnostics"
+      />
+
       <section class="actions-artifacts" aria-label="Artifacts">
         <div class="actions-section-head">
           <strong>产物</strong>
@@ -292,7 +312,9 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
           type="button"
           class="actions-artifact"
           :class="{ 'is-active': selectedArtifactId === artifact.id }"
+          :disabled="artifact.expired"
           :data-agent-id="`repo.actions.artifact.${artifact.id}`"
+          :title="artifact.expired ? 'Artifact 已过期，无法读取' : `查看 ${artifact.name}`"
           @click="selectArtifact(artifact)"
         >
           <Package :size="15" aria-hidden="true" />
@@ -482,6 +504,11 @@ function attachArtifactFile(entry: GitHubWorkflowArtifactEntry) {
 .actions-artifact-file-select:hover:not(:disabled),
 .actions-artifact-attach:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+.actions-artifact:disabled {
+  cursor: default;
+  opacity: 0.58;
 }
 
 .actions-artifact.is-active,

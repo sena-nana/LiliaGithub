@@ -45,6 +45,8 @@ import {
   openPathTarget,
   openUrl,
   pickFiles,
+  rerunFailedGitHubWorkflowRun,
+  rerunGitHubWorkflowJob,
   updateGitHubRelease,
   updateGitHubRepoActionsPermissions,
   updateGitHubRepoWorkflowPermissions,
@@ -276,6 +278,27 @@ const githubWorkflowRunDetail: GitHubWorkflowRunDetail = {
     ].join("\n"),
   },
 };
+
+function failedWorkflowRunDetail(): GitHubWorkflowRunDetail {
+  const now = new Date().toISOString();
+  return {
+    ...githubWorkflowRunDetail,
+    run: {
+      ...githubWorkflowRunDetail.run,
+      status: "completed",
+      conclusion: "failure",
+      createdAt: now,
+      updatedAt: now,
+    },
+    jobs: githubWorkflowRunDetail.jobs.map((job) => job.id === 13103
+      ? {
+        ...job,
+        conclusion: "failure",
+        steps: job.steps.map((step) => step.number === 2 ? { ...step, conclusion: "failure" } : step),
+      }
+      : job),
+  };
+}
 
 const githubPullRequests: GitHubPullRequest[] = [{
   number: 52,
@@ -638,6 +661,8 @@ vi.mock("../src/services/workspace/client", () => ({
   listGitHubReleases: vi.fn(),
   getGitHubWorkflowRunDetail: vi.fn(),
   getGitHubWorkflowJobLog: vi.fn(),
+  rerunFailedGitHubWorkflowRun: vi.fn(),
+  rerunGitHubWorkflowJob: vi.fn(),
   listGitHubWorkflowArtifactFiles: vi.fn(),
   getGitHubWorkflowArtifactFilePreview: vi.fn(),
   isGitHubBindingExpiredError: (err: unknown) => {
@@ -929,6 +954,8 @@ describe("RepoProjectPanel", () => {
       jobId: 13101,
       content: "##[group]Run tests\nyarn test\npassed\n##[endgroup]",
     });
+    vi.mocked(rerunFailedGitHubWorkflowRun).mockResolvedValue(undefined);
+    vi.mocked(rerunGitHubWorkflowJob).mockResolvedValue(undefined);
     vi.mocked(listGitHubWorkflowArtifactFiles).mockResolvedValue([
       { path: "README.md", name: "README.md", kind: "file", size: 42 },
     ]);
@@ -1745,27 +1772,150 @@ describe("RepoProjectPanel", () => {
     expect(sameNameRun.textContent?.match(/same action/g)).toHaveLength(1);
   });
 
-  it("Actions 右侧显示 run 摘要并预览 artifact，主区域保持运行列表", async () => {
+  it("Actions 右侧显示 run、job、step 和按需日志并预览 artifact", async () => {
     vi.mocked(listGitHubWorkflowRuns).mockResolvedValue(githubWorkflowRuns);
     vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(githubWorkflowRunDetail);
     const view = await renderProjectPanel({
       repoFullName: "sena-nana/remote-repo",
       projectTab: "actions",
       projectRunId: 1310,
+      projectJobId: 13103,
     });
 
     expect(await view.findByRole("heading", { level: 3, name: "release pipeline" })).toBeInTheDocument();
     expect(await view.findByRole("button", { name: /release pipeline/ })).toBeInTheDocument();
     expect(view.getByLabelText("Actions 运行列表")).toHaveTextContent("release pipeline");
     expect(getGitHubWorkflowRunDetail).toHaveBeenCalledWith("sena-nana/remote-repo", 1310, { forceRefresh: false });
-    expect(view.queryByText("Run tests")).toBeNull();
+    expect(view.getByText("Run tests")).toBeInTheDocument();
     expect(getGitHubWorkflowJobLog).not.toHaveBeenCalled();
+
+    await fireEvent.click(view.getByRole("button", { name: "查看日志" }));
+    expect((await view.findAllByText(/yarn test/)).length).toBeGreaterThan(0);
+    expect(getGitHubWorkflowJobLog).toHaveBeenCalledWith("sena-nana/remote-repo", 13103, { forceRefresh: false });
 
     await fireEvent.click(view.getByText("dist"));
     const artifactFile = await view.findByRole("button", { name: /README\.md/ });
     await fireEvent.click(artifactFile);
     expect(await view.findByText("Artifact")).toBeInTheDocument();
     expect(getGitHubWorkflowArtifactFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", 131001, "README.md");
+  });
+
+  it("失败 Actions 可定位节点并分别重跑失败任务和 job", async () => {
+    const failedDetail = failedWorkflowRunDetail();
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([failedDetail.run]);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(failedDetail);
+    vi.mocked(getGitHubWorkflowJobLog).mockResolvedValue({
+      jobId: 13103,
+      content: "##[group]Run tests\nyarn test\n::error file=tests/app.test.ts::assertion failed\n##[endgroup]",
+    });
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+      projectRunId: 1310,
+      projectJobId: 13103,
+    });
+
+    expect(await view.findByText("失败位置")).toBeInTheDocument();
+    expect(view.getByText("test · Run tests")).toBeInTheDocument();
+    expect(view.container.querySelector('[data-job-id="13103"].is-active')).not.toBeNull();
+
+    await fireEvent.click(view.getByRole("button", { name: "查看日志" }));
+    expect(await view.findByText("错误摘要")).toBeInTheDocument();
+    expect(view.getAllByText(/assertion failed/).length).toBeGreaterThan(0);
+
+    await fireEvent.click(view.getByRole("button", { name: "重跑失败任务" }));
+    await waitFor(() => {
+      expect(rerunFailedGitHubWorkflowRun).toHaveBeenCalledWith("sena-nana/remote-repo", 1310);
+    });
+
+    const rerunJob = view.getByRole("button", { name: "重跑 Job" });
+    await waitFor(() => expect(rerunJob).not.toBeDisabled());
+    await fireEvent.click(rerunJob);
+    await waitFor(() => {
+      expect(rerunGitHubWorkflowJob).toHaveBeenCalledWith("sena-nana/remote-repo", 13103);
+    });
+  });
+
+  it("Actions 重跑权限错误可见且入口恢复可重试", async () => {
+    const failedDetail = failedWorkflowRunDetail();
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([failedDetail.run]);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(failedDetail);
+    vi.mocked(rerunFailedGitHubWorkflowRun)
+      .mockRejectedValueOnce(new Error("HTTP 403 Forbidden"))
+      .mockResolvedValueOnce(undefined);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+      projectRunId: 1310,
+    });
+
+    const rerun = await view.findByRole("button", { name: "重跑失败任务" });
+    await fireEvent.click(rerun);
+    expect(await view.findByText(/没有重跑权限/)).toBeInTheDocument();
+    expect(rerun).not.toBeDisabled();
+
+    await fireEvent.click(rerun);
+    await waitFor(() => expect(rerunFailedGitHubWorkflowRun).toHaveBeenCalledTimes(2));
+    expect(await view.findByText("已提交失败任务重跑。")).toBeInTheDocument();
+  });
+
+  it("Actions 重跑提交期间阻止重复操作并显示进行中状态", async () => {
+    const failedDetail = failedWorkflowRunDetail();
+    const pending = deferred<void>();
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([failedDetail.run]);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(failedDetail);
+    vi.mocked(rerunFailedGitHubWorkflowRun).mockReturnValue(pending.promise);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+      projectRunId: 1310,
+    });
+
+    await fireEvent.click(await view.findByRole("button", { name: "重跑失败任务" }));
+    const running = view.getByRole("button", { name: "正在重跑" });
+    expect(running).toBeDisabled();
+    expect(view.getByRole("button", { name: "重跑 Job" })).toBeDisabled();
+
+    pending.resolve();
+    expect(await view.findByText("已提交失败任务重跑。")).toBeInTheDocument();
+  });
+
+  it("Actions 失效 job 深链和缺少错误摘要都有明确降级状态", async () => {
+    const failedDetail = failedWorkflowRunDetail();
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([failedDetail.run]);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(failedDetail);
+    vi.mocked(getGitHubWorkflowJobLog).mockResolvedValue({ jobId: 13103, content: "plain test output" });
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+      projectRunId: 1310,
+      projectJobId: 99999,
+    });
+
+    expect(await view.findByText("该 job 不存在或已失效。")).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("button", { name: "查看日志" }));
+    expect(await view.findByText("未从日志中提取到错误摘要，请查看 step 日志。")).toBeInTheDocument();
+    expect(view.getAllByText("完整 job 日志").length).toBeGreaterThan(0);
+  });
+
+  it("Actions 重跑上限和过期 artifact 显示真实不可用状态", async () => {
+    const failedDetail = failedWorkflowRunDetail();
+    failedDetail.run.runAttempt = 50;
+    failedDetail.artifacts = failedDetail.artifacts.map((artifact) => ({ ...artifact, expired: true }));
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([failedDetail.run]);
+    vi.mocked(getGitHubWorkflowRunDetail).mockResolvedValue(failedDetail);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+      projectRunId: 1310,
+    });
+
+    const rerun = await view.findByRole("button", { name: "重跑失败任务" });
+    expect(rerun).toBeDisabled();
+    expect(view.getByText("已达到 50 次重跑上限")).toBeInTheDocument();
+    const artifact = view.getByRole("button", { name: /dist/ });
+    expect(artifact).toBeDisabled();
+    expect(artifact).toHaveAttribute("title", "Artifact 已过期，无法读取");
   });
 
   it("Actions 筛选更新列表并写入路由", async () => {

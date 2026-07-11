@@ -261,6 +261,8 @@ export interface WorkspaceCommandContracts {
     RepoFullNameArg & { jobId: number; forceRefresh: Maybe<boolean> },
     GitHubWorkflowJobLog
   >;
+  github_rerun_failed_workflow_run: CommandContract<RepoFullNameArg & { runId: number }, void>;
+  github_rerun_workflow_job: CommandContract<RepoFullNameArg & { jobId: number }, void>;
   github_list_workflow_artifact_files: CommandContract<
     RepoFullNameArg & { artifactId: number },
     GitHubWorkflowArtifactEntry[]

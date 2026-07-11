@@ -32,6 +32,8 @@ delegate_command!(async github; fn github_update_issue(app: AppHandle, repo_full
 delegate_command!(async github; fn github_list_workflow_runs(app: AppHandle, repo_full_name: String, per_page: Option<u32>, force_refresh: Option<bool>,) -> Result<Vec<GitHubWorkflowRun>, String>);
 delegate_command!(async github; fn github_get_workflow_run_detail(app: AppHandle, repo_full_name: String, run_id: u64, _force_refresh: Option<bool>,) -> Result<GitHubWorkflowRunDetail, String>);
 delegate_command!(async github; fn github_get_workflow_job_log(app: AppHandle, repo_full_name: String, job_id: u64, _force_refresh: Option<bool>,) -> Result<GitHubWorkflowJobLog, String>);
+delegate_command!(async github; fn github_rerun_failed_workflow_run(app: AppHandle, repo_full_name: String, run_id: u64,) -> Result<(), String>);
+delegate_command!(async github; fn github_rerun_workflow_job(app: AppHandle, repo_full_name: String, job_id: u64,) -> Result<(), String>);
 delegate_command!(async github; fn github_list_workflow_artifact_files(app: AppHandle, repo_full_name: String, artifact_id: u64,) -> Result<Vec<GitHubWorkflowArtifactEntry>, String>);
 delegate_command!(async github; fn github_get_workflow_artifact_file_preview(app: AppHandle, repo_full_name: String, artifact_id: u64, path: String,) -> Result<RepoFilePreview, String>);
 delegate_command!(async github; fn github_list_repo_commits(app: AppHandle, repo_full_name: String, per_page: Option<u32>, sha: Option<String>, force_refresh: Option<bool>,) -> Result<Vec<CommitSummary>, String>);

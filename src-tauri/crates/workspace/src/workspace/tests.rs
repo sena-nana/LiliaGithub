@@ -38,7 +38,7 @@ use super::github::{
     GitHubTeamResponse, GitHubWorkflowActorResponse, GitHubWorkflowArtifactResponse,
     GitHubWorkflowJobResponse, GitHubWorkflowJobStepResponse, GitHubWorkflowResponse,
     GitHubWorkflowRunResponse, GITHUB_DELETE_REPO_SCOPE, GITHUB_READ_PROJECT_SCOPE,
-    GITHUB_RELEASE_ASSET_MAX_BYTES, GITHUB_SCOPE,
+    GITHUB_RELEASE_ASSET_MAX_BYTES, GITHUB_REPO_SCOPE, GITHUB_SCOPE,
 };
 use super::launch::{
     clear_launch_logs, infer_launch_candidates, infer_launch_config, launch_logs, push_launch_log,
@@ -3478,6 +3478,21 @@ fn maps_github_workflow_runs_with_defaults() {
         mapped.run_started_at.as_deref(),
         Some("2026-06-12T10:01:00Z")
     );
+}
+
+#[test]
+fn github_workflow_rerun_requires_repo_scope() {
+    let mut binding = GitHubBindingMetadata {
+        login: "lilia-user".to_string(),
+        avatar_url: None,
+        bound_at: 1,
+        scopes: vec!["workflow".to_string()],
+        client_id_source: "bundled".to_string(),
+    };
+
+    assert!(github_require_scope(&binding, GITHUB_REPO_SCOPE).is_err());
+    binding.scopes.push(GITHUB_REPO_SCOPE.to_string());
+    assert!(github_require_scope(&binding, GITHUB_REPO_SCOPE).is_ok());
 }
 
 #[test]

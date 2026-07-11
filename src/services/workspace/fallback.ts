@@ -5169,6 +5169,36 @@ export function getGitHubWorkflowJobLog(repoFullName: string, jobId: number): Pr
   });
 }
 
+function markFallbackWorkflowRerun(repoFullName: string, detail: GitHubWorkflowRunDetail) {
+  const rerun = {
+    ...detail.run,
+    status: "queued",
+    conclusion: null,
+    runAttempt: (detail.run.runAttempt ?? 1) + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  detail.run = rerun;
+  const runs = fallbackGitHubWorkflowRuns[repoFullName] ?? [];
+  fallbackGitHubWorkflowRuns[repoFullName] = runs.map((run) => run.id === rerun.id ? { ...rerun } : run);
+}
+
+export function rerunFailedGitHubWorkflowRun(repoFullName: string, runId: number): Promise<void> {
+  return call("github_rerun_failed_workflow_run", { repoFullName, runId }, () => {
+    const detail = fallbackGitHubWorkflowRunDetails[repoFullName]?.[runId];
+    if (!detail) throw new Error("GitHub Actions run 不存在");
+    markFallbackWorkflowRerun(repoFullName, detail);
+  });
+}
+
+export function rerunGitHubWorkflowJob(repoFullName: string, jobId: number): Promise<void> {
+  return call("github_rerun_workflow_job", { repoFullName, jobId }, () => {
+    const details = Object.values(fallbackGitHubWorkflowRunDetails[repoFullName] ?? {});
+    const detail = details.find((item) => item.jobs.some((job) => job.id === jobId));
+    if (!detail) throw new Error("GitHub Actions job 不存在");
+    markFallbackWorkflowRerun(repoFullName, detail);
+  });
+}
+
 export function listGitHubWorkflowArtifactFiles(
   repoFullName: string,
   artifactId: number,
