@@ -52,40 +52,6 @@ function commandExists(command, args = ["--version"]) {
   return result.status === 0;
 }
 
-function findCommand(command) {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  const result = spawnSync(locator, [command], { encoding: "utf8" });
-  if (result.status !== 0) return null;
-  return result.stdout
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .find((item) => item && existsSync(item)) ?? null;
-}
-
-function findNativeWebDriver() {
-  const programFilesX86 = process.env["ProgramFiles(x86)"];
-  const candidates = [
-    process.env.LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER,
-    process.env.MSEDGEDRIVER,
-    findCommand("msedgedriver"),
-    findCommand("MicrosoftWebDriver"),
-    process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "MicrosoftWebDriver.exe") : null,
-    process.platform === "win32" && programFilesX86
-      ? path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedgedriver.exe")
-      : null,
-    process.platform === "win32" && process.env.ProgramFiles
-      ? path.join(process.env.ProgramFiles, "Microsoft", "Edge", "Application", "msedgedriver.exe")
-      : null,
-    process.platform === "win32" && programFilesX86
-      ? path.join(programFilesX86, "Microsoft", "EdgeWebView", "Application", "msedgedriver.exe")
-      : null,
-    process.platform === "win32" && process.env.ProgramFiles
-      ? path.join(process.env.ProgramFiles, "Microsoft", "EdgeWebView", "Application", "msedgedriver.exe")
-      : null,
-  ].filter(Boolean);
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
-
 function parsePortFromUrl(url) {
   const parsed = new URL(url);
   if (parsed.port) return Number.parseInt(parsed.port, 10);
@@ -790,7 +756,11 @@ async function main() {
     }
   }
 
-  const nativeWebDriver = findNativeWebDriver();
+  const configuredNativeWebDriver = process.env.LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER;
+  const nativeWebDriver =
+    configuredNativeWebDriver && existsSync(configuredNativeWebDriver)
+      ? configuredNativeWebDriver
+      : null;
   const preflight = {
     runId,
     runDir,
@@ -798,7 +768,10 @@ async function main() {
     devUrl,
     autoSelectedDevUrl,
     tauriDriver: commandExists("tauri-driver", ["--help"]),
-    edgeDriver: Boolean(nativeWebDriver),
+    edgeDriver:
+      Boolean(nativeWebDriver) ||
+      commandExists("msedgedriver") ||
+      commandExists("MicrosoftWebDriver"),
     nativeWebDriver,
     cargo: commandExists("cargo"),
     localViteBin,
