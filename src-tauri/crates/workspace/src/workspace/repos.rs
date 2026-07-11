@@ -72,6 +72,19 @@ pub(super) fn git_command(
     args: &[&str],
     auth_header: Option<&str>,
 ) -> Result<String, String> {
+    run_git_command(repo_path, args, auth_header, false)
+}
+
+fn git_observe_command(repo_path: &Path, args: &[&str]) -> Result<String, String> {
+    run_git_command(repo_path, args, None, true)
+}
+
+fn run_git_command(
+    repo_path: &Path,
+    args: &[&str],
+    auth_header: Option<&str>,
+    disable_optional_locks: bool,
+) -> Result<String, String> {
     let mut command = Command::new("git");
     command
         .args(args)
@@ -79,6 +92,9 @@ pub(super) fn git_command(
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if disable_optional_locks {
+        command.env("GIT_OPTIONAL_LOCKS", "0");
+    }
     configure_background_command(&mut command);
     if let Some(header) = auth_header {
         command
@@ -856,7 +872,7 @@ pub(super) fn parse_status_snapshot(status: &str) -> RepoStatusSnapshot {
 }
 
 fn repo_status_snapshot(path: &Path) -> RepoStatusSnapshot {
-    let status = git_command(
+    let status = git_observe_command(
         path,
         &[
             "status",
@@ -866,7 +882,6 @@ fn repo_status_snapshot(path: &Path) -> RepoStatusSnapshot {
             "--ahead-behind",
             "--untracked-files=all",
         ],
-        None,
     )
     .unwrap_or_default();
     parse_status_snapshot(&status)
