@@ -275,6 +275,7 @@ export interface GitHubRepoManagement {
   private: boolean;
   visibility?: "public" | "private" | string;
   defaultBranch: string;
+  viewerCanAdminister?: boolean;
   archived?: boolean;
   isTemplate?: boolean;
   hasIssues: boolean;
@@ -301,6 +302,21 @@ export interface GitHubRepoManagement {
   forksCount: number;
   htmlUrl: string;
   license: GitHubRepoLicense | null;
+}
+
+export type GitHubBranchProtection = Record<string, unknown>;
+export type GitHubRuleset = Record<string, unknown>;
+
+export interface GitHubRulesetSummary {
+  id: number;
+  name: string;
+  target: string;
+  enforcement: string;
+  sourceType: string;
+  source: string;
+  repositoryOwned: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 
 export type GitHubUpdateRepoSettingsRequest = Partial<Omit<GitHubRepoManagement, "fullName" | "htmlUrl" | "license">>;

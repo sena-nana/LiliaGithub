@@ -20,21 +20,22 @@ use super::github::{
     github_release_from_response, github_release_upload_base_url,
     github_release_validate_asset_file_size, github_repo_management_from_response,
     github_require_scope, github_review_comment_timeline_item_from_response,
-    github_review_timeline_item_from_response, github_timeline_item_from_response,
-    github_update_repo_settings_payload, github_validate_release_for_artifact_asset,
-    github_workflow_artifact_from_response, github_workflow_definition_from_file,
-    github_workflow_job_from_response, github_workflow_permissions_payload,
-    github_workflow_run_from_response, github_workflow_runs_cache_key,
-    normalize_github_content_path, normalize_github_repo_input, normalize_github_topics,
-    normalize_scope_list, parse_github_datetime, parse_next_page, remember_remote_repo_shortcut,
-    sort_github_discussion_timeline, GitHubAssigneeResponse, GitHubBranchResponse,
-    GitHubCommitFileResponse, GitHubContentFileResponse, GitHubContentListItem, GitHubGraphQlError,
-    GitHubIssueMilestoneResponse, GitHubIssueProjectsGraphQlData, GitHubIssueResponse,
-    GitHubIssueTimelineResponse, GitHubIssueTimelineSourceIssueResponse,
-    GitHubIssueTimelineSourceResponse, GitHubLabelResponse, GitHubPullRequestReviewCommentResponse,
-    GitHubPullRequestReviewResponse, GitHubPullRequestUserResponse, GitHubReleaseAssetResponse,
-    GitHubReleaseResponse, GitHubReleaseUserResponse, GitHubRepoLicenseResponse,
-    GitHubRepoOwnerResponse, GitHubRepoResponse, GitHubRequestedReviewersResponse,
+    github_review_timeline_item_from_response, github_ruleset_summary_from_response,
+    github_timeline_item_from_response, github_update_repo_settings_payload,
+    github_validate_release_for_artifact_asset, github_workflow_artifact_from_response,
+    github_workflow_definition_from_file, github_workflow_job_from_response,
+    github_workflow_permissions_payload, github_workflow_run_from_response,
+    github_workflow_runs_cache_key, normalize_github_content_path, normalize_github_repo_input,
+    normalize_github_topics, normalize_scope_list, parse_github_datetime, parse_next_page,
+    remember_remote_repo_shortcut, sort_github_discussion_timeline, GitHubAssigneeResponse,
+    GitHubBranchResponse, GitHubCommitFileResponse, GitHubContentFileResponse,
+    GitHubContentListItem, GitHubGraphQlError, GitHubIssueMilestoneResponse,
+    GitHubIssueProjectsGraphQlData, GitHubIssueResponse, GitHubIssueTimelineResponse,
+    GitHubIssueTimelineSourceIssueResponse, GitHubIssueTimelineSourceResponse, GitHubLabelResponse,
+    GitHubPullRequestReviewCommentResponse, GitHubPullRequestReviewResponse,
+    GitHubPullRequestUserResponse, GitHubReleaseAssetResponse, GitHubReleaseResponse,
+    GitHubReleaseUserResponse, GitHubRepoLicenseResponse, GitHubRepoOwnerResponse,
+    GitHubRepoResponse, GitHubRequestedReviewersResponse, GitHubRulesetSummaryResponse,
     GitHubTeamResponse, GitHubWorkflowActorResponse, GitHubWorkflowArtifactResponse,
     GitHubWorkflowJobResponse, GitHubWorkflowJobStepResponse, GitHubWorkflowResponse,
     GitHubWorkflowRunResponse, GITHUB_DELETE_REPO_SCOPE, GITHUB_READ_PROJECT_SCOPE,
@@ -3641,6 +3642,46 @@ fn maps_github_branches_with_default_and_protection() {
     assert!(feature.remote);
     assert!(!feature.current);
     assert!(!feature.protected);
+}
+
+#[test]
+fn maps_github_ruleset_ownership_and_default_target() {
+    let repository_ruleset = github_ruleset_summary_from_response(
+        "sena-nana/remote-repo",
+        GitHubRulesetSummaryResponse {
+            id: 41,
+            name: "Protect main".to_string(),
+            target: String::new(),
+            enforcement: "active".to_string(),
+            source_type: "Repository".to_string(),
+            source: "SENA-NANA/REMOTE-REPO".to_string(),
+            created_at: Some("2026-07-11T08:00:00Z".to_string()),
+            updated_at: None,
+        },
+    );
+    let inherited_ruleset = github_ruleset_summary_from_response(
+        "sena-nana/remote-repo",
+        GitHubRulesetSummaryResponse {
+            id: 42,
+            name: "Organization baseline".to_string(),
+            target: "branch".to_string(),
+            enforcement: "evaluate".to_string(),
+            source_type: "Organization".to_string(),
+            source: "sena-nana".to_string(),
+            created_at: None,
+            updated_at: None,
+        },
+    );
+
+    assert_eq!(repository_ruleset.target, "branch");
+    assert!(repository_ruleset.repository_owned);
+    assert_eq!(
+        repository_ruleset.created_at.as_deref(),
+        Some("2026-07-11T08:00:00Z")
+    );
+    assert!(!inherited_ruleset.repository_owned);
+    assert_eq!(inherited_ruleset.source_type, "Organization");
+    assert_eq!(inherited_ruleset.source, "sena-nana");
 }
 
 #[test]

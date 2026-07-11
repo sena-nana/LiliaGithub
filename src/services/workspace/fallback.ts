@@ -17,6 +17,7 @@ import type {
   GitHubAccountIssueItem,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubBindingStatus,
+  GitHubBranchProtection,
   GitHubCommitListOptions,
   GitHubContributionDay,
   GitHubContributionMeta,
@@ -46,6 +47,8 @@ import type {
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
+  GitHubRuleset,
+  GitHubRulesetSummary,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
   GitHubWorkflowRun,
@@ -520,6 +523,7 @@ function renamedGitHubRepoSummary(repo: GitHubRepoSummary, fullName: string, nam
 function cloneGitHubRepoManagement(repo: GitHubRepoManagement): GitHubRepoManagement {
   return {
     ...repo,
+    viewerCanAdminister: repo.viewerCanAdminister ?? true,
     topics: [...repo.topics],
   };
 }
@@ -1792,6 +1796,57 @@ function createFallbackGitHubBranches(): Record<string, BranchSummary[]> {
   };
 }
 
+function createFallbackGitHubBranchProtections(): Record<string, Record<string, GitHubBranchProtection>> {
+  return {
+    "sena-nana/LiliaGithub": {
+      main: {
+        required_status_checks: { strict: true, contexts: ["build"] },
+        enforce_admins: { enabled: false },
+        required_pull_request_reviews: {
+          dismiss_stale_reviews: true,
+          require_code_owner_reviews: false,
+          required_approving_review_count: 1,
+          require_last_push_approval: false,
+        },
+        restrictions: null,
+        required_linear_history: { enabled: false },
+        allow_force_pushes: { enabled: false },
+        allow_deletions: { enabled: false },
+        required_conversation_resolution: { enabled: true },
+        lock_branch: { enabled: false },
+        allow_fork_syncing: { enabled: false },
+      },
+    },
+  };
+}
+
+function createFallbackGitHubRulesets(): Record<string, Record<number, GitHubRuleset>> {
+  return {
+    "sena-nana/LiliaGithub": {
+      42: {
+        id: 42,
+        name: "Protect main",
+        target: "branch",
+        enforcement: "active",
+        source_type: "Repository",
+        source: "sena-nana/LiliaGithub",
+        conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } },
+        rules: [{ type: "deletion" }, { type: "non_fast_forward" }],
+      },
+      73: {
+        id: 73,
+        name: "Organization policy",
+        target: "branch",
+        enforcement: "active",
+        source_type: "Organization",
+        source: "sena-nana",
+        conditions: { ref_name: { include: ["refs/heads/main"], exclude: [] } },
+        rules: [{ type: "required_linear_history" }],
+      },
+    },
+  };
+}
+
 function buildBranchSummary(overrides: Partial<BranchSummary> & Pick<BranchSummary, "name">): BranchSummary {
   return {
     name: overrides.name,
@@ -2234,6 +2289,8 @@ let fallbackGitHubWorkflowArtifactPreviews = createFallbackGitHubWorkflowArtifac
 let fallbackGitHubCommits = createFallbackGitHubCommits();
 let fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
 let fallbackGitHubBranches = createFallbackGitHubBranches();
+let fallbackGitHubBranchProtections = createFallbackGitHubBranchProtections();
+let fallbackGitHubRulesets = createFallbackGitHubRulesets();
 let fallbackRepoStashes = createFallbackRepoStashes();
 let fallbackRepoRemotes = createFallbackRepoRemotes();
 let fallbackRepoBranches = createFallbackRepoBranches();
@@ -2443,6 +2500,8 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubCommits = createFallbackGitHubCommits();
   fallbackGitHubCommitDetails = createFallbackGitHubCommitDetails();
   fallbackGitHubBranches = createFallbackGitHubBranches();
+  fallbackGitHubBranchProtections = createFallbackGitHubBranchProtections();
+  fallbackGitHubRulesets = createFallbackGitHubRulesets();
   fallbackGitHubRepoSettingsSections = {};
   fallbackRepoStashes = createFallbackRepoStashes();
   fallbackRepoRemotes = createFallbackRepoRemotes();
@@ -2611,6 +2670,18 @@ export function setFallbackGitHubBranchesForTests(branchesByRepo: Record<string,
   for (const repoFullName of Object.keys(branchesByRepo)) {
     clearFallbackGitHubRepoSettingsSection(repoFullName, "branches");
   }
+}
+
+export function setFallbackGitHubBranchProtectionsForTests(
+  protectionsByRepo: Record<string, Record<string, GitHubBranchProtection>>,
+) {
+  fallbackGitHubBranchProtections = cloneFallbackData(protectionsByRepo);
+}
+
+export function setFallbackGitHubRulesetsForTests(
+  rulesetsByRepo: Record<string, Record<number, GitHubRuleset>>,
+) {
+  fallbackGitHubRulesets = cloneFallbackData(rulesetsByRepo);
 }
 
 export function getFallbackGitHubIssueListCallsForTests(): FallbackGitHubIssueListCall[] {
@@ -3993,6 +4064,8 @@ function renameFallbackGitHubRepoReferences(fromFullName: string, toFullName: st
     fallbackGitHubCommits,
     fallbackGitHubCommitDetails,
     fallbackGitHubBranches,
+    fallbackGitHubBranchProtections,
+    fallbackGitHubRulesets,
     fallbackGitHubRepoFiles,
     fallbackGitHubRepoFilePreviews,
     fallbackGitHubRepoSettingsSections,
@@ -4379,6 +4452,8 @@ export function deleteGitHubRepo(repoFullName: string): Promise<void> {
     delete fallbackGitHubPullRequestChecks[normalized];
     delete fallbackGitHubWorkflowRuns[normalized];
     delete fallbackGitHubBranches[normalized];
+    delete fallbackGitHubBranchProtections[normalized];
+    delete fallbackGitHubRulesets[normalized];
   });
 }
 
@@ -4389,6 +4464,101 @@ export function listGitHubBranches(repoFullName: string): Promise<BranchSummary[
       buildBranchSummary({ name: management.defaultBranch || "main", remote: true }),
     ];
     return branches.map(cloneBranchSummary);
+  });
+}
+
+export function getGitHubBranchProtection(
+  repoFullName: string,
+  branchName: string,
+): Promise<GitHubBranchProtection | null> {
+  return call("github_get_branch_protection", { repoFullName, branchName }, () => {
+    fallbackRepoManagement(repoFullName);
+    const branch = branchName.trim();
+    if (!branch) throw new Error("分支名不能为空");
+    const protection = fallbackGitHubBranchProtections[repoFullName]?.[branch];
+    return protection ? cloneFallbackData(protection) : null;
+  });
+}
+
+export function updateGitHubBranchProtection(
+  repoFullName: string,
+  branchName: string,
+  request: GitHubBranchProtection,
+): Promise<GitHubBranchProtection> {
+  return call("github_update_branch_protection", { repoFullName, branchName, request }, () => {
+    const management = fallbackRepoManagement(repoFullName);
+    if (management.viewerCanAdminister === false) throw new Error("更新 GitHub 分支保护失败：权限不足");
+    const branch = branchName.trim();
+    if (!branch) throw new Error("分支名不能为空");
+    const branches = fallbackGitHubBranches[repoFullName] ?? [];
+    if (!branches.some((item) => item.name === branch)) throw new Error(`未找到 GitHub 分支：${branch}`);
+    const protection = cloneFallbackData(request);
+    fallbackGitHubBranchProtections[repoFullName] ??= {};
+    fallbackGitHubBranchProtections[repoFullName][branch] = protection;
+    fallbackGitHubBranches[repoFullName] = branches.map((item) =>
+      item.name === branch ? { ...item, protected: true } : item
+    );
+    clearFallbackGitHubRepoSettingsSection(repoFullName, "branches");
+    return cloneFallbackData(protection);
+  });
+}
+
+function fallbackRulesetSummary(repoFullName: string, ruleset: GitHubRuleset): GitHubRulesetSummary {
+  const sourceType = String(ruleset.source_type ?? ruleset.sourceType ?? "");
+  const source = String(ruleset.source ?? "");
+  return {
+    id: Number(ruleset.id),
+    name: String(ruleset.name ?? ""),
+    target: String(ruleset.target ?? "branch"),
+    enforcement: String(ruleset.enforcement ?? "disabled"),
+    sourceType,
+    source,
+    repositoryOwned: sourceType.toLowerCase() === "repository" && source.toLowerCase() === repoFullName.toLowerCase(),
+    createdAt: typeof ruleset.created_at === "string" ? ruleset.created_at : null,
+    updatedAt: typeof ruleset.updated_at === "string" ? ruleset.updated_at : null,
+  };
+}
+
+export function listGitHubRepoRulesets(repoFullName: string): Promise<GitHubRulesetSummary[]> {
+  return call("github_list_repo_rulesets", { repoFullName }, () => {
+    fallbackRepoManagement(repoFullName);
+    return Object.values(fallbackGitHubRulesets[repoFullName] ?? {})
+      .map((ruleset) => fallbackRulesetSummary(repoFullName, ruleset))
+      .sort((left, right) => left.id - right.id);
+  });
+}
+
+export function getGitHubRepoRuleset(repoFullName: string, rulesetId: number): Promise<GitHubRuleset> {
+  return call("github_get_repo_ruleset", { repoFullName, rulesetId }, () => {
+    fallbackRepoManagement(repoFullName);
+    const ruleset = fallbackGitHubRulesets[repoFullName]?.[rulesetId];
+    if (!ruleset) throw new Error(`未找到 GitHub 规则集：${rulesetId}`);
+    return cloneFallbackData(ruleset);
+  });
+}
+
+export function updateGitHubRepoRuleset(
+  repoFullName: string,
+  rulesetId: number,
+  request: GitHubRuleset,
+): Promise<GitHubRuleset> {
+  return call("github_update_repo_ruleset", { repoFullName, rulesetId, request }, () => {
+    const management = fallbackRepoManagement(repoFullName);
+    if (management.viewerCanAdminister === false) throw new Error("更新 GitHub 规则集失败：权限不足");
+    const current = fallbackGitHubRulesets[repoFullName]?.[rulesetId];
+    if (!current) throw new Error(`未找到 GitHub 规则集：${rulesetId}`);
+    const summary = fallbackRulesetSummary(repoFullName, current);
+    if (!summary.repositoryOwned) throw new Error("继承的组织或企业规则集只能查看，不能在仓库中编辑");
+    const updated = {
+      ...cloneFallbackData(current),
+      ...cloneFallbackData(request),
+      id: rulesetId,
+      source_type: current.source_type,
+      source: current.source,
+    };
+    fallbackGitHubRulesets[repoFullName][rulesetId] = updated;
+    clearFallbackGitHubRepoSettingsSection(repoFullName, "rules");
+    return cloneFallbackData(updated);
   });
 }
 
@@ -4403,6 +4573,9 @@ export function deleteGitHubBranch(repoFullName: string, branchName: string): Pr
     if (!target) throw new Error(`未找到 GitHub 分支：${branch}`);
     if (target.protected) throw new Error("受保护分支不能删除");
     fallbackGitHubBranches[repoFullName] = branches.filter((item) => item.name !== branch);
+    if (fallbackGitHubBranchProtections[repoFullName]) {
+      delete fallbackGitHubBranchProtections[repoFullName][branch];
+    }
     clearFallbackGitHubRepoSettingsSection(repoFullName, "branches");
   });
 }

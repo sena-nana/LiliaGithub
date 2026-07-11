@@ -22,9 +22,11 @@ import {
   deleteGitHubReleaseAsset,
   getGitHubIssueDiscussion,
   getGitHubIssueFilterMetadata,
+  getGitHubBranchProtection,
   getGitHubRepoFilePreview,
   getGitHubPullRequestDiscussion,
   getGitHubRepoManagement,
+  getGitHubRepoRuleset,
   getGitHubRepoSettingsSection,
   getRepoFilePreview,
   getGitHubWorkflowArtifactFilePreview,
@@ -37,6 +39,7 @@ import {
   listGitHubIssueAssignees,
   listGitHubIssueLabels,
   listGitHubRepoFiles,
+  listGitHubRepoRulesets,
   listGitHubBranches,
   listGitHubWorkflowRuns,
   listGitHubReleases,
@@ -48,7 +51,9 @@ import {
   rerunFailedGitHubWorkflowRun,
   rerunGitHubWorkflowJob,
   updateGitHubRelease,
+  updateGitHubBranchProtection,
   updateGitHubRepoActionsPermissions,
+  updateGitHubRepoRuleset,
   updateGitHubRepoWorkflowPermissions,
   updateGitHubRepoSettings,
   uploadGitHubReleaseAsset,
@@ -645,11 +650,13 @@ vi.mock("../src/services/workspace/client", () => ({
   deleteGitHubRelease: vi.fn(),
   deleteGitHubReleaseAsset: vi.fn(),
   getGitHubIssueDiscussion: vi.fn(),
+  getGitHubBranchProtection: vi.fn(),
   getGitHubRepoFilePreview: vi.fn(),
   getGitHubIssueFilterMetadata: vi.fn(),
   getGitHubPullRequestDiscussion: vi.fn(),
   getRepoCommitDetail: vi.fn(),
   getGitHubRepoManagement: vi.fn(),
+  getGitHubRepoRuleset: vi.fn(),
   getRepoFilePreview: vi.fn(),
   listGitHubPullRequestChecks: vi.fn(),
   listGitHubPullRequests: vi.fn(),
@@ -657,6 +664,7 @@ vi.mock("../src/services/workspace/client", () => ({
   listGitHubIssueAssignees: vi.fn(),
   listGitHubIssueLabels: vi.fn(),
   listGitHubRepoFiles: vi.fn(),
+  listGitHubRepoRulesets: vi.fn(),
   listGitHubWorkflowRuns: vi.fn(),
   listGitHubReleases: vi.fn(),
   getGitHubWorkflowRunDetail: vi.fn(),
@@ -682,7 +690,9 @@ vi.mock("../src/services/workspace/client", () => ({
   openUrl: vi.fn(),
   updateGitHubIssue: vi.fn(),
   updateGitHubRelease: vi.fn(),
+  updateGitHubBranchProtection: vi.fn(),
   updateGitHubRepoActionsPermissions: vi.fn(),
+  updateGitHubRepoRuleset: vi.fn(),
   updateGitHubRepoWorkflowPermissions: vi.fn(),
   updateGitHubRepoSettings: vi.fn(async (_repoFullName: string, request: Partial<GitHubRepoManagement>) => ({
     ...githubSettings,
@@ -811,22 +821,27 @@ describe("RepoProjectPanel", () => {
     vi.mocked(deleteGitHubRelease).mockReset();
     vi.mocked(deleteGitHubReleaseAsset).mockReset();
     vi.mocked(getGitHubIssueDiscussion).mockReset();
+    vi.mocked(getGitHubBranchProtection).mockReset();
     vi.mocked(getGitHubPullRequestDiscussion).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
     vi.mocked(getRepoFilePreview).mockReset();
     vi.mocked(getGitHubIssueFilterMetadata).mockReset();
     vi.mocked(getGitHubRepoManagement).mockReset();
+    vi.mocked(getGitHubRepoRuleset).mockReset();
     vi.mocked(getGitHubRepoSettingsSection).mockReset();
     vi.mocked(listGitHubIssueAssignees).mockReset();
     vi.mocked(listGitHubIssueLabels).mockReset();
     vi.mocked(listGitHubRepoFiles).mockReset();
+    vi.mocked(listGitHubRepoRulesets).mockReset();
     vi.mocked(listGitHubBranches).mockReset();
     vi.mocked(listGitHubReleases).mockReset();
     vi.mocked(listRepoFiles).mockReset();
     vi.mocked(openPathTarget).mockReset();
     vi.mocked(pickFiles).mockReset();
     vi.mocked(updateGitHubRelease).mockReset();
+    vi.mocked(updateGitHubBranchProtection).mockReset();
     vi.mocked(updateGitHubRepoActionsPermissions).mockReset();
+    vi.mocked(updateGitHubRepoRuleset).mockReset();
     vi.mocked(updateGitHubRepoWorkflowPermissions).mockReset();
     vi.mocked(updateGitHubRepoSettings).mockReset();
     vi.mocked(uploadGitHubReleaseAsset).mockReset();
@@ -922,6 +937,25 @@ describe("RepoProjectPanel", () => {
     });
     vi.mocked(getGitHubRepoFilePreview).mockRejectedValue(new Error("not found"));
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
+    vi.mocked(getGitHubBranchProtection).mockResolvedValue({
+      required_status_checks: { strict: true, contexts: ["CI"] },
+      enforce_admins: { enabled: true },
+      required_pull_request_reviews: { required_approving_review_count: 1 },
+      restrictions: null,
+      required_linear_history: { enabled: false },
+      allow_force_pushes: { enabled: false },
+      allow_deletions: { enabled: false },
+      required_conversation_resolution: { enabled: true },
+    });
+    vi.mocked(updateGitHubBranchProtection).mockImplementation(async (_repoFullName, _branchName, request) => request);
+    vi.mocked(listGitHubRepoRulesets).mockResolvedValue([]);
+    vi.mocked(getGitHubRepoRuleset).mockRejectedValue(new Error("missing ruleset"));
+    vi.mocked(updateGitHubRepoRuleset).mockImplementation(async (_repoFullName, rulesetId, request) => ({
+      ...request,
+      id: rulesetId,
+      source_type: "Repository",
+      source: "sena-nana/remote-repo",
+    }));
     vi.mocked(getGitHubRepoSettingsSection).mockImplementation(async (_repoFullName, section) => settingsSection(section));
     vi.mocked(deleteGitHubBranch).mockResolvedValue(undefined);
     vi.mocked(updateGitHubRepoActionsPermissions).mockResolvedValue(undefined);
@@ -2894,6 +2928,7 @@ describe("RepoProjectPanel", () => {
     expect(within(settingsNav).getByText("仓库控制")).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "Security" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "Branches" })).toBeInTheDocument();
+    expect(within(settingsNav).getByRole("button", { name: "Rulesets" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "Actions" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "Environments" })).toBeInTheDocument();
     expect(within(settingsNav).getByRole("button", { name: "Webhooks" })).toBeInTheDocument();
@@ -2919,6 +2954,7 @@ describe("RepoProjectPanel", () => {
     expect(within(dangerCard).getByLabelText("远端危险操作")).toBeInTheDocument();
     expect(await view.findByRole("region", { name: "Security" })).toBeInTheDocument();
     expect(view.getByRole("region", { name: "Branches" })).toBeInTheDocument();
+    expect(view.getByRole("region", { name: "Rulesets" })).toBeInTheDocument();
     expect(view.getByRole("region", { name: "Actions" })).toBeInTheDocument();
     expect(view.getByRole("region", { name: "Environments" })).toBeInTheDocument();
     expect(view.getByRole("region", { name: "Webhooks" })).toBeInTheDocument();
@@ -2945,6 +2981,194 @@ describe("RepoProjectPanel", () => {
       );
     });
     expect(vi.mocked(updateGitHubRepoSettings).mock.calls[0][1]).not.toHaveProperty("defaultBranch");
+  });
+
+  it("读取并更新主要分支保护规则", async () => {
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const branchesCard = await view.findByRole("region", { name: "Branches" });
+    const approvals = await within(branchesCard).findByRole("spinbutton");
+    const contexts = within(branchesCard).getByPlaceholderText("每行一个检查名称");
+    expect(approvals).toHaveValue(1);
+    expect(contexts).toHaveValue("CI");
+
+    await fireEvent.update(approvals, "2");
+    await fireEvent.click(within(branchesCard).getByRole("button", { name: "保存分支保护" }));
+
+    await waitFor(() => {
+      expect(updateGitHubBranchProtection).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        "main",
+        expect.objectContaining({
+          required_status_checks: expect.objectContaining({ strict: true, contexts: ["CI"] }),
+          enforce_admins: true,
+          required_pull_request_reviews: expect.objectContaining({
+            required_approving_review_count: 2,
+          }),
+          restrictions: null,
+          required_conversation_resolution: true,
+        }),
+      );
+    });
+  });
+
+  it("未保护分支可从空配置创建保护规则", async () => {
+    vi.mocked(getGitHubBranchProtection).mockImplementation(async (_repoFullName, branchName) => (
+      branchName === "feature/settings" ? null : {
+        required_status_checks: null,
+        enforce_admins: false,
+        required_pull_request_reviews: null,
+        restrictions: null,
+      }
+    ));
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const branchesCard = await view.findByRole("region", { name: "Branches" });
+    await fireEvent.click(await within(branchesCard).findByRole("button", { name: "配置" }));
+    await waitFor(() => {
+      expect(within(branchesCard).getByText("尚未设置保护")).toBeInTheDocument();
+    });
+    await fireEvent.click(within(branchesCard).getByRole("switch", { name: "Pull Request 审批" }));
+    await fireEvent.update(within(branchesCard).getByRole("spinbutton"), "1");
+    await fireEvent.click(within(branchesCard).getByRole("button", { name: "保存分支保护" }));
+
+    await waitFor(() => {
+      expect(updateGitHubBranchProtection).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        "feature/settings",
+        expect.objectContaining({
+          required_pull_request_reviews: expect.objectContaining({
+            required_approving_review_count: 1,
+          }),
+        }),
+      );
+    });
+  });
+
+  it("规则集更新保留未知规则并省略不可见的 bypass actors", async () => {
+    const rules = [
+      { type: "pull_request", parameters: { required_approving_review_count: 2 } },
+      { type: "future_rule", parameters: { keep: "opaque" } },
+    ];
+    const ruleset = {
+      id: 41,
+      name: "Protect main",
+      target: "branch",
+      enforcement: "active",
+      source_type: "Repository",
+      source: "sena-nana/remote-repo",
+      conditions: {
+        ref_name: { include: ["~DEFAULT_BRANCH"], exclude: ["refs/heads/release/*"] },
+        repository_name: { include: ["remote-repo"], exclude: [], protected: true },
+      },
+      rules,
+    };
+    vi.mocked(listGitHubRepoRulesets).mockResolvedValue([{
+      id: 41,
+      name: "Protect main",
+      target: "branch",
+      enforcement: "active",
+      sourceType: "Repository",
+      source: "sena-nana/remote-repo",
+      repositoryOwned: true,
+    }]);
+    vi.mocked(getGitHubRepoRuleset).mockResolvedValue(ruleset);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const rulesCard = await view.findByRole("region", { name: "Rulesets" });
+    const name = await within(rulesCard).findByRole("textbox", { name: "名称" });
+    expect(within(rulesCard).getByText("2 条，保存时保持不变")).toBeInTheDocument();
+    await fireEvent.update(name, "Protect main updated");
+    await fireEvent.click(within(rulesCard).getByRole("button", { name: "保存规则集" }));
+
+    await waitFor(() => {
+      expect(updateGitHubRepoRuleset).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        41,
+        expect.objectContaining({
+          name: "Protect main updated",
+          target: "branch",
+          enforcement: "active",
+          conditions: ruleset.conditions,
+          rules,
+        }),
+      );
+    });
+    expect(vi.mocked(updateGitHubRepoRuleset).mock.calls[0][2]).not.toHaveProperty("bypass_actors");
+  });
+
+  it("权限不足时保留保护与规则集摘要并禁用写入", async () => {
+    vi.mocked(getGitHubRepoManagement).mockResolvedValue({
+      ...githubSettings,
+      viewerCanAdminister: false,
+    });
+    vi.mocked(listGitHubRepoRulesets).mockResolvedValue([{
+      id: 42,
+      name: "Organization baseline",
+      target: "branch",
+      enforcement: "active",
+      sourceType: "Organization",
+      source: "sena-nana",
+      repositoryOwned: false,
+    }]);
+    vi.mocked(getGitHubRepoRuleset).mockResolvedValue({
+      id: 42,
+      name: "Organization baseline",
+      target: "branch",
+      enforcement: "active",
+      source_type: "Organization",
+      source: "sena-nana",
+      conditions: { ref_name: { include: ["~ALL"], exclude: [] } },
+      rules: [{ type: "deletion" }],
+    });
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const branchesCard = await view.findByRole("region", { name: "Branches" });
+    const rulesCard = view.getByRole("region", { name: "Rulesets" });
+    expect(await within(branchesCard).findByText("当前账号没有仓库管理权限，分支保护以只读方式显示。")).toBeInTheDocument();
+    expect(within(branchesCard).getByRole("spinbutton")).toBeDisabled();
+    expect((await within(rulesCard).findAllByText("Organization baseline")).length).toBeGreaterThanOrEqual(2);
+    expect(await within(rulesCard).findByText("此规则集由上级范围提供，只能在来源位置修改。")).toBeInTheDocument();
+    expect(within(rulesCard).getByRole("textbox", { name: "名称" })).toBeDisabled();
+    expect(within(branchesCard).queryByRole("button", { name: "保存分支保护" })).toBeNull();
+    expect(within(rulesCard).queryByRole("button", { name: "保存规则集" })).toBeNull();
+  });
+
+  it("分支保护写入失败时保留草稿并进入明确只读降级", async () => {
+    vi.mocked(updateGitHubBranchProtection).mockRejectedValue(new Error("HTTP 403 Forbidden"));
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "settings",
+    });
+    await fireEvent.click(view.getByRole("tab", { name: "Settings" }));
+
+    const branchesCard = await view.findByRole("region", { name: "Branches" });
+    const approvals = await within(branchesCard).findByRole("spinbutton");
+    await fireEvent.update(approvals, "3");
+    await fireEvent.click(within(branchesCard).getByRole("button", { name: "保存分支保护" }));
+
+    expect(await within(branchesCard).findByText("保存分支保护失败：当前凭据权限不足。")).toBeInTheDocument();
+    expect(within(branchesCard).getByText("当前凭据没有修改分支保护的权限。")).toBeInTheDocument();
+    expect(approvals).toHaveValue(3);
+    expect(approvals).toBeDisabled();
+    expect(updateGitHubBranchProtection).toHaveBeenCalledTimes(1);
+    expect(getGitHubBranchProtection).toHaveBeenCalledTimes(1);
   });
 
   it("归档仓库需要完整仓库名确认并走独立 mutation", async () => {

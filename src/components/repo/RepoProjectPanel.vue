@@ -750,6 +750,7 @@ type SettingsNavigationCard = { id: string; title: string; sections: readonly Se
 const settingsDetailSections: readonly SettingsDetailSectionConfig[] = [
   { kind: "security", title: "Security", id: "project-settings-security-title" },
   { kind: "branches", title: "Branches", id: "project-settings-branches-title" },
+  { kind: "rules", title: "Rulesets", id: "project-settings-rules-title" },
   { kind: "actions", title: "Actions", id: "project-settings-actions-title" },
   { kind: "environments", title: "Environments", id: "project-settings-environments-title" },
   { kind: "webhooks", title: "Webhooks", id: "project-settings-webhooks-title" },
@@ -4090,6 +4091,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                   :title="detailSection.title"
                   :default-branch="settingsForm.defaultBranch"
                   :branches="settingsBranches"
+                  :can-administer="settings.viewerCanAdminister"
                   :disabled="savingSettings || deletingRepo || deletingLocalRepo || githubLoading"
                   @updated-management="applyUpdatedSettingsManagement"
                   @branch-deleted="handleSettingsBranchDeleted"

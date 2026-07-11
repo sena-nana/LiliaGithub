@@ -8,6 +8,7 @@ import type {
   ContributionIdentity,
   ContributionIdentityRecommendationResult,
   GitHubBindingStatus,
+  GitHubBranchProtection,
   GitHubActionNotification,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubAccountIssueItem,
@@ -34,6 +35,8 @@ import type {
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
+  GitHubRuleset,
+  GitHubRulesetSummary,
   GitHubUpdateIssueRequest,
   GitHubUpdatePullRequestRequest,
   GitHubUpdateReleaseRequest,
@@ -173,6 +176,20 @@ export interface WorkspaceCommandContracts {
   >;
   github_delete_repo: CommandContract<RepoFullNameArg, void>;
   github_list_branches: CommandContract<RepoFullNameArg, BranchSummary[]>;
+  github_get_branch_protection: CommandContract<
+    RepoFullNameArg & { branchName: string },
+    GitHubBranchProtection | null
+  >;
+  github_update_branch_protection: CommandContract<
+    RepoFullNameArg & { branchName: string; request: GitHubBranchProtection },
+    GitHubBranchProtection
+  >;
+  github_list_repo_rulesets: CommandContract<RepoFullNameArg, GitHubRulesetSummary[]>;
+  github_get_repo_ruleset: CommandContract<RepoFullNameArg & { rulesetId: number }, GitHubRuleset>;
+  github_update_repo_ruleset: CommandContract<
+    RepoFullNameArg & { rulesetId: number; request: GitHubRuleset },
+    GitHubRuleset
+  >;
   github_delete_branch: CommandContract<RepoFullNameArg & { branchName: string }, void>;
   github_list_pull_requests: CommandContract<
     RepoFullNameArg & {

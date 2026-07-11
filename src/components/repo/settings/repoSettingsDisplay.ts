@@ -6,6 +6,7 @@ import type {
 export type RepoSettingsDetailKind =
   | "security"
   | "branches"
+  | "rules"
   | "actions"
   | "environments"
   | "webhooks"
@@ -34,11 +35,31 @@ export function asRecord(value: unknown): Record<string, unknown> {
 export function asArray(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   const record = asRecord(value);
-  for (const key of ["items", "environments", "hooks", "secrets", "variables", "workflows", "codespaces"]) {
+  for (const key of ["items", "environments", "hooks", "secrets", "variables", "workflows", "codespaces", "rulesets"]) {
     const nested = record[key];
     if (Array.isArray(nested)) return nested;
   }
   return [];
+}
+
+export function enabledValue(value: unknown, fallback = false) {
+  const direct = asBoolean(value);
+  if (direct !== null) return direct;
+  return asBoolean(asRecord(value).enabled) ?? fallback;
+}
+
+export function stringList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+export function editableListText(value: unknown) {
+  return stringList(value).join("\n");
+}
+
+export function parseEditableList(value: string) {
+  return [...new Set(value.split(/[\n,]/).map((entry) => entry.trim()).filter(Boolean))];
 }
 
 export function asBoolean(value: unknown): boolean | null {
