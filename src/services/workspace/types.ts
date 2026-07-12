@@ -737,6 +737,10 @@ export interface RepoSummary {
   worktree: RepoWorktree;
 }
 
+export interface RepoStorageStats {
+  logicalBytes: number | null;
+}
+
 export interface RepoRefreshSummaryOptions {
   fetchRemote?: boolean;
 }

@@ -7,6 +7,7 @@ pub(crate) mod refresh;
 pub mod repos;
 pub mod settings;
 mod shared;
+pub mod storage;
 pub mod system;
 pub mod tasks;
 pub(crate) mod watcher;

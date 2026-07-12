@@ -104,6 +104,7 @@ describe("languageStats", () => {
   it("formats code totals consistently", () => {
     expect(formatBytes(1000)).toBe("1000 B");
     expect(formatBytes(4096)).toBe("4 KB");
+    expect(formatBytes(3 * 1024 ** 3)).toBe("3.0 GB");
     expect(formatPercent(66.6)).toBe("67%");
     expect(formatLines(12345)).toBe("12,345");
   });

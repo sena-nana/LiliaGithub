@@ -146,7 +146,14 @@ export function buildLanguageOverviewFromStats(
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  const units = ["MB", "GB", "TB", "PB"];
+  let value = bytes / 1024 / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 export function formatLines(lines: number) {

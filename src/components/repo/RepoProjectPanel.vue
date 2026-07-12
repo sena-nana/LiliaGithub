@@ -56,6 +56,7 @@ import {
   attachGitHubWorkflowArtifactAsset,
   getGitHubIssueDiscussion,
   getRepoFilePreview,
+  getRepoStorageStats,
   getGitHubIssueFilterMetadata,
   getGitHubPullRequestDiscussion,
   getGitHubRepoManagement,
@@ -103,6 +104,7 @@ import type {
   ProjectLaunchLog,
   RepoChange,
   RepoFilePreview,
+  RepoStorageStats,
   RepoSummary,
 } from "../../services/workspace/types";
 import {
@@ -845,6 +847,9 @@ const deleteDialogTitle = computed(() =>
 );
 const deletingAnything = computed(() => deletingRepo.value || deletingLocalRepo.value);
 const languageStatsLoading = computed(() => workspace.state.languageStatsLoadingRepoIds.includes(props.repoId));
+const isLocalRepo = computed(() => hasRepoTag(resolvedRepoContext.value, "local"));
+const storageStats = ref<RepoStorageStats | null | undefined>();
+const storageStatsLoader = createLatestAsyncLoader({ componentEpoch });
 const currentBranchName = computed(() => workspace.repoById(props.repoId)?.currentBranch ?? "");
 const projectSections: readonly ProjectSectionConfig[] = [
   { key: "milestones", label: "Milestones", icon: Milestone },
@@ -1177,6 +1182,12 @@ watch(() => props.repoId, () => {
   void applyProjectRouteState();
 });
 
+watch([() => props.repoId, isLocalRepo], () => {
+  storageStatsLoader.invalidate();
+  storageStats.value = isLocalRepo.value ? null : undefined;
+  if (isLocalRepo.value) void loadStorageStats();
+}, { immediate: true });
+
 watch(() => props.repoFullName, () => {
   const currentSection = activeSection.value;
   remoteDeleted.value = false;
@@ -1264,6 +1275,22 @@ watch(() => props.activeGitTab, (tab) => {
     void ensureSectionData(activeSection.value);
   }
 });
+
+async function loadStorageStats() {
+  const repoId = props.repoId;
+  await storageStatsLoader.run(repoId, async (runId) => {
+    try {
+      const result = await getRepoStorageStats(repoId);
+      if (storageStatsLoader.isCurrent(runId) && props.repoId === repoId && isLocalRepo.value) {
+        storageStats.value = result;
+      }
+    } catch {
+      if (storageStatsLoader.isCurrent(runId) && props.repoId === repoId && isLocalRepo.value) {
+        storageStats.value = { logicalBytes: null };
+      }
+    }
+  });
+}
 
 function normalizeProjectTab(value: unknown): ProjectTab | null {
   if (
@@ -4660,6 +4687,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           :repo="repoSummary ?? null"
           :show-line-counts="resolvedRepoContext.capabilities.open.available"
           :loading="languageStatsLoading"
+          :storage-stats="storageStats"
         />
         </template>
         </div>

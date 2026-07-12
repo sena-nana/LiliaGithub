@@ -402,6 +402,12 @@ pub struct RepoSummary {
     pub worktree: RepoWorktree,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoStorageStats {
+    pub logical_bytes: Option<u64>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoRefreshSummaryOptions {
