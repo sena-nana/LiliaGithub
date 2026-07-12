@@ -50,7 +50,13 @@ import {
   state,
 } from "../src/composables/workspace/state";
 import type { WorkspaceService } from "../src/composables/workspace/serviceLoader";
-import type { BulkSyncPreview, GitHubContributionResult, RepoChange, WorkspaceStartupCache } from "../src/services/workspace";
+import type {
+  BulkSyncPreview,
+  GitHubContributionResult,
+  RepoChange,
+  RepoSummary,
+  WorkspaceStartupCache,
+} from "../src/services/workspace";
 import { conflictState, repoDetail, repoDetailPatch, repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 function deferred<T>() {
@@ -61,6 +67,21 @@ function deferred<T>() {
     reject = fail;
   });
   return { promise, resolve, reject };
+}
+
+function startupCache(
+  settings: ReturnType<typeof workspaceSettings>,
+  repos: RepoSummary[],
+): WorkspaceStartupCache {
+  return {
+    workspaceRoot: settings.workspaceRoot,
+    bindingLogin: settings.githubBinding?.login ?? null,
+    reposById: Object.fromEntries(repos.map((summary) => [
+      summary.id,
+      { summary, cachedAt: Date.now() },
+    ])),
+    contributions: null,
+  };
 }
 
 function repoChange(path: string, overrides: Partial<RepoChange> = {}): RepoChange {
@@ -258,32 +279,54 @@ beforeEach(() => {
 });
 
 describe("workspace incremental refresh", () => {
-  it("初始化命中新鲜启动缓存时跳过自动仓库状态刷新", async () => {
-    const cached = repoSummary("LiliaGithub", {
-      ahead: 2,
-      githubFullName: "sena-nana/LiliaGithub",
-      currentBranch: "main",
-    });
-    const startupCache: WorkspaceStartupCache = {
-      workspaceRoot: "C:\\Files\\workspace",
-      bindingLogin: "sena-nana",
-      reposById: {
-        LiliaGithub: {
-          summary: cached,
-          cachedAt: Date.now(),
-        },
-      },
-      contributions: null,
+  it("初始化先恢复可见缓存仓库，再由权威列表校正", async () => {
+    const settings = {
+      ...workspaceSettings(["Hidden"]),
+      managedRepoIds: ["Updated", "Removed", "Hidden", "Missing"],
     };
-    service.readStartupCache.mockResolvedValue(startupCache);
-    service.listManagedRepos.mockResolvedValue([cached]);
+    service.getWorkspaceSettings.mockResolvedValue(settings);
+    service.readStartupCache.mockResolvedValue(startupCache(
+      settings,
+      ["Updated", "Removed", "Hidden", "Unmanaged"]
+        .map((repoId) => repoSummary(repoId, { ahead: 2 })),
+    ));
+    const managedRepos = deferred<RepoSummary[]>();
+    service.listManagedRepos.mockReturnValue(managedRepos.promise);
 
-    await initialize();
+    const initialization = initialize();
 
-    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(service.listManagedRepos).toHaveBeenCalledTimes(1));
+    expect(state.repos.map((repo) => repo.id)).toEqual(["Updated", "Removed"]);
+    expect(state.repos.every((repo) => repo.ahead === 2)).toBe(true);
     expect(service.refreshRepoSummary).not.toHaveBeenCalled();
-    expect(state.scanning).toBe(false);
-    expect(state.repos[0]).toMatchObject({ id: "LiliaGithub", ahead: 2 });
+
+    const updated = repoSummary("Updated", { ahead: 0, path: "C:\\Current\\Updated" });
+    const added = repoSummary("Added");
+    managedRepos.resolve([updated, added]);
+    await initialization;
+
+    expect(state.repos).toEqual([updated, added]);
+  });
+
+  it("权威仓库列表加载失败时保留启动缓存", async () => {
+    const cached = repoSummary("Cached", { ahead: 1 });
+    const settings = {
+      ...workspaceSettings(),
+      managedRepoIds: [cached.id],
+    };
+    service.getWorkspaceSettings.mockResolvedValue(settings);
+    service.readStartupCache.mockResolvedValue(startupCache(settings, [cached]));
+    const managedRepos = deferred<RepoSummary[]>();
+    service.listManagedRepos.mockReturnValue(managedRepos.promise);
+
+    const initialization = initialize();
+
+    await waitFor(() => expect(service.listManagedRepos).toHaveBeenCalledTimes(1));
+    managedRepos.reject(new Error("list failed"));
+    await initialization;
+
+    expect(state.repos).toEqual([cached]);
+    expect(state.error).toBe("Error: list failed");
   });
 
   it("初始化从启动缓存恢复贡献图，再继续刷新仓库列表", async () => {
