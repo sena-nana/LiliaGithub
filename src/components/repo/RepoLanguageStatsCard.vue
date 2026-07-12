@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { LoaderCircle } from "@lucide/vue";
-import type { RepoSummary } from "../../services/workspace";
+import type { RepoStorageStats, RepoSummary } from "../../services/workspace";
 import {
   buildLanguageOverviewFromStats,
+  formatBytes,
   formatLines,
   formatPercent,
 } from "../../utils/languageStats";
@@ -12,12 +13,19 @@ const props = defineProps<{
   repo: RepoSummary | null;
   showLineCounts: boolean;
   loading: boolean;
+  storageStats?: RepoStorageStats | null;
 }>();
 
 const REPO_LANGUAGE_SLICE_LIMIT = 4;
 const stats = computed(() => props.repo?.languageStats ?? []);
 const overview = computed(() => buildLanguageOverviewFromStats(stats.value, REPO_LANGUAGE_SLICE_LIMIT));
 const hasLanguageStats = computed(() => overview.value.slices.length > 0);
+const showStorageStats = computed(() => props.storageStats !== undefined);
+const storageStatsText = computed(() => {
+  if (props.storageStats === null) return "读取中…";
+  if (props.storageStats?.logicalBytes == null) return "暂不可用";
+  return formatBytes(props.storageStats.logicalBytes);
+});
 </script>
 
 <template>
@@ -28,7 +36,7 @@ const hasLanguageStats = computed(() => overview.value.slices.length > 0);
 
     <p v-if="!hasLanguageStats" class="repo-language-card__empty">暂无语言数据</p>
 
-    <template v-else>
+    <template v-if="hasLanguageStats">
       <div class="repo-language-card__bar" aria-label="代码语言占比">
         <span
           v-for="slice in overview.slices"
@@ -43,23 +51,30 @@ const hasLanguageStats = computed(() => overview.value.slices.length > 0);
         />
       </div>
 
-      <ul class="repo-language-card__list">
-        <li v-for="slice in overview.slices" :key="slice.language">
-          <span class="repo-language-card__dot" :style="{ background: slice.color }" aria-hidden="true" />
-          <span class="repo-language-card__name">{{ slice.language }}</span>
-          <strong>
-            <span v-if="showLineCounts">{{ formatLines(slice.lines) }} · </span>
-            {{ formatPercent(slice.percent) }}
-          </strong>
-        </li>
-
-        <li v-if="showLineCounts && overview.totalLines > 0">
-          <span class="repo-language-card__dot" :style="{ background: 'var(--text-muted)' }" aria-hidden="true" />
-          <span class="repo-language-card__name">总代码行数</span>
-          <strong>{{ formatLines(overview.totalLines) }}</strong>
-        </li>
-      </ul>
     </template>
+
+    <ul v-if="hasLanguageStats || showStorageStats" class="repo-language-card__list">
+      <li v-for="slice in overview.slices" :key="slice.language">
+        <span class="repo-language-card__dot" :style="{ background: slice.color }" aria-hidden="true" />
+        <span class="repo-language-card__name">{{ slice.language }}</span>
+        <strong>
+          <span v-if="showLineCounts">{{ formatLines(slice.lines) }} · </span>
+          {{ formatPercent(slice.percent) }}
+        </strong>
+      </li>
+
+      <li v-if="showLineCounts && overview.totalLines > 0">
+        <span class="repo-language-card__dot" :style="{ background: 'var(--text-muted)' }" aria-hidden="true" />
+        <span class="repo-language-card__name">总代码行数</span>
+        <strong>{{ formatLines(overview.totalLines) }}</strong>
+      </li>
+
+      <li v-if="showStorageStats">
+        <span class="repo-language-card__dot" :style="{ background: 'var(--text-muted)' }" aria-hidden="true" />
+        <span class="repo-language-card__name">项目总大小</span>
+        <strong>{{ storageStatsText }}</strong>
+      </li>
+    </ul>
   </section>
 </template>
 

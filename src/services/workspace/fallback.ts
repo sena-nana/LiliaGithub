@@ -82,6 +82,7 @@ import type {
   RepoSyncPreference,
   RepoStashEntry,
   RepoStashDetail,
+  RepoStorageStats,
   RemoteRepoShortcut,
   SystemOpenTarget,
   WorkspaceTask,
@@ -3456,6 +3457,12 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
 
 export function getRepoSummary(repoId: string): Promise<RepoSummary> {
   return call("repo_get_summary", { repoId }, () => ({ ...fallbackRepo(repoId) }));
+}
+
+export function getRepoStorageStats(repoId: string): Promise<RepoStorageStats> {
+  return call("repo_get_storage_stats", { repoId }, () => ({
+    logicalBytes: null,
+  }));
 }
 
 export function refreshRepoSummary(

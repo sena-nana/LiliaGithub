@@ -29,6 +29,7 @@ use lilia_github_contracts::workspace::{
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
 pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
+const NTFS_REQUIRED: &str = "工作区必须位于 NTFS 文件系统";
 
 fn startup_cache_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -377,7 +378,68 @@ pub(super) fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
     if !path.exists() || !path.is_dir() {
         return Err(format!("工作区不存在或不是文件夹：{}", path.display()));
     }
+    ensure_ntfs_path(&path)?;
     Ok(path)
+}
+
+pub(super) fn ensure_ntfs_path(path: &Path) -> Result<(), String> {
+    let file_system = volume_file_system(path)?;
+    if file_system.trim().eq_ignore_ascii_case("NTFS") {
+        Ok(())
+    } else {
+        Err(NTFS_REQUIRED.to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn volume_file_system(path: &Path) -> Result<String, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{GetVolumeInformationW, GetVolumePathNameW};
+
+    let canonical = dunce::canonicalize(path).map_err(|_| NTFS_REQUIRED.to_string())?;
+    let path_wide = canonical
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let mut volume_path = vec![0_u16; 32_768];
+    let volume_path_ok = unsafe {
+        GetVolumePathNameW(
+            path_wide.as_ptr(),
+            volume_path.as_mut_ptr(),
+            volume_path.len() as u32,
+        )
+    };
+    if volume_path_ok == 0 {
+        return Err(NTFS_REQUIRED.to_string());
+    }
+
+    let mut file_system = vec![0_u16; 64];
+    let info_ok = unsafe {
+        GetVolumeInformationW(
+            volume_path.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            file_system.as_mut_ptr(),
+            file_system.len() as u32,
+        )
+    };
+    if info_ok == 0 {
+        return Err(NTFS_REQUIRED.to_string());
+    }
+    let length = file_system
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(file_system.len());
+    Ok(String::from_utf16_lossy(&file_system[..length]))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn volume_file_system(_path: &Path) -> Result<String, String> {
+    Err(NTFS_REQUIRED.to_string())
 }
 
 pub(super) fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -461,6 +523,12 @@ pub fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings {
 
 pub fn workspace_read_startup_cache(app: AppHandle) -> Option<WorkspaceStartupCache> {
     let settings = load_settings(&app);
+    if let Some(root) = settings.workspace_root.as_deref() {
+        let path = PathBuf::from(root);
+        if ensure_ntfs_path(&path).is_err() {
+            return None;
+        }
+    }
     load_startup_cache(&app).filter(|cache| startup_cache_matches_settings(cache, &settings))
 }
 
@@ -484,6 +552,7 @@ pub fn workspace_set_root(
     if !root.exists() || !root.is_dir() {
         return Err(format!("工作区不存在或不是文件夹：{}", root.display()));
     }
+    ensure_ntfs_path(&root)?;
     let mut settings = load_settings(&app);
     settings.workspace_root = Some(root.to_string_lossy().to_string());
     save_settings(&app, &settings)?;

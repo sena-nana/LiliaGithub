@@ -29,6 +29,7 @@ import {
   getGitHubRepoRuleset,
   getGitHubRepoSettingsSection,
   getRepoFilePreview,
+  getRepoStorageStats,
   getGitHubWorkflowArtifactFilePreview,
   getGitHubWorkflowJobLog,
   getGitHubWorkflowRunDetail,
@@ -658,6 +659,7 @@ vi.mock("../src/services/workspace/client", () => ({
   getGitHubRepoManagement: vi.fn(),
   getGitHubRepoRuleset: vi.fn(),
   getRepoFilePreview: vi.fn(),
+  getRepoStorageStats: vi.fn(),
   listGitHubPullRequestChecks: vi.fn(),
   listGitHubPullRequests: vi.fn(),
   listGitHubIssues: vi.fn(),
@@ -825,6 +827,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(getGitHubPullRequestDiscussion).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
     vi.mocked(getRepoFilePreview).mockReset();
+    vi.mocked(getRepoStorageStats).mockReset();
     vi.mocked(getGitHubIssueFilterMetadata).mockReset();
     vi.mocked(getGitHubRepoManagement).mockReset();
     vi.mocked(getGitHubRepoRuleset).mockReset();
@@ -926,6 +929,7 @@ describe("RepoProjectPanel", () => {
     ]);
     vi.mocked(listRepoFiles).mockResolvedValue(localRootFiles);
     vi.mocked(getRepoFilePreview).mockResolvedValue(localReadmePreview);
+    vi.mocked(getRepoStorageStats).mockResolvedValue({ logicalBytes: null });
     vi.mocked(listGitHubIssueLabels).mockResolvedValue(["bug", "needs triage", "documentation"]);
     vi.mocked(listGitHubIssueAssignees).mockResolvedValue(["mika", "sena"]);
     vi.mocked(getGitHubIssueFilterMetadata).mockResolvedValue({
@@ -1017,6 +1021,7 @@ describe("RepoProjectPanel", () => {
   });
 
   it("侧边栏显示本地仓库语言占比和代码行数", async () => {
+    vi.mocked(getRepoStorageStats).mockResolvedValue({ logicalBytes: 12 * 1024 * 1024 });
     const summary = repoSummary("local-repo", {
       languageStats: [
         { language: "TypeScript", bytes: 3000, lines: 120 },
@@ -1043,6 +1048,10 @@ describe("RepoProjectPanel", () => {
     expect(within(card).queryByText("Markdown")).toBeNull();
     expect(within(card).getByText("总代码行数")).toBeInTheDocument();
     expect(within(card).getByText("240")).toBeInTheDocument();
+    expect(within(card).getByText("项目总大小")).toBeInTheDocument();
+    expect(within(card).getByText("12.0 MB")).toBeInTheDocument();
+    expect(getRepoStorageStats).toHaveBeenCalledTimes(1);
+    expect(getRepoStorageStats).toHaveBeenCalledWith("local-repo");
     const bar = within(card).getByLabelText("代码语言占比");
     const segmentLabels = [...bar.querySelectorAll("[aria-label]")].map((segment) =>
       segment.getAttribute("aria-label"),
@@ -1068,6 +1077,25 @@ describe("RepoProjectPanel", () => {
     expect(within(card).getByText("100%")).toBeInTheDocument();
     expect(within(card).queryByText("40 ·")).toBeNull();
     expect(within(card).queryByText("总代码行数")).toBeNull();
+    expect(within(card).queryByText("项目总大小")).toBeNull();
+    expect(getRepoStorageStats).not.toHaveBeenCalled();
+  });
+
+  it("本地项目大小读取期间显示真实加载状态，索引不可用时不显示为零", async () => {
+    const pending = deferred<{ logicalBytes: number | null }>();
+    vi.mocked(getRepoStorageStats).mockReturnValue(pending.promise);
+    const summary = repoSummary("local-repo", {
+      languageStats: [{ language: "TypeScript", bytes: 1000, lines: 40 }],
+    });
+    const view = await renderProjectPanel({ repoSummary: summary });
+
+    const card = await view.findByRole("region", { name: "代码统计" }, { timeout: 5000 });
+    expect(within(card).getByText("项目总大小")).toBeInTheDocument();
+    expect(within(card).getByText("读取中…")).toBeInTheDocument();
+
+    pending.resolve({ logicalBytes: null });
+    await waitFor(() => expect(within(card).getByText("暂不可用")).toBeInTheDocument());
+    expect(within(card).queryByText("0 B")).toBeNull();
   });
 
   it("启动终端按终端输出渲染 ANSI 颜色和多行日志", async () => {

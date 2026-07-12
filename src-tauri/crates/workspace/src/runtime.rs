@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -13,6 +14,9 @@ pub trait WorkspaceRuntime: Send + Sync {
     fn open_path(&self, path: &str, with: Option<&str>) -> Result<(), String>;
     fn open_url(&self, url: &str, with: Option<&str>) -> Result<(), String>;
     fn emit(&self, event: &str, payload: JsonValue) -> Result<(), String>;
+    fn resource_dir(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 #[derive(Clone)]
@@ -47,6 +51,10 @@ impl WorkspaceContext {
     pub fn emit<T: Serialize>(&self, event: &str, payload: &T) -> Result<(), String> {
         let payload = serde_json::to_value(payload).map_err(|error| error.to_string())?;
         self.runtime.emit(event, payload)
+    }
+
+    pub fn resource_dir(&self) -> Option<PathBuf> {
+        self.runtime.resource_dir()
     }
 }
 

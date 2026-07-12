@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde_json::Value as JsonValue;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_store::StoreExt;
@@ -44,6 +44,7 @@ mod launch;
 mod refresh;
 mod repos;
 mod settings;
+mod storage;
 mod system;
 mod tasks;
 
@@ -115,6 +116,10 @@ impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
         self.app
             .emit(event, payload)
             .map_err(|error| error.to_string())
+    }
+
+    fn resource_dir(&self) -> Option<std::path::PathBuf> {
+        self.app.path().resource_dir().ok()
     }
 }
 
@@ -211,6 +216,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_attach_workflow_artifact_asset,
         github::github_delete_release_asset,
         repos::repo_get_summary,
+        storage::repo_get_storage_stats,
         repos::repo_clear_local_cache,
         repos::repo_refresh_summary,
         repos::repo_refresh_language_stats,

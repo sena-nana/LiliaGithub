@@ -69,6 +69,7 @@ import type {
   RepoResetMode,
   RepoStashDetail,
   RepoStashEntry,
+  RepoStorageStats,
   RepoSummary,
   RepoSyncPreference,
   SystemOpenTarget,
@@ -311,6 +312,7 @@ export interface WorkspaceCommandContracts {
   github_delete_release_asset: CommandContract<RepoFullNameArg & { releaseId: number; assetId: number }, void>;
 
   repo_get_summary: CommandContract<RepoArg, RepoSummary>;
+  repo_get_storage_stats: CommandContract<RepoArg, RepoStorageStats>;
   repo_clear_local_cache: CommandContract<RepoArg & { repoFullName: Maybe<string> }, void>;
   repo_refresh_summary: CommandContract<RepoArg & { options: RepoRefreshSummaryOptions }, RepoSummary>;
   repo_refresh_language_stats: CommandContract<RepoArg, RepoSummary>;
