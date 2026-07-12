@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { state } from "./state";
+import { replaceRepos, state } from "./state";
 import {
   refreshRepoSummaries,
   refreshRepos,
@@ -66,6 +66,13 @@ export async function initialize() {
         loading: false,
         error: null,
       };
+    }
+    if (startupCache) {
+      const hiddenRepoIds = new Set(settings.hiddenRepoIds);
+      replaceRepos(settings.managedRepoIds.flatMap((repoId) => {
+        const cached = startupCache.reposById[repoId];
+        return cached && !hiddenRepoIds.has(repoId) ? [{ ...cached.summary, id: repoId }] : [];
+      }));
     }
     hydrateRepoRemoteCheckedAt(startupCache?.reposById);
     await ensureRepoRefreshEventsReady();
