@@ -352,7 +352,10 @@ fn handle_notify_batch(
             if kind == RepoChangeKind::GitMetadata {
                 affected.insert(repo_id, kind);
             } else {
-                worktree_paths.entry(repo_id).or_default().insert(path.clone());
+                worktree_paths
+                    .entry(repo_id)
+                    .or_default()
+                    .insert(path.clone());
             }
         }
     }
@@ -387,7 +390,10 @@ fn repo_has_relevant_worktree_change<'a>(
         let Ok(relative) = path.strip_prefix(&repo.worktree_path) else {
             return true;
         };
-        if relative.file_name().is_some_and(|name| name == ".gitignore") {
+        if relative
+            .file_name()
+            .is_some_and(|name| name == ".gitignore")
+        {
             return true;
         }
         let Some(relative) = relative.to_str() else {
@@ -637,7 +643,12 @@ mod tests {
                 std::process::id()
             ));
             fs::create_dir_all(&path).unwrap();
-            assert!(Command::new("git").arg("init").arg(&path).status().unwrap().success());
+            assert!(Command::new("git")
+                .arg("init")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success());
             Self(path)
         }
 
@@ -686,11 +697,24 @@ mod tests {
         repo.write(".git/info/exclude", "private.dat\n");
         let global_excludes = repo.path("global-excludes");
         fs::write(&global_excludes, "global.cache\n").unwrap();
-        repo.git(&["config", "core.excludesFile", global_excludes.to_str().unwrap()]);
+        repo.git(&[
+            "config",
+            "core.excludesFile",
+            global_excludes.to_str().unwrap(),
+        ]);
 
         let spec = repo.spec();
-        for ignored in ["debug.log", "build/output.js", "nested/item.tmp", "private.dat", "global.cache"] {
-            assert!(!repo_has_relevant_worktree_change(&spec, [repo.path(ignored)].iter()));
+        for ignored in [
+            "debug.log",
+            "build/output.js",
+            "nested/item.tmp",
+            "private.dat",
+            "global.cache",
+        ] {
+            assert!(!repo_has_relevant_worktree_change(
+                &spec,
+                [repo.path(ignored)].iter()
+            ));
         }
         for relevant in ["keep.log", "src/main.rs", ".gitignore"] {
             assert!(
@@ -713,13 +737,19 @@ mod tests {
         repo.write("tracked.log", "tracked");
         repo.git(&["add", "-f", "tracked.log"]);
         let spec = repo.spec();
-        assert!(repo_has_relevant_worktree_change(&spec, [repo.path("tracked.log")].iter()));
+        assert!(repo_has_relevant_worktree_change(
+            &spec,
+            [repo.path("tracked.log")].iter()
+        ));
 
         let missing = RepoWatchSpec {
             worktree_path: repo.path("missing"),
             ..spec
         };
-        assert!(repo_has_relevant_worktree_change(&missing, [repo.path("missing/file")].iter()));
+        assert!(repo_has_relevant_worktree_change(
+            &missing,
+            [repo.path("missing/file")].iter()
+        ));
     }
 
     #[test]

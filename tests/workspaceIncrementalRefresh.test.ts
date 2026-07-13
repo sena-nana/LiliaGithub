@@ -512,6 +512,35 @@ describe("workspace incremental refresh", () => {
     expect(state.repos.find((repo) => repo.id === "Repo1")).toMatchObject({ ahead: 1 });
   });
 
+  it("批量刷新并发提交全部仓库，并在所有请求结束后汇总失败", async () => {
+    const first = deferred<string>();
+    const third = deferred<string>();
+    service.listManagedRepos.mockResolvedValue([
+      repoSummary("Repo1"),
+      repoSummary("Repo2"),
+      repoSummary("Repo3"),
+    ]);
+    service.enqueueRepoRefresh
+      .mockReturnValueOnce(first.promise)
+      .mockRejectedValueOnce(new Error("Repo2 enqueue failed"))
+      .mockReturnValueOnce(third.promise);
+
+    const refreshing = refreshRepoSummaries();
+    await waitFor(() => expect(service.enqueueRepoRefresh).toHaveBeenCalledTimes(3));
+    expect(state.error).toBeNull();
+
+    first.resolve("refresh-1");
+    third.resolve("refresh-3");
+    await refreshing;
+
+    expect(service.enqueueRepoRefresh.mock.calls.map(([request]) => request.repoId)).toEqual([
+      "Repo1",
+      "Repo2",
+      "Repo3",
+    ]);
+    expect(state.error).toContain("Repo2 enqueue failed");
+  });
+
   it("远端刷新结果会触发已启用仓库的自动同步", async () => {
     const stale = repoSummary("Repo1", { behind: 1 });
     const synced = repoSummary("Repo1", { behind: 0 });

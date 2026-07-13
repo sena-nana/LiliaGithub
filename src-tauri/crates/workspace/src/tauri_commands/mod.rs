@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use mutsuki_runtime_contracts::{Task, TaskHandle};
+use mutsuki_tauri_host::MutsukiTauriHost;
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_dialog::DialogExt;
@@ -115,6 +117,21 @@ impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
     fn emit(&self, event: &str, payload: JsonValue) -> Result<(), String> {
         self.app
             .emit(event, payload)
+            .map_err(|error| error.to_string())
+    }
+
+    fn submit_mutsuki_task(&self, task: Task) -> Result<TaskHandle, String> {
+        self.app
+            .state::<Arc<MutsukiTauriHost>>()
+            .submit_task(task)
+            .map_err(|error| error.to_string())
+    }
+
+    fn cancel_mutsuki_task(&self, handle: TaskHandle) -> Result<(), String> {
+        self.app
+            .state::<Arc<MutsukiTauriHost>>()
+            .cancel_task_handle(handle)
+            .map(|_| ())
             .map_err(|error| error.to_string())
     }
 

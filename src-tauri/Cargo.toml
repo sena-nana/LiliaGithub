@@ -30,6 +30,7 @@ tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-mutsuki = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "ff3f65c04fb5a406d14bcd08356fa183c8a87819" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lilia_github_agent_debug = { path = "crates/agent_debug" }

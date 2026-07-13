@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::workspace::shared::configure_background_command;
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::workspace::shared::configure_background_command;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;

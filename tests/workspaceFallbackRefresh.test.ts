@@ -8,12 +8,21 @@ import {
   listGitHubRepos,
   listWorkspaceTasks,
   refreshRepos,
+  setActiveWorkspaceRepo,
   setWorkspaceRefreshPaused,
   workspaceFallbackForTests,
 } from "../src/services/workspace";
 
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
 let workspaceFallback: WorkspaceFallbackForTests;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 describe("workspace fallback refresh", () => {
   beforeEach(async () => {
@@ -81,6 +90,110 @@ describe("workspace fallback refresh", () => {
     });
 
     expect(await listWorkspaceTasks()).toHaveLength(200);
+  });
+
+  it("同一仓库的本地与远端刷新不会跨 lane 同时执行", async () => {
+    const detail = await getRepoDetail("LiliaGithub");
+    const localDetail = deferred<typeof detail>();
+    workspaceFallback.setFallbackRepoDetailOverrideForTests(() => localDetail.promise);
+    await setActiveWorkspaceRepo("LiliaGithub");
+
+    const localTaskId = await enqueueRepoRefresh({
+      repoId: "LiliaGithub",
+      mode: "local",
+      priority: "normal",
+      force: false,
+      detailScope: "detail",
+      trigger: "manual",
+    });
+    await vi.waitFor(async () => {
+      expect((await listWorkspaceTasks()).find((task) => task.id === localTaskId)?.status).toBe("running");
+    });
+
+    const remoteTaskId = await enqueueRepoRefresh({
+      repoId: "LiliaGithub",
+      mode: "remote",
+      priority: "high",
+      force: true,
+      detailScope: "summary",
+      trigger: "manual",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((await listWorkspaceTasks()).find((task) => task.id === remoteTaskId)?.status).toBe("pending");
+
+    localDetail.resolve(detail);
+    await vi.waitFor(async () => {
+      const tasks = await listWorkspaceTasks();
+      expect(tasks.find((task) => task.id === localTaskId)?.status).toBe("success");
+      expect(tasks.find((task) => task.id === remoteTaskId)?.status).toBe("success");
+    });
+  });
+
+  it("本地刷新最多并行四个仓库", async () => {
+    const detail = await getRepoDetail("LiliaGithub");
+    const releases: Array<() => void> = [];
+    workspaceFallback.setFallbackRepoDetailOverrideForTests(async () => {
+      const gate = deferred<void>();
+      releases.push(() => gate.resolve(undefined));
+      await gate.promise;
+      return detail;
+    });
+
+    const taskIds = await Promise.all(Array.from({ length: 5 }, (_, index) => enqueueRepoRefresh({
+      repoId: `Repo${index + 1}`,
+      mode: "local",
+      priority: "normal",
+      force: false,
+      detailScope: "detail",
+      trigger: "manual",
+    })));
+    await vi.waitFor(() => expect(releases).toHaveLength(4));
+
+    releases[0]();
+    await vi.waitFor(() => expect(releases).toHaveLength(5));
+    releases.forEach((release) => release());
+    await vi.waitFor(async () => {
+      const tasks = await listWorkspaceTasks();
+      expect(taskIds.map((id) => tasks.find((task) => task.id === id)?.status)).toEqual([
+        "success",
+        "success",
+        "success",
+        "success",
+        "success",
+      ]);
+    });
+  });
+
+  it("远端刷新保持单仓库串行", async () => {
+    const detail = await getRepoDetail("LiliaGithub");
+    const releases: Array<() => void> = [];
+    workspaceFallback.setFallbackRepoDetailOverrideForTests(async () => {
+      const gate = deferred<void>();
+      releases.push(() => gate.resolve(undefined));
+      await gate.promise;
+      return detail;
+    });
+
+    const taskIds = await Promise.all(["LiliaGithub", "Lilia"].map((repoId) => enqueueRepoRefresh({
+      repoId,
+      mode: "remote",
+      priority: "normal",
+      force: true,
+      detailScope: "detail",
+      trigger: "autoSync",
+    })));
+    await vi.waitFor(() => expect(releases).toHaveLength(1));
+
+    releases[0]();
+    await vi.waitFor(() => expect(releases).toHaveLength(2));
+    releases[1]();
+    await vi.waitFor(async () => {
+      const tasks = await listWorkspaceTasks();
+      expect(taskIds.map((id) => tasks.find((task) => task.id === id)?.status)).toEqual([
+        "success",
+        "success",
+      ]);
+    });
   });
 
   it("删除 GitHub 远端仓库只清理远端列表并保留本地仓库", async () => {

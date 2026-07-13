@@ -17,9 +17,7 @@ use crate::workspace::settings::{
     save_settings, sort_dedup, workspace_root, write_startup_repo_summary,
     write_startup_repo_summary_after_fetch,
 };
-use crate::workspace::shared::{
-    compatible_path_text, configure_background_command, now_millis,
-};
+use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
 use crate::workspace::tasks::{record_workspace_task, update_workspace_task};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
@@ -304,9 +302,8 @@ fn repo_id_within_root(root: &Path, path: &Path) -> Option<String> {
 
 pub(super) fn resolve_repo_worktree(root: &Path, path: &Path) -> ResolvedRepoWorktree {
     let current_path = canonical_repo_path(path);
-    let shared_repo_key = compatible_path_text(
-        &git_common_dir(path).unwrap_or_else(|| current_path.join(".git")),
-    );
+    let shared_repo_key =
+        compatible_path_text(&git_common_dir(path).unwrap_or_else(|| current_path.join(".git")));
     let worktrees = git_worktree_entries(path);
     if worktrees.len() <= 1 {
         return ResolvedRepoWorktree {
@@ -1568,15 +1565,6 @@ pub(super) fn refresh_repo_for_scheduler(
         .as_ref()
         .map(|patch| patch.summary.clone())
         .unwrap_or_else(|| summarize_repo(&root, &path));
-    let settings = load_settings(app);
-    if settings.workspace_root.as_deref().map(Path::new) != Some(root.as_path()) {
-        return Err("工作区已切换，已丢弃刷新结果".to_string());
-    }
-    if let Some(checked_at) = remote_checked_at {
-        write_startup_repo_summary_after_fetch(app, &settings, &summary, checked_at)?;
-    } else {
-        write_startup_repo_summary(app, &settings, &summary)?;
-    }
     Ok((summary, detail_patch, remote_checked_at))
 }
 

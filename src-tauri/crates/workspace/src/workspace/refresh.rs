@@ -1,25 +1,91 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::workspace::repos::refresh_repo_for_scheduler;
-use crate::workspace::settings::{load_startup_cache, repo_path_by_id};
+use crate::workspace::repos::{git_common_dir, refresh_repo_for_scheduler};
+use crate::workspace::settings::{
+    load_settings, load_startup_cache, repo_path_by_id, write_startup_repo_summary,
+    write_startup_repo_summary_after_fetch,
+};
 use crate::workspace::shared::now_millis;
 use crate::workspace::tasks::{record_workspace_task_and_emit, update_workspace_task_and_emit};
 use lilia_github_contracts::workspace::{RepoRefreshRequest, RepoRefreshedEvent};
+use mutsuki_runtime_contracts::{
+    CompletionBatch, EntryCompletion, ExecutionClass, RunnerBatchCapability, RunnerDescriptor,
+    RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskHandle,
+    WorkBatch,
+};
+use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
+use mutsuki_runtime_host::{
+    DefaultScheduler, HostRuntimeConfig, RunnerLimits, ScheduleInput, SchedulerPolicy,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 const REPO_REFRESHED_EVENT: &str = "workspace://repo-refreshed";
 const REMOTE_CACHE_TTL_MS: i64 = 10 * 60 * 1_000;
 const REMOTE_BACKOFF_MS: [i64; 3] = [60 * 1_000, 5 * 60 * 1_000, 15 * 60 * 1_000];
+pub const LOCAL_REFRESH_PROTOCOL: &str = "lilia.github.repo.refresh.local.v1";
+pub const REMOTE_REFRESH_PROTOCOL: &str = "lilia.github.repo.refresh.remote.v1";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
+struct RefreshSchedulerPolicy;
+
+impl SchedulerPolicy for RefreshSchedulerPolicy {
+    fn decide(
+        &self,
+        input: &ScheduleInput<'_>,
+    ) -> RuntimeResult<mutsuki_runtime_core::ScheduleDecision> {
+        if input.runner.runner_id == LOCAL_REFRESH_PROTOCOL
+            && scheduler()
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .local_paused
+        {
+            return Ok(mutsuki_runtime_core::ScheduleDecision::new(
+                DefaultScheduler::POLICY_ID,
+                0,
+                "local.paused",
+            ));
+        }
+        DefaultScheduler.decide(input)
+    }
+}
+
+pub fn refresh_runtime_config() -> HostRuntimeConfig {
+    let mut config = HostRuntimeConfig {
+        blocking_threads: 2,
+        scheduler_policy: Arc::new(RefreshSchedulerPolicy),
+        ..HostRuntimeConfig::default()
+    };
+    config.runner_limits.insert(
+        LOCAL_REFRESH_PROTOCOL.into(),
+        RunnerLimits {
+            max_running: 4,
+            max_inflight: 4,
+            ..RunnerLimits::default()
+        },
+    );
+    config.runner_limits.insert(
+        REMOTE_REFRESH_PROTOCOL.into(),
+        RunnerLimits {
+            max_running: 1,
+            max_inflight: 1,
+            ..RunnerLimits::default()
+        },
+    );
+    config
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RefreshLane {
     Local,
     Remote,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EntryState {
     Pending,
     Running,
@@ -31,7 +97,8 @@ struct ScheduledRefresh {
     task_id: String,
     state: EntryState,
     rerun: Option<RepoRefreshRequest>,
-    sequence: u64,
+    runtime_task_id: String,
+    runtime_handle: Option<TaskHandle>,
 }
 
 #[derive(Default)]
@@ -47,185 +114,441 @@ struct SchedulerState {
     entries: HashMap<String, ScheduledRefresh>,
     remote_backoff: HashMap<String, RemoteBackoff>,
     next_sequence: u64,
+    generation: u64,
 }
 
+#[derive(Default)]
 struct RefreshScheduler {
     state: Mutex<SchedulerState>,
-    changed: Condvar,
 }
 
-fn scheduler() -> &'static Arc<RefreshScheduler> {
-    static SCHEDULER: OnceLock<Arc<RefreshScheduler>> = OnceLock::new();
-    SCHEDULER.get_or_init(|| {
-        let scheduler = Arc::new(RefreshScheduler {
-            state: Mutex::new(SchedulerState::default()),
-            changed: Condvar::new(),
-        });
-        start_worker(scheduler.clone(), RefreshLane::Local);
-        start_worker(scheduler.clone(), RefreshLane::Remote);
-        scheduler
-    })
+fn scheduler() -> &'static RefreshScheduler {
+    static SCHEDULER: OnceLock<RefreshScheduler> = OnceLock::new();
+    SCHEDULER.get_or_init(RefreshScheduler::default)
 }
 
-fn start_worker(scheduler: Arc<RefreshScheduler>, lane: RefreshLane) {
-    let name = match lane {
-        RefreshLane::Local => "repo-refresh-local",
-        RefreshLane::Remote => "repo-refresh-remote",
-    };
-    thread::Builder::new()
-        .name(name.to_string())
-        .spawn(move || worker_loop(&scheduler, lane))
-        .expect("failed to start repository refresh worker");
+fn common_dir_guards() -> &'static Mutex<HashMap<PathBuf, Weak<Mutex<()>>>> {
+    static GUARDS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    GUARDS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn worker_loop(scheduler: &RefreshScheduler, lane: RefreshLane) {
-    loop {
-        let (key, app, request, task_id, include_detail) = {
-            let mut state = scheduler
-                .state
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            loop {
-                if let Some(key) = next_pending_key(&state, lane) {
-                    let active_repo = state.active_repo.clone();
-                    let entry = state
-                        .entries
-                        .get_mut(&key)
-                        .expect("pending refresh disappeared");
-                    entry.state = EntryState::Running;
-                    let include_detail = match entry.request.detail_scope.as_str() {
-                        "detail" => true,
-                        "summary" => false,
-                        _ => active_repo.as_deref() == Some(entry.request.repo_id.as_str()),
-                    };
-                    break (
-                        key,
-                        entry.app.clone(),
-                        entry.request.clone(),
-                        entry.task_id.clone(),
-                        include_detail,
-                    );
-                }
-                state = scheduler
-                    .changed
-                    .wait(state)
-                    .unwrap_or_else(|error| error.into_inner());
-            }
+fn common_dir_guard(key: PathBuf) -> Arc<Mutex<()>> {
+    let mut guards = common_dir_guards()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    guards.retain(|_, guard| guard.strong_count() > 0);
+    if let Some(guard) = guards.get(&key).and_then(Weak::upgrade) {
+        return guard;
+    }
+    let guard = Arc::new(Mutex::new(()));
+    guards.insert(key, Arc::downgrade(&guard));
+    guard
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct RefreshPayload {
+    key: String,
+    generation: u64,
+    run_id: String,
+}
+
+pub fn repo_refresh_runners() -> Vec<Box<dyn Runner>> {
+    vec![
+        Box::new(RepoRefreshRunner::new(RefreshLane::Local)),
+        Box::new(RepoRefreshRunner::new(RefreshLane::Remote)),
+    ]
+}
+
+struct RepoRefreshRunner {
+    lane: RefreshLane,
+    descriptor: RunnerDescriptor,
+}
+
+impl RepoRefreshRunner {
+    fn new(lane: RefreshLane) -> Self {
+        let (runner_id, protocol_id, max_entries) = match lane {
+            RefreshLane::Local => (LOCAL_REFRESH_PROTOCOL, LOCAL_REFRESH_PROTOCOL, 4),
+            RefreshLane::Remote => (REMOTE_REFRESH_PROTOCOL, REMOTE_REFRESH_PROTOCOL, 1),
         };
+        Self {
+            lane,
+            descriptor: RunnerDescriptor {
+                runner_id: runner_id.into(),
+                plugin_id: "lilia.github.repo.refresh".into(),
+                plugin_generation: 1,
+                accepted_protocol_ids: vec![protocol_id.into()],
+                purity: RunnerPurity::Pure,
+                execution_class: ExecutionClass::Blocking,
+                input_schema: json!({ "type": "object" }),
+                output_schema: json!({ "type": "object" }),
+                batch: RunnerBatchCapability {
+                    mode: RunnerMode::NativeBatch,
+                    preferred_batch_size: max_entries,
+                    max_batch_entries: max_entries,
+                    max_entry_concurrency: max_entries,
+                    max_inflight_batches: 1,
+                    scalar_thread_safe: true,
+                    scalar_reentrant: true,
+                    partial_failure: true,
+                    preserve_order: false,
+                    side_effect: RunnerSideEffect::External,
+                },
+                payload: Default::default(),
+                resources: Default::default(),
+                ordering: Default::default(),
+                control: Default::default(),
+                metadata: BTreeMap::new(),
+                contract_surfaces: vec![format!("task_protocol:{protocol_id}")],
+            },
+        }
+    }
+}
 
+impl Runner for RepoRefreshRunner {
+    fn descriptor(&self) -> &RunnerDescriptor {
+        &self.descriptor
+    }
+
+    fn run_batch(
+        &mut self,
+        _ctx: RunnerContext,
+        batch: WorkBatch,
+    ) -> RuntimeResult<CompletionBatch> {
+        let tasks = match batch.row_payload_tasks() {
+            Ok(tasks) => tasks,
+            Err(error) => return Ok(CompletionBatch::from_error(&batch, error)),
+        };
+        let lane = self.lane;
+        let mut by_id = std::thread::scope(|scope| {
+            tasks
+                .into_iter()
+                .map(|task| {
+                    let task_id = task.task_id.clone();
+                    let worker = scope.spawn(move || {
+                        (task.task_id.clone(), execute_runtime_task(lane, task))
+                    });
+                    (task_id, worker)
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|(task_id, worker)| {
+                    worker.join().unwrap_or_else(|_| {
+                        let mut result = RunnerResult::completed(task_id.clone());
+                        result.status = RunnerStatus::Failed;
+                        (task_id, result)
+                    })
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        Ok(CompletionBatch::from_results(
+            &batch,
+            batch
+                .entries
+                .iter()
+                .map(|entry| EntryCompletion {
+                    entry_id: entry.entry_id.clone(),
+                    task_id: entry.task_id.clone(),
+                    result: Some(by_id.remove(&entry.task_id).unwrap_or_else(|| {
+                        let mut result = RunnerResult::completed(entry.task_id.clone());
+                        result.status = RunnerStatus::Failed;
+                        result
+                    })),
+                    error: None,
+                })
+                .collect(),
+        ))
+    }
+}
+
+fn execute_runtime_task(lane: RefreshLane, task: Task) -> RunnerResult {
+    let Ok(payload) = serde_json::from_value::<RefreshPayload>(task.payload) else {
+        let mut result = RunnerResult::completed(task.task_id);
+        result.status = RunnerStatus::Failed;
+        return result;
+    };
+    let Some((app, request, logical_task_id, include_detail)) = begin_run(lane, &payload) else {
+        return RunnerResult::completed(task.task_id);
+    };
+
+    update_workspace_task_and_emit(
+        &app,
+        &logical_task_id,
+        "running",
+        Some(refresh_running_message(lane).to_string()),
+        false,
+    );
+    let mut result = with_common_dir_guard(&app, &request.repo_id, || {
+        refresh_repo_for_scheduler(&app, &request, include_detail)
+    });
+    if let Ok(refresh) = &result {
+        if let Err(error) = commit_refresh_result(&app, &payload, refresh) {
+            result = Err(error);
+        }
+    }
+    let failed = result.is_err();
+    finish_run(lane, &payload, app, request, logical_task_id, result);
+    let mut outcome = RunnerResult::completed(task.task_id);
+    if failed {
+        outcome.status = RunnerStatus::Failed;
+    }
+    outcome
+}
+
+fn begin_run(
+    lane: RefreshLane,
+    payload: &RefreshPayload,
+) -> Option<(AppHandle, RepoRefreshRequest, String, bool)> {
+    let mut state = scheduler()
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if payload.generation != state.generation {
+        return None;
+    }
+    let active_repo = state.active_repo.clone();
+    let entry = state.entries.get_mut(&payload.key)?;
+    if entry.runtime_task_id != payload.run_id || request_lane(&entry.request) != lane
+    {
+        return None;
+    }
+    entry.state = EntryState::Running;
+    let include_detail = match entry.request.detail_scope.as_str() {
+        "detail" => true,
+        "summary" => false,
+        _ => active_repo.as_deref() == Some(entry.request.repo_id.as_str()),
+    };
+    Some((
+        entry.app.clone(),
+        entry.request.clone(),
+        entry.task_id.clone(),
+        include_detail,
+    ))
+}
+
+fn with_common_dir_guard<T>(app: &AppHandle, repo_id: &str, run: impl FnOnce() -> T) -> T {
+    let key = repo_path_by_id(app, repo_id)
+        .ok()
+        .map(|path| git_common_dir(&path).unwrap_or(path))
+        .unwrap_or_else(|| PathBuf::from(repo_id));
+    let guard = common_dir_guard(key);
+    let _held = guard.lock().unwrap_or_else(|error| error.into_inner());
+    run()
+}
+
+type RefreshResult = Result<
+    (
+        lilia_github_contracts::workspace::RepoSummary,
+        Option<lilia_github_contracts::workspace::RepoDetailPatch>,
+        Option<i64>,
+    ),
+    String,
+>;
+
+fn commit_refresh_result(
+    app: &AppHandle,
+    payload: &RefreshPayload,
+    refresh: &(
+        lilia_github_contracts::workspace::RepoSummary,
+        Option<lilia_github_contracts::workspace::RepoDetailPatch>,
+        Option<i64>,
+    ),
+) -> Result<(), String> {
+    let state = scheduler()
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let owns = payload.generation == state.generation
+        && state
+            .entries
+            .get(&payload.key)
+            .is_some_and(|entry| entry.runtime_task_id == payload.run_id);
+    if !owns {
+        return Err("工作区已切换，已丢弃刷新结果".to_string());
+    }
+    let settings = load_settings(app);
+    if let Some(checked_at) = refresh.2 {
+        write_startup_repo_summary_after_fetch(app, &settings, &refresh.0, checked_at)
+    } else {
+        write_startup_repo_summary(app, &settings, &refresh.0)
+    }
+}
+
+fn finish_run(
+    lane: RefreshLane,
+    payload: &RefreshPayload,
+    app: AppHandle,
+    request: RepoRefreshRequest,
+    task_id: String,
+    result: RefreshResult,
+) {
+    let mut event =
+        result.as_ref().ok().map(
+            |(summary, detail_patch, remote_checked_at)| RepoRefreshedEvent {
+                repo_id: request.repo_id.clone(),
+                mode: request.mode.clone(),
+                summary: summary.clone(),
+                detail_patch: detail_patch.clone(),
+                remote_checked_at: *remote_checked_at,
+            },
+        );
+    let rerun = {
+        let mut state = scheduler()
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let owns = payload.generation == state.generation
+            && state.entries.get(&payload.key).is_some_and(|entry| {
+                entry.runtime_task_id == payload.run_id
+            });
+        if !owns {
+            return;
+        }
+        if lane == RefreshLane::Remote {
+            update_remote_backoff(&mut state, &request.repo_id, result.is_ok());
+        }
+        if state.active_repo.as_deref() != Some(request.repo_id.as_str()) {
+            if let Some(event) = event.as_mut() {
+                event.detail_patch = None;
+            }
+        }
+        let rerun = state
+            .entries
+            .get_mut(&payload.key)
+            .and_then(|entry| entry.rerun.take());
+        if rerun.is_none() {
+            state.entries.remove(&payload.key);
+        }
+        rerun
+    };
+    if let Some(event) = event {
+        let _ = app.emit(REPO_REFRESHED_EVENT, &event);
+    }
+    if let Some(next) = rerun {
         update_workspace_task_and_emit(
             &app,
             &task_id,
-            "running",
-            Some(refresh_running_message(lane).to_string()),
-            false,
+            "pending",
+            Some("仓库发生了新的变化，等待再次刷新".to_string()),
+            true,
         );
-
-        let result = refresh_repo_for_scheduler(&app, &request, include_detail);
-        let mut event = result
-            .as_ref()
-            .ok()
-            .map(
-                |(summary, detail_patch, remote_checked_at)| RepoRefreshedEvent {
-                    repo_id: request.repo_id.clone(),
-                    mode: request.mode.clone(),
-                    summary: summary.clone(),
-                    detail_patch: detail_patch.clone(),
-                    remote_checked_at: *remote_checked_at,
-                },
-            );
-
-        let rerun = {
-            let mut state = scheduler
-                .state
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let owns_entry = state
-                .entries
-                .get(&key)
-                .is_some_and(|entry| entry.task_id == task_id);
-            if owns_entry && lane == RefreshLane::Remote {
-                update_remote_backoff(&mut state, &request.repo_id, result.is_ok());
-            }
-            if !owns_entry {
-                event = None;
-            } else if state.active_repo.as_deref() != Some(request.repo_id.as_str()) {
-                if let Some(event) = event.as_mut() {
-                    event.detail_patch = None;
-                }
-            }
-            let rerun = if owns_entry {
-                state
-                    .entries
-                    .get_mut(&key)
-                    .and_then(|entry| entry.rerun.take())
-            } else {
-                None
-            };
-            if owns_entry {
-                if let Some(next_request) = rerun.as_ref() {
-                    let sequence = next_sequence(&mut state);
-                    if let Some(entry) = state.entries.get_mut(&key) {
-                        entry.request = next_request.clone();
-                        entry.state = EntryState::Pending;
-                        entry.sequence = sequence;
-                    }
-                } else {
-                    state.entries.remove(&key);
-                }
-            }
-            rerun
-        };
-        scheduler.changed.notify_all();
-
-        if let Some(event) = event {
-            let _ = app.emit(REPO_REFRESHED_EVENT, &event);
+        if let Err(error) = schedule_rerun(&payload.key, app.clone(), next, &task_id) {
+            update_workspace_task_and_emit(&app, &task_id, "error", Some(error), false);
         }
-
-        if rerun.is_some() {
-            update_workspace_task_and_emit(
+    } else {
+        match result {
+            Ok(_) => update_workspace_task_and_emit(
                 &app,
                 &task_id,
-                "pending",
-                Some("仓库发生了新的变化，等待再次刷新".to_string()),
-                true,
-            );
-        } else {
-            match result {
-                Ok(_) => {
-                    update_workspace_task_and_emit(
-                        &app,
-                        &task_id,
-                        "success",
-                        Some(refresh_success_message(lane).to_string()),
-                        false,
-                    );
-                }
-                Err(error) => {
-                    update_workspace_task_and_emit(&app, &task_id, "error", Some(error), false);
-                }
+                "success",
+                Some(refresh_success_message(lane).to_string()),
+                false,
+            ),
+            Err(error) => {
+                update_workspace_task_and_emit(&app, &task_id, "error", Some(error), false)
             }
-        }
+        };
     }
 }
 
-fn next_pending_key(state: &SchedulerState, lane: RefreshLane) -> Option<String> {
-    if lane == RefreshLane::Local && state.local_paused {
-        return None;
+fn schedule_rerun(
+    key: &str,
+    app: AppHandle,
+    request: RepoRefreshRequest,
+    task_id: &str,
+) -> Result<(), String> {
+    let (generation, run_id) = {
+        let mut state = scheduler()
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let generation = state.generation;
+        let sequence = next_sequence(&mut state);
+        let run_id = format!("{task_id}:refresh:{generation}:{sequence}");
+        state.entries.insert(
+            key.to_string(),
+            ScheduledRefresh {
+                app,
+                request,
+                task_id: task_id.to_string(),
+                state: EntryState::Pending,
+                rerun: None,
+                runtime_task_id: run_id.clone(),
+                runtime_handle: None,
+            },
+        );
+        (generation, run_id)
+    };
+    if let Err(error) = submit_runtime_task(key, generation, run_id.clone()) {
+        if discard_failed_submission(key, generation, &run_id) {
+            return Err(error);
+        }
     }
-    state
-        .entries
-        .iter()
-        .filter(|(_, entry)| {
-            entry.state == EntryState::Pending
-                && request_lane(&entry.request) == lane
-                && !state.entries.values().any(|running| {
-                    running.state == EntryState::Running
-                        && running.request.repo_id == entry.request.repo_id
-                })
+    Ok(())
+}
+
+fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(), String> {
+    let (app, mut task) = {
+        let state = scheduler()
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let entry = state
+            .entries
+            .get(key)
+            .ok_or_else(|| "刷新任务已失效".to_string())?;
+        let protocol = match request_lane(&entry.request) {
+            RefreshLane::Local => LOCAL_REFRESH_PROTOCOL,
+            RefreshLane::Remote => REMOTE_REFRESH_PROTOCOL,
+        };
+        let payload = serde_json::to_value(RefreshPayload {
+            key: key.to_string(),
+            generation,
+            run_id: run_id.clone(),
         })
-        .min_by_key(|(_, entry)| (priority_rank(&entry.request.priority), entry.sequence))
-        .map(|(key, _)| key.clone())
+        .map_err(|error| error.to_string())?;
+        let mut task = Task::new(run_id.clone(), protocol, payload);
+        task.priority = mutsuki_priority(&entry.request.priority);
+        task.runner_hint = Some(protocol.to_string());
+        task.correlation_id = Some(entry.task_id.clone());
+        (entry.app.clone(), task)
+    };
+    task.idempotency_key = Some(run_id.clone());
+    let handle = app.submit_mutsuki_task(task)?;
+    let mut state = scheduler()
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let current_generation = state.generation == generation;
+    if let Some(entry) = state.entries.get_mut(key) {
+        if current_generation && entry.runtime_task_id == run_id {
+            entry.runtime_handle = Some(handle);
+        }
+    }
+    Ok(())
+}
+
+fn discard_failed_submission(key: &str, generation: u64, run_id: &str) -> bool {
+    let mut state = scheduler()
+        .state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let owns = state.generation == generation
+        && state
+            .entries
+            .get(key)
+            .is_some_and(|entry| entry.runtime_task_id == run_id);
+    if owns {
+        state.entries.remove(key);
+    }
+    owns
+}
+
+fn mutsuki_priority(priority: &str) -> i64 {
+    match priority {
+        "high" => 100,
+        "normal" => 0,
+        _ => -100,
+    }
 }
 
 fn priority_rank(priority: &str) -> usize {
@@ -318,6 +641,78 @@ fn merge_scheduled_entry(
     }
 }
 
+enum ExistingMerge {
+    Merged(String),
+    Resubmit {
+        app: AppHandle,
+        key: String,
+        task_id: String,
+        generation: u64,
+        run_id: String,
+        previous_handle: Option<TaskHandle>,
+    },
+}
+
+fn merge_existing_refresh(
+    state: &mut SchedulerState,
+    key: &str,
+    incoming: &RepoRefreshRequest,
+    lane: RefreshLane,
+) -> Option<ExistingMerge> {
+    let promoted = state.entries.get(key).is_some_and(|entry| {
+        entry.state == EntryState::Pending
+            && priority_rank(&incoming.priority) < priority_rank(&entry.request.priority)
+    });
+    let sequence = promoted.then(|| next_sequence(state));
+    let generation = state.generation;
+    let entry = state.entries.get_mut(key)?;
+    merge_scheduled_entry(entry, incoming, lane);
+    let Some(sequence) = sequence else {
+        return Some(ExistingMerge::Merged(entry.task_id.clone()));
+    };
+    let run_id = format!("{}:refresh:{generation}:{sequence}", entry.task_id);
+    entry.runtime_task_id = run_id.clone();
+    Some(ExistingMerge::Resubmit {
+        app: entry.app.clone(),
+        key: key.to_string(),
+        task_id: entry.task_id.clone(),
+        generation,
+        run_id,
+        previous_handle: entry.runtime_handle.take(),
+    })
+}
+
+fn finish_existing_merge(merged: ExistingMerge) -> Result<String, String> {
+    match merged {
+        ExistingMerge::Merged(task_id) => Ok(task_id),
+        ExistingMerge::Resubmit {
+            app,
+            key,
+            task_id,
+            generation,
+            run_id,
+            previous_handle,
+        } => {
+            if let Some(handle) = previous_handle {
+                let _ = app.cancel_mutsuki_task(handle);
+            }
+            if let Err(error) = submit_runtime_task(&key, generation, run_id.clone()) {
+                if discard_failed_submission(&key, generation, &run_id) {
+                    update_workspace_task_and_emit(
+                        &app,
+                        &task_id,
+                        "error",
+                        Some(error.clone()),
+                        false,
+                    );
+                    return Err(error);
+                }
+            }
+            Ok(task_id)
+        }
+    }
+}
+
 fn detail_scope_rank(scope: &str) -> usize {
     match scope {
         "detail" => 2,
@@ -372,21 +767,19 @@ pub fn workspace_enqueue_repo_refresh(
 ) -> Result<String, String> {
     let request = normalize_request(request)?;
     repo_path_by_id(&app, &request.repo_id)?;
-    let scheduler = scheduler();
     let key = refresh_key(&request);
     let lane = request_lane(&request);
-
-    {
-        let mut state = scheduler
+    let existing = {
+        let mut state = scheduler()
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some(entry) = state.entries.get_mut(&key) {
-            merge_scheduled_entry(entry, &request, lane);
-            return Ok(entry.task_id.clone());
-        }
-
-        if lane == RefreshLane::Remote && !request.force && request.trigger != "autoSync" {
+        let existing = merge_existing_refresh(&mut state, &key, &request, lane);
+        if existing.is_none()
+            && lane == RefreshLane::Remote
+            && !request.force
+            && request.trigger != "autoSync"
+        {
             let manual = request.priority == "high" || request.trigger == "manual";
             if !manual && state.active_repo.as_deref() != Some(request.repo_id.as_str()) {
                 drop(state);
@@ -397,22 +790,26 @@ pub fn workspace_enqueue_repo_refresh(
                 ));
             }
         }
-        if lane == RefreshLane::Remote && !request.force {
-            if state
+        if existing.is_none()
+            && lane == RefreshLane::Remote
+            && !request.force
+            && state
                 .remote_backoff
                 .get(&request.repo_id)
                 .is_some_and(|backoff| backoff.retry_at > now_millis())
-            {
-                drop(state);
-                return Ok(record_skipped_remote_task(
-                    &app,
-                    &request,
-                    "远端检查处于失败退避期",
-                ));
-            }
+        {
+            drop(state);
+            return Ok(record_skipped_remote_task(
+                &app,
+                &request,
+                "远端检查处于失败退避期",
+            ));
         }
+        existing
+    };
+    if let Some(existing) = existing {
+        return finish_existing_merge(existing);
     }
-
     if lane == RefreshLane::Remote
         && !request.force
         && remote_cache_is_fresh(&app, &request.repo_id)
@@ -423,43 +820,52 @@ pub fn workspace_enqueue_repo_refresh(
             "远端状态缓存仍然有效",
         ));
     }
-
     let kind = if lane == RefreshLane::Remote {
         "repoRemote"
     } else {
         "repoStatus"
     };
-    let mut state = scheduler
-        .state
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    if let Some(existing) = state.entries.get_mut(&key) {
-        merge_scheduled_entry(existing, &request, lane);
-        return Ok(existing.task_id.clone());
+    let (task, generation, run_id) = {
+        let mut state = scheduler()
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(existing) = merge_existing_refresh(&mut state, &key, &request, lane) {
+            drop(state);
+            return finish_existing_merge(existing);
+        }
+        let task = record_workspace_task_and_emit(
+            &app,
+            kind,
+            &request.priority,
+            Some(request.repo_id.clone()),
+            "pending",
+            Some("等待后台刷新".to_string()),
+            true,
+        );
+        let generation = state.generation;
+        let sequence = next_sequence(&mut state);
+        let run_id = format!("{}:refresh:{generation}:{sequence}", task.id);
+        state.entries.insert(
+            key.clone(),
+            ScheduledRefresh {
+                app: app.clone(),
+                request,
+                task_id: task.id.clone(),
+                state: EntryState::Pending,
+                rerun: None,
+                runtime_task_id: run_id.clone(),
+                runtime_handle: None,
+            },
+        );
+        (task, generation, run_id)
+    };
+    if let Err(error) = submit_runtime_task(&key, generation, run_id.clone()) {
+        if discard_failed_submission(&key, generation, &run_id) {
+            update_workspace_task_and_emit(&app, &task.id, "error", Some(error.clone()), false);
+            return Err(error);
+        }
     }
-    let task = record_workspace_task_and_emit(
-        &app,
-        kind,
-        &request.priority,
-        Some(request.repo_id.clone()),
-        "pending",
-        Some("等待后台刷新".to_string()),
-        true,
-    );
-    let sequence = next_sequence(&mut state);
-    state.entries.insert(
-        key,
-        ScheduledRefresh {
-            app,
-            request,
-            task_id: task.id.clone(),
-            state: EntryState::Pending,
-            rerun: None,
-            sequence,
-        },
-    );
-    drop(state);
-    scheduler.changed.notify_all();
     Ok(task.id)
 }
 
@@ -470,14 +876,13 @@ pub fn workspace_set_active_repo(app: AppHandle, repo_id: Option<String>) -> Res
     if let Some(repo_id) = repo_id.as_deref() {
         repo_path_by_id(&app, repo_id)?;
     }
-    let scheduler = scheduler();
     let cancelled = {
-        let mut state = scheduler
+        let mut state = scheduler()
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         state.active_repo = repo_id.clone();
-        let keys: Vec<String> = state
+        let keys = state
             .entries
             .iter()
             .filter(|(_, entry)| {
@@ -487,34 +892,21 @@ pub fn workspace_set_active_repo(app: AppHandle, repo_id: Option<String>) -> Res
                     && Some(entry.request.repo_id.as_str()) != repo_id.as_deref()
             })
             .map(|(key, _)| key.clone())
-            .collect();
+            .collect::<Vec<_>>();
         keys.into_iter()
             .filter_map(|key| state.entries.remove(&key))
-            .map(|entry| (entry.app, entry.task_id))
             .collect::<Vec<_>>()
     };
-    for (task_app, task_id) in cancelled {
-        update_workspace_task_and_emit(
-            &task_app,
-            &task_id,
-            "cancelled",
-            Some("已切换到其他仓库".to_string()),
-            false,
-        );
-    }
+    cancel_entries(cancelled, "已切换到其他仓库");
     Ok(())
 }
 
 pub fn workspace_set_refresh_paused(paused: bool) -> Result<(), String> {
-    let scheduler = scheduler();
-    scheduler
+    scheduler()
         .state
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .local_paused = paused;
-    if !paused {
-        scheduler.changed.notify_all();
-    }
     Ok(())
 }
 
@@ -527,91 +919,105 @@ pub(crate) fn enqueue_watcher_repo_refresh(
         app,
         RepoRefreshRequest {
             repo_id,
-            mode: "local".to_string(),
-            priority: "low".to_string(),
+            mode: "local".into(),
+            priority: "low".into(),
             force: false,
-            detail_scope: "auto".to_string(),
+            detail_scope: "auto".into(),
             include_commits: git_metadata_changed,
             include_branches: git_metadata_changed,
-            trigger: "watch".to_string(),
+            trigger: "watch".into(),
         },
     )
     .unwrap_or_default()
 }
 
-pub(crate) fn enqueue_uncertain_repo_refreshes<I>(app: AppHandle, repo_ids: I)
-where
-    I: IntoIterator<Item = String>,
-{
+pub(crate) fn enqueue_uncertain_repo_refreshes<I: IntoIterator<Item = String>>(
+    app: AppHandle,
+    repo_ids: I,
+) {
     for repo_id in repo_ids {
         let _ = workspace_enqueue_repo_refresh(
             app.clone(),
             RepoRefreshRequest {
                 repo_id,
-                mode: "local".to_string(),
-                priority: "low".to_string(),
+                mode: "local".into(),
+                priority: "low".into(),
                 force: false,
-                detail_scope: "auto".to_string(),
+                detail_scope: "auto".into(),
                 include_commits: true,
                 include_branches: true,
-                trigger: "reconcile".to_string(),
+                trigger: "reconcile".into(),
             },
         );
     }
 }
 
-pub(crate) fn enqueue_baseline_repo_refreshes<I>(app: AppHandle, repo_ids: I)
-where
-    I: IntoIterator<Item = String>,
-{
+pub(crate) fn enqueue_baseline_repo_refreshes<I: IntoIterator<Item = String>>(
+    app: AppHandle,
+    repo_ids: I,
+) {
     enqueue_uncertain_repo_refreshes(app, repo_ids);
 }
 
 pub(crate) fn reset_refresh_scheduler() {
-    let scheduler = scheduler();
     let cancelled = {
-        let mut state = scheduler
+        let mut state = scheduler()
             .state
             .lock()
             .unwrap_or_else(|error| error.into_inner());
+        state.generation = state.generation.wrapping_add(1);
         state.active_repo = None;
         state.local_paused = false;
         state.remote_backoff.clear();
         state
             .entries
             .drain()
-            .filter(|(_, entry)| entry.state == EntryState::Pending)
-            .map(|(_, entry)| (entry.app, entry.task_id))
             .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(_, entry)| entry)
+            .collect()
     };
-    for (app, task_id) in cancelled {
+    cancel_entries(cancelled, "工作区已切换");
+}
+
+fn cancel_entries(entries: Vec<ScheduledRefresh>, message: &str) {
+    for entry in entries {
+        if entry.state == EntryState::Pending {
+            if let Some(handle) = entry.runtime_handle {
+                let _ = entry.app.cancel_mutsuki_task(handle);
+            }
+        }
         update_workspace_task_and_emit(
-            &app,
-            &task_id,
+            &entry.app,
+            &entry.task_id,
             "cancelled",
-            Some("工作区已切换".to_string()),
+            Some(message.to_string()),
             false,
         );
     }
-    scheduler.changed.notify_all();
 }
 
 pub(super) fn cancel_pending_refresh(task_id: &str) -> bool {
-    let scheduler = scheduler();
-    let mut state = scheduler
-        .state
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    remove_pending_refresh(&mut state, task_id)
-}
-
-fn remove_pending_refresh(state: &mut SchedulerState, task_id: &str) -> bool {
-    let key = state
-        .entries
-        .iter()
-        .find(|(_, entry)| entry.task_id == task_id && entry.state == EntryState::Pending)
-        .map(|(key, _)| key.clone());
-    key.and_then(|key| state.entries.remove(&key)).is_some()
+    let entry = {
+        let mut state = scheduler()
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let key = state
+            .entries
+            .iter()
+            .find(|(_, entry)| entry.task_id == task_id && entry.state == EntryState::Pending)
+            .map(|(key, _)| key.clone());
+        key.and_then(|key| state.entries.remove(&key))
+    };
+    if let Some(entry) = entry {
+        if let Some(handle) = entry.runtime_handle {
+            let _ = entry.app.cancel_mutsuki_task(handle);
+        }
+        true
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -620,197 +1026,43 @@ mod tests {
 
     fn request(repo_id: &str, mode: &str, priority: &str) -> RepoRefreshRequest {
         RepoRefreshRequest {
-            repo_id: repo_id.to_string(),
-            mode: mode.to_string(),
-            priority: priority.to_string(),
+            repo_id: repo_id.into(),
+            mode: mode.into(),
+            priority: priority.into(),
             force: false,
-            detail_scope: "summary".to_string(),
+            detail_scope: "summary".into(),
             include_commits: false,
             include_branches: false,
-            trigger: "watch".to_string(),
+            trigger: "watch".into(),
         }
     }
 
     #[test]
-    fn pending_refresh_selection_respects_lane_priority_and_fifo() {
-        let app = AppHandle::new(Arc::new(crate::workspace::tests::NoopWorkspaceRuntime));
-        let mut state = SchedulerState::default();
-        for (sequence, item) in [
-            request("low", "local", "low"),
-            request("remote", "remote", "high"),
-            request("normal-first", "local", "normal"),
-            request("normal-second", "local", "normal"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let key = refresh_key(&item);
-            state.entries.insert(
-                key,
-                ScheduledRefresh {
-                    app: app.clone(),
-                    request: item,
-                    task_id: format!("task-{sequence}"),
-                    state: EntryState::Pending,
-                    rerun: None,
-                    sequence: sequence as u64,
-                },
-            );
-        }
+    fn runners_expose_local_four_remote_one_blocking_capacity() {
+        let runners = repo_refresh_runners();
         assert_eq!(
-            next_pending_key(&state, RefreshLane::Local).as_deref(),
-            Some("repo-local:normal-first")
+            runners[0].descriptor().execution_class,
+            ExecutionClass::Blocking
         );
-        assert_eq!(
-            next_pending_key(&state, RefreshLane::Remote).as_deref(),
-            Some("repo-remote:remote")
-        );
+        assert_eq!(runners[0].descriptor().batch.max_entry_concurrency, 4);
+        assert_eq!(runners[1].descriptor().batch.max_entry_concurrency, 1);
+        let config = refresh_runtime_config();
+        assert_eq!(config.blocking_threads, 2);
+        assert_eq!(config.runner_limits[LOCAL_REFRESH_PROTOCOL].max_running, 4);
+        assert_eq!(config.runner_limits[REMOTE_REFRESH_PROTOCOL].max_running, 1);
     }
 
     #[test]
-    fn paused_local_lane_keeps_pending_work_until_resumed() {
-        let app = AppHandle::new(Arc::new(crate::workspace::tests::NoopWorkspaceRuntime));
-        let mut state = SchedulerState {
-            local_paused: true,
-            ..SchedulerState::default()
-        };
-        state.entries.insert(
-            "repo-local:repo".to_string(),
-            ScheduledRefresh {
-                app,
-                request: request("repo", "local", "low"),
-                task_id: "task".to_string(),
-                state: EntryState::Pending,
-                rerun: None,
-                sequence: 1,
-            },
-        );
-        assert!(next_pending_key(&state, RefreshLane::Local).is_none());
-        state.local_paused = false;
-        assert_eq!(
-            next_pending_key(&state, RefreshLane::Local).as_deref(),
-            Some("repo-local:repo")
-        );
-    }
-
-    #[test]
-    fn pending_refresh_waits_for_the_other_lane_on_the_same_repo() {
-        let app = AppHandle::new(Arc::new(crate::workspace::tests::NoopWorkspaceRuntime));
-        let mut state = SchedulerState::default();
-        for (item, task_id, entry_state, sequence) in [
-            (
-                request("shared", "remote", "normal"),
-                "remote-running",
-                EntryState::Running,
-                0,
-            ),
-            (
-                request("shared", "local", "high"),
-                "local-blocked",
-                EntryState::Pending,
-                1,
-            ),
-            (
-                request("other", "local", "low"),
-                "local-other",
-                EntryState::Pending,
-                2,
-            ),
-        ] {
-            state.entries.insert(
-                refresh_key(&item),
-                ScheduledRefresh {
-                    app: app.clone(),
-                    request: item,
-                    task_id: task_id.to_string(),
-                    state: entry_state,
-                    rerun: None,
-                    sequence,
-                },
-            );
-        }
-
-        assert_eq!(
-            next_pending_key(&state, RefreshLane::Local).as_deref(),
-            Some("repo-local:other")
-        );
-        state.entries.remove("repo-remote:shared");
-        assert_eq!(
-            next_pending_key(&state, RefreshLane::Local).as_deref(),
-            Some("repo-local:shared")
-        );
-    }
-
-    #[test]
-    fn coalescing_promotes_priority_and_keeps_expensive_detail_flags() {
+    fn coalescing_promotes_priority_and_preserves_expensive_flags() {
         let mut target = request("repo", "local", "low");
-        target.detail_scope = "auto".to_string();
         let mut incoming = request("repo", "local", "high");
-        incoming.detail_scope = "detail".to_string();
+        incoming.detail_scope = "detail".into();
         incoming.include_commits = true;
-        incoming.force = true;
-        incoming.trigger = "manual".to_string();
+        incoming.include_branches = true;
         merge_request(&mut target, &incoming);
         assert_eq!(target.priority, "high");
         assert_eq!(target.detail_scope, "detail");
-        assert!(target.include_commits);
-        assert!(target.force);
-        assert_eq!(target.trigger, "manual");
-    }
-
-    #[test]
-    fn cancellation_removes_only_pending_refreshes() {
-        let app = AppHandle::new(Arc::new(crate::workspace::tests::NoopWorkspaceRuntime));
-        let mut state = SchedulerState::default();
-        for (repo_id, task_id, entry_state) in [
-            ("pending", "task-pending", EntryState::Pending),
-            ("running", "task-running", EntryState::Running),
-        ] {
-            let item = request(repo_id, "local", "low");
-            state.entries.insert(
-                refresh_key(&item),
-                ScheduledRefresh {
-                    app: app.clone(),
-                    request: item,
-                    task_id: task_id.to_string(),
-                    state: entry_state,
-                    rerun: None,
-                    sequence: 0,
-                },
-            );
-        }
-        assert!(remove_pending_refresh(&mut state, "task-pending"));
-        assert!(!remove_pending_refresh(&mut state, "task-running"));
-        assert!(state.entries.contains_key("repo-local:running"));
-    }
-
-    #[test]
-    fn running_local_refresh_keeps_one_merged_rerun() {
-        let app = AppHandle::new(Arc::new(crate::workspace::tests::NoopWorkspaceRuntime));
-        let initial = request("repo", "local", "low");
-        let mut entry = ScheduledRefresh {
-            app,
-            request: initial,
-            task_id: "task".to_string(),
-            state: EntryState::Running,
-            rerun: None,
-            sequence: 0,
-        };
-        let mut metadata = request("repo", "local", "normal");
-        metadata.detail_scope = "auto".to_string();
-        metadata.include_commits = true;
-        merge_scheduled_entry(&mut entry, &metadata, RefreshLane::Local);
-
-        let mut manual = request("repo", "local", "high");
-        manual.detail_scope = "detail".to_string();
-        manual.include_branches = true;
-        merge_scheduled_entry(&mut entry, &manual, RefreshLane::Local);
-
-        let rerun = entry.rerun.expect("running refresh should keep a rerun");
-        assert_eq!(rerun.priority, "high");
-        assert_eq!(rerun.detail_scope, "detail");
-        assert!(rerun.include_commits);
-        assert!(rerun.include_branches);
+        assert!(target.include_commits && target.include_branches);
     }
 
     #[test]
@@ -827,7 +1079,5 @@ mod tests {
         assert!((REMOTE_BACKOFF_MS[0]..=REMOTE_BACKOFF_MS[0] + 100).contains(&first));
         assert!((REMOTE_BACKOFF_MS[1]..=REMOTE_BACKOFF_MS[1] + 100).contains(&second));
         assert!((REMOTE_BACKOFF_MS[2]..=REMOTE_BACKOFF_MS[2] + 100).contains(&fourth));
-        update_remote_backoff(&mut state, "repo", true);
-        assert!(!state.remote_backoff.contains_key("repo"));
     }
 }

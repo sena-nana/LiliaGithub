@@ -2456,7 +2456,20 @@ let fallbackTasks: WorkspaceTask[] = [];
 let fallbackActiveRepoId: string | null = null;
 const fallbackBaselineRepoKeys = new Set<string>();
 let fallbackRefreshPaused = false;
-const fallbackRepoRefreshRequests = new Map<string, WorkspaceRepoRefreshRequest>();
+type FallbackRefreshEntry = {
+  taskId: string;
+  request: WorkspaceRepoRefreshRequest;
+  state: "pending" | "running";
+  rerun: WorkspaceRepoRefreshRequest | null;
+  sequence: number;
+  generation: number;
+};
+const fallbackRepoRefreshEntries = new Map<string, FallbackRefreshEntry>();
+let fallbackRefreshSequence = 0;
+let fallbackRefreshGeneration = 0;
+let fallbackLocalRefreshesRunning = 0;
+let fallbackRemoteRefreshesRunning = 0;
+let fallbackRefreshPumpScheduled = false;
 const fallbackRemoteFailureCounts = new Map<string, number>();
 const fallbackRemoteRetryAt = new Map<string, number>();
 let fallbackStartupCache: WorkspaceStartupCache | null = null;
@@ -2470,6 +2483,7 @@ let fallbackLaunchCandidatesOverride: Record<string, ProjectLaunchCandidate[]> |
 let fallbackStopLaunchOverride: ((repoId: string) => Promise<ProjectLaunchStatus> | ProjectLaunchStatus) | null = null;
 
 export function resetWorkspaceFallbacksForTests() {
+  fallbackRefreshGeneration += 1;
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
@@ -2538,7 +2552,11 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackActiveRepoId = null;
   fallbackBaselineRepoKeys.clear();
   fallbackRefreshPaused = false;
-  fallbackRepoRefreshRequests.clear();
+  fallbackRepoRefreshEntries.clear();
+  fallbackRefreshSequence = 0;
+  fallbackLocalRefreshesRunning = 0;
+  fallbackRemoteRefreshesRunning = 0;
+  fallbackRefreshPumpScheduled = false;
   fallbackRemoteFailureCounts.clear();
   fallbackRemoteRetryAt.clear();
   fallbackStartupCache = null;
@@ -3768,6 +3786,9 @@ export function cancelWorkspaceTask(taskId: string): Promise<void> {
     if (!task || task.status !== "pending" || !task.cancellable) {
       throw new Error("任务当前不可取消");
     }
+    const entry = Array.from(fallbackRepoRefreshEntries.values())
+      .find((candidate) => candidate.taskId === taskId);
+    if (entry) fallbackRepoRefreshEntries.delete(fallbackRefreshKey(entry.request));
     updateFallbackTask(taskId, "cancelled", "已取消", false);
   });
 }
@@ -3775,42 +3796,36 @@ export function cancelWorkspaceTask(taskId: string): Promise<void> {
 export function setActiveWorkspaceRepo(repoId: string | null): Promise<void> {
   return call("workspace_set_active_repo", { repoId }, () => {
     fallbackActiveRepoId = repoId;
-    for (const task of fallbackTasks) {
-      if (
-        task.kind === "repoRemote" &&
-        task.status === "pending" &&
-        task.cancellable &&
-        task.repoId !== repoId &&
-        fallbackRepoRefreshRequests.get(task.id)?.trigger !== "autoSync"
-      ) {
-        updateFallbackTask(task.id, "cancelled", "已取消", false);
-      }
+    for (const entry of fallbackRepoRefreshEntries.values()) {
+      if (entry.request.mode !== "remote" || entry.state !== "pending") continue;
+      if (entry.request.repoId === repoId || entry.request.trigger === "autoSync") continue;
+      fallbackRepoRefreshEntries.delete(fallbackRefreshKey(entry.request));
+      updateFallbackTask(entry.taskId, "cancelled", "已取消", false);
     }
+    scheduleFallbackRefreshPump();
   });
 }
 
 export function setWorkspaceRefreshPaused(paused: boolean): Promise<void> {
   return call("workspace_set_refresh_paused", { paused }, () => {
     fallbackRefreshPaused = paused;
-    if (!paused) {
-      for (const [taskId, request] of fallbackRepoRefreshRequests) {
-        const task = fallbackTasks.find((item) => item.id === taskId);
-        if (request.mode === "local" && task?.status === "pending") {
-          setTimeout(() => void runFallbackRepoRefresh(taskId, request), 0);
-        }
-      }
-    }
+    if (!paused) scheduleFallbackRefreshPump();
   });
 }
 
 export function enqueueRepoRefresh(request: WorkspaceRepoRefreshRequest): Promise<string> {
   return call("workspace_enqueue_repo_refresh", { request }, () => {
-    const existing = fallbackTasks.find((task) =>
-      task.repoId === request.repoId &&
-      task.kind === (request.mode === "remote" ? "repoRemote" : "repoStatus") &&
-      (task.status === "pending" || task.status === "running")
-    );
-    if (existing) return existing.id;
+    const key = fallbackRefreshKey(request);
+    const existing = fallbackRepoRefreshEntries.get(key);
+    if (existing) {
+      if (existing.state === "running") {
+        existing.rerun = mergeFallbackRefreshRequest(existing.rerun ?? request, request);
+      } else {
+        existing.request = mergeFallbackRefreshRequest(existing.request, request);
+        updateFallbackPendingTask(existing);
+      }
+      return existing.taskId;
+    }
     const task = recordFallbackTask(
       request.mode === "remote" ? "repoRemote" : "repoStatus",
       request.priority,
@@ -3820,65 +3835,180 @@ export function enqueueRepoRefresh(request: WorkspaceRepoRefreshRequest): Promis
       true,
     );
     emitFallbackWorkspaceEvent("workspace://task-changed", task);
-    fallbackRepoRefreshRequests.set(task.id, request);
-    setTimeout(() => void runFallbackRepoRefresh(task.id, request), 0);
+    fallbackRepoRefreshEntries.set(key, {
+      taskId: task.id,
+      request: { ...request },
+      state: "pending",
+      rerun: null,
+      sequence: fallbackRefreshSequence++,
+      generation: fallbackRefreshGeneration,
+    });
+    scheduleFallbackRefreshPump();
     return task.id;
   });
 }
 
-async function runFallbackRepoRefresh(taskId: string, request: WorkspaceRepoRefreshRequest) {
-  const pending = fallbackTasks.find((task) => task.id === taskId);
-  if (!pending || pending.status !== "pending") return;
-  if (request.mode === "local" && fallbackRefreshPaused) return;
+function fallbackRefreshKey(request: WorkspaceRepoRefreshRequest) {
+  return `${request.mode}:${request.repoId}`;
+}
+
+function mergeFallbackRefreshRequest(
+  current: WorkspaceRepoRefreshRequest,
+  incoming: WorkspaceRepoRefreshRequest,
+): WorkspaceRepoRefreshRequest {
+  const priority = { low: 0, normal: 1, high: 2 } as const;
+  const detailScopeRank = { summary: 0, auto: 1, detail: 2 } as const;
+  const detailScope = detailScopeRank[incoming.detailScope ?? "summary"] > detailScopeRank[current.detailScope ?? "summary"]
+    ? incoming.detailScope
+    : current.detailScope;
+  return {
+    ...current,
+    priority: priority[incoming.priority] > priority[current.priority] ? incoming.priority : current.priority,
+    force: current.force || incoming.force,
+    detailScope,
+    includeCommits: Boolean(current.includeCommits || incoming.includeCommits),
+    includeBranches: Boolean(current.includeBranches || incoming.includeBranches),
+    trigger: incoming.force || incoming.trigger === "manual" ? incoming.trigger : current.trigger,
+  };
+}
+
+function updateFallbackPendingTask(entry: FallbackRefreshEntry) {
+  const task = fallbackTasks.find((candidate) => candidate.id === entry.taskId);
+  if (!task || task.priority === entry.request.priority) return;
+  Object.assign(task, { priority: entry.request.priority, updatedAt: Date.now() });
+  fallbackTasks = normalizeWorkspaceTasks(fallbackTasks);
+  emitFallbackWorkspaceEvent("workspace://task-changed", { ...task });
+}
+
+function scheduleFallbackRefreshPump() {
+  if (fallbackRefreshPumpScheduled) return;
+  fallbackRefreshPumpScheduled = true;
+  setTimeout(() => {
+    fallbackRefreshPumpScheduled = false;
+    pumpFallbackRefreshes();
+  }, 0);
+}
+
+function pumpFallbackRefreshes() {
+  while (!fallbackRefreshPaused && fallbackLocalRefreshesRunning < 4) {
+    const entry = nextFallbackRefresh("local");
+    if (!entry) break;
+    startFallbackRepoRefresh(entry);
+  }
+  while (fallbackRemoteRefreshesRunning < 1) {
+    const entry = nextFallbackRefresh("remote");
+    if (!entry) break;
+    startFallbackRepoRefresh(entry);
+  }
+}
+
+function nextFallbackRefresh(mode: WorkspaceRepoRefreshRequest["mode"]) {
+  const priority = { low: 0, normal: 1, high: 2 } as const;
+  return Array.from(fallbackRepoRefreshEntries.values())
+    .filter((entry) =>
+      entry.state === "pending" &&
+      entry.request.mode === mode &&
+      !fallbackRefreshResourceIsRunning(entry.request)
+    )
+    .sort((left, right) =>
+      priority[right.request.priority] - priority[left.request.priority] || left.sequence - right.sequence
+    )[0];
+}
+
+function fallbackRefreshResourceIsRunning(request: WorkspaceRepoRefreshRequest) {
+  const resourceKey = fallbackRefreshResourceKey(request);
+  return Array.from(fallbackRepoRefreshEntries.values()).some((entry) =>
+    entry.state === "running" && fallbackRefreshResourceKey(entry.request) === resourceKey
+  );
+}
+
+function fallbackRefreshResourceKey(request: WorkspaceRepoRefreshRequest) {
+  const repo = allFallbackRepos().find((candidate) => candidate.id === request.repoId);
+  return repo?.worktree.sharedRepoKey || request.repoId;
+}
+
+function startFallbackRepoRefresh(entry: FallbackRefreshEntry) {
+  entry.state = "running";
+  if (entry.request.mode === "local") fallbackLocalRefreshesRunning += 1;
+  else fallbackRemoteRefreshesRunning += 1;
+  void runFallbackRepoRefresh(entry);
+}
+
+async function runFallbackRepoRefresh(entry: FallbackRefreshEntry) {
+  const generation = entry.generation;
+  const request = entry.request;
+  let outcome!: { status: "success" | "error" | "cancelled"; message: string };
   if (request.mode === "remote" && request.trigger !== "autoSync" && fallbackActiveRepoId !== request.repoId) {
-    updateFallbackTask(taskId, "cancelled", "已取消", false);
+    outcome = { status: "cancelled", message: "已取消" };
+  } else {
+    updateFallbackTask(entry.taskId, "running", null, false);
+    try {
+      let remoteIsFresh = false;
+      if (request.mode === "remote" && !request.force) {
+        const now = Date.now();
+        const cached = currentStartupCache().reposById[request.repoId];
+        const remoteCheckedAt = cached?.remoteCheckedAt ?? null;
+        const retryAt = fallbackRemoteRetryAt.get(request.repoId) ?? 0;
+        remoteIsFresh = (remoteCheckedAt != null && now - remoteCheckedAt < 10 * 60_000) || retryAt > now;
+        if (remoteIsFresh) {
+          outcome = { status: "success", message: "远端状态仍然有效" };
+        }
+      }
+      if (!remoteIsFresh) {
+        const summary = request.mode === "remote"
+          ? refreshFallbackRemoteRepo(request.repoId)
+          : cloneRepoSummary(fallbackRepo(request.repoId));
+        const remoteCheckedAt = request.mode === "remote" ? Date.now() : undefined;
+        const detailPatch = request.detailScope === "detail"
+          ? await refreshRepoDetailPatch(request.repoId, {
+              includeCommits: request.includeCommits,
+              includeBranches: request.includeBranches,
+            })
+          : null;
+        if (generation !== fallbackRefreshGeneration) return;
+        if (request.mode === "remote") {
+          fallbackRemoteFailureCounts.delete(request.repoId);
+          fallbackRemoteRetryAt.delete(request.repoId);
+        }
+        writeFallbackStartupRepoSummary(summary, remoteCheckedAt);
+        const event: WorkspaceRepoRefreshedEvent = {
+          repoId: request.repoId,
+          mode: request.mode,
+          summary,
+          detailPatch,
+          remoteCheckedAt,
+        };
+        emitFallbackWorkspaceEvent("workspace://repo-refreshed", event);
+        outcome = { status: "success", message: "仓库状态已更新" };
+      }
+    } catch (err) {
+      if (generation !== fallbackRefreshGeneration) return;
+      if (request.mode === "remote") {
+        const failures = Math.min((fallbackRemoteFailureCounts.get(request.repoId) ?? 0) + 1, 3);
+        const delays = [60_000, 5 * 60_000, 15 * 60_000];
+        fallbackRemoteFailureCounts.set(request.repoId, failures);
+        fallbackRemoteRetryAt.set(request.repoId, Date.now() + delays[failures - 1]);
+      }
+      outcome = { status: "error", message: String(err) };
+    }
+  }
+  if (generation !== fallbackRefreshGeneration) return;
+  if (request.mode === "local") fallbackLocalRefreshesRunning -= 1;
+  else fallbackRemoteRefreshesRunning -= 1;
+  if (fallbackRepoRefreshEntries.get(fallbackRefreshKey(request)) !== entry) {
+    scheduleFallbackRefreshPump();
     return;
   }
-  if (request.mode === "remote" && !request.force) {
-    const now = Date.now();
-    const cached = currentStartupCache().reposById[request.repoId];
-    const remoteCheckedAt = cached?.remoteCheckedAt ?? null;
-    const retryAt = fallbackRemoteRetryAt.get(request.repoId) ?? 0;
-    if ((remoteCheckedAt != null && now - remoteCheckedAt < 10 * 60_000) || retryAt > now) {
-      updateFallbackTask(taskId, "success", "远端状态仍然有效", false);
-      return;
-    }
+  if (entry.rerun) {
+    entry.request = entry.rerun;
+    entry.rerun = null;
+    entry.state = "pending";
+    entry.sequence = fallbackRefreshSequence++;
+  } else {
+    fallbackRepoRefreshEntries.delete(fallbackRefreshKey(request));
+    updateFallbackTask(entry.taskId, outcome.status, outcome.message, false);
   }
-  updateFallbackTask(taskId, "running", null, false);
-  try {
-    const summary = request.mode === "remote"
-      ? refreshFallbackRemoteRepo(request.repoId)
-      : await refreshRepoSummary(request.repoId, { fetchRemote: false });
-    const remoteCheckedAt = request.mode === "remote" ? Date.now() : undefined;
-    if (request.mode === "remote") {
-      fallbackRemoteFailureCounts.delete(request.repoId);
-      fallbackRemoteRetryAt.delete(request.repoId);
-    }
-    writeFallbackStartupRepoSummary(summary, remoteCheckedAt);
-    const detailPatch = request.detailScope === "detail"
-      ? await refreshRepoDetailPatch(request.repoId, {
-          includeCommits: request.includeCommits,
-          includeBranches: request.includeBranches,
-        })
-      : null;
-    const event: WorkspaceRepoRefreshedEvent = {
-      repoId: request.repoId,
-      mode: request.mode,
-      summary,
-      detailPatch,
-      remoteCheckedAt,
-    };
-    emitFallbackWorkspaceEvent("workspace://repo-refreshed", event);
-    updateFallbackTask(taskId, "success", "仓库状态已更新", false);
-  } catch (err) {
-    if (request.mode === "remote") {
-      const failures = Math.min((fallbackRemoteFailureCounts.get(request.repoId) ?? 0) + 1, 3);
-      const delays = [60_000, 5 * 60_000, 15 * 60_000];
-      fallbackRemoteFailureCounts.set(request.repoId, failures);
-      fallbackRemoteRetryAt.set(request.repoId, Date.now() + delays[failures - 1]);
-    }
-    updateFallbackTask(taskId, "error", String(err), false);
-  }
+  scheduleFallbackRefreshPump();
 }
 
 function refreshFallbackRemoteRepo(repoId: string) {
@@ -3903,9 +4033,6 @@ function updateFallbackTask(
   });
   fallbackTasks = normalizeWorkspaceTasks(fallbackTasks);
   if (updated) emitFallbackWorkspaceEvent("workspace://task-changed", updated);
-  if (status === "success" || status === "error" || status === "cancelled") {
-    fallbackRepoRefreshRequests.delete(taskId);
-  }
 }
 
 function emitFallbackWorkspaceEvent(name: string, payload: unknown) {
