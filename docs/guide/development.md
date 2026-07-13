@@ -37,8 +37,9 @@ yarn tauri:install
 
 `yarn tauri:dev` 会自动寻找可用本地端口,再把对应 `devUrl` 传给 Tauri。此模式和生产包一样通过现有 Tauri command 访问真实工作区、Git 和 GitHub 能力。
 `yarn tauri:build:no-bundle` 只验证 release 编译并跳过安装包生成,适合发布前的本机快速检查。
-`yarn tauri:install` 会先用本机 CPU 优化参数打包,再打开安装程序并尝试安装;该入口面向本机安装验证,不要用它产出的包做通用分发。
-需要检查 install 打包命令但不执行构建和安装时,使用 `LILIA_GITHUB_INSTALL_DRY_RUN=1 yarn tauri:install`;这是 LiliaGithub 的唯一 install dry-run 接口。
+`yarn tauri:install` 会用本机 CPU 优化参数构建 release 应用,再把应用入口添加到当前用户桌面:Windows 创建 `.lnk`,macOS 创建指向 `.app` 的符号链接,Linux 创建 `.desktop`。该命令不会生成或打开安装包,也不会自动启动应用。
+
+桌面入口直接指向本仓库 `src-tauri/target` 中的 release 产物。移动仓库或清理 `target` 后,原入口会失效;在新位置重新运行 `yarn tauri:install` 即可刷新。需要检查构建与快捷方式计划但不执行构建或写入桌面时,使用 `LILIA_GITHUB_INSTALL_DRY_RUN=1 yarn tauri:install`;这是 LiliaGithub 的唯一 install dry-run 接口。
 
 ## LiliaUI 本地联调
 
