@@ -34,10 +34,10 @@
     "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
   },
   "dependencies": {
-    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=c50df072aa318a0bdf05dcece22fd108bb75d9fa",
-    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=c50df072aa318a0bdf05dcece22fd108bb75d9fa",
-    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=c50df072aa318a0bdf05dcece22fd108bb75d9fa",
-    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=c50df072aa318a0bdf05dcece22fd108bb75d9fa",
+    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=2d6554f051a4cebc98fe55af5b2bcb9980412128",
+    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=2d6554f051a4cebc98fe55af5b2bcb9980412128",
+    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=2d6554f051a4cebc98fe55af5b2bcb9980412128",
+    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=2d6554f051a4cebc98fe55af5b2bcb9980412128",
     "ansi_up": "^6.0.6",
     "yaml": "^2.9.0"
   },
