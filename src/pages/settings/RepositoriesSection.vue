@@ -39,7 +39,6 @@ const restoringRepoId = ref<string | null>(null);
 const resettingSystemGitRepoId = ref<string | null>(null);
 const discovering = ref(false);
 const addingRepo = ref(false);
-const choosingWorkspaceRoot = ref(false);
 const confirmingGitHubUnbind = ref(false);
 const unbindingGitHub = ref(false);
 const createDialogOpen = ref(false);
@@ -264,6 +263,7 @@ async function useDefaultTokenAuth(repoId: string) {
 }
 
 async function addLocalRepo() {
+  if (addingRepo.value) return;
   addingRepo.value = true;
   error.value = null;
   try {
@@ -290,15 +290,12 @@ async function discoverRepos() {
 }
 
 async function chooseWorkspaceRoot() {
-  choosingWorkspaceRoot.value = true;
   error.value = null;
   try {
     await settingsActionTracker.run(() => workspace.chooseWorkspaceRoot());
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
-  } finally {
-    if (componentEpoch.assertAlive()) choosingWorkspaceRoot.value = false;
   }
 }
 
@@ -384,10 +381,10 @@ onUnmounted(() => {
           type="button"
           class="ghost"
           data-agent-id="settings.repositories.workspace-root.change"
-          :disabled="choosingWorkspaceRoot"
+          :disabled="workspace.choosingWorkspaceRoot.value"
           @click="chooseWorkspaceRoot"
         >
-          <LoaderCircle v-if="choosingWorkspaceRoot" :size="14" aria-hidden="true" class="sb-spin" />
+          <LoaderCircle v-if="workspace.choosingWorkspaceRoot.value" :size="14" aria-hidden="true" class="sb-spin" />
           <FolderGit2 v-else :size="14" aria-hidden="true" />
           更换工作区
         </button>

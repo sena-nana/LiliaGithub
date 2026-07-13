@@ -60,6 +60,7 @@ const workspace = vi.hoisted(() => ({
     tasks: [],
   },
   workspaceRoot: { value: "C:\\\\Files\\\\workspace" },
+  choosingWorkspaceRoot: { value: false },
   isAuthorized: { value: true },
   githubBinding: { value: null },
   authBindingStatusText: { value: "尚未绑定 GitHub" },
@@ -93,9 +94,13 @@ const workspace = vi.hoisted(() => ({
   refreshRepoContributions: vi.fn(),
 }));
 
-vi.mock("../src/composables/useWorkspace", () => ({
-  useWorkspace: () => workspace,
-}));
+vi.mock("../src/composables/useWorkspace", async () => {
+  const { ref } = await vi.importActual<typeof import("vue")>("vue");
+  workspace.choosingWorkspaceRoot = ref(false);
+  return {
+    useWorkspace: () => workspace,
+  };
+});
 
 vi.mock("../src/services/workspace", async () => {
   const actual = await vi.importActual<typeof import("../src/services/workspace")>("../src/services/workspace");
@@ -125,8 +130,10 @@ describe("RepositoriesSection", () => {
     workspace.deviceFlow.value = null;
     workspace.authBindingStatusText.value = "尚未绑定 GitHub";
     workspace.workspaceRoot.value = "C:\\\\Files\\\\workspace";
+    workspace.choosingWorkspaceRoot.value = false;
     workspace.unbindGitHub.mockClear();
-    workspace.chooseWorkspaceRoot.mockClear();
+    workspace.chooseWorkspaceRoot.mockReset();
+    workspace.chooseWorkspaceRoot.mockResolvedValue("D:\\NewWorkspace");
     workspace.setContributionIdentities.mockClear();
     workspace.scanContributionIdentities.mockResolvedValue({
       scannedRepoCount: 1,
@@ -152,7 +159,14 @@ describe("RepositoriesSection", () => {
 
   it("更换工作区期间保持控件 loading 并在完成后复位", async () => {
     const changeWorkspace = deferred<string>();
-    workspace.chooseWorkspaceRoot.mockReturnValue(changeWorkspace.promise);
+    workspace.chooseWorkspaceRoot.mockImplementation(async () => {
+      workspace.choosingWorkspaceRoot.value = true;
+      try {
+        return await changeWorkspace.promise;
+      } finally {
+        workspace.choosingWorkspaceRoot.value = false;
+      }
+    });
 
     render(RepositoriesSection);
 
@@ -162,12 +176,14 @@ describe("RepositoriesSection", () => {
     await waitFor(() => {
       expect(button).toBeDisabled();
     });
+    expect(button.querySelector(".sb-spin")).toBeInTheDocument();
 
     changeWorkspace.resolve("D:\\NewWorkspace");
 
     await waitFor(() => {
       expect(button).toBeEnabled();
     });
+    expect(button.querySelector(".sb-spin")).not.toBeInTheDocument();
   });
 
   it("已绑定 GitHub 时通过二次确认解绑", async () => {

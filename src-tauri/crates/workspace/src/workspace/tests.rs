@@ -67,6 +67,7 @@ use super::settings::{
     add_managed_repo_id, create_repo_group, delete_repo_group, move_repo_to_group,
     prune_deleted_repo_settings, remove_managed_repo_path, remove_system_git_repo_id,
     rename_repo_group, repo_path_from_id, scan_contribution_identity_recommendations,
+    workspace_set_root,
 };
 use super::shared::{
     cached_local_contribution_count, collect_local_contribution_counts, compatible_path_text,
@@ -162,6 +163,19 @@ fn init_git_repo(path: &Path) {
     run_git(path, &["init"]);
     run_git(path, &["config", "user.email", "test@example.com"]);
     run_git(path, &["config", "user.name", "Test User"]);
+}
+
+#[cfg(not(target_os = "windows"))]
+#[test]
+fn workspace_set_root_accepts_native_non_windows_file_system() {
+    let root = temp_dir("native-workspace-root");
+    let root_text = root.to_string_lossy().to_string();
+    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
+
+    let settings = workspace_set_root(app, root_text.clone()).unwrap();
+
+    assert_eq!(settings.workspace_root.as_deref(), Some(root_text.as_str()));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

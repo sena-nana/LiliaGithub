@@ -116,6 +116,14 @@ const cloneDialog = useCloneRepoDialog({
   onCloned: placeCreatedRepo,
 });
 
+async function chooseWorkspaceRoot() {
+  try {
+    await workspace.chooseWorkspaceRoot();
+  } catch {
+    // The workspace lifecycle exposes the failure through its shared error state.
+  }
+}
+
 type RepoAction = {
   label: string;
   title: string;
@@ -1644,9 +1652,16 @@ function bulkOperationDescription(operation: BulkOperation) {
               type="button"
               class="primary"
               data-agent-id="setup.workspace.choose"
-              @click="workspace.chooseWorkspaceRoot"
+              :disabled="workspace.choosingWorkspaceRoot.value"
+              @click="chooseWorkspaceRoot"
             >
-              <FolderOpen :size="14" aria-hidden="true" />
+              <LoaderCircle
+                v-if="workspace.choosingWorkspaceRoot.value"
+                :size="14"
+                aria-hidden="true"
+                class="sb-spin"
+              />
+              <FolderOpen v-else :size="14" aria-hidden="true" />
               选择工作区
             </button>
           </div>

@@ -40,6 +40,23 @@ macro_rules! delegate_command {
     };
 }
 
+macro_rules! delegate_dialog_command {
+    ($module:ident; fn $name:ident($app:ident: AppHandle $(, $arg:ident: $arg_ty:ty)* $(,)?) -> $ret:ty) => {
+        #[tauri::command(async)]
+        pub fn $name<R: tauri::Runtime>(
+            $app: tauri::AppHandle<R>,
+            window: tauri::WebviewWindow<R>,
+            $($arg: $arg_ty),*
+        ) -> $ret {
+            let app = crate::tauri_commands::workspace_dialog_context(
+                $app,
+                window.label().to_string(),
+            );
+            crate::workspace::$module::$name(app, $($arg),*)
+        }
+    };
+}
+
 mod bulk;
 mod file_browser;
 mod github;
@@ -54,10 +71,24 @@ mod tasks;
 #[derive(Clone)]
 struct TauriWorkspaceRuntime<R: Runtime> {
     app: AppHandle<R>,
+    parent_window_label: Option<String>,
 }
 
 fn workspace_context<R: Runtime>(app: AppHandle<R>) -> WorkspaceContext {
-    WorkspaceContext::new(Arc::new(TauriWorkspaceRuntime { app }))
+    WorkspaceContext::new(Arc::new(TauriWorkspaceRuntime {
+        app,
+        parent_window_label: None,
+    }))
+}
+
+fn workspace_dialog_context<R: Runtime>(
+    app: AppHandle<R>,
+    parent_window_label: String,
+) -> WorkspaceContext {
+    WorkspaceContext::new(Arc::new(TauriWorkspaceRuntime {
+        app,
+        parent_window_label: Some(parent_window_label),
+    }))
 }
 
 impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
@@ -85,6 +116,11 @@ impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
 
     fn pick_folder(&self, title: Option<&str>) -> Result<Option<String>, String> {
         let mut dialog = self.app.dialog().file();
+        if let Some(parent_window_label) = &self.parent_window_label {
+            if let Some(parent) = self.app.get_webview_window(parent_window_label) {
+                dialog = dialog.set_parent(&parent);
+            }
+        }
         if let Some(title) = title {
             dialog = dialog.set_title(title);
         }
@@ -93,6 +129,11 @@ impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
 
     fn pick_files(&self, title: Option<&str>) -> Result<Option<Vec<String>>, String> {
         let mut dialog = self.app.dialog().file();
+        if let Some(parent_window_label) = &self.parent_window_label {
+            if let Some(parent) = self.app.get_webview_window(parent_window_label) {
+                dialog = dialog.set_parent(&parent);
+            }
+        }
         if let Some(title) = title {
             dialog = dialog.set_title(title);
         }

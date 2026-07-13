@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FOCUS_REFRESH_THRESHOLD_MS,
   chooseWorkspaceRoot,
+  choosingWorkspaceRoot,
   initialize,
   installWorkspaceFocusRefresh,
 } from "../src/composables/workspace/lifecycle";
-import { refreshRepoSummaries, resetRepositoryRuntimeForTests } from "../src/composables/workspace/repositories";
+import {
+  addLocalRepo,
+  refreshRepoSummaries,
+  resetRepositoryRuntimeForTests,
+} from "../src/composables/workspace/repositories";
 import {
   applyWorkspaceRepoRefreshed,
   applyWorkspaceTaskChanged,
@@ -25,6 +30,8 @@ const service = vi.hoisted(() => ({
   getGitHubBindingStatus: vi.fn(),
   pickWorkspaceRoot: vi.fn(),
   setWorkspaceRoot: vi.fn(),
+  pickRepo: vi.fn(),
+  addRepo: vi.fn(),
   refreshRepoSummary: vi.fn(),
   refreshRepoDetailPatch: vi.fn(),
   discoverRepos: vi.fn(),
@@ -100,6 +107,8 @@ describe("workspace focus refresh", () => {
       ...workspaceSettings(),
       workspaceRoot: "D:\\NewWorkspace",
     });
+    service.pickRepo.mockResolvedValue(null);
+    service.addRepo.mockResolvedValue(repoSummary("LocalRepo"));
     service.listManagedRepos.mockResolvedValue([repoSummary("LiliaGithub")]);
     service.refreshRepoSummary.mockImplementation(async (repoId: string) => repoSummary(repoId));
     service.refreshRepoDetailPatch.mockImplementation(async (repoId: string) =>
@@ -285,6 +294,81 @@ describe("workspace focus refresh", () => {
 
     expect(state.settings?.workspaceRoot).toBe("D:\\NewWorkspace");
     expect(state.loading).toBe(false);
+  });
+
+  it("并发选择工作区复用同一任务并共享 pending 状态", async () => {
+    const picker = deferred<string | null>();
+    service.pickWorkspaceRoot.mockReturnValue(picker.promise);
+    service.listManagedRepos.mockResolvedValue([repoSummary("LocalRepo")]);
+
+    const first = chooseWorkspaceRoot();
+    const second = chooseWorkspaceRoot();
+
+    expect(choosingWorkspaceRoot.value).toBe(true);
+    await flushPromises();
+    expect(service.pickWorkspaceRoot).toHaveBeenCalledTimes(1);
+
+    picker.resolve("D:\\NewWorkspace");
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      "D:\\NewWorkspace",
+      "D:\\NewWorkspace",
+    ]);
+
+    expect(service.setWorkspaceRoot).toHaveBeenCalledTimes(1);
+    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+    expect(choosingWorkspaceRoot.value).toBe(false);
+  });
+
+  it("取消工作区选择不写入设置且释放 pending 状态", async () => {
+    service.pickWorkspaceRoot.mockResolvedValue(null);
+
+    await expect(chooseWorkspaceRoot()).resolves.toBeNull();
+
+    expect(service.setWorkspaceRoot).not.toHaveBeenCalled();
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
+    expect(choosingWorkspaceRoot.value).toBe(false);
+  });
+
+  it("工作区选择失败后释放 pending 状态并允许重试", async () => {
+    service.pickWorkspaceRoot
+      .mockRejectedValueOnce(new Error("选择器失败"))
+      .mockResolvedValueOnce(null);
+
+    await expect(chooseWorkspaceRoot()).rejects.toThrow("选择器失败");
+    expect(state.error).toBe("Error: 选择器失败");
+    expect(choosingWorkspaceRoot.value).toBe(false);
+    await expect(chooseWorkspaceRoot()).resolves.toBeNull();
+    expect(service.pickWorkspaceRoot).toHaveBeenCalledTimes(2);
+  });
+
+  it("添加本地仓库对选择、添加和刷新整段操作 single-flight", async () => {
+    const picker = deferred<string | null>();
+    const summary = repoSummary("LocalRepo");
+    service.pickRepo.mockReturnValue(picker.promise);
+    service.addRepo.mockResolvedValue(summary);
+    service.listManagedRepos.mockResolvedValue([summary]);
+
+    const first = addLocalRepo();
+    const second = addLocalRepo();
+
+    await flushPromises();
+    expect(service.pickRepo).toHaveBeenCalledTimes(1);
+
+    picker.resolve("D:\\Workspace\\LocalRepo");
+    await expect(Promise.all([first, second])).resolves.toEqual([summary, summary]);
+
+    expect(service.addRepo).toHaveBeenCalledTimes(1);
+    expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+    expect(state.repos).toEqual([summary]);
+  });
+
+  it("取消添加本地仓库不添加也不刷新", async () => {
+    service.pickRepo.mockResolvedValue(null);
+
+    await expect(addLocalRepo()).resolves.toBeNull();
+
+    expect(service.addRepo).not.toHaveBeenCalled();
+    expect(service.listManagedRepos).not.toHaveBeenCalled();
   });
 
   it("失焦不足 5 分钟后回焦点不会刷新", async () => {

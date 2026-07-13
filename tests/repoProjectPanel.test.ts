@@ -1607,6 +1607,36 @@ describe("RepoProjectPanel", () => {
     });
   });
 
+  it("Release 选择本地资产期间阻止重复选择，并在取消后恢复操作", async () => {
+    const picker = deferred<string[]>();
+    vi.mocked(listGitHubReleases).mockResolvedValue([githubReleases[0]]);
+    vi.mocked(pickFiles).mockReturnValue(picker.promise);
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+    });
+
+    await fireEvent.click(view.getByRole("tab", { name: "Release" }));
+    await view.findByRole("heading", { level: 4, name: "Lilia v1.0.0" });
+
+    const releaseCard = view.container.querySelector(".release-card[data-release-tag=\"v1.0.0\"]") as HTMLElement;
+    const releaseActionsButton = within(releaseCard).getByRole("button", { name: "编辑 Release 菜单" });
+    const contextMenu = useContextMenu();
+    await fireEvent.click(releaseActionsButton);
+    const uploadItem = contextMenu.state.items.find((item) => item.label === "上传资产");
+    expect(uploadItem).toBeTruthy();
+
+    await selectContextMenuItem(uploadItem!);
+    await selectContextMenuItem(uploadItem!);
+
+    expect(pickFiles).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(releaseActionsButton).toBeDisabled());
+    expect(uploadGitHubReleaseAsset).not.toHaveBeenCalled();
+
+    picker.resolve([]);
+    await waitFor(() => expect(releaseActionsButton).not.toBeDisabled());
+    expect(uploadGitHubReleaseAsset).not.toHaveBeenCalled();
+  });
+
   it("Release Tab 显示空态和 GitHub 不可用态", async () => {
     const emptyView = await renderProjectPanel({
       repoFullName: "sena-nana/remote-repo",

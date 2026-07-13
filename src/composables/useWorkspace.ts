@@ -15,6 +15,7 @@ import {
 import {
   initialize,
   chooseWorkspaceRoot,
+  choosingWorkspaceRoot,
 } from "./workspace/lifecycle";
 import {
   startAuthFlow,
@@ -118,6 +119,7 @@ export function useWorkspace() {
     authRemainingText,
     initialize,
     chooseWorkspaceRoot,
+    choosingWorkspaceRoot: readonly(choosingWorkspaceRoot),
     cancelWorkspaceTask,
     cloneRepo,
     createLocalRepo,
