@@ -379,15 +379,21 @@ export async function refreshRepoSummaries(options: { automatic?: boolean } = {}
 async function enqueueManagedRepoLocalRefreshes(repoIds: string[], trigger: string) {
   if (!repoIds.length) return;
   const service = await loadWorkspaceService();
-  for (const repoId of Array.from(new Set(repoIds))) {
-    await service.enqueueRepoRefresh({
+  const submissions = Array.from(new Set(repoIds)).map((repoId) =>
+    service.enqueueRepoRefresh({
       repoId,
       mode: "local",
       priority: "low",
       force: false,
       detailScope: "summary",
       trigger,
-    });
+    })
+  );
+  const failures = (await Promise.allSettled(submissions))
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => result.reason);
+  if (failures.length) {
+    throw new Error(`${failures.length} 个仓库刷新任务提交失败：${failures.map(String).join("；")}`);
   }
 }
 

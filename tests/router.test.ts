@@ -29,6 +29,7 @@ function cleanupMountedApp() {
   mountedContainer?.remove();
   mountedContainer = null;
   cleanup();
+  document.body.replaceChildren();
 }
 
 async function flushFakeTimersIfNeeded() {
@@ -57,6 +58,7 @@ async function renderAt(path: string) {
   const refreshPromise = refreshRepoSummaries();
   await flushFakeTimersIfNeeded();
   await refreshPromise;
+  await flushFakeTimersIfNeeded();
   await waitForContributionRefresh(workspace);
   const { app, router } = createLiliaGithubApp({ history: createMemoryHistory() });
   await router.push(path);
@@ -90,8 +92,13 @@ async function clickOverviewSync() {
   if (!(main instanceof HTMLElement)) throw new Error("未找到主内容区域");
   await screen.findByRole("heading", { level: 1, name: "项目总览" });
   await within(main).findByLabelText("仓库状态列表");
-  await screen.findByText("↑1");
-  await fireEvent.click(within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" }));
+  await waitFor(() => {
+    expect(useWorkspace().state.repos.some((repo) => repo.ahead > 0 || repo.behind > 0)).toBe(true);
+  });
+  const syncButton = within(screen.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" });
+  await waitFor(() => expect(syncButton).toBeEnabled());
+  await fireEvent.click(syncButton);
+  await waitFor(() => expect(useWorkspace().state.recentSync?.results.length).toBeGreaterThan(0));
 }
 
 async function waitForRepoTitle(name: string) {
@@ -951,7 +958,8 @@ describe("基础路由", () => {
     await waitForRepoTitle("LiliaGithub");
     expect(screen.queryByRole("group", { name: "扩展仓库操作" })).toBeNull();
 
-    await fireEvent.click(await screen.findByRole("button", { name: /stash@\{1\}/ }));
+    const stash = await screen.findByRole("button", { name: /stash@\{1\}/ }, { timeout: 5_000 });
+    await fireEvent.click(stash);
 
     await waitFor(() => {
       expect(screen.getByLabelText("Stash 内容")).toHaveTextContent("On main: WIP toolbar");

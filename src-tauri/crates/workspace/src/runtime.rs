@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use mutsuki_runtime_contracts::{Task, TaskHandle};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
@@ -14,6 +15,12 @@ pub trait WorkspaceRuntime: Send + Sync {
     fn open_path(&self, path: &str, with: Option<&str>) -> Result<(), String>;
     fn open_url(&self, url: &str, with: Option<&str>) -> Result<(), String>;
     fn emit(&self, event: &str, payload: JsonValue) -> Result<(), String>;
+    fn submit_mutsuki_task(&self, _task: Task) -> Result<TaskHandle, String> {
+        Err("Mutsuki runtime is unavailable".to_string())
+    }
+    fn cancel_mutsuki_task(&self, _handle: TaskHandle) -> Result<(), String> {
+        Err("Mutsuki runtime is unavailable".to_string())
+    }
     fn resource_dir(&self) -> Option<PathBuf> {
         None
     }
@@ -56,6 +63,14 @@ impl WorkspaceContext {
     pub fn resource_dir(&self) -> Option<PathBuf> {
         self.runtime.resource_dir()
     }
+
+    pub fn submit_mutsuki_task(&self, task: Task) -> Result<TaskHandle, String> {
+        self.runtime.submit_mutsuki_task(task)
+    }
+
+    pub fn cancel_mutsuki_task(&self, handle: TaskHandle) -> Result<(), String> {
+        self.runtime.cancel_mutsuki_task(handle)
+    }
 }
 
 pub struct WorkspaceStore {
@@ -65,7 +80,11 @@ pub struct WorkspaceStore {
 
 impl WorkspaceStore {
     pub fn get(&self, key: &str) -> Option<JsonValue> {
-        self.context.runtime.store_get(&self.file, key).ok().flatten()
+        self.context
+            .runtime
+            .store_get(&self.file, key)
+            .ok()
+            .flatten()
     }
 
     pub fn set(&self, key: &str, value: JsonValue) {

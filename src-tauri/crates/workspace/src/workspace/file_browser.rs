@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path};
 
+use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::readme::{image_mime_for_path, readme_image_data_urls};
 use crate::workspace::repos::{safe_repo_file_path, summarize_repo};
 use crate::workspace::run_blocking;
 use crate::workspace::settings::{repo_path_by_id, workspace_root};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{RepoFilePreview, RepoFileTreeEntry, RepoSummary};
-use crate::runtime::WorkspaceContext as AppHandle;
 
 pub(super) const MAX_FILE_PREVIEW_BYTES: u64 = 1024 * 1024;
 
@@ -173,7 +173,8 @@ pub(super) fn delete_repo_file(repo_path: &Path, file_path: &str) -> Result<(), 
     if !file_path.is_file() {
         return Err(format!("只能删除文件：{}", file_path.display()));
     }
-    fs::remove_file(&file_path).map_err(|err| format!("删除文件失败：{}（{err}）", file_path.display()))
+    fs::remove_file(&file_path)
+        .map_err(|err| format!("删除文件失败：{}（{err}）", file_path.display()))
 }
 
 fn is_visible_repo_entry(path: &Path) -> bool {

@@ -11,6 +11,10 @@ libc = "0.2"
 lilia_github_contracts = { path = "../lilia_github_contracts" }
 lilia_github_git = { path = "../git" }
 lilia_github_github = { path = "../github" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "cb6527b81b21c8c3c5a9c12cea3445a26b796acf" }
+mutsuki-tauri-host = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "ff3f65c04fb5a406d14bcd08356fa183c8a87819" }
 notify = "6.1"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "form", "json", "query", "rustls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }

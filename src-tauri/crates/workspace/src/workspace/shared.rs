@@ -157,7 +157,9 @@ pub(super) fn repo_git_identity(path: &Path) -> Option<ContributionIdentity> {
     }
 }
 
-pub(super) fn contribution_identity_key(identity: &ContributionIdentity) -> Option<(String, String)> {
+pub(super) fn contribution_identity_key(
+    identity: &ContributionIdentity,
+) -> Option<(String, String)> {
     let name = identity
         .name
         .as_deref()
