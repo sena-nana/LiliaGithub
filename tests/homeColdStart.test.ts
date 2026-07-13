@@ -392,15 +392,18 @@ describe("Home cold start pending items", () => {
       [repoFullName]: [
         issue(12, "Complete issue"),
         issue(13, "Close issue"),
+        issue(14, "Retry issue"),
       ],
     });
     workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => [
       accountIssueItem(12, "Complete issue"),
       accountIssueItem(13, "Close issue"),
+      accountIssueItem(14, "Retry issue"),
     ]);
     workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
     const updateGitHubIssueSpy = vi.spyOn(workspaceService, "updateGitHubIssue").mockImplementation((currentRepoFullName, issueNumber, request) => {
       if (issueNumber === 12) return pendingIssueUpdate.promise;
+      if (issueNumber === 14) return Promise.reject(new Error("Issue update failed"));
       return Promise.resolve({
         ...issue(issueNumber, issueNumber === 13 ? "Close issue" : "Issue"),
         state: request.state ?? "open",
@@ -413,21 +416,34 @@ describe("Home cold start pending items", () => {
     await renderHomeFromStoredSnapshot();
 
     const completeRow = await screen.findByLabelText(/Issue #12 Complete issue/);
-    await fireEvent.focus(completeRow);
     await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
-    expect(updateGitHubIssueSpy).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    const confirmCompleteButton = within(completeRow).getByRole("button", { name: "确认完成" });
+    expect(confirmCompleteButton).toHaveAttribute(
+      "data-agent-id",
+      `home.pending.issue:${repoFullName}:12.issue-complete.confirm`,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await fireEvent.pointerDown(document.body);
+    expect(within(completeRow).getByRole("button", { name: "完成" })).toBeInTheDocument();
+
+    await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
+    await fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+    expect(within(completeRow).getByRole("button", { name: "完成" })).toBeInTheDocument();
+
+    await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
+    await fireEvent.click(within(completeRow).getByRole("button", { name: "关闭" }));
+    expect(within(completeRow).getByRole("button", { name: "确认关闭" })).toBeInTheDocument();
+    expect(within(completeRow).getByRole("button", { name: "完成" })).toBeInTheDocument();
     expect(updateGitHubIssueSpy).not.toHaveBeenCalled();
 
     await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
-    expect(screen.getByRole("dialog", { name: "确认完成 Issue #12" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "确认完成" }));
+    await fireEvent.click(within(completeRow).getByRole("button", { name: "确认完成" }));
 
     await waitFor(() => {
       expect(tasks.value).toEqual(expect.arrayContaining([
         expect.objectContaining({
           kind: "github",
-          title: "完成 Issue",
           repoName: repoFullName,
           status: "running",
         }),
@@ -435,15 +451,11 @@ describe("Home cold start pending items", () => {
     });
     await waitFor(() => {
       const runningRow = screen.getByLabelText(/Issue #12 Complete issue/);
-      const completeButton = within(runningRow).getByRole("button", { name: "完成" });
-      const closeButton = within(runningRow).getByRole("button", { name: "关闭" });
+      const completeButton = within(runningRow).getByRole("button", { name: "正在完成" });
       expect(completeButton).toBeDisabled();
-      expect(closeButton).toBeDisabled();
-      expect(completeButton.querySelector(".sb-spin")).toBeInTheDocument();
-      expect(closeButton.querySelector(".sb-spin")).toBeNull();
+      expect(within(runningRow).queryByRole("button", { name: "关闭" })).toBeNull();
     });
     const otherRow = screen.getByLabelText(/Issue #13 Close issue/);
-    expect(within(otherRow).getByRole("button", { name: "完成" })).toBeEnabled();
     expect(within(otherRow).getByRole("button", { name: "关闭" })).toBeEnabled();
 
     pendingIssueUpdate.resolve({
@@ -454,11 +466,17 @@ describe("Home cold start pending items", () => {
     await waitFor(() => expect(screen.queryByLabelText(/Issue #12 Complete issue/)).toBeNull());
 
     const closeRow = await screen.findByLabelText(/Issue #13 Close issue/);
-    await fireEvent.focus(closeRow);
     await fireEvent.click(within(closeRow).getByRole("button", { name: "关闭" }));
-    expect(screen.getByRole("dialog", { name: "确认关闭 Issue #13" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "确认关闭" }));
+    await fireEvent.click(within(closeRow).getByRole("button", { name: "确认关闭" }));
     await waitFor(() => expect(screen.queryByLabelText(/Issue #13 Close issue/)).toBeNull());
+
+    const retryRow = await screen.findByLabelText(/Issue #14 Retry issue/);
+    await fireEvent.click(within(retryRow).getByRole("button", { name: "完成" }));
+    await fireEvent.click(within(retryRow).getByRole("button", { name: "确认完成" }));
+    await waitFor(() => {
+      const restoredRow = screen.getByLabelText(/Issue #14 Retry issue/);
+      expect(within(restoredRow).getByRole("button", { name: "完成" })).toBeEnabled();
+    });
   });
 
   it("runs pull request pending quick actions and removes handled rows", async () => {
@@ -477,17 +495,15 @@ describe("Home cold start pending items", () => {
     await renderHomeFromStoredSnapshot();
 
     const mergeRow = await screen.findByLabelText(/PR #7 Merge PR/);
-    await fireEvent.focus(mergeRow);
     await fireEvent.click(within(mergeRow).getByRole("button", { name: "合并" }));
-    expect(screen.getByRole("dialog", { name: "确认合并 PR #7" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "确认合并" }));
+    expect(within(mergeRow).getByRole("button", { name: "确认合并" })).toBeInTheDocument();
+    await fireEvent.click(within(mergeRow).getByRole("button", { name: "确认合并" }));
     await waitFor(() => expect(screen.queryByLabelText(/PR #7 Merge PR/)).toBeNull());
 
     const closeRow = await screen.findByLabelText(/PR #8 Close PR/);
-    await fireEvent.focus(closeRow);
     await fireEvent.click(within(closeRow).getByRole("button", { name: "关闭" }));
-    expect(screen.getByRole("dialog", { name: "确认关闭 PR #8" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "确认关闭" }));
+    expect(within(closeRow).getByRole("button", { name: "确认关闭" })).toBeInTheDocument();
+    await fireEvent.click(within(closeRow).getByRole("button", { name: "确认关闭" }));
     await waitFor(() => expect(screen.queryByLabelText(/PR #8 Close PR/)).toBeNull());
   });
 });
