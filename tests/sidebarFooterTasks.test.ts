@@ -3,13 +3,6 @@ import { Settings } from "@lucide/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { afterEach, describe, expect, it } from "vitest";
 import SidebarFooter from "../src/components/sidebar/SidebarFooter.vue";
-import {
-  beginBackgroundTask,
-  clearFrontendBackgroundTasksForTests,
-  completeBackgroundTask,
-  failBackgroundTask,
-  finishBackgroundTask,
-} from "../src/composables/useBackgroundTasks";
 import { resetWorkspaceStateForTests, setWorkspaceTasks } from "../src/composables/workspace/state";
 
 function testRouter() {
@@ -78,7 +71,6 @@ function translateY(element: HTMLElement) {
 
 describe("SidebarFooter tasks", () => {
   afterEach(() => {
-    clearFrontendBackgroundTasksForTests();
     resetWorkspaceStateForTests();
   });
 
@@ -95,13 +87,19 @@ describe("SidebarFooter tasks", () => {
   });
 
   it("显示后台任务计数并在悬浮时渲染单行任务", async () => {
-    beginBackgroundTask({
+    const now = Date.now();
+    setWorkspaceTasks([{
+      id: "push-task",
       kind: "git",
       title: "推送当前分支",
-      repoName: "LiliaGithub",
-      detail: "main",
+      repoId: "LiliaGithub",
+      message: "main",
       priority: "high",
-    });
+      status: "running",
+      cancellable: false,
+      createdAt: now,
+      updatedAt: now,
+    }]);
     await renderFooter();
 
     const button = screen.getByRole("button", { name: "后台任务" });
@@ -123,64 +121,74 @@ describe("SidebarFooter tasks", () => {
     });
   });
 
-  it("显示任务完成、失败和等待状态", async () => {
-    const completedTaskId = beginBackgroundTask({
-      kind: "git",
-      title: "提交变更",
-      repoName: "LiliaGithub",
-      priority: "high",
-    });
-    completeBackgroundTask(completedTaskId);
-    const failedTaskId = beginBackgroundTask({
-      kind: "git",
-      title: "推送当前分支",
-      repoName: "LiliaGithub",
-      priority: "high",
-    });
-    failBackgroundTask(failedTaskId, "远端拒绝推送");
+  it("只显示后端报告的等待中与运行中任务", async () => {
+    const now = Date.now();
     setWorkspaceTasks([{
       id: "pending-task",
       kind: "discoverRepos",
+      title: "发现工作区仓库",
       priority: "normal",
       repoId: null,
       status: "pending",
       message: "等待发现",
-      updatedAt: Date.now(),
+      cancellable: true,
+      createdAt: now,
+      updatedAt: now,
+    }, {
+      id: "finished-task",
+      kind: "git",
+      title: "提交变更",
+      priority: "high",
+      repoId: "LiliaGithub",
+      status: "success",
+      message: "已完成",
+      cancellable: false,
+      createdAt: now - 1,
+      updatedAt: now,
     }]);
     await renderFooter();
 
     const button = screen.getByRole("button", { name: "后台任务" });
-    expect(within(button).queryByText("2")).not.toBeInTheDocument();
-    expect(button.querySelector(".sb-tasks__badge--failed")).toBeInstanceOf(HTMLElement);
+    expect(within(button).getByText("1")).toBeInTheDocument();
 
     await fireEvent.mouseEnter(button);
 
     const menu = await screen.findByRole("menu", { name: "后台任务" });
-    expect(within(menu).getByText("提交变更")).toBeInTheDocument();
-    expect(within(menu).getByRole("img", { name: "已完成" })).toBeInTheDocument();
-    const failedTask = within(menu).getByText("推送当前分支").closest('[role="menuitem"]');
-    expect(failedTask).toHaveAttribute("title", "失败：远端拒绝推送");
-    expect(within(menu).getByRole("img", { name: "失败" })).toBeInTheDocument();
-    expect(within(menu).queryByText("失败：远端拒绝推送")).not.toBeInTheDocument();
     expect(within(menu).getByText("发现工作区仓库")).toBeInTheDocument();
+    expect(within(menu).queryByText("提交变更")).not.toBeInTheDocument();
     expect(within(menu).getByText("工作区")).toBeInTheDocument();
     expect(within(menu).getByRole("img", { name: "等待中" })).toBeInTheDocument();
     expect(within(menu).queryByText("等待发现")).not.toBeInTheDocument();
   });
 
   it("任务项删除后弹层按底部锚点向下收缩", async () => {
-    beginBackgroundTask({
-      kind: "git",
-      title: "推送当前分支",
-      repoName: "LiliaGithub",
-      priority: "high",
-    });
-    const secondTaskId = beginBackgroundTask({
-      kind: "sync",
-      title: "刷新仓库状态",
-      repoName: "LiliaGithub",
-      priority: "normal",
-    });
+    const now = Date.now();
+    setWorkspaceTasks([
+      {
+        id: "push-task",
+        kind: "git",
+        title: "推送当前分支",
+        repoId: "LiliaGithub",
+        priority: "high",
+        status: "running",
+        message: null,
+        cancellable: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: "refresh-task",
+        kind: "sync",
+        title: "刷新仓库状态",
+        repoId: "LiliaGithub",
+        priority: "normal",
+        status: "pending",
+        message: null,
+        cancellable: true,
+        createdAt: now + 1,
+        updatedAt: now + 1,
+      },
+    ]);
     await renderFooter();
 
     const button = screen.getByRole("button", { name: "后台任务" });
@@ -202,7 +210,18 @@ describe("SidebarFooter tasks", () => {
     const initialTop = translateY(menu);
     const initialBottom = translateY(menu) + initialHeight;
 
-    finishBackgroundTask(secondTaskId);
+    setWorkspaceTasks([{
+      id: "refresh-task",
+      kind: "sync",
+      title: "刷新仓库状态",
+      repoId: "LiliaGithub",
+      priority: "normal",
+      status: "success",
+      message: "已完成",
+      cancellable: false,
+      createdAt: now + 1,
+      updatedAt: now + 2,
+    }]);
 
     await waitFor(() => {
       expect(within(menu).queryByText("刷新仓库状态")).not.toBeInTheDocument();

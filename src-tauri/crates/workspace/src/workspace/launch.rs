@@ -7,12 +7,14 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
 use crate::workspace::shared::{configure_background_command, now_millis};
 use lilia_github_contracts::workspace::{
     ProjectLaunchCandidate, ProjectLaunchConfig, ProjectLaunchHistoryEntry, ProjectLaunchLog,
     ProjectLaunchStatus,
 };
+use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
 pub(super) const LAUNCH_LOG_LIMIT: usize = 500;
 pub(super) const LAUNCH_HISTORY_KEY: &str = "workspace.launchHistory.v1";
@@ -765,7 +767,7 @@ pub fn repo_list_launch_history(
         .unwrap_or_default())
 }
 
-pub fn repo_start_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
+fn start_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
     let repo_path = repo_path_by_id(&app, &repo_id)?;
     let Some(config) = launch_config_for_repo(&app, &repo_id)? else {
         return Err("未配置快速启动脚本".to_string());
@@ -824,7 +826,7 @@ pub fn repo_start_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunc
     Ok(status)
 }
 
-pub fn repo_stop_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
+fn stop_launch_control(app: AppHandle, repo_id: String) -> Result<ProjectLaunchStatus, String> {
     let current = {
         let runtime = launch_runtime().lock().unwrap_or_else(|e| e.into_inner());
         runtime
@@ -849,4 +851,44 @@ pub fn repo_stop_launch(app: AppHandle, repo_id: String) -> Result<ProjectLaunch
         "已停止快速启动进程".to_string(),
     )
     .unwrap_or(current))
+}
+
+async fn run_launch_control(
+    app: AppHandle,
+    repo_id: String,
+    title: &'static str,
+    control: fn(AppHandle, String) -> Result<ProjectLaunchStatus, String>,
+) -> Result<ProjectLaunchStatus, String> {
+    let resource = format!("launch:{repo_id}");
+    let run_app = app.clone();
+    let run_repo_id = repo_id.clone();
+    run_operation(
+        app,
+        OperationSpec::new(OperationKind::LaunchControl)
+            .lane(DispatchLane::Interactive)
+            .priority(100)
+            .resource(resource.clone(), ResourceAccessMode::ExclusiveWrite)
+            .same_resource_order(resource)
+            .visible(
+                VisibleOperation::new("launch", title)
+                    .priority("high")
+                    .repo_id(repo_id),
+            ),
+        move || control(run_app, run_repo_id),
+    )
+    .await
+}
+
+pub async fn repo_start_launch(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<ProjectLaunchStatus, String> {
+    run_launch_control(app, repo_id, "启动项目", start_launch_control).await
+}
+
+pub async fn repo_stop_launch(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<ProjectLaunchStatus, String> {
+    run_launch_control(app, repo_id, "停止项目", stop_launch_control).await
 }

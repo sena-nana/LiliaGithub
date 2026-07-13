@@ -2406,7 +2406,11 @@ function createFallbackSettings(): WorkspaceSettings {
 
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
 let fallbackBulkExecuteOverride:
-  | ((operation: BulkOperation, repoIds: string[], localChangesMode: RepoPullLocalChangesMode) => BulkSyncResult[])
+  | ((
+      operation: BulkOperation,
+      repoIds: string[],
+      localChangesMode: RepoPullLocalChangesMode,
+    ) => BulkSyncResult[] | Promise<BulkSyncResult[]>)
   | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
 let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContributionResult) | null = null;
@@ -2453,6 +2457,32 @@ let fallbackClonedRepos: RepoSummary[] = [];
 let fallbackRepoOverrides: Record<string, RepoSummary> = {};
 let fallbackTaskIndex = 1;
 let fallbackTasks: WorkspaceTask[] = [];
+type FallbackOperationEntry = {
+  taskId: string;
+  descriptor: FallbackOperationDescriptor;
+  state: "pending" | "running";
+  generation: number;
+  sequence: number;
+  readyAt: number;
+  execute: () => unknown | Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+};
+const fallbackOperationEntries = new Map<string, FallbackOperationEntry>();
+let fallbackOperationGeneration = 0;
+let fallbackOperationSequence = 0;
+let fallbackOperationPumpTimer: ReturnType<typeof setTimeout> | null = null;
+const fallbackOperationRunningByKind: Record<FallbackOperationKind, number> = {
+  localRead: 0,
+  localWrite: 0,
+  githubRead: 0,
+  githubWrite: 0,
+  githubTransfer: 0,
+  workspaceAnalysis: 0,
+  bulk: 0,
+  launchControl: 0,
+};
+const fallbackOperationResources = new Map<string, { readers: number; writer: boolean }>();
 let fallbackActiveRepoId: string | null = null;
 const fallbackBaselineRepoKeys = new Set<string>();
 let fallbackRefreshPaused = false;
@@ -2484,6 +2514,18 @@ let fallbackStopLaunchOverride: ((repoId: string) => Promise<ProjectLaunchStatus
 
 export function resetWorkspaceFallbacksForTests() {
   fallbackRefreshGeneration += 1;
+  fallbackOperationGeneration += 1;
+  if (fallbackOperationPumpTimer) clearTimeout(fallbackOperationPumpTimer);
+  fallbackOperationPumpTimer = null;
+  for (const entry of fallbackOperationEntries.values()) {
+    if (entry.state === "pending") entry.reject(new Error("任务已取消"));
+  }
+  fallbackOperationEntries.clear();
+  fallbackOperationSequence = 0;
+  for (const kind of Object.keys(fallbackOperationRunningByKind) as FallbackOperationKind[]) {
+    fallbackOperationRunningByKind[kind] = 0;
+  }
+  fallbackOperationResources.clear();
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
@@ -2577,7 +2619,11 @@ export function resetWorkspaceFallbacksForTests() {
 
 export function setFallbackBulkExecuteOverrideForTests(
   override:
-    | ((operation: BulkOperation, repoIds: string[], localChangesMode: RepoPullLocalChangesMode) => BulkSyncResult[])
+    | ((
+        operation: BulkOperation,
+        repoIds: string[],
+        localChangesMode: RepoPullLocalChangesMode,
+      ) => BulkSyncResult[] | Promise<BulkSyncResult[]>)
     | null,
 ) {
   fallbackBulkExecuteOverride = override;
@@ -3106,9 +3152,412 @@ export function setFallbackGitHubRepoFilePreviewsForTests(previewsByRepo: Record
   );
 }
 
-async function call<T>(_command: string, _args?: Record<string, unknown>, fallback?: () => T | Promise<T>): Promise<T> {
-  if (fallback) return fallback();
+async function call<T>(
+  command: string,
+  args?: Record<string, unknown>,
+  fallback?: () => T | FallbackOperationError<T> | Promise<T | FallbackOperationError<T>>,
+): Promise<T> {
+  if (fallback) {
+    const descriptor = fallbackOperationDescriptor(command, args);
+    if (descriptor) return enqueueFallbackOperation<T>(descriptor, fallback);
+    const result = await fallback();
+    return isFallbackOperationError(result) ? result.value as T : result;
+  }
   throw new Error("Workspace fallback is unavailable for this command");
+}
+
+type FallbackOperationDescriptor = {
+  kind: WorkspaceTask["kind"];
+  title: string;
+  priority: WorkspaceTask["priority"];
+  repoId: string | null;
+  operationKind: FallbackOperationKind;
+  lane: FallbackOperationLane;
+  corePriority: number;
+  resources: FallbackOperationResource[];
+};
+
+type FallbackOperationKind =
+  | "localRead"
+  | "localWrite"
+  | "githubRead"
+  | "githubWrite"
+  | "githubTransfer"
+  | "workspaceAnalysis"
+  | "bulk"
+  | "launchControl";
+
+type FallbackOperationLane = "interactive" | "background" | "bulk";
+type FallbackOperationResource = { key: string; access: "read" | "write" };
+
+const fallbackOperationLimits: Record<FallbackOperationKind, number> = {
+  localRead: 4,
+  localWrite: 2,
+  githubRead: 4,
+  githubWrite: 2,
+  githubTransfer: 2,
+  workspaceAnalysis: 2,
+  bulk: 4,
+  launchControl: 2,
+};
+
+function fallbackOperationDescriptor(
+  command: string,
+  args?: Record<string, unknown>,
+): FallbackOperationDescriptor | null {
+  const repoId = typeof args?.repoId === "string" ? args.repoId : null;
+  if (command === "bulk_sync_execute") {
+    const trigger = args?.trigger;
+    const repoIds = Array.isArray(args?.repoIds)
+      ? args.repoIds.filter((value): value is string => typeof value === "string")
+      : [];
+    return {
+      kind: "sync",
+      title: trigger === "autoSync" ? "自动同步仓库" : trigger === "syncAll" ? "同步全部仓库" : "批量同步仓库",
+      priority: trigger === "autoSync" ? "normal" : "high",
+      repoId,
+      operationKind: "bulk",
+      lane: trigger === "autoSync" ? "background" : "bulk",
+      corePriority: trigger === "autoSync" ? -50 : trigger === "syncAll" ? 50 : 100,
+      resources: fallbackRepoResources(repoIds, "write"),
+    };
+  }
+  if (command === "workspace_discover_repos") {
+    return {
+      kind: "discoverRepos",
+      title: "发现工作区仓库",
+      priority: "low",
+      repoId: null,
+      operationKind: "workspaceAnalysis",
+      lane: "background",
+      corePriority: -25,
+      resources: fallbackRepoResources(allFallbackRepos().map((repo) => repo.id), "read"),
+    };
+  }
+  if (command === "workspace_refresh_repos" || command === "repo_refresh_summary") {
+    const fetchRemote = command === "repo_refresh_summary" &&
+      typeof args?.options === "object" && args.options !== null &&
+      "fetchRemote" in args.options && Boolean((args.options as { fetchRemote?: unknown }).fetchRemote);
+    return {
+      kind: "repoStatus",
+      title: "刷新仓库状态",
+      priority: command === "workspace_refresh_repos" ? "high" : "normal",
+      repoId,
+      operationKind: command === "workspace_refresh_repos" ? "workspaceAnalysis" : fetchRemote ? "localWrite" : "localRead",
+      lane: "interactive",
+      corePriority: command === "workspace_refresh_repos" ? 50 : 0,
+      resources: command === "workspace_refresh_repos"
+        ? fallbackRepoResources(allFallbackRepos().map((repo) => repo.id), "read")
+        : fallbackRepoResources(repoId ? [repoId] : [], fetchRemote ? "write" : "read"),
+    };
+  }
+  if (command === "repo_refresh_language_stats") {
+    return {
+      kind: "languageStats",
+      title: "更新代码统计",
+      priority: "low",
+      repoId,
+      operationKind: "workspaceAnalysis",
+      lane: "background",
+      corePriority: -25,
+      resources: fallbackRepoResources(repoId ? [repoId] : [], "read"),
+    };
+  }
+  if (command === "workspace_scan_contribution_identities" || command === "github_list_repo_contribution") {
+    return {
+      kind: "contributions",
+      title: "更新贡献统计",
+      priority: "low",
+      repoId,
+      operationKind: "workspaceAnalysis",
+      lane: "background",
+      corePriority: -25,
+      resources: repoId
+        ? fallbackRepoResources([repoId], "read")
+        : fallbackRepoResources(allFallbackRepos().map((repo) => repo.id), "read"),
+    };
+  }
+  if (command === "repo_start_launch" || command === "repo_stop_launch") {
+    return {
+      kind: "launch",
+      title: command === "repo_start_launch" ? "启动项目" : "停止项目",
+      priority: "high",
+      repoId,
+      operationKind: "launchControl",
+      lane: "interactive",
+      corePriority: 50,
+      resources: fallbackRepoResources(repoId ? [repoId] : [], "write"),
+    };
+  }
+  if (
+    command === "github_list_workflow_artifact_files" ||
+    command === "github_get_workflow_artifact_file_preview" ||
+    command === "github_attach_workflow_artifact_asset" ||
+    command === "github_upload_release_asset"
+  ) {
+    return {
+      kind: "github",
+      title: "传输 GitHub 文件",
+      priority: "normal",
+      repoId,
+      operationKind: "githubTransfer",
+      lane: "interactive",
+      corePriority: 0,
+      resources: fallbackGitHubResources(args),
+    };
+  }
+  if (
+    command === "workspace_add_repo" ||
+    command === "workspace_create_local_repo" ||
+    command === "workspace_clone_repo" ||
+    command === "workspace_delete_local_repo"
+  ) {
+    const titles: Record<string, string> = {
+      workspace_add_repo: "添加仓库",
+      workspace_create_local_repo: "创建本地仓库",
+      workspace_clone_repo: "克隆仓库",
+      workspace_delete_local_repo: "删除本地仓库",
+    };
+    return {
+      kind: "workspace",
+      title: titles[command]!,
+      priority: "high",
+      repoId,
+      operationKind: "localWrite",
+      lane: "interactive",
+      corePriority: 50,
+      resources: [
+        { key: "workspace", access: "write" },
+        ...fallbackRepoResources(repoId ? [repoId] : [], "write"),
+      ],
+    };
+  }
+  if (command.startsWith("repo_") && isFallbackRepoWrite(command)) {
+    return {
+      kind: "git",
+      title: "更新本地仓库",
+      priority: "high",
+      repoId,
+      operationKind: "localWrite",
+      lane: "interactive",
+      corePriority: 50,
+      resources: fallbackRepoResources(repoId ? [repoId] : [], "write"),
+    };
+  }
+  if (command.startsWith("github_") && isFallbackGitHubWrite(command)) {
+    return {
+      kind: "github",
+      title: "更新 GitHub 仓库",
+      priority: "normal",
+      repoId,
+      operationKind: "githubWrite",
+      lane: "interactive",
+      corePriority: 0,
+      resources: fallbackGitHubResources(args),
+    };
+  }
+  return null;
+}
+
+function fallbackRepoResources(repoIds: string[], access: FallbackOperationResource["access"]) {
+  return Array.from(new Set(repoIds.map(fallbackRepoResourceKey)))
+    .sort()
+    .map((key) => ({ key: `repo:${key}`, access }));
+}
+
+function fallbackRepoResourceKey(repoId: string) {
+  return allFallbackRepos().find((repo) => repo.id === repoId)?.worktree.sharedRepoKey || repoId;
+}
+
+function fallbackGitHubResources(args?: Record<string, unknown>): FallbackOperationResource[] {
+  const repoFullName = typeof args?.repoFullName === "string" ? args.repoFullName : null;
+  if (!repoFullName) return [];
+  const artifactId = typeof args?.artifactId === "number" ? args.artifactId : null;
+  return [{
+    key: artifactId == null ? `github:${repoFullName}` : `github:${repoFullName}:artifact:${artifactId}`,
+    access: "write",
+  }];
+}
+
+function isFallbackRepoWrite(command: string) {
+  return command !== "repo_set_preference" &&
+    command !== "repo_set_auto_sync" &&
+    command !== "repo_save_launch_config" &&
+    command !== "repo_use_default_token_auth" &&
+    !command.startsWith("repo_get_") &&
+    !command.startsWith("repo_list_") &&
+    !command.startsWith("repo_refresh_");
+}
+
+function isFallbackGitHubWrite(command: string) {
+  return command.startsWith("github_create_") ||
+    command.startsWith("github_update_") ||
+    command.startsWith("github_delete_") ||
+    command.startsWith("github_merge_") ||
+    command.startsWith("github_rerun_");
+}
+
+function enqueueFallbackOperation<T>(
+  descriptor: FallbackOperationDescriptor,
+  execute: () => T | FallbackOperationError<T> | Promise<T | FallbackOperationError<T>>,
+): Promise<T> {
+  const task = recordFallbackTask(
+    descriptor.kind,
+    descriptor.priority,
+    descriptor.repoId,
+    "pending",
+    null,
+    true,
+    descriptor.title,
+  );
+  emitFallbackWorkspaceEvent("workspace://task-changed", task);
+  return new Promise<T>((resolve, reject) => {
+    const dispatchDelay = import.meta.env.VITE_LILIA_GITHUB_AGENT_DEBUG === "1" ? 750 : 0;
+    fallbackOperationEntries.set(task.id, {
+      taskId: task.id,
+      descriptor,
+      state: "pending",
+      generation: fallbackOperationGeneration,
+      sequence: fallbackOperationSequence++,
+      readyAt: Date.now() + dispatchDelay,
+      execute,
+      resolve: resolve as (value: unknown) => void,
+      reject,
+    });
+    scheduleFallbackOperationPump();
+  });
+}
+
+const fallbackOperationErrorMarker = Symbol("fallback-operation-error");
+type FallbackOperationError<T> = {
+  [fallbackOperationErrorMarker]: true;
+  value: T;
+  message: string;
+};
+
+function fallbackOperationError<T>(
+  value: T,
+  message: string,
+): FallbackOperationError<T> {
+  return { [fallbackOperationErrorMarker]: true, value, message };
+}
+
+function isFallbackOperationError(value: unknown): value is FallbackOperationError<unknown> {
+  return typeof value === "object" && value !== null && fallbackOperationErrorMarker in value;
+}
+
+function scheduleFallbackOperationPump() {
+  if (fallbackOperationPumpTimer) return;
+  const now = Date.now();
+  const pending = Array.from(fallbackOperationEntries.values())
+    .filter((entry) => entry.state === "pending");
+  const hasReadyOperation = pending.some((entry) => entry.readyAt <= now && fallbackOperationCanStart(entry));
+  const nextReadyAt = Math.min(
+    ...pending
+      .filter((entry) => entry.readyAt > now)
+      .map((entry) => entry.readyAt),
+  );
+  if (!hasReadyOperation && !Number.isFinite(nextReadyAt)) return;
+  fallbackOperationPumpTimer = setTimeout(() => {
+    fallbackOperationPumpTimer = null;
+    pumpFallbackOperations();
+  }, hasReadyOperation ? 0 : Math.max(0, nextReadyAt - now));
+}
+
+function pumpFallbackOperations() {
+  let started = false;
+  do {
+    started = false;
+    const entry = nextFallbackOperation();
+    if (entry) {
+      startFallbackOperation(entry);
+      started = true;
+    }
+  } while (started);
+  scheduleFallbackOperationPump();
+}
+
+function nextFallbackOperation() {
+  const now = Date.now();
+  const laneRank: Record<FallbackOperationLane, number> = { interactive: 2, bulk: 1, background: 0 };
+  return Array.from(fallbackOperationEntries.values())
+    .filter((entry) => entry.state === "pending" && entry.readyAt <= now && fallbackOperationCanStart(entry))
+    .sort((left, right) =>
+      right.descriptor.corePriority - left.descriptor.corePriority ||
+      laneRank[right.descriptor.lane] - laneRank[left.descriptor.lane] ||
+      left.sequence - right.sequence
+    )[0];
+}
+
+function fallbackOperationCanStart(entry: FallbackOperationEntry) {
+  if (fallbackOperationRunningByKind[entry.descriptor.operationKind] >=
+    fallbackOperationLimits[entry.descriptor.operationKind]) return false;
+  return fallbackResourcesCanAcquire(entry.descriptor.resources);
+}
+
+function fallbackResourcesCanAcquire(requirements: readonly FallbackOperationResource[]) {
+  return requirements.every((requirement) => {
+    const resource = fallbackOperationResources.get(requirement.key);
+    if (!resource) return true;
+    return requirement.access === "read" ? !resource.writer : !resource.writer && resource.readers === 0;
+  });
+}
+
+function acquireFallbackResources(requirements: readonly FallbackOperationResource[]) {
+  for (const requirement of requirements) {
+    const resource = fallbackOperationResources.get(requirement.key) ?? { readers: 0, writer: false };
+    if (requirement.access === "read") resource.readers += 1;
+    else resource.writer = true;
+    fallbackOperationResources.set(requirement.key, resource);
+  }
+}
+
+function releaseFallbackResources(requirements: readonly FallbackOperationResource[]) {
+  for (const requirement of requirements) {
+    const resource = fallbackOperationResources.get(requirement.key);
+    if (!resource) continue;
+    if (requirement.access === "read") resource.readers -= 1;
+    else resource.writer = false;
+    if (!resource.writer && resource.readers === 0) fallbackOperationResources.delete(requirement.key);
+  }
+}
+
+function startFallbackOperation(entry: FallbackOperationEntry) {
+  entry.state = "running";
+  fallbackOperationRunningByKind[entry.descriptor.operationKind] += 1;
+  acquireFallbackResources(entry.descriptor.resources);
+  updateFallbackTask(entry.taskId, "running", null, false);
+  void Promise.resolve()
+    .then(entry.execute)
+    .then((result) => {
+      if (isFallbackOperationError(result)) {
+        if (entry.generation === fallbackOperationGeneration) {
+          updateFallbackTask(entry.taskId, "error", result.message, false);
+        }
+        entry.resolve(result.value);
+      } else {
+        if (entry.generation === fallbackOperationGeneration) {
+          updateFallbackTask(entry.taskId, "success", "已完成", false);
+        }
+        entry.resolve(result);
+      }
+    })
+    .catch((error) => {
+      if (entry.generation === fallbackOperationGeneration) {
+        updateFallbackTask(entry.taskId, "error", String(error), false);
+      }
+      entry.reject(error);
+    })
+    .finally(() => {
+      if (entry.generation !== fallbackOperationGeneration || fallbackOperationEntries.get(entry.taskId) !== entry) {
+        return;
+      }
+      fallbackOperationEntries.delete(entry.taskId);
+      fallbackOperationRunningByKind[entry.descriptor.operationKind] -= 1;
+      releaseFallbackResources(entry.descriptor.resources);
+      pumpFallbackOperations();
+      scheduleFallbackRefreshPump();
+    });
 }
 
 function recordFallbackTask(
@@ -3117,16 +3566,20 @@ function recordFallbackTask(
   repoId: string | null,
   status: WorkspaceTask["status"],
   message: string | null,
-  cancellable = false,
+  cancellable: boolean,
+  title: string,
 ) {
+  const createdAt = Date.now();
   const task: WorkspaceTask = {
     id: `fallback-task-${fallbackTaskIndex++}`,
     kind,
+    title,
     priority,
     repoId,
     status,
     message,
-    updatedAt: Date.now(),
+    createdAt,
+    updatedAt: createdAt,
     cancellable,
   };
   fallbackTasks = normalizeWorkspaceTasks([task, ...fallbackTasks]);
@@ -3209,7 +3662,7 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
     const pendingTaskIds = fallbackTasks
       .filter((task) => task.status === "pending" && task.cancellable)
       .map((task) => task.id);
-    for (const taskId of pendingTaskIds) updateFallbackTask(taskId, "cancelled", "工作区已切换", false);
+    for (const taskId of pendingTaskIds) cancelPendingFallbackTask(taskId, "工作区已切换");
     fallbackActiveRepoId = null;
     fallbackRemoteFailureCounts.clear();
     fallbackRemoteRetryAt.clear();
@@ -3304,13 +3757,6 @@ export function pickFiles(): Promise<string[]> {
 export function refreshRepos(): Promise<RepoSummary[]> {
   return call("workspace_refresh_repos", undefined, () => {
     const repos = visibleFallbackRepos();
-    recordFallbackTask(
-      "repoStatus",
-      "high",
-      null,
-      "success",
-      `已读取 ${repos.length} 个仓库的本地状态`,
-    );
     return repos;
   });
 }
@@ -3364,7 +3810,6 @@ export function discoverRepos(): Promise<RepoSummary[]> {
       ...fallbackSettings,
       managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, ...discovered.map((repo) => repo.id)])).sort(),
     };
-    recordFallbackTask("discoverRepos", "low", null, "success", `发现 ${discovered.length} 个仓库`);
     return discovered;
   });
 }
@@ -3377,7 +3822,6 @@ export function addRepo(repoPath: string): Promise<RepoSummary> {
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repo.id),
       managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, repo.id])).sort(),
     };
-    recordFallbackTask("repoStatus", "high", repo.id, "success", "已添加仓库");
     return { ...repo };
   });
 }
@@ -3423,7 +3867,6 @@ export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promi
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repo.id),
       managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, repo.id])).sort(),
     };
-    recordFallbackTask("repoStatus", "high", repo.id, "success", "已创建本地仓库");
     writeFallbackStartupRepoSummary(repo);
     return cloneRepoSummary(repo);
   });
@@ -3490,15 +3933,11 @@ export function refreshRepoSummary(
   return call("repo_refresh_summary", { repoId, options }, () => {
     const repo = fallbackRepo(repoId);
     const error = options.fetchRemote && repo.remoteUrl ? fallbackRepoRemoteSyncOverride?.(repo) : null;
-    recordFallbackTask(
-      "repoStatus",
-      "normal",
-      repo.id,
-      error ? "error" : "success",
-      error ? `仓库状态已刷新，远端同步失败：${error}` : "仓库状态已更新",
-    );
     writeFallbackStartupRepoSummary(repo);
-    return cloneRepoSummary(repo);
+    const summary = cloneRepoSummary(repo);
+    return error
+      ? fallbackOperationError(summary, `仓库状态已刷新，远端同步失败：${error}`)
+      : summary;
   });
 }
 
@@ -3782,15 +4221,28 @@ export function listWorkspaceTasks(): Promise<WorkspaceTask[]> {
 
 export function cancelWorkspaceTask(taskId: string): Promise<void> {
   return call("workspace_cancel_task", { taskId }, () => {
-    const task = fallbackTasks.find((item) => item.id === taskId);
-    if (!task || task.status !== "pending" || !task.cancellable) {
+    if (!cancelPendingFallbackTask(taskId, "已取消", "任务已取消")) {
       throw new Error("任务当前不可取消");
     }
-    const entry = Array.from(fallbackRepoRefreshEntries.values())
-      .find((candidate) => candidate.taskId === taskId);
-    if (entry) fallbackRepoRefreshEntries.delete(fallbackRefreshKey(entry.request));
-    updateFallbackTask(taskId, "cancelled", "已取消", false);
   });
+}
+
+function cancelPendingFallbackTask(taskId: string, message: string, rejectionMessage = message) {
+  const task = fallbackTasks.find((item) => item.id === taskId);
+  if (!task || task.status !== "pending" || !task.cancellable) return false;
+
+  const refresh = Array.from(fallbackRepoRefreshEntries.values())
+    .find((entry) => entry.taskId === taskId);
+  if (refresh) fallbackRepoRefreshEntries.delete(fallbackRefreshKey(refresh.request));
+
+  const operation = fallbackOperationEntries.get(taskId);
+  if (operation) {
+    if (operation.state !== "pending") return false;
+    fallbackOperationEntries.delete(taskId);
+    operation.reject(new Error(rejectionMessage));
+  }
+  updateFallbackTask(taskId, "cancelled", message, false);
+  return true;
 }
 
 export function setActiveWorkspaceRepo(repoId: string | null): Promise<void> {
@@ -3799,8 +4251,7 @@ export function setActiveWorkspaceRepo(repoId: string | null): Promise<void> {
     for (const entry of fallbackRepoRefreshEntries.values()) {
       if (entry.request.mode !== "remote" || entry.state !== "pending") continue;
       if (entry.request.repoId === repoId || entry.request.trigger === "autoSync") continue;
-      fallbackRepoRefreshEntries.delete(fallbackRefreshKey(entry.request));
-      updateFallbackTask(entry.taskId, "cancelled", "已取消", false);
+      cancelPendingFallbackTask(entry.taskId, "已取消");
     }
     scheduleFallbackRefreshPump();
   });
@@ -3833,6 +4284,7 @@ export function enqueueRepoRefresh(request: WorkspaceRepoRefreshRequest): Promis
       "pending",
       null,
       true,
+      request.mode === "remote" ? "检查远端更新" : "刷新仓库状态",
     );
     emitFallbackWorkspaceEvent("workspace://task-changed", task);
     fallbackRepoRefreshEntries.set(key, {
@@ -3908,29 +4360,22 @@ function nextFallbackRefresh(mode: WorkspaceRepoRefreshRequest["mode"]) {
     .filter((entry) =>
       entry.state === "pending" &&
       entry.request.mode === mode &&
-      !fallbackRefreshResourceIsRunning(entry.request)
+      fallbackResourcesCanAcquire(fallbackRefreshResources(entry.request))
     )
     .sort((left, right) =>
       priority[right.request.priority] - priority[left.request.priority] || left.sequence - right.sequence
     )[0];
 }
 
-function fallbackRefreshResourceIsRunning(request: WorkspaceRepoRefreshRequest) {
-  const resourceKey = fallbackRefreshResourceKey(request);
-  return Array.from(fallbackRepoRefreshEntries.values()).some((entry) =>
-    entry.state === "running" && fallbackRefreshResourceKey(entry.request) === resourceKey
-  );
-}
-
-function fallbackRefreshResourceKey(request: WorkspaceRepoRefreshRequest) {
-  const repo = allFallbackRepos().find((candidate) => candidate.id === request.repoId);
-  return repo?.worktree.sharedRepoKey || request.repoId;
+function fallbackRefreshResources(request: WorkspaceRepoRefreshRequest) {
+  return fallbackRepoResources([request.repoId], request.mode === "remote" ? "write" : "read");
 }
 
 function startFallbackRepoRefresh(entry: FallbackRefreshEntry) {
   entry.state = "running";
   if (entry.request.mode === "local") fallbackLocalRefreshesRunning += 1;
   else fallbackRemoteRefreshesRunning += 1;
+  acquireFallbackResources(fallbackRefreshResources(entry.request));
   void runFallbackRepoRefresh(entry);
 }
 
@@ -3995,7 +4440,9 @@ async function runFallbackRepoRefresh(entry: FallbackRefreshEntry) {
   if (generation !== fallbackRefreshGeneration) return;
   if (request.mode === "local") fallbackLocalRefreshesRunning -= 1;
   else fallbackRemoteRefreshesRunning -= 1;
+  releaseFallbackResources(fallbackRefreshResources(request));
   if (fallbackRepoRefreshEntries.get(fallbackRefreshKey(request)) !== entry) {
+    pumpFallbackOperations();
     scheduleFallbackRefreshPump();
     return;
   }
@@ -4008,6 +4455,7 @@ async function runFallbackRepoRefresh(entry: FallbackRefreshEntry) {
     fallbackRepoRefreshEntries.delete(fallbackRefreshKey(request));
     updateFallbackTask(entry.taskId, outcome.status, outcome.message, false);
   }
+  pumpFallbackOperations();
   scheduleFallbackRefreshPump();
 }
 
@@ -6073,7 +6521,6 @@ export async function refreshRepoDetailPatch(
 export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
   return call("repo_refresh_language_stats", { repoId }, () => {
     const repo = fallbackRepo(repoId);
-    recordFallbackTask("languageStats", "low", repo.id, "success", "语言统计已更新");
     return updateFallbackRepo({
       ...repo,
       languageStats: repo.languageStats.length ? repo.languageStats : [{ language: "TypeScript", bytes: 1000, lines: 40 }],
@@ -6783,9 +7230,10 @@ export function bulkSyncExecute(
   operation: BulkOperation,
   repoIds: string[],
   localChangesMode: RepoPullLocalChangesMode = "reject",
+  trigger: "manual" | "syncAll" | "autoSync" = "manual",
 ): Promise<BulkSyncResult[]> {
-  return call("bulk_sync_execute", { operation, repoIds, localChangesMode }, () =>
-    (fallbackBulkExecuteOverride?.(operation, repoIds, localChangesMode) ?? repoIds.map((repoId) => {
+  return call("bulk_sync_execute", { operation, repoIds, localChangesMode, trigger }, async () => {
+    const results = await (fallbackBulkExecuteOverride?.(operation, repoIds, localChangesMode) ?? repoIds.map((repoId) => {
       const repo = fallbackRepo(repoId);
       const discardCounts = localChangesMode === "discard" && (operation === "pull" || operation === "sync");
       const summary = operation === "push"
@@ -6804,11 +7252,12 @@ export function bulkSyncExecute(
         status: "success",
         message: "完成",
       };
-    })).map((result) => ({
+    }));
+    return results.map((result) => ({
       ...result,
       summary: result.summary ? updateFallbackRepo(result.summary) : null,
-    })),
-  );
+    }));
+  });
 }
 
 export function openPath(path: string): Promise<void> {

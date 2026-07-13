@@ -743,6 +743,8 @@ pub struct HiddenRepo {
 pub struct WorkspaceTask {
     pub id: String,
     pub kind: String,
+    #[serde(default)]
+    pub title: String,
     pub priority: String,
     #[serde(default)]
     pub repo_id: Option<String>,
@@ -751,6 +753,8 @@ pub struct WorkspaceTask {
     pub message: Option<String>,
     #[serde(default)]
     pub cancellable: bool,
+    #[serde(default)]
+    pub created_at: i64,
     pub updated_at: i64,
 }
 

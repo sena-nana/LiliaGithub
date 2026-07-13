@@ -107,10 +107,12 @@ describe("workspace repo refresh events", () => {
     applyWorkspaceTaskChanged({
       id: firstTaskId,
       kind: "repoRemote",
+      title: "检查远端更新",
       priority: "normal",
       repoId: "A",
       status: "error",
       message: "offline",
+      createdAt: Date.now(),
       updatedAt: Date.now(),
       cancellable: false,
     });
@@ -148,10 +150,12 @@ describe("workspace repo refresh events", () => {
     applyWorkspaceTaskChanged({
       id: "remote-1",
       kind: "repoRemote",
+      title: "检查远端更新",
       priority: "high",
       repoId: "A",
       status: "success",
       message: null,
+      createdAt: Date.now(),
       updatedAt: Date.now(),
       cancellable: false,
     });
@@ -164,10 +168,12 @@ describe("workspace repo refresh events", () => {
     applyWorkspaceTaskChanged({
       id: "long-running",
       kind: "repoStatus",
+      title: "刷新仓库状态",
       priority: "low",
       repoId: "A",
       status: "running",
       message: null,
+      createdAt: 1,
       updatedAt: 1,
       cancellable: false,
     });
@@ -177,10 +183,12 @@ describe("workspace repo refresh events", () => {
       applyWorkspaceTaskChanged({
         id: `completed-${index}`,
         kind: "repoStatus",
+        title: "刷新仓库状态",
         priority: "normal",
         repoId: "B",
         status: "success",
         message: null,
+        createdAt: index + 2,
         updatedAt: index + 2,
         cancellable: false,
       });
@@ -192,10 +200,12 @@ describe("workspace repo refresh events", () => {
     applyWorkspaceTaskChanged({
       id: "long-running",
       kind: "repoStatus",
+      title: "刷新仓库状态",
       priority: "low",
       repoId: "A",
       status: "success",
       message: null,
+      createdAt: 1,
       updatedAt: 203,
       cancellable: false,
     });

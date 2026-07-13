@@ -8,7 +8,6 @@ import {
 import { deleteGitHubBranch, getGitHubRepoManagement, listGitHubBranches, listGitHubRepoCommits } from "../services/workspace";
 import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
-import type { BackgroundTaskDescriptor } from "./useBackgroundTasks";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
 import { useWorkspace } from "./useWorkspace";
 import { recentSyncErrorForRepo } from "./workspace/state";
@@ -654,34 +653,13 @@ export function useRepoDetailController() {
     return generation === actionGeneration && repoId.value === targetRepoId;
   }
 
-  function repoTask(descriptor: BackgroundTaskDescriptor): BackgroundTaskDescriptor {
-    return {
-      repoId: repoId.value,
-      repoName: repoTitle.value,
-      ...descriptor,
-    };
-  }
-
-  function fileCountDetail(paths: readonly string[]) {
-    return paths.length === 1 ? paths[0] : `${paths.length} 个文件`;
-  }
-
-  async function runAction(action: () => Promise<unknown>, descriptor?: BackgroundTaskDescriptor) {
+  async function runAction(action: () => Promise<unknown>) {
     const generation = actionGeneration;
     const targetRepoId = repoId.value;
     if (!targetRepoId) return false;
     actionError.value = null;
     try {
-      await actionTracker.run(
-        action,
-        descriptor
-          ? {
-              ...descriptor,
-              repoId: descriptor.repoId ?? targetRepoId,
-              repoName: descriptor.repoName ?? repoTitle.value,
-            }
-          : undefined,
-      );
+      await actionTracker.run(action);
       return true;
     } catch (err) {
       if (isActionCurrent(generation, targetRepoId)) {
@@ -691,23 +669,14 @@ export function useRepoDetailController() {
     }
   }
 
-  async function runLaunchAction(action: () => Promise<unknown>, descriptor?: BackgroundTaskDescriptor) {
+  async function runLaunchAction(action: () => Promise<unknown>) {
     const generation = actionGeneration;
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
     launchError.value = null;
     actionError.value = null;
     try {
-      await actionTracker.run(
-        action,
-        descriptor
-          ? {
-              ...descriptor,
-              repoId: descriptor.repoId ?? targetRepoId,
-              repoName: descriptor.repoName ?? repoTitle.value,
-            }
-          : undefined,
-      );
+      await actionTracker.run(action);
     } catch (err) {
       if (!isActionCurrent(generation, targetRepoId)) return;
       const message = String(err);
@@ -720,14 +689,14 @@ export function useRepoDetailController() {
     const files = paths?.length ? paths : unstagedChangePaths.value;
     void runAction(async () => {
       await workspace.stage(repoId.value, files);
-    }, repoTask({ kind: "git", title: "暂存变更", detail: fileCountDetail(files), priority: "high" }));
+    });
   }
 
   function unstageStagedChanges(paths?: string[]) {
     const files = paths?.length ? paths : stagedChangePaths.value;
     void runAction(async () => {
       await workspace.unstage(repoId.value, files);
-    }, repoTask({ kind: "git", title: "取消暂存", detail: fileCountDetail(files), priority: "high" }));
+    });
   }
 
   function runChangeAction(
@@ -740,7 +709,6 @@ export function useRepoDetailController() {
       setDiscardingChangePaths(files, true);
       void runAction(
         () => workspace.discardChanges(repoId.value, files),
-        repoTask({ kind: "git", title: "丢弃变更", detail: fileCountDetail(files), priority: "high" }),
       )
         .finally(() => setDiscardingChangePaths(files, false));
       return;
@@ -751,18 +719,7 @@ export function useRepoDetailController() {
       if (action === "unstage") return workspace.unstage(repoId.value, files);
       if (action === "gitignore") return workspace.addFilesToGitignore(repoId.value, files);
       return workspace.copyText(change.path);
-    }, repoTask({
-      kind: action === "copyPath" ? "system" : "git",
-      title: action === "stage"
-        ? "暂存变更"
-        : action === "unstage"
-          ? "取消暂存"
-          : action === "gitignore"
-            ? "加入 Gitignore"
-            : "复制文件路径",
-      detail: fileCountDetail(files),
-      priority: action === "copyPath" ? "low" : "high",
-    }));
+    });
   }
 
   function setDiscardingChangePaths(paths: readonly string[], pending: boolean) {
@@ -786,12 +743,7 @@ export function useRepoDetailController() {
         workspace.commit(targetRepoId, targetPaths, message, pushAfter);
       if (pushAfter) await runPushWithFallback(targetRepoId, commitAction);
       else await commitAction();
-    }, repoTask({
-      kind: "git",
-      title: pushAfter ? (needsPublish.value ? "提交并发布" : "提交并推送") : "提交变更",
-      detail: fileCountDetail(targetPaths),
-      priority: "high",
-    })).then((success) => {
+    }).then((success) => {
       if (
         !success &&
         repoId.value === targetRepoId &&
@@ -808,7 +760,7 @@ export function useRepoDetailController() {
     if (!targetRepoId) return;
     void runAction(async () => {
       await workspace.mergePull(targetRepoId, "stash");
-    }, repoTask({ kind: "git", title: "更新当前分支", detail: "抓取后合并上游", priority: "high" }));
+    });
   }
 
   function refreshAndFetchRepo() {
@@ -827,7 +779,7 @@ export function useRepoDetailController() {
         includeBranches: true,
       });
       projectRefreshToken.value += 1;
-    }, localRepo ? undefined : repoTask({ kind: "sync", title: "刷新仓库", priority: "normal" }));
+    });
   }
 
   function refreshProjectCache() {
@@ -846,7 +798,7 @@ export function useRepoDetailController() {
       } else {
         await load();
       }
-    }, repoTask({ kind: "workspace", title: "刷新项目缓存", priority: "normal" }));
+    });
   }
 
   function selectPullStrategy(value: string) {
@@ -858,7 +810,6 @@ export function useRepoDetailController() {
   function setRepoSetting(key: RepoSettingKey, value: boolean) {
     void runAction(
       () => workspace.setRepoSetting(repoId.value, key, value),
-      repoTask({ kind: "workspace", title: "更新仓库设置", priority: "normal" }),
     );
   }
 
@@ -878,7 +829,6 @@ export function useRepoDetailController() {
     const target = openTarget.value;
     void runAction(
       () => workspace.openPathTarget(path, target),
-      repoTask({ kind: "system", title: "打开仓库", detail: openTargetLabel.value, priority: "low" }),
     );
   }
 
@@ -895,15 +845,7 @@ export function useRepoDetailController() {
         return;
       }
       await workspace.mergePull(targetRepoId, "stash");
-    }, repoTask({
-      kind: "git",
-      title: pullStrategy.value === "pull"
-        ? "拉取上游"
-        : pullStrategy.value === "rebase"
-          ? "变基到上游"
-          : "合并上游",
-      priority: "high",
-    }));
+    });
   }
 
   function push() {
@@ -911,7 +853,6 @@ export function useRepoDetailController() {
     if (!targetRepoId) return;
     void runAction(
       () => runPushWithFallback(targetRepoId, () => workspace.push(targetRepoId)),
-      repoTask({ kind: "git", title: needsPublish.value ? "发布当前分支" : "推送当前分支", priority: "high" }),
     );
   }
 
@@ -924,7 +865,6 @@ export function useRepoDetailController() {
         runPushWithFallback(targetRepoId, () =>
           workspace.pushNewBranch(targetRepoId, "origin", branch)
         ),
-      repoTask({ kind: "git", title: "发布当前分支", detail: branch, priority: "high" }),
     );
   }
 
@@ -935,14 +875,12 @@ export function useRepoDetailController() {
     if (!next) return;
     void runAction(
       () => workspace.setUpstream(repoId.value, branch, next),
-      repoTask({ kind: "git", title: "设置上游分支", detail: next, priority: "normal" }),
     );
   }
 
   function useDefaultTokenAuth() {
     void runAction(
       () => workspace.useDefaultTokenAuthForRepo(repoId.value),
-      repoTask({ kind: "github", title: "切换推送凭证", priority: "normal" }),
     );
   }
 
@@ -961,7 +899,7 @@ export function useRepoDetailController() {
       await workspace.startLaunch(targetRepoId);
       if (repoId.value !== targetRepoId) return;
       launchTerminalVisible.value = true;
-    }, repoTask({ kind: "launch", title: "启动项目命令", detail: trimmedCommand, priority: "normal" }));
+    });
   }
 
   function stopLaunch() {
@@ -969,7 +907,6 @@ export function useRepoDetailController() {
     if (!targetRepoId) return;
     void runLaunchAction(
       () => workspace.stopLaunch(targetRepoId),
-      repoTask({ kind: "launch", title: "停止项目命令", priority: "normal" }),
     );
   }
 
@@ -983,7 +920,7 @@ export function useRepoDetailController() {
       await workspace.saveLaunchConfig(targetRepoId, candidate.command, candidate.cwd);
       if (repoId.value !== targetRepoId) return;
       launchTerminalVisible.value = true;
-    }, repoTask({ kind: "launch", title: "保存启动配置", detail: candidate.label || candidate.command, priority: "normal" }));
+    });
   }
 
   function selectLaunchCandidateByValue(value: string) {
@@ -999,7 +936,6 @@ export function useRepoDetailController() {
     }
     void runAction(
       () => workspace.checkout(repoId.value, branch),
-      repoTask({ kind: "git", title: "切换分支", detail: branch, priority: "high" }),
     );
   }
 
@@ -1009,7 +945,6 @@ export function useRepoDetailController() {
     if (!branchName || !baseRef) return;
     await runAction(
       () => workspace.createBranch(repoId.value, branchName, baseRef, checkoutAfter),
-      repoTask({ kind: "git", title: "创建分支", detail: branchName, priority: "high" }),
     );
   }
 
@@ -1019,7 +954,6 @@ export function useRepoDetailController() {
     if (!from || !to) return;
     await runAction(
       () => workspace.renameBranch(repoId.value, from, to),
-      repoTask({ kind: "git", title: "重命名分支", detail: `${from} -> ${to}`, priority: "high" }),
     );
   }
 
@@ -1027,7 +961,6 @@ export function useRepoDetailController() {
     if (!branch || branch === summary.value?.currentBranch) return;
     void runAction(
       () => workspace.mergeBranch(repoId.value, branch),
-      repoTask({ kind: "git", title: "合并分支", detail: branch, priority: "high" }),
     );
   }
 
@@ -1048,7 +981,6 @@ export function useRepoDetailController() {
         try {
           await actionTracker.run(
             () => deleteGitHubBranch(repoFullName, branchName),
-            repoTask({ kind: "github", title: "删除远程分支", detail: branchName, priority: "high" }),
           );
           if (!isActionCurrent(generation, targetRepoId)) return;
           githubBranches.value = githubBranches.value.filter((item) => item.name !== branchName);
@@ -1075,7 +1007,6 @@ export function useRepoDetailController() {
     if (branch === summary.value?.currentBranch) return;
     void runAction(
       () => workspace.deleteBranch(repoId.value, branch),
-      repoTask({ kind: "git", title: "删除分支", detail: branch, priority: "high" }),
     );
   }
 
@@ -1091,14 +1022,12 @@ export function useRepoDetailController() {
   function cherryPickCommit(hash: string) {
     void runAction(
       () => workspace.cherryPickCommit(repoId.value, hash),
-      repoTask({ kind: "git", title: "拣选提交", detail: hash.slice(0, 7), priority: "high" }),
     );
   }
 
   function revertCommit(hash: string) {
     void runAction(
       () => workspace.revertCommit(repoId.value, hash),
-      repoTask({ kind: "git", title: "回滚提交", detail: hash.slice(0, 7), priority: "high" }),
     );
   }
 
@@ -1109,7 +1038,6 @@ export function useRepoDetailController() {
     if (!confirmed) return;
     void runAction(
       () => workspace.resetToCommit(repoId.value, hash, mode),
-      repoTask({ kind: "git", title: "重置到提交", detail: `${hash.slice(0, 7)} · ${mode}`, priority: "high" }),
     );
   }
 
@@ -1118,7 +1046,6 @@ export function useRepoDetailController() {
     if (!name) return;
     void runAction(
       () => workspace.createBranch(repoId.value, name, hash, true),
-      repoTask({ kind: "git", title: "从提交创建分支", detail: name, priority: "high" }),
     );
   }
 

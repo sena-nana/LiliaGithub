@@ -4,7 +4,6 @@ import { ContextMenuHost } from "@lilia/ui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../src/composables/useWorkspace";
 import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
-import { clearFrontendBackgroundTasksForTests, useBackgroundTasks } from "../src/composables/useBackgroundTasks";
 import {
   clearGitHubRepoCache,
   resetWorkspaceFallbacksForTests,
@@ -224,10 +223,6 @@ beforeEach(async () => {
   localStorage.clear();
 });
 
-afterEach(() => {
-  clearFrontendBackgroundTasksForTests();
-});
-
 describe("Home cold start pending items", () => {
   it("sorts repo status rows from a persisted local preference", async () => {
     const repos = [
@@ -411,8 +406,6 @@ describe("Home cold start pending items", () => {
         htmlUrl: `https://github.com/${currentRepoFullName}/issues/${issueNumber}`,
       });
     });
-    const { tasks } = useBackgroundTasks();
-
     await renderHomeFromStoredSnapshot();
 
     const completeRow = await screen.findByLabelText(/Issue #12 Complete issue/);
@@ -440,15 +433,6 @@ describe("Home cold start pending items", () => {
     await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
     await fireEvent.click(within(completeRow).getByRole("button", { name: "确认完成" }));
 
-    await waitFor(() => {
-      expect(tasks.value).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          kind: "github",
-          repoName: repoFullName,
-          status: "running",
-        }),
-      ]));
-    });
     await waitFor(() => {
       const runningRow = screen.getByLabelText(/Issue #12 Complete issue/);
       const completeButton = within(runningRow).getByRole("button", { name: "正在完成" });

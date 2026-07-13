@@ -14,6 +14,7 @@ lilia_github_github = { path = "../github" }
 mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ad7082163a24a469afd704bd35e3ce2c9613e26e" }
 mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ad7082163a24a469afd704bd35e3ce2c9613e26e" }
 mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "ad7082163a24a469afd704bd35e3ce2c9613e26e" }
+mutsuki-tauri-bridge = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "64ca4e149fc9cdd53fd6d7e7f4d315acbe745cf6" }
 mutsuki-tauri-host = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "64ca4e149fc9cdd53fd6d7e7f4d315acbe745cf6" }
 notify = "6.1"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "form", "json", "query", "rustls", "system-proxy"] }
@@ -23,7 +24,7 @@ tauri = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
-tokio = { version = "1", default-features = false, features = ["rt"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]

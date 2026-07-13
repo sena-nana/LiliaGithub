@@ -90,15 +90,6 @@ function isTaskCancellable(task: WorkspaceTask) {
   return task.status === "pending" && task.cancellable;
 }
 
-const WORKSPACE_TASK_KIND_TEXT: Record<WorkspaceTask["kind"], string> = {
-  repoStatus: "本地状态",
-  repoRemote: "远端更新",
-  repoDetail: "仓库详情",
-  discoverRepos: "发现仓库",
-  languageStats: "代码统计",
-  contributions: "贡献统计",
-};
-
 function isCancellingTask(taskId: string) {
   return cancellingTaskIds.value.includes(taskId);
 }
@@ -152,10 +143,7 @@ async function saveContributionIdentities() {
   contributionIdentitySaved.value = false;
   error.value = null;
   try {
-    await settingsActionTracker.run(
-      () => workspace.setContributionIdentities(normalizeContributionIdentityDraft()),
-      { kind: "workspace", title: "保存贡献身份", priority: "normal" },
-    );
+    await settingsActionTracker.run(() => workspace.setContributionIdentities(normalizeContributionIdentityDraft()));
     if (!componentEpoch.assertAlive()) return;
     contributionIdentitySaved.value = true;
     return true;
@@ -180,10 +168,7 @@ async function scanContributionIdentities() {
   scanningContributionIdentities.value = true;
   contributionRecommendationError.value = null;
   try {
-    const result = await settingsActionTracker.run(
-      () => workspace.scanContributionIdentities(),
-      { kind: "workspace", title: "扫描贡献身份", priority: "normal" },
-    );
+    const result = await settingsActionTracker.run(() => workspace.scanContributionIdentities());
     if (!componentEpoch.assertAlive()) return;
     contributionIdentityRecommendations.value = result;
   } catch (err) {
@@ -205,11 +190,7 @@ async function adoptContributionIdentityRecommendation(recommendation: Contribut
   contributionRecommendationError.value = null;
   try {
     const identities = mergeContributionIdentity(normalizeContributionIdentityDraft(), recommendation.identity);
-    const identityLabel = contributionIdentityKey(recommendation.identity);
-    const settings = await settingsActionTracker.run(
-      () => workspace.setContributionIdentities(identities),
-      { kind: "workspace", title: "采纳贡献身份", detail: identityLabel, priority: "normal" },
-    );
+    const settings = await settingsActionTracker.run(() => workspace.setContributionIdentities(identities));
     if (!componentEpoch.assertAlive()) return;
     contributionIdentityDraft.value = cloneContributionIdentities(settings.contributionIdentities);
     contributionIdentitySaved.value = true;
@@ -256,14 +237,11 @@ async function restoreRepo(repoId: string) {
   restoringRepoId.value = repoId;
   error.value = null;
   try {
-    await settingsActionTracker.run(
-      async () => {
+    await settingsActionTracker.run(async () => {
         await workspace.unhideRepo(repoId);
         if (!componentEpoch.assertAlive()) return;
         await loadHiddenRepos();
-      },
-      { kind: "workspace", title: "恢复隐藏仓库", repoId, priority: "normal" },
-    );
+      });
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -276,10 +254,7 @@ async function useDefaultTokenAuth(repoId: string) {
   resettingSystemGitRepoId.value = repoId;
   error.value = null;
   try {
-    await settingsActionTracker.run(
-      () => workspace.useDefaultTokenAuthForRepo(repoId),
-      { kind: "github", title: "恢复默认凭证", repoId, priority: "normal" },
-    );
+    await settingsActionTracker.run(() => workspace.useDefaultTokenAuthForRepo(repoId));
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -292,10 +267,7 @@ async function addLocalRepo() {
   addingRepo.value = true;
   error.value = null;
   try {
-    await settingsActionTracker.run(
-      () => workspace.addLocalRepo(),
-      { kind: "workspace", title: "添加本地仓库", priority: "normal" },
-    );
+    await settingsActionTracker.run(() => workspace.addLocalRepo());
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -308,10 +280,7 @@ async function discoverRepos() {
   discovering.value = true;
   error.value = null;
   try {
-    await settingsActionTracker.run(
-      () => workspace.discoverRepos(),
-      { kind: "workspace", title: "发现工作区仓库", priority: "normal" },
-    );
+    await settingsActionTracker.run(() => workspace.discoverRepos());
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -324,10 +293,7 @@ async function chooseWorkspaceRoot() {
   choosingWorkspaceRoot.value = true;
   error.value = null;
   try {
-    await settingsActionTracker.run(
-      () => workspace.chooseWorkspaceRoot(),
-      { kind: "workspace", title: "更换工作区", priority: "high" },
-    );
+    await settingsActionTracker.run(() => workspace.chooseWorkspaceRoot());
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     error.value = String(err);
@@ -341,10 +307,7 @@ async function confirmGitHubUnbind() {
   unbindingGitHub.value = true;
   error.value = null;
   try {
-    await settingsActionTracker.run(
-      () => workspace.unbindGitHub(),
-      { kind: "github", title: "解绑 GitHub", priority: "high" },
-    );
+    await settingsActionTracker.run(() => workspace.unbindGitHub());
     if (!componentEpoch.assertAlive()) return;
     confirmingGitHubUnbind.value = false;
   } catch (err) {
@@ -368,10 +331,7 @@ async function cancelTask(taskId: string) {
   cancellingTaskIds.value.push(taskId);
   delete taskCancelErrors.value[taskId];
   try {
-    await settingsActionTracker.run(
-      () => workspace.cancelWorkspaceTask(taskId),
-      { kind: "workspace", title: "取消后台任务", priority: "normal" },
-    );
+    await settingsActionTracker.run(() => workspace.cancelWorkspaceTask(taskId));
   } catch (err) {
     if (!componentEpoch.assertAlive()) return;
     taskCancelErrors.value[taskId] = String(err);
@@ -704,7 +664,7 @@ onUnmounted(() => {
         <h3>后台任务</h3>
         <ul>
           <li v-for="task in workspace.state.tasks.slice(0, 6)" :key="task.id" class="workspace-task-list__item">
-            <span class="workspace-task-list__kind">{{ WORKSPACE_TASK_KIND_TEXT[task.kind] }}</span>
+            <span class="workspace-task-list__kind">{{ task.title }}</span>
             <div class="workspace-task-list__detail">
               <div class="workspace-task-list__summary">
                 <span class="workspace-task-list__status" :class="taskStatusClass(task.status)">

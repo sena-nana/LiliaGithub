@@ -15,7 +15,6 @@ import {
   upsertReposBatch,
 } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
-import { runBackgroundTask } from "../useBackgroundTasks";
 import {
   repoAutoSyncEnabled,
   repoIncludedInHomeContributionStats,
@@ -41,7 +40,6 @@ import { representativeReposBySharedGroup } from "../../utils/repoWorktree";
 import { waitForWorkspaceTask } from "./taskWaiters";
 
 const CONTRIBUTION_REPO_LIMIT = 30;
-const REPO_REFRESH_CONCURRENCY = 4;
 const LOCAL_REPO_CONTRIBUTION_SCOPE = "local:";
 type ContributionRefreshScope = {
   scope: string;
@@ -310,46 +308,35 @@ export async function autoSyncRepoIfNeeded(
   autoSyncRunningRepoIds.add(summary.id);
   beginRepoSync(summary.id);
   try {
-    return await runBackgroundTask(
-      {
-        kind: "sync",
-        title: "自动同步仓库",
+    let result: BulkSyncResult | undefined;
+    try {
+      const service = await loadWorkspaceService();
+      [result] = await service.bulkSyncExecute(operation, [summary.id], localChangesMode, "autoSync");
+    } catch (err) {
+      const failedResult: BulkSyncResult = {
         repoId: summary.id,
-        repoName: summary.name,
-        priority: "normal",
-      },
-      async () => {
-        let result: BulkSyncResult | undefined;
-        try {
-          const service = await loadWorkspaceService();
-          [result] = await service.bulkSyncExecute(operation, [summary.id], localChangesMode);
-        } catch (err) {
-          const failedResult: BulkSyncResult = {
-            repoId: summary.id,
-            status: "error",
-            message: String(err),
-            summary: null,
-          };
-          rememberAutoSyncFailure(summary, operation, failedResult);
-          setRepoActionError(summary.id, failedResult.message);
-          if (options.throwOnError) throw err;
-          return null;
-        }
-        if (!result) return null;
-        applyAutoSyncResult(result);
-        if (result.status !== "success") {
-          rememberAutoSyncFailure(summary, operation, result);
-          if (options.throwOnError) throw new Error(result.message);
-          return result;
-        }
-        const syncedRepoId = result.summary?.id ?? summary.id;
-        if (options.refreshDetail || state.repoDetails[syncedRepoId]) {
-          await requestRepoStatusRefresh(syncedRepoId, { includeCommits: true }, { immediate: true })
-            .catch(() => undefined);
-        }
-        return result;
-      },
-    );
+        status: "error",
+        message: String(err),
+        summary: null,
+      };
+      rememberAutoSyncFailure(summary, operation, failedResult);
+      setRepoActionError(summary.id, failedResult.message);
+      if (options.throwOnError) throw err;
+      return null;
+    }
+    if (!result) return null;
+    applyAutoSyncResult(result);
+    if (result.status !== "success") {
+      rememberAutoSyncFailure(summary, operation, result);
+      if (options.throwOnError) throw new Error(result.message);
+      return result;
+    }
+    const syncedRepoId = result.summary?.id ?? summary.id;
+    if (options.refreshDetail || state.repoDetails[syncedRepoId]) {
+      await requestRepoStatusRefresh(syncedRepoId, { includeCommits: true }, { immediate: true })
+        .catch(() => undefined);
+    }
+    return result;
   } finally {
     autoSyncRunningRepoIds.delete(summary.id);
     finishRepoSync(summary.id);
@@ -702,7 +689,7 @@ export async function refreshLanguageStatsForRepos(
   const uniqueRepoIds = Array.from(new Set(repoIds));
   let firstError: unknown = null;
   const pendingSummaries = new Map<string, RepoSummary>();
-  await runBoundedParallel(uniqueRepoIds, REPO_REFRESH_CONCURRENCY, async (repoId) => {
+  await Promise.all(uniqueRepoIds.map(async (repoId) => {
     if (generation !== repositoryRuntimeGeneration) return;
     try {
       const summary = await loadRepoLanguageStatsSummary(repoId, generation, options);
@@ -715,7 +702,7 @@ export async function refreshLanguageStatsForRepos(
     } catch (err) {
       firstError ??= err;
     }
-  });
+  }));
   if (pendingSummaries.size) {
     const summaries = [...pendingSummaries.values()];
     scheduleLowPriorityTask(() => {
@@ -725,22 +712,6 @@ export async function refreshLanguageStatsForRepos(
   if (firstError && !options.silent) {
     throw firstError;
   }
-}
-
-async function runBoundedParallel<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-) {
-  let nextIndex = 0;
-  const workerCount = Math.min(Math.max(1, limit), items.length);
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      const item = items[nextIndex];
-      nextIndex += 1;
-      await worker(item);
-    }
-  }));
 }
 
 export async function refreshRepoLanguageStats(

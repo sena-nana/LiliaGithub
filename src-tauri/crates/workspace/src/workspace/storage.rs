@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::workspace::run_blocking;
+use crate::workspace::operations::OperationKind;
+use crate::workspace::repos::run_repo_blocking;
 use crate::workspace::settings::{ensure_ntfs_path, repo_path_by_id};
 use lilia_github_contracts::workspace::RepoStorageStats;
 
@@ -9,14 +10,20 @@ pub async fn repo_get_storage_stats(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoStorageStats, String> {
-    run_blocking("读取项目大小", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        ensure_ntfs_path(&path)?;
-        let Some(resource_dir) = app.resource_dir() else {
-            return Ok(RepoStorageStats::default());
-        };
-        Ok(query_everything_folder_size(&resource_dir, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::WorkspaceAnalysis,
+        "读取项目大小",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            ensure_ntfs_path(&path)?;
+            let Some(resource_dir) = app.resource_dir() else {
+                return Ok(RepoStorageStats::default());
+            };
+            Ok(query_everything_folder_size(&resource_dir, &path))
+        },
+    )
     .await
 }
 

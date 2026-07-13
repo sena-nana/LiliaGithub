@@ -1,7 +1,7 @@
 use lilia_github_contracts::workspace::*;
 
 delegate_command!(github; fn github_get_binding_status(app: AppHandle) -> Result<GitHubBindingStatus, String>);
-delegate_command!(async github; fn github_start_device_flow() -> Result<GitHubDeviceFlowStart, String>);
+delegate_command!(async github; fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlowStart, String>);
 delegate_command!(async github; fn github_poll_device_flow(app: AppHandle, device_code: String, interval_seconds: Option<i64>,) -> Result<GitHubDeviceFlowPollResult, String>);
 delegate_command!(github; fn github_unbind(app: AppHandle) -> Result<(), String>);
 delegate_command!(async github; fn github_list_repos(app: AppHandle, page: Option<u32>,) -> Result<GitHubRepoPage, String>);

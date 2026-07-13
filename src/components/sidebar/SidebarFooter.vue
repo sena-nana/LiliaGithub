@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { CheckCircle2, Clock3, ListChecks, LoaderCircle, Settings, XCircle } from "@lucide/vue";
+import { Clock3, ListChecks, LoaderCircle, Settings } from "@lucide/vue";
 import { RouterLink } from "vue-router";
 import { SB_MENU_POP_TRANSITION_MS, useAnchoredMenuMotion, type LiliaSidebarConfigInput } from "@lilia/ui";
 import { useBackgroundTasks } from "../../composables/useBackgroundTasks";
@@ -11,17 +11,14 @@ defineProps<{
   status: SidebarFooterStatus;
 }>();
 
-const { tasks, runningTaskCount } = useBackgroundTasks();
+const { tasks } = useBackgroundTasks();
 const tasksOpen = ref(false);
-const hasFailedTask = computed(() => tasks.value.some((task) => task.status === "failed"));
 const placement = computed(() => "top" as const);
 const menuMotion = useAnchoredMenuMotion(tasksOpen, placement);
 const menuStyle = computed(() => menuMotion.overlayStyle.value);
 let closeTimer: number | null = null;
 
 const taskStatusDisplay = {
-  success: { label: "已完成", icon: CheckCircle2 },
-  failed: { label: "失败", icon: XCircle },
   pending: { label: "等待中", icon: Clock3 },
   running: { label: "进行中", icon: LoaderCircle },
 };
@@ -119,16 +116,11 @@ onBeforeUnmount(() => {
       >
         <ListChecks class="sb-tasks__icon" :size="14" aria-hidden="true" />
         <span
-          v-if="hasFailedTask"
-          class="sb-tasks__badge sb-tasks__badge--failed"
-          aria-hidden="true"
-        />
-        <span
-          v-else-if="runningTaskCount"
+          v-if="tasks.length"
           class="sb-tasks__badge"
           aria-hidden="true"
         >
-          {{ runningTaskCount }}
+          {{ tasks.length }}
         </span>
       </button>
 
@@ -156,7 +148,6 @@ onBeforeUnmount(() => {
                 :class="`sb-tasks__item--${task.status}`"
                 role="menuitem"
                 :data-agent-id="taskAgentId(task.id)"
-                :title="task.status === 'failed' ? task.detail || taskStatusDisplay.failed.label : undefined"
               >
                 <strong class="sb-tasks__title">{{ task.title }}</strong>
                 <span class="sb-tasks__source">{{ task.repoName || "工作区" }}</span>
@@ -269,16 +260,6 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.sb-tasks__badge--failed {
-  top: -1px;
-  right: -1px;
-  width: 8px;
-  min-width: 8px;
-  height: 8px;
-  padding: 0;
-  background: var(--err);
-}
-
 .sb-tasks__menu {
   position: fixed;
   left: 0;
@@ -359,14 +340,6 @@ onBeforeUnmount(() => {
 
 .sb-tasks__item--running .sb-tasks__status {
   color: var(--accent);
-}
-
-.sb-tasks__item--success .sb-tasks__status {
-  color: var(--ok);
-}
-
-.sb-tasks__item--failed .sb-tasks__status {
-  color: var(--err);
 }
 
 .sb-spin {
