@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,7 +11,9 @@ use std::thread;
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
-use crate::workspace::shared::{configure_background_command, now_millis};
+#[cfg(target_os = "windows")]
+use crate::workspace::shared::configure_background_command;
+use crate::workspace::shared::now_millis;
 use lilia_github_contracts::workspace::{
     ProjectLaunchCandidate, ProjectLaunchConfig, ProjectLaunchHistoryEntry, ProjectLaunchLog,
     ProjectLaunchStatus,
