@@ -1,6 +1,40 @@
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+
+type TauriInstallDryRun = {
+  platform: NodeJS.Platform;
+  build: {
+    command: string;
+    args: string[];
+    env: { RUSTFLAGS: string };
+  };
+  artifact: {
+    kind: "executable" | "app";
+    path: string;
+  };
+  shortcut: {
+    kind: "windows-lnk" | "macos-app-symlink" | "linux-desktop-entry";
+    path: string;
+    target: string;
+  };
+};
+
+function runTauriInstallDryRun(rustflags: string) {
+  return spawnSync(
+    process.execPath,
+    [resolve("node_modules/@lilia/build/bin/lilia-build.mjs"), "tauri-install"],
+    {
+      cwd: resolve("."),
+      env: {
+        ...process.env,
+        LILIA_GITHUB_INSTALL_DRY_RUN: "1",
+        RUSTFLAGS: rustflags,
+      },
+      encoding: "utf-8",
+    },
+  );
+}
 
 function scriptEnv(extra: Record<string, string>) {
   const env = { ...process.env };
@@ -65,41 +99,59 @@ describe("工具链行为", () => {
     });
   });
 
-  it("Tauri install 脚本默认为本机 CPU 优化 release 打包", () => {
-    const run = spawnSync("node", ["scripts/tauri-install.mjs"], {
-      cwd: resolve("."),
-      env: {
-        ...process.env,
-        LILIA_GITHUB_INSTALL_DRY_RUN: "1",
-        RUSTFLAGS: "-C debuginfo=0",
-      },
-      encoding: "utf-8",
-    });
+  it("共享 Tauri install CLI 规划 release 产物和桌面快捷方式", () => {
+    const run = runTauriInstallDryRun("-C debuginfo=0");
 
     expect(run.status).toBe(0);
-    const parsed = JSON.parse(run.stdout) as {
-      args: string[];
-      env: Record<string, string>;
-    };
-    expect(parsed.args.join(" ")).toContain("tauri build");
-    expect(parsed.env.RUSTFLAGS).toBe("-C debuginfo=0 -C target-cpu=native");
+    const parsed = JSON.parse(run.stdout) as TauriInstallDryRun;
+    const expected = {
+      win32: {
+        artifactKind: "executable",
+        artifactSuffix: ".exe",
+        shortcutKind: "windows-lnk",
+        shortcutSuffix: ".lnk",
+        buildArgs: ["build", "--no-bundle"],
+      },
+      darwin: {
+        artifactKind: "app",
+        artifactSuffix: ".app",
+        shortcutKind: "macos-app-symlink",
+        shortcutSuffix: ".app",
+        buildArgs: ["build", "--bundles", "app"],
+      },
+      linux: {
+        artifactKind: "executable",
+        artifactSuffix: "",
+        shortcutKind: "linux-desktop-entry",
+        shortcutSuffix: ".desktop",
+        buildArgs: ["build", "--no-bundle"],
+      },
+    }[process.platform];
+
+    if (!expected) throw new Error(`不支持的测试平台: ${process.platform}`);
+    expect(parsed.platform).toBe(process.platform);
+    expect(parsed.build.command).toBe(process.execPath);
+    expect(parsed.build.args.slice(-expected.buildArgs.length)).toEqual(expected.buildArgs);
+    expect(parsed.build.env.RUSTFLAGS).toBe("-C debuginfo=0 -C target-cpu=native");
+    expect(parsed.artifact.kind).toBe(expected.artifactKind);
+    expect(resolve(parsed.artifact.path)).toBe(parsed.artifact.path);
+    if (process.platform === "darwin") {
+      expect(parsed.artifact.path).toContain(`${sep}bundle${sep}macos${sep}`);
+    } else {
+      expect(parsed.artifact.path).not.toContain(`${sep}bundle${sep}`);
+    }
+    expect(parsed.artifact.path.toLowerCase().endsWith(expected.artifactSuffix)).toBe(true);
+    expect(parsed.shortcut.kind).toBe(expected.shortcutKind);
+    expect(resolve(parsed.shortcut.path)).toBe(parsed.shortcut.path);
+    expect(parsed.shortcut.path.toLowerCase().endsWith(expected.shortcutSuffix)).toBe(true);
+    expect(parsed.shortcut.target).toBe(parsed.artifact.path);
   });
 
-  it("Tauri install 脚本不覆盖显式 target-cpu 配置", () => {
-    const run = spawnSync("node", ["scripts/tauri-install.mjs"], {
-      cwd: resolve("."),
-      env: {
-        ...process.env,
-        LILIA_GITHUB_INSTALL_DRY_RUN: "1",
-        RUSTFLAGS: "-C target-cpu=x86-64-v3",
-      },
-      encoding: "utf-8",
-    });
+  it("共享 Tauri install CLI 不覆盖显式 target-cpu 配置", () => {
+    const run = runTauriInstallDryRun("-C target-cpu=x86-64-v3");
 
     expect(run.status).toBe(0);
-    const parsed = JSON.parse(run.stdout) as {
-      env: Record<string, string>;
-    };
-    expect(parsed.env.RUSTFLAGS).toBe("-C target-cpu=x86-64-v3");
+    const parsed = JSON.parse(run.stdout) as TauriInstallDryRun;
+    expect(parsed.build.env.RUSTFLAGS).toBe("-C target-cpu=x86-64-v3");
   });
 });
