@@ -31,7 +31,6 @@ import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
 import { buildContributionHeatmapModel } from "@lilia/ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
-import { runBackgroundTask } from "../composables/useBackgroundTasks";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
   repoSyncIssuesByRepoId,
@@ -222,12 +221,6 @@ const repoStatusSortOptions: readonly {
   { value: "created", label: "创建时间", defaultDirection: "desc", icon: CalendarDays },
   { value: "updated", label: "最近更新", defaultDirection: "desc", icon: Clock },
 ];
-const homePendingTaskTitles: Record<HomePendingAction, string> = {
-  "issue-complete": "完成 Issue",
-  "issue-close": "关闭 Issue",
-  "pull-merge": "合并 PR",
-  "pull-close": "关闭 PR",
-};
 const defaultRepoStatusSortOption = repoStatusSortOptions[2]!;
 type RepoStatusSortOption = (typeof repoStatusSortOptions)[number];
 
@@ -1218,13 +1211,11 @@ async function runHomePendingAction(item: HomePendingItem, action: HomePendingAc
     [item.id]: action,
   };
   try {
-    await runBackgroundTask(homePendingBackgroundTask(item, action), async () => {
-      if (action === "issue-complete" || action === "issue-close") {
-        await updateHomePendingIssue(item, action);
-      } else {
-        await updateHomePendingPullRequest(item, action);
-      }
-    });
+    if (action === "issue-complete" || action === "issue-close") {
+      await updateHomePendingIssue(item, action);
+    } else {
+      await updateHomePendingPullRequest(item, action);
+    }
   } catch {
     return;
   } finally {
@@ -1233,18 +1224,6 @@ async function runHomePendingAction(item: HomePendingItem, action: HomePendingAc
       homePendingRunningActions.value = next;
     }
   }
-}
-
-function homePendingBackgroundTask(item: HomePendingItem, action: HomePendingAction) {
-  const target = item.target;
-  return {
-    kind: "github" as const,
-    title: homePendingTaskTitles[action],
-    repoId: target.kind === "repo" ? target.repoId : target.localRepoId,
-    repoName: homePendingItemRepoFullName(item),
-    detail: item.title,
-    priority: "normal" as const,
-  };
 }
 
 async function updateHomePendingIssue(item: HomePendingItem, action: Extract<HomePendingAction, "issue-complete" | "issue-close">) {

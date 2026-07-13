@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::{Task, TaskHandle};
+use mutsuki_runtime_contracts::{Task, TaskBatch, TaskHandle, TaskOutcome};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 
@@ -16,6 +16,12 @@ pub trait WorkspaceRuntime: Send + Sync {
     fn open_url(&self, url: &str, with: Option<&str>) -> Result<(), String>;
     fn emit(&self, event: &str, payload: JsonValue) -> Result<(), String>;
     fn submit_mutsuki_task(&self, _task: Task) -> Result<TaskHandle, String> {
+        Err("Mutsuki runtime is unavailable".to_string())
+    }
+    fn submit_mutsuki_batch(&self, _batch: TaskBatch) -> Result<Vec<TaskHandle>, String> {
+        Err("Mutsuki runtime is unavailable".to_string())
+    }
+    fn wait_mutsuki_task(&self, _task_id: &str) -> Result<TaskOutcome, String> {
         Err("Mutsuki runtime is unavailable".to_string())
     }
     fn cancel_mutsuki_task(&self, _handle: TaskHandle) -> Result<(), String> {
@@ -66,6 +72,14 @@ impl WorkspaceContext {
 
     pub fn submit_mutsuki_task(&self, task: Task) -> Result<TaskHandle, String> {
         self.runtime.submit_mutsuki_task(task)
+    }
+
+    pub fn submit_mutsuki_batch(&self, batch: TaskBatch) -> Result<Vec<TaskHandle>, String> {
+        self.runtime.submit_mutsuki_batch(batch)
+    }
+
+    pub fn wait_mutsuki_task(&self, task_id: &str) -> Result<TaskOutcome, String> {
+        self.runtime.wait_mutsuki_task(task_id)
     }
 
     pub fn cancel_mutsuki_task(&self, handle: TaskHandle) -> Result<(), String> {

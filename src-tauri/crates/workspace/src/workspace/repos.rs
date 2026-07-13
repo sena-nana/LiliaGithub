@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::thread;
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::bulk::{merge_pull_block_reason_with_mode, repo_dirty_count};
@@ -10,7 +9,14 @@ use crate::workspace::github::{
     clear_github_project_repo_cache, github_auth_header, normalize_github_repo_input,
     normalize_optional_string, token_for_binding,
 };
-use crate::workspace::run_blocking;
+use crate::workspace::operations::{
+    run_operation, run_operation_with_completion, OperationKind, OperationSpec,
+    OperationTaskCompletion, VisibleOperation,
+};
+use crate::workspace::repo_guard::{
+    repo_resource_id, with_repo_guard, with_repo_guards, RepoAccess,
+};
+use crate::workspace::run_core_operation_as;
 use crate::workspace::settings::{
     add_managed_repo_id, cached_repo_summary, load_settings, matching_startup_cache,
     prune_deleted_repo_settings, remove_startup_cache_repo, repo_path_by_id, repo_path_from_id,
@@ -18,7 +24,6 @@ use crate::workspace::settings::{
     write_startup_repo_summary_after_fetch,
 };
 use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
-use crate::workspace::tasks::{record_workspace_task, update_workspace_task};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
     LanguageStat, RepoChange, RepoConflictChoice, RepoConflictFile, RepoConflictHunk,
@@ -27,6 +32,147 @@ use lilia_github_contracts::workspace::{
     RepoRemote, RepoStashDetail, RepoStashEntry, RepoSummary, RepoWorktree,
     WorkspaceCreateLocalRepoRequest, WorkspaceSettings,
 };
+use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
+
+pub(super) async fn run_repo_blocking<T, F>(
+    app: AppHandle,
+    repo_id: String,
+    kind: OperationKind,
+    label: &'static str,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    run_repo_blocking_as(app, repo_id, kind, None, label, task).await
+}
+
+pub(super) async fn run_repo_analysis_blocking<T, F>(
+    app: AppHandle,
+    repo_id: String,
+    visible_kind: &'static str,
+    label: &'static str,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    run_repo_blocking_as(
+        app,
+        repo_id,
+        OperationKind::WorkspaceAnalysis,
+        Some(visible_kind),
+        label,
+        task,
+    )
+    .await
+}
+
+pub(super) async fn run_repo_visible_blocking<T, F>(
+    app: AppHandle,
+    repo_id: String,
+    kind: OperationKind,
+    visible_kind: &'static str,
+    label: &'static str,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    run_repo_blocking_as(app, repo_id, kind, Some(visible_kind), label, task).await
+}
+
+async fn run_repo_blocking_as<T, F>(
+    app: AppHandle,
+    repo_id: String,
+    kind: OperationKind,
+    visible_kind: Option<&'static str>,
+    label: &'static str,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let (spec, common_dir, access) =
+        repo_operation_setup(&app, &repo_id, kind, visible_kind, label)?;
+    run_operation(app, spec, move || with_repo_guard(common_dir, access, task)).await
+}
+
+fn repo_operation_setup(
+    app: &AppHandle,
+    repo_id: &str,
+    kind: OperationKind,
+    visible_kind: Option<&'static str>,
+    label: &'static str,
+) -> Result<(OperationSpec, PathBuf, RepoAccess), String> {
+    let write = kind == OperationKind::LocalWrite;
+    let common_dir = repo_common_dir_by_id(app, repo_id)?;
+    let resource_id = repo_resource_id(&common_dir);
+    let mut spec = OperationSpec::new(kind)
+        .resource(
+            resource_id.clone(),
+            if write {
+                ResourceAccessMode::ExclusiveWrite
+            } else {
+                ResourceAccessMode::Read
+            },
+        )
+        .same_resource_order(resource_id);
+    if write {
+        spec = spec.priority(100).visible(
+            VisibleOperation::new(visible_kind.unwrap_or("git"), label)
+                .priority(if visible_kind == Some("repoStatus") {
+                    "normal"
+                } else {
+                    "high"
+                })
+                .repo_id(repo_id.to_string()),
+        );
+    } else if kind == OperationKind::WorkspaceAnalysis {
+        spec = spec.lane(DispatchLane::Background).priority(-50).visible(
+            VisibleOperation::new(visible_kind.unwrap_or("workspace"), label)
+                .priority("low")
+                .repo_id(repo_id.to_string()),
+        );
+    } else if let Some(visible_kind) = visible_kind {
+        spec = spec.visible(
+            VisibleOperation::new(visible_kind, label)
+                .priority("normal")
+                .repo_id(repo_id.to_string()),
+        );
+    }
+    Ok((
+        spec,
+        common_dir,
+        if write {
+            RepoAccess::Write
+        } else {
+            RepoAccess::Read
+        },
+    ))
+}
+
+async fn run_repo_visible_blocking_with_completion<T, F>(
+    app: AppHandle,
+    repo_id: String,
+    kind: OperationKind,
+    visible_kind: &'static str,
+    label: &'static str,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<(T, OperationTaskCompletion), String> + Send + 'static,
+{
+    let (spec, common_dir, access) =
+        repo_operation_setup(&app, &repo_id, kind, Some(visible_kind), label)?;
+    run_operation_with_completion(app, spec, move || with_repo_guard(common_dir, access, task))
+        .await
+}
 
 #[cfg(test)]
 use lilia_github_contracts::workspace::WorkspaceStartupCache;
@@ -278,6 +424,37 @@ pub(super) fn git_worktree_entries(path: &Path) -> Vec<GitWorktreeEntry> {
 }
 
 pub(super) fn git_common_dir(path: &Path) -> Option<PathBuf> {
+    let dot_git = path.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        Some(dot_git)
+    } else if dot_git.is_file() {
+        fs::read_to_string(&dot_git).ok().and_then(|content| {
+            let raw = content.trim().strip_prefix("gitdir:")?.trim();
+            let git_dir = PathBuf::from(raw);
+            Some(if git_dir.is_absolute() {
+                git_dir
+            } else {
+                path.join(git_dir)
+            })
+        })
+    } else {
+        None
+    };
+    if let Some(git_dir) = git_dir {
+        let common_dir = fs::read_to_string(git_dir.join("commondir"))
+            .ok()
+            .map(|raw| PathBuf::from(raw.trim()))
+            .filter(|value| !value.as_os_str().is_empty())
+            .map(|value| {
+                if value.is_absolute() {
+                    value
+                } else {
+                    git_dir.join(value)
+                }
+            })
+            .unwrap_or(git_dir);
+        return Some(canonical_repo_path(&common_dir));
+    }
     let raw = git_command_lossy(path, &["rev-parse", "--git-common-dir"])?;
     if raw.is_empty() {
         return None;
@@ -289,6 +466,11 @@ pub(super) fn git_common_dir(path: &Path) -> Option<PathBuf> {
         path.join(common_dir)
     };
     Some(canonical_repo_path(&absolute))
+}
+
+pub(super) fn repo_common_dir_by_id(app: &AppHandle, repo_id: &str) -> Result<PathBuf, String> {
+    let path = repo_path_by_id(app, repo_id)?;
+    Ok(git_common_dir(&path).unwrap_or(path))
 }
 
 fn repo_id_within_root(root: &Path, path: &Path) -> Option<String> {
@@ -924,6 +1106,19 @@ pub(super) fn expand_repo_paths_with_root_worktrees(
     root: &Path,
     paths: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
+    let common_dirs = paths
+        .iter()
+        .map(|path| git_common_dir(path).unwrap_or_else(|| path.clone()))
+        .collect::<Vec<_>>();
+    with_repo_guards(common_dirs, RepoAccess::Read, || {
+        expand_repo_paths_with_root_worktrees_unlocked(root, paths)
+    })
+}
+
+fn expand_repo_paths_with_root_worktrees_unlocked(
+    root: &Path,
+    paths: Vec<PathBuf>,
+) -> Vec<PathBuf> {
     let canonical_root = canonical_repo_path(root);
     let mut expanded = Vec::new();
     let mut seen = HashSet::new();
@@ -959,16 +1154,37 @@ pub(super) fn expand_repo_paths_with_root_worktrees(
 }
 
 pub(super) fn summarize_repos(root: &Path, paths: Vec<PathBuf>) -> Vec<RepoSummary> {
-    thread::scope(|scope| {
-        let handles: Vec<_> = paths
-            .into_iter()
-            .map(|path| scope.spawn(move || summarize_repo(root, &path)))
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| handle.join().expect("repo summary worker panicked"))
-            .collect()
-    })
+    paths
+        .into_iter()
+        .map(|path| {
+            let common_dir = git_common_dir(&path).unwrap_or_else(|| path.clone());
+            with_repo_guard(common_dir, RepoAccess::Read, || summarize_repo(root, &path))
+        })
+        .collect()
+}
+
+fn operation_spec_with_repo_reads(
+    mut spec: OperationSpec,
+    paths: impl IntoIterator<Item = PathBuf>,
+) -> OperationSpec {
+    let mut resources = paths
+        .into_iter()
+        .map(|path| git_common_dir(&path).unwrap_or(path))
+        .map(repo_resource_id)
+        .collect::<Vec<_>>();
+    resources.sort();
+    resources.dedup();
+    for resource in resources {
+        spec = spec.resource(resource, ResourceAccessMode::Read);
+    }
+    spec
+}
+
+fn workspace_analysis_spec(kind: &'static str, title: &'static str) -> OperationSpec {
+    OperationSpec::new(OperationKind::WorkspaceAnalysis)
+        .lane(DispatchLane::Background)
+        .priority(-50)
+        .visible(VisibleOperation::new(kind, title).priority("low"))
 }
 
 #[cfg(test)]
@@ -1062,27 +1278,21 @@ pub(super) fn filter_hidden_repos(
 }
 
 pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    run_blocking("刷新仓库", move || {
+    let root = workspace_root(&app)?;
+    let settings = load_settings(&app);
+    let spec = operation_spec_with_repo_reads(
+        workspace_analysis_spec("repoStatus", "刷新仓库"),
+        managed_repo_paths(&root, &settings),
+    );
+    run_operation(app.clone(), spec, move || {
         let root = workspace_root(&app)?;
         let mut settings = load_settings(&app);
-        let task = record_workspace_task(
-            "repoStatus",
-            "high",
-            None,
-            "running",
-            Some("刷新已管理仓库本地状态".to_string()),
-        );
         let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
         let mut repos = summarize_repos(&root, paths);
         sort_repos(&mut repos);
         for summary in &repos {
             let _ = write_startup_repo_summary(&app, &settings, summary);
         }
-        update_workspace_task(
-            &task.id,
-            "success",
-            Some(format!("已刷新 {} 个仓库的本地状态", repos.len())),
-        );
         Ok(repos)
     })
     .await
@@ -1090,14 +1300,25 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
 
 pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
     let refresh_app = app.clone();
-    let repos = run_blocking("读取已管理仓库", move || {
+    let root = workspace_root(&app)?;
+    let settings = load_settings(&app);
+    let spec = operation_spec_with_repo_reads(
+        OperationSpec::new(OperationKind::LocalRead),
+        managed_repo_paths(&root, &settings),
+    );
+    let repos = run_operation(app.clone(), spec, move || {
         let root = workspace_root(&app)?;
         let mut settings = load_settings(&app);
         let cache = matching_startup_cache(&app, &settings);
         let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
         let mut repos: Vec<_> = paths
             .into_iter()
-            .map(|path| cached_repo_summary(&cache, lightweight_repo_summary(&root, &path)))
+            .map(|path| {
+                let common_dir = git_common_dir(&path).unwrap_or_else(|| path.clone());
+                with_repo_guard(common_dir, RepoAccess::Read, || {
+                    cached_repo_summary(&cache, lightweight_repo_summary(&root, &path))
+                })
+            })
             .collect();
         sort_repos(&mut repos);
         crate::workspace::watcher::sync_repo_watchers(&app);
@@ -1116,61 +1337,54 @@ pub async fn workspace_scan_repos(app: AppHandle) -> Result<Vec<RepoSummary>, St
 }
 
 pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String> {
-    run_blocking("发现仓库", move || {
-        let root = workspace_root(&app)?;
-        let task = record_workspace_task(
-            "discoverRepos",
-            "low",
-            None,
-            "running",
-            Some("后台发现工作区仓库".to_string()),
-        );
-        let paths = expand_repo_paths_with_root_worktrees(&root, collect_repos(&root));
-        let mut settings = load_settings(&app);
-        for path in &paths {
-            add_managed_repo_id(&mut settings, repo_id(&root, path));
-        }
-        save_settings(&app, &settings)?;
-        crate::workspace::watcher::sync_repo_watchers(&app);
-        let mut repos =
-            filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
-        sort_repos(&mut repos);
-        update_workspace_task(
-            &task.id,
-            "success",
-            Some(format!("发现 {} 个仓库", repos.len())),
-        );
-        Ok(repos)
-    })
+    run_operation(
+        app.clone(),
+        workspace_analysis_spec("discoverRepos", "发现仓库"),
+        move || {
+            let root = workspace_root(&app)?;
+            let paths = expand_repo_paths_with_root_worktrees(&root, collect_repos(&root));
+            let mut settings = load_settings(&app);
+            for path in &paths {
+                add_managed_repo_id(&mut settings, repo_id(&root, path));
+            }
+            save_settings(&app, &settings)?;
+            crate::workspace::watcher::sync_repo_watchers(&app);
+            let mut repos =
+                filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
+            sort_repos(&mut repos);
+            Ok(repos)
+        },
+    )
     .await
 }
 
 pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<RepoSummary, String> {
-    run_blocking("添加仓库", move || {
-        let root = workspace_root(&app)?;
-        let path = normalize_repo_path(&root, &repo_path)?;
-        let selected_repo_id = repo_id(&root, &path);
-        let task = record_workspace_task(
-            "repoStatus",
-            "high",
-            Some(selected_repo_id.clone()),
-            "running",
-            Some("添加本地仓库".to_string()),
-        );
-        let mut settings = load_settings(&app);
-        for managed_path in expand_repo_paths_with_root_worktrees(&root, vec![path.clone()]) {
-            add_managed_repo_id(&mut settings, repo_id(&root, &managed_path));
-        }
-        settings
-            .hidden_repo_ids
-            .retain(|id| id != &selected_repo_id);
-        save_settings(&app, &settings)?;
-        crate::workspace::watcher::sync_repo_watchers(&app);
-        let summary = summarize_repo(&root, &path);
-        let _ = write_startup_repo_summary(&app, &settings, &summary);
-        update_workspace_task(&task.id, "success", Some("已添加仓库".to_string()));
-        Ok(summary)
-    })
+    let root = workspace_root(&app)?;
+    let path = normalize_repo_path(&root, &repo_path)?;
+    let selected_repo_id = repo_id(&root, &path);
+    run_repo_visible_blocking(
+        app.clone(),
+        selected_repo_id.clone(),
+        OperationKind::LocalWrite,
+        "workspace",
+        "添加仓库",
+        move || {
+            let mut settings = load_settings(&app);
+            for managed_path in
+                expand_repo_paths_with_root_worktrees_unlocked(&root, vec![path.clone()])
+            {
+                add_managed_repo_id(&mut settings, repo_id(&root, &managed_path));
+            }
+            settings
+                .hidden_repo_ids
+                .retain(|id| id != &selected_repo_id);
+            save_settings(&app, &settings)?;
+            crate::workspace::watcher::sync_repo_watchers(&app);
+            let summary = summarize_repo(&root, &path);
+            let _ = write_startup_repo_summary(&app, &settings, &summary);
+            Ok(summary)
+        },
+    )
     .await
 }
 
@@ -1201,62 +1415,61 @@ pub async fn workspace_create_local_repo(
     app: AppHandle,
     request: WorkspaceCreateLocalRepoRequest,
 ) -> Result<RepoSummary, String> {
-    run_blocking("创建本地仓库", move || {
-        let root = workspace_root(&app)?;
-        let name = request.name.trim().to_string();
-        validate_clone_directory_name(&name)?;
-        let target = root.join(&name);
-        if target.exists() {
-            return Err(format!("目标目录已存在：{}", target.display()));
-        }
-        if target.parent() != Some(root.as_path()) {
-            return Err("目标目录必须位于工作区内".to_string());
-        }
+    run_core_operation_as(
+        app.clone(),
+        OperationKind::LocalWrite,
+        Some("workspace"),
+        "创建本地仓库",
+        move || {
+            let root = workspace_root(&app)?;
+            let name = request.name.trim().to_string();
+            validate_clone_directory_name(&name)?;
+            let target = root.join(&name);
+            if target.exists() {
+                return Err(format!("目标目录已存在：{}", target.display()));
+            }
+            if target.parent() != Some(root.as_path()) {
+                return Err("目标目录必须位于工作区内".to_string());
+            }
 
-        let task = record_workspace_task(
-            "repoStatus",
-            "high",
-            Some(name.clone()),
-            "running",
-            Some("创建本地仓库".to_string()),
-        );
-        fs::create_dir(&target).map_err(|e| format!("创建仓库目录失败：{e}"))?;
-        if request.add_readme {
-            let description = normalize_local_repo_optional_string(request.description);
-            let body = description
-                .as_ref()
-                .map(|value| format!("# {name}\n\n{value}\n"))
-                .unwrap_or_else(|| format!("# {name}\n"));
-            fs::write(target.join("README.md"), body)
-                .map_err(|e| format!("写入 README 失败：{e}"))?;
-        }
-        if let Some(template) = normalize_local_repo_optional_string(request.gitignore_template) {
-            fs::write(
-                target.join(".gitignore"),
-                local_gitignore_template_content(&template),
-            )
-            .map_err(|e| format!("写入 .gitignore 失败：{e}"))?;
-        }
-        if let Some(template) = normalize_local_repo_optional_string(request.license_template) {
-            fs::write(
-                target.join("LICENSE"),
-                local_license_template_content(&template, &name),
-            )
-            .map_err(|e| format!("写入 LICENSE 失败：{e}"))?;
-        }
-        git_command(&target, &["init"], None)?;
+            fs::create_dir(&target).map_err(|e| format!("创建仓库目录失败：{e}"))?;
+            if request.add_readme {
+                let description = normalize_local_repo_optional_string(request.description);
+                let body = description
+                    .as_ref()
+                    .map(|value| format!("# {name}\n\n{value}\n"))
+                    .unwrap_or_else(|| format!("# {name}\n"));
+                fs::write(target.join("README.md"), body)
+                    .map_err(|e| format!("写入 README 失败：{e}"))?;
+            }
+            if let Some(template) = normalize_local_repo_optional_string(request.gitignore_template)
+            {
+                fs::write(
+                    target.join(".gitignore"),
+                    local_gitignore_template_content(&template),
+                )
+                .map_err(|e| format!("写入 .gitignore 失败：{e}"))?;
+            }
+            if let Some(template) = normalize_local_repo_optional_string(request.license_template) {
+                fs::write(
+                    target.join("LICENSE"),
+                    local_license_template_content(&template, &name),
+                )
+                .map_err(|e| format!("写入 LICENSE 失败：{e}"))?;
+            }
+            git_command(&target, &["init"], None)?;
 
-        let repo_id = repo_id(&root, &target);
-        let mut settings = load_settings(&app);
-        add_managed_repo_id(&mut settings, repo_id.clone());
-        settings.hidden_repo_ids.retain(|id| id != &repo_id);
-        save_settings(&app, &settings)?;
-        crate::workspace::watcher::sync_repo_watchers(&app);
-        let summary = summarize_repo(&root, &target);
-        let _ = write_startup_repo_summary(&app, &settings, &summary);
-        update_workspace_task(&task.id, "success", Some("已创建本地仓库".to_string()));
-        Ok(summary)
-    })
+            let repo_id = repo_id(&root, &target);
+            let mut settings = load_settings(&app);
+            add_managed_repo_id(&mut settings, repo_id.clone());
+            settings.hidden_repo_ids.retain(|id| id != &repo_id);
+            save_settings(&app, &settings)?;
+            crate::workspace::watcher::sync_repo_watchers(&app);
+            let summary = summarize_repo(&root, &target);
+            let _ = write_startup_repo_summary(&app, &settings, &summary);
+            Ok(summary)
+        },
+    )
     .await
 }
 
@@ -1265,58 +1478,71 @@ pub async fn workspace_clone_repo(
     remote_url: String,
     directory_name: Option<String>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("克隆仓库", move || {
-        let root = workspace_root(&app)?;
-        let input = remote_url.trim();
-        if input.is_empty() {
-            return Err("远端 URL 不能为空".to_string());
-        }
-        let normalized_github = normalize_github_repo_input(input).ok();
-        let remote = normalized_github
-            .as_ref()
-            .map(|repo| repo.clone_url.as_str())
-            .unwrap_or(input);
-        let directory = normalize_clone_directory_name(remote, directory_name)?;
-        let target = root.join(&directory);
-        if target.exists() {
-            return Err(format!("目标目录已存在：{}", target.display()));
-        }
-        if target.parent() != Some(root.as_path()) {
-            return Err("目标目录必须位于工作区内".to_string());
-        }
-        let auth_header = if normalized_github.is_some() || parse_github_remote(remote).is_some() {
-            token_for_binding(&app)?.map(|token| github_auth_header(&token))
-        } else {
-            None
-        };
-        let run_clone = |auth: Option<&str>| {
-            git_command(&root, &["clone", remote, directory.as_str()], auth)
-                .map_err(|error| normalize_git_remote_error(remote, error))
-        };
-        if let Err(error) = run_clone(auth_header.as_deref()) {
-            if !should_retry_clone_with_system_git(remote, &error) {
-                return Err(error);
+    run_core_operation_as(
+        app.clone(),
+        OperationKind::LocalWrite,
+        Some("workspace"),
+        "克隆仓库",
+        move || {
+            let root = workspace_root(&app)?;
+            let input = remote_url.trim();
+            if input.is_empty() {
+                return Err("远端 URL 不能为空".to_string());
             }
-            run_clone(None)?;
-            remember_repo_uses_system_git(&app, &target)?;
-        }
-        let mut settings = load_settings(&app);
-        add_managed_repo_id(&mut settings, repo_id(&root, &target));
-        save_settings(&app, &settings)?;
-        crate::workspace::watcher::sync_repo_watchers(&app);
-        let summary = summarize_repo(&root, &target);
-        let _ = write_startup_repo_summary(&app, &settings, &summary);
-        Ok(summary)
-    })
+            let normalized_github = normalize_github_repo_input(input).ok();
+            let remote = normalized_github
+                .as_ref()
+                .map(|repo| repo.clone_url.as_str())
+                .unwrap_or(input);
+            let directory = normalize_clone_directory_name(remote, directory_name)?;
+            let target = root.join(&directory);
+            if target.exists() {
+                return Err(format!("目标目录已存在：{}", target.display()));
+            }
+            if target.parent() != Some(root.as_path()) {
+                return Err("目标目录必须位于工作区内".to_string());
+            }
+            let auth_header =
+                if normalized_github.is_some() || parse_github_remote(remote).is_some() {
+                    token_for_binding(&app)?.map(|token| github_auth_header(&token))
+                } else {
+                    None
+                };
+            let run_clone = |auth: Option<&str>| {
+                git_command(&root, &["clone", remote, directory.as_str()], auth)
+                    .map_err(|error| normalize_git_remote_error(remote, error))
+            };
+            if let Err(error) = run_clone(auth_header.as_deref()) {
+                if !should_retry_clone_with_system_git(remote, &error) {
+                    return Err(error);
+                }
+                run_clone(None)?;
+                remember_repo_uses_system_git(&app, &target)?;
+            }
+            let mut settings = load_settings(&app);
+            add_managed_repo_id(&mut settings, repo_id(&root, &target));
+            save_settings(&app, &settings)?;
+            crate::workspace::watcher::sync_repo_watchers(&app);
+            let summary = summarize_repo(&root, &target);
+            let _ = write_startup_repo_summary(&app, &settings, &summary);
+            Ok(summary)
+        },
+    )
     .await
 }
 
 pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
-    run_blocking("读取仓库摘要", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取仓库摘要",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1325,17 +1551,23 @@ pub async fn repo_clear_local_cache(
     repo_id: String,
     repo_full_name: Option<String>,
 ) -> Result<(), String> {
-    run_blocking("清理项目缓存", move || {
-        remove_startup_cache_repo(&app, &repo_id)?;
-        if let Some(repo_full_name) = repo_full_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            clear_github_project_repo_cache(&app, repo_full_name)?;
-        }
-        Ok(())
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "清理项目缓存",
+        move || {
+            remove_startup_cache_repo(&app, &repo_id)?;
+            if let Some(repo_full_name) = repo_full_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                clear_github_project_repo_cache(&app, repo_full_name)?;
+            }
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -1344,43 +1576,45 @@ pub async fn repo_refresh_summary(
     repo_id: String,
     options: Option<RepoRefreshSummaryOptions>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("刷新仓库摘要", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let task = record_workspace_task(
-            "repoStatus",
-            "normal",
-            Some(repo_id),
-            "running",
-            Some("刷新仓库状态".to_string()),
-        );
-        let fetched_remote = options.map(|value| value.fetch_remote).unwrap_or(false);
-        let fetch_error = if fetched_remote {
-            summarize_repo(&root, &path)
-                .remote_url
-                .as_ref()
-                .and_then(|_| run_fetch(&app, &path).err())
-        } else {
-            None
-        };
-        let summary = summarize_repo(&root, &path);
-        let settings = load_settings(&app);
-        if fetched_remote && fetch_error.is_none() {
-            let _ = write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis());
-        } else {
-            let _ = write_startup_repo_summary(&app, &settings, &summary);
-        }
-        if let Some(error) = fetch_error {
-            update_workspace_task(
-                &task.id,
-                "error",
-                Some(format!("仓库状态已刷新，远端同步失败：{error}")),
-            );
-        } else {
-            update_workspace_task(&task.id, "success", Some("仓库状态已更新".to_string()));
-        }
-        Ok(summary)
-    })
+    let fetched_remote = options.map(|value| value.fetch_remote).unwrap_or(false);
+    let kind = if fetched_remote {
+        OperationKind::LocalWrite
+    } else {
+        OperationKind::LocalRead
+    };
+    run_repo_visible_blocking_with_completion(
+        app.clone(),
+        repo_id.clone(),
+        kind,
+        "repoStatus",
+        "刷新仓库状态",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let fetch_error = if fetched_remote {
+                summarize_repo(&root, &path)
+                    .remote_url
+                    .as_ref()
+                    .and_then(|_| run_fetch(&app, &path).err())
+            } else {
+                None
+            };
+            let summary = summarize_repo(&root, &path);
+            let settings = load_settings(&app);
+            if fetched_remote && fetch_error.is_none() {
+                let _ =
+                    write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis());
+            } else {
+                let _ = write_startup_repo_summary(&app, &settings, &summary);
+            }
+            let completion = if let Some(error) = fetch_error {
+                OperationTaskCompletion::Error(format!("仓库状态已刷新，远端同步失败：{error}"))
+            } else {
+                OperationTaskCompletion::Success("仓库状态已更新".to_string())
+            };
+            Ok((summary, completion))
+        },
+    )
     .await
 }
 
@@ -1388,30 +1622,34 @@ pub async fn repo_refresh_language_stats(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("刷新语言统计", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let task = record_workspace_task(
-            "languageStats",
-            "low",
-            Some(repo_id),
-            "running",
-            Some("刷新语言统计".to_string()),
-        );
-        let summary = summarize_repo_with_language_stats(&root, &path);
-        let settings = load_settings(&app);
-        let _ = write_startup_repo_summary(&app, &settings, &summary);
-        update_workspace_task(&task.id, "success", Some("语言统计已更新".to_string()));
-        Ok(summary)
-    })
+    run_repo_analysis_blocking(
+        app.clone(),
+        repo_id.clone(),
+        "languageStats",
+        "刷新语言统计",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let summary = summarize_repo_with_language_stats(&root, &path);
+            let settings = load_settings(&app);
+            let _ = write_startup_repo_summary(&app, &settings, &summary);
+            Ok(summary)
+        },
+    )
     .await
 }
 
 pub async fn repo_get_changes(app: AppHandle, repo_id: String) -> Result<Vec<RepoChange>, String> {
-    run_blocking("读取仓库改动", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        Ok(repo_changes(&path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取仓库改动",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            Ok(repo_changes(&path))
+        },
+    )
     .await
 }
 
@@ -1419,10 +1657,16 @@ pub async fn repo_get_history(
     app: AppHandle,
     repo_id: String,
 ) -> Result<Vec<CommitSummary>, String> {
-    run_blocking("读取提交历史", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        Ok(repo_history(&path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取提交历史",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            Ok(repo_history(&path))
+        },
+    )
     .await
 }
 
@@ -1431,10 +1675,16 @@ pub async fn repo_get_commit_detail(
     repo_id: String,
     hash: String,
 ) -> Result<CommitDetail, String> {
-    run_blocking("读取提交详情", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        repo_commit_detail(&path, &hash)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取提交详情",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            repo_commit_detail(&path, &hash)
+        },
+    )
     .await
 }
 
@@ -1442,10 +1692,16 @@ pub async fn repo_get_branches(
     app: AppHandle,
     repo_id: String,
 ) -> Result<Vec<BranchSummary>, String> {
-    run_blocking("读取仓库分支", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        Ok(repo_branches(&path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取仓库分支",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            Ok(repo_branches(&path))
+        },
+    )
     .await
 }
 
@@ -1453,47 +1709,45 @@ pub async fn repo_get_conflicts(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoConflictState, String> {
-    run_blocking("读取冲突状态", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        Ok(repo_conflicts(&path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取冲突状态",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            Ok(repo_conflicts(&path))
+        },
+    )
     .await
 }
 
 pub async fn repo_get_detail(app: AppHandle, repo_id: String) -> Result<RepoDetail, String> {
-    run_blocking("读取仓库详情", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let status = repo_status_snapshot(&path);
-        let change_entries = status.entries.clone();
-        let conflict_entries = conflict_status_entries(&status.entries);
-        let changes_path = path.as_path();
-        let conflicts_path = path.as_path();
-        let (summary, changes, commits, branches, conflicts) = thread::scope(|scope| {
-            let summary = scope
-                .spawn(|| summarize_repo_with_language_stats_from_status(&root, &path, &status));
-            let changes =
-                scope.spawn(move || repo_changes_from_entries(changes_path, change_entries));
-            let commits = scope.spawn(|| repo_history(&path));
-            let branches = scope.spawn(|| repo_branches(&path));
-            let conflicts =
-                scope.spawn(move || repo_conflicts_from_entries(conflicts_path, conflict_entries));
-            (
-                summary.join().expect("repo summary worker panicked"),
-                changes.join().expect("repo changes worker panicked"),
-                commits.join().expect("repo history worker panicked"),
-                branches.join().expect("repo branches worker panicked"),
-                conflicts.join().expect("repo conflicts worker panicked"),
-            )
-        });
-        Ok(RepoDetail {
-            summary,
-            changes,
-            commits,
-            branches,
-            conflicts,
-        })
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取仓库详情",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let status = repo_status_snapshot(&path);
+            let change_entries = status.entries.clone();
+            let conflict_entries = conflict_status_entries(&status.entries);
+            let summary = summarize_repo_with_language_stats_from_status(&root, &path, &status);
+            let changes = repo_changes_from_entries(&path, change_entries);
+            let commits = repo_history(&path);
+            let branches = repo_branches(&path);
+            let conflicts = repo_conflicts_from_entries(&path, conflict_entries);
+            Ok(RepoDetail {
+                summary,
+                changes,
+                commits,
+                branches,
+                conflicts,
+            })
+        },
+    )
     .await
 }
 
@@ -1502,11 +1756,17 @@ pub async fn repo_refresh_detail_patch(
     repo_id: String,
     request: RepoDetailPatchRequest,
 ) -> Result<RepoDetailPatch, String> {
-    run_blocking("刷新仓库状态", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        Ok(build_repo_detail_patch(&root, &path, &request))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "刷新仓库状态",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            Ok(build_repo_detail_patch(&root, &path, &request))
+        },
+    )
     .await
 }
 
@@ -1518,16 +1778,9 @@ fn build_repo_detail_patch(
     let status = repo_status_snapshot(path);
     let change_entries = status.entries.clone();
     let conflict_entries = conflict_status_entries(&status.entries);
-    let (summary, changes, conflicts) = thread::scope(|scope| {
-        let summary = scope.spawn(|| summarize_repo_from_status(root, path, &status));
-        let changes = scope.spawn(|| repo_changes_from_entries(path, change_entries));
-        let conflicts = scope.spawn(|| repo_conflicts_from_entries(path, conflict_entries));
-        (
-            summary.join().expect("repo summary worker panicked"),
-            changes.join().expect("repo changes worker panicked"),
-            conflicts.join().expect("repo conflicts worker panicked"),
-        )
-    });
+    let summary = summarize_repo_from_status(root, path, &status);
+    let changes = repo_changes_from_entries(path, change_entries);
+    let conflicts = repo_conflicts_from_entries(path, conflict_entries);
     let commits = request.include_commits.then(|| repo_history(path));
     let branches = request.include_branches.then(|| repo_branches(path));
     RepoDetailPatch {
@@ -1573,13 +1826,19 @@ pub async fn repo_stage_files(
     repo_id: String,
     files: Vec<String>,
 ) -> Result<(), String> {
-    run_blocking("暂存文件", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        for file in selected_repo_files(&path, files)? {
-            git_command(&path, &["add", "--", &file], None)?;
-        }
-        Ok(())
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "暂存文件",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            for file in selected_repo_files(&path, files)? {
+                git_command(&path, &["add", "--", &file], None)?;
+            }
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -1588,13 +1847,19 @@ pub async fn repo_unstage_files(
     repo_id: String,
     files: Vec<String>,
 ) -> Result<(), String> {
-    run_blocking("取消暂存文件", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        for file in selected_repo_files(&path, files)? {
-            git_command(&path, &["restore", "--staged", "--", &file], None)?;
-        }
-        Ok(())
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "取消暂存文件",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            for file in selected_repo_files(&path, files)? {
+                git_command(&path, &["restore", "--staged", "--", &file], None)?;
+            }
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -1603,12 +1868,18 @@ pub async fn repo_discard_files(
     repo_id: String,
     files: Vec<String>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("放弃文件更改", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        discard_repo_files(&path, files)?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "放弃文件更改",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            discard_repo_files(&path, files)?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1617,12 +1888,18 @@ pub async fn repo_add_files_to_gitignore(
     repo_id: String,
     files: Vec<String>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("添加文件到 gitignore", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        add_repo_files_to_gitignore(&path, files)?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "添加文件到 gitignore",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            add_repo_files_to_gitignore(&path, files)?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1633,20 +1910,26 @@ pub async fn repo_commit(
     message: String,
     push_after: bool,
 ) -> Result<RepoSummary, String> {
-    run_blocking("提交仓库", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let trimmed = message.trim();
-        if trimmed.is_empty() {
-            return Err("提交说明不能为空".to_string());
-        }
-        let _selected = selected_repo_files(&path, files)?;
-        git_command(&path, &["commit", "-m", trimmed], None)?;
-        if push_after {
-            run_push(&app, &path)?;
-        }
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "提交仓库",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let trimmed = message.trim();
+            if trimmed.is_empty() {
+                return Err("提交说明不能为空".to_string());
+            }
+            let _selected = selected_repo_files(&path, files)?;
+            git_command(&path, &["commit", "-m", trimmed], None)?;
+            if push_after {
+                run_push(&app, &path)?;
+            }
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1655,27 +1938,33 @@ pub async fn repo_pull(
     repo_id: String,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("拉取仓库", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let summary = summarize_repo(&root, &path);
-        let local_changes =
-            prepare_pull_local_changes(&path, &summary, local_changes_mode, "pull")?;
-        if let Err(err) = run_pull(&app, &path) {
-            return Err(restore_pull_local_changes_after_error(
-                &path,
-                local_changes,
-                err,
-            ));
-        }
-        if let Err(err) = restore_pull_local_changes(&path, local_changes) {
-            let conflicts = repo_conflicts(&path);
-            if conflicts.files.is_empty() {
-                return Err(err);
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "拉取仓库",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let summary = summarize_repo(&root, &path);
+            let local_changes =
+                prepare_pull_local_changes(&path, &summary, local_changes_mode, "pull")?;
+            if let Err(err) = run_pull(&app, &path) {
+                return Err(restore_pull_local_changes_after_error(
+                    &path,
+                    local_changes,
+                    err,
+                ));
             }
-        }
-        Ok(summarize_repo(&root, &path))
-    })
+            if let Err(err) = restore_pull_local_changes(&path, local_changes) {
+                let conflicts = repo_conflicts(&path);
+                if conflicts.files.is_empty() {
+                    return Err(err);
+                }
+            }
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1684,78 +1973,91 @@ pub async fn repo_merge_pull(
     repo_id: String,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
 ) -> Result<RepoMergePullResult, String> {
-    run_blocking("合并拉取仓库", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let summary = summarize_repo(&root, &path);
-        let mode = local_changes_mode.unwrap_or_default();
-        if let Some(reason) = merge_pull_block_reason_with_mode(
-            &summary,
-            current_branch_upstream(&path).is_some(),
-            mode,
-        ) {
-            return Err(reason);
-        }
-        let local_changes = prepare_pull_local_changes(&path, &summary, Some(mode), "合并拉取")?;
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "合并拉取仓库",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let summary = summarize_repo(&root, &path);
+            let mode = local_changes_mode.unwrap_or_default();
+            if let Some(reason) = merge_pull_block_reason_with_mode(
+                &summary,
+                current_branch_upstream(&path).is_some(),
+                mode,
+            ) {
+                return Err(reason);
+            }
+            let local_changes =
+                prepare_pull_local_changes(&path, &summary, Some(mode), "合并拉取")?;
 
-        if let Err(err) = run_fetch(&app, &path) {
-            return Err(restore_pull_local_changes_after_error(
-                &path,
-                local_changes,
-                err,
-            ));
-        }
-        match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
-            Ok(_) => {
-                if let Some(result) = restore_pull_local_changes_for_merge_result(
-                    &root,
+            if let Err(err) = run_fetch(&app, &path) {
+                return Err(restore_pull_local_changes_after_error(
                     &path,
                     local_changes,
-                    "拉取完成，stash 还原产生冲突，请处理后提交",
-                )? {
-                    return Ok(result);
-                }
-                let summary = summarize_repo(&root, &path);
-                Ok(RepoMergePullResult {
-                    status: "success".to_string(),
-                    message: "合并完成".to_string(),
-                    conflicts: repo_conflicts(&path),
-                    summary,
-                })
+                    err,
+                ));
             }
-            Err(err) => {
-                let conflicts = repo_conflicts(&path);
-                let summary = summarize_repo(&root, &path);
-                if conflicts.files.is_empty() {
-                    Err(restore_pull_local_changes_after_error(
+            match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
+                Ok(_) => {
+                    if let Some(result) = restore_pull_local_changes_for_merge_result(
+                        &root,
                         &path,
                         local_changes,
-                        err,
-                    ))
-                } else {
+                        "拉取完成，stash 还原产生冲突，请处理后提交",
+                    )? {
+                        return Ok(result);
+                    }
+                    let summary = summarize_repo(&root, &path);
                     Ok(RepoMergePullResult {
-                        status: "conflicts".to_string(),
-                        message: "合并产生冲突，请处理后提交".to_string(),
+                        status: "success".to_string(),
+                        message: "合并完成".to_string(),
+                        conflicts: repo_conflicts(&path),
                         summary,
-                        conflicts,
                     })
                 }
+                Err(err) => {
+                    let conflicts = repo_conflicts(&path);
+                    let summary = summarize_repo(&root, &path);
+                    if conflicts.files.is_empty() {
+                        Err(restore_pull_local_changes_after_error(
+                            &path,
+                            local_changes,
+                            err,
+                        ))
+                    } else {
+                        Ok(RepoMergePullResult {
+                            status: "conflicts".to_string(),
+                            message: "合并产生冲突，请处理后提交".to_string(),
+                            summary,
+                            conflicts,
+                        })
+                    }
+                }
             }
-        }
-    })
+        },
+    )
     .await
 }
 
 pub async fn repo_fetch(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
-    run_blocking("抓取远端引用", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        run_fetch(&app, &path)?;
-        let summary = summarize_repo(&root, &path);
-        let settings = load_settings(&app);
-        write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis())?;
-        Ok(summary)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "抓取远端引用",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            run_fetch(&app, &path)?;
+            let summary = summarize_repo(&root, &path);
+            let settings = load_settings(&app);
+            write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis())?;
+            Ok(summary)
+        },
+    )
     .await
 }
 
@@ -1765,54 +2067,66 @@ pub async fn repo_start_rebase(
     onto_ref: Option<String>,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
 ) -> Result<RepoOperationResult, String> {
-    run_blocking("执行 rebase", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        ensure_repo_has_no_conflicts(&root, &path, "rebase")?;
-        let summary = summarize_repo(&root, &path);
-        let local_changes =
-            prepare_pull_local_changes(&path, &summary, local_changes_mode, "rebase")?;
-        let target = normalize_rebase_target(&path, onto_ref)?;
-        if target == "@{u}" || target.contains('/') {
-            if let Err(err) = run_fetch(&app, &path) {
-                return Err(restore_pull_local_changes_after_error(
-                    &path,
-                    local_changes,
-                    err,
-                ));
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "执行 rebase",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            ensure_repo_has_no_conflicts(&root, &path, "rebase")?;
+            let summary = summarize_repo(&root, &path);
+            let local_changes =
+                prepare_pull_local_changes(&path, &summary, local_changes_mode, "rebase")?;
+            let target = normalize_rebase_target(&path, onto_ref)?;
+            if target == "@{u}" || target.contains('/') {
+                if let Err(err) = run_fetch(&app, &path) {
+                    return Err(restore_pull_local_changes_after_error(
+                        &path,
+                        local_changes,
+                        err,
+                    ));
+                }
             }
-        }
-        let result = run_repo_operation_with_conflicts(
-            &root,
-            &path,
-            &["rebase", target.as_str()],
-            None,
-            "rebase 完成",
-            "rebase 产生冲突，请处理后继续",
-        )?;
-        if result.status == "conflicts" {
-            return Ok(result);
-        }
-        if let Some(result) = restore_pull_local_changes_for_operation_result(
-            &root,
-            &path,
-            local_changes,
-            "rebase 完成，stash 还原产生冲突，请处理后继续",
-        )? {
-            return Ok(result);
-        }
-        Ok(result)
-    })
+            let result = run_repo_operation_with_conflicts(
+                &root,
+                &path,
+                &["rebase", target.as_str()],
+                None,
+                "rebase 完成",
+                "rebase 产生冲突，请处理后继续",
+            )?;
+            if result.status == "conflicts" {
+                return Ok(result);
+            }
+            if let Some(result) = restore_pull_local_changes_for_operation_result(
+                &root,
+                &path,
+                local_changes,
+                "rebase 完成，stash 还原产生冲突，请处理后继续",
+            )? {
+                return Ok(result);
+            }
+            Ok(result)
+        },
+    )
     .await
 }
 
 pub async fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
-    run_blocking("推送仓库", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        run_push(&app, &path)?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "推送仓库",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            run_push(&app, &path)?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1822,27 +2136,33 @@ pub async fn repo_push_new_branch(
     remote_name: Option<String>,
     branch_name: Option<String>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("推送新分支", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let summary = summarize_repo(&root, &path);
-        let branch = normalize_branch_ref(
-            branch_name
-                .as_deref()
-                .or(summary.current_branch.as_deref())
-                .unwrap_or(""),
-            "分支名不能为空",
-        )?;
-        let remote = normalize_remote_name(remote_name.as_deref().unwrap_or("origin"))?;
-        let auth = git_auth_for_repo(&app, &path)?;
-        git_command(
-            &path,
-            &["push", "-u", remote.as_str(), branch.as_str()],
-            auth.as_deref(),
-        )
-        .map_err(|error| map_remote_git_error(&path, error))?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "推送新分支",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let summary = summarize_repo(&root, &path);
+            let branch = normalize_branch_ref(
+                branch_name
+                    .as_deref()
+                    .or(summary.current_branch.as_deref())
+                    .unwrap_or(""),
+                "分支名不能为空",
+            )?;
+            let remote = normalize_remote_name(remote_name.as_deref().unwrap_or("origin"))?;
+            let auth = git_auth_for_repo(&app, &path)?;
+            git_command(
+                &path,
+                &["push", "-u", remote.as_str(), branch.as_str()],
+                auth.as_deref(),
+            )
+            .map_err(|error| map_remote_git_error(&path, error))?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1850,13 +2170,19 @@ pub async fn repo_push_with_system_git(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("使用系统 Git 推送仓库", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        run_system_git_push(&path)?;
-        remember_repo_uses_system_git(&app, &path)?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "使用系统 Git 推送仓库",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            run_system_git_push(&path)?;
+            remember_repo_uses_system_git(&app, &path)?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1865,11 +2191,17 @@ pub async fn repo_checkout_branch(
     repo_id: String,
     branch: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("切换分支", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        checkout_branch_at(&root, &path, &branch)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "切换分支",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            checkout_branch_at(&root, &path, &branch)
+        },
+    )
     .await
 }
 
@@ -1880,11 +2212,17 @@ pub async fn repo_create_branch(
     from_ref: String,
     checkout_after: bool,
 ) -> Result<RepoSummary, String> {
-    run_blocking("创建分支", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        create_branch_at(&root, &path, &name, &from_ref, checkout_after)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "创建分支",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            create_branch_at(&root, &path, &name, &from_ref, checkout_after)
+        },
+    )
     .await
 }
 
@@ -1894,11 +2232,17 @@ pub async fn repo_rename_branch(
     old_name: String,
     new_name: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("重命名分支", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        rename_branch_at(&root, &path, &old_name, &new_name)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "重命名分支",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            rename_branch_at(&root, &path, &old_name, &new_name)
+        },
+    )
     .await
 }
 
@@ -1907,11 +2251,17 @@ pub async fn repo_merge_branch(
     repo_id: String,
     branch: String,
 ) -> Result<RepoMergePullResult, String> {
-    run_blocking("合并分支", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        merge_branch_at(&root, &path, &branch)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "合并分支",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            merge_branch_at(&root, &path, &branch)
+        },
+    )
     .await
 }
 
@@ -1920,11 +2270,17 @@ pub async fn repo_delete_branch(
     repo_id: String,
     branch: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("删除分支", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        delete_branch_at(&root, &path, &branch)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "删除分支",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            delete_branch_at(&root, &path, &branch)
+        },
+    )
     .await
 }
 
@@ -1934,23 +2290,29 @@ pub async fn repo_set_upstream(
     branch: String,
     upstream: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("设置分支 upstream", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let branch = normalize_branch_ref(&branch, "分支名不能为空")?;
-        let upstream = normalize_branch_ref(&upstream, "upstream 不能为空")?;
-        git_command(
-            &path,
-            &[
-                "branch",
-                "--set-upstream-to",
-                upstream.as_str(),
-                branch.as_str(),
-            ],
-            None,
-        )?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "设置分支 upstream",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let branch = normalize_branch_ref(&branch, "分支名不能为空")?;
+            let upstream = normalize_branch_ref(&upstream, "upstream 不能为空")?;
+            git_command(
+                &path,
+                &[
+                    "branch",
+                    "--set-upstream-to",
+                    upstream.as_str(),
+                    branch.as_str(),
+                ],
+                None,
+            )?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -1958,10 +2320,16 @@ pub async fn repo_list_stashes(
     app: AppHandle,
     repo_id: String,
 ) -> Result<Vec<RepoStashEntry>, String> {
-    run_blocking("读取 stash 列表", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        repo_stashes(&path)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取 stash 列表",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            repo_stashes(&path)
+        },
+    )
     .await
 }
 
@@ -1970,18 +2338,24 @@ pub async fn repo_get_stash_detail(
     repo_id: String,
     stash_id: String,
 ) -> Result<RepoStashDetail, String> {
-    run_blocking("读取 stash 详情", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let stash = normalize_stash_id(&stash_id)?;
-        let entry = repo_stashes(&path)?
-            .into_iter()
-            .find(|entry| entry.id == stash)
-            .ok_or_else(|| "stash 不存在".to_string())?;
-        Ok(RepoStashDetail {
-            entry,
-            files: repo_stash_file_changes(&path, &stash),
-        })
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取 stash 详情",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let stash = normalize_stash_id(&stash_id)?;
+            let entry = repo_stashes(&path)?
+                .into_iter()
+                .find(|entry| entry.id == stash)
+                .ok_or_else(|| "stash 不存在".to_string())?;
+            Ok(RepoStashDetail {
+                entry,
+                files: repo_stash_file_changes(&path, &stash),
+            })
+        },
+    )
     .await
 }
 
@@ -1990,27 +2364,33 @@ pub async fn repo_stash_save(
     repo_id: String,
     message: Option<String>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("保存 stash", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let summary = summarize_repo(&root, &path);
-        if repo_dirty_count(&summary) == 0 {
-            return Err("当前没有可保存的改动".to_string());
-        }
-        let message = normalize_optional_string(message).unwrap_or_else(|| {
-            summary
-                .current_branch
-                .as_deref()
-                .map(|branch| format!("保存工作区：{branch}"))
-                .unwrap_or_else(|| "保存工作区".to_string())
-        });
-        git_command(
-            &path,
-            &["stash", "push", "-u", "-m", message.as_str()],
-            None,
-        )?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "保存 stash",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let summary = summarize_repo(&root, &path);
+            if repo_dirty_count(&summary) == 0 {
+                return Err("当前没有可保存的改动".to_string());
+            }
+            let message = normalize_optional_string(message).unwrap_or_else(|| {
+                summary
+                    .current_branch
+                    .as_deref()
+                    .map(|branch| format!("保存工作区：{branch}"))
+                    .unwrap_or_else(|| "保存工作区".to_string())
+            });
+            git_command(
+                &path,
+                &["stash", "push", "-u", "-m", message.as_str()],
+                None,
+            )?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -2019,19 +2399,25 @@ pub async fn repo_stash_apply(
     repo_id: String,
     stash_id: String,
 ) -> Result<RepoOperationResult, String> {
-    run_blocking("应用 stash", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let stash = normalize_stash_id(&stash_id)?;
-        run_repo_operation_with_conflicts(
-            &root,
-            &path,
-            &["stash", "apply", stash.as_str()],
-            None,
-            "stash 已应用",
-            "stash 应用产生冲突，请处理后继续",
-        )
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "应用 stash",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let stash = normalize_stash_id(&stash_id)?;
+            run_repo_operation_with_conflicts(
+                &root,
+                &path,
+                &["stash", "apply", stash.as_str()],
+                None,
+                "stash 已应用",
+                "stash 应用产生冲突，请处理后继续",
+            )
+        },
+    )
     .await
 }
 
@@ -2040,19 +2426,25 @@ pub async fn repo_stash_pop(
     repo_id: String,
     stash_id: String,
 ) -> Result<RepoOperationResult, String> {
-    run_blocking("弹出 stash", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let stash = normalize_stash_id(&stash_id)?;
-        run_repo_operation_with_conflicts(
-            &root,
-            &path,
-            &["stash", "pop", stash.as_str()],
-            None,
-            "stash 已弹出",
-            "stash 弹出产生冲突，请处理后继续",
-        )
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "弹出 stash",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let stash = normalize_stash_id(&stash_id)?;
+            run_repo_operation_with_conflicts(
+                &root,
+                &path,
+                &["stash", "pop", stash.as_str()],
+                None,
+                "stash 已弹出",
+                "stash 弹出产生冲突，请处理后继续",
+            )
+        },
+    )
     .await
 }
 
@@ -2061,20 +2453,32 @@ pub async fn repo_stash_drop(
     repo_id: String,
     stash_id: String,
 ) -> Result<Vec<RepoStashEntry>, String> {
-    run_blocking("删除 stash", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let stash = normalize_stash_id(&stash_id)?;
-        git_command(&path, &["stash", "drop", stash.as_str()], None)?;
-        repo_stashes(&path)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "删除 stash",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let stash = normalize_stash_id(&stash_id)?;
+            git_command(&path, &["stash", "drop", stash.as_str()], None)?;
+            repo_stashes(&path)
+        },
+    )
     .await
 }
 
 pub async fn repo_list_remotes(app: AppHandle, repo_id: String) -> Result<Vec<RepoRemote>, String> {
-    run_blocking("读取远端配置", move || {
-        let path = repo_path_by_id(&app, &repo_id)?;
-        repo_remotes(&path)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取远端配置",
+        move || {
+            let path = repo_path_by_id(&app, &repo_id)?;
+            repo_remotes(&path)
+        },
+    )
     .await
 }
 
@@ -2083,20 +2487,26 @@ pub async fn repo_cherry_pick_commit(
     repo_id: String,
     hash: String,
 ) -> Result<RepoOperationResult, String> {
-    run_blocking("执行 cherry-pick", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        ensure_repo_ready_for_rewrite(&root, &path, "cherry-pick")?;
-        let hash = normalize_commit_hash(&hash)?;
-        run_repo_operation_with_conflicts(
-            &root,
-            &path,
-            &["cherry-pick", hash.as_str()],
-            None,
-            "cherry-pick 完成",
-            "cherry-pick 产生冲突，请处理后继续",
-        )
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "执行 cherry-pick",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            ensure_repo_ready_for_rewrite(&root, &path, "cherry-pick")?;
+            let hash = normalize_commit_hash(&hash)?;
+            run_repo_operation_with_conflicts(
+                &root,
+                &path,
+                &["cherry-pick", hash.as_str()],
+                None,
+                "cherry-pick 完成",
+                "cherry-pick 产生冲突，请处理后继续",
+            )
+        },
+    )
     .await
 }
 
@@ -2105,20 +2515,26 @@ pub async fn repo_revert_commit(
     repo_id: String,
     hash: String,
 ) -> Result<RepoOperationResult, String> {
-    run_blocking("回退提交", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        ensure_repo_ready_for_rewrite(&root, &path, "revert")?;
-        let hash = normalize_commit_hash(&hash)?;
-        run_repo_operation_with_conflicts(
-            &root,
-            &path,
-            &["revert", "--no-edit", hash.as_str()],
-            None,
-            "revert 完成",
-            "revert 产生冲突，请处理后继续",
-        )
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "回退提交",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            ensure_repo_ready_for_rewrite(&root, &path, "revert")?;
+            let hash = normalize_commit_hash(&hash)?;
+            run_repo_operation_with_conflicts(
+                &root,
+                &path,
+                &["revert", "--no-edit", hash.as_str()],
+                None,
+                "revert 完成",
+                "revert 产生冲突，请处理后继续",
+            )
+        },
+    )
     .await
 }
 
@@ -2128,18 +2544,24 @@ pub async fn repo_reset_to_commit(
     hash: String,
     mode: Option<String>,
 ) -> Result<RepoSummary, String> {
-    run_blocking("重置到提交", move || {
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let summary = summarize_repo(&root, &path);
-        if summary.conflict_count > 0 || !repo_conflicts(&path).files.is_empty() {
-            return Err("当前仓库存在未处理冲突，已阻止 reset".to_string());
-        }
-        let hash = normalize_commit_hash(&hash)?;
-        let mode = normalize_reset_mode(mode)?;
-        git_command(&path, &["reset", mode.as_str(), hash.as_str()], None)?;
-        Ok(summarize_repo(&root, &path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "重置到提交",
+        move || {
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let summary = summarize_repo(&root, &path);
+            if summary.conflict_count > 0 || !repo_conflicts(&path).files.is_empty() {
+                return Err("当前仓库存在未处理冲突，已阻止 reset".to_string());
+            }
+            let hash = normalize_commit_hash(&hash)?;
+            let mode = normalize_reset_mode(mode)?;
+            git_command(&path, &["reset", mode.as_str(), hash.as_str()], None)?;
+            Ok(summarize_repo(&root, &path))
+        },
+    )
     .await
 }
 
@@ -2150,16 +2572,22 @@ pub async fn repo_accept_conflict_file(
     side: String,
     stage: bool,
 ) -> Result<RepoSummary, String> {
-    run_blocking("接受冲突文件", move || {
-        let root = workspace_root(&app)?;
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        let checkout_side = conflict_checkout_side(&side)?;
-        git_command(&repo_path, &["checkout", checkout_side, "--", &path], None)?;
-        if stage {
-            git_command(&repo_path, &["add", "--", &path], None)?;
-        }
-        Ok(summarize_repo(&root, &repo_path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "接受冲突文件",
+        move || {
+            let root = workspace_root(&app)?;
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let checkout_side = conflict_checkout_side(&side)?;
+            git_command(&repo_path, &["checkout", checkout_side, "--", &path], None)?;
+            if stage {
+                git_command(&repo_path, &["add", "--", &path], None)?;
+            }
+            Ok(summarize_repo(&root, &repo_path))
+        },
+    )
     .await
 }
 
@@ -2170,19 +2598,25 @@ pub async fn repo_resolve_conflict_file(
     choices: Vec<RepoConflictChoice>,
     stage: bool,
 ) -> Result<RepoSummary, String> {
-    run_blocking("解决冲突文件", move || {
-        let root = workspace_root(&app)?;
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        let file_path = safe_repo_file_path(&repo_path, &path)?;
-        let content =
-            fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
-        let resolved = resolve_conflict_content(&content, &choices)?;
-        fs::write(&file_path, resolved).map_err(|e| format!("写入冲突文件失败：{e}"))?;
-        if stage {
-            git_command(&repo_path, &["add", "--", &path], None)?;
-        }
-        Ok(summarize_repo(&root, &repo_path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "解决冲突文件",
+        move || {
+            let root = workspace_root(&app)?;
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let file_path = safe_repo_file_path(&repo_path, &path)?;
+            let content =
+                fs::read_to_string(&file_path).map_err(|e| format!("读取冲突文件失败：{e}"))?;
+            let resolved = resolve_conflict_content(&content, &choices)?;
+            fs::write(&file_path, resolved).map_err(|e| format!("写入冲突文件失败：{e}"))?;
+            if stage {
+                git_command(&repo_path, &["add", "--", &path], None)?;
+            }
+            Ok(summarize_repo(&root, &repo_path))
+        },
+    )
     .await
 }
 
@@ -2191,12 +2625,18 @@ pub async fn repo_mark_file_resolved(
     repo_id: String,
     path: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("标记冲突文件已解决", move || {
-        let root = workspace_root(&app)?;
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        git_command(&repo_path, &["add", "--", &path], None)?;
-        Ok(summarize_repo(&root, &repo_path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "标记冲突文件已解决",
+        move || {
+            let root = workspace_root(&app)?;
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            git_command(&repo_path, &["add", "--", &path], None)?;
+            Ok(summarize_repo(&root, &repo_path))
+        },
+    )
     .await
 }
 
@@ -2204,14 +2644,20 @@ pub async fn repo_abort_conflict_operation(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("终止冲突操作", move || {
-        let root = workspace_root(&app)?;
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        let operation = conflict_operation(&repo_path);
-        let args = conflict_operation_args(&operation, "终止")?;
-        git_command(&repo_path, args, None)?;
-        Ok(summarize_repo(&root, &repo_path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "终止冲突操作",
+        move || {
+            let root = workspace_root(&app)?;
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let operation = conflict_operation(&repo_path);
+            let args = conflict_operation_args(&operation, "终止")?;
+            git_command(&repo_path, args, None)?;
+            Ok(summarize_repo(&root, &repo_path))
+        },
+    )
     .await
 }
 
@@ -2219,17 +2665,23 @@ pub async fn repo_continue_conflict_operation(
     app: AppHandle,
     repo_id: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("继续冲突操作", move || {
-        let root = workspace_root(&app)?;
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        let conflicts = repo_conflicts(&repo_path);
-        if !conflicts.files.is_empty() {
-            return Err("仍有冲突文件未解决".to_string());
-        }
-        let args = conflict_operation_args(&conflicts.operation, "继续")?;
-        git_command(&repo_path, args, None)?;
-        Ok(summarize_repo(&root, &repo_path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "继续冲突操作",
+        move || {
+            let root = workspace_root(&app)?;
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            let conflicts = repo_conflicts(&repo_path);
+            if !conflicts.files.is_empty() {
+                return Err("仍有冲突文件未解决".to_string());
+            }
+            let args = conflict_operation_args(&conflicts.operation, "继续")?;
+            git_command(&repo_path, args, None)?;
+            Ok(summarize_repo(&root, &repo_path))
+        },
+    )
     .await
 }
 
@@ -2715,53 +3167,40 @@ pub(super) fn repo_changes(path: &Path) -> Vec<RepoChange> {
 }
 
 fn repo_changes_from_entries(path: &Path, entries: Vec<RepoStatusEntry>) -> Vec<RepoChange> {
-    thread::scope(|scope| {
-        let handles: Vec<_> = entries
-            .into_iter()
-            .map(|entry| {
-                scope.spawn(move || {
-                    let RepoStatusEntry {
-                        index,
-                        worktree,
-                        path: file_path,
-                        old_path,
-                    } = entry;
-                    let untracked = index == "?" && worktree == "?";
-                    let conflicted = is_conflict_status(&index, &worktree);
-                    let staged = !untracked && index != " ";
-                    let unstaged = !untracked && worktree != " ";
-                    let diff = if untracked {
-                        git_diff_command_lossy(
-                            path,
-                            &["diff", "--no-index", "--", "/dev/null", &file_path],
-                        )
-                        .unwrap_or_default()
-                    } else if staged {
-                        git_command_lossy(path, &["diff", "--cached", "--", &file_path])
-                            .unwrap_or_default()
-                    } else {
-                        git_command_lossy(path, &["diff", "--", &file_path]).unwrap_or_default()
-                    };
-                    RepoChange {
-                        path: file_path,
-                        old_path,
-                        index_status: index,
-                        worktree_status: worktree,
-                        staged,
-                        unstaged,
-                        untracked,
-                        conflicted,
-                        diff,
-                    }
-                })
-            })
-            .collect();
-
-        handles
-            .into_iter()
-            .map(|handle| handle.join().expect("repo diff worker panicked"))
-            .collect()
-    })
+    entries
+        .into_iter()
+        .map(|entry| {
+            let RepoStatusEntry {
+                index,
+                worktree,
+                path: file_path,
+                old_path,
+            } = entry;
+            let untracked = index == "?" && worktree == "?";
+            let conflicted = is_conflict_status(&index, &worktree);
+            let staged = !untracked && index != " ";
+            let unstaged = !untracked && worktree != " ";
+            let diff = if untracked {
+                git_diff_command_lossy(path, &["diff", "--no-index", "--", "/dev/null", &file_path])
+                    .unwrap_or_default()
+            } else if staged {
+                git_command_lossy(path, &["diff", "--cached", "--", &file_path]).unwrap_or_default()
+            } else {
+                git_command_lossy(path, &["diff", "--", &file_path]).unwrap_or_default()
+            };
+            RepoChange {
+                path: file_path,
+                old_path,
+                index_status: index,
+                worktree_status: worktree,
+                staged,
+                unstaged,
+                untracked,
+                conflicted,
+                diff,
+            }
+        })
+        .collect()
 }
 
 pub(super) fn repo_history(path: &Path) -> Vec<CommitSummary> {

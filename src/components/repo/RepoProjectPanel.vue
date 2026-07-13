@@ -43,7 +43,6 @@ import {
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { invalidateSessionContextSnapshot } from "../../composables/sessionContext";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
-import type { BackgroundTaskDescriptor } from "../../composables/useBackgroundTasks";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
@@ -2662,33 +2661,15 @@ function isRepoMutationCurrent(generation: number, repoId: string) {
   return generation === repoMutationGeneration && props.repoId === repoId;
 }
 
-function remoteTask(descriptor: BackgroundTaskDescriptor): BackgroundTaskDescriptor {
-  return {
-    repoId: props.repoId,
-    repoName: props.repoTitle || props.repoFullName || props.repoId,
-    ...descriptor,
-  };
-}
-
 async function runGitHubMutation<T>(
   repoFullName: string,
   tracker: PendingTaskTracker,
   task: () => Promise<T>,
-  descriptor?: BackgroundTaskDescriptor,
 ): Promise<GitHubMutationResult<T>> {
   const generation = githubMutationGeneration;
   githubError.value = null;
   try {
-    const value = await tracker.run(
-      task,
-      descriptor
-        ? {
-            ...descriptor,
-            repoId: descriptor.repoId ?? props.repoId,
-            repoName: descriptor.repoName ?? props.repoTitle ?? repoFullName,
-          }
-        : undefined,
-    );
+    const value = await tracker.run(task);
     if (!isGitHubMutationCurrent(generation, repoFullName)) return { ok: false };
     return { ok: true, value };
   } catch (err) {
@@ -2712,7 +2693,6 @@ async function saveSettings(closeAboutOnSuccess = false) {
     repoFullName,
     settingsSaveTracker,
     () => updateGitHubRepoSettings(repoFullName, request),
-    remoteTask({ kind: "github", title: "保存仓库设置", priority: "normal" }),
   );
   if (!result.ok) return false;
   const next = result.value;
@@ -2763,7 +2743,6 @@ async function toggleArchivedSetting() {
     repoFullName,
     archiveSettingsTracker,
     () => updateGitHubRepoSettings(repoFullName, { archived: !(current.archived ?? false) }),
-    remoteTask({ kind: "github", title: current.archived ? "取消归档仓库" : "归档仓库", priority: "high" }),
   );
   if (!result.ok) {
     archiveError.value = githubError.value;
@@ -2876,10 +2855,7 @@ async function confirmDeleteLocalRepo() {
   const generation = repoMutationGeneration;
   deleteError.value = null;
   try {
-    await localDeleteTracker.run(
-      () => workspace.deleteLocalRepo(repoId),
-      remoteTask({ kind: "workspace", title: "删除本地仓库", priority: "high" }),
-    );
+    await localDeleteTracker.run(() => workspace.deleteLocalRepo(repoId));
     if (!isRepoMutationCurrent(generation, repoId)) return;
     deleteDialogTarget.value = null;
     deleteConfirmInput.value = "";
@@ -2901,7 +2877,7 @@ async function confirmDeleteRepo() {
     await remoteDeleteTracker.run(async () => {
       await deleteGitHubRepo(repoFullName);
       await workspace.forgetRemoteRepo(repoFullName);
-    }, remoteTask({ kind: "github", title: "删除远程仓库", priority: "high" }));
+    });
     if (!isGitHubMutationCurrent(generation, repoFullName)) return;
     clearHomeGitHubOverviewSnapshot();
     remoteDeleted.value = true;
@@ -3176,7 +3152,6 @@ async function saveIssueEdit(issue: GitHubIssue) {
     repoFullName,
     issueUpdateTracker,
     () => updateGitHubIssue(repoFullName, issue.number, request),
-    remoteTask({ kind: "github", title: "更新 Issue", detail: `#${issue.number}`, priority: "normal" }),
   );
   if (!result.ok) return;
   const updated = result.value;
@@ -3200,7 +3175,6 @@ async function createIssue() {
     repoFullName,
     issueCreateTracker,
     () => createGitHubIssue(repoFullName, request),
-    remoteTask({ kind: "github", title: "创建 Issue", detail: title, priority: "normal" }),
   );
   if (!result.ok) return;
   const issue = result.value;
@@ -3223,12 +3197,6 @@ async function toggleIssue(issue: GitHubIssue) {
     issueUpdateTracker,
     () => updateGitHubIssue(repoFullName, issue.number, {
       state: issue.state === "open" ? "closed" : "open",
-    }),
-    remoteTask({
-      kind: "github",
-      title: issue.state === "open" ? "关闭 Issue" : "重新打开 Issue",
-      detail: `#${issue.number}`,
-      priority: "normal",
     }),
   );
   if (!result.ok) return;
@@ -3267,7 +3235,6 @@ async function createPullRequest() {
     repoFullName,
     pullCreateTracker,
     () => createGitHubPullRequest(repoFullName, request),
-    remoteTask({ kind: "github", title: "创建 Pull Request", detail: title, priority: "normal" }),
   );
   if (!result.ok) return;
   const pull = result.value;
@@ -3295,12 +3262,6 @@ async function togglePullRequestState(pull: GitHubPullRequest) {
     () => updateGitHubPullRequest(repoFullName, pull.number, {
       state: pull.state === "open" ? "closed" : "open",
     }),
-    remoteTask({
-      kind: "github",
-      title: pull.state === "open" ? "关闭 Pull Request" : "重新打开 Pull Request",
-      detail: `#${pull.number}`,
-      priority: "normal",
-    }),
   );
   if (!result.ok) return;
   const updated = result.value;
@@ -3320,7 +3281,6 @@ async function mergePullRequest(pull: GitHubPullRequest) {
     () => mergeGitHubPullRequest(repoFullName, pull.number, {
       method,
     }),
-    remoteTask({ kind: "github", title: "合并 Pull Request", detail: `#${pull.number}`, priority: "high" }),
   );
   if (!result.ok) return;
   const updated = result.value;
@@ -3496,7 +3456,6 @@ async function createRelease(request: GitHubCreateReleaseRequest) {
     repoFullName,
     releaseCreateTracker,
     () => createGitHubRelease(repoFullName, request),
-    remoteTask({ kind: "github", title: "创建 Release", detail: request.tagName, priority: "normal" }),
   );
   if (!result.ok) return;
   upsertReleaseInView(result.value);
@@ -3512,7 +3471,6 @@ async function updateRelease(releaseId: number, request: GitHubUpdateReleaseRequ
     repoFullName,
     releaseUpdateTracker,
     () => updateGitHubRelease(repoFullName, releaseId, request),
-    remoteTask({ kind: "github", title: "更新 Release", detail: request.tagName ?? null, priority: "normal" }),
   );
   if (!result.ok) return;
   upsertReleaseInView(result.value);
@@ -3527,7 +3485,6 @@ async function removeRelease(release: GitHubRelease) {
     repoFullName,
     releaseDeleteTracker,
     () => deleteGitHubRelease(repoFullName, release.id),
-    remoteTask({ kind: "github", title: "删除 Release", detail: release.tagName, priority: "high" }),
   );
   if (!result.ok) return;
   releases.value = releases.value.filter((item) => item.id !== release.id);
@@ -3544,7 +3501,6 @@ async function uploadReleaseAssets(release: GitHubRelease) {
       repoFullName,
       releaseAssetUploadTracker,
       () => uploadGitHubReleaseAsset(repoFullName, release.id, filePath),
-      remoteTask({ kind: "github", title: "上传 Release 资源", detail: release.tagName, priority: "normal" }),
     );
     if (!result.ok) return;
     updateReleaseAssetsInView(release.id, (assets) => [
@@ -3561,12 +3517,6 @@ async function attachWorkflowArtifactAsset(request: GitHubAttachWorkflowArtifact
     repoFullName,
     releaseAssetUploadTracker,
     () => attachGitHubWorkflowArtifactAsset(repoFullName, request),
-    remoteTask({
-      kind: "github",
-      title: "挂载工作流产物",
-      detail: request.label ?? request.artifactName ?? request.expectedTagName,
-      priority: "normal",
-    }),
   );
   if (!result.ok) return;
   updateReleaseAssetsInView(request.releaseId, (assets) => [
@@ -3583,7 +3533,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
     repoFullName,
     releaseAssetDeleteTracker,
     () => deleteGitHubReleaseAsset(repoFullName, release.id, asset.id),
-    remoteTask({ kind: "github", title: "删除 Release 资源", detail: asset.name, priority: "normal" }),
   );
   if (!result.ok) return;
   updateReleaseAssetsInView(release.id, (assets) => assets.filter((candidate) => candidate.id !== asset.id));

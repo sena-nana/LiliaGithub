@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::workspace::repos::{git_common_dir, refresh_repo_for_scheduler};
+use crate::workspace::repo_guard::{repo_resource_id, with_repo_guard, RepoAccess};
+use crate::workspace::repos::{git_common_dir, refresh_repo_for_scheduler, repo_common_dir_by_id};
 use crate::workspace::settings::{
     load_settings, load_startup_cache, repo_path_by_id, write_startup_repo_summary,
     write_startup_repo_summary_after_fetch,
@@ -12,9 +13,9 @@ use crate::workspace::shared::now_millis;
 use crate::workspace::tasks::{record_workspace_task_and_emit, update_workspace_task_and_emit};
 use lilia_github_contracts::workspace::{RepoRefreshRequest, RepoRefreshedEvent};
 use mutsuki_runtime_contracts::{
-    CompletionBatch, EntryCompletion, ExecutionClass, RunnerBatchCapability, RunnerDescriptor,
-    RunnerMode, RunnerPurity, RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskHandle,
-    WorkBatch,
+    CompletionBatch, EntryCompletion, ExecutionClass, OrderingRequirement, ResourceAccessMode,
+    ResourceRequirement, RunnerBatchCapability, RunnerDescriptor, RunnerMode, RunnerPurity,
+    RunnerResult, RunnerSideEffect, RunnerStatus, Task, TaskHandle, WorkBatch,
 };
 use mutsuki_runtime_core::{Runner, RunnerContext, RuntimeResult};
 use mutsuki_runtime_host::{
@@ -56,7 +57,7 @@ impl SchedulerPolicy for RefreshSchedulerPolicy {
 
 pub fn refresh_runtime_config() -> HostRuntimeConfig {
     let mut config = HostRuntimeConfig {
-        blocking_threads: 2,
+        blocking_threads: 4,
         scheduler_policy: Arc::new(RefreshSchedulerPolicy),
         ..HostRuntimeConfig::default()
     };
@@ -76,6 +77,26 @@ pub fn refresh_runtime_config() -> HostRuntimeConfig {
             ..RunnerLimits::default()
         },
     );
+    for kind in [
+        crate::workspace::operations::OperationKind::LocalRead,
+        crate::workspace::operations::OperationKind::LocalWrite,
+        crate::workspace::operations::OperationKind::GitHubRead,
+        crate::workspace::operations::OperationKind::GitHubWrite,
+        crate::workspace::operations::OperationKind::GitHubTransfer,
+        crate::workspace::operations::OperationKind::WorkspaceAnalysis,
+        crate::workspace::operations::OperationKind::Bulk,
+        crate::workspace::operations::OperationKind::LaunchControl,
+    ] {
+        let concurrency = kind.concurrency();
+        config.runner_limits.insert(
+            kind.protocol().into(),
+            RunnerLimits {
+                max_running: concurrency,
+                max_inflight: concurrency,
+                ..RunnerLimits::default()
+            },
+        );
+    }
     config
 }
 
@@ -125,24 +146,6 @@ struct RefreshScheduler {
 fn scheduler() -> &'static RefreshScheduler {
     static SCHEDULER: OnceLock<RefreshScheduler> = OnceLock::new();
     SCHEDULER.get_or_init(RefreshScheduler::default)
-}
-
-fn common_dir_guards() -> &'static Mutex<HashMap<PathBuf, Weak<Mutex<()>>>> {
-    static GUARDS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
-    GUARDS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn common_dir_guard(key: PathBuf) -> Arc<Mutex<()>> {
-    let mut guards = common_dir_guards()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    guards.retain(|_, guard| guard.strong_count() > 0);
-    if let Some(guard) = guards.get(&key).and_then(Weak::upgrade) {
-        return guard;
-    }
-    let guard = Arc::new(Mutex::new(()));
-    guards.insert(key, Arc::downgrade(&guard));
-    guard
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -224,9 +227,8 @@ impl Runner for RepoRefreshRunner {
                 .into_iter()
                 .map(|task| {
                     let task_id = task.task_id.clone();
-                    let worker = scope.spawn(move || {
-                        (task.task_id.clone(), execute_runtime_task(lane, task))
-                    });
+                    let worker = scope
+                        .spawn(move || (task.task_id.clone(), execute_runtime_task(lane, task)));
                     (task_id, worker)
                 })
                 .collect::<Vec<_>>()
@@ -277,7 +279,7 @@ fn execute_runtime_task(lane: RefreshLane, task: Task) -> RunnerResult {
         Some(refresh_running_message(lane).to_string()),
         false,
     );
-    let mut result = with_common_dir_guard(&app, &request.repo_id, || {
+    let mut result = with_common_dir_guard(&app, &request.repo_id, lane, || {
         refresh_repo_for_scheduler(&app, &request, include_detail)
     });
     if let Ok(refresh) = &result {
@@ -307,8 +309,7 @@ fn begin_run(
     }
     let active_repo = state.active_repo.clone();
     let entry = state.entries.get_mut(&payload.key)?;
-    if entry.runtime_task_id != payload.run_id || request_lane(&entry.request) != lane
-    {
+    if entry.runtime_task_id != payload.run_id || request_lane(&entry.request) != lane {
         return None;
     }
     entry.state = EntryState::Running;
@@ -325,14 +326,21 @@ fn begin_run(
     ))
 }
 
-fn with_common_dir_guard<T>(app: &AppHandle, repo_id: &str, run: impl FnOnce() -> T) -> T {
+fn with_common_dir_guard<T>(
+    app: &AppHandle,
+    repo_id: &str,
+    lane: RefreshLane,
+    run: impl FnOnce() -> T,
+) -> T {
     let key = repo_path_by_id(app, repo_id)
         .ok()
         .map(|path| git_common_dir(&path).unwrap_or(path))
         .unwrap_or_else(|| PathBuf::from(repo_id));
-    let guard = common_dir_guard(key);
-    let _held = guard.lock().unwrap_or_else(|error| error.into_inner());
-    run()
+    let access = match lane {
+        RefreshLane::Local => RepoAccess::Read,
+        RefreshLane::Remote => RepoAccess::Write,
+    };
+    with_repo_guard(key, access, run)
 }
 
 type RefreshResult = Result<
@@ -397,9 +405,10 @@ fn finish_run(
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let owns = payload.generation == state.generation
-            && state.entries.get(&payload.key).is_some_and(|entry| {
-                entry.runtime_task_id == payload.run_id
-            });
+            && state
+                .entries
+                .get(&payload.key)
+                .is_some_and(|entry| entry.runtime_task_id == payload.run_id);
         if !owns {
             return;
         }
@@ -487,7 +496,7 @@ fn schedule_rerun(
 }
 
 fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(), String> {
-    let (app, mut task) = {
+    let (app, mut task, repo_id, lane) = {
         let state = scheduler()
             .state
             .lock()
@@ -510,9 +519,18 @@ fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(),
         task.priority = mutsuki_priority(&entry.request.priority);
         task.runner_hint = Some(protocol.to_string());
         task.correlation_id = Some(entry.task_id.clone());
-        (entry.app.clone(), task)
+        (
+            entry.app.clone(),
+            task,
+            entry.request.repo_id.clone(),
+            request_lane(&entry.request),
+        )
     };
+    let common_dir = repo_common_dir_by_id(&app, &repo_id)?;
+    let (resource_requirements, ordering) = refresh_resource_requirements(lane, common_dir);
     task.idempotency_key = Some(run_id.clone());
+    task.resource_requirements = resource_requirements;
+    task.ordering = ordering;
     let handle = app.submit_mutsuki_task(task)?;
     let mut state = scheduler()
         .state
@@ -525,6 +543,26 @@ fn submit_runtime_task(key: &str, generation: u64, run_id: String) -> Result<(),
         }
     }
     Ok(())
+}
+
+fn refresh_resource_requirements(
+    lane: RefreshLane,
+    common_dir: PathBuf,
+) -> (Vec<ResourceRequirement>, OrderingRequirement) {
+    let resource_id = repo_resource_id(common_dir);
+    (
+        vec![ResourceRequirement {
+            ref_id: resource_id.clone(),
+            mode: match lane {
+                RefreshLane::Local => ResourceAccessMode::Read,
+                RefreshLane::Remote => ResourceAccessMode::ExclusiveWrite,
+            },
+            expected_version: None,
+        }],
+        OrderingRequirement::SameResourceOrder {
+            ref_id: resource_id,
+        },
+    )
 }
 
 fn discard_failed_submission(key: &str, generation: u64, run_id: &str) -> bool {
@@ -1047,9 +1085,56 @@ mod tests {
         assert_eq!(runners[0].descriptor().batch.max_entry_concurrency, 4);
         assert_eq!(runners[1].descriptor().batch.max_entry_concurrency, 1);
         let config = refresh_runtime_config();
-        assert_eq!(config.blocking_threads, 2);
+        assert_eq!(config.blocking_threads, 4);
         assert_eq!(config.runner_limits[LOCAL_REFRESH_PROTOCOL].max_running, 4);
         assert_eq!(config.runner_limits[REMOTE_REFRESH_PROTOCOL].max_running, 1);
+        for (kind, expected) in [
+            (crate::workspace::operations::OperationKind::LocalRead, 4),
+            (crate::workspace::operations::OperationKind::LocalWrite, 2),
+            (crate::workspace::operations::OperationKind::GitHubRead, 4),
+            (crate::workspace::operations::OperationKind::GitHubWrite, 2),
+            (
+                crate::workspace::operations::OperationKind::GitHubTransfer,
+                2,
+            ),
+            (
+                crate::workspace::operations::OperationKind::WorkspaceAnalysis,
+                2,
+            ),
+            (crate::workspace::operations::OperationKind::Bulk, 4),
+            (
+                crate::workspace::operations::OperationKind::LaunchControl,
+                2,
+            ),
+        ] {
+            assert_eq!(config.runner_limits[kind.protocol()].max_running, expected);
+            assert_eq!(config.runner_limits[kind.protocol()].max_inflight, expected);
+        }
+    }
+
+    #[test]
+    fn remote_refresh_exclusively_orders_the_common_dir_resource() {
+        let common_dir = PathBuf::from("shared-repo");
+        let (local_resources, local_ordering) =
+            refresh_resource_requirements(RefreshLane::Local, common_dir.clone());
+        let (remote_resources, remote_ordering) =
+            refresh_resource_requirements(RefreshLane::Remote, common_dir);
+
+        assert_eq!(local_resources[0].mode, ResourceAccessMode::Read);
+        assert_eq!(remote_resources[0].mode, ResourceAccessMode::ExclusiveWrite);
+        assert_eq!(local_resources[0].ref_id, remote_resources[0].ref_id);
+        assert_eq!(
+            local_ordering,
+            OrderingRequirement::SameResourceOrder {
+                ref_id: local_resources[0].ref_id.clone()
+            }
+        );
+        assert_eq!(
+            remote_ordering,
+            OrderingRequirement::SameResourceOrder {
+                ref_id: remote_resources[0].ref_id.clone()
+            }
+        );
     }
 
     #[test]

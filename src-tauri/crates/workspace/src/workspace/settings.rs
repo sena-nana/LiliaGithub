@@ -7,11 +7,13 @@ use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::github::{
     forget_remote_repo_shortcut, remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
 };
+use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
+use crate::workspace::repo_guard::{repo_resource_id, with_repo_guards, RepoAccess};
 use crate::workspace::repos::{
     canonical_repo_path, git_command, git_command_lossy, git_common_dir, is_git_repo,
-    managed_repo_paths, repo_id, resolve_repo_worktree, ResolvedRepoWorktree,
+    managed_repo_paths, repo_id, resolve_repo_worktree, run_repo_visible_blocking,
+    ResolvedRepoWorktree,
 };
-use crate::workspace::run_blocking;
 use crate::workspace::shared::{
     contribution_identity_key, contribution_identity_matches, current_utc_day_index,
     format_day_index, local_contribution_identities, now_millis, remove_local_contribution_cache,
@@ -25,6 +27,7 @@ use lilia_github_contracts::workspace::{
     RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
     WorkspaceStartupContributions,
 };
+use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
@@ -578,8 +581,23 @@ pub async fn workspace_scan_contribution_identities(
 ) -> Result<ContributionIdentityRecommendationResult, String> {
     let root = workspace_root(&app)?;
     let settings = load_settings(&app);
-    run_blocking("扫描贡献身份推荐", move || {
-        Ok(scan_contribution_identity_recommendations(&root, &settings))
+    let mut common_dirs = managed_repo_paths(&root, &settings)
+        .into_iter()
+        .map(|path| git_common_dir(&path).unwrap_or(path))
+        .collect::<Vec<_>>();
+    common_dirs.sort();
+    common_dirs.dedup();
+    let mut spec = OperationSpec::new(OperationKind::WorkspaceAnalysis)
+        .lane(DispatchLane::Background)
+        .priority(-50)
+        .visible(VisibleOperation::new("contributions", "扫描贡献身份推荐").priority("low"));
+    for common_dir in &common_dirs {
+        spec = spec.resource(repo_resource_id(common_dir), ResourceAccessMode::Read);
+    }
+    run_operation(app, spec, move || {
+        Ok(with_repo_guards(common_dirs, RepoAccess::Read, || {
+            scan_contribution_identity_recommendations(&root, &settings)
+        }))
     })
     .await
 }
@@ -1093,22 +1111,30 @@ pub async fn workspace_delete_local_repo(
     app: AppHandle,
     repo_id: String,
 ) -> Result<WorkspaceSettings, String> {
-    run_blocking("删除本地仓库", move || {
-        let normalized = repo_id.trim();
-        if normalized.is_empty() {
-            return Err("仓库 ID 不能为空".to_string());
-        }
-        let root = workspace_root(&app)?;
-        let path = repo_path_by_id(&app, normalized)?;
-        let worktree = resolve_repo_worktree(&root, &path);
-        remove_managed_repo_path(&root, &path, &worktree)?;
-        let mut settings = load_settings(&app);
-        prune_deleted_repo_settings(&mut settings, normalized);
-        save_settings(&app, &settings)?;
-        remove_startup_cache_repo(&app, normalized)?;
-        crate::workspace::watcher::sync_repo_watchers(&app);
-        Ok(settings)
-    })
+    let operation_repo_id = repo_id.trim().to_string();
+    run_repo_visible_blocking(
+        app.clone(),
+        operation_repo_id,
+        OperationKind::LocalWrite,
+        "workspace",
+        "删除本地仓库",
+        move || {
+            let normalized = repo_id.trim();
+            if normalized.is_empty() {
+                return Err("仓库 ID 不能为空".to_string());
+            }
+            let root = workspace_root(&app)?;
+            let path = repo_path_by_id(&app, normalized)?;
+            let worktree = resolve_repo_worktree(&root, &path);
+            remove_managed_repo_path(&root, &path, &worktree)?;
+            let mut settings = load_settings(&app);
+            prune_deleted_repo_settings(&mut settings, normalized);
+            save_settings(&app, &settings)?;
+            remove_startup_cache_repo(&app, normalized)?;
+            crate::workspace::watcher::sync_repo_watchers(&app);
+            Ok(settings)
+        },
+    )
     .await
 }
 

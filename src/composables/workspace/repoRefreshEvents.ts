@@ -46,8 +46,10 @@ function isWorkspaceTask(value: unknown): value is WorkspaceTask {
   const task = value as Partial<WorkspaceTask>;
   return typeof task.id === "string" &&
     typeof task.kind === "string" &&
+    typeof task.title === "string" &&
     typeof task.priority === "string" &&
     typeof task.status === "string" &&
+    typeof task.createdAt === "number" &&
     typeof task.updatedAt === "number" &&
     typeof task.cancellable === "boolean";
 }

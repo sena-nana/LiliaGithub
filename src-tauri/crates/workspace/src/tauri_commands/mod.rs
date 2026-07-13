@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use mutsuki_runtime_contracts::{Task, TaskHandle};
+use mutsuki_runtime_contracts::{Task, TaskBatch, TaskHandle, TaskOutcome};
+use mutsuki_tauri_bridge::TaskResultRequest;
 use mutsuki_tauri_host::MutsukiTauriHost;
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -125,6 +126,24 @@ impl<R: Runtime> WorkspaceRuntime for TauriWorkspaceRuntime<R> {
             .state::<Arc<MutsukiTauriHost>>()
             .submit_task(task)
             .map_err(|error| error.to_string())
+    }
+
+    fn submit_mutsuki_batch(&self, batch: TaskBatch) -> Result<Vec<TaskHandle>, String> {
+        self.app
+            .state::<Arc<MutsukiTauriHost>>()
+            .submit_batch(batch)
+            .map_err(|error| error.to_string())
+    }
+
+    fn wait_mutsuki_task(&self, task_id: &str) -> Result<TaskOutcome, String> {
+        self.app
+            .state::<Arc<MutsukiTauriHost>>()
+            .task_result(TaskResultRequest {
+                task_id: task_id.to_string(),
+            })
+            .map_err(|error| error.to_string())?
+            .outcome
+            .ok_or_else(|| format!("Mutsuki task {task_id} ended without an outcome"))
     }
 
     fn cancel_mutsuki_task(&self, handle: TaskHandle) -> Result<(), String> {

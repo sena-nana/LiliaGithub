@@ -388,7 +388,12 @@ export interface WorkspaceCommandContracts {
   repo_continue_conflict_operation: CommandContract<RepoArg, RepoSummary>;
 
   bulk_sync_preview: CommandContract<{ operation: BulkOperation; repos: RepoSummary[]; localChangesMode: Maybe<RepoPullLocalChangesMode> }, BulkSyncPreview>;
-  bulk_sync_execute: CommandContract<{ operation: BulkOperation; repoIds: string[]; localChangesMode: Maybe<RepoPullLocalChangesMode> }, BulkSyncResult[]>;
+  bulk_sync_execute: CommandContract<{
+    operation: BulkOperation;
+    repoIds: string[];
+    localChangesMode: Maybe<RepoPullLocalChangesMode>;
+    trigger: Maybe<"manual" | "syncAll" | "autoSync">;
+  }, BulkSyncResult[]>;
   system_open_path: CommandContract<{ path: string }, void>;
   system_open_path_target: CommandContract<{ path: string; target: SystemOpenTarget }, void>;
   system_open_url: CommandContract<{ url: string }, void>;

@@ -148,10 +148,12 @@ describe("workspace focus refresh", () => {
       applyWorkspaceTaskChanged({
         id: taskId,
         kind,
+        title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
         priority: request.priority,
         repoId: request.repoId,
         status: "success",
         message: null,
+        createdAt: Date.now(),
         updatedAt: Date.now(),
         cancellable: false,
       });

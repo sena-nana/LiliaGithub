@@ -1823,9 +1823,10 @@ export function bulkSyncExecute(
   operation: BulkOperation,
   repoIds: string[],
   localChangesMode: RepoPullLocalChangesMode = "reject",
+  trigger: "manual" | "syncAll" | "autoSync" = "manual",
 ): Promise<BulkSyncResult[]> {
-  return call("bulk_sync_execute", { operation, repoIds, localChangesMode }, () =>
-    workspaceFallback().bulkSyncExecute(operation, repoIds, localChangesMode)
+  return call("bulk_sync_execute", { operation, repoIds, localChangesMode, trigger }, () =>
+    workspaceFallback().bulkSyncExecute(operation, repoIds, localChangesMode, trigger)
   );
 }
 

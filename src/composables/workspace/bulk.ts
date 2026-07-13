@@ -1,18 +1,11 @@
 import type { BulkOperation, RepoPullLocalChangesMode } from "../../services/workspace";
 import { invalidateSessionContextSnapshot } from "../sessionContext";
-import { runBackgroundTask } from "../useBackgroundTasks";
 import { bulkSyncRepoIds, rememberRecentSync, state, upsertRepo } from "./state";
 import { loadWorkspaceService } from "./serviceLoader";
 import { refreshLanguageStatsForRepos } from "./repositories";
 
 let bulkPreviewGeneration = 0;
 let bulkExecutionGeneration = 0;
-
-function bulkTaskTitle(operation: BulkOperation) {
-  if (operation === "push") return "批量推送仓库";
-  if (operation === "pull") return "批量拉取仓库";
-  return "批量同步仓库";
-}
 
 export async function previewBulk(
   operation: BulkOperation,
@@ -45,23 +38,13 @@ export async function executeBulk(
   const generation = ++bulkExecutionGeneration;
   state.bulkRunning = true;
   try {
-    await runBackgroundTask(
-      {
-        kind: "sync",
-        title: bulkTaskTitle(preview.operation),
-        detail: `${targetRepoIds.length} 个仓库`,
-        priority: "high",
-      },
-      async () => {
-        const service = await loadWorkspaceService();
-        const results = await service.bulkSyncExecute(preview.operation, targetRepoIds, localChangesMode);
-        if (generation !== bulkExecutionGeneration) return;
-        applyBulkResults(preview, results);
-        if (preview.operation === "push" || preview.operation === "sync") {
-          state.settings = await service.getWorkspaceSettings();
-        }
-      },
-    );
+    const service = await loadWorkspaceService();
+    const results = await service.bulkSyncExecute(preview.operation, targetRepoIds, localChangesMode, "manual");
+    if (generation !== bulkExecutionGeneration) return;
+    applyBulkResults(preview, results);
+    if (preview.operation === "push" || preview.operation === "sync") {
+      state.settings = await service.getWorkspaceSettings();
+    }
   } finally {
     if (generation === bulkExecutionGeneration) {
       state.bulkRunning = false;
@@ -75,24 +58,15 @@ export async function syncAll(localChangesMode: RepoPullLocalChangesMode = "reje
   const generation = ++bulkExecutionGeneration;
   state.bulkRunning = true;
   try {
-    await runBackgroundTask(
-      {
-        kind: "sync",
-        title: "同步全部仓库",
-        priority: "high",
-      },
-      async () => {
-        const service = await loadWorkspaceService();
-        const preview = await service.bulkSyncPreview("sync", state.repos, localChangesMode);
-        if (generation !== bulkExecutionGeneration) return;
-        applyBulkPreview(preview);
-        const targetRepoIds = bulkExecutionRepoIds(preview) ?? [];
-        const results = await service.bulkSyncExecute("sync", targetRepoIds, localChangesMode);
-        if (generation !== bulkExecutionGeneration) return;
-        applyBulkResults(preview, results);
-        state.settings = await service.getWorkspaceSettings();
-      },
-    );
+    const service = await loadWorkspaceService();
+    const preview = await service.bulkSyncPreview("sync", state.repos, localChangesMode);
+    if (generation !== bulkExecutionGeneration) return;
+    applyBulkPreview(preview);
+    const targetRepoIds = bulkExecutionRepoIds(preview) ?? [];
+    const results = await service.bulkSyncExecute("sync", targetRepoIds, localChangesMode, "syncAll");
+    if (generation !== bulkExecutionGeneration) return;
+    applyBulkResults(preview, results);
+    state.settings = await service.getWorkspaceSettings();
   } finally {
     if (generation === bulkExecutionGeneration) {
       state.bulkRunning = false;

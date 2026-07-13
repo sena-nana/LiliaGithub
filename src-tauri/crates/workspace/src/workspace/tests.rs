@@ -1,7 +1,7 @@
 use super::bulk::{
     build_bulk_preview, build_bulk_push_preview_with_lookup, build_bulk_sync_preview_with_lookup,
-    build_bulk_sync_preview_with_lookup_and_mode, bulk_error_result, merge_pull_block_reason,
-    run_bulk_sync_parallel, should_retry_push_with_system_git, sync_repo,
+    build_bulk_sync_preview_with_lookup_and_mode, merge_pull_block_reason,
+    should_retry_push_with_system_git, sync_repo,
 };
 use super::file_browser::{
     delete_repo_file, repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES,
@@ -46,21 +46,22 @@ use super::launch::{
     LaunchOutputParser,
 };
 use super::readme::readme_image_data_urls;
+use super::repo_guard::repo_resource_id;
 use super::repos::{
     add_repo_files_to_gitignore, cached_managed_repos, canonical_repo_path, checkout_branch_at,
     commit_file_change_from_status, commit_file_changes_from_outputs, commit_file_numstats,
     commit_file_patches, commit_file_statuses, conflict_operation_args, create_branch_at,
     current_branch_upstream, delete_branch_at, discard_all_repo_local_changes, discard_repo_files,
-    expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_worktree_entries,
-    infer_clone_directory_name, is_conflict_status, language_for_path, lightweight_managed_repos,
-    local_branch_exists, managed_repo_paths, managed_repo_paths_and_prune_stale, merge_branch_at,
-    normalize_clone_directory_name, normalize_git_remote_error, normalize_stash_id,
-    parse_conflict_hunks, parse_github_remote, parse_status_snapshot, prepare_pull_local_changes,
-    rename_branch_at, repo_branches, repo_changes, repo_head_language_stats, repo_history, repo_id,
-    repo_status_entries, resolve_conflict_content, resolve_repo_worktree,
-    restore_pull_local_changes, selected_repo_files, should_retry_clone_with_system_git,
-    should_skip_language_path, status_pair, summarize_repo, validate_clone_directory_name,
-    RepoStatusEntry,
+    expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_common_dir,
+    git_worktree_entries, infer_clone_directory_name, is_conflict_status, language_for_path,
+    lightweight_managed_repos, local_branch_exists, managed_repo_paths,
+    managed_repo_paths_and_prune_stale, merge_branch_at, normalize_clone_directory_name,
+    normalize_git_remote_error, normalize_stash_id, parse_conflict_hunks, parse_github_remote,
+    parse_status_snapshot, prepare_pull_local_changes, rename_branch_at, repo_branches,
+    repo_changes, repo_head_language_stats, repo_history, repo_id, repo_status_entries,
+    resolve_conflict_content, resolve_repo_worktree, restore_pull_local_changes,
+    selected_repo_files, should_retry_clone_with_system_git, should_skip_language_path,
+    status_pair, summarize_repo, validate_clone_directory_name, RepoStatusEntry,
 };
 use super::settings::{
     add_managed_repo_id, create_repo_group, delete_repo_group, move_repo_to_group,
@@ -77,23 +78,20 @@ use super::tasks::task_priority_rank;
 use crate::runtime::{WorkspaceContext, WorkspaceRuntime};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{
-    BulkSyncResult, CachedRepoSummary, ContributionIdentity,
-    ContributionIdentityRecommendationConfidence, GitHubBindingMetadata, GitHubContributionDay,
-    GitHubDiscussionTimelineItem, GitHubIssue, GitHubProjectCache, GitHubPullRequest,
-    GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest,
-    GitHubRepoWorkflowPermissionsRequest, GitHubUpdateRepoSettingsRequest, LanguageStat,
-    LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut, RepoConflictChoice,
-    RepoPullLocalChangesMode, RepoSummary, RepoWorktree, WorkspaceRepoGroup, WorkspaceSettings,
-    WorkspaceStartupCache,
+    CachedRepoSummary, ContributionIdentity, ContributionIdentityRecommendationConfidence,
+    GitHubBindingMetadata, GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue,
+    GitHubProjectCache, GitHubPullRequest, GitHubRelease, GitHubReleaseAsset,
+    GitHubRepoActionsPermissionsRequest, GitHubRepoWorkflowPermissionsRequest,
+    GitHubUpdateRepoSettingsRequest, LanguageStat, LocalContributionDayCache, ProjectLaunchConfig,
+    RemoteRepoShortcut, RepoConflictChoice, RepoPullLocalChangesMode, RepoSummary, RepoWorktree,
+    WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
 };
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
-use std::time::Duration as TestDuration;
 
 pub(super) struct NoopWorkspaceRuntime;
 
@@ -2250,6 +2248,13 @@ fn repo_branches_reports_checked_out_worktrees() {
         feature.checked_out_worktree_paths,
         vec![compatible_path_text(&canonical_repo_path(&linked))]
     );
+    let main_common_dir = git_common_dir(&path).unwrap();
+    let linked_common_dir = git_common_dir(&linked).unwrap();
+    assert_eq!(main_common_dir, linked_common_dir);
+    assert_eq!(
+        repo_resource_id(main_common_dir),
+        repo_resource_id(linked_common_dir)
+    );
 }
 
 #[test]
@@ -3102,36 +3107,6 @@ fn sync_repo_returns_success_when_repo_has_no_sync_work() {
     assert_eq!(result_summary.id, summary.id);
     assert_eq!(result_summary.ahead, 0);
     assert_eq!(result_summary.behind, 0);
-}
-
-#[test]
-fn bulk_sync_parallel_returns_all_results_after_repo_error() {
-    let active = AtomicUsize::new(0);
-    let peak = AtomicUsize::new(0);
-
-    let results = run_bulk_sync_parallel(vec!["ok".to_string(), "failed".to_string()], |repo_id| {
-        let current = active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
-        peak.fetch_max(current, AtomicOrdering::SeqCst);
-        std::thread::sleep(TestDuration::from_millis(30));
-        active.fetch_sub(1, AtomicOrdering::SeqCst);
-
-        if repo_id == "failed" {
-            return bulk_error_result(repo_id, "认证失败".to_string());
-        }
-        BulkSyncResult {
-            repo_id,
-            status: "success".to_string(),
-            message: "完成".to_string(),
-            summary: None,
-        }
-    });
-
-    assert_eq!(results.len(), 2);
-    assert!(peak.load(AtomicOrdering::SeqCst) > 1);
-    assert!(results.iter().any(|result| result.status == "success"));
-    assert!(results
-        .iter()
-        .any(|result| result.status == "error" && result.message == "认证失败"));
 }
 
 #[test]

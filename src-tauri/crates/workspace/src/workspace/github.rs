@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use crate::runtime::WorkspaceContext as AppHandle;
@@ -13,15 +14,16 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::workspace::file_browser::{file_preview_mime, MAX_FILE_PREVIEW_BYTES};
+use crate::workspace::operations::OperationKind;
 use crate::workspace::readme::image_mime_for_path;
-use crate::workspace::repos::commit_file_patches;
-use crate::workspace::run_blocking;
+use crate::workspace::repos::{commit_file_patches, run_repo_analysis_blocking};
 use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
 use crate::workspace::shared::{
     collect_local_contribution_counts, current_utc_day_index, github_contribution_days,
     github_contribution_meta, local_contribution_identities, normalize_local_contribution_repo_id,
     now_millis,
 };
+use crate::workspace::{run_core_operation, run_core_operation_as};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitFileChange, CommitSummary, GitHubAccountIssueItem,
     GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest, GitHubBindingMetadata,
@@ -3468,30 +3470,36 @@ pub fn github_get_binding_status(app: AppHandle) -> Result<GitHubBindingStatus, 
     Ok(binding_status(None))
 }
 
-pub async fn github_start_device_flow() -> Result<GitHubDeviceFlowStart, String> {
-    run_blocking("启动 GitHub 设备授权", move || {
-        let Some(client_id) = client_id() else {
-            return Err("GitHub Client ID 未配置".to_string());
-        };
-        let client = build_client()?;
-        let response = github_oauth_headers(client.post("https://github.com/login/device/code"))
-            .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
-            .send()
-            .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
-        if !response.status().is_success() {
-            return Err(github_http_error("启动 GitHub 设备授权失败", response));
-        }
-        let body = response
-            .json::<DeviceCodeResponse>()
-            .map_err(|e| format!("解析 GitHub 设备授权响应失败：{e}"))?;
-        Ok(GitHubDeviceFlowStart {
-            device_code: body.device_code,
-            user_code: body.user_code,
-            verification_uri: body.verification_uri,
-            expires_at: now_millis() + body.expires_in * 1000,
-            interval_seconds: body.interval,
-        })
-    })
+pub async fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlowStart, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "启动 GitHub 设备授权",
+        move || {
+            let Some(client_id) = client_id() else {
+                return Err("GitHub Client ID 未配置".to_string());
+            };
+            let client = build_client()?;
+            let response =
+                github_oauth_headers(client.post("https://github.com/login/device/code"))
+                    .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
+                    .send()
+                    .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
+            if !response.status().is_success() {
+                return Err(github_http_error("启动 GitHub 设备授权失败", response));
+            }
+            let body = response
+                .json::<DeviceCodeResponse>()
+                .map_err(|e| format!("解析 GitHub 设备授权响应失败：{e}"))?;
+            Ok(GitHubDeviceFlowStart {
+                device_code: body.device_code,
+                user_code: body.user_code,
+                verification_uri: body.verification_uri,
+                expires_at: now_millis() + body.expires_in * 1000,
+                interval_seconds: body.interval,
+            })
+        },
+    )
     .await
 }
 
@@ -3500,85 +3508,92 @@ pub async fn github_poll_device_flow(
     device_code: String,
     interval_seconds: Option<i64>,
 ) -> Result<GitHubDeviceFlowPollResult, String> {
-    run_blocking("轮询 GitHub 授权", move || {
-        let Some(client_id) = client_id() else {
-            return Err("GitHub Client ID 未配置".to_string());
-        };
-        let client = build_client()?;
-        let response =
-            github_oauth_headers(client.post("https://github.com/login/oauth/access_token"))
-                .form(&[
-                    ("client_id", client_id),
-                    ("device_code", device_code.trim()),
-                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                ])
-                .send()
-                .map_err(|e| format!("轮询 GitHub 授权失败：{e}"))?;
-        if !response.status().is_success() {
-            return Err(github_http_error("轮询 GitHub 授权失败", response));
-        }
-        let body = response
-            .json::<TokenResponse>()
-            .map_err(|e| format!("解析 GitHub 授权结果失败：{e}"))?;
-        if let Some(token) = body.access_token {
-            let user_response =
-                github_headers(client.get("https://api.github.com/user"), Some(&token))
-                    .send()
-                    .map_err(|e| format!("读取 GitHub 账号信息失败：{e}"))?;
-            if !user_response.status().is_success() {
-                return Err(format!(
-                    "读取 GitHub 账号信息失败：HTTP {}",
-                    user_response.status()
-                ));
-            }
-            let user = user_response
-                .json::<GitHubUserResponse>()
-                .map_err(|e| format!("解析 GitHub 账号信息失败：{e}"))?;
-            write_token(&user.login, &token)?;
-            let mut settings = load_settings(&app);
-            let binding = GitHubBindingMetadata {
-                login: user.login,
-                avatar_url: user.avatar_url,
-                bound_at: now_millis(),
-                scopes: normalize_scope_list(body.scope.as_deref()),
-                client_id_source: client_id_source().to_string(),
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "轮询 GitHub 授权",
+        move || {
+            let Some(client_id) = client_id() else {
+                return Err("GitHub Client ID 未配置".to_string());
             };
-            settings.github_binding = Some(binding.clone());
-            save_settings(&app, &settings)?;
-            return Ok(GitHubDeviceFlowPollResult {
-                status: "authorized".to_string(),
-                interval_seconds: interval_seconds.unwrap_or(5),
-                binding_status: Some(binding_status(Some(binding))),
-                error: None,
-            });
-        }
+            let client = build_client()?;
+            let response =
+                github_oauth_headers(client.post("https://github.com/login/oauth/access_token"))
+                    .form(&[
+                        ("client_id", client_id),
+                        ("device_code", device_code.trim()),
+                        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                    ])
+                    .send()
+                    .map_err(|e| format!("轮询 GitHub 授权失败：{e}"))?;
+            if !response.status().is_success() {
+                return Err(github_http_error("轮询 GitHub 授权失败", response));
+            }
+            let body = response
+                .json::<TokenResponse>()
+                .map_err(|e| format!("解析 GitHub 授权结果失败：{e}"))?;
+            if let Some(token) = body.access_token {
+                let user_response =
+                    github_headers(client.get("https://api.github.com/user"), Some(&token))
+                        .send()
+                        .map_err(|e| format!("读取 GitHub 账号信息失败：{e}"))?;
+                if !user_response.status().is_success() {
+                    return Err(format!(
+                        "读取 GitHub 账号信息失败：HTTP {}",
+                        user_response.status()
+                    ));
+                }
+                let user = user_response
+                    .json::<GitHubUserResponse>()
+                    .map_err(|e| format!("解析 GitHub 账号信息失败：{e}"))?;
+                write_token(&user.login, &token)?;
+                let mut settings = load_settings(&app);
+                let binding = GitHubBindingMetadata {
+                    login: user.login,
+                    avatar_url: user.avatar_url,
+                    bound_at: now_millis(),
+                    scopes: normalize_scope_list(body.scope.as_deref()),
+                    client_id_source: client_id_source().to_string(),
+                };
+                settings.github_binding = Some(binding.clone());
+                save_settings(&app, &settings)?;
+                return Ok(GitHubDeviceFlowPollResult {
+                    status: "authorized".to_string(),
+                    interval_seconds: interval_seconds.unwrap_or(5),
+                    binding_status: Some(binding_status(Some(binding))),
+                    error: None,
+                });
+            }
 
-        match body.error.as_deref() {
-            Some("authorization_pending") | Some("slow_down") => Ok(GitHubDeviceFlowPollResult {
-                status: "pending".to_string(),
-                interval_seconds: interval_seconds.unwrap_or(5)
-                    + if body.error.as_deref() == Some("slow_down") {
-                        5
-                    } else {
-                        0
-                    },
-                binding_status: None,
-                error: None,
-            }),
-            Some("expired_token") => Ok(GitHubDeviceFlowPollResult {
-                status: "expired".to_string(),
-                interval_seconds: interval_seconds.unwrap_or(5),
-                binding_status: None,
-                error: body.error,
-            }),
-            _ => Ok(GitHubDeviceFlowPollResult {
-                status: "pending".to_string(),
-                interval_seconds: interval_seconds.unwrap_or(5),
-                binding_status: None,
-                error: body.error,
-            }),
-        }
-    })
+            match body.error.as_deref() {
+                Some("authorization_pending") | Some("slow_down") => {
+                    Ok(GitHubDeviceFlowPollResult {
+                        status: "pending".to_string(),
+                        interval_seconds: interval_seconds.unwrap_or(5)
+                            + if body.error.as_deref() == Some("slow_down") {
+                                5
+                            } else {
+                                0
+                            },
+                        binding_status: None,
+                        error: None,
+                    })
+                }
+                Some("expired_token") => Ok(GitHubDeviceFlowPollResult {
+                    status: "expired".to_string(),
+                    interval_seconds: interval_seconds.unwrap_or(5),
+                    binding_status: None,
+                    error: body.error,
+                }),
+                _ => Ok(GitHubDeviceFlowPollResult {
+                    status: "pending".to_string(),
+                    interval_seconds: interval_seconds.unwrap_or(5),
+                    binding_status: None,
+                    error: body.error,
+                }),
+            }
+        },
+    )
     .await
 }
 
@@ -3592,75 +3607,85 @@ pub async fn github_list_repos(
     app: AppHandle,
     page: Option<u32>,
 ) -> Result<GitHubRepoPage, String> {
-    run_blocking("读取 GitHub 仓库", move || {
-        let page = page.unwrap_or(1).max(1);
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 仓库失败",
-            github_headers(
-                client.get("https://api.github.com/user/repos").query(&[
-                    ("affiliation", "owner"),
-                    ("visibility", "all"),
-                    ("sort", "updated"),
-                    ("per_page", "100"),
-                    ("page", &page.to_string()),
-                ]),
-                Some(&token),
-            ),
-        )?;
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 仓库",
+        move || {
+            let page = page.unwrap_or(1).max(1);
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 仓库失败",
+                github_headers(
+                    client.get("https://api.github.com/user/repos").query(&[
+                        ("affiliation", "owner"),
+                        ("visibility", "all"),
+                        ("sort", "updated"),
+                        ("per_page", "100"),
+                        ("page", &page.to_string()),
+                    ]),
+                    Some(&token),
+                ),
+            )?;
 
-        if !response.status().is_success() {
-            return Err(github_http_error("读取 GitHub 仓库失败", response));
-        }
+            if !response.status().is_success() {
+                return Err(github_http_error("读取 GitHub 仓库失败", response));
+            }
 
-        let next_page = parse_next_page(
-            response
-                .headers()
-                .get(LINK)
-                .and_then(|value| value.to_str().ok()),
-        );
-        let repos = response
-            .json::<Vec<GitHubRepoResponse>>()
-            .map_err(|e| format!("解析 GitHub 仓库列表失败：{e}"))?;
+            let next_page = parse_next_page(
+                response
+                    .headers()
+                    .get(LINK)
+                    .and_then(|value| value.to_str().ok()),
+            );
+            let repos = response
+                .json::<Vec<GitHubRepoResponse>>()
+                .map_err(|e| format!("解析 GitHub 仓库列表失败：{e}"))?;
 
-        Ok(GitHubRepoPage {
-            items: repos
-                .into_iter()
-                .map(github_repo_summary_from_response)
-                .collect(),
-            next_page,
-        })
-    })
+            Ok(GitHubRepoPage {
+                items: repos
+                    .into_iter()
+                    .map(github_repo_summary_from_response)
+                    .collect(),
+                next_page,
+            })
+        },
+    )
     .await
 }
 
 pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwner>, String> {
-    run_blocking("读取 GitHub 仓库 owner", move || {
-        let (binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 组织失败",
-            github_headers(
-                client
-                    .get("https://api.github.com/user/orgs")
-                    .query(&[("per_page", "100")]),
-                Some(&token),
-            ),
-        )?;
-        let orgs = github_json::<Vec<GitHubOrgResponse>>("读取 GitHub 组织失败", response)?;
-        let mut owners = vec![GitHubRepoOwner {
-            login: binding.login,
-            kind: "user".to_string(),
-        }];
-        owners.extend(orgs.into_iter().map(|org| GitHubRepoOwner {
-            login: org.login,
-            kind: "org".to_string(),
-        }));
-        Ok(owners)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 仓库 owner",
+        move || {
+            let (binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 组织失败",
+                github_headers(
+                    client
+                        .get("https://api.github.com/user/orgs")
+                        .query(&[("per_page", "100")]),
+                    Some(&token),
+                ),
+            )?;
+            let orgs = github_json::<Vec<GitHubOrgResponse>>("读取 GitHub 组织失败", response)?;
+            let mut owners = vec![GitHubRepoOwner {
+                login: binding.login,
+                kind: "user".to_string(),
+            }];
+            owners.extend(orgs.into_iter().map(|org| GitHubRepoOwner {
+                login: org.login,
+                kind: "org".to_string(),
+            }));
+            Ok(owners)
+        },
+    )
     .await
 }
 
@@ -3668,83 +3693,89 @@ pub async fn github_create_repo(
     app: AppHandle,
     request: GitHubCreateRepoRequest,
 ) -> Result<GitHubRepoSummary, String> {
-    run_blocking("创建 GitHub 仓库", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let owner = request.owner.trim();
-        let name = request.name.trim();
-        if owner.is_empty() || name.is_empty() {
-            return Err("owner 和仓库名不能为空".to_string());
-        }
-        let template = normalize_optional_string(request.template_full_name.clone())
-            .map(|value| normalize_github_repo_input(&value))
-            .transpose()?;
-        if let Some(template) = template {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "创建 GitHub 仓库",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let owner = request.owner.trim();
+            let name = request.name.trim();
+            if owner.is_empty() || name.is_empty() {
+                return Err("owner 和仓库名不能为空".to_string());
+            }
+            let template = normalize_optional_string(request.template_full_name.clone())
+                .map(|value| normalize_github_repo_input(&value))
+                .transpose()?;
+            if let Some(template) = template {
+                let mut payload = serde_json::json!({
+                    "owner": owner,
+                    "name": name,
+                    "private": request.private,
+                    "include_all_branches": request.include_all_branches,
+                });
+                if let Some(map) = payload.as_object_mut() {
+                    if let Some(value) = normalize_optional_string(request.description) {
+                        map.insert("description".to_string(), serde_json::Value::String(value));
+                    }
+                }
+                let client = build_client()?;
+                let url = format!(
+                    "https://api.github.com/repos/{}/{}/generate",
+                    url_encode_path_segment(&template.owner),
+                    url_encode_path_segment(&template.name)
+                );
+                let response = github_send(
+                    &app,
+                    "从模板创建 GitHub 仓库失败",
+                    github_headers(client.post(url).json(&payload), Some(&token)),
+                )?;
+                let repo =
+                    github_json::<GitHubRepoResponse>("从模板创建 GitHub 仓库失败", response)?;
+                return Ok(github_repo_summary_from_response(repo));
+            }
             let mut payload = serde_json::json!({
-                "owner": owner,
                 "name": name,
                 "private": request.private,
-                "include_all_branches": request.include_all_branches,
+                "auto_init": request.auto_init,
+                "has_issues": request.has_issues,
+                "has_wiki": request.has_wiki,
             });
             if let Some(map) = payload.as_object_mut() {
                 if let Some(value) = normalize_optional_string(request.description) {
                     map.insert("description".to_string(), serde_json::Value::String(value));
                 }
+                if let Some(value) = normalize_optional_string(request.gitignore_template) {
+                    map.insert(
+                        "gitignore_template".to_string(),
+                        serde_json::Value::String(value),
+                    );
+                }
+                if let Some(value) = normalize_optional_string(request.license_template) {
+                    map.insert(
+                        "license_template".to_string(),
+                        serde_json::Value::String(value),
+                    );
+                }
             }
             let client = build_client()?;
-            let url = format!(
-                "https://api.github.com/repos/{}/{}/generate",
-                url_encode_path_segment(&template.owner),
-                url_encode_path_segment(&template.name)
-            );
+            let url = if request.owner_kind == "org" {
+                format!(
+                    "https://api.github.com/orgs/{}/repos",
+                    url_encode_path_segment(owner)
+                )
+            } else {
+                "https://api.github.com/user/repos".to_string()
+            };
             let response = github_send(
                 &app,
-                "从模板创建 GitHub 仓库失败",
+                "创建 GitHub 仓库失败",
                 github_headers(client.post(url).json(&payload), Some(&token)),
             )?;
-            let repo = github_json::<GitHubRepoResponse>("从模板创建 GitHub 仓库失败", response)?;
-            return Ok(github_repo_summary_from_response(repo));
-        }
-        let mut payload = serde_json::json!({
-            "name": name,
-            "private": request.private,
-            "auto_init": request.auto_init,
-            "has_issues": request.has_issues,
-            "has_wiki": request.has_wiki,
-        });
-        if let Some(map) = payload.as_object_mut() {
-            if let Some(value) = normalize_optional_string(request.description) {
-                map.insert("description".to_string(), serde_json::Value::String(value));
-            }
-            if let Some(value) = normalize_optional_string(request.gitignore_template) {
-                map.insert(
-                    "gitignore_template".to_string(),
-                    serde_json::Value::String(value),
-                );
-            }
-            if let Some(value) = normalize_optional_string(request.license_template) {
-                map.insert(
-                    "license_template".to_string(),
-                    serde_json::Value::String(value),
-                );
-            }
-        }
-        let client = build_client()?;
-        let url = if request.owner_kind == "org" {
-            format!(
-                "https://api.github.com/orgs/{}/repos",
-                url_encode_path_segment(owner)
-            )
-        } else {
-            "https://api.github.com/user/repos".to_string()
-        };
-        let response = github_send(
-            &app,
-            "创建 GitHub 仓库失败",
-            github_headers(client.post(url).json(&payload), Some(&token)),
-        )?;
-        let repo = github_json::<GitHubRepoResponse>("创建 GitHub 仓库失败", response)?;
-        Ok(github_repo_summary_from_response(repo))
-    })
+            let repo = github_json::<GitHubRepoResponse>("创建 GitHub 仓库失败", response)?;
+            Ok(github_repo_summary_from_response(repo))
+        },
+    )
     .await
 }
 
@@ -3779,23 +3810,28 @@ pub async fn github_get_repo_management(
     repo_full_name: String,
     force_refresh: Option<bool>,
 ) -> Result<GitHubRepoManagement, String> {
-    run_blocking("读取 GitHub 仓库设置", move || {
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.management.clone())
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 仓库设置",
+        move || {
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| repo_cache.management.clone())
+                {
+                    return Ok(cached);
+                }
             }
-        }
-        let next = fetch_github_repo_management(&app, &repo_full_name)?;
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.management = Some(next.clone());
-        })?;
-        Ok(next)
-    })
+            let next = fetch_github_repo_management(&app, &repo_full_name)?;
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.management = Some(next.clone());
+            })?;
+            Ok(next)
+        },
+    )
     .await
 }
 
@@ -3804,56 +3840,63 @@ pub async fn github_update_repo_settings(
     repo_full_name: String,
     request: GitHubUpdateRepoSettingsRequest,
 ) -> Result<GitHubRepoManagement, String> {
-    run_blocking("更新 GitHub 仓库设置", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let payload = github_update_repo_settings_payload(&request);
-        let client = build_client()?;
-        let repo_url = github_repo_api_url(&repo_full_name)?;
-        let repo = if payload.is_empty() {
-            let response = github_send(
-                &app,
-                "读取 GitHub 仓库设置失败",
-                github_headers(client.get(&repo_url), Some(&token)),
-            )?;
-            github_json::<serde_json::Value>("读取 GitHub 仓库设置失败", response)?
-        } else {
-            let response = github_send(
-                &app,
-                "更新 GitHub 仓库设置失败",
-                github_headers(client.patch(&repo_url).json(&payload), Some(&token)),
-            )?;
-            github_json::<serde_json::Value>("更新 GitHub 仓库设置失败", response)?
-        };
-        let topics = if let Some(topics) = request.topics {
-            let response = github_send(
-                &app,
-                "更新 GitHub 仓库 topics 失败",
-                github_headers(
-                    client
-                        .put(github_repo_topics_api_url(&repo_full_name)?)
-                        .json(&serde_json::json!({ "names": normalize_github_topics(topics) })),
-                    Some(&token),
-                ),
-            )?;
-            github_json::<GitHubRepoTopicsResponse>("更新 GitHub 仓库 topics 失败", response)?.names
-        } else {
-            let response = github_send(
-                &app,
-                "读取 GitHub 仓库 topics 失败",
-                github_headers(
-                    client.get(github_repo_topics_api_url(&repo_full_name)?),
-                    Some(&token),
-                ),
-            )?;
-            github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", response)?.names
-        };
-        let management =
-            github_repo_management_from_value("读取 GitHub 仓库设置失败", repo, topics)?;
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.management = Some(management.clone());
-        })?;
-        Ok(management)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub 仓库设置",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let payload = github_update_repo_settings_payload(&request);
+            let client = build_client()?;
+            let repo_url = github_repo_api_url(&repo_full_name)?;
+            let repo = if payload.is_empty() {
+                let response = github_send(
+                    &app,
+                    "读取 GitHub 仓库设置失败",
+                    github_headers(client.get(&repo_url), Some(&token)),
+                )?;
+                github_json::<serde_json::Value>("读取 GitHub 仓库设置失败", response)?
+            } else {
+                let response = github_send(
+                    &app,
+                    "更新 GitHub 仓库设置失败",
+                    github_headers(client.patch(&repo_url).json(&payload), Some(&token)),
+                )?;
+                github_json::<serde_json::Value>("更新 GitHub 仓库设置失败", response)?
+            };
+            let topics = if let Some(topics) = request.topics {
+                let response = github_send(
+                    &app,
+                    "更新 GitHub 仓库 topics 失败",
+                    github_headers(
+                        client
+                            .put(github_repo_topics_api_url(&repo_full_name)?)
+                            .json(&serde_json::json!({ "names": normalize_github_topics(topics) })),
+                        Some(&token),
+                    ),
+                )?;
+                github_json::<GitHubRepoTopicsResponse>("更新 GitHub 仓库 topics 失败", response)?
+                    .names
+            } else {
+                let response = github_send(
+                    &app,
+                    "读取 GitHub 仓库 topics 失败",
+                    github_headers(
+                        client.get(github_repo_topics_api_url(&repo_full_name)?),
+                        Some(&token),
+                    ),
+                )?;
+                github_json::<GitHubRepoTopicsResponse>("读取 GitHub 仓库 topics 失败", response)?
+                    .names
+            };
+            let management =
+                github_repo_management_from_value("读取 GitHub 仓库设置失败", repo, topics)?;
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.management = Some(management.clone());
+            })?;
+            Ok(management)
+        },
+    )
     .await
 }
 
@@ -4064,9 +4107,12 @@ pub async fn github_get_repo_settings_section(
     section: String,
     _force_refresh: Option<bool>,
 ) -> Result<GitHubRepoSettingsSection, String> {
-    run_blocking("读取 GitHub 仓库设置分区", move || {
-        github_get_repo_settings_section_sync(&app, &repo_full_name, &section)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 仓库设置分区",
+        move || github_get_repo_settings_section_sync(&app, &repo_full_name, &section),
+    )
     .await
 }
 
@@ -4075,27 +4121,32 @@ pub async fn github_update_repo_actions_permissions(
     repo_full_name: String,
     request: GitHubRepoActionsPermissionsRequest,
 ) -> Result<(), String> {
-    run_blocking("更新 GitHub Actions 权限", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "更新 GitHub Actions 权限失败",
-            github_headers(
-                client
-                    .put(format!(
-                        "{}/actions/permissions",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .json(&github_actions_permissions_payload(&request)),
-                Some(&token),
-            ),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error("更新 GitHub Actions 权限失败", response));
-        }
-        Ok(())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub Actions 权限",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "更新 GitHub Actions 权限失败",
+                github_headers(
+                    client
+                        .put(format!(
+                            "{}/actions/permissions",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .json(&github_actions_permissions_payload(&request)),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error("更新 GitHub Actions 权限失败", response));
+            }
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -4104,49 +4155,59 @@ pub async fn github_update_repo_workflow_permissions(
     repo_full_name: String,
     request: GitHubRepoWorkflowPermissionsRequest,
 ) -> Result<(), String> {
-    run_blocking("更新 GitHub 工作流权限", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "更新 GitHub 工作流权限失败",
-            github_headers(
-                client
-                    .put(format!(
-                        "{}/actions/permissions/workflow",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .json(&github_workflow_permissions_payload(&request)),
-                Some(&token),
-            ),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error("更新 GitHub 工作流权限失败", response));
-        }
-        Ok(())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub 工作流权限",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "更新 GitHub 工作流权限失败",
+                github_headers(
+                    client
+                        .put(format!(
+                            "{}/actions/permissions/workflow",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .json(&github_workflow_permissions_payload(&request)),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error("更新 GitHub 工作流权限失败", response));
+            }
+            Ok(())
+        },
+    )
     .await
 }
 
 pub async fn github_delete_repo(app: AppHandle, repo_full_name: String) -> Result<(), String> {
-    run_blocking("删除 GitHub 仓库", move || {
-        let (binding, token) = github_require_token(&app)?;
-        github_require_scope(&binding, GITHUB_DELETE_REPO_SCOPE)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "删除 GitHub 仓库失败",
-            github_headers(
-                client.delete(github_repo_api_url(&repo_full_name)?),
-                Some(&token),
-            ),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error("删除 GitHub 仓库失败", response));
-        }
-        clear_github_project_repo_cache(&app, &repo_full_name)?;
-        Ok(())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "删除 GitHub 仓库",
+        move || {
+            let (binding, token) = github_require_token(&app)?;
+            github_require_scope(&binding, GITHUB_DELETE_REPO_SCOPE)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "删除 GitHub 仓库失败",
+                github_headers(
+                    client.delete(github_repo_api_url(&repo_full_name)?),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error("删除 GitHub 仓库失败", response));
+            }
+            clear_github_project_repo_cache(&app, &repo_full_name)?;
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -4154,26 +4215,32 @@ pub async fn github_list_branches(
     app: AppHandle,
     repo_full_name: String,
 ) -> Result<Vec<BranchSummary>, String> {
-    run_blocking("读取 GitHub 分支", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let repo_url = github_repo_api_url(&repo_full_name)?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 分支失败",
-            github_headers(
-                client
-                    .get(format!("{repo_url}/branches"))
-                    .query(&[("per_page", "100")]),
-                Some(&token),
-            ),
-        )?;
-        let branches = github_json::<Vec<GitHubBranchResponse>>("读取 GitHub 分支失败", response)?;
-        Ok(branches
-            .into_iter()
-            .map(github_branch_from_response)
-            .collect())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 分支",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let repo_url = github_repo_api_url(&repo_full_name)?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 分支失败",
+                github_headers(
+                    client
+                        .get(format!("{repo_url}/branches"))
+                        .query(&[("per_page", "100")]),
+                    Some(&token),
+                ),
+            )?;
+            let branches =
+                github_json::<Vec<GitHubBranchResponse>>("读取 GitHub 分支失败", response)?;
+            Ok(branches
+                .into_iter()
+                .map(github_branch_from_response)
+                .collect())
+        },
+    )
     .await
 }
 
@@ -4197,22 +4264,27 @@ pub async fn github_get_branch_protection(
     repo_full_name: String,
     branch_name: String,
 ) -> Result<Option<serde_json::Value>, String> {
-    run_blocking("读取 GitHub 分支保护", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 分支保护失败",
-            github_headers(
-                client.get(github_branch_protection_api_url(
-                    &repo_full_name,
-                    &branch_name,
-                )?),
-                Some(&token),
-            ),
-        )?;
-        github_branch_protection_from_response("读取 GitHub 分支保护失败", response)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 分支保护",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 分支保护失败",
+                github_headers(
+                    client.get(github_branch_protection_api_url(
+                        &repo_full_name,
+                        &branch_name,
+                    )?),
+                    Some(&token),
+                ),
+            )?;
+            github_branch_protection_from_response("读取 GitHub 分支保护失败", response)
+        },
+    )
     .await
 }
 
@@ -4222,24 +4294,29 @@ pub async fn github_update_branch_protection(
     branch_name: String,
     request: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    run_blocking("更新 GitHub 分支保护", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "更新 GitHub 分支保护失败",
-            github_headers(
-                client
-                    .put(github_branch_protection_api_url(
-                        &repo_full_name,
-                        &branch_name,
-                    )?)
-                    .json(&request),
-                Some(&token),
-            ),
-        )?;
-        github_json("更新 GitHub 分支保护失败", response)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub 分支保护",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "更新 GitHub 分支保护失败",
+                github_headers(
+                    client
+                        .put(github_branch_protection_api_url(
+                            &repo_full_name,
+                            &branch_name,
+                        )?)
+                        .json(&request),
+                    Some(&token),
+                ),
+            )?;
+            github_json("更新 GitHub 分支保护失败", response)
+        },
+    )
     .await
 }
 
@@ -4270,30 +4347,37 @@ pub async fn github_list_repo_rulesets(
     app: AppHandle,
     repo_full_name: String,
 ) -> Result<Vec<GitHubRulesetSummary>, String> {
-    run_blocking("读取 GitHub 规则集", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 规则集失败",
-            github_headers(
-                client
-                    .get(github_ruleset_api_url(&repo_full_name, None)?)
-                    .query(&[
-                        ("includes_parents", "true"),
-                        ("targets", "branch"),
-                        ("per_page", "100"),
-                    ]),
-                Some(&token),
-            ),
-        )?;
-        let rulesets =
-            github_json::<Vec<GitHubRulesetSummaryResponse>>("读取 GitHub 规则集失败", response)?;
-        Ok(rulesets
-            .into_iter()
-            .map(|ruleset| github_ruleset_summary_from_response(&repo_full_name, ruleset))
-            .collect())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 规则集",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 规则集失败",
+                github_headers(
+                    client
+                        .get(github_ruleset_api_url(&repo_full_name, None)?)
+                        .query(&[
+                            ("includes_parents", "true"),
+                            ("targets", "branch"),
+                            ("per_page", "100"),
+                        ]),
+                    Some(&token),
+                ),
+            )?;
+            let rulesets = github_json::<Vec<GitHubRulesetSummaryResponse>>(
+                "读取 GitHub 规则集失败",
+                response,
+            )?;
+            Ok(rulesets
+                .into_iter()
+                .map(|ruleset| github_ruleset_summary_from_response(&repo_full_name, ruleset))
+                .collect())
+        },
+    )
     .await
 }
 
@@ -4302,11 +4386,16 @@ pub async fn github_get_repo_ruleset(
     repo_full_name: String,
     ruleset_id: u64,
 ) -> Result<serde_json::Value, String> {
-    run_blocking("读取 GitHub 规则集", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 规则集",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)
+        },
+    )
     .await
 }
 
@@ -4316,35 +4405,40 @@ pub async fn github_update_repo_ruleset(
     ruleset_id: u64,
     request: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    run_blocking("更新 GitHub 规则集", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let current = fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)?;
-        let source_type = current
-            .get("source_type")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        let source = current
-            .get("source")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
-        if !source_type.eq_ignore_ascii_case("Repository")
-            || !source.eq_ignore_ascii_case(&repo_full_name)
-        {
-            return Err("继承的组织或企业规则集只能查看，不能在仓库中编辑".to_string());
-        }
-        let response = github_send(
-            &app,
-            "更新 GitHub 规则集失败",
-            github_headers(
-                client
-                    .put(github_ruleset_api_url(&repo_full_name, Some(ruleset_id))?)
-                    .json(&request),
-                Some(&token),
-            ),
-        )?;
-        github_json("更新 GitHub 规则集失败", response)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub 规则集",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let current = fetch_github_ruleset(&app, &client, &token, &repo_full_name, ruleset_id)?;
+            let source_type = current
+                .get("source_type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let source = current
+                .get("source")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if !source_type.eq_ignore_ascii_case("Repository")
+                || !source.eq_ignore_ascii_case(&repo_full_name)
+            {
+                return Err("继承的组织或企业规则集只能查看，不能在仓库中编辑".to_string());
+            }
+            let response = github_send(
+                &app,
+                "更新 GitHub 规则集失败",
+                github_headers(
+                    client
+                        .put(github_ruleset_api_url(&repo_full_name, Some(ruleset_id))?)
+                        .json(&request),
+                    Some(&token),
+                ),
+            )?;
+            github_json("更新 GitHub 规则集失败", response)
+        },
+    )
     .await
 }
 
@@ -4353,30 +4447,35 @@ pub async fn github_delete_branch(
     repo_full_name: String,
     branch_name: String,
 ) -> Result<(), String> {
-    run_blocking("删除 GitHub 分支", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let branch = branch_name.trim();
-        if branch.is_empty() {
-            return Err("分支名不能为空".to_string());
-        }
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "删除 GitHub 分支失败",
-            github_headers(
-                client.delete(format!(
-                    "{}/git/refs/heads/{}",
-                    github_repo_api_url(&repo_full_name)?,
-                    url_encode_path_segment(branch)
-                )),
-                Some(&token),
-            ),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error("删除 GitHub 分支失败", response));
-        }
-        Ok(())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "删除 GitHub 分支",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let branch = branch_name.trim();
+            if branch.is_empty() {
+                return Err("分支名不能为空".to_string());
+            }
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "删除 GitHub 分支失败",
+                github_headers(
+                    client.delete(format!(
+                        "{}/git/refs/heads/{}",
+                        github_repo_api_url(&repo_full_name)?,
+                        url_encode_path_segment(branch)
+                    )),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error("删除 GitHub 分支失败", response));
+            }
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -4396,157 +4495,170 @@ pub async fn github_list_pull_requests(
     query: Option<String>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubPullRequest>, String> {
-    run_blocking("读取 GitHub Pull Requests", move || {
-        let milestone_key = github_issue_milestone_param(milestone.clone());
-        let search_query = normalize_optional_string(query.clone());
-        let pull_key = github_pull_request_cache_key(
-            state.as_deref(),
-            per_page,
-            sort.as_deref(),
-            direction.as_deref(),
-            creator.as_deref(),
-            assignee.as_deref(),
-            labels.as_deref(),
-            milestone_key.as_deref(),
-            project.as_deref(),
-            review.as_deref(),
-            search_query.as_deref(),
-        );
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.pull_requests.get(&pull_key).cloned())
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Pull Requests",
+        move || {
+            let milestone_key = github_issue_milestone_param(milestone.clone());
+            let search_query = normalize_optional_string(query.clone());
+            let pull_key = github_pull_request_cache_key(
+                state.as_deref(),
+                per_page,
+                sort.as_deref(),
+                direction.as_deref(),
+                creator.as_deref(),
+                assignee.as_deref(),
+                labels.as_deref(),
+                milestone_key.as_deref(),
+                project.as_deref(),
+                review.as_deref(),
+                search_query.as_deref(),
+            );
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| repo_cache.pull_requests.get(&pull_key).cloned())
+                {
+                    return Ok(cached);
+                }
             }
-        }
-        let (binding, token) = github_require_token(&app)?;
-        let pull_state = match state.as_deref() {
-            Some("closed") => "closed",
-            Some("merged") => "merged",
-            Some("all") => "all",
-            _ => "open",
-        };
-        let pull_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
-        let pull_sort = match sort.as_deref() {
-            Some("created") => "created",
-            Some("comments") => "comments",
-            _ => "updated",
-        };
-        let pull_direction = match direction.as_deref() {
-            Some("asc") => "asc",
-            _ => "desc",
-        };
-        let pull_creator = normalize_optional_string(creator);
-        let pull_assignee = normalize_optional_string(assignee);
-        let pull_review = normalize_optional_string(review);
-        let pull_project = normalize_optional_string(project);
-        let client = build_client()?;
-        if !github_pull_request_search_required(
-            pull_state,
-            pull_sort,
-            pull_creator.as_deref(),
-            pull_assignee.as_deref(),
-            labels.as_deref(),
-            milestone_key.as_deref(),
-            pull_project.as_deref(),
-            pull_review.as_deref(),
-            search_query.as_deref(),
-        ) {
-            let repo_url = github_repo_api_url(&repo_full_name)?;
+            let (binding, token) = github_require_token(&app)?;
+            let pull_state = match state.as_deref() {
+                Some("closed") => "closed",
+                Some("merged") => "merged",
+                Some("all") => "all",
+                _ => "open",
+            };
+            let pull_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let pull_sort = match sort.as_deref() {
+                Some("created") => "created",
+                Some("comments") => "comments",
+                _ => "updated",
+            };
+            let pull_direction = match direction.as_deref() {
+                Some("asc") => "asc",
+                _ => "desc",
+            };
+            let pull_creator = normalize_optional_string(creator);
+            let pull_assignee = normalize_optional_string(assignee);
+            let pull_review = normalize_optional_string(review);
+            let pull_project = normalize_optional_string(project);
+            let client = build_client()?;
+            if !github_pull_request_search_required(
+                pull_state,
+                pull_sort,
+                pull_creator.as_deref(),
+                pull_assignee.as_deref(),
+                labels.as_deref(),
+                milestone_key.as_deref(),
+                pull_project.as_deref(),
+                pull_review.as_deref(),
+                search_query.as_deref(),
+            ) {
+                let repo_url = github_repo_api_url(&repo_full_name)?;
+                let response = github_send(
+                    &app,
+                    "读取 GitHub Pull Requests 失败",
+                    github_headers(
+                        client.get(format!("{repo_url}/pulls")).query(&[
+                            ("state", pull_state),
+                            ("per_page", pull_per_page.as_str()),
+                            ("sort", pull_sort),
+                            ("direction", pull_direction),
+                        ]),
+                        Some(&token),
+                    ),
+                )?;
+                if !response.status().is_success() {
+                    return Err(github_http_error(
+                        "读取 GitHub Pull Requests 失败",
+                        response,
+                    ));
+                }
+                let pulls = github_json::<Vec<GitHubPullRequestResponse>>(
+                    "读取 GitHub Pull Requests 失败",
+                    response,
+                )?
+                .into_iter()
+                .map(github_pull_request_from_response)
+                .collect::<Vec<_>>();
+                update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                    repo_cache.pull_requests.insert(pull_key, pulls.clone());
+                })?;
+                return Ok(pulls);
+            }
+            let search_q = github_pull_request_search_query(
+                &repo_full_name,
+                pull_state,
+                search_query.as_deref().unwrap_or(""),
+                pull_creator.as_deref(),
+                pull_assignee.as_deref(),
+                labels.as_deref(),
+                milestone_key.as_deref(),
+                pull_review.as_deref(),
+            );
+            let search_params = vec![
+                ("q", search_q),
+                ("per_page", pull_per_page),
+                ("sort", pull_sort.to_string()),
+                ("order", pull_direction.to_string()),
+            ];
             let response = github_send(
                 &app,
                 "读取 GitHub Pull Requests 失败",
                 github_headers(
-                    client.get(format!("{repo_url}/pulls")).query(&[
-                        ("state", pull_state),
-                        ("per_page", pull_per_page.as_str()),
-                        ("sort", pull_sort),
-                        ("direction", pull_direction),
-                    ]),
+                    client
+                        .get("https://api.github.com/search/issues")
+                        .query(&search_params),
                     Some(&token),
                 ),
             )?;
-            if !response.status().is_success() {
-                return Err(github_http_error(
-                    "读取 GitHub Pull Requests 失败",
-                    response,
-                ));
-            }
-            let pulls = github_json::<Vec<GitHubPullRequestResponse>>(
+            let mut issues = github_json::<GitHubIssueSearchResponse>(
                 "读取 GitHub Pull Requests 失败",
                 response,
             )?
+            .items
             .into_iter()
-            .map(github_pull_request_from_response)
+            .filter_map(github_pull_request_issue_from_response)
             .collect::<Vec<_>>();
+            enrich_github_issues_with_projects(
+                &app,
+                &repo_full_name,
+                &binding,
+                &token,
+                &mut issues,
+            )?;
+            if let Some(project_filter) = pull_project {
+                issues.retain(|issue| {
+                    issue
+                        .project_items
+                        .iter()
+                        .any(|item| item.id == project_filter || item.title == project_filter)
+                });
+            }
+            let mut pulls = Vec::with_capacity(issues.len());
+            for issue in issues {
+                let pull_request = github_fetch_pull_request_response(
+                    &app,
+                    &repo_full_name,
+                    issue.number,
+                    &token,
+                    "读取 GitHub Pull Request 失败",
+                )?;
+                pulls.push(github_pull_request_with_issue_metadata(
+                    github_pull_request_from_response(pull_request),
+                    issue,
+                ));
+            }
             update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
                 repo_cache.pull_requests.insert(pull_key, pulls.clone());
             })?;
-            return Ok(pulls);
-        }
-        let search_q = github_pull_request_search_query(
-            &repo_full_name,
-            pull_state,
-            search_query.as_deref().unwrap_or(""),
-            pull_creator.as_deref(),
-            pull_assignee.as_deref(),
-            labels.as_deref(),
-            milestone_key.as_deref(),
-            pull_review.as_deref(),
-        );
-        let search_params = vec![
-            ("q", search_q),
-            ("per_page", pull_per_page),
-            ("sort", pull_sort.to_string()),
-            ("order", pull_direction.to_string()),
-        ];
-        let response = github_send(
-            &app,
-            "读取 GitHub Pull Requests 失败",
-            github_headers(
-                client
-                    .get("https://api.github.com/search/issues")
-                    .query(&search_params),
-                Some(&token),
-            ),
-        )?;
-        let mut issues =
-            github_json::<GitHubIssueSearchResponse>("读取 GitHub Pull Requests 失败", response)?
-                .items
-                .into_iter()
-                .filter_map(github_pull_request_issue_from_response)
-                .collect::<Vec<_>>();
-        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
-        if let Some(project_filter) = pull_project {
-            issues.retain(|issue| {
-                issue
-                    .project_items
-                    .iter()
-                    .any(|item| item.id == project_filter || item.title == project_filter)
-            });
-        }
-        let mut pulls = Vec::with_capacity(issues.len());
-        for issue in issues {
-            let pull_request = github_fetch_pull_request_response(
-                &app,
-                &repo_full_name,
-                issue.number,
-                &token,
-                "读取 GitHub Pull Request 失败",
-            )?;
-            pulls.push(github_pull_request_with_issue_metadata(
-                github_pull_request_from_response(pull_request),
-                issue,
-            ));
-        }
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.pull_requests.insert(pull_key, pulls.clone());
-        })?;
-        Ok(pulls)
-    })
+            Ok(pulls)
+        },
+    )
     .await
 }
 
@@ -4555,17 +4667,22 @@ pub async fn github_get_pull_request(
     repo_full_name: String,
     pull_number: u64,
 ) -> Result<GitHubPullRequest, String> {
-    run_blocking("读取 GitHub Pull Request", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let pull_request = github_fetch_pull_request_response(
-            &app,
-            &repo_full_name,
-            pull_number,
-            &token,
-            "读取 GitHub Pull Request 失败",
-        )?;
-        Ok(github_pull_request_from_response(pull_request))
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Pull Request",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let pull_request = github_fetch_pull_request_response(
+                &app,
+                &repo_full_name,
+                pull_number,
+                &token,
+                "读取 GitHub Pull Request 失败",
+            )?;
+            Ok(github_pull_request_from_response(pull_request))
+        },
+    )
     .await
 }
 
@@ -4575,128 +4692,133 @@ pub async fn github_get_pull_request_discussion(
     pull_number: u64,
     force_refresh: Option<bool>,
 ) -> Result<GitHubPullRequestDiscussion, String> {
-    run_blocking("读取 GitHub Pull Request 讨论", move || {
-        if pull_number == 0 {
-            return Err("Pull Request 编号不合法".to_string());
-        }
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        let discussion_key = pull_number.to_string();
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| {
-                    repo_cache
-                        .pull_request_discussions
-                        .get(&discussion_key)
-                        .cloned()
-                })
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Pull Request 讨论",
+        move || {
+            if pull_number == 0 {
+                return Err("Pull Request 编号不合法".to_string());
             }
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let pull_request_response = github_fetch_pull_request_response(
-            &app,
-            &repo_full_name,
-            pull_number,
-            &token,
-            "读取 GitHub Pull Request 失败",
-        )?;
-        let pull_request_issue = github_fetch_issue_response(
-            &app,
-            &repo_full_name,
-            pull_number,
-            &token,
-            "读取 GitHub Pull Request 元数据失败",
-        )?;
-        let issue_metadata = github_pull_request_issue_from_response(pull_request_issue);
-        let mut pull_request = github_pull_request_from_response(pull_request_response);
-        if let Some(issue) = issue_metadata {
-            pull_request = github_pull_request_with_issue_metadata(pull_request, issue);
-        }
-        let client = build_client()?;
-        let repo_url = github_repo_api_url(&repo_full_name)?;
-        let mut timeline = vec![github_timeline_item_from_pull_request(&pull_request)];
-        let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
-            &app,
-            &client,
-            &token,
-            format!("{repo_url}/issues/{pull_number}/timeline"),
-            "读取 GitHub Pull Request 时间线失败",
-        )?;
-        let mut development_items =
-            github_development_items_from_timeline(&repo_full_name, &timeline_events);
-        timeline.extend(
-            timeline_events
-                .into_iter()
-                .map(github_timeline_item_from_response),
-        );
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            let discussion_key = pull_number.to_string();
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| {
+                        repo_cache
+                            .pull_request_discussions
+                            .get(&discussion_key)
+                            .cloned()
+                    })
+                {
+                    return Ok(cached);
+                }
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let pull_request_response = github_fetch_pull_request_response(
+                &app,
+                &repo_full_name,
+                pull_number,
+                &token,
+                "读取 GitHub Pull Request 失败",
+            )?;
+            let pull_request_issue = github_fetch_issue_response(
+                &app,
+                &repo_full_name,
+                pull_number,
+                &token,
+                "读取 GitHub Pull Request 元数据失败",
+            )?;
+            let issue_metadata = github_pull_request_issue_from_response(pull_request_issue);
+            let mut pull_request = github_pull_request_from_response(pull_request_response);
+            if let Some(issue) = issue_metadata {
+                pull_request = github_pull_request_with_issue_metadata(pull_request, issue);
+            }
+            let client = build_client()?;
+            let repo_url = github_repo_api_url(&repo_full_name)?;
+            let mut timeline = vec![github_timeline_item_from_pull_request(&pull_request)];
+            let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/issues/{pull_number}/timeline"),
+                "读取 GitHub Pull Request 时间线失败",
+            )?;
+            let mut development_items =
+                github_development_items_from_timeline(&repo_full_name, &timeline_events);
+            timeline.extend(
+                timeline_events
+                    .into_iter()
+                    .map(github_timeline_item_from_response),
+            );
 
-        let review_responses = github_fetch_paginated::<GitHubPullRequestReviewResponse>(
-            &app,
-            &client,
-            &token,
-            format!("{repo_url}/pulls/{pull_number}/reviews"),
-            "读取 GitHub Pull Request Reviews 失败",
-        )?;
-        let mut reviewers = fetch_github_pull_request_requested_reviewers(
-            &app,
-            &client,
-            &token,
-            &repo_url,
-            pull_number,
-        )?;
-        add_pull_request_reviewers_from_reviews(&mut reviewers, &review_responses);
-        timeline.extend(
-            review_responses
-                .into_iter()
-                .map(github_review_timeline_item_from_response),
-        );
+            let review_responses = github_fetch_paginated::<GitHubPullRequestReviewResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/pulls/{pull_number}/reviews"),
+                "读取 GitHub Pull Request Reviews 失败",
+            )?;
+            let mut reviewers = fetch_github_pull_request_requested_reviewers(
+                &app,
+                &client,
+                &token,
+                &repo_url,
+                pull_number,
+            )?;
+            add_pull_request_reviewers_from_reviews(&mut reviewers, &review_responses);
+            timeline.extend(
+                review_responses
+                    .into_iter()
+                    .map(github_review_timeline_item_from_response),
+            );
 
-        let review_comments = github_fetch_paginated::<GitHubPullRequestReviewCommentResponse>(
-            &app,
-            &client,
-            &token,
-            format!("{repo_url}/pulls/{pull_number}/comments"),
-            "读取 GitHub Pull Request Review Comments 失败",
-        )?;
-        timeline.extend(
-            review_comments
-                .into_iter()
-                .map(github_review_comment_timeline_item_from_response),
-        );
+            let review_comments = github_fetch_paginated::<GitHubPullRequestReviewCommentResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/pulls/{pull_number}/comments"),
+                "读取 GitHub Pull Request Review Comments 失败",
+            )?;
+            timeline.extend(
+                review_comments
+                    .into_iter()
+                    .map(github_review_comment_timeline_item_from_response),
+            );
 
-        let commits = github_fetch_paginated::<GitHubCommitResponse>(
-            &app,
-            &client,
-            &token,
-            format!("{repo_url}/pulls/{pull_number}/commits"),
-            "读取 GitHub Pull Request Commits 失败",
-        )?;
-        development_items.extend(github_pull_request_commit_development_items(
-            &repo_full_name,
-            &commits,
-        ));
-        let mut development_seen = HashSet::new();
-        development_items.retain(|item| development_seen.insert(item.id.clone()));
-        pull_request.reviewers = reviewers;
-        pull_request.development_items = development_items;
-        pull_request.commit_count = Some(commits.len() as u64);
-        let mut seen = HashSet::new();
-        timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
-        sort_github_discussion_timeline(&mut timeline);
-        let discussion = GitHubPullRequestDiscussion {
-            pull_request,
-            timeline,
-        };
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache
-                .pull_request_discussions
-                .insert(discussion_key, discussion.clone());
-        })?;
-        Ok(discussion)
-    })
+            let commits = github_fetch_paginated::<GitHubCommitResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/pulls/{pull_number}/commits"),
+                "读取 GitHub Pull Request Commits 失败",
+            )?;
+            development_items.extend(github_pull_request_commit_development_items(
+                &repo_full_name,
+                &commits,
+            ));
+            let mut development_seen = HashSet::new();
+            development_items.retain(|item| development_seen.insert(item.id.clone()));
+            pull_request.reviewers = reviewers;
+            pull_request.development_items = development_items;
+            pull_request.commit_count = Some(commits.len() as u64);
+            let mut seen = HashSet::new();
+            timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
+            sort_github_discussion_timeline(&mut timeline);
+            let discussion = GitHubPullRequestDiscussion {
+                pull_request,
+                timeline,
+            };
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache
+                    .pull_request_discussions
+                    .insert(discussion_key, discussion.clone());
+            })?;
+            Ok(discussion)
+        },
+    )
     .await
 }
 
@@ -4705,42 +4827,49 @@ pub async fn github_create_pull_request(
     repo_full_name: String,
     request: GitHubCreatePullRequestRequest,
 ) -> Result<GitHubPullRequest, String> {
-    run_blocking("创建 GitHub Pull Request", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let title = request.title.trim();
-        let head = request.head.trim();
-        let base = request.base.trim();
-        if title.is_empty() || head.is_empty() || base.is_empty() {
-            return Err("Pull Request 标题、head 和 base 不能为空".to_string());
-        }
-        let mut payload = serde_json::json!({
-            "title": title,
-            "head": head,
-            "base": base,
-            "draft": request.draft,
-        });
-        if let Some(map) = payload.as_object_mut() {
-            if let Some(value) = normalize_optional_string(request.body) {
-                map.insert("body".to_string(), serde_json::Value::String(value));
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "创建 GitHub Pull Request",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let title = request.title.trim();
+            let head = request.head.trim();
+            let base = request.base.trim();
+            if title.is_empty() || head.is_empty() || base.is_empty() {
+                return Err("Pull Request 标题、head 和 base 不能为空".to_string());
             }
-        }
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "创建 GitHub Pull Request 失败",
-            github_headers(
-                client
-                    .post(format!("{}/pulls", github_repo_api_url(&repo_full_name)?))
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        let pull_request =
-            github_json::<GitHubPullRequestResponse>("创建 GitHub Pull Request 失败", response)?;
-        let pull = github_pull_request_from_response(pull_request);
-        clear_github_project_pull_request_cache(&app, &repo_full_name)?;
-        Ok(pull)
-    })
+            let mut payload = serde_json::json!({
+                "title": title,
+                "head": head,
+                "base": base,
+                "draft": request.draft,
+            });
+            if let Some(map) = payload.as_object_mut() {
+                if let Some(value) = normalize_optional_string(request.body) {
+                    map.insert("body".to_string(), serde_json::Value::String(value));
+                }
+            }
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "创建 GitHub Pull Request 失败",
+                github_headers(
+                    client
+                        .post(format!("{}/pulls", github_repo_api_url(&repo_full_name)?))
+                        .json(&payload),
+                    Some(&token),
+                ),
+            )?;
+            let pull_request = github_json::<GitHubPullRequestResponse>(
+                "创建 GitHub Pull Request 失败",
+                response,
+            )?;
+            let pull = github_pull_request_from_response(pull_request);
+            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            Ok(pull)
+        },
+    )
     .await
 }
 
@@ -4750,48 +4879,55 @@ pub async fn github_update_pull_request(
     pull_number: u64,
     request: GitHubUpdatePullRequestRequest,
 ) -> Result<GitHubPullRequest, String> {
-    run_blocking("更新 GitHub Pull Request", move || {
-        if pull_number == 0 {
-            return Err("Pull Request 编号不合法".to_string());
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let mut payload = serde_json::Map::new();
-        if let Some(value) = normalize_optional_string(request.title) {
-            payload.insert("title".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = request.body {
-            payload.insert("body".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = request.state {
-            let trimmed = value.trim().to_string();
-            if trimmed != "open" && trimmed != "closed" {
-                return Err("Pull Request 状态只能是 open 或 closed".to_string());
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub Pull Request",
+        move || {
+            if pull_number == 0 {
+                return Err("Pull Request 编号不合法".to_string());
             }
-            payload.insert("state".to_string(), serde_json::Value::String(trimmed));
-        }
-        if let Some(value) = normalize_optional_string(request.base) {
-            payload.insert("base".to_string(), serde_json::Value::String(value));
-        }
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "更新 GitHub Pull Request 失败",
-            github_headers(
-                client
-                    .patch(format!(
-                        "{}/pulls/{pull_number}",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        let pull_request =
-            github_json::<GitHubPullRequestResponse>("更新 GitHub Pull Request 失败", response)?;
-        let pull = github_pull_request_from_response(pull_request);
-        clear_github_project_pull_request_cache(&app, &repo_full_name)?;
-        Ok(pull)
-    })
+            let (_binding, token) = github_require_token(&app)?;
+            let mut payload = serde_json::Map::new();
+            if let Some(value) = normalize_optional_string(request.title) {
+                payload.insert("title".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = request.body {
+                payload.insert("body".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = request.state {
+                let trimmed = value.trim().to_string();
+                if trimmed != "open" && trimmed != "closed" {
+                    return Err("Pull Request 状态只能是 open 或 closed".to_string());
+                }
+                payload.insert("state".to_string(), serde_json::Value::String(trimmed));
+            }
+            if let Some(value) = normalize_optional_string(request.base) {
+                payload.insert("base".to_string(), serde_json::Value::String(value));
+            }
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "更新 GitHub Pull Request 失败",
+                github_headers(
+                    client
+                        .patch(format!(
+                            "{}/pulls/{pull_number}",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .json(&payload),
+                    Some(&token),
+                ),
+            )?;
+            let pull_request = github_json::<GitHubPullRequestResponse>(
+                "更新 GitHub Pull Request 失败",
+                response,
+            )?;
+            let pull = github_pull_request_from_response(pull_request);
+            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            Ok(pull)
+        },
+    )
     .await
 }
 
@@ -4801,55 +4937,60 @@ pub async fn github_merge_pull_request(
     pull_number: u64,
     request: GitHubMergePullRequestRequest,
 ) -> Result<GitHubPullRequest, String> {
-    run_blocking("合并 GitHub Pull Request", move || {
-        if pull_number == 0 {
-            return Err("Pull Request 编号不合法".to_string());
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let mut payload = serde_json::Map::new();
-        if let Some(value) = normalize_optional_string(request.method) {
-            payload.insert("merge_method".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = normalize_optional_string(request.commit_title) {
-            payload.insert("commit_title".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = normalize_optional_string(request.commit_message) {
-            payload.insert(
-                "commit_message".to_string(),
-                serde_json::Value::String(value),
-            );
-        }
-        if let Some(value) = normalize_optional_string(request.sha) {
-            payload.insert("sha".to_string(), serde_json::Value::String(value));
-        }
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "合并 GitHub Pull Request 失败",
-            github_headers(
-                client
-                    .put(format!(
-                        "{}/pulls/{pull_number}/merge",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error("合并 GitHub Pull Request 失败", response));
-        }
-        let pull_request = github_fetch_pull_request_response(
-            &app,
-            &repo_full_name,
-            pull_number,
-            &token,
-            "读取合并后的 Pull Request 失败",
-        )?;
-        let pull = github_pull_request_from_response(pull_request);
-        clear_github_project_pull_request_cache(&app, &repo_full_name)?;
-        Ok(pull)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "合并 GitHub Pull Request",
+        move || {
+            if pull_number == 0 {
+                return Err("Pull Request 编号不合法".to_string());
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let mut payload = serde_json::Map::new();
+            if let Some(value) = normalize_optional_string(request.method) {
+                payload.insert("merge_method".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = normalize_optional_string(request.commit_title) {
+                payload.insert("commit_title".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = normalize_optional_string(request.commit_message) {
+                payload.insert(
+                    "commit_message".to_string(),
+                    serde_json::Value::String(value),
+                );
+            }
+            if let Some(value) = normalize_optional_string(request.sha) {
+                payload.insert("sha".to_string(), serde_json::Value::String(value));
+            }
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "合并 GitHub Pull Request 失败",
+                github_headers(
+                    client
+                        .put(format!(
+                            "{}/pulls/{pull_number}/merge",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .json(&payload),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error("合并 GitHub Pull Request 失败", response));
+            }
+            let pull_request = github_fetch_pull_request_response(
+                &app,
+                &repo_full_name,
+                pull_number,
+                &token,
+                "读取合并后的 Pull Request 失败",
+            )?;
+            let pull = github_pull_request_from_response(pull_request);
+            clear_github_project_pull_request_cache(&app, &repo_full_name)?;
+            Ok(pull)
+        },
+    )
     .await
 }
 
@@ -4859,65 +5000,70 @@ pub async fn github_list_pull_request_checks(
     pull_number: u64,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubPullRequestCheck>, String> {
-    run_blocking("读取 GitHub Pull Request Checks", move || {
-        if pull_number == 0 {
-            return Err("Pull Request 编号不合法".to_string());
-        }
-        let checks_key = pull_number.to_string();
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.pull_request_checks.get(&checks_key).cloned())
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Pull Request Checks",
+        move || {
+            if pull_number == 0 {
+                return Err("Pull Request 编号不合法".to_string());
             }
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let pull_request = github_fetch_pull_request_response(
-            &app,
-            &repo_full_name,
-            pull_number,
-            &token,
-            "读取 GitHub Pull Request Checks 失败",
-        )?;
-        let head_sha = pull_request
-            .head
-            .sha
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "Pull Request 缺少 head sha".to_string())?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub Pull Request Checks 失败",
-            github_headers(
-                client
-                    .get(format!(
-                        "{}/commits/{}/check-runs",
-                        github_repo_api_url(&repo_full_name)?,
-                        url_encode_path_segment(&head_sha)
-                    ))
-                    .query(&[("per_page", "100")]),
-                Some(&token),
-            ),
-        )?;
-        let checks = github_json::<GitHubPullRequestCheckRunsResponse>(
-            "读取 GitHub Pull Request Checks 失败",
-            response,
-        )?;
-        let checks = checks
-            .check_runs
-            .into_iter()
-            .map(github_pull_request_check_from_response)
-            .collect::<Vec<_>>();
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache
-                .pull_request_checks
-                .insert(checks_key, checks.clone());
-        })?;
-        Ok(checks)
-    })
+            let checks_key = pull_number.to_string();
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| repo_cache.pull_request_checks.get(&checks_key).cloned())
+                {
+                    return Ok(cached);
+                }
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let pull_request = github_fetch_pull_request_response(
+                &app,
+                &repo_full_name,
+                pull_number,
+                &token,
+                "读取 GitHub Pull Request Checks 失败",
+            )?;
+            let head_sha = pull_request
+                .head
+                .sha
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Pull Request 缺少 head sha".to_string())?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub Pull Request Checks 失败",
+                github_headers(
+                    client
+                        .get(format!(
+                            "{}/commits/{}/check-runs",
+                            github_repo_api_url(&repo_full_name)?,
+                            url_encode_path_segment(&head_sha)
+                        ))
+                        .query(&[("per_page", "100")]),
+                    Some(&token),
+                ),
+            )?;
+            let checks = github_json::<GitHubPullRequestCheckRunsResponse>(
+                "读取 GitHub Pull Request Checks 失败",
+                response,
+            )?;
+            let checks = checks
+                .check_runs
+                .into_iter()
+                .map(github_pull_request_check_from_response)
+                .collect::<Vec<_>>();
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache
+                    .pull_request_checks
+                    .insert(checks_key, checks.clone());
+            })?;
+            Ok(checks)
+        },
+    )
     .await
 }
 
@@ -4937,135 +5083,146 @@ pub async fn github_list_issues(
     query: Option<String>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubIssue>, String> {
-    run_blocking("读取 GitHub Issue", move || {
-        let milestone_key = github_issue_milestone_param(milestone.clone());
-        let search_query = normalize_optional_string(query.clone());
-        let issue_key = github_issue_cache_key(
-            state.as_deref(),
-            per_page,
-            sort.as_deref(),
-            direction.as_deref(),
-            since.as_deref(),
-            creator.as_deref(),
-            assignee.as_deref(),
-            labels.as_deref(),
-            milestone_key.as_deref(),
-            project.as_deref(),
-            search_query.as_deref(),
-        );
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.issues.get(&issue_key).cloned())
-            {
-                return Ok(cached);
-            }
-        }
-        let (binding, token) = github_require_token(&app)?;
-        let issue_state = state.unwrap_or_else(|| "open".to_string());
-        let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
-        let issue_sort = match sort.as_deref() {
-            Some("updated") => "updated",
-            Some("comments") => "comments",
-            _ => "created",
-        };
-        let issue_direction = match direction.as_deref() {
-            Some("asc") => "asc",
-            _ => "desc",
-        };
-        let issue_since = normalize_optional_string(since);
-        let issue_creator = normalize_optional_string(creator);
-        let issue_assignee = normalize_optional_string(assignee);
-        let issue_labels = github_issue_labels_param(labels.clone());
-        let issue_milestone = milestone_key.clone();
-        let mut rest_query = vec![
-            ("state", issue_state.clone()),
-            ("per_page", issue_per_page.clone()),
-            ("sort", issue_sort.to_string()),
-            ("direction", issue_direction.to_string()),
-        ];
-        if let Some(issue_since) = issue_since.clone() {
-            rest_query.push(("since", issue_since));
-        }
-        if let Some(issue_creator) = issue_creator.clone() {
-            rest_query.push(("creator", issue_creator));
-        }
-        if let Some(issue_assignee) = issue_assignee.clone() {
-            rest_query.push(("assignee", issue_assignee));
-        }
-        if let Some(issue_labels) = issue_labels.clone() {
-            rest_query.push(("labels", issue_labels));
-        }
-        if let Some(issue_milestone) = issue_milestone.clone() {
-            rest_query.push(("milestone", issue_milestone));
-        }
-        let client = build_client()?;
-        let issues = if let Some(search_text) = search_query {
-            let search_sort = match issue_sort {
-                "updated" => "updated",
-                "comments" => "comments",
-                _ => "created",
-            };
-            let search_q = github_issue_search_query(
-                &repo_full_name,
-                &issue_state,
-                &search_text,
-                issue_since.as_deref(),
-                issue_creator.as_deref(),
-                issue_assignee.as_deref(),
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Issue",
+        move || {
+            let milestone_key = github_issue_milestone_param(milestone.clone());
+            let search_query = normalize_optional_string(query.clone());
+            let issue_key = github_issue_cache_key(
+                state.as_deref(),
+                per_page,
+                sort.as_deref(),
+                direction.as_deref(),
+                since.as_deref(),
+                creator.as_deref(),
+                assignee.as_deref(),
                 labels.as_deref(),
                 milestone_key.as_deref(),
+                project.as_deref(),
+                search_query.as_deref(),
             );
-            let search_params = vec![
-                ("q", search_q),
-                ("per_page", issue_per_page),
-                ("sort", search_sort.to_string()),
-                ("order", issue_direction.to_string()),
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| repo_cache.issues.get(&issue_key).cloned())
+                {
+                    return Ok(cached);
+                }
+            }
+            let (binding, token) = github_require_token(&app)?;
+            let issue_state = state.unwrap_or_else(|| "open".to_string());
+            let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let issue_sort = match sort.as_deref() {
+                Some("updated") => "updated",
+                Some("comments") => "comments",
+                _ => "created",
+            };
+            let issue_direction = match direction.as_deref() {
+                Some("asc") => "asc",
+                _ => "desc",
+            };
+            let issue_since = normalize_optional_string(since);
+            let issue_creator = normalize_optional_string(creator);
+            let issue_assignee = normalize_optional_string(assignee);
+            let issue_labels = github_issue_labels_param(labels.clone());
+            let issue_milestone = milestone_key.clone();
+            let mut rest_query = vec![
+                ("state", issue_state.clone()),
+                ("per_page", issue_per_page.clone()),
+                ("sort", issue_sort.to_string()),
+                ("direction", issue_direction.to_string()),
             ];
-            let response = github_send(
+            if let Some(issue_since) = issue_since.clone() {
+                rest_query.push(("since", issue_since));
+            }
+            if let Some(issue_creator) = issue_creator.clone() {
+                rest_query.push(("creator", issue_creator));
+            }
+            if let Some(issue_assignee) = issue_assignee.clone() {
+                rest_query.push(("assignee", issue_assignee));
+            }
+            if let Some(issue_labels) = issue_labels.clone() {
+                rest_query.push(("labels", issue_labels));
+            }
+            if let Some(issue_milestone) = issue_milestone.clone() {
+                rest_query.push(("milestone", issue_milestone));
+            }
+            let client = build_client()?;
+            let issues = if let Some(search_text) = search_query {
+                let search_sort = match issue_sort {
+                    "updated" => "updated",
+                    "comments" => "comments",
+                    _ => "created",
+                };
+                let search_q = github_issue_search_query(
+                    &repo_full_name,
+                    &issue_state,
+                    &search_text,
+                    issue_since.as_deref(),
+                    issue_creator.as_deref(),
+                    issue_assignee.as_deref(),
+                    labels.as_deref(),
+                    milestone_key.as_deref(),
+                );
+                let search_params = vec![
+                    ("q", search_q),
+                    ("per_page", issue_per_page),
+                    ("sort", search_sort.to_string()),
+                    ("order", issue_direction.to_string()),
+                ];
+                let response = github_send(
+                    &app,
+                    "搜索 GitHub Issue 失败",
+                    github_headers(
+                        client
+                            .get("https://api.github.com/search/issues")
+                            .query(&search_params),
+                        Some(&token),
+                    ),
+                )?;
+                github_json::<GitHubIssueSearchResponse>("搜索 GitHub Issue 失败", response)?.items
+            } else {
+                let response = github_send(
+                    &app,
+                    "读取 GitHub Issue 失败",
+                    github_headers(
+                        client
+                            .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
+                            .query(&rest_query),
+                        Some(&token),
+                    ),
+                )?;
+                github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?
+            };
+            let mut issues = issues
+                .into_iter()
+                .filter_map(github_issue_from_response)
+                .collect::<Vec<_>>();
+            enrich_github_issues_with_projects(
                 &app,
-                "搜索 GitHub Issue 失败",
-                github_headers(
-                    client
-                        .get("https://api.github.com/search/issues")
-                        .query(&search_params),
-                    Some(&token),
-                ),
+                &repo_full_name,
+                &binding,
+                &token,
+                &mut issues,
             )?;
-            github_json::<GitHubIssueSearchResponse>("搜索 GitHub Issue 失败", response)?.items
-        } else {
-            let response = github_send(
-                &app,
-                "读取 GitHub Issue 失败",
-                github_headers(
-                    client
-                        .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
-                        .query(&rest_query),
-                    Some(&token),
-                ),
-            )?;
-            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 失败", response)?
-        };
-        let mut issues = issues
-            .into_iter()
-            .filter_map(github_issue_from_response)
-            .collect::<Vec<_>>();
-        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
-        if let Some(project_filter) = normalize_optional_string(project) {
-            issues.retain(|issue| {
-                issue
-                    .project_items
-                    .iter()
-                    .any(|item| item.id == project_filter || item.title == project_filter)
-            });
-        }
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.issues.insert(issue_key, issues.clone());
-        })?;
-        Ok(issues)
-    })
+            if let Some(project_filter) = normalize_optional_string(project) {
+                issues.retain(|issue| {
+                    issue
+                        .project_items
+                        .iter()
+                        .any(|item| item.id == project_filter || item.title == project_filter)
+                });
+            }
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.issues.insert(issue_key, issues.clone());
+            })?;
+            Ok(issues)
+        },
+    )
     .await
 }
 
@@ -5075,59 +5232,66 @@ pub async fn github_get_issue_discussion(
     issue_number: u64,
     force_refresh: Option<bool>,
 ) -> Result<GitHubIssueDiscussion, String> {
-    run_blocking("读取 GitHub Issue 讨论", move || {
-        if issue_number == 0 {
-            return Err("Issue 编号不合法".to_string());
-        }
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        let discussion_key = issue_number.to_string();
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.issue_discussions.get(&discussion_key).cloned())
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Issue 讨论",
+        move || {
+            if issue_number == 0 {
+                return Err("Issue 编号不合法".to_string());
             }
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let issue_response = github_fetch_issue_response(
-            &app,
-            &repo_full_name,
-            issue_number,
-            &token,
-            "读取 GitHub Issue 失败",
-        )?;
-        let mut issue = github_issue_from_response(issue_response)
-            .ok_or_else(|| format!("#{issue_number} 是 Pull Request，不是 Issue"))?;
-        let client = build_client()?;
-        let repo_url = github_repo_api_url(&repo_full_name)?;
-        let mut timeline = vec![github_timeline_item_from_issue(&issue)];
-        let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
-            &app,
-            &client,
-            &token,
-            format!("{repo_url}/issues/{issue_number}/timeline"),
-            "读取 GitHub Issue 时间线失败",
-        )?;
-        issue.development_items =
-            github_development_items_from_timeline(&repo_full_name, &timeline_events);
-        timeline.extend(
-            timeline_events
-                .into_iter()
-                .map(github_timeline_item_from_response),
-        );
-        let mut seen = HashSet::new();
-        timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
-        sort_github_discussion_timeline(&mut timeline);
-        let discussion = GitHubIssueDiscussion { issue, timeline };
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache
-                .issue_discussions
-                .insert(discussion_key, discussion.clone());
-        })?;
-        Ok(discussion)
-    })
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            let discussion_key = issue_number.to_string();
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| {
+                        repo_cache.issue_discussions.get(&discussion_key).cloned()
+                    })
+                {
+                    return Ok(cached);
+                }
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let issue_response = github_fetch_issue_response(
+                &app,
+                &repo_full_name,
+                issue_number,
+                &token,
+                "读取 GitHub Issue 失败",
+            )?;
+            let mut issue = github_issue_from_response(issue_response)
+                .ok_or_else(|| format!("#{issue_number} 是 Pull Request，不是 Issue"))?;
+            let client = build_client()?;
+            let repo_url = github_repo_api_url(&repo_full_name)?;
+            let mut timeline = vec![github_timeline_item_from_issue(&issue)];
+            let timeline_events = github_fetch_paginated::<GitHubIssueTimelineResponse>(
+                &app,
+                &client,
+                &token,
+                format!("{repo_url}/issues/{issue_number}/timeline"),
+                "读取 GitHub Issue 时间线失败",
+            )?;
+            issue.development_items =
+                github_development_items_from_timeline(&repo_full_name, &timeline_events);
+            timeline.extend(
+                timeline_events
+                    .into_iter()
+                    .map(github_timeline_item_from_response),
+            );
+            let mut seen = HashSet::new();
+            timeline.retain(|item| seen.insert(format!("{}:{}", item.kind, item.id)));
+            sort_github_discussion_timeline(&mut timeline);
+            let discussion = GitHubIssueDiscussion { issue, timeline };
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache
+                    .issue_discussions
+                    .insert(discussion_key, discussion.clone());
+            })?;
+            Ok(discussion)
+        },
+    )
     .await
 }
 
@@ -5136,51 +5300,62 @@ pub async fn github_get_issue_filter_metadata(
     repo_full_name: String,
     force_refresh: Option<bool>,
 ) -> Result<GitHubIssueFilterMetadata, String> {
-    run_blocking("读取 GitHub Issue 筛选项", move || {
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            let cache = load_github_project_cache(&app);
-            if let Some(repo_cache) = cache.repos.get(&cache_key) {
-                if let Some(cached) = repo_cache.issue_filter_metadata.clone() {
-                    if !cached.labels.is_empty() || repo_cache.issue_labels.is_some() {
-                        return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Issue 筛选项",
+        move || {
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                let cache = load_github_project_cache(&app);
+                if let Some(repo_cache) = cache.repos.get(&cache_key) {
+                    if let Some(cached) = repo_cache.issue_filter_metadata.clone() {
+                        if !cached.labels.is_empty() || repo_cache.issue_labels.is_some() {
+                            return Ok(cached);
+                        }
                     }
                 }
             }
-        }
-        let (binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let query = vec![
-            ("state", "all".to_string()),
-            ("per_page", "100".to_string()),
-            ("sort", "updated".to_string()),
-            ("direction", "desc".to_string()),
-        ];
-        let response = github_send(
-            &app,
-            "读取 GitHub Issue 筛选项失败",
-            github_headers(
-                client
-                    .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
-                    .query(&query),
-                Some(&token),
-            ),
-        )?;
-        let issues =
-            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 筛选项失败", response)?;
-        let mut issues = issues
-            .into_iter()
-            .filter_map(github_issue_from_response)
-            .collect::<Vec<_>>();
-        enrich_github_issues_with_projects(&app, &repo_full_name, &binding, &token, &mut issues)?;
-        let mut metadata = github_issue_filter_metadata_from_issues(&issues);
-        let repo_labels = list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)?;
-        metadata.labels = merge_unique_sorted_strings(metadata.labels, repo_labels);
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.issue_filter_metadata = Some(metadata.clone());
-        })?;
-        Ok(metadata)
-    })
+            let (binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let query = vec![
+                ("state", "all".to_string()),
+                ("per_page", "100".to_string()),
+                ("sort", "updated".to_string()),
+                ("direction", "desc".to_string()),
+            ];
+            let response = github_send(
+                &app,
+                "读取 GitHub Issue 筛选项失败",
+                github_headers(
+                    client
+                        .get(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
+                        .query(&query),
+                    Some(&token),
+                ),
+            )?;
+            let issues =
+                github_json::<Vec<GitHubIssueResponse>>("读取 GitHub Issue 筛选项失败", response)?;
+            let mut issues = issues
+                .into_iter()
+                .filter_map(github_issue_from_response)
+                .collect::<Vec<_>>();
+            enrich_github_issues_with_projects(
+                &app,
+                &repo_full_name,
+                &binding,
+                &token,
+                &mut issues,
+            )?;
+            let mut metadata = github_issue_filter_metadata_from_issues(&issues);
+            let repo_labels = list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)?;
+            metadata.labels = merge_unique_sorted_strings(metadata.labels, repo_labels);
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.issue_filter_metadata = Some(metadata.clone());
+            })?;
+            Ok(metadata)
+        },
+    )
     .await
 }
 
@@ -5283,9 +5458,12 @@ pub async fn github_list_issue_labels(
     repo_full_name: String,
     force_refresh: Option<bool>,
 ) -> Result<Vec<String>, String> {
-    run_blocking("读取 GitHub Issue Labels", move || {
-        list_github_issue_labels_inner(&app, &repo_full_name, force_refresh)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Issue Labels",
+        move || list_github_issue_labels_inner(&app, &repo_full_name, force_refresh),
+    )
     .await
 }
 
@@ -5294,9 +5472,12 @@ pub async fn github_list_issue_assignees(
     repo_full_name: String,
     force_refresh: Option<bool>,
 ) -> Result<Vec<String>, String> {
-    run_blocking("读取 GitHub Issue Assignees", move || {
-        list_github_issue_assignees_inner(&app, &repo_full_name, force_refresh)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Issue Assignees",
+        move || list_github_issue_assignees_inner(&app, &repo_full_name, force_refresh),
+    )
     .await
 }
 
@@ -5305,39 +5486,44 @@ pub async fn github_create_issue(
     repo_full_name: String,
     request: GitHubCreateIssueRequest,
 ) -> Result<GitHubIssue, String> {
-    run_blocking("创建 GitHub Issue", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let title = request.title.trim();
-        if title.is_empty() {
-            return Err("Issue 标题不能为空".to_string());
-        }
-        let mut payload = serde_json::json!({
-            "title": title,
-            "labels": request.labels,
-            "assignees": request.assignees,
-        });
-        if let Some(map) = payload.as_object_mut() {
-            if let Some(value) = normalize_optional_string(request.body) {
-                map.insert("body".to_string(), serde_json::Value::String(value));
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "创建 GitHub Issue",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let title = request.title.trim();
+            if title.is_empty() {
+                return Err("Issue 标题不能为空".to_string());
             }
-        }
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "创建 GitHub Issue 失败",
-            github_headers(
-                client
-                    .post(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        let issue = github_json::<GitHubIssueResponse>("创建 GitHub Issue 失败", response)?;
-        let issue = github_issue_from_response(issue)
-            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
-        clear_github_project_issue_cache(&app, &repo_full_name)?;
-        Ok(issue)
-    })
+            let mut payload = serde_json::json!({
+                "title": title,
+                "labels": request.labels,
+                "assignees": request.assignees,
+            });
+            if let Some(map) = payload.as_object_mut() {
+                if let Some(value) = normalize_optional_string(request.body) {
+                    map.insert("body".to_string(), serde_json::Value::String(value));
+                }
+            }
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "创建 GitHub Issue 失败",
+                github_headers(
+                    client
+                        .post(format!("{}/issues", github_repo_api_url(&repo_full_name)?))
+                        .json(&payload),
+                    Some(&token),
+                ),
+            )?;
+            let issue = github_json::<GitHubIssueResponse>("创建 GitHub Issue 失败", response)?;
+            let issue = github_issue_from_response(issue)
+                .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
+            clear_github_project_issue_cache(&app, &repo_full_name)?;
+            Ok(issue)
+        },
+    )
     .await
 }
 
@@ -5347,56 +5533,61 @@ pub async fn github_update_issue(
     issue_number: u64,
     request: GitHubUpdateIssueRequest,
 ) -> Result<GitHubIssue, String> {
-    run_blocking("更新 GitHub Issue", move || {
-        if issue_number == 0 {
-            return Err("Issue 编号不合法".to_string());
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let mut payload = serde_json::Map::new();
-        if let Some(value) = normalize_optional_string(request.title) {
-            payload.insert("title".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = request.body {
-            payload.insert("body".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = request.state {
-            if value != "open" && value != "closed" {
-                return Err("Issue 状态只能是 open 或 closed".to_string());
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub Issue",
+        move || {
+            if issue_number == 0 {
+                return Err("Issue 编号不合法".to_string());
             }
-            payload.insert("state".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = normalize_optional_string(request.state_reason) {
-            if value != "completed" && value != "not_planned" {
-                return Err("Issue 关闭原因只能是 completed 或 not_planned".to_string());
+            let (_binding, token) = github_require_token(&app)?;
+            let mut payload = serde_json::Map::new();
+            if let Some(value) = normalize_optional_string(request.title) {
+                payload.insert("title".to_string(), serde_json::Value::String(value));
             }
-            payload.insert("state_reason".to_string(), serde_json::Value::String(value));
-        }
-        if let Some(value) = request.labels {
-            payload.insert("labels".to_string(), serde_json::json!(value));
-        }
-        if let Some(value) = request.assignees {
-            payload.insert("assignees".to_string(), serde_json::json!(value));
-        }
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "更新 GitHub Issue 失败",
-            github_headers(
-                client
-                    .patch(format!(
-                        "{}/issues/{issue_number}",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        let issue = github_json::<GitHubIssueResponse>("更新 GitHub Issue 失败", response)?;
-        let issue = github_issue_from_response(issue)
-            .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
-        clear_github_project_issue_cache(&app, &repo_full_name)?;
-        Ok(issue)
-    })
+            if let Some(value) = request.body {
+                payload.insert("body".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = request.state {
+                if value != "open" && value != "closed" {
+                    return Err("Issue 状态只能是 open 或 closed".to_string());
+                }
+                payload.insert("state".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = normalize_optional_string(request.state_reason) {
+                if value != "completed" && value != "not_planned" {
+                    return Err("Issue 关闭原因只能是 completed 或 not_planned".to_string());
+                }
+                payload.insert("state_reason".to_string(), serde_json::Value::String(value));
+            }
+            if let Some(value) = request.labels {
+                payload.insert("labels".to_string(), serde_json::json!(value));
+            }
+            if let Some(value) = request.assignees {
+                payload.insert("assignees".to_string(), serde_json::json!(value));
+            }
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "更新 GitHub Issue 失败",
+                github_headers(
+                    client
+                        .patch(format!(
+                            "{}/issues/{issue_number}",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .json(&payload),
+                    Some(&token),
+                ),
+            )?;
+            let issue = github_json::<GitHubIssueResponse>("更新 GitHub Issue 失败", response)?;
+            let issue = github_issue_from_response(issue)
+                .ok_or_else(|| "GitHub 返回了 Pull Request 记录".to_string())?;
+            clear_github_project_issue_cache(&app, &repo_full_name)?;
+            Ok(issue)
+        },
+    )
     .await
 }
 
@@ -5406,45 +5597,51 @@ pub async fn github_list_workflow_runs(
     per_page: Option<u32>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubWorkflowRun>, String> {
-    run_blocking("读取 GitHub Actions", move || {
-        let runs_key = github_workflow_runs_cache_key(per_page);
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.workflow_runs.get(&runs_key).cloned())
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Actions",
+        move || {
+            let runs_key = github_workflow_runs_cache_key(per_page);
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| repo_cache.workflow_runs.get(&runs_key).cloned())
+                {
+                    return Ok(cached);
+                }
             }
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let runs_per_page = per_page.unwrap_or(30).clamp(1, 100).to_string();
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub Actions 失败",
-            github_headers(
-                client
-                    .get(format!(
-                        "{}/actions/runs",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .query(&[("per_page", runs_per_page)]),
-                Some(&token),
-            ),
-        )?;
-        let runs = github_json::<GitHubWorkflowRunsResponse>("读取 GitHub Actions 失败", response)?;
-        let runs = runs
-            .workflow_runs
-            .into_iter()
-            .map(github_workflow_run_from_response)
-            .collect::<Vec<_>>();
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.workflow_runs.insert(runs_key, runs.clone());
-        })?;
-        Ok(runs)
-    })
+            let (_binding, token) = github_require_token(&app)?;
+            let runs_per_page = per_page.unwrap_or(30).clamp(1, 100).to_string();
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub Actions 失败",
+                github_headers(
+                    client
+                        .get(format!(
+                            "{}/actions/runs",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .query(&[("per_page", runs_per_page)]),
+                    Some(&token),
+                ),
+            )?;
+            let runs =
+                github_json::<GitHubWorkflowRunsResponse>("读取 GitHub Actions 失败", response)?;
+            let runs = runs
+                .workflow_runs
+                .into_iter()
+                .map(github_workflow_run_from_response)
+                .collect::<Vec<_>>();
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.workflow_runs.insert(runs_key, runs.clone());
+            })?;
+            Ok(runs)
+        },
+    )
     .await
 }
 
@@ -5454,75 +5651,80 @@ pub async fn github_get_workflow_run_detail(
     run_id: u64,
     _force_refresh: Option<bool>,
 ) -> Result<GitHubWorkflowRunDetail, String> {
-    run_blocking("读取 GitHub Actions 详情", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let repo_api_url = github_repo_api_url(&repo_full_name)?;
-        let run_response = github_send(
-            &app,
-            "读取 GitHub Actions 详情失败",
-            github_headers(
-                client.get(format!("{repo_api_url}/actions/runs/{run_id}")),
-                Some(&token),
-            ),
-        )?;
-        let run = github_workflow_run_from_response(github_json::<GitHubWorkflowRunResponse>(
-            "读取 GitHub Actions 详情失败",
-            run_response,
-        )?);
-        let jobs_response = github_send(
-            &app,
-            "读取 GitHub Actions jobs 失败",
-            github_headers(
-                client
-                    .get(format!("{repo_api_url}/actions/runs/{run_id}/jobs"))
-                    .query(&[("per_page", "100")]),
-                Some(&token),
-            ),
-        )?;
-        let jobs = github_json::<GitHubWorkflowJobsResponse>(
-            "读取 GitHub Actions jobs 失败",
-            jobs_response,
-        )?
-        .jobs
-        .into_iter()
-        .map(github_workflow_job_from_response)
-        .collect::<Vec<_>>();
-        let artifacts_response = github_send(
-            &app,
-            "读取 GitHub Actions artifacts 失败",
-            github_headers(
-                client
-                    .get(format!("{repo_api_url}/actions/runs/{run_id}/artifacts"))
-                    .query(&[("per_page", "100")]),
-                Some(&token),
-            ),
-        )?;
-        let artifacts = github_json::<GitHubWorkflowArtifactsResponse>(
-            "读取 GitHub Actions artifacts 失败",
-            artifacts_response,
-        )?
-        .artifacts
-        .into_iter()
-        .map(github_workflow_artifact_from_response)
-        .collect::<Vec<_>>();
-        let workflow = github_workflow_definition_for_run(
-            &app,
-            &client,
-            &repo_api_url,
-            &repo_full_name,
-            &token,
-            &run,
-        )
-        .ok()
-        .flatten();
-        Ok(GitHubWorkflowRunDetail {
-            run,
-            jobs,
-            artifacts,
-            workflow,
-        })
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Actions 详情",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let repo_api_url = github_repo_api_url(&repo_full_name)?;
+            let run_response = github_send(
+                &app,
+                "读取 GitHub Actions 详情失败",
+                github_headers(
+                    client.get(format!("{repo_api_url}/actions/runs/{run_id}")),
+                    Some(&token),
+                ),
+            )?;
+            let run = github_workflow_run_from_response(github_json::<GitHubWorkflowRunResponse>(
+                "读取 GitHub Actions 详情失败",
+                run_response,
+            )?);
+            let jobs_response = github_send(
+                &app,
+                "读取 GitHub Actions jobs 失败",
+                github_headers(
+                    client
+                        .get(format!("{repo_api_url}/actions/runs/{run_id}/jobs"))
+                        .query(&[("per_page", "100")]),
+                    Some(&token),
+                ),
+            )?;
+            let jobs = github_json::<GitHubWorkflowJobsResponse>(
+                "读取 GitHub Actions jobs 失败",
+                jobs_response,
+            )?
+            .jobs
+            .into_iter()
+            .map(github_workflow_job_from_response)
+            .collect::<Vec<_>>();
+            let artifacts_response = github_send(
+                &app,
+                "读取 GitHub Actions artifacts 失败",
+                github_headers(
+                    client
+                        .get(format!("{repo_api_url}/actions/runs/{run_id}/artifacts"))
+                        .query(&[("per_page", "100")]),
+                    Some(&token),
+                ),
+            )?;
+            let artifacts = github_json::<GitHubWorkflowArtifactsResponse>(
+                "读取 GitHub Actions artifacts 失败",
+                artifacts_response,
+            )?
+            .artifacts
+            .into_iter()
+            .map(github_workflow_artifact_from_response)
+            .collect::<Vec<_>>();
+            let workflow = github_workflow_definition_for_run(
+                &app,
+                &client,
+                &repo_api_url,
+                &repo_full_name,
+                &token,
+                &run,
+            )
+            .ok()
+            .flatten();
+            Ok(GitHubWorkflowRunDetail {
+                run,
+                jobs,
+                artifacts,
+                workflow,
+            })
+        },
+    )
     .await
 }
 
@@ -5532,28 +5734,33 @@ pub async fn github_get_workflow_job_log(
     job_id: u64,
     _force_refresh: Option<bool>,
 ) -> Result<GitHubWorkflowJobLog, String> {
-    run_blocking("读取 GitHub Actions 日志", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
-        let response = github_send(
-            &app,
-            "读取 GitHub Actions 日志失败",
-            github_headers(
-                client.get(format!(
-                    "{}/actions/jobs/{job_id}/logs",
-                    github_repo_api_url(&repo_full_name)?
-                )),
-                Some(&token),
-            ),
-        )?;
-        let content = response
-            .text()
-            .map_err(|e| format!("读取 GitHub Actions 日志失败：读取响应失败：{e}"))?;
-        Ok(GitHubWorkflowJobLog { job_id, content })
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Actions 日志",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|e| format!("构造 GitHub HTTP 客户端失败：{e}"))?;
+            let response = github_send(
+                &app,
+                "读取 GitHub Actions 日志失败",
+                github_headers(
+                    client.get(format!(
+                        "{}/actions/jobs/{job_id}/logs",
+                        github_repo_api_url(&repo_full_name)?
+                    )),
+                    Some(&token),
+                ),
+            )?;
+            let content = response
+                .text()
+                .map_err(|e| format!("读取 GitHub Actions 日志失败：读取响应失败：{e}"))?;
+            Ok(GitHubWorkflowJobLog { job_id, content })
+        },
+    )
     .await
 }
 
@@ -5581,13 +5788,18 @@ pub async fn github_rerun_failed_workflow_run(
     repo_full_name: String,
     run_id: u64,
 ) -> Result<(), String> {
-    run_blocking("重跑 GitHub Actions 失败任务", move || {
-        github_rerun_workflow(
-            &app,
-            &repo_full_name,
-            &format!("actions/runs/{run_id}/rerun-failed-jobs"),
-        )
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "重跑 GitHub Actions 失败任务",
+        move || {
+            github_rerun_workflow(
+                &app,
+                &repo_full_name,
+                &format!("actions/runs/{run_id}/rerun-failed-jobs"),
+            )
+        },
+    )
     .await
 }
 
@@ -5596,17 +5808,32 @@ pub async fn github_rerun_workflow_job(
     repo_full_name: String,
     job_id: u64,
 ) -> Result<(), String> {
-    run_blocking("重跑 GitHub Actions job", move || {
-        github_rerun_workflow(
-            &app,
-            &repo_full_name,
-            &format!("actions/jobs/{job_id}/rerun"),
-        )
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "重跑 GitHub Actions job",
+        move || {
+            github_rerun_workflow(
+                &app,
+                &repo_full_name,
+                &format!("actions/jobs/{job_id}/rerun"),
+            )
+        },
+    )
     .await
 }
 
 fn ensure_github_artifact_zip(
+    app: &AppHandle,
+    repo_full_name: &str,
+    artifact_id: u64,
+) -> Result<PathBuf, String> {
+    with_github_artifact_guard(repo_full_name, artifact_id, || {
+        ensure_github_artifact_zip_guarded(app, repo_full_name, artifact_id)
+    })
+}
+
+fn ensure_github_artifact_zip_guarded(
     app: &AppHandle,
     repo_full_name: &str,
     artifact_id: u64,
@@ -5656,38 +5883,104 @@ fn ensure_github_artifact_zip(
     Ok(path)
 }
 
+type GitHubArtifactKey = (String, u64);
+
+fn github_artifact_guards() -> &'static Mutex<HashMap<GitHubArtifactKey, Weak<Mutex<()>>>> {
+    static GUARDS: OnceLock<Mutex<HashMap<GitHubArtifactKey, Weak<Mutex<()>>>>> = OnceLock::new();
+    GUARDS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn github_artifact_guard(repo_full_name: &str, artifact_id: u64) -> Arc<Mutex<()>> {
+    let key = (repo_full_name.to_ascii_lowercase(), artifact_id);
+    let mut guards = github_artifact_guards()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    guards.retain(|_, guard| guard.strong_count() > 0);
+    if let Some(guard) = guards.get(&key).and_then(Weak::upgrade) {
+        return guard;
+    }
+    let guard = Arc::new(Mutex::new(()));
+    guards.insert(key, Arc::downgrade(&guard));
+    guard
+}
+
+fn with_github_artifact_guard<T>(
+    repo_full_name: &str,
+    artifact_id: u64,
+    run: impl FnOnce() -> T,
+) -> T {
+    let guard = github_artifact_guard(repo_full_name, artifact_id);
+    let _held = guard.lock().unwrap_or_else(|error| error.into_inner());
+    run()
+}
+
+#[cfg(test)]
+mod artifact_lock_tests {
+    use super::with_github_artifact_guard;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn identical_artifact_resource_downloads_once_after_locked_recheck() {
+        let cached = Arc::new(AtomicBool::new(false));
+        let downloads = Arc::new(AtomicUsize::new(0));
+        let workers = (0..8)
+            .map(|_| {
+                let cached = Arc::clone(&cached);
+                let downloads = Arc::clone(&downloads);
+                std::thread::spawn(move || {
+                    with_github_artifact_guard("Owner/Repo", 42, || {
+                        if !cached.swap(true, Ordering::SeqCst) {
+                            downloads.fetch_add(1, Ordering::SeqCst);
+                        }
+                    });
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(downloads.load(Ordering::SeqCst), 1);
+    }
+}
+
 pub async fn github_list_workflow_artifact_files(
     app: AppHandle,
     repo_full_name: String,
     artifact_id: u64,
 ) -> Result<Vec<GitHubWorkflowArtifactEntry>, String> {
-    run_blocking("读取 GitHub Actions artifact", move || {
-        let path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
-        let bytes = fs::read(&path)
-            .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", path.display()))?;
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-            .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
-        let mut entries = Vec::new();
-        for index in 0..archive.len() {
-            let file = archive
-                .by_index(index)
-                .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
-            if let Some(entry) = github_artifact_entry_from_zip_file(&file)? {
-                entries.push(entry);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubTransfer,
+        "读取 GitHub Actions artifact",
+        move || {
+            let path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
+            let bytes = fs::read(&path)
+                .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", path.display()))?;
+            let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+                .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+            let mut entries = Vec::new();
+            for index in 0..archive.len() {
+                let file = archive
+                    .by_index(index)
+                    .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
+                if let Some(entry) = github_artifact_entry_from_zip_file(&file)? {
+                    entries.push(entry);
+                }
             }
-        }
-        entries.sort_by(|left, right| {
-            (right.kind == "dir")
-                .cmp(&(left.kind == "dir"))
-                .then_with(|| {
-                    left.path
-                        .to_ascii_lowercase()
-                        .cmp(&right.path.to_ascii_lowercase())
-                })
-                .then_with(|| left.path.cmp(&right.path))
-        });
-        Ok(entries)
-    })
+            entries.sort_by(|left, right| {
+                (right.kind == "dir")
+                    .cmp(&(left.kind == "dir"))
+                    .then_with(|| {
+                        left.path
+                            .to_ascii_lowercase()
+                            .cmp(&right.path.to_ascii_lowercase())
+                    })
+                    .then_with(|| left.path.cmp(&right.path))
+            });
+            Ok(entries)
+        },
+    )
     .await
 }
 
@@ -5697,44 +5990,49 @@ pub async fn github_get_workflow_artifact_file_preview(
     artifact_id: u64,
     path: String,
 ) -> Result<RepoFilePreview, String> {
-    run_blocking("预览 GitHub Actions artifact 文件", move || {
-        let requested_path = github_artifact_requested_file_path(&path)?;
-        let cache_path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
-        let bytes = fs::read(&cache_path)
-            .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", cache_path.display()))?;
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-            .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
-        for index in 0..archive.len() {
-            let mut file = archive
-                .by_index(index)
-                .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
-            let Some(enclosed_name) = file.enclosed_name() else {
-                continue;
-            };
-            let entry_path = github_artifact_entry_path(&enclosed_name)?;
-            if entry_path != requested_path {
-                continue;
-            }
-            if file.is_dir() {
-                return Err("不能预览 artifact 目录".to_string());
-            }
-            let size = file.size();
-            if size > MAX_FILE_PREVIEW_BYTES {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubTransfer,
+        "预览 GitHub Actions artifact 文件",
+        move || {
+            let requested_path = github_artifact_requested_file_path(&path)?;
+            let cache_path = ensure_github_artifact_zip(&app, &repo_full_name, artifact_id)?;
+            let bytes = fs::read(&cache_path)
+                .map_err(|e| format!("读取 artifact 缓存失败：{}（{e}）", cache_path.display()))?;
+            let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+                .map_err(|e| format!("读取 artifact ZIP 失败：{e}"))?;
+            for index in 0..archive.len() {
+                let mut file = archive
+                    .by_index(index)
+                    .map_err(|e| format!("读取 artifact ZIP 条目失败：{e}"))?;
+                let Some(enclosed_name) = file.enclosed_name() else {
+                    continue;
+                };
+                let entry_path = github_artifact_entry_path(&enclosed_name)?;
+                if entry_path != requested_path {
+                    continue;
+                }
+                if file.is_dir() {
+                    return Err("不能预览 artifact 目录".to_string());
+                }
+                let size = file.size();
+                if size > MAX_FILE_PREVIEW_BYTES {
+                    return Ok(github_artifact_preview_from_bytes(
+                        entry_path,
+                        size,
+                        Vec::new(),
+                    ));
+                }
+                let mut file_bytes = Vec::with_capacity(size as usize);
+                file.read_to_end(&mut file_bytes)
+                    .map_err(|e| format!("读取 artifact 文件失败：{e}"))?;
                 return Ok(github_artifact_preview_from_bytes(
-                    entry_path,
-                    size,
-                    Vec::new(),
+                    entry_path, size, file_bytes,
                 ));
             }
-            let mut file_bytes = Vec::with_capacity(size as usize);
-            file.read_to_end(&mut file_bytes)
-                .map_err(|e| format!("读取 artifact 文件失败：{e}"))?;
-            return Ok(github_artifact_preview_from_bytes(
-                entry_path, size, file_bytes,
-            ));
-        }
-        Err("artifact 文件不存在".to_string())
-    })
+            Err("artifact 文件不存在".to_string())
+        },
+    )
     .await
 }
 
@@ -5745,45 +6043,50 @@ pub async fn github_list_repo_commits(
     sha: Option<String>,
     force_refresh: Option<bool>,
 ) -> Result<Vec<CommitSummary>, String> {
-    run_blocking("读取 GitHub 提交历史", move || {
-        let sha = sha
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let commits_key = github_commit_list_cache_key(per_page, sha.as_deref());
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.commits.get(&commits_key).cloned())
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 提交历史",
+        move || {
+            let sha = sha
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            let commits_key = github_commit_list_cache_key(per_page, sha.as_deref());
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| repo_cache.commits.get(&commits_key).cloned())
+                {
+                    return Ok(cached);
+                }
             }
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let commits_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
-        let client = build_client()?;
-        let mut request = client
-            .get(format!("{}/commits", github_repo_api_url(&repo_full_name)?))
-            .query(&[("per_page", commits_per_page.as_str())]);
-        if let Some(sha) = sha.as_deref() {
-            request = request.query(&[("sha", sha)]);
-        }
-        let response = github_send(
-            &app,
-            "读取 GitHub 提交历史失败",
-            github_headers(request, Some(&token)),
-        )?;
-        let commits =
-            github_json::<Vec<GitHubCommitResponse>>("读取 GitHub 提交历史失败", response)?
-                .into_iter()
-                .map(github_commit_summary_from_response)
-                .collect::<Vec<_>>();
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.commits.insert(commits_key, commits.clone());
-        })?;
-        Ok(commits)
-    })
+            let (_binding, token) = github_require_token(&app)?;
+            let commits_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let client = build_client()?;
+            let mut request = client
+                .get(format!("{}/commits", github_repo_api_url(&repo_full_name)?))
+                .query(&[("per_page", commits_per_page.as_str())]);
+            if let Some(sha) = sha.as_deref() {
+                request = request.query(&[("sha", sha)]);
+            }
+            let response = github_send(
+                &app,
+                "读取 GitHub 提交历史失败",
+                github_headers(request, Some(&token)),
+            )?;
+            let commits =
+                github_json::<Vec<GitHubCommitResponse>>("读取 GitHub 提交历史失败", response)?
+                    .into_iter()
+                    .map(github_commit_summary_from_response)
+                    .collect::<Vec<_>>();
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.commits.insert(commits_key, commits.clone());
+            })?;
+            Ok(commits)
+        },
+    )
     .await
 }
 
@@ -5793,57 +6096,62 @@ pub async fn github_get_repo_commit_detail(
     hash: String,
     force_refresh: Option<bool>,
 ) -> Result<CommitDetail, String> {
-    run_blocking("读取 GitHub 提交详情", move || {
-        let hash = hash.trim().to_string();
-        if hash.is_empty() {
-            return Err("提交 hash 不能为空".to_string());
-        }
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| {
-                    repo_cache.commit_details.get(&hash).cloned().or_else(|| {
-                        repo_cache
-                            .commit_details
-                            .values()
-                            .find(|detail| detail.hash == hash || detail.short_hash == hash)
-                            .cloned()
-                    })
-                })
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 提交详情",
+        move || {
+            let hash = hash.trim().to_string();
+            if hash.is_empty() {
+                return Err("提交 hash 不能为空".to_string());
             }
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 提交详情失败",
-            github_headers(
-                client.get(format!(
-                    "{}/commits/{}",
-                    github_repo_api_url(&repo_full_name)?,
-                    hash
-                )),
-                Some(&token),
-            ),
-        )?;
-        let detail = github_commit_detail_from_response(github_json::<GitHubCommitResponse>(
-            "读取 GitHub 提交详情失败",
-            response,
-        )?);
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache
-                .commit_details
-                .insert(detail.hash.clone(), detail.clone());
-            repo_cache
-                .commit_details
-                .insert(detail.short_hash.clone(), detail.clone());
-        })?;
-        Ok(detail)
-    })
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| {
+                        repo_cache.commit_details.get(&hash).cloned().or_else(|| {
+                            repo_cache
+                                .commit_details
+                                .values()
+                                .find(|detail| detail.hash == hash || detail.short_hash == hash)
+                                .cloned()
+                        })
+                    })
+                {
+                    return Ok(cached);
+                }
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 提交详情失败",
+                github_headers(
+                    client.get(format!(
+                        "{}/commits/{}",
+                        github_repo_api_url(&repo_full_name)?,
+                        hash
+                    )),
+                    Some(&token),
+                ),
+            )?;
+            let detail = github_commit_detail_from_response(github_json::<GitHubCommitResponse>(
+                "读取 GitHub 提交详情失败",
+                response,
+            )?);
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache
+                    .commit_details
+                    .insert(detail.hash.clone(), detail.clone());
+                repo_cache
+                    .commit_details
+                    .insert(detail.short_hash.clone(), detail.clone());
+            })?;
+            Ok(detail)
+        },
+    )
     .await
 }
 
@@ -5852,42 +6160,47 @@ pub async fn github_list_releases(
     repo_full_name: String,
     force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubRelease>, String> {
-    run_blocking("读取 GitHub Releases", move || {
-        let cache_key = github_project_cache_repo_key(&repo_full_name)?;
-        if github_project_cache_enabled(force_refresh) {
-            if let Some(cached) = load_github_project_cache(&app)
-                .repos
-                .get(&cache_key)
-                .and_then(|repo_cache| repo_cache.releases.clone())
-            {
-                return Ok(cached);
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Releases",
+        move || {
+            let cache_key = github_project_cache_repo_key(&repo_full_name)?;
+            if github_project_cache_enabled(force_refresh) {
+                if let Some(cached) = load_github_project_cache(&app)
+                    .repos
+                    .get(&cache_key)
+                    .and_then(|repo_cache| repo_cache.releases.clone())
+                {
+                    return Ok(cached);
+                }
             }
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub Releases 失败",
-            github_headers(
-                client
-                    .get(format!(
-                        "{}/releases",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .query(&[("per_page", "100")]),
-                Some(&token),
-            ),
-        )?;
-        let releases =
-            github_json::<Vec<GitHubReleaseResponse>>("读取 GitHub Releases 失败", response)?
-                .into_iter()
-                .map(github_release_from_response)
-                .collect::<Vec<_>>();
-        update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
-            repo_cache.releases = Some(releases.clone());
-        })?;
-        Ok(releases)
-    })
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub Releases 失败",
+                github_headers(
+                    client
+                        .get(format!(
+                            "{}/releases",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .query(&[("per_page", "100")]),
+                    Some(&token),
+                ),
+            )?;
+            let releases =
+                github_json::<Vec<GitHubReleaseResponse>>("读取 GitHub Releases 失败", response)?
+                    .into_iter()
+                    .map(github_release_from_response)
+                    .collect::<Vec<_>>();
+            update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
+                repo_cache.releases = Some(releases.clone());
+            })?;
+            Ok(releases)
+        },
+    )
     .await
 }
 
@@ -5896,51 +6209,60 @@ pub async fn github_create_release(
     repo_full_name: String,
     request: GitHubCreateReleaseRequest,
 ) -> Result<GitHubRelease, String> {
-    run_blocking("创建 GitHub Release", move || {
-        let tag_name = request.tag_name.trim().to_string();
-        if tag_name.is_empty() {
-            return Err("Release tag 不能为空".to_string());
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let mut payload = serde_json::Map::new();
-        payload.insert("tag_name".to_string(), serde_json::Value::String(tag_name));
-        payload.insert(
-            "draft".to_string(),
-            serde_json::Value::Bool(request.draft.unwrap_or(false)),
-        );
-        payload.insert(
-            "prerelease".to_string(),
-            serde_json::Value::Bool(request.prerelease.unwrap_or(false)),
-        );
-        payload.insert(
-            "generate_release_notes".to_string(),
-            serde_json::Value::Bool(request.generate_release_notes.unwrap_or(false)),
-        );
-        insert_optional_release_string(&mut payload, "target_commitish", request.target_commitish);
-        insert_optional_release_string(&mut payload, "name", request.name);
-        insert_optional_release_string(&mut payload, "body", request.body);
-        insert_optional_release_string(&mut payload, "make_latest", request.make_latest);
-        let response = github_send(
-            &app,
-            "创建 GitHub Release 失败",
-            github_headers(
-                client
-                    .post(format!(
-                        "{}/releases",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        let release = github_release_from_response(github_json::<GitHubReleaseResponse>(
-            "创建 GitHub Release 失败",
-            response,
-        )?);
-        clear_github_project_release_cache(&app, &repo_full_name)?;
-        Ok(release)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "创建 GitHub Release",
+        move || {
+            let tag_name = request.tag_name.trim().to_string();
+            if tag_name.is_empty() {
+                return Err("Release tag 不能为空".to_string());
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let mut payload = serde_json::Map::new();
+            payload.insert("tag_name".to_string(), serde_json::Value::String(tag_name));
+            payload.insert(
+                "draft".to_string(),
+                serde_json::Value::Bool(request.draft.unwrap_or(false)),
+            );
+            payload.insert(
+                "prerelease".to_string(),
+                serde_json::Value::Bool(request.prerelease.unwrap_or(false)),
+            );
+            payload.insert(
+                "generate_release_notes".to_string(),
+                serde_json::Value::Bool(request.generate_release_notes.unwrap_or(false)),
+            );
+            insert_optional_release_string(
+                &mut payload,
+                "target_commitish",
+                request.target_commitish,
+            );
+            insert_optional_release_string(&mut payload, "name", request.name);
+            insert_optional_release_string(&mut payload, "body", request.body);
+            insert_optional_release_string(&mut payload, "make_latest", request.make_latest);
+            let response = github_send(
+                &app,
+                "创建 GitHub Release 失败",
+                github_headers(
+                    client
+                        .post(format!(
+                            "{}/releases",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .json(&payload),
+                    Some(&token),
+                ),
+            )?;
+            let release = github_release_from_response(github_json::<GitHubReleaseResponse>(
+                "创建 GitHub Release 失败",
+                response,
+            )?);
+            clear_github_project_release_cache(&app, &repo_full_name)?;
+            Ok(release)
+        },
+    )
     .await
 }
 
@@ -5950,37 +6272,46 @@ pub async fn github_update_release(
     release_id: u64,
     request: GitHubUpdateReleaseRequest,
 ) -> Result<GitHubRelease, String> {
-    run_blocking("更新 GitHub Release", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let mut payload = serde_json::Map::new();
-        insert_optional_release_string(&mut payload, "tag_name", request.tag_name);
-        insert_optional_release_string(&mut payload, "target_commitish", request.target_commitish);
-        insert_optional_release_string(&mut payload, "name", request.name);
-        insert_optional_release_string(&mut payload, "body", request.body);
-        insert_optional_release_bool(&mut payload, "draft", request.draft);
-        insert_optional_release_bool(&mut payload, "prerelease", request.prerelease);
-        insert_optional_release_string(&mut payload, "make_latest", request.make_latest);
-        let response = github_send(
-            &app,
-            "更新 GitHub Release 失败",
-            github_headers(
-                client
-                    .patch(format!(
-                        "{}/releases/{release_id}",
-                        github_repo_api_url(&repo_full_name)?
-                    ))
-                    .json(&payload),
-                Some(&token),
-            ),
-        )?;
-        let release = github_release_from_response(github_json::<GitHubReleaseResponse>(
-            "更新 GitHub Release 失败",
-            response,
-        )?);
-        clear_github_project_release_cache(&app, &repo_full_name)?;
-        Ok(release)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub Release",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let mut payload = serde_json::Map::new();
+            insert_optional_release_string(&mut payload, "tag_name", request.tag_name);
+            insert_optional_release_string(
+                &mut payload,
+                "target_commitish",
+                request.target_commitish,
+            );
+            insert_optional_release_string(&mut payload, "name", request.name);
+            insert_optional_release_string(&mut payload, "body", request.body);
+            insert_optional_release_bool(&mut payload, "draft", request.draft);
+            insert_optional_release_bool(&mut payload, "prerelease", request.prerelease);
+            insert_optional_release_string(&mut payload, "make_latest", request.make_latest);
+            let response = github_send(
+                &app,
+                "更新 GitHub Release 失败",
+                github_headers(
+                    client
+                        .patch(format!(
+                            "{}/releases/{release_id}",
+                            github_repo_api_url(&repo_full_name)?
+                        ))
+                        .json(&payload),
+                    Some(&token),
+                ),
+            )?;
+            let release = github_release_from_response(github_json::<GitHubReleaseResponse>(
+                "更新 GitHub Release 失败",
+                response,
+            )?);
+            clear_github_project_release_cache(&app, &repo_full_name)?;
+            Ok(release)
+        },
+    )
     .await
 }
 
@@ -5989,26 +6320,31 @@ pub async fn github_delete_release(
     repo_full_name: String,
     release_id: u64,
 ) -> Result<(), String> {
-    run_blocking("删除 GitHub Release", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "删除 GitHub Release 失败",
-            github_headers(
-                client.delete(format!(
-                    "{}/releases/{release_id}",
-                    github_repo_api_url(&repo_full_name)?
-                )),
-                Some(&token),
-            ),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error("删除 GitHub Release 失败", response));
-        }
-        clear_github_project_release_cache(&app, &repo_full_name)?;
-        Ok(())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "删除 GitHub Release",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "删除 GitHub Release 失败",
+                github_headers(
+                    client.delete(format!(
+                        "{}/releases/{release_id}",
+                        github_repo_api_url(&repo_full_name)?
+                    )),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error("删除 GitHub Release 失败", response));
+            }
+            clear_github_project_release_cache(&app, &repo_full_name)?;
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -6148,30 +6484,40 @@ pub async fn github_upload_release_asset(
     file_path: String,
     label: Option<String>,
 ) -> Result<GitHubReleaseAsset, String> {
-    run_blocking("上传 GitHub Release asset", move || {
-        let asset_name = github_release_asset_name(&file_path)?;
-        let bytes = github_release_asset_bytes(&file_path)?;
-        if bytes.is_empty() {
-            return Err("Release asset 文件不能为空".to_string());
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let release =
-            github_release_for_asset_upload(&app, &client, &repo_full_name, release_id, &token)?;
-        if release.assets.iter().any(|asset| asset.name == asset_name) {
-            return Err("Release asset 已存在，请先删除旧文件后再上传".to_string());
-        }
-        github_upload_release_asset_bytes(
-            &app,
-            &client,
-            &repo_full_name,
-            &token,
-            &release,
-            &asset_name,
-            bytes,
-            label,
-        )
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubTransfer,
+        "上传 GitHub Release asset",
+        move || {
+            let asset_name = github_release_asset_name(&file_path)?;
+            let bytes = github_release_asset_bytes(&file_path)?;
+            if bytes.is_empty() {
+                return Err("Release asset 文件不能为空".to_string());
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let release = github_release_for_asset_upload(
+                &app,
+                &client,
+                &repo_full_name,
+                release_id,
+                &token,
+            )?;
+            if release.assets.iter().any(|asset| asset.name == asset_name) {
+                return Err("Release asset 已存在，请先删除旧文件后再上传".to_string());
+            }
+            github_upload_release_asset_bytes(
+                &app,
+                &client,
+                &repo_full_name,
+                &token,
+                &release,
+                &asset_name,
+                bytes,
+                label,
+            )
+        },
+    )
     .await
 }
 
@@ -6180,45 +6526,51 @@ pub async fn github_attach_workflow_artifact_asset(
     repo_full_name: String,
     request: GitHubAttachWorkflowArtifactAssetRequest,
 ) -> Result<GitHubReleaseAsset, String> {
-    run_blocking("附加 GitHub Actions artifact 到 Release", move || {
-        let cache_path = ensure_github_artifact_zip(&app, &repo_full_name, request.artifact_id)?;
-        let (artifact_path, bytes) =
-            github_artifact_file_bytes_from_zip(&cache_path, &request.artifact_path)?;
-        let asset_name = github_release_asset_name(&artifact_path)?;
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        github_validate_artifact_for_run(
-            &app,
-            &client,
-            &repo_full_name,
-            &token,
-            request.run_id,
-            request.artifact_id,
-            request.artifact_name,
-        )?;
-        let release = github_release_for_asset_upload(
-            &app,
-            &client,
-            &repo_full_name,
-            request.release_id,
-            &token,
-        )?;
-        github_validate_release_for_artifact_asset(
-            &release,
-            &request.expected_tag_name,
-            &asset_name,
-        )?;
-        github_upload_release_asset_bytes(
-            &app,
-            &client,
-            &repo_full_name,
-            &token,
-            &release,
-            &asset_name,
-            bytes,
-            request.label,
-        )
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubTransfer,
+        "附加 GitHub Actions artifact 到 Release",
+        move || {
+            let cache_path =
+                ensure_github_artifact_zip(&app, &repo_full_name, request.artifact_id)?;
+            let (artifact_path, bytes) =
+                github_artifact_file_bytes_from_zip(&cache_path, &request.artifact_path)?;
+            let asset_name = github_release_asset_name(&artifact_path)?;
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            github_validate_artifact_for_run(
+                &app,
+                &client,
+                &repo_full_name,
+                &token,
+                request.run_id,
+                request.artifact_id,
+                request.artifact_name,
+            )?;
+            let release = github_release_for_asset_upload(
+                &app,
+                &client,
+                &repo_full_name,
+                request.release_id,
+                &token,
+            )?;
+            github_validate_release_for_artifact_asset(
+                &release,
+                &request.expected_tag_name,
+                &asset_name,
+            )?;
+            github_upload_release_asset_bytes(
+                &app,
+                &client,
+                &repo_full_name,
+                &token,
+                &release,
+                &asset_name,
+                bytes,
+                request.label,
+            )
+        },
+    )
     .await
 }
 
@@ -6228,30 +6580,35 @@ pub async fn github_delete_release_asset(
     release_id: u64,
     asset_id: u64,
 ) -> Result<(), String> {
-    run_blocking("删除 GitHub Release asset", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "删除 GitHub Release asset 失败",
-            github_headers(
-                client.delete(format!(
-                    "{}/releases/assets/{asset_id}",
-                    github_repo_api_url(&repo_full_name)?
-                )),
-                Some(&token),
-            ),
-        )?;
-        if !response.status().is_success() {
-            return Err(github_http_error(
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "删除 GitHub Release asset",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
                 "删除 GitHub Release asset 失败",
-                response,
-            ));
-        }
-        let _ = release_id;
-        clear_github_project_release_cache(&app, &repo_full_name)?;
-        Ok(())
-    })
+                github_headers(
+                    client.delete(format!(
+                        "{}/releases/assets/{asset_id}",
+                        github_repo_api_url(&repo_full_name)?
+                    )),
+                    Some(&token),
+                ),
+            )?;
+            if !response.status().is_success() {
+                return Err(github_http_error(
+                    "删除 GitHub Release asset 失败",
+                    response,
+                ));
+            }
+            let _ = release_id;
+            clear_github_project_release_cache(&app, &repo_full_name)?;
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -6262,27 +6619,33 @@ pub async fn github_list_repo_files(
     ref_name: Option<String>,
     _force_refresh: Option<bool>,
 ) -> Result<Vec<RepoFileTreeEntry>, String> {
-    run_blocking("读取 GitHub 文件树", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let mut request = client.get(github_repo_contents_api_url(
-            &repo_full_name,
-            parent_path.as_deref(),
-        )?);
-        if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
-            request = request.query(&[("ref", ref_name)]);
-        }
-        let response = github_send(
-            &app,
-            "读取 GitHub 文件树失败",
-            github_headers(request, Some(&token)),
-        )?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Ok(Vec::new());
-        }
-        let items = github_json::<Vec<GitHubContentListItem>>("读取 GitHub 文件树失败", response)?;
-        Ok(github_content_items_to_file_entries(items))
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 文件树",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let mut request = client.get(github_repo_contents_api_url(
+                &repo_full_name,
+                parent_path.as_deref(),
+            )?);
+            if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
+                request = request.query(&[("ref", ref_name)]);
+            }
+            let response = github_send(
+                &app,
+                "读取 GitHub 文件树失败",
+                github_headers(request, Some(&token)),
+            )?;
+            if response.status() == StatusCode::NOT_FOUND {
+                return Ok(Vec::new());
+            }
+            let items =
+                github_json::<Vec<GitHubContentListItem>>("读取 GitHub 文件树失败", response)?;
+            Ok(github_content_items_to_file_entries(items))
+        },
+    )
     .await
 }
 
@@ -6293,25 +6656,32 @@ pub async fn github_get_repo_file_preview(
     ref_name: Option<String>,
     _force_refresh: Option<bool>,
 ) -> Result<RepoFilePreview, String> {
-    run_blocking("读取 GitHub 文件预览", move || {
-        let path = normalize_github_content_path(Some(&path))?;
-        if path.is_empty() {
-            return Err("GitHub 文件路径不能为空".to_string());
-        }
-        let (_binding, token) = github_require_token(&app)?;
-        let client = build_client()?;
-        let mut request = client.get(github_repo_contents_api_url(&repo_full_name, Some(&path))?);
-        if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
-            request = request.query(&[("ref", ref_name)]);
-        }
-        let response = github_send(
-            &app,
-            "读取 GitHub 文件预览失败",
-            github_headers(request, Some(&token)),
-        )?;
-        let file = github_json::<GitHubContentFileResponse>("读取 GitHub 文件预览失败", response)?;
-        github_file_preview_from_content("读取 GitHub 文件预览失败", file)
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 文件预览",
+        move || {
+            let path = normalize_github_content_path(Some(&path))?;
+            if path.is_empty() {
+                return Err("GitHub 文件路径不能为空".to_string());
+            }
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let mut request =
+                client.get(github_repo_contents_api_url(&repo_full_name, Some(&path))?);
+            if let Some(ref_name) = normalize_github_ref_name(ref_name.as_deref()) {
+                request = request.query(&[("ref", ref_name)]);
+            }
+            let response = github_send(
+                &app,
+                "读取 GitHub 文件预览失败",
+                github_headers(request, Some(&token)),
+            )?;
+            let file =
+                github_json::<GitHubContentFileResponse>("读取 GitHub 文件预览失败", response)?;
+            github_file_preview_from_content("读取 GitHub 文件预览失败", file)
+        },
+    )
     .await
 }
 
@@ -6323,41 +6693,46 @@ pub async fn github_list_account_issues(
     direction: Option<String>,
     _force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubAccountIssueItem>, String> {
-    run_blocking("读取 GitHub 待处理 Issue", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let issue_state = state.unwrap_or_else(|| "open".to_string());
-        let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
-        let issue_sort = match sort.as_deref() {
-            Some("created") => "created",
-            Some("comments") => "comments",
-            _ => "updated",
-        };
-        let issue_direction = match direction.as_deref() {
-            Some("asc") => "asc",
-            _ => "desc",
-        };
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub 待处理 Issue 失败",
-            github_headers(
-                client.get("https://api.github.com/issues").query(&[
-                    ("filter", "all"),
-                    ("state", issue_state.as_str()),
-                    ("per_page", issue_per_page.as_str()),
-                    ("sort", issue_sort),
-                    ("direction", issue_direction),
-                ]),
-                Some(&token),
-            ),
-        )?;
-        let items =
-            github_json::<Vec<GitHubIssueResponse>>("读取 GitHub 待处理 Issue 失败", response)?;
-        Ok(items
-            .into_iter()
-            .filter_map(github_account_issue_item_from_response)
-            .collect())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 待处理 Issue",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let issue_state = state.unwrap_or_else(|| "open".to_string());
+            let issue_per_page = per_page.unwrap_or(100).clamp(1, 100).to_string();
+            let issue_sort = match sort.as_deref() {
+                Some("created") => "created",
+                Some("comments") => "comments",
+                _ => "updated",
+            };
+            let issue_direction = match direction.as_deref() {
+                Some("asc") => "asc",
+                _ => "desc",
+            };
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 待处理 Issue 失败",
+                github_headers(
+                    client.get("https://api.github.com/issues").query(&[
+                        ("filter", "all"),
+                        ("state", issue_state.as_str()),
+                        ("per_page", issue_per_page.as_str()),
+                        ("sort", issue_sort),
+                        ("direction", issue_direction),
+                    ]),
+                    Some(&token),
+                ),
+            )?;
+            let items =
+                github_json::<Vec<GitHubIssueResponse>>("读取 GitHub 待处理 Issue 失败", response)?;
+            Ok(items
+                .into_iter()
+                .filter_map(github_account_issue_item_from_response)
+                .collect())
+        },
+    )
     .await
 }
 
@@ -6366,31 +6741,36 @@ pub async fn github_list_action_notifications(
     per_page: Option<u32>,
     _force_refresh: Option<bool>,
 ) -> Result<Vec<GitHubActionNotification>, String> {
-    run_blocking("读取 GitHub Actions 通知", move || {
-        let (_binding, token) = github_require_token(&app)?;
-        let notification_per_page = per_page.unwrap_or(50).clamp(1, 100).to_string();
-        let client = build_client()?;
-        let response = github_send(
-            &app,
-            "读取 GitHub Actions 通知失败",
-            github_headers(
-                client.get("https://api.github.com/notifications").query(&[
-                    ("all", "false"),
-                    ("participating", "false"),
-                    ("per_page", notification_per_page.as_str()),
-                ]),
-                Some(&token),
-            ),
-        )?;
-        let notifications = github_json::<Vec<GitHubNotificationResponse>>(
-            "读取 GitHub Actions 通知失败",
-            response,
-        )?;
-        Ok(notifications
-            .into_iter()
-            .filter_map(github_action_notification_from_response)
-            .collect())
-    })
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub Actions 通知",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let notification_per_page = per_page.unwrap_or(50).clamp(1, 100).to_string();
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub Actions 通知失败",
+                github_headers(
+                    client.get("https://api.github.com/notifications").query(&[
+                        ("all", "false"),
+                        ("participating", "false"),
+                        ("per_page", notification_per_page.as_str()),
+                    ]),
+                    Some(&token),
+                ),
+            )?;
+            let notifications = github_json::<Vec<GitHubNotificationResponse>>(
+                "读取 GitHub Actions 通知失败",
+                response,
+            )?;
+            Ok(notifications
+                .into_iter()
+                .filter_map(github_action_notification_from_response)
+                .collect())
+        },
+    )
     .await
 }
 
@@ -6398,40 +6778,56 @@ pub async fn github_list_repo_contribution(
     app: AppHandle,
     repo_full_name: String,
 ) -> Result<GitHubContributionResult, String> {
-    run_blocking("读取本地提交贡献", move || {
-        let end_day_index = current_utc_day_index();
-        let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
-        let Some(repo_id) = normalize_local_contribution_repo_id(&repo_full_name) else {
-            return Ok(github_contribution_result(
-                &HashMap::new(),
+    let Some(repo_id) = normalize_local_contribution_repo_id(&repo_full_name) else {
+        return run_core_operation_as(
+            app,
+            OperationKind::WorkspaceAnalysis,
+            Some("contributions"),
+            "读取本地提交贡献",
+            move || {
+                let end_day_index = current_utc_day_index();
+                return Ok(github_contribution_result(
+                    &HashMap::new(),
+                    end_day_index,
+                    0,
+                    0,
+                    0,
+                ));
+            },
+        )
+        .await;
+    };
+    run_repo_analysis_blocking(
+        app.clone(),
+        repo_id.clone(),
+        "contributions",
+        "读取本地提交贡献",
+        move || {
+            let end_day_index = current_utc_day_index();
+            let start_day_index = end_day_index - GITHUB_CONTRIBUTION_DAYS as i64 + 1;
+            let path = repo_path_by_id(&app, &repo_id)?;
+            let settings = load_settings(&app);
+            let identities = local_contribution_identities(&path, &settings);
+            if identities.is_empty() {
+                return Ok(github_contribution_result(
+                    &HashMap::new(),
+                    end_day_index,
+                    0,
+                    1,
+                    1,
+                ));
+            }
+            let mut counts = HashMap::new();
+            collect_local_contribution_counts(
+                &path,
+                start_day_index,
                 end_day_index,
-                0,
-                0,
-                0,
-            ));
-        };
-        let path = repo_path_by_id(&app, &repo_id)?;
-        let settings = load_settings(&app);
-        let identities = local_contribution_identities(&path, &settings);
-        if identities.is_empty() {
-            return Ok(github_contribution_result(
-                &HashMap::new(),
-                end_day_index,
-                0,
-                1,
-                1,
-            ));
-        }
-        let mut counts = HashMap::new();
-        collect_local_contribution_counts(
-            &path,
-            start_day_index,
-            end_day_index,
-            &identities,
-            &mut counts,
-        )?;
-        Ok(github_contribution_result(&counts, end_day_index, 1, 1, 0))
-    })
+                &identities,
+                &mut counts,
+            )?;
+            Ok(github_contribution_result(&counts, end_day_index, 1, 1, 0))
+        },
+    )
     .await
 }
 

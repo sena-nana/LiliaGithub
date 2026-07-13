@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Component, Path};
 
 use crate::runtime::WorkspaceContext as AppHandle;
+use crate::workspace::operations::OperationKind;
 use crate::workspace::readme::{image_mime_for_path, readme_image_data_urls};
-use crate::workspace::repos::{safe_repo_file_path, summarize_repo};
-use crate::workspace::run_blocking;
+use crate::workspace::repos::{run_repo_blocking, safe_repo_file_path, summarize_repo};
 use crate::workspace::settings::{repo_path_by_id, workspace_root};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{RepoFilePreview, RepoFileTreeEntry, RepoSummary};
@@ -241,10 +241,16 @@ pub async fn repo_list_files(
     repo_id: String,
     parent_path: Option<String>,
 ) -> Result<Vec<RepoFileTreeEntry>, String> {
-    run_blocking("读取文件树", move || {
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        repo_file_entries(&repo_path, parent_path.as_deref())
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取文件树",
+        move || {
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            repo_file_entries(&repo_path, parent_path.as_deref())
+        },
+    )
     .await
 }
 
@@ -253,10 +259,16 @@ pub async fn repo_get_file_preview(
     repo_id: String,
     path: String,
 ) -> Result<RepoFilePreview, String> {
-    run_blocking("读取文件预览", move || {
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        repo_file_preview(&repo_path, &path)
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalRead,
+        "读取文件预览",
+        move || {
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            repo_file_preview(&repo_path, &path)
+        },
+    )
     .await
 }
 
@@ -265,11 +277,17 @@ pub async fn repo_delete_file(
     repo_id: String,
     path: String,
 ) -> Result<RepoSummary, String> {
-    run_blocking("删除文件", move || {
-        let root = workspace_root(&app)?;
-        let repo_path = repo_path_by_id(&app, &repo_id)?;
-        delete_repo_file(&repo_path, &path)?;
-        Ok(summarize_repo(&root, &repo_path))
-    })
+    run_repo_blocking(
+        app.clone(),
+        repo_id.clone(),
+        OperationKind::LocalWrite,
+        "删除文件",
+        move || {
+            let root = workspace_root(&app)?;
+            let repo_path = repo_path_by_id(&app, &repo_id)?;
+            delete_repo_file(&repo_path, &path)?;
+            Ok(summarize_repo(&root, &repo_path))
+        },
+    )
     .await
 }

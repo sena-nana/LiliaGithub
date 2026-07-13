@@ -956,7 +956,18 @@ export type RepoPullStrategy = "pull" | "merge" | "rebase";
 export type RepoPullLocalChangesMode = "reject" | "stash" | "discard";
 export type WorkspaceTaskPriority = "high" | "normal" | "low";
 export type WorkspaceTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
-export type WorkspaceTaskKind = "repoStatus" | "repoRemote" | "repoDetail" | "discoverRepos" | "languageStats" | "contributions";
+export type WorkspaceTaskKind =
+  | "repoStatus"
+  | "repoRemote"
+  | "repoDetail"
+  | "discoverRepos"
+  | "languageStats"
+  | "contributions"
+  | "git"
+  | "sync"
+  | "github"
+  | "launch"
+  | "workspace";
 
 export type RepoRefreshMode = "local" | "remote";
 export type RepoRefreshDetailScope = "auto" | "summary" | "detail";
@@ -983,10 +994,12 @@ export interface WorkspaceRepoRefreshedEvent {
 export interface WorkspaceTask {
   id: string;
   kind: WorkspaceTaskKind;
+  title: string;
   priority: WorkspaceTaskPriority;
   repoId: string | null;
   status: WorkspaceTaskStatus;
   message: string | null;
+  createdAt: number;
   updatedAt: number;
   cancellable: boolean;
 }

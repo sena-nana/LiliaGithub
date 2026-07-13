@@ -226,10 +226,12 @@ beforeEach(() => {
     applyWorkspaceTaskChanged({
       id: taskId,
       kind,
+      title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
       priority: request.priority,
       repoId: request.repoId,
       status: "running",
       message: null,
+      createdAt: Date.now(),
       updatedAt: Date.now(),
       cancellable: false,
     });
@@ -255,10 +257,12 @@ beforeEach(() => {
       applyWorkspaceTaskChanged({
         id: taskId,
         kind,
+        title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
         priority: request.priority,
         repoId: request.repoId,
         status: "success",
         message: null,
+        createdAt: Date.now(),
         updatedAt: Date.now(),
         cancellable: false,
       });
@@ -266,10 +270,12 @@ beforeEach(() => {
       applyWorkspaceTaskChanged({
         id: taskId,
         kind,
+        title: kind === "repoRemote" ? "检查远端更新" : "刷新仓库状态",
         priority: request.priority,
         repoId: request.repoId,
         status: "error",
         message: String(err),
+        createdAt: Date.now(),
         updatedAt: Date.now(),
         cancellable: false,
       });
@@ -563,7 +569,7 @@ describe("workspace incremental refresh", () => {
       trigger: "autoSync",
     });
 
-    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash"));
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash", "autoSync"));
     await waitFor(() => expect(state.repos[0].behind).toBe(0));
   });
 
@@ -579,7 +585,7 @@ describe("workspace incremental refresh", () => {
     service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
 
     const running = autoSyncRepoIfNeeded("Repo1");
-    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash"));
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", ["Repo1"], "stash", "autoSync"));
     expect(bulkSyncRunningRepoIds().has("Repo1")).toBe(true);
 
     await autoSyncRepoIfNeeded("Repo1");
@@ -640,20 +646,24 @@ describe("workspace incremental refresh", () => {
     applyWorkspaceTaskChanged({
       id: "existing-task",
       kind: "repoStatus",
+      title: "刷新仓库状态",
       priority: "normal",
       repoId: "Repo1",
       status: "success",
       message: "event result",
+      createdAt: 10,
       updatedAt: 20,
       cancellable: false,
     });
     applyWorkspaceTaskChanged({
       id: "new-active-task",
       kind: "repoRemote",
+      title: "检查远端更新",
       priority: "low",
       repoId: "Repo2",
       status: "running",
       message: null,
+      createdAt: 30,
       updatedAt: 30,
       cancellable: false,
     });
@@ -850,7 +860,7 @@ describe("workspace incremental refresh", () => {
     service.bulkSyncExecute.mockReturnValueOnce(execution.promise);
 
     const running = executeBulk();
-    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [repo.id], "reject"));
+    await waitFor(() => expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [repo.id], "reject", "manual"));
     state.bulkPreview = pullPreview;
 
     execution.resolve([
@@ -916,7 +926,7 @@ describe("workspace incremental refresh", () => {
     await syncAll();
 
     expect(service.bulkSyncPreview).toHaveBeenCalledWith("sync", expect.any(Array), "reject");
-    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, both.id], "reject");
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("sync", [first.id, both.id], "reject", "syncAll");
     expect(service.pushRepo).not.toHaveBeenCalled();
     expect(state.bulkPreview).toEqual(preview);
     expect(state.bulkResults).toEqual([

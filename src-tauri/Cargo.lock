@@ -2260,6 +2260,7 @@ dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-host",
+ "mutsuki-tauri-bridge",
  "mutsuki-tauri-host",
  "notify",
  "reqwest",
