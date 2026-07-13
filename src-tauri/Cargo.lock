@@ -2206,6 +2206,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-plugin-lilia",
  "tauri-plugin-mutsuki",
  "tauri-plugin-opener",
  "tauri-plugin-store",
@@ -4382,6 +4383,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-lilia"
+version = "0.1.0"
+source = "git+https://github.com/sena-nana/LiliaUI.git?rev=2d6554f051a4cebc98fe55af5b2bcb9980412128#2d6554f051a4cebc98fe55af5b2bcb9980412128"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin-store",
+]
+
+[[package]]
 name = "tauri-plugin-mutsuki"
 version = "0.1.0"
 source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=64ca4e149fc9cdd53fd6d7e7f4d315acbe745cf6#64ca4e149fc9cdd53fd6d7e7f4d315acbe745cf6"
@@ -5346,7 +5358,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
