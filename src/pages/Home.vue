@@ -183,6 +183,7 @@ type HomePendingRow = {
   repoFullName: string;
   link: HomePendingLink;
   actions: HomePendingAction[];
+  confirmingAction: HomePendingAction | null;
   runningAction: HomePendingAction | null;
 };
 
@@ -264,7 +265,7 @@ const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotificat
 const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
 const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
-const homePendingConfirmAction = ref<{ item: HomePendingItem; action: HomePendingAction } | null>(null);
+const homePendingArmedAction = ref<{ itemId: string; action: HomePendingAction } | null>(null);
 const cloningFullName = ref<string | null>(null);
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
@@ -1076,12 +1077,14 @@ function repoSyncIssueForTimeline(githubRepo: GitHubRepoSummary) {
 }
 
 function toHomePendingRow(item: HomePendingItem): HomePendingRow {
+  const armedAction = homePendingArmedAction.value;
   return {
     item,
     icon: homePendingItemIcon(item.kind),
     repoFullName: homePendingItemRepoFullName(item),
     link: homePendingItemLink(item),
     actions: homePendingActions(item),
+    confirmingAction: armedAction?.itemId === item.id ? armedAction.action : null,
     runningAction: homePendingRunningActions.value[item.id] ?? null,
   };
 }
@@ -1150,6 +1153,11 @@ function homePendingActionLabel(action: HomePendingAction) {
   return "关闭";
 }
 
+function homePendingButtonLabel(row: HomePendingRow, action: HomePendingAction) {
+  const prefix = row.runningAction === action ? "正在" : row.confirmingAction === action ? "确认" : "";
+  return `${prefix}${homePendingActionLabel(action)}`;
+}
+
 function homePendingActionIcon(action: HomePendingAction) {
   if (action === "issue-complete") return CheckCircle2;
   if (action === "pull-merge") return GitMerge;
@@ -1166,43 +1174,42 @@ function homePendingActionAgentId(item: HomePendingItem, action: HomePendingActi
   return `home.pending.${item.id}.${action}`;
 }
 
-function homePendingConfirmControlAgentId(
-  action: NonNullable<typeof homePendingConfirmAction.value>,
-  control: "close" | "cancel" | "confirm",
-) {
-  return `${homePendingActionAgentId(action.item, action.action)}.${control}`;
-}
-
-function homePendingActionTargetLabel(item: HomePendingItem) {
-  const target = item.target;
-  if (target.kind === "issue") return `Issue #${target.number}`;
-  if (target.kind === "pull") return `PR #${target.number}`;
-  return item.title;
-}
-
-function homePendingConfirmTitle(action: NonNullable<typeof homePendingConfirmAction.value>) {
-  return `确认${homePendingActionLabel(action.action)} ${homePendingActionTargetLabel(action.item)}`;
-}
-
-function homePendingConfirmBody(action: NonNullable<typeof homePendingConfirmAction.value>) {
-  return `确认后将处理「${action.item.title} ${action.item.detail}」。`;
-}
-
-function requestHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
+async function requestHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
   if (homePendingRunningActions.value[item.id]) return;
-  homePendingConfirmAction.value = { item, action };
+  const armedAction = homePendingArmedAction.value;
+  if (armedAction?.itemId === item.id && armedAction.action === action) {
+    homePendingArmedAction.value = null;
+    await runHomePendingAction(item, action);
+    return;
+  }
+  homePendingArmedAction.value = { itemId: item.id, action };
 }
 
 function closeHomePendingConfirm() {
-  homePendingConfirmAction.value = null;
+  homePendingArmedAction.value = null;
 }
 
-async function confirmHomePendingAction() {
-  const action = homePendingConfirmAction.value;
-  if (!action) return;
-  homePendingConfirmAction.value = null;
-  await runHomePendingAction(action.item, action.action);
+function onHomePendingConfirmPointer(event: PointerEvent) {
+  const target = event.target;
+  if (target instanceof Element && target.closest(".home-pending-action.is-confirming")) return;
+  closeHomePendingConfirm();
 }
+
+function onHomePendingConfirmKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape" || !homePendingArmedAction.value) return;
+  closeHomePendingConfirm();
+  event.stopPropagation();
+}
+
+watch(homePendingArmedAction, (value, _, onCleanup) => {
+  if (!value) return;
+  document.addEventListener("pointerdown", onHomePendingConfirmPointer, true);
+  document.addEventListener("keydown", onHomePendingConfirmKeydown);
+  onCleanup(() => {
+    document.removeEventListener("pointerdown", onHomePendingConfirmPointer, true);
+    document.removeEventListener("keydown", onHomePendingConfirmKeydown);
+  });
+});
 
 async function runHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
   if (homePendingRunningActions.value[item.id]) return;
@@ -2057,20 +2064,26 @@ function bulkOperationDescription(operation: BulkOperation) {
                   <span
                     v-if="row.actions.length || row.link.kind !== 'none'"
                     class="home-pending-row__actions"
+                    :class="{
+                      'is-expanded': Boolean(row.confirmingAction || row.runningAction),
+                    }"
                     aria-label="快捷操作"
                   >
                     <button
                       v-for="action in row.actions"
+                      v-show="!row.runningAction || row.runningAction === action"
                       :key="action"
                       type="button"
                       class="home-pending-action"
                       :class="{
                         'home-pending-action--ok': action === 'issue-complete' || action === 'pull-merge',
                         'home-pending-action--danger': action === 'issue-close' || action === 'pull-close',
+                        'is-confirming': row.confirmingAction === action,
+                        'is-expanded': row.confirmingAction === action || row.runningAction === action,
                       }"
-                      :aria-label="homePendingActionLabel(action)"
-                      :title="homePendingActionLabel(action)"
-                      :data-agent-id="homePendingActionAgentId(row.item, action)"
+                      :aria-label="homePendingButtonLabel(row, action)"
+                      :title="homePendingButtonLabel(row, action)"
+                      :data-agent-id="`${homePendingActionAgentId(row.item, action)}${row.confirmingAction === action ? '.confirm' : ''}`"
                       :disabled="Boolean(row.runningAction)"
                       @click.stop="requestHomePendingAction(row.item, action)"
                     >
@@ -2083,9 +2096,12 @@ function bulkOperationDescription(operation: BulkOperation) {
                       <component
                         v-else
                         :is="homePendingActionIcon(action)"
-                        :size="13"
+                        :size="row.confirmingAction === action ? 12 : 13"
                         aria-hidden="true"
                       />
+                      <span v-if="row.runningAction === action || row.confirmingAction === action">
+                        {{ homePendingButtonLabel(row, action) }}
+                      </span>
                     </button>
                     <a
                       v-if="row.link.kind !== 'none'"
@@ -2261,48 +2277,6 @@ function bulkOperationDescription(operation: BulkOperation) {
         </div>
       </div>
     </template>
-
-    <div
-      v-if="homePendingConfirmAction"
-      class="modal-backdrop"
-      role="presentation"
-    >
-      <div class="modal home-pending-confirm" role="dialog" aria-modal="true" :aria-label="homePendingConfirmTitle(homePendingConfirmAction)">
-        <div class="modal__header">
-          <div>
-            <h2>{{ homePendingConfirmTitle(homePendingConfirmAction) }}</h2>
-            <p class="muted">{{ homePendingConfirmBody(homePendingConfirmAction) }}</p>
-          </div>
-          <button
-            type="button"
-            class="ghost"
-            aria-label="关闭"
-            :data-agent-id="homePendingConfirmControlAgentId(homePendingConfirmAction, 'close')"
-            @click="closeHomePendingConfirm"
-          >
-            <X :size="14" aria-hidden="true" />
-          </button>
-        </div>
-        <div class="modal__footer">
-          <button
-            type="button"
-            class="ghost"
-            :data-agent-id="homePendingConfirmControlAgentId(homePendingConfirmAction, 'cancel')"
-            @click="closeHomePendingConfirm"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            class="primary"
-            :data-agent-id="homePendingConfirmControlAgentId(homePendingConfirmAction, 'confirm')"
-            @click="confirmHomePendingAction"
-          >
-            确认{{ homePendingActionLabel(homePendingConfirmAction.action) }}
-          </button>
-        </div>
-      </div>
-    </div>
 
     <div
       v-if="workspace.state.bulkPreview && workspace.state.bulkPreview.operation !== 'sync'"
@@ -2934,11 +2908,17 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .home-pending-action--ok {
+  --home-pending-action-state-bg: var(--ok-soft);
   color: var(--ok);
 }
 
 .home-pending-action--danger {
+  --home-pending-action-state-bg: var(--err-soft);
   color: var(--err);
+}
+
+.home-pending-row__actions.is-expanded .home-pending-row__jump {
+  display: none;
 }
 
 .home-pending-action:hover,
@@ -2947,6 +2927,17 @@ function bulkOperationDescription(operation: BulkOperation) {
 .home-pending-row__jump:focus-visible {
   background: var(--bg-hover);
   outline: 0;
+}
+
+.home-pending-action.is-expanded {
+  width: auto;
+  min-width: 68px;
+  gap: 4px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: var(--home-pending-action-state-bg);
 }
 
 .home-pending-action:disabled {
@@ -3330,7 +3321,7 @@ function bulkOperationDescription(operation: BulkOperation) {
   }
 
   .home-pending-row {
-    grid-template-columns: 18px minmax(0, 1fr) minmax(82px, 30%);
+    grid-template-columns: 18px minmax(0, 1fr) minmax(100px, 30%);
     gap: 5px;
   }
 
