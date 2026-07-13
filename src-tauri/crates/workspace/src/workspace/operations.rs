@@ -20,14 +20,14 @@ use crate::workspace::tasks::{
     register_pending_task_cancellation,
 };
 
-pub const LOCAL_READ_PROTOCOL: &str = "lilia.github.operation.local-read.v1";
-pub const LOCAL_WRITE_PROTOCOL: &str = "lilia.github.operation.local-write.v1";
-pub const GITHUB_READ_PROTOCOL: &str = "lilia.github.operation.github-read.v1";
-pub const GITHUB_WRITE_PROTOCOL: &str = "lilia.github.operation.github-write.v1";
-pub const GITHUB_TRANSFER_PROTOCOL: &str = "lilia.github.operation.github-transfer.v1";
-pub const WORKSPACE_ANALYSIS_PROTOCOL: &str = "lilia.github.operation.workspace-analysis.v1";
-pub const BULK_PROTOCOL: &str = "lilia.github.operation.bulk.v1";
-pub const LAUNCH_CONTROL_PROTOCOL: &str = "lilia.github.operation.launch-control.v1";
+pub const LOCAL_READ_PROTOCOL: &str = "effect.lilia.github.operation.local-read.v1";
+pub const LOCAL_WRITE_PROTOCOL: &str = "effect.lilia.github.operation.local-write.v1";
+pub const GITHUB_READ_PROTOCOL: &str = "effect.lilia.github.operation.github-read.v1";
+pub const GITHUB_WRITE_PROTOCOL: &str = "effect.lilia.github.operation.github-write.v1";
+pub const GITHUB_TRANSFER_PROTOCOL: &str = "effect.lilia.github.operation.github-transfer.v1";
+pub const WORKSPACE_ANALYSIS_PROTOCOL: &str = "effect.lilia.github.operation.workspace-analysis.v1";
+pub const BULK_PROTOCOL: &str = "effect.lilia.github.operation.bulk.v1";
+pub const LAUNCH_CONTROL_PROTOCOL: &str = "effect.lilia.github.operation.launch-control.v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperationKind {
@@ -693,6 +693,7 @@ mod tests {
     use crate::runtime::WorkspaceRuntime;
     use crate::workspace::tasks::{workspace_cancel_task, workspace_list_tasks};
     use mutsuki_runtime_contracts::{CancelPolicy, RuntimeError};
+    use mutsuki_runtime_core::TaskPool;
     use serde_json::Value;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
     use std::sync::{Arc, Condvar};
@@ -700,6 +701,27 @@ mod tests {
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static TEST_LOCK: Mutex<()> = Mutex::new(());
         TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    #[test]
+    fn effectful_operation_runners_are_claimable() {
+        for (index, runner) in operation_runners().into_iter().enumerate() {
+            let descriptor = runner.descriptor();
+            assert!(descriptor.runner_id.starts_with("effect."));
+
+            let task_id = format!("operation-contract-{index}");
+            let mut tasks = TaskPool::default();
+            tasks
+                .enqueue(Task::new(
+                    task_id.clone(),
+                    descriptor.accepted_protocol_ids[0].clone(),
+                    json!({}),
+                ))
+                .unwrap();
+            let claimed = tasks.claim_ready(descriptor, 1, 0, 1);
+            assert_eq!(claimed.len(), 1);
+            assert_eq!(claimed[0].task_id, task_id);
+        }
     }
 
     #[derive(Default)]

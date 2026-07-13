@@ -469,6 +469,7 @@ const releases = ref<GitHubRelease[]>([]);
 const releasesLoading = ref(false);
 const releasesLoaded = ref(false);
 const releasesError = ref<string | null>(null);
+const selectingReleaseAssets = ref(false);
 const focusedReleaseTag = ref<string | null>(null);
 const releaseTypeFilter = ref<ReleaseTypeFilter>("all");
 const aboutEditing = ref(false);
@@ -560,6 +561,7 @@ const updatingIssue = issueUpdateTracker.running;
 const creatingPullRequest = pullCreateTracker.running;
 const updatingPullRequest = pullUpdateTracker.running;
 const releaseMutating = computed(() =>
+  selectingReleaseAssets.value ||
   releaseCreateTracker.running.value ||
   releaseUpdateTracker.running.value ||
   releaseDeleteTracker.running.value ||
@@ -3494,19 +3496,25 @@ async function removeRelease(release: GitHubRelease) {
 
 async function uploadReleaseAssets(release: GitHubRelease) {
   const repoFullName = props.repoFullName;
-  if (!repoFullName || releaseAssetUploadTracker.running.value) return;
-  const paths = await pickFiles();
-  for (const filePath of paths) {
-    const result = await runGitHubMutation(
-      repoFullName,
-      releaseAssetUploadTracker,
-      () => uploadGitHubReleaseAsset(repoFullName, release.id, filePath),
-    );
-    if (!result.ok) return;
-    updateReleaseAssetsInView(release.id, (assets) => [
-      result.value,
-      ...assets.filter((asset) => asset.id !== result.value.id),
-    ]);
+  if (!repoFullName || selectingReleaseAssets.value || releaseAssetUploadTracker.running.value) return;
+  selectingReleaseAssets.value = true;
+  try {
+    const paths = await pickFiles();
+    if (!paths.length) return;
+    for (const filePath of paths) {
+      const result = await runGitHubMutation(
+        repoFullName,
+        releaseAssetUploadTracker,
+        () => uploadGitHubReleaseAsset(repoFullName, release.id, filePath),
+      );
+      if (!result.ok) return;
+      updateReleaseAssetsInView(release.id, (assets) => [
+        result.value,
+        ...assets.filter((asset) => asset.id !== result.value.id),
+      ]);
+    }
+  } finally {
+    selectingReleaseAssets.value = false;
   }
 }
 

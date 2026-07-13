@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import { computed, reactive, ref } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const workspaceRoot = ref<string | null>(null);
+const choosingWorkspaceRoot = ref(false);
 const githubBinding = ref<null>(null);
 const deviceFlow = ref<null>(null);
 const isReady = ref(false);
@@ -22,6 +23,15 @@ const state = reactive({
   languageStatsLoadingRepoIds: [],
   tasks: [],
 });
+const chooseWorkspaceRoot = vi.fn(async () => null as string | null);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -38,11 +48,12 @@ vi.mock("../src/composables/useWorkspace", () => ({
     state,
     deviceFlow,
     workspaceRoot,
+    choosingWorkspaceRoot,
     githubBinding,
     isAuthorized,
     isReady,
     initialize: vi.fn(async () => undefined),
-    chooseWorkspaceRoot: vi.fn(async () => null),
+    chooseWorkspaceRoot,
     addLocalRepo: vi.fn(async () => null),
     discoverRepos: vi.fn(async () => []),
     refreshRepos: vi.fn(async () => undefined),
@@ -85,6 +96,13 @@ async function renderSetupHome() {
 }
 
 describe("初始化覆盖界面", () => {
+  beforeEach(() => {
+    workspaceRoot.value = null;
+    choosingWorkspaceRoot.value = false;
+    chooseWorkspaceRoot.mockReset();
+    chooseWorkspaceRoot.mockResolvedValue(null);
+  });
+
   it("初始化加载期间覆盖标题栏下方整窗并隐藏侧栏", async () => {
     const view = await renderSetupHome();
 
@@ -94,5 +112,29 @@ describe("初始化覆盖界面", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "工作区文件夹" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "GitHub 授权" })).toBeInTheDocument();
+  });
+
+  it("工作区选择期间禁用入口并保持图标占位", async () => {
+    const picker = deferred<string | null>();
+    chooseWorkspaceRoot.mockImplementation(async () => {
+      choosingWorkspaceRoot.value = true;
+      try {
+        return await picker.promise;
+      } finally {
+        choosingWorkspaceRoot.value = false;
+      }
+    });
+    await renderSetupHome();
+
+    const button = screen.getByRole("button", { name: "选择工作区" });
+    await fireEvent.click(button);
+
+    await waitFor(() => expect(button).toBeDisabled());
+    expect(button.querySelector(".sb-spin")).toBeInTheDocument();
+
+    picker.resolve(null);
+
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(button.querySelector(".sb-spin")).not.toBeInTheDocument();
   });
 });

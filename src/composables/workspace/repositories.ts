@@ -59,6 +59,7 @@ let contributionRefreshError: string | null = null;
 let workspaceTaskRefreshGeneration = 0;
 let languageStatsLoadingGenerations = new Map<string, number>();
 const autoSyncRunningRepoIds = new Set<string>();
+let addLocalRepoPromise: Promise<RepoSummary | null> | null = null;
 type RepoStatusRefreshOptions = {
   immediate?: boolean;
 };
@@ -409,14 +410,22 @@ export async function discoverRepos() {
   }
 }
 
-export async function addLocalRepo() {
-  const service = await loadWorkspaceService();
-  const picked = await service.pickRepo();
-  if (!picked) return null;
-  const summary = await service.addRepo(picked);
-  const repos = await loadManagedRepoList();
-  if (!repos) upsertRepo(summary);
-  return summary;
+export function addLocalRepo() {
+  if (addLocalRepoPromise) return addLocalRepoPromise;
+
+  const pending = (async () => {
+    const service = await loadWorkspaceService();
+    const picked = await service.pickRepo();
+    if (!picked) return null;
+    const summary = await service.addRepo(picked);
+    const repos = await loadManagedRepoList();
+    if (!repos) upsertRepo(summary);
+    return summary;
+  })().finally(() => {
+    if (addLocalRepoPromise === pending) addLocalRepoPromise = null;
+  });
+  addLocalRepoPromise = pending;
+  return pending;
 }
 
 function applyRepoList(repos: RepoSummary[]) {
@@ -773,6 +782,7 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshSkippedRepoCount = 0;
   contributionRefreshStartedAt = 0;
   contributionRefreshError = null;
+  addLocalRepoPromise = null;
 }
 
 export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {

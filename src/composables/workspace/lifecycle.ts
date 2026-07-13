@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { ref } from "vue";
 import { replaceRepos, state } from "./state";
 import {
   refreshRepoSummaries,
@@ -17,6 +18,8 @@ export const FOCUS_REFRESH_THRESHOLD_MS = 5 * 60 * 1000;
 
 let lastFocusEventAt = Date.now();
 let lifecycleGeneration = 0;
+let chooseWorkspaceRootPromise: Promise<string | null> | null = null;
+export const choosingWorkspaceRoot = ref(false);
 
 export async function initialize() {
   if (state.loading) return;
@@ -92,16 +95,33 @@ export async function initialize() {
   }
 }
 
-export async function chooseWorkspaceRoot() {
-  lifecycleGeneration += 1;
-  state.loading = false;
-  state.error = null;
-  const service = await loadWorkspaceService();
-  const picked = await service.pickWorkspaceRoot();
-  if (!picked) return null;
-  state.settings = await service.setWorkspaceRoot(picked);
-  await refreshRepos();
-  return picked;
+export function chooseWorkspaceRoot() {
+  if (chooseWorkspaceRootPromise) return chooseWorkspaceRootPromise;
+
+  choosingWorkspaceRoot.value = true;
+  const pending = (async () => {
+    try {
+      lifecycleGeneration += 1;
+      state.loading = false;
+      state.error = null;
+      const service = await loadWorkspaceService();
+      const picked = await service.pickWorkspaceRoot();
+      if (!picked) return null;
+      state.settings = await service.setWorkspaceRoot(picked);
+      await refreshRepos();
+      return picked;
+    } catch (err) {
+      state.error = String(err);
+      throw err;
+    }
+  })().finally(() => {
+    if (chooseWorkspaceRootPromise === pending) {
+      chooseWorkspaceRootPromise = null;
+      choosingWorkspaceRoot.value = false;
+    }
+  });
+  chooseWorkspaceRootPromise = pending;
+  return pending;
 }
 
 export async function installWorkspaceFocusRefresh(): Promise<() => void> {

@@ -32,6 +32,7 @@ use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 pub(super) const STORE_FILE: &str = "lilia-github.json";
 pub(super) const SETTINGS_KEY: &str = "workspace.settings";
 pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
+#[cfg(target_os = "windows")]
 const NTFS_REQUIRED: &str = "工作区必须位于 NTFS 文件系统";
 
 fn startup_cache_write_lock() -> &'static Mutex<()> {
@@ -385,6 +386,7 @@ pub(super) fn workspace_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+#[cfg(target_os = "windows")]
 pub(super) fn ensure_ntfs_path(path: &Path) -> Result<(), String> {
     let file_system = volume_file_system(path)?;
     if file_system.trim().eq_ignore_ascii_case("NTFS") {
@@ -392,6 +394,11 @@ pub(super) fn ensure_ntfs_path(path: &Path) -> Result<(), String> {
     } else {
         Err(NTFS_REQUIRED.to_string())
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(super) fn ensure_ntfs_path(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -438,11 +445,6 @@ fn volume_file_system(path: &Path) -> Result<String, String> {
         .position(|value| *value == 0)
         .unwrap_or(file_system.len());
     Ok(String::from_utf16_lossy(&file_system[..length]))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn volume_file_system(_path: &Path) -> Result<String, String> {
-    Err(NTFS_REQUIRED.to_string())
 }
 
 pub(super) fn repo_path_by_id(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
