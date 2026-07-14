@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
+import RepoRemoteSyncDialog from "../components/repo/RepoRemoteSyncDialog.vue";
+import RepoSyncResultDialog from "../components/repo/RepoSyncResultDialog.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 
@@ -58,8 +60,20 @@ const {
   needsPublish,
   aheadCount,
   behindCount,
+  remotesNeedingPull,
+  remotesNeedingPush,
+  pullRemoteCount,
+  pushRemoteNames,
+  remoteSyncUnavailableReason,
   repoSettingValues,
   repoActionError,
+  remoteSyncConfig,
+  remoteSyncConfigLoading,
+  remoteSyncConfigSaving,
+  remoteSyncConfigError,
+  remoteSyncDialogOpen,
+  syncOperationResult,
+  failedPushRetrying,
   focusChange,
   stageUnstagedChanges,
   unstageStagedChanges,
@@ -71,6 +85,12 @@ const {
   selectOpenTarget,
   selectPullStrategy,
   setRepoSetting,
+  openRemoteSyncSettings,
+  closeRemoteSyncSettings,
+  loadRemoteSyncConfig,
+  saveRemoteSyncPolicy,
+  closeSyncResultDialog,
+  retryFailedRemotePush,
   runSelectedPullStrategy,
   push,
   pushCurrentBranchWithUpstream,
@@ -123,6 +143,11 @@ const {
         :needs-publish="needsPublish"
         :ahead-count="aheadCount"
         :behind-count="behindCount"
+        :remotes-needing-pull="remotesNeedingPull"
+        :remotes-needing-push="remotesNeedingPush"
+        :pull-remote-count="pullRemoteCount"
+        :push-remote-names="pushRemoteNames"
+        :remote-sync-unavailable-reason="remoteSyncUnavailableReason"
         :launch-command="launchConfig?.command"
         @refresh-project-cache="refreshProjectCache"
         @checkout="checkout"
@@ -145,6 +170,7 @@ const {
         @run-selected-pull-strategy="runSelectedPullStrategy"
         @select-pull-strategy="selectPullStrategy"
         @push="push"
+        @open-remote-sync-settings="openRemoteSyncSettings"
       />
     </div>
 
@@ -215,6 +241,23 @@ const {
         />
       </main>
     </div>
+
+    <RepoRemoteSyncDialog
+      :open="remoteSyncDialogOpen"
+      :config="remoteSyncConfig"
+      :loading="remoteSyncConfigLoading"
+      :saving="remoteSyncConfigSaving"
+      :error="remoteSyncConfigError"
+      @close="closeRemoteSyncSettings"
+      @retry="loadRemoteSyncConfig()"
+      @save="saveRemoteSyncPolicy"
+    />
+    <RepoSyncResultDialog
+      :result="syncOperationResult"
+      :retrying="failedPushRetrying"
+      @close="closeSyncResultDialog"
+      @retry-push="retryFailedRemotePush"
+    />
   </section>
 </template>
 
@@ -326,6 +369,26 @@ const {
   width: auto;
   min-width: 32px;
   padding: 0 7px;
+}
+
+.repo-toolbar__sync-label {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.repo-toolbar__btn:has(.repo-toolbar__sync-label) {
+  gap: 5px;
+  width: auto;
+  min-width: 32px;
+  padding: 0 7px;
+}
+
+.repo-toolbar__pull-main:has(.repo-toolbar__sync-label) {
+  border-radius: var(--radius-sm);
 }
 
 .repo-toolbar__branch-select {

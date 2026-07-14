@@ -1,4 +1,12 @@
-import type { RepoConflictState, RepoDetail, RepoDetailPatch, RepoSummary, WorkspaceSettings } from "../../src/services/workspace";
+import type {
+  RepoCommitResult,
+  RepoConflictState,
+  RepoDetail,
+  RepoDetailPatch,
+  RepoSummary,
+  RepoSyncOperationResult,
+  WorkspaceSettings,
+} from "../../src/services/workspace";
 
 export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): RepoSummary {
   return {
@@ -11,6 +19,9 @@ export function repoSummary(id: string, overrides: Partial<RepoSummary> = {}): R
     githubFullName: `sena-nana/${id}`,
     ahead: 0,
     behind: 0,
+    remoteBranchStates: [],
+    remotesNeedingPull: 0,
+    remotesNeedingPush: 0,
     stagedCount: 0,
     unstagedCount: 0,
     untrackedCount: 0,
@@ -35,6 +46,24 @@ export function conflictState(overrides: Partial<RepoConflictState> = {}): RepoC
     allResolved: true,
     ...overrides,
   };
+}
+
+export function repoSyncResult(
+  summary: RepoSummary,
+  overrides: Partial<Omit<RepoSyncOperationResult, "summary">> = {},
+): RepoSyncOperationResult {
+  return {
+    status: "success",
+    message: "完成",
+    summary,
+    conflicts: conflictState(),
+    steps: [],
+    ...overrides,
+  };
+}
+
+export function repoCommitResult(summary: RepoSummary, pushResult: RepoSyncOperationResult | null = null): RepoCommitResult {
+  return { summary, pushResult };
 }
 
 export function repoDetail(summary: RepoSummary, overrides: Partial<Omit<RepoDetail, "summary">> = {}): RepoDetail {
@@ -69,6 +98,7 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     githubBinding: null,
     projectLaunchConfigs: {},
     repoSyncPreferences: {},
+    repoRemoteSyncPolicies: {},
     hiddenRepoIds,
     managedRepoIds: [],
     systemGitRepoIds: [],

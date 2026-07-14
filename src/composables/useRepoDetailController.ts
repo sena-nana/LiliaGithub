@@ -21,7 +21,10 @@ import type {
   CommitSummary,
   ProjectLaunchCandidate,
   RepoChange,
+  RepoRemoteSyncConfig,
+  RepoRemoteSyncPolicy,
   RepoSummary,
+  RepoSyncOperationResult,
   SystemOpenTarget,
 } from "../services/workspace";
 import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
@@ -86,6 +89,13 @@ export function useRepoDetailController() {
   const deletingRemoteBranchName = ref<string | null>(null);
   const deletedRemoteBranchNames = ref<string[]>([]);
   const discardingChangePaths = ref<string[]>([]);
+  const remoteSyncConfig = ref<RepoRemoteSyncConfig | null>(null);
+  const remoteSyncConfigLoading = ref(false);
+  const remoteSyncConfigSaving = ref(false);
+  const remoteSyncConfigError = ref<string | null>(null);
+  const remoteSyncDialogOpen = ref(false);
+  const syncOperationResult = ref<RepoSyncOperationResult | null>(null);
+  const failedPushRetrying = ref(false);
   const projectRefreshToken = ref(0);
   const projectCacheResetToken = ref(0);
   const componentEpoch = useComponentEpoch();
@@ -121,6 +131,9 @@ export function useRepoDetailController() {
       githubFullName: fullName,
       ahead: 0,
       behind: 0,
+      remoteBranchStates: [],
+      remotesNeedingPull: 0,
+      remotesNeedingPush: 0,
       stagedCount: 0,
       unstagedCount: 0,
       untrackedCount: 0,
@@ -327,6 +340,27 @@ export function useRepoDetailController() {
   });
   const aheadCount = computed(() => summary.value?.ahead ?? 0);
   const behindCount = computed(() => summary.value?.behind ?? 0);
+  const remotesNeedingPull = computed(() => {
+    const sourceNames = new Set(remoteSyncConfig.value?.resolvedPolicy.pullRemotes ?? []);
+    if (!sourceNames.size) return summary.value?.remotesNeedingPull ?? 0;
+    return summary.value?.remoteBranchStates.filter((state) =>
+      sourceNames.has(state.remote) && state.needsPull
+    ).length ?? 0;
+  });
+  const remotesNeedingPush = computed(() => {
+    const targetNames = new Set(remoteSyncConfig.value?.resolvedPolicy.pushRemotes ?? []);
+    if (!targetNames.size) return 0;
+    return summary.value?.remoteBranchStates.filter((state) =>
+      targetNames.has(state.remote) && state.needsPush
+    ).length ?? 0;
+  });
+  const pullRemoteCount = computed(() => remoteSyncConfig.value?.resolvedPolicy.pullRemotes.length ?? 0);
+  const pushRemoteNames = computed(() => remoteSyncConfig.value?.resolvedPolicy.pushRemotes ?? []);
+  const remoteSyncUnavailableReason = computed(() => {
+    if (remoteSyncConfigLoading.value && !remoteSyncConfig.value) return "正在读取远端同步配置";
+    if (remoteSyncConfigError.value && !remoteSyncConfig.value) return remoteSyncConfigError.value;
+    return remoteSyncConfig.value?.validationErrors[0] ?? null;
+  });
   const repoSettingValues = computed(() => Object.fromEntries(
     REPO_SETTING_ITEMS.map((setting) => [
       setting.key,
@@ -376,6 +410,13 @@ export function useRepoDetailController() {
     deletingRemoteBranchName.value = null;
     deletedRemoteBranchNames.value = [];
     discardingChangePaths.value = [];
+    remoteSyncConfig.value = null;
+    remoteSyncConfigLoading.value = false;
+    remoteSyncConfigSaving.value = false;
+    remoteSyncConfigError.value = null;
+    remoteSyncDialogOpen.value = false;
+    syncOperationResult.value = null;
+    failedPushRetrying.value = false;
     void load();
   });
 
@@ -476,6 +517,7 @@ export function useRepoDetailController() {
         return;
       }
       const launchLoad = loadLaunchData(targetRepoId, runId);
+      const remoteSyncLoad = loadRemoteSyncConfig(targetRepoId, runId);
       repoDetailLoading.value = true;
       repoDetailError.value = null;
       try {
@@ -497,8 +539,26 @@ export function useRepoDetailController() {
       }
       if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
       resetGitHubRemoteState();
-      await launchLoad;
+      await Promise.all([launchLoad, remoteSyncLoad]);
     });
+  }
+
+  async function loadRemoteSyncConfig(targetRepoId = repoId.value, runId?: number) {
+    if (!targetRepoId) return;
+    remoteSyncConfigLoading.value = true;
+    remoteSyncConfigError.value = null;
+    try {
+      const config = await workspace.getRemoteSyncConfig(targetRepoId);
+      if (repoId.value !== targetRepoId || (runId != null && !repoDetailLoader.isCurrent(runId))) return;
+      remoteSyncConfig.value = config;
+    } catch (err) {
+      if (repoId.value !== targetRepoId || (runId != null && !repoDetailLoader.isCurrent(runId))) return;
+      remoteSyncConfigError.value = String(err);
+    } finally {
+      if (repoId.value === targetRepoId && (runId == null || repoDetailLoader.isCurrent(runId))) {
+        remoteSyncConfigLoading.value = false;
+      }
+    }
   }
 
   async function loadLaunchData(targetRepoId: string, runId: number) {
@@ -618,8 +678,14 @@ export function useRepoDetailController() {
   }
 
   function shouldOfferSystemGitPush(error: unknown) {
-    const message = String(error);
-    return message.includes("当前 GitHub 绑定无权限") || message.includes("无法认证 GitHub 仓库");
+    const message = String(error).toLowerCase();
+    return (
+      message.includes("当前 github 绑定无权限") ||
+      message.includes("无法认证 github 仓库") ||
+      message.includes("authentication failed") ||
+      message.includes("could not read username") ||
+      message.includes("permission denied (publickey)")
+    );
   }
 
   async function retryPushWithSystemGitIfConfirmed(error: unknown, targetRepoId: string) {
@@ -638,10 +704,79 @@ export function useRepoDetailController() {
 
   async function runPushWithFallback(targetRepoId: string, pushAction: () => Promise<unknown>) {
     try {
-      await pushAction();
+      const value = await pushAction();
+      const result = syncResultFromValue(value);
+      const authFailedRemotes = result?.steps
+        .filter((step) => step.operation === "push" && step.status === "error" && shouldOfferSystemGitPush(step.message))
+        .map((step) => step.remote) ?? [];
+      if (!result || !authFailedRemotes.length) return value;
+      const failedRemotes = [...new Set(authFailedRemotes)];
+      const confirmed = window.confirm(
+        `${failedRemotes.join("、")} 的 GitHub token 推送认证失败。是否仅对这些远端改用系统 git 凭证重试？`,
+      );
+      if (!confirmed) return value;
+      const retryResult = await workspace.pushWithSystemGit(targetRepoId, failedRemotes);
+      return replaceSyncResult(value, mergePushRetryResult(result, retryResult, failedRemotes));
     } catch (err) {
-      await retryPushWithSystemGitIfConfirmed(err, targetRepoId);
+      return retryPushWithSystemGitIfConfirmed(err, targetRepoId);
     }
+  }
+
+  function isSyncOperationResult(value: unknown): value is RepoSyncOperationResult {
+    if (!value || typeof value !== "object") return false;
+    const candidate = value as Partial<RepoSyncOperationResult>;
+    return (
+      (candidate.status === "success" || candidate.status === "partial" || candidate.status === "conflicts" || candidate.status === "error") &&
+      Array.isArray(candidate.steps)
+    );
+  }
+
+  function syncResultFromValue(value: unknown) {
+    if (isSyncOperationResult(value)) return value;
+    if (!value || typeof value !== "object") return null;
+    const nestedResult = (value as { pushResult?: unknown }).pushResult;
+    return isSyncOperationResult(nestedResult) ? nestedResult : null;
+  }
+
+  function replaceSyncResult(value: unknown, result: RepoSyncOperationResult) {
+    if (isSyncOperationResult(value)) return result;
+    if (!value || typeof value !== "object") return result;
+    return { ...value, pushResult: result };
+  }
+
+  function mergePushRetryResult(
+    original: RepoSyncOperationResult,
+    retry: RepoSyncOperationResult,
+    retriedRemotes: readonly string[],
+  ): RepoSyncOperationResult {
+    const retried = new Set(retriedRemotes);
+    const steps = [
+      ...original.steps.filter((step) => !(step.operation === "push" && retried.has(step.remote))),
+      ...retry.steps,
+    ];
+    const hasConflicts = retry.status === "conflicts" || steps.some((step) => step.status === "conflicts");
+    const hasErrors = steps.some((step) => step.status === "error");
+    const hasSuccess = steps.some((step) => step.status === "success");
+    const status: RepoSyncOperationResult["status"] = hasConflicts
+      ? "conflicts"
+      : hasErrors && hasSuccess
+        ? "partial"
+        : hasErrors
+          ? "error"
+          : "success";
+    return {
+      status,
+      message: status === "success" ? "推送完成" : status === "partial" ? "部分远端推送失败" : retry.message,
+      summary: retry.summary,
+      conflicts: retry.conflicts,
+      steps,
+    };
+  }
+
+  function captureSyncOperationResult(value: unknown) {
+    const result = syncResultFromValue(value);
+    if (!result) return;
+    syncOperationResult.value = result.status === "success" ? null : result;
   }
 
   function invalidateActions() {
@@ -741,8 +876,10 @@ export function useRepoDetailController() {
     void runAction(async () => {
       const commitAction = () =>
         workspace.commit(targetRepoId, targetPaths, message, pushAfter);
-      if (pushAfter) await runPushWithFallback(targetRepoId, commitAction);
-      else await commitAction();
+      const result = pushAfter
+        ? await runPushWithFallback(targetRepoId, commitAction)
+        : await commitAction();
+      captureSyncOperationResult(result);
     }).then((success) => {
       if (
         !success &&
@@ -759,7 +896,7 @@ export function useRepoDetailController() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
     void runAction(async () => {
-      await workspace.mergePull(targetRepoId, "stash");
+      captureSyncOperationResult(await workspace.mergePull(targetRepoId, "stash"));
     });
   }
 
@@ -813,6 +950,57 @@ export function useRepoDetailController() {
     );
   }
 
+  function openRemoteSyncSettings() {
+    if (!hasLocalRepo.value) return;
+    remoteSyncDialogOpen.value = true;
+    if (!remoteSyncConfig.value || remoteSyncConfigError.value) {
+      void loadRemoteSyncConfig();
+    }
+  }
+
+  function closeRemoteSyncSettings() {
+    if (remoteSyncConfigSaving.value) return;
+    remoteSyncDialogOpen.value = false;
+  }
+
+  async function saveRemoteSyncPolicy(policy: RepoRemoteSyncPolicy) {
+    const targetRepoId = repoId.value;
+    if (!targetRepoId || remoteSyncConfigSaving.value) return;
+    remoteSyncConfigSaving.value = true;
+    remoteSyncConfigError.value = null;
+    try {
+      const config = await workspace.setRemoteSyncPolicy(targetRepoId, policy);
+      if (repoId.value !== targetRepoId) return;
+      remoteSyncConfig.value = config;
+      remoteSyncDialogOpen.value = false;
+    } catch (err) {
+      if (repoId.value === targetRepoId) remoteSyncConfigError.value = String(err);
+    } finally {
+      if (repoId.value === targetRepoId) remoteSyncConfigSaving.value = false;
+    }
+  }
+
+  function closeSyncResultDialog() {
+    if (!failedPushRetrying.value) syncOperationResult.value = null;
+  }
+
+  async function retryFailedRemotePush(remoteNames: string[]) {
+    const targetRepoId = repoId.value;
+    const currentResult = syncOperationResult.value;
+    if (!targetRepoId || !currentResult || failedPushRetrying.value) return;
+    failedPushRetrying.value = true;
+    actionError.value = null;
+    try {
+      const result = await workspace.push(targetRepoId, remoteNames);
+      if (repoId.value !== targetRepoId) return;
+      captureSyncOperationResult(result);
+    } catch (err) {
+      if (repoId.value === targetRepoId) actionError.value = String(err);
+    } finally {
+      if (repoId.value === targetRepoId) failedPushRetrying.value = false;
+    }
+  }
+
   function isOpenTarget(value: string): value is SystemOpenTarget {
     return value === "folder" || value === "terminal" || value === "vscode" || value === "liliacode";
   }
@@ -836,36 +1024,41 @@ export function useRepoDetailController() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
     void runAction(async () => {
+      if (pullRemoteCount.value > 1) {
+        captureSyncOperationResult(await workspace.mergePull(targetRepoId, "stash"));
+        return;
+      }
       if (pullStrategy.value === "pull") {
-        await workspace.pull(targetRepoId, "stash");
+        captureSyncOperationResult(await workspace.pull(targetRepoId, "stash"));
         return;
       }
       if (pullStrategy.value === "rebase") {
-        await workspace.startRebase(targetRepoId, null, "stash");
+        captureSyncOperationResult(await workspace.startRebase(targetRepoId, null, "stash"));
         return;
       }
-      await workspace.mergePull(targetRepoId, "stash");
+      captureSyncOperationResult(await workspace.mergePull(targetRepoId, "stash"));
     });
   }
 
   function push() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
-    void runAction(
-      () => runPushWithFallback(targetRepoId, () => workspace.push(targetRepoId)),
-    );
+    void runAction(async () => {
+      const result = await runPushWithFallback(targetRepoId, () => workspace.push(targetRepoId));
+      captureSyncOperationResult(result);
+    });
   }
 
   function pushCurrentBranchWithUpstream() {
     const targetRepoId = repoId.value;
     const branch = summary.value?.currentBranch ?? null;
     if (!targetRepoId || !branch) return;
-    void runAction(
-      () =>
-        runPushWithFallback(targetRepoId, () =>
-          workspace.pushNewBranch(targetRepoId, "origin", branch)
-        ),
-    );
+    void runAction(async () => {
+      const result = await runPushWithFallback(targetRepoId, () =>
+        workspace.pushNewBranch(targetRepoId, null, branch)
+      );
+      captureSyncOperationResult(result);
+    });
   }
 
   function setCurrentBranchUpstream() {
@@ -1117,8 +1310,20 @@ export function useRepoDetailController() {
       needsPublish,
       aheadCount,
       behindCount,
+      remotesNeedingPull,
+      remotesNeedingPush,
+      pullRemoteCount,
+      pushRemoteNames,
+      remoteSyncUnavailableReason,
       repoSettingValues,
       repoActionError,
+      remoteSyncConfig,
+      remoteSyncConfigLoading,
+      remoteSyncConfigSaving,
+      remoteSyncConfigError,
+      remoteSyncDialogOpen,
+      syncOperationResult,
+      failedPushRetrying,
       focusChange,
       stageUnstagedChanges,
       unstageStagedChanges,
@@ -1129,6 +1334,12 @@ export function useRepoDetailController() {
       refreshProjectCache,
       selectPullStrategy,
       setRepoSetting,
+      openRemoteSyncSettings,
+      closeRemoteSyncSettings,
+      loadRemoteSyncConfig,
+      saveRemoteSyncPolicy,
+      closeSyncResultDialog,
+      retryFailedRemotePush,
       selectOpenTarget,
       openSelectedTarget,
       runSelectedPullStrategy,

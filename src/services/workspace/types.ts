@@ -5,6 +5,7 @@ export interface WorkspaceSettings {
   githubBinding: GitHubBindingMetadata | null;
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
   repoSyncPreferences: Record<string, RepoSyncPreference>;
+  repoRemoteSyncPolicies: Record<string, RepoRemoteSyncPolicy>;
   hiddenRepoIds: string[];
   managedRepoIds: string[];
   systemGitRepoIds: string[];
@@ -43,6 +44,12 @@ export interface RepoSyncPreference {
   includeInHomeCodeStats?: boolean;
   includeInHomeContributionStats?: boolean;
   calculateHomeTimeline?: boolean;
+}
+
+export interface RepoRemoteSyncPolicy {
+  primaryRemote: string;
+  pullRemotes: string[];
+  pushRemotes: string[];
 }
 
 export interface WorkspaceRepoGroup {
@@ -735,6 +742,9 @@ export interface RepoSummary {
   githubFullName: string | null;
   ahead: number;
   behind: number;
+  remoteBranchStates: readonly RepoRemoteBranchState[];
+  remotesNeedingPull: number;
+  remotesNeedingPush: number;
   stagedCount: number;
   unstagedCount: number;
   untrackedCount: number;
@@ -744,6 +754,17 @@ export interface RepoSummary {
   languageStats: readonly LanguageStat[];
   languageStatsUpdatedAt: number;
   worktree: RepoWorktree;
+}
+
+export interface RepoRemoteBranchState {
+  remote: string;
+  remoteBranch: string;
+  exists: boolean;
+  ahead: number;
+  behind: number;
+  needsPull: boolean;
+  needsPush: boolean;
+  upstream: boolean;
 }
 
 export interface RepoStorageStats {
@@ -805,6 +826,37 @@ export interface RepoMergePullResult {
   message: string;
   summary: RepoSummary;
   conflicts: RepoConflictState;
+}
+
+export interface RepoRemoteSyncConfig {
+  remotes: RepoRemote[];
+  policy: RepoRemoteSyncPolicy | null;
+  resolvedPolicy: RepoRemoteSyncPolicy;
+  validationErrors: string[];
+}
+
+export type RepoRemoteOperation = "fetch" | "merge" | "push" | "restore";
+export type RepoRemoteOperationStatus = "success" | "skipped" | "conflicts" | "error";
+
+export interface RepoRemoteOperationStep {
+  remote: string;
+  operation: RepoRemoteOperation;
+  status: RepoRemoteOperationStatus;
+  message: string;
+  targetBranch?: string | null;
+}
+
+export interface RepoSyncOperationResult {
+  status: "success" | "partial" | "conflicts" | "error";
+  message: string;
+  summary: RepoSummary;
+  conflicts: RepoConflictState;
+  steps: RepoRemoteOperationStep[];
+}
+
+export interface RepoCommitResult {
+  summary: RepoSummary;
+  pushResult: RepoSyncOperationResult | null;
 }
 
 export interface RepoOperationResult {
@@ -950,9 +1002,10 @@ export interface BulkSyncPreview {
 
 export interface BulkSyncResult {
   repoId: string;
-  status: "success" | "error";
+  status: "success" | "partial" | "conflicts" | "error";
   message: string;
   summary: RepoSummary | null;
+  steps: RepoRemoteOperationStep[];
 }
 
 export interface HiddenRepo {

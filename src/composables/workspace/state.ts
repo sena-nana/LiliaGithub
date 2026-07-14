@@ -14,6 +14,7 @@ import type {
   RepoDetail,
   RepoDetailPatch,
   RepoSummary,
+  RepoSyncOperationResult,
   WorkspaceTask,
   WorkspaceSettings,
 } from "../../services/workspace";
@@ -44,6 +45,7 @@ export interface WorkspaceState {
   bulkRunning: boolean;
   recentSync: RecentBulkSyncState | null;
   repoActionErrors: Record<string, RepoActionErrorState | undefined>;
+  repoSyncResults: Record<string, RepoSyncOperationResult | undefined>;
   githubContributions: GitHubContributionsState;
   tasks: WorkspaceTask[];
   languageStatsLoadingRepoIds: string[];
@@ -112,6 +114,7 @@ export const state = reactive<WorkspaceState>({
   bulkRunning: false,
   recentSync: null,
   repoActionErrors: {},
+  repoSyncResults: {},
   githubContributions: {
     days: [],
     meta: null,
@@ -325,6 +328,8 @@ function sameRepoSummary(left: RepoSummary | undefined, right: RepoSummary | und
     left.githubFullName === right.githubFullName &&
     left.ahead === right.ahead &&
     left.behind === right.behind &&
+    left.remotesNeedingPull === right.remotesNeedingPull &&
+    left.remotesNeedingPush === right.remotesNeedingPush &&
     left.stagedCount === right.stagedCount &&
     left.unstagedCount === right.unstagedCount &&
     left.untrackedCount === right.untrackedCount &&
@@ -332,8 +337,25 @@ function sameRepoSummary(left: RepoSummary | undefined, right: RepoSummary | und
     left.lastCommitAt === right.lastCommitAt &&
     left.lastCommitMessage === right.lastCommitMessage &&
     left.languageStatsUpdatedAt === right.languageStatsUpdatedAt &&
+    sameRemoteBranchStates(left, right) &&
     sameRepoWorktree(left, right) &&
     sameLanguageStats(left, right);
+}
+
+function sameRemoteBranchStates(left: RepoSummary, right: RepoSummary) {
+  if (left.remoteBranchStates.length !== right.remoteBranchStates.length) return false;
+  return left.remoteBranchStates.every((state, index) => {
+    const other = right.remoteBranchStates[index];
+    return other != null &&
+      state.remote === other.remote &&
+      state.remoteBranch === other.remoteBranch &&
+      state.exists === other.exists &&
+      state.ahead === other.ahead &&
+      state.behind === other.behind &&
+      state.needsPull === other.needsPull &&
+      state.needsPush === other.needsPush &&
+      state.upstream === other.upstream;
+  });
 }
 
 function sameRepoWorktree(left: RepoSummary, right: RepoSummary) {
@@ -411,7 +433,12 @@ export function bulkSyncRepoIds(preview: BulkSyncPreview | null = state.bulkPrev
   const ids = new Set<string>();
   const items = preview.operation === "push" ? [...preview.eligible, ...preview.blocked] : preview.eligible;
   for (const item of items) {
-    if (item.repo.ahead > 0 || item.repo.behind > 0) ids.add(item.repo.id);
+    if (
+      item.repo.remotesNeedingPull > 0 ||
+      item.repo.remotesNeedingPush > 0 ||
+      item.repo.ahead > 0 ||
+      item.repo.behind > 0
+    ) ids.add(item.repo.id);
   }
   return ids;
 }
@@ -437,7 +464,7 @@ export function syncErrorDetailsByRepoId() {
   }
   return new Map(
     state.bulkResults
-      .filter((result) => result.status === "error")
+      .filter((result) => result.status !== "success")
       .map((result) => [result.repoId, { message: result.message, updatedAt: state.recentSync?.updatedAt ?? 0 }]),
   );
 }
@@ -462,8 +489,9 @@ export function repoSyncIssuesByRepoId() {
   if (recentErrors.size) {
     const retryingRepoIds = new Set(state.recentSync?.retryingRepoIds ?? []);
     for (const [repoId, error] of recentErrors) {
+      const result = state.recentSync?.results.find((item) => item.repoId === repoId);
       issues.set(repoId, createRepoSyncIssue("最近同步失败", error, {
-        retryable: true,
+        retryable: result?.status !== "conflicts",
         retrying: retryingRepoIds.has(repoId),
       }));
     }
@@ -485,7 +513,7 @@ export function repoSyncIssuesByRepoId() {
 }
 
 export function recentSyncErrorForRepo(repoId: string) {
-  const result = state.recentSync?.results.find((item) => item.repoId === repoId && item.status === "error");
+  const result = state.recentSync?.results.find((item) => item.repoId === repoId && item.status !== "success");
   if (!result) return null;
   return {
     message: result.message,
@@ -502,26 +530,7 @@ export function repoActionErrorDetailForRepo(repoId: string) {
 }
 
 export function repoSyncIssueForRepo(repoId: string): RepoSyncIssueDisplay | null {
-  const recentSyncError = recentSyncErrorForRepo(repoId);
-  if (recentSyncError) {
-    return createRepoSyncIssue(
-      "最近同步失败",
-      { message: recentSyncError.message, updatedAt: state.recentSync?.updatedAt ?? 0 },
-      { retryable: true, retrying: recentSyncError.retrying },
-    );
-  }
-
-  const syncError = syncErrorDetailsByRepoId().get(repoId);
-  if (syncError) {
-    return createRepoSyncIssue("同步失败", syncError);
-  }
-
-  const actionError = repoActionErrorDetailForRepo(repoId);
-  if (!actionError) return null;
-  return createRepoSyncIssue(
-    actionError.message.includes("已跳过自动同步") ? "自动同步已跳过" : "仓库操作失败",
-    actionError,
-  );
+  return repoSyncIssuesByRepoId().get(repoId) ?? null;
 }
 
 export function setRepoActionError(repoId: string, message: string) {
@@ -557,7 +566,7 @@ export function rememberRecentSync(preview: BulkSyncPreview, results: BulkSyncRe
     preview,
     results,
     retryingRepoIds: state.recentSync?.retryingRepoIds.filter((id) =>
-      results.some((result) => result.repoId === id && result.status === "error"),
+      results.some((result) => result.repoId === id && result.status !== "success"),
     ) ?? [],
     updatedAt: Date.now(),
   };
@@ -590,6 +599,13 @@ export function finishRecentSyncRetry(result: BulkSyncResult) {
   };
 }
 
+export function recordRepoSyncResult(repoId: string, result: RepoSyncOperationResult) {
+  state.repoSyncResults = {
+    ...state.repoSyncResults,
+    [repoId]: result,
+  };
+}
+
 function isRecentSyncIssue(repoId: string) {
   return Boolean(recentSyncErrorForRepo(repoId));
 }
@@ -597,7 +613,7 @@ function isRecentSyncIssue(repoId: string) {
 function recentSyncErrorsByRepoId() {
   const errors = new Map<string, RepoActionErrorState>();
   for (const result of state.recentSync?.results ?? []) {
-    if (result.status === "error") {
+    if (result.status !== "success") {
       errors.set(result.repoId, {
         message: result.message,
         updatedAt: state.recentSync?.updatedAt ?? 0,
@@ -636,6 +652,7 @@ export function resetWorkspaceStateForTests() {
   state.bulkRunning = false;
   state.recentSync = null;
   state.repoActionErrors = {};
+  state.repoSyncResults = {};
   state.githubContributions = {
     days: [],
     meta: null,

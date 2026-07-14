@@ -9,6 +9,8 @@ delegate_command!(settings; fn workspace_set_contribution_identities(app: AppHan
 delegate_command!(async settings; fn workspace_scan_contribution_identities(app: AppHandle) -> Result<ContributionIdentityRecommendationResult, String>);
 delegate_command!(settings; fn repo_set_preference(app: AppHandle, repo_id: String, key: String, value: bool,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn repo_set_auto_sync(app: AppHandle, repo_id: String, auto_sync: bool,) -> Result<WorkspaceSettings, String>);
+delegate_command!(settings; fn repo_get_remote_sync_config(app: AppHandle, repo_id: String,) -> Result<RepoRemoteSyncConfig, String>);
+delegate_command!(settings; fn repo_set_remote_sync_policy(app: AppHandle, repo_id: String, policy: RepoRemoteSyncPolicy,) -> Result<RepoRemoteSyncConfig, String>);
 delegate_dialog_command!(settings; fn workspace_pick_root(app: AppHandle) -> Result<Option<String>, String>);
 delegate_dialog_command!(settings; fn workspace_pick_repo(app: AppHandle) -> Result<Option<String>, String>);
 delegate_dialog_command!(settings; fn workspace_pick_files(app: AppHandle) -> Result<Vec<String>, String>);

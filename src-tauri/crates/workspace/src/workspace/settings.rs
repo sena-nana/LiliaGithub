@@ -11,8 +11,8 @@ use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, 
 use crate::workspace::repo_guard::{repo_resource_id, with_repo_guards, RepoAccess};
 use crate::workspace::repos::{
     canonical_repo_path, git_command, git_command_lossy, git_common_dir, is_git_repo,
-    managed_repo_paths, repo_id, resolve_repo_worktree, run_repo_visible_blocking,
-    ResolvedRepoWorktree,
+    managed_repo_paths, repo_id, resolve_remote_sync_config, resolve_repo_worktree,
+    run_repo_visible_blocking, ResolvedRepoWorktree,
 };
 use crate::workspace::shared::{
     contribution_identity_key, contribution_identity_matches, current_utc_day_index,
@@ -23,9 +23,9 @@ use lilia_github_contracts::workspace::{
     CachedContributionResult, CachedRepoSummary, ContributionIdentity,
     ContributionIdentityRecommendation, ContributionIdentityRecommendationConfidence,
     ContributionIdentityRecommendationRepo, ContributionIdentityRecommendationResult,
-    ContributionIdentityRecommendationSource, HiddenRepo, RemoteRepoShortcut, RepoSummary,
-    RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
-    WorkspaceStartupContributions,
+    ContributionIdentityRecommendationSource, HiddenRepo, RemoteRepoShortcut, RepoRemoteSyncConfig,
+    RepoRemoteSyncPolicy, RepoSummary, RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings,
+    WorkspaceStartupCache, WorkspaceStartupContributions,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
@@ -519,6 +519,7 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
     }
     settings.project_launch_configs.remove(repo_id);
     settings.repo_sync_preferences.remove(repo_id);
+    settings.repo_remote_sync_policies.remove(repo_id);
     remove_local_contribution_cache(settings, repo_id);
 }
 
@@ -976,6 +977,43 @@ pub fn repo_set_auto_sync(
     set_repo_preference_value(&mut settings, normalized, "autoSync", auto_sync)?;
     save_settings(&app, &settings)?;
     Ok(settings)
+}
+
+pub fn repo_get_remote_sync_config(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoRemoteSyncConfig, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    let path = repo_path_by_id(&app, normalized)?;
+    resolve_remote_sync_config(&load_settings(&app), normalized, &path)
+}
+
+pub fn repo_set_remote_sync_policy(
+    app: AppHandle,
+    repo_id: String,
+    policy: RepoRemoteSyncPolicy,
+) -> Result<RepoRemoteSyncConfig, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    let path = repo_path_by_id(&app, normalized)?;
+    let mut settings = load_settings(&app);
+    settings
+        .repo_remote_sync_policies
+        .insert(normalized.to_string(), policy);
+    let config = resolve_remote_sync_config(&settings, normalized, &path)?;
+    if !config.validation_errors.is_empty() {
+        return Err(config.validation_errors.join("；"));
+    }
+    settings
+        .repo_remote_sync_policies
+        .insert(normalized.to_string(), config.resolved_policy.clone());
+    save_settings(&app, &settings)?;
+    resolve_remote_sync_config(&settings, normalized, &path)
 }
 
 fn set_repo_preference_value(

@@ -212,6 +212,8 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         settings::workspace_scan_contribution_identities,
         settings::repo_set_preference,
         settings::repo_set_auto_sync,
+        settings::repo_get_remote_sync_config,
+        settings::repo_set_remote_sync_policy,
         settings::workspace_pick_root,
         settings::workspace_pick_repo,
         settings::workspace_pick_files,

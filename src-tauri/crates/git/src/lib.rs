@@ -122,9 +122,26 @@ pub fn normalize_git_remote_error(remote: &str, error: String) -> String {
 }
 
 pub fn map_remote_git_error(path: &Path, error: String) -> String {
-    origin_remote_url(path)
+    current_upstream_remote(path)
+        .and_then(|remote| remote_url(path, &remote))
+        .or_else(|| origin_remote_url(path))
         .map(|remote| normalize_git_remote_error(&remote, error.clone()))
         .unwrap_or(error)
+}
+
+pub fn remote_url(path: &Path, remote: &str) -> Option<String> {
+    git_command_lossy(path, &["remote", "get-url", remote]).filter(|value| !value.is_empty())
+}
+
+pub fn map_named_remote_git_error(path: &Path, remote: &str, error: String) -> String {
+    remote_url(path, remote)
+        .map(|url| normalize_git_remote_error(&url, error.clone()))
+        .unwrap_or(error)
+}
+
+pub fn current_upstream_remote(path: &Path) -> Option<String> {
+    let branch = git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    git_config_value(path, &format!("branch.{branch}.remote"))
 }
 
 pub fn run_pull(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
@@ -137,6 +154,16 @@ pub fn run_fetch(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
     git_command(path, &["fetch"], auth_header)
         .map(|_| ())
         .map_err(|error| map_remote_git_error(path, error))
+}
+
+pub fn run_fetch_remote(
+    path: &Path,
+    remote: &str,
+    auth_header: Option<&str>,
+) -> Result<(), String> {
+    git_command(path, &["fetch", "--", remote], auth_header)
+        .map(|_| ())
+        .map_err(|error| map_named_remote_git_error(path, remote, error))
 }
 
 pub fn run_push(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
@@ -163,6 +190,24 @@ pub fn run_push(path: &Path, auth_header: Option<&str>) -> Result<(), String> {
     }
     .map(|_| ())
     .map_err(|error| map_remote_git_error(path, error))
+}
+
+pub fn run_push_remote(
+    path: &Path,
+    remote: &str,
+    target_branch: &str,
+    set_upstream: bool,
+    auth_header: Option<&str>,
+) -> Result<(), String> {
+    let refspec = format!("HEAD:refs/heads/{target_branch}");
+    let mut args = vec!["push"];
+    if set_upstream {
+        args.push("--set-upstream");
+    }
+    args.extend(["--", remote, refspec.as_str()]);
+    git_command(path, &args, auth_header)
+        .map(|_| ())
+        .map_err(|error| map_named_remote_git_error(path, remote, error))
 }
 
 fn git_config_value(path: &Path, key: &str) -> Option<String> {
@@ -553,6 +598,71 @@ mod tests {
             run_test_git(&remote, &["rev-parse", "refs/heads/main"]),
             remote_head
         );
+    }
+
+    #[test]
+    fn named_remote_push_sets_upstream_only_for_selected_remote() {
+        let fixture = TestDirectory::new("multi-publish");
+        let repo = fixture.join("repo");
+        let primary = fixture.join("primary.git");
+        let mirror = fixture.join("mirror.git");
+        init_work_repo(&repo, "main");
+        init_bare_repo(&primary);
+        init_bare_repo(&mirror);
+        run_test_git(
+            &repo,
+            &[
+                "remote",
+                "add",
+                "primary",
+                primary.to_string_lossy().as_ref(),
+            ],
+        );
+        run_test_git(
+            &repo,
+            &["remote", "add", "mirror", mirror.to_string_lossy().as_ref()],
+        );
+
+        run_push_remote(&repo, "primary", "main", true, None).unwrap();
+        run_push_remote(&repo, "mirror", "main", false, None).unwrap();
+
+        assert_eq!(
+            run_test_git(
+                &repo,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+            ),
+            "primary/main"
+        );
+        let head = run_test_git(&repo, &["rev-parse", "HEAD"]);
+        assert_eq!(
+            run_test_git(&primary, &["rev-parse", "refs/heads/main"]),
+            head
+        );
+        assert_eq!(
+            run_test_git(&mirror, &["rev-parse", "refs/heads/main"]),
+            head
+        );
+    }
+
+    #[test]
+    fn named_remote_errors_use_that_remotes_url() {
+        let fixture = TestDirectory::new("remote-error-url");
+        let repo = fixture.join("repo");
+        init_work_repo(&repo, "main");
+        run_test_git(
+            &repo,
+            &[
+                "remote",
+                "add",
+                "fork",
+                "https://github.com/example/private-fork.git",
+            ],
+        );
+
+        let message =
+            map_named_remote_git_error(&repo, "fork", "remote: Repository not found".to_string());
+
+        assert!(message.contains("example/private-fork"));
     }
 
     #[test]

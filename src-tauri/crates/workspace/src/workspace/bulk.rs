@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::runtime::WorkspaceContext as AppHandle;
@@ -7,10 +8,8 @@ use crate::workspace::operations::{
 };
 use crate::workspace::repo_guard::{repo_resource_id, with_repo_guard, RepoAccess};
 use crate::workspace::repos::{
-    current_branch_upstream, git_command, git_common_dir, prepare_pull_local_changes,
-    remember_repo_uses_system_git, repo_conflicts, repo_uses_system_git,
-    restore_pull_local_changes, restore_pull_local_changes_after_error, run_fetch, run_pull,
-    run_push, run_system_git_push, summarize_repo,
+    git_common_dir, require_valid_remote_sync_config, run_configured_pull,
+    run_configured_pull_with_config, run_multi_remote_push, summarize_repo, sync_result,
 };
 use crate::workspace::settings::{repo_path_by_id, workspace_root};
 use crate::workspace::tasks::{
@@ -18,7 +17,8 @@ use crate::workspace::tasks::{
     register_pending_task_cancellation,
 };
 use lilia_github_contracts::workspace::{
-    BulkSyncPreview, BulkSyncRepo, BulkSyncResult, RepoPullLocalChangesMode, RepoSummary,
+    BulkSyncPreview, BulkSyncRepo, BulkSyncResult, RepoPullLocalChangesMode, RepoRemoteSyncPolicy,
+    RepoSummary,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
@@ -76,295 +76,30 @@ pub(super) fn repo_dirty_count(summary: &RepoSummary) -> usize {
     summary.staged_count + summary.unstaged_count + summary.untracked_count
 }
 
-pub(super) fn push_block_reason(summary: &RepoSummary) -> Option<String> {
-    if summary.remote_url.is_none() {
-        Some("没有 origin remote".to_string())
-    } else if summary.current_branch.is_none() {
-        Some("当前不是命名分支".to_string())
-    } else if summary.behind > 0 {
-        Some("当前分支落后于 upstream".to_string())
-    } else {
-        None
-    }
+#[derive(Clone, Copy, Default)]
+pub(super) struct RemoteSyncNeeds {
+    pub(super) pull: bool,
+    pub(super) push: bool,
+    pub(super) divergent: bool,
+    pub(super) unpushable_commits: bool,
 }
 
-#[cfg(test)]
-pub(super) fn merge_pull_block_reason(summary: &RepoSummary, has_upstream: bool) -> Option<String> {
-    merge_pull_block_reason_with_mode(summary, has_upstream, RepoPullLocalChangesMode::Reject)
-}
-
-pub(super) fn merge_pull_block_reason_with_mode(
+pub(super) fn remote_sync_needs(
     summary: &RepoSummary,
-    has_upstream: bool,
-    local_changes_mode: RepoPullLocalChangesMode,
-) -> Option<String> {
-    if summary.conflict_count > 0 {
-        Some("已有冲突需要先处理".to_string())
-    } else if repo_dirty_count(summary) > 0
-        && local_changes_mode == RepoPullLocalChangesMode::Reject
-    {
-        Some("存在未提交变更，已阻止合并拉取".to_string())
-    } else if !has_upstream {
-        Some("当前分支没有 upstream".to_string())
-    } else {
-        None
-    }
-}
-
-pub(super) fn build_bulk_push_preview_with_lookup<F>(
-    repos: Vec<RepoSummary>,
-    has_upstream: F,
-) -> BulkSyncPreview
-where
-    F: Fn(&RepoSummary) -> bool,
-{
-    let mut eligible = Vec::new();
-    let mut blocked = Vec::new();
-    let mut warnings = Vec::new();
-
-    for repo in repos {
-        if let Some(reason) = push_block_reason(&repo) {
-            blocked.push(BulkSyncRepo { repo, reason });
-            continue;
+    policy: &RepoRemoteSyncPolicy,
+) -> RemoteSyncNeeds {
+    let pull_remotes = policy.pull_remotes.iter().collect::<HashSet<_>>();
+    let push_remotes = policy.push_remotes.iter().collect::<HashSet<_>>();
+    let mut needs = RemoteSyncNeeds::default();
+    for state in &summary.remote_branch_states {
+        if pull_remotes.contains(&state.remote) {
+            needs.pull |= state.needs_pull;
+            needs.divergent |= state.needs_pull && state.ahead > 0;
+            needs.unpushable_commits |= state.needs_push;
         }
-        let has_upstream = has_upstream(&repo);
-        let dirty = repo_dirty_count(&repo);
-        if !has_upstream {
-            eligible.push(BulkSyncRepo {
-                repo: repo.clone(),
-                reason: "发布当前分支到远端".to_string(),
-            });
-            if dirty > 0 {
-                warnings.push(BulkSyncRepo {
-                    repo,
-                    reason: "存在未提交变更，但仍可发布当前分支".to_string(),
-                });
-            }
-        } else if repo.ahead > 0 {
-            eligible.push(BulkSyncRepo {
-                repo: repo.clone(),
-                reason: "有本地提交待推送".to_string(),
-            });
-            if dirty > 0 {
-                warnings.push(BulkSyncRepo {
-                    repo,
-                    reason: "存在未提交变更，但仍可执行 push".to_string(),
-                });
-            }
-        } else {
-            warnings.push(BulkSyncRepo {
-                repo,
-                reason: "没有需要推送的提交".to_string(),
-            });
-        }
+        needs.push |= push_remotes.contains(&state.remote) && state.needs_push;
     }
-
-    BulkSyncPreview {
-        operation: "push".to_string(),
-        eligible,
-        blocked,
-        warnings,
-    }
-}
-
-pub(super) fn build_bulk_push_preview(repos: Vec<RepoSummary>) -> BulkSyncPreview {
-    build_bulk_push_preview_with_lookup(repos, |repo| {
-        current_branch_upstream(&PathBuf::from(&repo.path)).is_some()
-    })
-}
-
-#[cfg(test)]
-pub(super) fn build_bulk_sync_preview_with_lookup<F>(
-    repos: Vec<RepoSummary>,
-    has_upstream: F,
-) -> BulkSyncPreview
-where
-    F: Fn(&RepoSummary) -> bool,
-{
-    build_bulk_sync_preview_with_lookup_and_mode(
-        repos,
-        has_upstream,
-        RepoPullLocalChangesMode::Reject,
-    )
-}
-
-pub(super) fn build_bulk_sync_preview_with_lookup_and_mode<F>(
-    repos: Vec<RepoSummary>,
-    has_upstream: F,
-    local_changes_mode: RepoPullLocalChangesMode,
-) -> BulkSyncPreview
-where
-    F: Fn(&RepoSummary) -> bool,
-{
-    let mut eligible = Vec::new();
-    let mut blocked = Vec::new();
-    let mut warnings = Vec::new();
-
-    for repo in repos {
-        if repo.remote_url.is_none() {
-            blocked.push(BulkSyncRepo {
-                repo,
-                reason: "没有 origin remote".to_string(),
-            });
-            continue;
-        }
-        if repo.current_branch.is_none() {
-            blocked.push(BulkSyncRepo {
-                repo,
-                reason: "当前不是命名分支".to_string(),
-            });
-            continue;
-        }
-
-        let has_upstream = has_upstream(&repo);
-        let dirty = repo_dirty_count(&repo);
-        if repo.behind > 0 {
-            if repo.conflict_count > 0 {
-                blocked.push(BulkSyncRepo {
-                    repo,
-                    reason: "已有冲突需要先处理".to_string(),
-                });
-            } else if dirty > 0 && local_changes_mode == RepoPullLocalChangesMode::Reject {
-                blocked.push(BulkSyncRepo {
-                    repo,
-                    reason: "存在未提交变更".to_string(),
-                });
-            } else if !has_upstream {
-                blocked.push(BulkSyncRepo {
-                    repo,
-                    reason: "当前分支没有 upstream".to_string(),
-                });
-            } else if repo.ahead > 0 {
-                eligible.push(BulkSyncRepo {
-                    repo,
-                    reason: if dirty > 0 {
-                        "需处理本地修改，拉取合并后推送".to_string()
-                    } else {
-                        "需先拉取合并后推送".to_string()
-                    },
-                });
-            } else {
-                eligible.push(BulkSyncRepo {
-                    repo,
-                    reason: if dirty > 0 {
-                        "需处理本地修改后拉取远端更新".to_string()
-                    } else {
-                        "可拉取远端更新".to_string()
-                    },
-                });
-            }
-            continue;
-        }
-
-        if repo.ahead > 0 {
-            if !has_upstream {
-                blocked.push(BulkSyncRepo {
-                    repo,
-                    reason: "当前分支没有 upstream".to_string(),
-                });
-            } else {
-                eligible.push(BulkSyncRepo {
-                    repo: repo.clone(),
-                    reason: "有本地提交待推送".to_string(),
-                });
-                if dirty > 0 {
-                    warnings.push(BulkSyncRepo {
-                        repo,
-                        reason: "存在未提交变更，但仍可执行 push".to_string(),
-                    });
-                }
-            }
-        } else {
-            warnings.push(BulkSyncRepo {
-                repo,
-                reason: "没有需要同步的更新".to_string(),
-            });
-        }
-    }
-
-    BulkSyncPreview {
-        operation: "sync".to_string(),
-        eligible,
-        blocked,
-        warnings,
-    }
-}
-
-pub(super) fn build_bulk_sync_preview_with_mode(
-    repos: Vec<RepoSummary>,
-    local_changes_mode: RepoPullLocalChangesMode,
-) -> BulkSyncPreview {
-    build_bulk_sync_preview_with_lookup_and_mode(
-        repos,
-        |repo| current_branch_upstream(&PathBuf::from(&repo.path)).is_some(),
-        local_changes_mode,
-    )
-}
-
-#[cfg(test)]
-pub(super) fn build_bulk_preview(operation: String, repos: Vec<RepoSummary>) -> BulkSyncPreview {
-    build_bulk_preview_with_mode(operation, repos, RepoPullLocalChangesMode::Reject)
-}
-
-pub(super) fn build_bulk_preview_with_mode(
-    operation: String,
-    repos: Vec<RepoSummary>,
-    local_changes_mode: RepoPullLocalChangesMode,
-) -> BulkSyncPreview {
-    if operation == "push" {
-        return build_bulk_push_preview(repos);
-    }
-    if operation == "sync" {
-        return build_bulk_sync_preview_with_mode(repos, local_changes_mode);
-    }
-    let mut eligible = Vec::new();
-    let mut blocked = Vec::new();
-    let mut warnings = Vec::new();
-
-    for repo in repos {
-        if repo.remote_url.is_none() {
-            blocked.push(BulkSyncRepo {
-                repo,
-                reason: "没有 origin remote".to_string(),
-            });
-            continue;
-        }
-        if repo.current_branch.is_none() {
-            blocked.push(BulkSyncRepo {
-                repo,
-                reason: "当前不是命名分支".to_string(),
-            });
-            continue;
-        }
-        let dirty = repo_dirty_count(&repo);
-        if dirty > 0 && local_changes_mode == RepoPullLocalChangesMode::Reject {
-            blocked.push(BulkSyncRepo {
-                repo,
-                reason: "存在未提交变更".to_string(),
-            });
-        } else if repo.behind > 0 {
-            eligible.push(BulkSyncRepo {
-                repo,
-                reason: if dirty > 0 {
-                    "需处理本地修改后拉取远端更新".to_string()
-                } else {
-                    "可拉取远端更新".to_string()
-                },
-            });
-        } else {
-            warnings.push(BulkSyncRepo {
-                repo,
-                reason: "没有需要拉取的更新".to_string(),
-            });
-        }
-    }
-
-    BulkSyncPreview {
-        operation: "pull".to_string(),
-        eligible,
-        blocked,
-        warnings,
-    }
+    needs
 }
 
 pub(super) fn bulk_sync_repo(
@@ -392,35 +127,34 @@ fn bulk_sync_repo_guarded(
     path: PathBuf,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> BulkSyncResult {
-    let summary = summarize_repo(root, &path);
     if operation == "sync" {
+        let summary = summarize_repo(root, &path);
         return sync_repo(app, root, repo_id, &path, &summary, local_changes_mode);
     }
-    let run = if operation == "pull" {
-        prepare_pull_local_changes(&path, &summary, Some(local_changes_mode), "pull").and_then(
-            |local_changes| {
-                run_pull(app, &path).map_err(|err| {
-                    restore_pull_local_changes_after_error(&path, local_changes.clone(), err)
-                })?;
-                restore_pull_local_changes(&path, local_changes)
-            },
-        )
-    } else if let Some(reason) = push_block_reason(&summary) {
-        Err(format!("{reason}，已跳过 push"))
-    } else if current_branch_upstream(&path).is_some() && summary.ahead <= 0 {
-        Err("没有需要推送的提交，已跳过 push".to_string())
+    let result = if operation == "pull" {
+        run_configured_pull(app, root, &repo_id, &path, Some(local_changes_mode), false)
     } else {
-        run_push_with_system_git_fallback(app, &path)
+        require_valid_remote_sync_config(app, &repo_id, &path).and_then(|config| {
+            run_multi_remote_push(app, &path, &config, None, None, false)
+                .map(|steps| sync_result(root, &path, steps, "推送已执行"))
+        })
     };
-
-    match run {
-        Ok(()) => BulkSyncResult {
-            summary: Some(summarize_repo(root, &path)),
-            repo_id,
-            status: "success".to_string(),
-            message: "完成".to_string(),
-        },
+    match result {
+        Ok(result) => bulk_result_from_operation(repo_id, result),
         Err(err) => bulk_error_result(repo_id, err),
+    }
+}
+
+fn bulk_result_from_operation(
+    repo_id: String,
+    result: lilia_github_contracts::workspace::RepoSyncOperationResult,
+) -> BulkSyncResult {
+    BulkSyncResult {
+        repo_id,
+        status: result.status,
+        message: result.message,
+        summary: Some(result.summary),
+        steps: result.steps,
     }
 }
 
@@ -432,145 +166,48 @@ pub(super) fn sync_repo(
     summary: &RepoSummary,
     local_changes_mode: RepoPullLocalChangesMode,
 ) -> BulkSyncResult {
-    if summary.ahead <= 0 && summary.behind <= 0 {
+    if summary.ahead <= 0
+        && summary.behind <= 0
+        && summary.remotes_needing_pull == 0
+        && summary.remotes_needing_push == 0
+    {
         return BulkSyncResult {
             summary: Some(summary.clone()),
             repo_id,
             status: "success".to_string(),
             message: "完成".to_string(),
+            steps: Vec::new(),
         };
     }
 
-    let has_upstream = current_branch_upstream(path).is_some();
-    let dirty = repo_dirty_count(summary);
-    let skip = |message: &str| bulk_error_result(&repo_id, message);
-    let run: Result<(), BulkSyncResult> = if summary.behind > 0 {
-        if summary.remote_url.is_none() {
-            Err(skip("没有 origin remote，已跳过同步"))
-        } else if summary.current_branch.is_none() {
-            Err(skip("当前不是命名分支，已跳过同步"))
-        } else if summary.conflict_count > 0 {
-            Err(skip("已有冲突需要先处理，已跳过同步"))
-        } else if dirty > 0 && local_changes_mode == RepoPullLocalChangesMode::Reject {
-            Err(skip("存在未提交变更，已跳过同步"))
-        } else if !has_upstream {
-            Err(skip("当前分支没有 upstream，已跳过同步"))
-        } else if summary.ahead > 0 {
-            run_merge_pull_then_push(
-                app,
-                root,
-                repo_id.clone(),
-                path,
-                summary,
-                local_changes_mode,
-            )
-        } else {
-            prepare_pull_local_changes(path, summary, Some(local_changes_mode), "pull")
-                .and_then(|local_changes| {
-                    run_pull(app, path).map_err(|err| {
-                        restore_pull_local_changes_after_error(path, local_changes.clone(), err)
-                    })?;
-                    restore_pull_local_changes(path, local_changes)
-                })
-                .map_err(|err| bulk_error_result(&repo_id, err))
-        }
-    } else {
-        if !has_upstream {
-            Err(bulk_error_result(
-                &repo_id,
-                "当前分支没有 upstream，已跳过同步",
-            ))
-        } else if let Some(reason) = push_block_reason(summary) {
-            Err(bulk_error_result(&repo_id, format!("{reason}，已跳过同步")))
-        } else {
-            run_push_with_system_git_fallback(app, path)
-                .map_err(|err| bulk_error_result(&repo_id, err))
-        }
+    let config = match require_valid_remote_sync_config(app, &repo_id, path) {
+        Ok(config) => config,
+        Err(error) => return bulk_error_result(repo_id, error),
     };
-
-    match run {
-        Ok(()) => BulkSyncResult {
-            summary: Some(summarize_repo(root, path)),
-            repo_id,
-            status: "success".to_string(),
-            message: "完成".to_string(),
-        },
-        Err(result) => result,
-    }
-}
-
-pub(super) fn run_merge_pull_then_push(
-    app: &AppHandle,
-    root: &Path,
-    repo_id: String,
-    path: &Path,
-    summary: &RepoSummary,
-    local_changes_mode: RepoPullLocalChangesMode,
-) -> Result<(), BulkSyncResult> {
-    let local_changes =
-        prepare_pull_local_changes(path, summary, Some(local_changes_mode), "合并拉取")
-            .map_err(|err| bulk_error_result(&repo_id, err))?;
-    run_fetch(app, path).map_err(|err| {
-        bulk_error_result(
-            &repo_id,
-            restore_pull_local_changes_after_error(path, local_changes.clone(), err),
-        )
-    })?;
-    match git_command(path, &["merge", "--no-edit", "@{u}"], None) {
-        Ok(_) => {
-            if let Err(err) = restore_pull_local_changes(path, local_changes) {
-                let conflicts = repo_conflicts(path);
-                if conflicts.files.is_empty() {
-                    return Err(bulk_error_result(repo_id, err));
-                }
-                return Err(BulkSyncResult {
-                    repo_id,
-                    status: "error".to_string(),
-                    message: "拉取完成，stash 还原产生冲突，请处理后推送".to_string(),
-                    summary: Some(summarize_repo(root, path)),
-                });
-            }
-            run_push_with_system_git_fallback(app, path)
-                .map_err(|err| bulk_error_result(repo_id, err))
-        }
-        Err(err) => {
-            let conflicts = repo_conflicts(path);
-            if conflicts.files.is_empty() {
-                Err(bulk_error_result(
-                    &repo_id,
-                    restore_pull_local_changes_after_error(path, local_changes, err),
-                ))
-            } else {
-                Err(BulkSyncResult {
-                    repo_id,
-                    status: "error".to_string(),
-                    message: "合并产生冲突，请处理后推送".to_string(),
-                    summary: Some(summarize_repo(root, path)),
-                })
-            }
+    let needs = remote_sync_needs(summary, &config.resolved_policy);
+    let mut steps = Vec::new();
+    if needs.pull {
+        match run_configured_pull_with_config(
+            app,
+            root,
+            path,
+            &config,
+            Some(local_changes_mode),
+            needs.divergent || config.resolved_policy.pull_remotes.len() > 1,
+        ) {
+            Ok(result) if result.status == "success" => steps.extend(result.steps),
+            Ok(result) => return bulk_result_from_operation(repo_id, result),
+            Err(error) => return bulk_error_result(repo_id, error),
         }
     }
-}
-
-pub(super) fn should_retry_push_with_system_git(error: &str) -> bool {
-    error.contains("当前 GitHub 绑定无权限") || error.contains("无法认证 GitHub 仓库")
-}
-
-pub(super) fn run_push_with_system_git_fallback(
-    app: &AppHandle,
-    path: &Path,
-) -> Result<(), String> {
-    if repo_uses_system_git(app, path) {
-        return run_push(app, path);
-    }
-    match run_push(app, path) {
-        Ok(()) => Ok(()),
-        Err(err) if should_retry_push_with_system_git(&err) => {
-            run_system_git_push(path)?;
-            remember_repo_uses_system_git(app, path)
+    let refreshed = summarize_repo(root, path);
+    if remote_sync_needs(&refreshed, &config.resolved_policy).push {
+        match run_multi_remote_push(app, path, &config, None, None, false) {
+            Ok(push_steps) => steps.extend(push_steps),
+            Err(error) => return bulk_error_result(repo_id, error),
         }
-        Err(err) => Err(err),
     }
+    bulk_result_from_operation(repo_id, sync_result(root, path, steps, "同步已执行"))
 }
 
 pub(super) fn bulk_error_result(
@@ -582,27 +219,111 @@ pub(super) fn bulk_error_result(
         status: "error".to_string(),
         message: message.into(),
         summary: None,
+        steps: Vec::new(),
     }
 }
 
 pub async fn bulk_sync_preview(
     app: AppHandle,
     operation: String,
-    repos: Vec<RepoSummary>,
+    repo_ids: Vec<String>,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
 ) -> Result<BulkSyncPreview, String> {
+    let operation_app = app.clone();
     run_operation(
         app,
         OperationSpec::new(OperationKind::LocalRead).lane(DispatchLane::Bulk),
         move || {
-            Ok(build_bulk_preview_with_mode(
+            build_live_bulk_preview(
+                &operation_app,
                 operation,
-                repos,
+                repo_ids,
                 local_changes_mode.unwrap_or_default(),
-            ))
+            )
         },
     )
     .await
+}
+
+fn build_live_bulk_preview(
+    app: &AppHandle,
+    operation: String,
+    repo_ids: Vec<String>,
+    local_changes_mode: RepoPullLocalChangesMode,
+) -> Result<BulkSyncPreview, String> {
+    if !matches!(operation.as_str(), "pull" | "push" | "sync") {
+        return Err("无效的批量同步操作".to_string());
+    }
+    let root = workspace_root(app)?;
+    let mut eligible = Vec::new();
+    let mut blocked = Vec::new();
+    let mut warnings = Vec::new();
+    for repo_id in repo_ids {
+        let path = repo_path_by_id(app, &repo_id)?;
+        let repo = summarize_repo(&root, &path);
+        let config = match require_valid_remote_sync_config(app, &repo_id, &path) {
+            Ok(config) => config,
+            Err(reason) => {
+                blocked.push(BulkSyncRepo { repo, reason });
+                continue;
+            }
+        };
+        if repo.current_branch.is_none() {
+            blocked.push(BulkSyncRepo {
+                repo,
+                reason: "当前不是命名分支".to_string(),
+            });
+            continue;
+        }
+        let needs = remote_sync_needs(&repo, &config.resolved_policy);
+        let pull_requested = operation != "push";
+        let push_requested = operation != "pull";
+        if pull_requested && repo.conflict_count > 0 {
+            blocked.push(BulkSyncRepo {
+                repo,
+                reason: "已有冲突需要先处理".to_string(),
+            });
+        } else if pull_requested
+            && repo_dirty_count(&repo) > 0
+            && local_changes_mode == RepoPullLocalChangesMode::Reject
+        {
+            blocked.push(BulkSyncRepo {
+                repo,
+                reason: "存在未提交变更".to_string(),
+            });
+        } else if push_requested
+            && config.resolved_policy.push_remotes.is_empty()
+            && !needs.pull
+            && (operation == "push" || needs.unpushable_commits)
+        {
+            blocked.push(BulkSyncRepo {
+                repo,
+                reason: "未配置推送目标".to_string(),
+            });
+        } else if (pull_requested && needs.pull) || (push_requested && needs.push) {
+            eligible.push(BulkSyncRepo {
+                repo,
+                reason: match (needs.pull, needs.push) {
+                    (true, true) => "有远端更新待合并及本地提交待推送",
+                    (true, false) => "有远端更新待拉取",
+                    (false, true) => "有本地提交待推送",
+                    _ => unreachable!(),
+                }
+                .to_string(),
+            });
+        } else {
+            warnings.push(BulkSyncRepo {
+                repo,
+                reason: "没有需要同步的更新".to_string(),
+            });
+        }
+    }
+    Ok(BulkSyncPreview {
+        operation,
+        eligible,
+        blocked,
+        warnings,
+    })
 }
 
 enum SubmittedBulkRepo {
@@ -798,6 +519,7 @@ mod trigger_tests {
                 "失败".to_string()
             },
             summary: None,
+            steps: Vec::new(),
         }
     }
 

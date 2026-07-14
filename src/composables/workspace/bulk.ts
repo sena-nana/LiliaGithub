@@ -14,7 +14,7 @@ export async function previewBulk(
   if (state.bulkRunning) return;
   const generation = ++bulkPreviewGeneration;
   const service = await loadWorkspaceService();
-  const preview = await service.bulkSyncPreview(operation, state.repos, localChangesMode);
+  const preview = await service.bulkSyncPreview(operation, state.repos.map((repo) => repo.id), localChangesMode);
   if (generation !== bulkPreviewGeneration) return;
   applyBulkPreview(preview);
 }
@@ -59,7 +59,7 @@ export async function syncAll(localChangesMode: RepoPullLocalChangesMode = "reje
   state.bulkRunning = true;
   try {
     const service = await loadWorkspaceService();
-    const preview = await service.bulkSyncPreview("sync", state.repos, localChangesMode);
+    const preview = await service.bulkSyncPreview("sync", state.repos.map((repo) => repo.id), localChangesMode);
     if (generation !== bulkExecutionGeneration) return;
     applyBulkPreview(preview);
     const targetRepoIds = bulkExecutionRepoIds(preview) ?? [];

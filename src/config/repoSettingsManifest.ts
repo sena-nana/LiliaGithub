@@ -1,4 +1,8 @@
-import type { RepoSyncPreference, WorkspaceSettings } from "../services/workspace/types";
+import type {
+  RepoRemoteSyncPolicy,
+  RepoSyncPreference,
+  WorkspaceSettings,
+} from "../services/workspace/types";
 
 export type RepoSettingKey = keyof RepoSyncPreference;
 
@@ -103,6 +107,27 @@ export function withRepoAutoSyncPreference(
   autoSync: boolean,
 ) {
   return withRepoSettingPreference(preferences, repoId, "autoSync", autoSync);
+}
+
+export function withRepoRemoteSyncPolicy(
+  policies: WorkspaceSettings["repoRemoteSyncPolicies"] | undefined,
+  repoId: string,
+  policy: RepoRemoteSyncPolicy,
+) {
+  const normalizedRepoId = repoId.trim();
+  const nextPolicies = Object.fromEntries(
+    Object.entries(policies ?? {}).map(([id, current]) => [id, cloneRepoRemoteSyncPolicy(current)]),
+  );
+  if (normalizedRepoId) nextPolicies[normalizedRepoId] = cloneRepoRemoteSyncPolicy(policy);
+  return nextPolicies;
+}
+
+export function cloneRepoRemoteSyncPolicy(policy: RepoRemoteSyncPolicy): RepoRemoteSyncPolicy {
+  return {
+    primaryRemote: policy.primaryRemote,
+    pullRemotes: [...policy.pullRemotes],
+    pushRemotes: [...policy.pushRemotes],
+  };
 }
 
 function cloneRepoSyncPreferences(preferences: WorkspaceSettings["repoSyncPreferences"] | undefined) {

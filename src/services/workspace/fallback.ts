@@ -1,7 +1,9 @@
 import packageJson from "../../../package.json";
 import { normalizeWorkspaceTasks } from "./taskRetention";
 import {
+  cloneRepoRemoteSyncPolicy,
   withRepoAutoSyncPreference,
+  withRepoRemoteSyncPolicy,
   withRepoSettingPreference,
 } from "../../config/repoSettingsManifest";
 import type {
@@ -68,6 +70,7 @@ import type {
   ProjectLaunchStatus,
   RepoConflictChoice,
   RepoConflictState,
+  RepoCommitResult,
   RepoDetail,
   RepoDetailPatch,
   RepoDetailPatchRequest,
@@ -77,9 +80,13 @@ import type {
   RepoOperationResult,
   RepoPullLocalChangesMode,
   RepoRemote,
+  RepoRemoteOperationStep,
+  RepoRemoteSyncConfig,
+  RepoRemoteSyncPolicy,
   RepoRefreshSummaryOptions,
   RepoResetMode,
   RepoSummary,
+  RepoSyncOperationResult,
   RepoSyncPreference,
   RepoStashEntry,
   RepoStashDetail,
@@ -134,7 +141,29 @@ const useAgentDebugMockWorkspace = typeof import.meta !== "undefined"
   && import.meta.env?.VITE_LILIA_GITHUB_AGENT_DEBUG_MOCK_WORKSPACE === "1";
 const useDefaultFallback = !useReadmeShowcaseFallback;
 
-let fallbackRepos: RepoSummary[] = [
+type FallbackRepoInput = Omit<RepoSummary, "remoteBranchStates" | "remotesNeedingPull" | "remotesNeedingPush">;
+
+function withFallbackRemoteState(repos: FallbackRepoInput[]): RepoSummary[] {
+  return repos.map((repo) => ({
+    ...repo,
+    remoteBranchStates: repo.currentBranch && repo.remoteUrl
+      ? [{
+          remote: "origin",
+          remoteBranch: repo.currentBranch,
+          exists: true,
+          ahead: repo.ahead,
+          behind: repo.behind,
+          needsPull: repo.behind > 0,
+          needsPush: repo.ahead > 0,
+          upstream: true,
+        }]
+      : [],
+    remotesNeedingPull: repo.behind > 0 ? 1 : 0,
+    remotesNeedingPush: repo.ahead > 0 ? 1 : 0,
+  }));
+}
+
+let fallbackRepos: RepoSummary[] = withFallbackRemoteState([
   {
     id: "LiliaGithub",
     name: "LiliaGithub",
@@ -277,14 +306,14 @@ let fallbackRepos: RepoSummary[] = [
       mainRepoId: null,
     },
   },
-];
+]);
 if (useDefaultFallback) {
   fallbackRepos = createDefaultFallbackRepos();
 }
 const baseFallbackRepos = fallbackRepos.map(cloneRepoSummary);
 
 function createDefaultFallbackRepos(): RepoSummary[] {
-  const repos: RepoSummary[] = [
+  const repos: FallbackRepoInput[] = [
     {
       id: "LiliaGithub",
       name: "LiliaGithub",
@@ -372,7 +401,7 @@ function createDefaultFallbackRepos(): RepoSummary[] {
       },
     });
   }
-  return repos;
+  return withFallbackRemoteState(repos);
 }
 
 const defaultFallbackBinding: GitHubBindingStatus = {
@@ -542,6 +571,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function cloneRepoSummary(repo: RepoSummary): RepoSummary {
   return {
     ...repo,
+    remoteBranchStates: (repo.remoteBranchStates ?? []).map((state) => ({ ...state })),
+    remotesNeedingPull: repo.remotesNeedingPull ?? (repo.behind > 0 ? 1 : 0),
+    remotesNeedingPush: repo.remotesNeedingPush ?? (repo.ahead > 0 ? 1 : 0),
     languageStats: repo.languageStats.map((stat) => ({ ...stat })),
     worktree: { ...repo.worktree },
   };
@@ -2375,6 +2407,7 @@ function createFallbackSettings(): WorkspaceSettings {
       githubBinding: defaultFallbackBinding.binding,
       projectLaunchConfigs: {},
       repoSyncPreferences: {},
+      repoRemoteSyncPolicies: {},
       hiddenRepoIds: [],
       managedRepoIds: fallbackRepos.map((repo) => repo.id),
       systemGitRepoIds: [],
@@ -2406,6 +2439,7 @@ function createFallbackSettings(): WorkspaceSettings {
       LiliaDocs: { autoSync: true },
       Mutsuki: { autoSync: false },
     },
+    repoRemoteSyncPolicies: {},
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     systemGitRepoIds: [],
@@ -2432,6 +2466,9 @@ let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContribut
 let fallbackGitHubWorkflowRunsOverride:
   ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null = null;
 let fallbackRepoRemoteSyncOverride: ((repo: RepoSummary) => string | null) | null = null;
+let fallbackRemoteOperationErrorOverride:
+  | ((repoId: string, remote: string, operation: RepoRemoteOperationStep["operation"]) => string | null)
+  | null = null;
 let fallbackRepoDetailOverride: ((repoId: string) => RepoDetail | Promise<RepoDetail> | null) | null = null;
 type FallbackGitHubAccountIssuesOverride = (
   options: Pick<GitHubIssueListOptions, "state" | "perPage" | "sort" | "direction">,
@@ -2547,6 +2584,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepoContributionOverride = null;
   fallbackGitHubWorkflowRunsOverride = null;
   fallbackRepoRemoteSyncOverride = null;
+  fallbackRemoteOperationErrorOverride = null;
   fallbackRepoDetailOverride = null;
   fallbackBinding = defaultFallbackBinding;
   fallbackGitHubReposError = null;
@@ -2673,6 +2711,19 @@ export function setFallbackRepoRemoteSyncOverrideForTests(
   override: ((repo: RepoSummary) => string | null) | null,
 ) {
   fallbackRepoRemoteSyncOverride = override;
+}
+
+export function setFallbackRemoteOperationErrorOverrideForTests(
+  override: ((repoId: string, remote: string, operation: RepoRemoteOperationStep["operation"]) => string | null) | null,
+) {
+  fallbackRemoteOperationErrorOverride = override;
+}
+
+export function setFallbackRepoRemotesForTests(repoId: string, remotes: RepoRemote[]) {
+  fallbackRepoRemotes = {
+    ...fallbackRepoRemotes,
+    [repoId]: remotes.map(cloneRepoRemote),
+  };
 }
 
 export function setFallbackRepoDetailOverrideForTests(
@@ -3076,6 +3127,12 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
       Object.entries(settings.repoSyncPreferences ?? {}).map(([repoId, preference]) => [
         repoId,
         { ...preference },
+      ]),
+    ),
+    repoRemoteSyncPolicies: Object.fromEntries(
+      Object.entries(settings.repoRemoteSyncPolicies ?? {}).map(([repoId, policy]) => [
+        repoId,
+        cloneRepoRemoteSyncPolicy(policy),
       ]),
     ),
     hiddenRepoIds: [...settings.hiddenRepoIds],
@@ -3863,6 +3920,9 @@ export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promi
       githubFullName: null,
       ahead: 0,
       behind: 0,
+      remoteBranchStates: [],
+      remotesNeedingPull: 0,
+      remotesNeedingPush: 0,
       stagedCount: 0,
       unstagedCount: request.addReadme || request.gitignoreTemplate || request.licenseTemplate ? 1 : 0,
       untrackedCount: 0,
@@ -3909,6 +3969,18 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
       githubFullName: remoteUrl.includes("github.com") ? `sena-nana/${name}` : null,
       ahead: 0,
       behind: 0,
+      remoteBranchStates: [{
+        remote: "origin",
+        remoteBranch: "main",
+        exists: true,
+        ahead: 0,
+        behind: 0,
+        needsPull: false,
+        needsPush: false,
+        upstream: true,
+      }],
+      remotesNeedingPull: 0,
+      remotesNeedingPush: 0,
       stagedCount: 0,
       unstagedCount: 0,
       untrackedCount: 0,
@@ -3987,6 +4059,9 @@ function lightweightRepoSummary(repo: RepoSummary): RepoSummary {
     githubFullName: null,
     ahead: 0,
     behind: 0,
+    remoteBranchStates: [],
+    remotesNeedingPull: 0,
+    remotesNeedingPush: 0,
     stagedCount: 0,
     unstagedCount: 0,
     untrackedCount: 0,
@@ -6137,36 +6212,6 @@ function syncFallbackRepoBranchState(repoId: string) {
   return next;
 }
 
-function fallbackPublishTarget(repoId: string, branchName?: string | null, remoteName?: string | null) {
-  const repo = fallbackRepo(repoId);
-  if (!repo.remoteUrl) throw new Error("没有 origin remote");
-  const localBranchName = branchName?.trim() || repo.currentBranch?.trim();
-  if (!localBranchName) throw new Error("当前不是命名分支");
-  const branches = syncFallbackRepoBranchState(repoId);
-  const localBranch = branches.find((branch) => !branch.remote && branch.name === localBranchName);
-  const remote = remoteName?.trim();
-  const upstream = remote
-    ? `${remote}/${localBranchName}`
-    : localBranch?.upstream?.trim() || `origin/${localBranchName}`;
-  const tipTimestamp = localBranch?.tipTimestamp ?? repo.lastCommitAt;
-  if (localBranch) {
-    localBranch.upstream = upstream;
-    localBranch.ahead = 0;
-  }
-  const remoteBranch = branches.find((branch) => branch.remote && branch.name === upstream);
-  if (remoteBranch) {
-    remoteBranch.tipTimestamp = tipTimestamp;
-  } else {
-    branches.push(buildBranchSummary({
-      name: upstream,
-      remote: true,
-      tipTimestamp,
-    }));
-  }
-  fallbackRepoBranches[repoId] = branches;
-  return updateFallbackRepo({ ...repo, ahead: 0 });
-}
-
 function fallbackRepoNeedsPublish(repo: RepoSummary) {
   const currentBranch = repo.currentBranch?.trim();
   if (!currentBranch) return false;
@@ -6733,7 +6778,7 @@ export function commitRepo(
   files: string[],
   message: string,
   pushAfter: boolean,
-): Promise<RepoSummary> {
+): Promise<RepoCommitResult> {
   return call("repo_commit", { repoId, files, message, pushAfter }, () => {
     const repo = fallbackRepo(repoId);
     const committed = updateFallbackRepo({
@@ -6741,49 +6786,149 @@ export function commitRepo(
       stagedCount: 0,
       unstagedCount: 0,
       untrackedCount: 0,
-      ahead: pushAfter ? 0 : repo.ahead + 1,
+      ahead: repo.ahead + 1,
+      remotesNeedingPush: Math.max(1, repo.remotesNeedingPush),
     });
-    return pushAfter ? fallbackPublishTarget(repoId) : committed;
+    const pushResult = pushAfter ? fallbackPushOperationResult(repoId) : null;
+    return {
+      summary: pushResult?.summary ?? committed,
+      pushResult,
+    };
   });
+}
+
+function fallbackOperationStatus(steps: RepoRemoteOperationStep[], conflicts: RepoConflictState) {
+  if (conflicts.files.length || steps.some((step) => step.status === "conflicts")) return "conflicts" as const;
+  const failures = steps.filter((step) => step.status === "error").length;
+  if (!failures) return "success" as const;
+  return failures < steps.length ? "partial" as const : "error" as const;
+}
+
+function fallbackSyncOperationResult(
+  summary: RepoSummary,
+  steps: RepoRemoteOperationStep[],
+  conflicts: RepoConflictState = { operation: "none", files: [], allResolved: true },
+): RepoSyncOperationResult {
+  const status = fallbackOperationStatus(steps, conflicts);
+  const message = status === "success"
+    ? "完成"
+    : status === "partial"
+      ? "部分远端操作失败"
+      : status === "conflicts"
+        ? "合并产生冲突，请处理后继续"
+        : "远端操作失败";
+  return { status, message, summary: cloneRepoSummary(summary), conflicts, steps };
+}
+
+function fallbackSyncErrorResult(summary: RepoSummary, message: string): RepoSyncOperationResult {
+  return {
+    status: "error",
+    message,
+    summary: cloneRepoSummary(summary),
+    conflicts: { operation: "none", files: [], allResolved: true },
+    steps: [],
+  };
+}
+
+function primaryFirstRemotes(primary: string, remotes: readonly string[]) {
+  const unique = [...new Set(remotes)];
+  return [
+    ...(unique.includes(primary) ? [primary] : []),
+    ...unique.filter((remote) => remote !== primary).sort(),
+  ];
+}
+
+function fallbackRemoteState(repo: RepoSummary, remote: string) {
+  return repo.remoteBranchStates.find((state) => state.remote === remote) ?? null;
+}
+
+function fallbackPullOperationResult(
+  repoId: string,
+  localChangesMode: RepoPullLocalChangesMode,
+): RepoSyncOperationResult {
+  const repo = fallbackRepo(repoId);
+  const config = fallbackRemoteSyncConfig(repoId);
+  if (config.validationErrors.length) {
+    return fallbackSyncErrorResult(repo, config.validationErrors.join("；"));
+  }
+  const orderedRemotes = primaryFirstRemotes(
+    config.resolvedPolicy.primaryRemote,
+    config.resolvedPolicy.pullRemotes,
+  );
+  const fetchSteps = orderedRemotes.map<RepoRemoteOperationStep>((remote) => {
+    const error = fallbackRemoteOperationErrorOverride?.(repoId, remote, "fetch") ?? null;
+    return {
+      remote,
+      operation: "fetch",
+      status: error ? "error" : "success",
+      message: error ?? "获取完成",
+      targetBranch: repo.currentBranch,
+    };
+  });
+  if (fetchSteps.some((step) => step.status === "error")) {
+    return fallbackSyncOperationResult(repo, fetchSteps);
+  }
+
+  const steps = [...fetchSteps];
+  let conflicts: RepoConflictState = { operation: "none", files: [], allResolved: true };
+  for (const remote of orderedRemotes) {
+    const remoteState = fallbackRemoteState(repo, remote);
+    if (remoteState && !remoteState.exists) {
+      steps.push({
+        remote,
+        operation: "merge",
+        status: "skipped",
+        message: "远端不存在当前同名分支",
+        targetBranch: repo.currentBranch,
+      });
+      continue;
+    }
+    const error = fallbackRemoteOperationErrorOverride?.(repoId, remote, "merge") ?? null;
+    if (error) {
+      steps.push({ remote, operation: "merge", status: "error", message: error, targetBranch: repo.currentBranch });
+      break;
+    }
+    const nextConflicts = fallbackConflictState(repoId);
+    if (nextConflicts.files.length) {
+      conflicts = nextConflicts;
+      steps.push({
+        remote,
+        operation: "merge",
+        status: "conflicts",
+        message: "合并产生冲突",
+        targetBranch: repo.currentBranch,
+      });
+      break;
+    }
+    steps.push({ remote, operation: "merge", status: "success", message: "合并完成", targetBranch: repo.currentBranch });
+  }
+  const completed = !conflicts.files.length && !steps.some((step) => step.status === "error");
+  const summary = completed
+    ? updateFallbackRepo({
+        ...repo,
+        behind: 0,
+        remoteBranchStates: repo.remoteBranchStates.map((state) => ({ ...state, behind: 0, needsPull: false })),
+        remotesNeedingPull: 0,
+        stagedCount: localChangesMode === "discard" ? 0 : repo.stagedCount,
+        unstagedCount: localChangesMode === "discard" ? 0 : repo.unstagedCount,
+        untrackedCount: localChangesMode === "discard" ? 0 : repo.untrackedCount,
+      })
+    : repo;
+  return fallbackSyncOperationResult(summary, steps, conflicts);
 }
 
 export function pullRepo(
   repoId: string,
   localChangesMode: RepoPullLocalChangesMode = "reject",
-): Promise<RepoSummary> {
-  return call("repo_pull", { repoId, localChangesMode }, () => {
-    const repo = fallbackRepo(repoId);
-    return {
-      ...repo,
-      behind: 0,
-      stagedCount: localChangesMode === "discard" ? 0 : repo.stagedCount,
-      unstagedCount: localChangesMode === "discard" ? 0 : repo.unstagedCount,
-      untrackedCount: localChangesMode === "discard" ? 0 : repo.untrackedCount,
-    };
-  });
+): Promise<RepoSyncOperationResult> {
+  return call("repo_pull", { repoId, localChangesMode }, () => fallbackPullOperationResult(repoId, localChangesMode));
 }
 
 export function mergePullRepo(
   repoId: string,
   localChangesMode: RepoPullLocalChangesMode = "reject",
-): Promise<RepoMergePullResult> {
-  return call("repo_merge_pull", { repoId, localChangesMode }, () => {
-    const repo = fallbackRepo(repoId);
-    const conflicts = fallbackConflictState(repoId);
-    const discardCounts = localChangesMode === "discard" && !conflicts.files.length;
-    return {
-      status: conflicts.files.length ? "conflicts" : "success",
-      message: conflicts.files.length ? "合并产生冲突，请处理后提交" : "合并完成",
-      summary: {
-        ...repo,
-        behind: conflicts.files.length ? repo.behind : 0,
-        stagedCount: discardCounts ? 0 : repo.stagedCount,
-        unstagedCount: discardCounts ? 0 : repo.unstagedCount,
-        untrackedCount: discardCounts ? 0 : repo.untrackedCount,
-      },
-      conflicts,
-    };
-  });
+): Promise<RepoSyncOperationResult> {
+  return call("repo_merge_pull", { repoId, localChangesMode }, () => fallbackPullOperationResult(repoId, localChangesMode));
 }
 
 export function mergeBranch(repoId: string, branch: string): Promise<RepoMergePullResult> {
@@ -6817,8 +6962,16 @@ function fallbackOperationResult(
   };
 }
 
-export function fetchRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_fetch", { repoId }, () => fallbackRepo(repoId));
+export function fetchRepo(repoId: string): Promise<RepoSyncOperationResult> {
+  return call("repo_fetch", { repoId }, () => {
+    const repo = fallbackRepo(repoId);
+    const config = fallbackRemoteSyncConfig(repoId);
+    const steps = config.resolvedPolicy.pullRemotes.map<RepoRemoteOperationStep>((remote) => {
+      const error = fallbackRemoteOperationErrorOverride?.(repoId, remote, "fetch") ?? null;
+      return { remote, operation: "fetch", status: error ? "error" : "success", message: error ?? "获取完成" };
+    });
+    return fallbackSyncOperationResult(repo, steps);
+  });
 }
 
 export function startRebaseRepo(
@@ -6835,28 +6988,93 @@ export function startRebaseRepo(
   );
 }
 
-export function pushRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_push", { repoId }, () => {
-    return fallbackPublishTarget(repoId);
+function fallbackPushOperationResult(
+  repoId: string,
+  remoteNames?: string[] | null,
+  branchName?: string | null,
+): RepoSyncOperationResult {
+  const repo = fallbackRepo(repoId);
+  const config = fallbackRemoteSyncConfig(repoId);
+  if (config.validationErrors.length) {
+    return fallbackSyncErrorResult(repo, config.validationErrors.join("；"));
+  }
+  const knownRemotes = new Set(config.remotes.map((remote) => remote.name));
+  const selected = remoteNames == null ? config.resolvedPolicy.pushRemotes : Array.from(new Set(remoteNames));
+  const unknown = selected.find((remote) => !knownRemotes.has(remote));
+  if (unknown) throw new Error(`远端不存在：${unknown}`);
+  if (!selected.length) {
+    return fallbackSyncErrorResult(repo, "未配置推送目标");
+  }
+  const ordered = primaryFirstRemotes(config.resolvedPolicy.primaryRemote, selected);
+  const successfulRemotes = new Set<string>();
+  const steps = ordered.map<RepoRemoteOperationStep>((remote) => {
+    const error = fallbackRemoteOperationErrorOverride?.(repoId, remote, "push") ?? null;
+    if (!error) successfulRemotes.add(remote);
+    return {
+      remote,
+      operation: "push",
+      status: error ? "error" : "success",
+      message: error ?? "推送完成",
+      targetBranch: branchName?.trim() || repo.currentBranch,
+    };
   });
+  if (successfulRemotes.size) {
+    const localBranchName = branchName?.trim() || repo.currentBranch?.trim();
+    if (localBranchName) {
+      const branches = syncFallbackRepoBranchState(repoId);
+      const localBranch = branches.find((branch) => !branch.remote && branch.name === localBranchName);
+      const upstreamRemote = ordered.find((remote) => successfulRemotes.has(remote));
+      if (localBranch && upstreamRemote && !localBranch.upstream) {
+        localBranch.upstream = `${upstreamRemote}/${localBranchName}`;
+      }
+      for (const remote of successfulRemotes) {
+        const remoteBranch = `${remote}/${localBranchName}`;
+        if (!branches.some((branch) => branch.remote && branch.name === remoteBranch)) {
+          branches.push(buildBranchSummary({ name: remoteBranch, remote: true, tipTimestamp: repo.lastCommitAt }));
+        }
+      }
+      fallbackRepoBranches[repoId] = branches;
+    }
+  }
+  const remoteBranchStates = repo.remoteBranchStates.map((state) =>
+    successfulRemotes.has(state.remote) ? { ...state, ahead: 0, needsPush: false } : { ...state }
+  );
+  const summary = successfulRemotes.size
+    ? updateFallbackRepo({
+        ...repo,
+        ahead: successfulRemotes.has(config.resolvedPolicy.primaryRemote) ? 0 : repo.ahead,
+        remoteBranchStates,
+        remotesNeedingPush: remoteBranchStates.filter((state) => state.needsPush).length,
+      })
+    : repo;
+  return fallbackSyncOperationResult(summary, steps);
+}
+
+export function pushRepo(repoId: string, remoteNames?: string[] | null): Promise<RepoSyncOperationResult> {
+  return call("repo_push", { repoId, remoteNames: remoteNames ?? null }, () =>
+    fallbackPushOperationResult(repoId, remoteNames)
+  );
 }
 
 export function pushNewBranchRepo(
   repoId: string,
-  remoteName?: string | null,
+  remoteNames?: string[] | null,
   branchName?: string | null,
-): Promise<RepoSummary> {
-  return call("repo_push_new_branch", { repoId, remoteName: remoteName ?? null, branchName: branchName ?? null }, () => {
-    return fallbackPublishTarget(repoId, branchName, remoteName ?? "origin");
-  });
+): Promise<RepoSyncOperationResult> {
+  return call("repo_push_new_branch", { repoId, remoteNames: remoteNames ?? null, branchName: branchName ?? null }, () =>
+    fallbackPushOperationResult(repoId, remoteNames, branchName)
+  );
 }
 
-export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
-  return call("repo_push_with_system_git", { repoId }, () => {
+export function pushRepoWithSystemGit(
+  repoId: string,
+  remoteNames?: string[] | null,
+): Promise<RepoSyncOperationResult> {
+  return call("repo_push_with_system_git", { repoId, remoteNames: remoteNames ?? null }, () => {
     if (!fallbackSettings.systemGitRepoIds.includes(repoId)) {
       fallbackSettings.systemGitRepoIds = [...fallbackSettings.systemGitRepoIds, repoId].sort();
     }
-    return fallbackPublishTarget(repoId);
+    return fallbackPushOperationResult(repoId, remoteNames);
   });
 }
 
@@ -7057,6 +7275,71 @@ export function listRepoRemotes(repoId: string): Promise<RepoRemote[]> {
   return call("repo_list_remotes", { repoId }, () => [...(fallbackRepoRemotes[repoId] ?? [])].map(cloneRepoRemote));
 }
 
+function fallbackResolvedRemoteSyncPolicy(repoId: string): RepoRemoteSyncPolicy {
+  const configured = fallbackSettings.repoRemoteSyncPolicies[repoId];
+  if (configured) return cloneRepoRemoteSyncPolicy(configured);
+  const remotes = fallbackRepoRemotes[repoId] ?? [];
+  const primary = remotes.find((remote) => remote.current)?.name
+    ?? remotes.find((remote) => remote.name === "origin")?.name
+    ?? (remotes.length === 1 ? remotes[0]?.name : null)
+    ?? "";
+  return {
+    primaryRemote: primary,
+    pullRemotes: primary ? [primary] : [],
+    pushRemotes: primary ? [primary] : [],
+  };
+}
+
+function fallbackRemotePolicyValidationErrors(repoId: string, policy: RepoRemoteSyncPolicy) {
+  const remoteNames = new Set((fallbackRepoRemotes[repoId] ?? []).map((remote) => remote.name));
+  const errors: string[] = [];
+  if (!remoteNames.has(policy.primaryRemote)) errors.push(`主远端不存在：${policy.primaryRemote || "未选择"}`);
+  if (!policy.pullRemotes.includes(policy.primaryRemote)) errors.push("主远端必须属于拉取源");
+  for (const remote of [...policy.pullRemotes, ...policy.pushRemotes]) {
+    if (!remoteNames.has(remote)) errors.push(`远端不存在：${remote}`);
+  }
+  return Array.from(new Set(errors));
+}
+
+function fallbackRemoteSyncConfig(repoId: string): RepoRemoteSyncConfig {
+  const configured = fallbackSettings.repoRemoteSyncPolicies[repoId] ?? null;
+  const resolvedPolicy = fallbackResolvedRemoteSyncPolicy(repoId);
+  return {
+    remotes: (fallbackRepoRemotes[repoId] ?? []).map(cloneRepoRemote),
+    policy: configured ? cloneRepoRemoteSyncPolicy(configured) : null,
+    resolvedPolicy,
+    validationErrors: fallbackRemotePolicyValidationErrors(repoId, resolvedPolicy),
+  };
+}
+
+export function getRepoRemoteSyncConfig(repoId: string): Promise<RepoRemoteSyncConfig> {
+  return call("repo_get_remote_sync_config", { repoId }, () => fallbackRemoteSyncConfig(repoId));
+}
+
+export function setRepoRemoteSyncPolicy(
+  repoId: string,
+  policy: RepoRemoteSyncPolicy,
+): Promise<RepoRemoteSyncConfig> {
+  return call("repo_set_remote_sync_policy", { repoId, policy }, () => {
+    const normalized: RepoRemoteSyncPolicy = {
+      primaryRemote: policy.primaryRemote.trim(),
+      pullRemotes: Array.from(new Set(policy.pullRemotes.map((remote) => remote.trim()).filter(Boolean))),
+      pushRemotes: Array.from(new Set(policy.pushRemotes.map((remote) => remote.trim()).filter(Boolean))),
+    };
+    const errors = fallbackRemotePolicyValidationErrors(repoId, normalized);
+    if (errors.length) throw new Error(errors.join("；"));
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoRemoteSyncPolicies: withRepoRemoteSyncPolicy(
+        fallbackSettings.repoRemoteSyncPolicies,
+        repoId,
+        normalized,
+      ),
+    };
+    return fallbackRemoteSyncConfig(repoId);
+  });
+}
+
 export function cherryPickRepoCommit(repoId: string, hash: string): Promise<RepoOperationResult> {
   return call("repo_cherry_pick_commit", { repoId, hash }, () => fallbackOperationResult(repoId, "cherry-pick 完成"));
 }
@@ -7123,22 +7406,25 @@ export function continueConflictOperation(repoId: string): Promise<RepoSummary> 
 
 export function bulkSyncPreview(
   operation: BulkOperation,
-  repos: RepoSummary[],
+  repoIds: string[],
   localChangesMode: RepoPullLocalChangesMode = "reject",
 ): Promise<BulkSyncPreview> {
-  const reposToUse = repos.length ? repos : visibleFallbackRepos();
-  return call("bulk_sync_preview", { operation, localChangesMode }, () => {
+  const reposToUse = repoIds.length ? repoIds.map(fallbackRepo) : visibleFallbackRepos();
+  const needsPull = (repo: RepoSummary) => repo.remotesNeedingPull > 0 || repo.behind > 0;
+  const needsPush = (repo: RepoSummary) => repo.remotesNeedingPush > 0 || repo.ahead > 0;
+  const hasPushTarget = (repo: RepoSummary) => fallbackRemoteSyncConfig(repo.id).resolvedPolicy.pushRemotes.length > 0;
+  return call("bulk_sync_preview", { operation, repoIds, localChangesMode }, () => {
     if (operation === "sync") {
       const needsPublish = new Set(reposToUse.filter(fallbackRepoNeedsPublish).map((repo) => repo.id));
       return {
         operation,
         eligible: reposToUse
-          .filter((repo) => repo.remoteUrl && repo.currentBranch && repo.conflictCount <= 0)
+          .filter((repo) => repo.currentBranch && repo.conflictCount <= 0 && hasPushTarget(repo))
           .filter((repo) => {
             if (needsPublish.has(repo.id)) return false;
             const dirty = repo.stagedCount + repo.unstagedCount + repo.untrackedCount;
-            return (repo.behind > 0 && (dirty === 0 || localChangesMode !== "reject")) ||
-              (repo.ahead > 0 && repo.behind === 0);
+            return (needsPull(repo) && (dirty === 0 || localChangesMode !== "reject")) ||
+              (needsPush(repo) && !needsPull(repo));
           })
           .map((repo) => ({
             repo: { ...repo },
@@ -7186,10 +7472,10 @@ export function bulkSyncPreview(
         operation,
         eligible: reposToUse
           .filter((repo) =>
-            (repo.ahead > 0 || needsPublish.has(repo.id)) &&
-            repo.behind === 0 &&
+            (needsPush(repo) || needsPublish.has(repo.id)) &&
+            !needsPull(repo) &&
             repo.currentBranch &&
-            repo.remoteUrl
+            hasPushTarget(repo)
           )
           .map((repo) => ({
             repo: { ...repo },
@@ -7224,7 +7510,7 @@ export function bulkSyncPreview(
       operation,
       eligible: reposToUse
         .filter((repo) =>
-          repo.behind > 0 &&
+          needsPull(repo) &&
           (localChangesMode !== "reject" || repo.stagedCount + repo.unstagedCount + repo.untrackedCount <= 0)
         )
         .map((repo) => ({
@@ -7240,7 +7526,7 @@ export function bulkSyncPreview(
         )
         .map((repo) => ({ repo: { ...repo }, reason: "存在未提交变更" })),
       warnings: reposToUse
-        .filter((repo) => repo.behind <= 0)
+        .filter((repo) => !needsPull(repo))
         .map((repo) => ({ repo: { ...repo }, reason: "没有需要拉取的更新" })),
     };
   });
@@ -7255,27 +7541,25 @@ export function bulkSyncExecute(
   return call("bulk_sync_execute", { operation, repoIds, localChangesMode, trigger }, async () => {
     const results = await (fallbackBulkExecuteOverride?.(operation, repoIds, localChangesMode) ?? repoIds.map((repoId) => {
       const repo = fallbackRepo(repoId);
-      const discardCounts = localChangesMode === "discard" && (operation === "pull" || operation === "sync");
-      const summary = operation === "push"
-        ? fallbackPublishTarget(repoId)
-        : {
-            ...repo,
-            ahead: operation === "sync" ? 0 : repo.ahead,
-            behind: operation === "pull" || operation === "sync" ? 0 : repo.behind,
-            stagedCount: discardCounts ? 0 : repo.stagedCount,
-            unstagedCount: discardCounts ? 0 : repo.unstagedCount,
-            untrackedCount: discardCounts ? 0 : repo.untrackedCount,
-          };
+      const pullResult = operation === "pull" || operation === "sync"
+        ? fallbackPullOperationResult(repoId, localChangesMode)
+        : null;
+      const pushResult = operation === "push" || (operation === "sync" && pullResult?.status === "success")
+        ? fallbackPushOperationResult(repoId)
+        : null;
+      const operationResult = pushResult ?? pullResult;
       return {
-        summary,
+        summary: operationResult?.summary ?? repo,
         repoId,
-        status: "success",
-        message: "完成",
+        status: operationResult?.status ?? "success",
+        message: operationResult?.message ?? "完成",
+        steps: operationResult?.steps ?? [],
       };
     }));
     return results.map((result) => ({
       ...result,
       summary: result.summary ? updateFallbackRepo(result.summary) : null,
+      steps: result.steps ?? [],
     }));
   });
 }

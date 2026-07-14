@@ -61,6 +61,7 @@ import type {
   ProjectLaunchStatus,
   RepoConflictChoice,
   RepoConflictState,
+  RepoCommitResult,
   RepoDetail,
   RepoDetailPatch,
   RepoDetailPatchRequest,
@@ -70,9 +71,12 @@ import type {
   RepoOperationResult,
   RepoPullLocalChangesMode,
   RepoRemote,
+  RepoRemoteSyncConfig,
+  RepoRemoteSyncPolicy,
   RepoRefreshSummaryOptions,
   RepoResetMode,
   RepoSummary,
+  RepoSyncOperationResult,
   RepoSyncPreference,
   RepoStashEntry,
   RepoStashDetail,
@@ -1594,6 +1598,19 @@ export function getRepoLaunchConfig(repoId: string): Promise<ProjectLaunchConfig
   return call("repo_get_launch_config", { repoId }, () => workspaceFallback().getRepoLaunchConfig(repoId));
 }
 
+export function getRepoRemoteSyncConfig(repoId: string): Promise<RepoRemoteSyncConfig> {
+  return call("repo_get_remote_sync_config", { repoId }, () => workspaceFallback().getRepoRemoteSyncConfig(repoId));
+}
+
+export function setRepoRemoteSyncPolicy(
+  repoId: string,
+  policy: RepoRemoteSyncPolicy,
+): Promise<RepoRemoteSyncConfig> {
+  return call("repo_set_remote_sync_policy", { repoId, policy }, () =>
+    workspaceFallback().setRepoRemoteSyncPolicy(repoId, policy)
+  );
+}
+
 export function listRepoLaunchCandidates(repoId: string): Promise<ProjectLaunchCandidate[]> {
   return call("repo_list_launch_candidates", { repoId }, () => workspaceFallback().listRepoLaunchCandidates(repoId));
 }
@@ -1649,7 +1666,7 @@ export function commitRepo(
   files: string[],
   message: string,
   pushAfter: boolean,
-): Promise<RepoSummary> {
+): Promise<RepoCommitResult> {
   return call("repo_commit", { repoId, files, message, pushAfter }, () =>
     workspaceFallback().commitRepo(repoId, files, message, pushAfter),
   );
@@ -1658,18 +1675,18 @@ export function commitRepo(
 export function pullRepo(
   repoId: string,
   localChangesMode: RepoPullLocalChangesMode = "reject",
-): Promise<RepoSummary> {
+): Promise<RepoSyncOperationResult> {
   return call("repo_pull", { repoId, localChangesMode }, () => workspaceFallback().pullRepo(repoId, localChangesMode));
 }
 
 export function mergePullRepo(
   repoId: string,
   localChangesMode: RepoPullLocalChangesMode = "reject",
-): Promise<RepoMergePullResult> {
+): Promise<RepoSyncOperationResult> {
   return call("repo_merge_pull", { repoId, localChangesMode }, () => workspaceFallback().mergePullRepo(repoId, localChangesMode));
 }
 
-export function fetchRepo(repoId: string): Promise<RepoSummary> {
+export function fetchRepo(repoId: string): Promise<RepoSyncOperationResult> {
   return call("repo_fetch", { repoId }, () => workspaceFallback().fetchRepo(repoId));
 }
 
@@ -1687,22 +1704,29 @@ export function mergeBranch(repoId: string, branch: string): Promise<RepoMergePu
   return call("repo_merge_branch", { repoId, branch }, () => workspaceFallback().mergeBranch(repoId, branch));
 }
 
-export function pushRepo(repoId: string): Promise<RepoSummary> {
-  return call("repo_push", { repoId }, () => workspaceFallback().pushRepo(repoId));
+export function pushRepo(repoId: string, remoteNames?: string[] | null): Promise<RepoSyncOperationResult> {
+  return call("repo_push", { repoId, remoteNames: remoteNames ?? null }, () =>
+    workspaceFallback().pushRepo(repoId, remoteNames)
+  );
 }
 
 export function pushNewBranchRepo(
   repoId: string,
-  remoteName?: string | null,
+  remoteNames?: string[] | null,
   branchName?: string | null,
-): Promise<RepoSummary> {
-  return call("repo_push_new_branch", { repoId, remoteName: remoteName ?? null, branchName: branchName ?? null }, () =>
-    workspaceFallback().pushNewBranchRepo(repoId, remoteName, branchName),
+): Promise<RepoSyncOperationResult> {
+  return call("repo_push_new_branch", { repoId, remoteNames: remoteNames ?? null, branchName: branchName ?? null }, () =>
+    workspaceFallback().pushNewBranchRepo(repoId, remoteNames, branchName),
   );
 }
 
-export function pushRepoWithSystemGit(repoId: string): Promise<RepoSummary> {
-  return call("repo_push_with_system_git", { repoId }, () => workspaceFallback().pushRepoWithSystemGit(repoId));
+export function pushRepoWithSystemGit(
+  repoId: string,
+  remoteNames?: string[] | null,
+): Promise<RepoSyncOperationResult> {
+  return call("repo_push_with_system_git", { repoId, remoteNames: remoteNames ?? null }, () =>
+    workspaceFallback().pushRepoWithSystemGit(repoId, remoteNames)
+  );
 }
 
 export function useDefaultTokenAuthForRepo(repoId: string): Promise<WorkspaceSettings> {
@@ -1834,11 +1858,11 @@ export function continueConflictOperation(repoId: string): Promise<RepoSummary> 
 
 export function bulkSyncPreview(
   operation: BulkOperation,
-  repos: RepoSummary[],
+  repoIds: string[],
   localChangesMode: RepoPullLocalChangesMode = "reject",
 ): Promise<BulkSyncPreview> {
-  return call("bulk_sync_preview", { operation, repos, localChangesMode }, () =>
-    workspaceFallback().bulkSyncPreview(operation, repos, localChangesMode)
+  return call("bulk_sync_preview", { operation, repoIds, localChangesMode }, () =>
+    workspaceFallback().bulkSyncPreview(operation, repoIds, localChangesMode)
   );
 }
 

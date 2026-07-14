@@ -272,9 +272,9 @@ describe("workspace fallback refresh", () => {
     };
     workspaceFallback.setFallbackRepoOverridesForTests({ [repo.id]: unpublished });
 
-    const pushPreview = await bulkSyncPreview("push", [unpublished]);
+    const pushPreview = await bulkSyncPreview("push", [unpublished.id]);
     expect(pushPreview.eligible.map((item) => item.repo.id)).toEqual([repo.id]);
-    const syncPreview = await bulkSyncPreview("sync", [unpublished]);
+    const syncPreview = await bulkSyncPreview("sync", [unpublished.id]);
     expect(syncPreview.eligible).toHaveLength(0);
     expect(syncPreview.blocked).toHaveLength(1);
 
