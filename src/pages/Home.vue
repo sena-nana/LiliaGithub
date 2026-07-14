@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, shallowRef, watch, type Component } from "vue";
+import { computed, nextTick, onUnmounted, reactive, ref, shallowRef, watch, type Component } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   AlertCircle,
@@ -268,7 +268,7 @@ const githubActionNotificationsLoading = ref(false);
 const githubTimelineError = ref<string | null>(null);
 const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
 const homePendingArmedAction = ref<{ itemId: string; action: HomePendingAction } | null>(null);
-const cloningFullName = ref<string | null>(null);
+const cloningFullNames = reactive(new Set<string>());
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
   readRepoSort(REPO_STATUS_SORT_STORAGE_KEY, repoStatusSortOptions, DEFAULT_REPO_SORT),
@@ -1555,8 +1555,8 @@ function waitForOverviewContributionRefresh() {
 }
 
 async function cloneGitHubRepo(repo: GitHubRepoSummary) {
-  if (cloningFullName.value) return;
-  cloningFullName.value = repo.fullName;
+  if (cloningFullNames.has(repo.fullName)) return;
+  cloningFullNames.add(repo.fullName);
   githubReposError.value = null;
   try {
     await workspace.cloneRepo(repo.cloneUrl, repo.name);
@@ -1566,7 +1566,7 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
       ? "GitHub 绑定已失效，请重新绑定后再克隆仓库。"
       : `克隆 ${repo.fullName} 失败：${String(err)}`;
   } finally {
-    cloningFullName.value = null;
+    cloningFullNames.delete(repo.fullName);
   }
 }
 
@@ -2255,11 +2255,11 @@ function bulkOperationDescription(operation: BulkOperation) {
                     type="button"
                     class="repo-action-link"
                     :data-agent-id="`home.repo-status.${githubRepo.fullName}.clone`"
-                    :disabled="Boolean(cloningFullName)"
+                    :disabled="cloningFullNames.has(githubRepo.fullName)"
                     @click.stop="cloneGitHubRepo(githubRepo)"
                   >
                     <LoaderCircle
-                      v-if="cloningFullName === githubRepo.fullName"
+                      v-if="cloningFullNames.has(githubRepo.fullName)"
                       :size="13"
                       aria-hidden="true"
                       class="sb-spin"
