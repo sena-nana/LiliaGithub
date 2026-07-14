@@ -93,6 +93,7 @@ export const LILIA_UI_CONFIG = {
   identifier: "com.lilia.github",
   storageKeyPrefix: "lilia-github",
   appearance: {
+    backdropTarget: "sidebar",
     backdropOpacity: 0.64,
     platformDefaults: {
       macos: { backdropMode: "system" },
