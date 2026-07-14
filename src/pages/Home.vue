@@ -287,13 +287,6 @@ let homeOverviewInitialized = false;
 let homeContributionRefreshGeneration = 0;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const emptySyncIssuesByRepoId = new Map<string, RepoSyncIssueDisplay>();
-const emptyContributions: GitHubContributionsState = {
-  days: [],
-  meta: null,
-  loading: false,
-  error: null,
-};
-
 function cloneOverviewSettings(settings: typeof workspace.state.settings): HomeOverviewSettingsSnapshot {
   if (!settings) return null;
   return {
@@ -430,7 +423,12 @@ const overviewActionNotificationsByRepo = computed(() => homeOverviewSnapshot.va
 const overviewSyncIssuesByRepoId = computed(() =>
   homeOverviewSnapshot.value?.syncIssuesByRepoId ?? emptySyncIssuesByRepoId,
 );
-const overviewContributions = computed(() => homeContributionSnapshot.value ?? emptyContributions);
+const overviewContributions = computed(() =>
+  homeContributionSnapshot.value ?? {
+    ...workspace.state.githubContributions,
+    loading: workspace.state.loading || workspace.state.githubContributions.loading,
+  },
+);
 
 const contributionHeatmapModel = computed(() =>
   buildContributionHeatmapModel(overviewContributions.value.days, {

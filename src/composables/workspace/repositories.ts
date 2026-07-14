@@ -345,7 +345,7 @@ export async function autoSyncRepoIfNeeded(
 }
 
 export async function refreshRepos() {
-  await loadManagedRepoList();
+  return loadManagedRepoList();
 }
 
 export async function refreshRepoSummaries(options: { automatic?: boolean } = {}) {
