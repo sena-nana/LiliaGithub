@@ -30,7 +30,7 @@ tauri = { version = "2", features = ["image-png", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-lilia = { git = "https://github.com/sena-nana/LiliaUI.git", rev = "e5b0323091af6bccba0e840247fd6014026991de" }
+tauri-plugin-lilia = { git = "https://github.com/sena-nana/LiliaUI.git", rev = "ae776ecc7320cfa5b63d26a015e341cdeb9839e1" }
 tauri-plugin-mutsuki = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "64ca4e149fc9cdd53fd6d7e7f4d315acbe745cf6" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
