@@ -80,7 +80,7 @@ import {
 } from "../config/repoSettingsManifest";
 import { representativeReposByGitHubFullName, representativeReposBySharedGroup } from "../utils/repoWorktree";
 import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
-import { repoProjectRoute, repoRoute } from "../utils/repoRoutes";
+import { repoConflictRoute, repoProjectRoute, repoRoute } from "../utils/repoRoutes";
 import {
   buildLanguageOverviewFromRepos,
   buildProjectCodeOverviewFromRepos,
@@ -129,7 +129,7 @@ type RepoAction = {
   title: string;
 } & (
   {
-    kind: "link";
+    kind: "conflict";
     to: string;
   } | {
     kind: "sync";
@@ -669,10 +669,6 @@ watch(
   { immediate: true },
 );
 
-function repoDetailPath(repo: Pick<RepoSummary, "id">, tab?: "conflicts") {
-  return tab === "conflicts" ? repoRoute(repo.id, "changes") : repoRoute(repo.id);
-}
-
 function repoProjectPath(
   repo: Pick<RepoSummary, "id">,
   tab: ProjectTabRef,
@@ -1065,10 +1061,10 @@ function showMoreRepoStatusRows() {
 function repoAction(repo: RepoSummary): RepoAction | null {
   if (repo.conflictCount > 0) {
     return {
-      kind: "link",
-      label: "查看变更",
-      title: `${repo.conflictCount} 个冲突待处理，冲突解决功能将重新设计`,
-      to: repoDetailPath(repo, "conflicts"),
+      kind: "conflict",
+      label: "处理冲突",
+      title: `${repo.conflictCount} 个冲突文件待处理`,
+      to: repoConflictRoute(repo.id),
     };
   }
   if (repo.behind > 0) {
@@ -1107,7 +1103,12 @@ function homePendingItemRepoFullName(item: HomePendingItem) {
 
 function homePendingItemLink(item: HomePendingItem): HomePendingLink {
   const target = item.target;
-  if (target.kind === "repo") return homePendingRouteLink(repoDetailPath({ id: target.repoId }));
+  if (target.kind === "repo") {
+    const href = target.view === "conflicts"
+      ? repoConflictRoute(target.repoId)
+      : repoRoute(target.repoId);
+    return homePendingRouteLink(href);
+  }
   if (target.kind === "issue") {
     const href = target.localRepoId
       ? repoProjectPath({ id: target.localRepoId }, "issues", target.number)
@@ -1182,6 +1183,12 @@ function homePendingActions(item: HomePendingItem): HomePendingAction[] {
 
 function homePendingActionAgentId(item: HomePendingItem, action: HomePendingAction) {
   return `home.pending.${item.id}.${action}`;
+}
+
+function homePendingItemAgentId(item: HomePendingItem) {
+  return item.target.kind === "repo" && item.target.view === "conflicts"
+    ? `home.pending.conflict.${item.target.repoId}`
+    : `home.pending.${item.id}`;
 }
 
 async function requestHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
@@ -1572,7 +1579,7 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
 
 async function openGitHubRepo(githubRepo: GitHubRepoSummary, localRepo: RepoSummary | null) {
   if (localRepo) {
-    await router.push(repoDetailPath(localRepo));
+    await router.push(repoRoute(localRepo.id));
     return;
   }
   await workspace.rememberRemoteRepo(shortcutFromGitHubRepo(githubRepo));
@@ -2081,7 +2088,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                   'is-clickable': row.link.kind !== 'none',
                 }"
                 :role="row.link.kind === 'route' ? 'link' : undefined"
-                :data-agent-id="row.link.kind === 'route' ? `home.pending.${row.item.id}` : undefined"
+                :data-agent-id="row.link.kind === 'route' ? homePendingItemAgentId(row.item) : undefined"
                 :aria-label="`${row.item.title} ${row.item.detail}，${row.repoFullName}`"
                 :tabindex="row.link.kind === 'route' ? 0 : undefined"
                 @click="openHomePendingLink($event, row.link)"
@@ -2149,7 +2156,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       :href="homePendingItemHref(row.link)"
                       :aria-label="`打开 ${row.item.title}`"
                       title="打开"
-                      :data-agent-id="`home.pending.${row.item.id}.open`"
+                      :data-agent-id="`${homePendingItemAgentId(row.item)}.open`"
                       @click.stop="openHomePendingLink($event, row.link)"
                     >
                       <ArrowRight :size="13" aria-hidden="true" />

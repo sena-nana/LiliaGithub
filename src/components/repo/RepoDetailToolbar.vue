@@ -113,6 +113,7 @@ const emit = defineEmits<{
   selectPullStrategy: [value: string];
   push: [];
   openRemoteSyncSettings: [];
+  openConflicts: [];
 }>();
 
 const launchPickerRef = ref<HTMLElement | null>(null);
@@ -428,12 +429,14 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             v-if="hasConflicts"
             type="button"
             class="repo-toolbar__btn repo-toolbar__btn--status"
-            disabled
-            title="存在未解决冲突"
-            aria-label="有冲突"
-            data-agent-id="repo.toolbar.conflict.status"
+            title="处理未解决冲突"
+            aria-label="处理冲突"
+            data-agent-id="repo.toolbar.conflict.resolve"
+            :disabled="actionRunning"
+            @click="emit('openConflicts')"
           >
             <TriangleAlert :size="17" aria-hidden="true" />
+            <span class="repo-toolbar__sync-label">处理冲突</span>
           </button>
           <button
             v-else

@@ -84,4 +84,33 @@ describe("remote sync UI", () => {
 
     expect(view.emitted("retryPush")?.[0]).toEqual([["mirror"]]);
   });
+
+  it("offers the conflict resolver for conflict results", async () => {
+    const result: RepoSyncOperationResult = {
+      status: "conflicts",
+      message: "合并后有文件需要处理",
+      summary: repoSummary("repo-a", { conflictCount: 1 }),
+      conflicts: conflictState({
+        operation: "merge",
+        allResolved: false,
+        files: [{
+          path: "src/main.ts",
+          status: "UU",
+          resolved: false,
+          binary: false,
+          hunks: [],
+        }],
+      }),
+      steps: [{ remote: "origin", operation: "merge", status: "conflicts", message: "有冲突" }],
+    };
+    const view = render(RepoSyncResultDialog, {
+      props: { result, retrying: false },
+      global: { stubs: { transition: false } },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "处理冲突" }));
+
+    expect(view.emitted("resolveConflicts")).toEqual([[]]);
+    expect(view.emitted("retryPush")).toBeUndefined();
+  });
 });

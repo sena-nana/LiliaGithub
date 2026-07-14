@@ -21,6 +21,8 @@ import type {
   CommitSummary,
   ProjectLaunchCandidate,
   RepoChange,
+  RepoConflictChoice,
+  RepoConflictState,
   RepoRemoteSyncConfig,
   RepoRemoteSyncPolicy,
   RepoSummary,
@@ -95,6 +97,7 @@ export function useRepoDetailController() {
   const remoteSyncConfigError = ref<string | null>(null);
   const remoteSyncDialogOpen = ref(false);
   const syncOperationResult = ref<RepoSyncOperationResult | null>(null);
+  const conflictDialogOpen = ref(false);
   const failedPushRetrying = ref(false);
   const projectRefreshToken = ref(0);
   const projectCacheResetToken = ref(0);
@@ -151,6 +154,11 @@ export function useRepoDetailController() {
   });
   const detail = computed(() => workspace.state.repoDetails[repoId.value] ?? null);
   const summary = computed(() => remoteSummary.value ?? detail.value?.summary ?? workspace.repoById(repoId.value));
+  const conflicts = computed(() => detail.value?.conflicts ?? ({
+    operation: "none",
+    files: [],
+    allResolved: true,
+  } satisfies RepoConflictState));
   const githubAuthorized = computed(() => {
     if (workspace.state.bindingStatus) {
       return workspace.state.bindingStatus.state === "bound" && Boolean(workspace.state.bindingStatus.binding);
@@ -209,14 +217,9 @@ export function useRepoDetailController() {
   const recentSyncError = computed(() => {
     return recentSyncErrorForRepo(repoId.value);
   });
-  const hasConflicts = computed(() => {
-    const repoConflicts = detail.value?.conflicts;
-    return Boolean(
-      summary.value?.conflictCount ||
-      repoConflicts?.files.length ||
-      (repoConflicts && repoConflicts.operation !== "none"),
-    );
-  });
+  const hasConflicts = computed(() =>
+    conflicts.value.files.length > 0 || conflicts.value.operation !== "none",
+  );
 
   const toolbarTabs = computed<Array<{ key: RepoToolbarTab; title: string }>>(() =>
     [
@@ -416,6 +419,7 @@ export function useRepoDetailController() {
     remoteSyncConfigError.value = null;
     remoteSyncDialogOpen.value = false;
     syncOperationResult.value = null;
+    conflictDialogOpen.value = false;
     failedPushRetrying.value = false;
     void load();
   });
@@ -426,6 +430,26 @@ export function useRepoDetailController() {
 
   watch(changes, () => {
     syncFocusedChange();
+  });
+
+  watch(
+    [
+      () => route.query.resolveConflicts,
+      repoDetailLoading,
+      detail,
+    ],
+    ([request, loading, currentDetail]) => {
+      const requested = (Array.isArray(request) ? request[0] : request) === "1";
+      if (!requested || loading || !currentDetail) return;
+      if (hasConflicts.value) openConflictDialog();
+      const query = { ...route.query };
+      delete query.resolveConflicts;
+      void router.replace({ path: route.path, query, hash: route.hash });
+    },
+  );
+
+  watch([conflictDialogOpen, hasConflicts], ([open, present]) => {
+    if (open && !present) conflictDialogOpen.value = false;
   });
 
   watch(activeTab, (tab) => {
@@ -984,6 +1008,55 @@ export function useRepoDetailController() {
     if (!failedPushRetrying.value) syncOperationResult.value = null;
   }
 
+  function openConflictDialog() {
+    if (!hasConflicts.value) return;
+    actionError.value = null;
+    conflictDialogOpen.value = true;
+  }
+
+  function closeConflictDialog() {
+    if (!actionRunning.value) conflictDialogOpen.value = false;
+  }
+
+  async function openConflictDialogFromSyncResult() {
+    if (syncOperationResult.value?.status !== "conflicts") return;
+    syncOperationResult.value = null;
+    await nextTick();
+    openConflictDialog();
+  }
+
+  async function resolveConflictFile(payload: { path: string; choices: RepoConflictChoice[] }) {
+    await runAction(
+      () => workspace.resolveConflictFile(repoId.value, payload.path, payload.choices, true),
+    );
+  }
+
+  async function acceptConflictFile(payload: { path: string; side: RepoConflictChoice["side"] }) {
+    await runAction(
+      () => workspace.acceptConflictFile(repoId.value, payload.path, payload.side, true),
+    );
+  }
+
+  async function markConflictResolved(path: string) {
+    await runAction(
+      () => workspace.markConflictFileResolved(repoId.value, path),
+    );
+  }
+
+  async function continueConflictOperation() {
+    const completed = await runAction(
+      () => workspace.continueConflictOperation(repoId.value),
+    );
+    if (completed) conflictDialogOpen.value = false;
+  }
+
+  async function abortConflictOperation() {
+    const completed = await runAction(
+      () => workspace.abortConflictOperation(repoId.value),
+    );
+    if (completed) conflictDialogOpen.value = false;
+  }
+
   async function retryFailedRemotePush(remoteNames: string[]) {
     const targetRepoId = repoId.value;
     const currentResult = syncOperationResult.value;
@@ -1287,6 +1360,8 @@ export function useRepoDetailController() {
       filesUnavailableMessage,
       recentSyncError,
       hasConflicts,
+      conflicts,
+      conflictDialogOpen,
       activeProjectTab,
       activeProjectIssue,
       activeProjectPullRequest,
@@ -1340,6 +1415,14 @@ export function useRepoDetailController() {
       saveRemoteSyncPolicy,
       closeSyncResultDialog,
       retryFailedRemotePush,
+      openConflictDialog,
+      closeConflictDialog,
+      openConflictDialogFromSyncResult,
+      resolveConflictFile,
+      acceptConflictFile,
+      markConflictResolved,
+      continueConflictOperation,
+      abortConflictOperation,
       selectOpenTarget,
       openSelectedTarget,
       runSelectedPullStrategy,

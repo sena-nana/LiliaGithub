@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
+import RepoConflictDialog from "../components/repo/RepoConflictDialog.vue";
 import RepoRemoteSyncDialog from "../components/repo/RepoRemoteSyncDialog.vue";
 import RepoSyncResultDialog from "../components/repo/RepoSyncResultDialog.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
@@ -37,6 +38,8 @@ const {
   filesUnavailableMessage,
   recentSyncError,
   hasConflicts,
+  conflicts,
+  conflictDialogOpen,
   activeProjectTab,
   activeProjectIssue,
   activeProjectPullRequest,
@@ -91,6 +94,14 @@ const {
   saveRemoteSyncPolicy,
   closeSyncResultDialog,
   retryFailedRemotePush,
+  openConflictDialog,
+  closeConflictDialog,
+  openConflictDialogFromSyncResult,
+  resolveConflictFile,
+  acceptConflictFile,
+  markConflictResolved,
+  continueConflictOperation,
+  abortConflictOperation,
   runSelectedPullStrategy,
   push,
   pushCurrentBranchWithUpstream,
@@ -171,6 +182,7 @@ const {
         @select-pull-strategy="selectPullStrategy"
         @push="push"
         @open-remote-sync-settings="openRemoteSyncSettings"
+        @open-conflicts="openConflictDialog"
       />
     </div>
 
@@ -257,6 +269,19 @@ const {
       :retrying="failedPushRetrying"
       @close="closeSyncResultDialog"
       @retry-push="retryFailedRemotePush"
+      @resolve-conflicts="openConflictDialogFromSyncResult"
+    />
+    <RepoConflictDialog
+      :open="conflictDialogOpen"
+      :conflicts="conflicts"
+      :action-running="actionRunning"
+      :error="actionError"
+      @close="closeConflictDialog"
+      @resolve-file="resolveConflictFile"
+      @accept-file="acceptConflictFile"
+      @mark-resolved="markConflictResolved"
+      @continue="continueConflictOperation"
+      @abort="abortConflictOperation"
     />
   </section>
 </template>
@@ -455,6 +480,11 @@ const {
 }
 
 .repo-toolbar__btn--status {
+  color: var(--warn);
+}
+
+.repo-toolbar__btn--status:hover:not(:disabled) {
+  background: var(--warn-soft);
   color: var(--warn);
 }
 
@@ -763,154 +793,6 @@ const {
 .change-badge--muted {
   color: var(--text-muted);
   background: var(--bg-subtle);
-}
-
-.conflict-workspace {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(420px, 1fr) minmax(260px, 320px);
-  gap: 14px;
-  align-items: start;
-}
-
-.conflict-flow {
-  display: grid;
-  gap: 12px;
-}
-
-.conflict-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--warn-soft);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--warn-soft) 72%, var(--bg-subtle));
-  color: var(--text);
-}
-
-.conflict-warning svg {
-  color: var(--warn);
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
-
-.conflict-warning span {
-  min-width: 0;
-  line-height: 1.5;
-}
-
-.conflict-list,
-.conflict-hunk-list {
-  display: grid;
-  gap: 8px;
-}
-
-.conflict-row {
-  width: 100%;
-  min-height: 56px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--bg-subtle);
-  justify-content: space-between;
-  text-align: left;
-}
-
-.conflict-row:hover {
-  background: var(--bg-hover);
-}
-
-.conflict-row.is-focused {
-  border-color: var(--accent);
-  background: var(--bg-active);
-}
-
-.conflict-row__path {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.conflict-row__path strong,
-.conflict-row__path small {
-  overflow-wrap: anywhere;
-}
-
-.conflict-row__path small {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.conflict-editor,
-.conflict-sidepanel__card,
-.conflict-hunk,
-.conflict-side {
-  display: grid;
-  gap: 10px;
-}
-
-.conflict-editor {
-  min-width: 0;
-}
-
-.conflict-hunk {
-  padding: 12px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--bg-subtle);
-}
-
-.conflict-hunk__header,
-.conflict-side__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.conflict-hunk__header strong,
-.conflict-side__header strong {
-  font-size: 13px;
-}
-
-.conflict-hunk__header span,
-.conflict-side__header span {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.conflict-hunk__columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.conflict-side {
-  padding: 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  background: var(--bg-elev);
-}
-
-.conflict-side.is-selected {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent-soft) 65%, var(--bg-elev));
-}
-
-.conflict-side pre {
-  min-height: 120px;
-  max-height: 320px;
-}
-
-.conflict-sidepanel {
-  min-width: 0;
-}
-
-.conflict-actions {
-  display: grid;
-  gap: 8px;
 }
 
 .diff-preview__empty {

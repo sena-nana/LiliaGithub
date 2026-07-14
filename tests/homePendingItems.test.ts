@@ -234,6 +234,22 @@ describe("buildHomePendingItems", () => {
     });
   });
 
+  it("marks conflict items with an explicit conflict view target", () => {
+    const items = buildHomePendingItems([
+      source({
+        localRepo: localRepo({ conflictCount: 2 }),
+      }),
+    ]);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      title: "冲突待处理",
+      detail: "2 个冲突文件",
+      target: { kind: "repo", repoId: "repo-1", view: "conflicts" },
+      tone: "error",
+    });
+  });
+
   it("can build only the top pending items without changing ordering", () => {
     const sources = [
       source({
