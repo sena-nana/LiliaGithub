@@ -607,6 +607,7 @@ const githubTimelineBusy = computed(() =>
 );
 
 let githubPendingGeneration = 0;
+let githubAccountIssuesGeneration = 0;
 watch(
   () => repoStatusRows.value.length,
   (length, previousLength) => {
@@ -771,6 +772,9 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
   if (!refresh && alreadyLoaded) return;
 
   const generation = githubPendingGeneration;
+  const accountIssuesGeneration = githubAccountIssuesGeneration;
+  const isCurrent = () =>
+    generation === githubPendingGeneration && accountIssuesGeneration === githubAccountIssuesGeneration;
   githubAccountIssuesLoading.value = true;
   githubTimelineError.value = null;
   try {
@@ -780,7 +784,7 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
       sort: "updated",
       direction: "desc",
     }, { forceRefresh: refresh });
-    if (generation !== githubPendingGeneration) return;
+    if (!isCurrent()) return;
     const grouped = groupAccountIssuesByRepo(items, repos);
     githubIssuesByRepo.value = replaceReposByFullName(githubIssuesByRepo.value, repos, grouped.issues);
     githubPullRequestsByRepo.value = replaceReposByFullName(
@@ -794,11 +798,11 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
       clearGitHubPendingItems();
       return;
     }
-    if (generation === githubPendingGeneration) {
+    if (isCurrent()) {
       githubTimelineError.value = `Issue / PR 加载失败：${String(err)}`;
     }
   } finally {
-    if (generation === githubPendingGeneration) {
+    if (isCurrent()) {
       githubAccountIssuesLoading.value = false;
     }
   }
@@ -929,6 +933,7 @@ function cloneGitHubPullRequest(pullRequest: GitHubPullRequest): GitHubPullReque
 }
 
 function clearGitHubPendingItems() {
+  githubAccountIssuesGeneration += 1;
   githubAccountIssuesLoading.value = false;
   githubActionNotificationsLoading.value = false;
   githubTimelineError.value = null;
@@ -1245,7 +1250,9 @@ async function updateHomePendingIssue(item: HomePendingItem, action: Extract<Hom
     state: "closed",
     stateReason: action === "issue-complete" ? "completed" : "not_planned",
   });
+  githubAccountIssuesGeneration += 1;
   replaceHomePendingIssue(target.repoFullName, updated);
+  await loadHomePendingAccountIssues(homeTimelineRepos.value, true);
 }
 
 async function updateHomePendingPullRequest(item: HomePendingItem, action: Extract<HomePendingAction, "pull-merge" | "pull-close">) {
@@ -1254,7 +1261,9 @@ async function updateHomePendingPullRequest(item: HomePendingItem, action: Extra
   const updated = action === "pull-merge"
     ? await mergeGitHubPullRequest(target.repoFullName, target.number, { method: "merge" })
     : await updateGitHubPullRequest(target.repoFullName, target.number, { state: "closed" });
+  githubAccountIssuesGeneration += 1;
   replaceHomePendingPullRequest(target.repoFullName, updated);
+  await loadHomePendingAccountIssues(homeTimelineRepos.value, true);
 }
 
 function replaceHomePendingIssue(repoFullName: string, updated: GitHubIssue) {
