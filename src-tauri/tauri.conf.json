@@ -11,6 +11,7 @@
     "removeUnusedCommands": true
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
