@@ -253,6 +253,7 @@ function snapshotHomeCodeRepos(repos: readonly RepoSummary[]): RepoSummary[] {
 }
 
 const languageChartMode = ref<LanguageChartMode>("language");
+const hoveredCodeSlice = ref<HomeCodeSlice | null>(null);
 const discovering = ref(false);
 const githubRepos = ref<GitHubRepoSummary[]>([]);
 const githubReposNextPage = ref<number | null>(null);
@@ -482,6 +483,11 @@ const projectCodeOverview = computed<HomeCodeOverview>(() => {
 const activeCodeOverview = computed(() =>
   languageChartMode.value === "project" ? projectCodeOverview.value : languageOverview.value,
 );
+
+function selectLanguageChartMode(mode: LanguageChartMode) {
+  hoveredCodeSlice.value = null;
+  languageChartMode.value = mode;
+}
 
 const localRepoByGitHubFullName = computed(() =>
   representativeReposByGitHubFullName(overviewStatusRepos.value),
@@ -1918,7 +1924,9 @@ function bulkOperationDescription(operation: BulkOperation) {
           <div class="card-heading">
             <div>
               <h2>编程语言占比</h2>
-              <p class="language-total">{{ formatBytes(activeCodeOverview.totalBytes) }} 代码量</p>
+              <p class="language-total" :role="hoveredCodeSlice ? 'tooltip' : undefined">
+                {{ hoveredCodeSlice?.title ?? `${formatBytes(activeCodeOverview.totalBytes)} 代码量` }}
+              </p>
             </div>
             <div class="language-actions">
               <div class="language-tabs" aria-label="代码占比模式">
@@ -1926,7 +1934,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                   type="button"
                   data-agent-id="home.language.mode.language"
                   :class="{ 'is-active': languageChartMode === 'language' }"
-                  @click="languageChartMode = 'language'"
+                  @click="selectLanguageChartMode('language')"
                 >
                   按编程语言
                 </button>
@@ -1934,7 +1942,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                   type="button"
                   data-agent-id="home.language.mode.project"
                   :class="{ 'is-active': languageChartMode === 'project' }"
-                  @click="languageChartMode = 'project'"
+                  @click="selectLanguageChartMode('project')"
                 >
                   按项目
                 </button>
@@ -1942,7 +1950,7 @@ function bulkOperationDescription(operation: BulkOperation) {
             </div>
           </div>
           <p v-if="!activeCodeOverview.slices.length" class="language-empty">暂无语言数据</p>
-          <div v-else class="language-chart" aria-label="编程语言占比图" v-memo="[activeCodeOverview]">
+          <div v-else class="language-chart" aria-label="编程语言占比图">
             <svg
               class="language-pie"
               viewBox="0 0 42 42"
@@ -1957,18 +1965,20 @@ function bulkOperationDescription(operation: BulkOperation) {
                 cx="21"
                 cy="21"
                 r="15.9155"
+                :aria-label="slice.title"
                 :stroke="slice.color"
                 :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
                 :stroke-dashoffset="-slice.offset"
-              >
-                <title>{{ slice.title }}</title>
-              </circle>
+                @pointerenter="hoveredCodeSlice = slice"
+                @pointerleave="hoveredCodeSlice = null"
+              />
             </svg>
             <ul class="language-list">
               <li v-for="slice in activeCodeOverview.slices" :key="slice.key">
                 <RouterLink
                   v-if="slice.to"
                   class="language-list__link"
+                  :class="{ 'is-hovered': hoveredCodeSlice?.key === slice.key }"
                   :data-agent-id="`home.language.slice.${slice.key}`"
                   :to="slice.to"
                   :title="slice.linkTitle"
@@ -1977,7 +1987,12 @@ function bulkOperationDescription(operation: BulkOperation) {
                   <span class="language-name">{{ slice.label }}</span>
                   <strong>{{ formatPercent(slice.percent) }}</strong>
                 </RouterLink>
-                <span v-else class="language-list__link language-list__link--static" :title="slice.linkTitle">
+                <span
+                  v-else
+                  class="language-list__link language-list__link--static"
+                  :class="{ 'is-hovered': hoveredCodeSlice?.key === slice.key }"
+                  :title="slice.linkTitle"
+                >
                   <span class="language-dot" :style="{ background: slice.color }" aria-hidden="true" />
                   <span class="language-name">{{ slice.label }}</span>
                   <strong>{{ formatPercent(slice.percent) }}</strong>
@@ -2648,7 +2663,13 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .language-pie__slice {
-  transition: stroke-dasharray 0.2s ease;
+  transition:
+    stroke-width 0.12s ease,
+    stroke-dasharray 0.2s ease;
+}
+
+.language-pie__slice:hover {
+  stroke-width: 11;
 }
 
 .language-list {
@@ -2683,6 +2704,7 @@ function bulkOperationDescription(operation: BulkOperation) {
   text-decoration: none;
   font-size: 12px;
   line-height: 16px;
+  transition: background-color 0.12s ease;
 }
 
 .language-list__link:hover,
@@ -2698,6 +2720,10 @@ function bulkOperationDescription(operation: BulkOperation) {
 .language-list__link--static:hover,
 .language-list__link--static:focus-visible {
   background: transparent;
+}
+
+.language-list__link.is-hovered {
+  background: var(--bg-hover);
 }
 
 .language-dot {
@@ -3335,6 +3361,13 @@ function bulkOperationDescription(operation: BulkOperation) {
   .setup-step__action {
     grid-column: 2;
     justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .language-pie__slice,
+  .language-list__link {
+    transition: none;
   }
 }
 </style>
