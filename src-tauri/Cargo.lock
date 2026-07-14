@@ -4385,7 +4385,7 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-lilia"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/LiliaUI.git?rev=e5b0323091af6bccba0e840247fd6014026991de#e5b0323091af6bccba0e840247fd6014026991de"
+source = "git+https://github.com/sena-nana/LiliaUI.git?rev=ae776ecc7320cfa5b63d26a015e341cdeb9839e1#ae776ecc7320cfa5b63d26a015e341cdeb9839e1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5359,7 +5359,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
