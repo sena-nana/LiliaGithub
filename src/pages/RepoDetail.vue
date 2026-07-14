@@ -357,6 +357,10 @@ const {
   max-width: min(100%, 380px);
 }
 
+.repo-toolbar__launch:has(.repo-toolbar__command-picker:focus-within, .repo-toolbar__command-picker.is-open) {
+  background: var(--bg-hover);
+}
+
 .repo-toolbar__actions {
   flex: 0 0 auto;
   margin-left: auto;
