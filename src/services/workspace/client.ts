@@ -132,6 +132,7 @@ let githubAccountIssueCache: {
   items: GitHubAccountIssueItem[];
   fetchedAt: number;
 } | null = null;
+let githubAccountIssueCacheGeneration = 0;
 let githubActionNotificationCache: {
   key: string;
   items: GitHubActionNotification[];
@@ -305,6 +306,15 @@ function cachedCall<TCommand extends WorkspaceCommandName>(
   cacheArgs: unknown = args,
 ): Promise<WorkspaceCommandResult<TCommand>> {
   return cachedWorkspaceRead(command, cacheArgs, () => call(command, args, fallback));
+}
+
+function invalidateGitHubAccountIssueCache() {
+  githubAccountIssueCache = null;
+  githubAccountIssueCacheGeneration += 1;
+  const commandPrefix = "github_list_account_issues:";
+  for (const key of pendingWorkspaceReads.keys()) {
+    if (key.startsWith(commandPrefix)) pendingWorkspaceReads.delete(key);
+  }
 }
 
 function githubProjectRepoCache(repoFullName: string) {
@@ -519,7 +529,7 @@ export function readCachedGitHubRepos(): GitHubRepoPage | null {
 export function clearGitHubRepoCache() {
   githubRepoCache = null;
   githubRepoPreloadPromise = null;
-  githubAccountIssueCache = null;
+  invalidateGitHubAccountIssueCache();
   githubActionNotificationCache = null;
   githubProjectCache.clear();
   pendingWorkspaceReads.clear();
@@ -733,13 +743,16 @@ export function listGitHubAccountIssues(
   ) {
     return Promise.resolve(cloneProjectList(githubAccountIssueCache.items));
   }
+  const cacheGeneration = githubAccountIssueCacheGeneration;
   return cachedCall("github_list_account_issues", args, () => workspaceFallback().listGitHubAccountIssues(args))
     .then((items) => {
-      githubAccountIssueCache = {
-        key: cacheKey,
-        items: cloneProjectList(items),
-        fetchedAt: Date.now(),
-      };
+      if (cacheGeneration === githubAccountIssueCacheGeneration) {
+        githubAccountIssueCache = {
+          key: cacheKey,
+          items: cloneProjectList(items),
+          fetchedAt: Date.now(),
+        };
+      }
       return cloneProjectList(items);
     });
 }
@@ -1004,6 +1017,7 @@ export function createGitHubPullRequest(
   ).then((pull) => {
     upsertGitHubPullRequest(repoFullName, pull);
     clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
+    invalidateGitHubAccountIssueCache();
     return cloneProjectData(pull);
   });
 }
@@ -1018,6 +1032,7 @@ export function updateGitHubPullRequest(
   ).then((pull) => {
     upsertGitHubPullRequest(repoFullName, pull);
     clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
+    invalidateGitHubAccountIssueCache();
     return cloneProjectData(pull);
   });
 }
@@ -1032,6 +1047,7 @@ export function mergeGitHubPullRequest(
   ).then((pull) => {
     upsertGitHubPullRequest(repoFullName, pull);
     clearGitHubProjectPullRequestChecks(repoFullName, pull.number);
+    invalidateGitHubAccountIssueCache();
     return cloneProjectData(pull);
   });
 }
@@ -1183,6 +1199,7 @@ export function createGitHubIssue(
     workspaceFallback().createGitHubIssue(repoFullName, request),
   ).then((issue) => {
     upsertGitHubIssue(repoFullName, issue);
+    invalidateGitHubAccountIssueCache();
     return cloneProjectData(issue);
   });
 }
@@ -1196,6 +1213,7 @@ export function updateGitHubIssue(
     workspaceFallback().updateGitHubIssue(repoFullName, issueNumber, request),
   ).then((issue) => {
     upsertGitHubIssue(repoFullName, issue);
+    invalidateGitHubAccountIssueCache();
     return cloneProjectData(issue);
   });
 }

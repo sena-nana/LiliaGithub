@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachGitHubWorkflowArtifactAsset,
   clearRepoLocalCache,
@@ -13,6 +13,7 @@ import {
   getGitHubRepoSettingsSection,
   getGitHubWorkflowRunDetail,
   listGitHubBranches,
+  listGitHubAccountIssues,
   listGitHubRepos,
   listRepoFiles,
   listGitHubRepoCommits,
@@ -22,6 +23,8 @@ import {
   listGitHubWorkflowRuns,
   rerunFailedGitHubWorkflowRun,
   rerunGitHubWorkflowJob,
+  mergeGitHubPullRequest,
+  updateGitHubPullRequest,
   updateGitHubIssue,
   updateGitHubRepoActionsPermissions,
   updateGitHubRepoWorkflowPermissions,
@@ -34,6 +37,7 @@ import type {
   BranchSummary,
   CommitDetail,
   CommitSummary,
+  GitHubAccountIssueItem,
   GitHubIssue,
   GitHubPullRequest,
   GitHubRelease,
@@ -45,6 +49,14 @@ import type {
 const repoFullName = "sena-nana/remote-repo";
 type WorkspaceFallbackForTests = Awaited<ReturnType<typeof workspaceFallbackForTests>>;
 let workspaceFallback: WorkspaceFallbackForTests;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 function issue(overrides: Partial<GitHubIssue> = {}): GitHubIssue {
   return {
@@ -83,6 +95,14 @@ function pullRequest(overrides: Partial<GitHubPullRequest> = {}): GitHubPullRequ
     mergeable: true,
     mergeableState: "clean",
     ...overrides,
+  };
+}
+
+function accountIssueItem(currentIssue: GitHubIssue, pullRequest = false): GitHubAccountIssueItem {
+  return {
+    repoFullName,
+    issue: { ...currentIssue },
+    pullRequest,
   };
 }
 
@@ -281,6 +301,54 @@ describe("workspace GitHub project cache", () => {
     const cached = await listGitHubIssues(repoFullName, "open");
     expect(cached[0]?.title).toBe("缓存前 Issue");
     expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(1);
+  });
+
+  it("Issue 和 Pull Request mutation 后失效账号待处理缓存", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({ [repoFullName]: [issue()] });
+    workspaceFallback.setFallbackGitHubPullRequestsForTests({
+      [repoFullName]: [
+        pullRequest(),
+        pullRequest({ number: 53, title: "待合并 PR" }),
+      ],
+    });
+
+    expect((await listGitHubAccountIssues()).map((item) => item.issue.number)).toEqual([53, 52, 12]);
+    expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(1);
+
+    await updateGitHubIssue(repoFullName, 12, { state: "closed", stateReason: "completed" });
+    expect((await listGitHubAccountIssues()).map((item) => item.issue.number)).toEqual([53, 52]);
+
+    await updateGitHubPullRequest(repoFullName, 52, { state: "closed" });
+    expect((await listGitHubAccountIssues()).map((item) => item.issue.number)).toEqual([53]);
+
+    await mergeGitHubPullRequest(repoFullName, 53);
+    expect(await listGitHubAccountIssues()).toEqual([]);
+    expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(4);
+  });
+
+  it("mutation 前启动的账号列表请求不能覆盖刷新后的缓存", async () => {
+    const staleRequest = deferred<GitHubAccountIssueItem[]>();
+    const openIssue = issue();
+    let requestCount = 0;
+    workspaceFallback.setFallbackGitHubIssuesForTests({ [repoFullName]: [openIssue] });
+    workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => {
+      requestCount += 1;
+      return requestCount === 1 ? staleRequest.promise : [];
+    });
+
+    const staleLoad = listGitHubAccountIssues();
+    await vi.waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(1);
+    });
+
+    await updateGitHubIssue(repoFullName, openIssue.number, { state: "closed", stateReason: "completed" });
+    expect(await listGitHubAccountIssues()).toEqual([]);
+    expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(2);
+
+    staleRequest.resolve([accountIssueItem(openIssue)]);
+    expect((await staleLoad).map((item) => item.issue.number)).toEqual([openIssue.number]);
+    expect(await listGitHubAccountIssues()).toEqual([]);
+    expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(2);
   });
 
   it("仓库设置分区按 section 缓存并隔离外部污染", async () => {

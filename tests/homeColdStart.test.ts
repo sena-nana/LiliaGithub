@@ -223,6 +223,10 @@ beforeEach(async () => {
   localStorage.clear();
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("Home cold start pending items", () => {
   it("sorts repo status rows from a persisted local preference", async () => {
     const repos = [
@@ -383,6 +387,7 @@ describe("Home cold start pending items", () => {
   it("runs Issue pending quick actions and removes completed rows", async () => {
     const workspaceService = await import("../src/services/workspace");
     const pendingIssueUpdate = deferred<GitHubIssue>();
+    const closedIssueNumbers = new Set<number>();
     workspaceFallback.setFallbackGitHubIssuesForTests({
       [repoFullName]: [
         issue(12, "Complete issue"),
@@ -394,11 +399,17 @@ describe("Home cold start pending items", () => {
       accountIssueItem(12, "Complete issue"),
       accountIssueItem(13, "Close issue"),
       accountIssueItem(14, "Retry issue"),
-    ]);
+    ].filter((item) => !closedIssueNumbers.has(item.issue.number)));
     workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
     const updateGitHubIssueSpy = vi.spyOn(workspaceService, "updateGitHubIssue").mockImplementation((currentRepoFullName, issueNumber, request) => {
-      if (issueNumber === 12) return pendingIssueUpdate.promise;
+      if (issueNumber === 12) {
+        return pendingIssueUpdate.promise.then((updated) => {
+          closedIssueNumbers.add(issueNumber);
+          return updated;
+        });
+      }
       if (issueNumber === 14) return Promise.reject(new Error("Issue update failed"));
+      closedIssueNumbers.add(issueNumber);
       return Promise.resolve({
         ...issue(issueNumber, issueNumber === 13 ? "Close issue" : "Issue"),
         state: request.state ?? "open",
@@ -406,7 +417,7 @@ describe("Home cold start pending items", () => {
         htmlUrl: `https://github.com/${currentRepoFullName}/issues/${issueNumber}`,
       });
     });
-    await renderHomeFromStoredSnapshot();
+    const rendered = await renderHomeFromStoredSnapshot();
 
     const completeRow = await screen.findByLabelText(/Issue #12 Complete issue/);
     await fireEvent.click(within(completeRow).getByRole("button", { name: "完成" }));
@@ -461,6 +472,55 @@ describe("Home cold start pending items", () => {
       const restoredRow = screen.getByLabelText(/Issue #14 Retry issue/);
       expect(within(restoredRow).getByRole("button", { name: "完成" })).toBeEnabled();
     });
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(3);
+    });
+    expect(workspaceFallback.getFallbackGitHubActionNotificationListCallsForTests()).toHaveLength(1);
+
+    rendered.unmount();
+    await renderHomeFromStoredSnapshot();
+    await screen.findByLabelText(/Issue #14 Retry issue/);
+    expect(screen.queryByLabelText(/Issue #12 Complete issue|Issue #13 Close issue/)).toBeNull();
+  });
+
+  it("keeps handled items removed when a pre-mutation refresh resolves late", async () => {
+    const staleRefresh = deferred<GitHubAccountIssueItem[]>();
+    let accountIssueRequestCount = 0;
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      [repoFullName]: [issue(12, "Late stale issue")],
+    });
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{
+      items: [githubRepoSummary()],
+      nextPage: null,
+    }]);
+    workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => {
+      accountIssueRequestCount += 1;
+      if (accountIssueRequestCount === 1) return [accountIssueItem(12, "Late stale issue")];
+      if (accountIssueRequestCount === 2) return staleRefresh.promise;
+      return [];
+    });
+    workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
+
+    const rendered = await renderHomeFromStoredSnapshot(
+      Date.now() - HOME_GITHUB_OVERVIEW_SNAPSHOT_REFRESH_MS - 1,
+    );
+    const issueRow = await screen.findByLabelText(/Issue #12 Late stale issue/);
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(2);
+    });
+
+    await fireEvent.click(within(issueRow).getByRole("button", { name: "完成" }));
+    await fireEvent.click(within(issueRow).getByRole("button", { name: "确认完成" }));
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(3);
+      expect(screen.queryByLabelText(/Issue #12 Late stale issue/)).toBeNull();
+    });
+
+    staleRefresh.resolve([accountIssueItem(12, "Late stale issue")]);
+    await staleRefresh.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByLabelText(/Issue #12 Late stale issue/)).toBeNull();
+    rendered.unmount();
   });
 
   it("runs pull request pending quick actions and removes handled rows", async () => {
@@ -470,10 +530,6 @@ describe("Home cold start pending items", () => {
         pullRequest(8, "Close PR"),
       ],
     });
-    workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => [
-      accountIssueItem(7, "Merge PR", true),
-      accountIssueItem(8, "Close PR", true),
-    ]);
     workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
 
     await renderHomeFromStoredSnapshot();
@@ -489,5 +545,8 @@ describe("Home cold start pending items", () => {
     expect(within(closeRow).getByRole("button", { name: "确认关闭" })).toBeInTheDocument();
     await fireEvent.click(within(closeRow).getByRole("button", { name: "确认关闭" }));
     await waitFor(() => expect(screen.queryByLabelText(/PR #8 Close PR/)).toBeNull());
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubAccountIssueListCallsForTests()).toHaveLength(3);
+    });
   });
 });
