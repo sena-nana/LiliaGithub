@@ -1592,11 +1592,35 @@ async function syncRepo(repo: RepoSummary) {
   }
 }
 
-async function retryRepoPush(repo: RepoSummary) {
+function failedRemoteSteps(repoId: string) {
+  const recent = workspace.state.recentSync?.results.find((result) => result.repoId === repoId);
+  const bulk = workspace.state.bulkResults.find((result) => result.repoId === repoId);
+  return (recent ?? bulk)?.steps?.filter((step) => step.status === "error") ?? [];
+}
+
+function remoteStepOperationLabel(operation: "fetch" | "merge" | "push" | "restore") {
+  if (operation === "fetch") return "抓取";
+  if (operation === "merge") return "合并";
+  if (operation === "restore") return "还原";
+  return "推送";
+}
+
+async function retryRepoSync(repo: RepoSummary) {
   if (syncingRepoId.value) return;
   syncingRepoId.value = repo.id;
   try {
-    await workspace.push(repo.id);
+    const failedSteps = failedRemoteSteps(repo.id);
+    const failedPushRemotes = [...new Set(
+      failedSteps
+        .filter((step) => step.operation === "push")
+        .map((step) => step.remote),
+    )];
+    if (failedPushRemotes.length && failedSteps.every((step) => step.operation === "push")) {
+      await workspace.push(repo.id, failedPushRemotes);
+    } else {
+      const pullResult = await workspace.mergePull(repo.id, "stash");
+      if (pullResult.status === "success") await workspace.push(repo.id);
+    }
     await refreshHomeAfterRepoMutation();
   } catch {
     /* retry state is surfaced by recent sync status */
@@ -2197,7 +2221,15 @@ function bulkOperationDescription(operation: BulkOperation) {
                     :aria-label="syncIssue.label"
                   >
                     <AlertCircle :size="13" aria-hidden="true" />
-                    <span>{{ syncIssue.label }}：{{ syncIssue.message }}</span>
+                    <span class="repo-status-row__issue-copy">
+                      <span>{{ syncIssue.label }}：{{ syncIssue.message }}</span>
+                      <small
+                        v-for="(step, index) in failedRemoteSteps(localRepo?.id ?? '')"
+                        :key="`${step.operation}:${step.remote}:${index}`"
+                      >
+                        {{ step.remote || "本地修改" }} · {{ remoteStepOperationLabel(step.operation) }} · {{ step.message }}
+                      </small>
+                    </span>
                   </span>
                 </span>
                 <span class="repo-status-row__action">
@@ -2209,7 +2241,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       :data-agent-id="`home.repo-status.${githubRepo.fullName}.retry`"
                       :disabled="workspace.state.bulkRunning || syncingRepoId === localRepo.id || syncIssue.retrying"
                       :title="syncIssue.message"
-                      @click.stop="retryRepoPush(localRepo)"
+                      @click.stop="retryRepoSync(localRepo)"
                     >
                       <LoaderCircle
                         v-if="syncingRepoId === localRepo.id || syncIssue.retrying"
@@ -2359,6 +2391,14 @@ function bulkOperationDescription(operation: BulkOperation) {
               <AlertCircle v-else :size="13" aria-hidden="true" />
               <span>{{ result.repoId }}</span>
               <em>{{ result.message }}</em>
+              <span v-if="result.steps.some((step) => step.status === 'error')" class="sync-results__steps">
+                <small
+                  v-for="(step, index) in result.steps.filter((item) => item.status === 'error')"
+                  :key="`${step.operation}:${step.remote}:${index}`"
+                >
+                  {{ step.remote || "本地修改" }} · {{ remoteStepOperationLabel(step.operation) }} · {{ step.message }}
+                </small>
+              </span>
             </li>
           </ul>
         </div>
@@ -3114,6 +3154,26 @@ function bulkOperationDescription(operation: BulkOperation) {
   white-space: nowrap;
 }
 
+.repo-status-row__issue > .repo-status-row__issue-copy {
+  display: grid;
+  gap: 1px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.repo-status-row__issue-copy > span,
+.repo-status-row__issue-copy > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-status-row__issue-copy > small {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .repo-status-row__issue--error {
   color: var(--err);
 }
@@ -3323,6 +3383,14 @@ function bulkOperationDescription(operation: BulkOperation) {
   color: var(--text-muted);
   font-size: 12px;
   font-style: normal;
+}
+
+.sync-results__steps {
+  grid-column: 2 / -1;
+  display: grid;
+  gap: 2px;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .sync-results__item--success {

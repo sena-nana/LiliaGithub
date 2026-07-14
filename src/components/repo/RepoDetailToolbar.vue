@@ -12,6 +12,7 @@ import {
   RotateCw,
   RotateCcw,
   ScrollText,
+  Settings2,
   Square,
   SquareTerminal,
   TriangleAlert,
@@ -81,6 +82,11 @@ const props = defineProps<{
   needsPublish: boolean;
   aheadCount: number;
   behindCount: number;
+  remotesNeedingPull: number;
+  remotesNeedingPush: number;
+  pullRemoteCount: number;
+  pushRemoteNames: readonly string[];
+  remoteSyncUnavailableReason: string | null;
   launchCommand?: string | null;
 }>();
 
@@ -106,6 +112,7 @@ const emit = defineEmits<{
   runSelectedPullStrategy: [];
   selectPullStrategy: [value: string];
   push: [];
+  openRemoteSyncSettings: [];
 }>();
 
 const launchPickerRef = ref<HTMLElement | null>(null);
@@ -113,6 +120,12 @@ const launchCommandDraft = ref("");
 const launchPickerOpen = ref(false);
 
 const launchCommandDisabled = computed(() => props.actionRunning || props.launchRunning);
+const usesMultiplePullRemotes = computed(() => props.pullRemoteCount > 1);
+const pushTargetLabel = computed(() => {
+  if (props.remoteSyncUnavailableReason) return props.remoteSyncUnavailableReason;
+  if (!props.pushRemoteNames.length) return "未配置推送目标";
+  return `推送至 ${props.pushRemoteNames.join("、")}`;
+});
 const launchCommandRunnable = computed(() => launchCommandDraft.value.trim().length > 0);
 const filteredLaunchCommandOptions = computed(() => {
   const query = launchCommandDraft.value.trim().toLowerCase();
@@ -332,6 +345,17 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             @update:setting="(key, value) => emit('updateSetting', key, value)"
           />
           <button
+            type="button"
+            class="repo-toolbar__btn"
+            title="远端同步设置"
+            aria-label="远端同步设置"
+            data-agent-id="repo.toolbar.remote-sync.settings"
+            :disabled="actionRunning"
+            @click="emit('openRemoteSyncSettings')"
+          >
+            <Settings2 :size="17" aria-hidden="true" />
+          </button>
+          <button
             v-if="repoContext.tags.includes('system-git')"
             type="button"
             class="repo-toolbar__btn"
@@ -374,17 +398,20 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             <button
               type="button"
               class="repo-toolbar__btn repo-toolbar__pull-main"
-              :class="{ 'repo-toolbar__btn--counted': behindCount }"
-              title="拉取"
-              aria-label="拉取"
+              :class="{ 'repo-toolbar__btn--counted': behindCount || remotesNeedingPull }"
+              :title="remoteSyncUnavailableReason || (usesMultiplePullRemotes ? `合并 ${pullRemoteCount} 个远端` : '拉取')"
+              :aria-label="remoteSyncUnavailableReason || (usesMultiplePullRemotes ? '合并多个远端' : '拉取')"
               data-agent-id="repo.toolbar.pull.selected"
-              :disabled="actionRunning || hasConflicts"
+              :disabled="actionRunning || hasConflicts || Boolean(remoteSyncUnavailableReason)"
               @click="emit('runSelectedPullStrategy')"
             >
               <CloudDownload :size="17" aria-hidden="true" />
-              <span v-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
+              <span v-if="usesMultiplePullRemotes" class="repo-toolbar__sync-label">合并多个远端</span>
+              <span v-if="usesMultiplePullRemotes && remotesNeedingPull" class="repo-toolbar__badge">{{ remotesNeedingPull }}</span>
+              <span v-else-if="behindCount" class="repo-toolbar__badge">{{ behindCount }}</span>
             </button>
             <Dropdown
+              v-if="!usesMultiplePullRemotes"
               :model-value="activePullStrategyValue"
               :options="pullStrategyOptions"
               placement="bottom"
@@ -393,7 +420,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
               menu-width="144px"
               menu-label="拉取策略"
               hide-button-label
-              :disabled="actionRunning || hasConflicts"
+              :disabled="actionRunning || hasConflicts || Boolean(remoteSyncUnavailableReason)"
               @update:model-value="emit('selectPullStrategy', $event)"
             />
           </div>
@@ -402,7 +429,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             type="button"
             class="repo-toolbar__btn repo-toolbar__btn--status"
             disabled
-            title="冲突解决功能将重新设计"
+            title="存在未解决冲突"
             aria-label="有冲突"
             data-agent-id="repo.toolbar.conflict.status"
           >
@@ -413,17 +440,21 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             type="button"
             class="repo-toolbar__btn"
             :class="{
-              'repo-toolbar__btn--counted': aheadCount,
-              'repo-toolbar__btn--push-ready': aheadCount || needsPublish,
+              'repo-toolbar__btn--counted': aheadCount || remotesNeedingPush,
+              'repo-toolbar__btn--push-ready': pushRemoteNames.length && (aheadCount || remotesNeedingPush || needsPublish),
             }"
-            :title="needsPublish ? '发布' : '推送'"
-            :aria-label="needsPublish ? '发布' : '推送'"
+            :title="pushTargetLabel"
+            aria-label="推送"
             data-agent-id="repo.toolbar.push"
-            :disabled="!aheadCount && !needsPublish"
+            :disabled="Boolean(remoteSyncUnavailableReason) || !pushRemoteNames.length || (!aheadCount && !remotesNeedingPush && !needsPublish)"
             @click="emit('push')"
           >
             <CloudUpload :size="17" aria-hidden="true" />
-            <span v-if="aheadCount" class="repo-toolbar__badge">{{ aheadCount }}</span>
+            <span v-if="pushRemoteNames.length" class="repo-toolbar__sync-label">
+              {{ pushRemoteNames.length === 1 ? pushRemoteNames[0] : `${pushRemoteNames.length} 个远端` }}
+            </span>
+            <span v-if="pushRemoteNames.length > 1 && remotesNeedingPush" class="repo-toolbar__badge">{{ remotesNeedingPush }}</span>
+            <span v-else-if="aheadCount" class="repo-toolbar__badge">{{ aheadCount }}</span>
           </button>
         </div>
       </div>

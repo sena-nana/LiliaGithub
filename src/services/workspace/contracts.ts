@@ -63,15 +63,19 @@ import type {
   RepoFilePreview,
   RepoFileTreeEntry,
   RepoMergePullResult,
+  RepoCommitResult,
   RepoOperationResult,
   RepoPullLocalChangesMode,
   RepoRefreshSummaryOptions,
   RepoRemote,
+  RepoRemoteSyncConfig,
+  RepoRemoteSyncPolicy,
   RepoResetMode,
   RepoStashDetail,
   RepoStashEntry,
   RepoStorageStats,
   RepoSummary,
+  RepoSyncOperationResult,
   RepoSyncPreference,
   SystemOpenTarget,
   WorkspaceSettings,
@@ -327,6 +331,8 @@ export interface WorkspaceCommandContracts {
   repo_get_branches: CommandContract<RepoArg, BranchSummary[]>;
   repo_get_conflicts: CommandContract<RepoArg, RepoConflictState>;
   repo_get_detail: CommandContract<RepoArg, RepoDetail>;
+  repo_get_remote_sync_config: CommandContract<RepoArg, RepoRemoteSyncConfig>;
+  repo_set_remote_sync_policy: CommandContract<RepoArg & { policy: RepoRemoteSyncPolicy }, RepoRemoteSyncConfig>;
   repo_refresh_detail_patch: CommandContract<RepoArg & { request: RepoDetailPatchRequest }, RepoDetailPatch>;
   repo_get_launch_config: CommandContract<RepoArg, Maybe<ProjectLaunchConfig>>;
   repo_list_launch_candidates: CommandContract<RepoArg, ProjectLaunchCandidate[]>;
@@ -345,18 +351,18 @@ export interface WorkspaceCommandContracts {
   repo_add_files_to_gitignore: CommandContract<RepoArg & { files: string[] }, RepoSummary>;
   repo_commit: CommandContract<
     RepoArg & { files: string[]; message: string; pushAfter: boolean },
-    RepoSummary
+    RepoCommitResult
   >;
-  repo_pull: CommandContract<RepoArg & { localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoSummary>;
-  repo_merge_pull: CommandContract<RepoArg & { localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoMergePullResult>;
-  repo_fetch: CommandContract<RepoArg, RepoSummary>;
+  repo_pull: CommandContract<RepoArg & { localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoSyncOperationResult>;
+  repo_merge_pull: CommandContract<RepoArg & { localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoSyncOperationResult>;
+  repo_fetch: CommandContract<RepoArg, RepoSyncOperationResult>;
   repo_start_rebase: CommandContract<RepoArg & { ontoRef: Maybe<string>; localChangesMode: Maybe<RepoPullLocalChangesMode> }, RepoOperationResult>;
-  repo_push: CommandContract<RepoArg, RepoSummary>;
+  repo_push: CommandContract<RepoArg & { remoteNames: Maybe<string[]> }, RepoSyncOperationResult>;
   repo_push_new_branch: CommandContract<
-    RepoArg & { remoteName: Maybe<string>; branchName: Maybe<string> },
-    RepoSummary
+    RepoArg & { remoteNames: Maybe<string[]>; branchName: Maybe<string> },
+    RepoSyncOperationResult
   >;
-  repo_push_with_system_git: CommandContract<RepoArg, RepoSummary>;
+  repo_push_with_system_git: CommandContract<RepoArg & { remoteNames: Maybe<string[]> }, RepoSyncOperationResult>;
   repo_use_default_token_auth: CommandContract<RepoArg, WorkspaceSettings>;
   repo_checkout_branch: CommandContract<RepoArg & { branch: string }, RepoSummary>;
   repo_create_branch: CommandContract<
@@ -389,7 +395,7 @@ export interface WorkspaceCommandContracts {
   repo_abort_conflict_operation: CommandContract<RepoArg, RepoSummary>;
   repo_continue_conflict_operation: CommandContract<RepoArg, RepoSummary>;
 
-  bulk_sync_preview: CommandContract<{ operation: BulkOperation; repos: RepoSummary[]; localChangesMode: Maybe<RepoPullLocalChangesMode> }, BulkSyncPreview>;
+  bulk_sync_preview: CommandContract<{ operation: BulkOperation; repoIds: string[]; localChangesMode: Maybe<RepoPullLocalChangesMode> }, BulkSyncPreview>;
   bulk_sync_execute: CommandContract<{
     operation: BulkOperation;
     repoIds: string[];

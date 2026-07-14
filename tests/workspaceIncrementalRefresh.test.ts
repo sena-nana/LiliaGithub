@@ -57,7 +57,15 @@ import type {
   RepoSummary,
   WorkspaceStartupCache,
 } from "../src/services/workspace";
-import { conflictState, repoDetail, repoDetailPatch, repoSummary, workspaceSettings } from "./fixtures/workspace";
+import {
+  conflictState,
+  repoCommitResult,
+  repoDetail,
+  repoDetailPatch,
+  repoSummary,
+  repoSyncResult,
+  workspaceSettings,
+} from "./fixtures/workspace";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -640,6 +648,38 @@ describe("workspace incremental refresh", () => {
     expect(state.repos[0].behind).toBe(0);
   });
 
+  it("自动同步只按已配置远端角色决定拉取或推送", async () => {
+    const summary = repoSummary("Repo1", {
+      ahead: 1,
+      behind: 0,
+      remoteBranchStates: [
+        { remote: "origin", remoteBranch: "main", exists: true, ahead: 1, behind: 0, needsPull: false, needsPush: true, upstream: true },
+        { remote: "mirror", remoteBranch: "main", exists: true, ahead: 0, behind: 2, needsPull: true, needsPush: false, upstream: false },
+      ],
+      remotesNeedingPull: 1,
+      remotesNeedingPush: 1,
+    });
+    state.settings = {
+      ...workspaceSettings(),
+      repoSyncPreferences: { Repo1: { autoSync: true } },
+      repoRemoteSyncPolicies: {
+        Repo1: { primaryRemote: "origin", pullRemotes: ["origin"], pushRemotes: ["origin"] },
+      },
+    };
+    state.repos = [summary];
+    service.bulkSyncExecute.mockResolvedValue([{
+      repoId: summary.id,
+      status: "success",
+      message: "完成",
+      summary,
+      steps: [],
+    }]);
+
+    await autoSyncRepoIfNeeded(summary.id);
+
+    expect(service.bulkSyncExecute).toHaveBeenCalledWith("push", [summary.id], "reject", "autoSync");
+  });
+
   it("任务列表刷新只应用最后一轮返回结果", async () => {
     const firstRefresh = deferred<typeof state.tasks>();
     const secondRefresh = deferred<typeof state.tasks>();
@@ -1080,17 +1120,17 @@ describe("workspace incremental refresh", () => {
         blocked: [],
         warnings: [],
       },
-      results: [{ repoId: failed.id, status: "error", message: "认证失败", summary: null }],
+      results: [{ repoId: failed.id, status: "error", message: "认证失败", summary: null, steps: [] }],
       retryingRepoIds: [],
       updatedAt: 1,
     };
-    service.pushRepo.mockResolvedValue(updated);
+    service.pushRepo.mockResolvedValue(repoSyncResult(updated));
     service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [] }));
 
     await push(failed.id);
 
     expect(state.recentSync?.results).toEqual([
-      { repoId: failed.id, status: "success", message: "完成", summary: updated },
+      { repoId: failed.id, status: "success", message: "完成", summary: updated, steps: [] },
     ]);
     expect(state.recentSync?.retryingRepoIds).toHaveLength(0);
     expect(state.repos[0].ahead).toBe(0);
@@ -1102,7 +1142,7 @@ describe("workspace incremental refresh", () => {
     state.repos = [initial];
     service.mergePullRepo.mockRejectedValue(new Error("合并失败：not something we can merge"));
     service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [] }));
-    service.pushRepo.mockResolvedValue(updated);
+    service.pushRepo.mockResolvedValue(repoSyncResult(updated));
 
     await expect(mergePull(initial.id)).rejects.toThrow("合并失败：not something we can merge");
     expect(repoActionErrorForRepo(initial.id)).toBe("Error: 合并失败：not something we can merge");
@@ -1193,9 +1233,9 @@ describe("workspace incremental refresh", () => {
     });
     state.repos = [initialWithLanguageStats];
     service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [], branches: [] }));
-    service.commitRepo.mockResolvedValue(updated);
-    service.pullRepo.mockResolvedValue(updated);
-    service.pushRepo.mockResolvedValue(updated);
+    service.commitRepo.mockResolvedValue(repoCommitResult(updated));
+    service.pullRepo.mockResolvedValue(repoSyncResult(updated));
+    service.pushRepo.mockResolvedValue(repoSyncResult(updated));
     service.checkoutBranch.mockResolvedValue(updated);
 
     await commit(initial.id, ["src/main.ts"], "提交说明", false);
@@ -1308,7 +1348,7 @@ describe("workspace incremental refresh", () => {
     state.repoDetails[initial.id] = repoDetail(initial, {
       changes: [repoChange("src/main.ts"), untrackedChange, remainingChange],
     });
-    const pending = deferred<ReturnType<typeof repoSummary>>();
+    const pending = deferred<ReturnType<typeof repoCommitResult>>();
     const refreshedSummary = repoSummary(initial.id, { unstagedCount: 1 });
     service.discardFiles.mockReturnValue(pending.promise);
     service.refreshRepoDetailPatch.mockResolvedValueOnce(repoDetailPatch(refreshedSummary, {
@@ -1322,7 +1362,7 @@ describe("workspace incremental refresh", () => {
     });
     expect(state.repos[0]).toMatchObject({ unstagedCount: 1, untrackedCount: 0 });
 
-    pending.resolve(refreshedSummary);
+    pending.resolve(repoCommitResult(refreshedSummary));
     await run;
 
     expect(service.discardFiles).toHaveBeenCalledWith(initial.id, ["src/main.ts", "src/scratch.ts"]);
@@ -1340,7 +1380,7 @@ describe("workspace incremental refresh", () => {
     state.repoDetails[initial.id] = repoDetail(initial, {
       changes: [untrackedChange, remainingChange],
     });
-    const pending = deferred<ReturnType<typeof repoSummary>>();
+    const pending = deferred<ReturnType<typeof repoCommitResult>>();
     service.discardFiles.mockReturnValue(pending.promise);
     service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(initial, {
       changes: [untrackedChange, remainingChange],
@@ -1376,7 +1416,7 @@ describe("workspace incremental refresh", () => {
     });
     state.repos = [initial];
     state.repoDetails[initial.id] = repoDetail(initial, { changes: [stagedOnly, partiallyStaged] });
-    const pending = deferred<ReturnType<typeof repoSummary>>();
+    const pending = deferred<ReturnType<typeof repoCommitResult>>();
     const refreshedSummary = repoSummary(initial.id, {
       ahead: 2,
       unstagedCount: 1,
@@ -1401,7 +1441,7 @@ describe("workspace incremental refresh", () => {
       lastCommitMessage: "提交说明",
     });
 
-    pending.resolve(refreshedSummary);
+    pending.resolve(repoCommitResult(refreshedSummary));
     await run;
   });
 
@@ -1416,7 +1456,7 @@ describe("workspace incremental refresh", () => {
     const actualAfterFailure = repoSummary(initial.id, { stagedCount: 1, ahead: 1 });
     state.repos = [initial];
     state.repoDetails[initial.id] = repoDetail(initial, { changes: [stagedChange] });
-    const pending = deferred<ReturnType<typeof repoSummary>>();
+    const pending = deferred<ReturnType<typeof repoCommitResult>>();
     service.commitRepo.mockReturnValue(pending.promise);
     service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(actualAfterFailure, {
       changes: [stagedChange],
@@ -1474,9 +1514,9 @@ describe("workspace incremental refresh", () => {
     service.refreshRepoDetailPatch.mockResolvedValue(repoDetailPatch(updated, { commits: [], branches: [] }));
     service.stageFiles.mockResolvedValue(undefined);
     service.unstageFiles.mockResolvedValue(undefined);
-    service.commitRepo.mockResolvedValue(updated);
-    service.pullRepo.mockResolvedValue(updated);
-    service.pushRepo.mockResolvedValue(updated);
+    service.commitRepo.mockResolvedValue(repoCommitResult(updated));
+    service.pullRepo.mockResolvedValue(repoSyncResult(updated));
+    service.pushRepo.mockResolvedValue(repoSyncResult(updated));
     service.checkoutBranch.mockResolvedValue(updated);
 
     await stage(initial.id, ["src/main.ts"]);
@@ -1530,6 +1570,7 @@ describe("workspace incremental refresh", () => {
           },
         ],
       }),
+      steps: [],
     });
     service.acceptConflictFile.mockResolvedValue(updated);
     service.resolveConflictFile.mockResolvedValue(updated);

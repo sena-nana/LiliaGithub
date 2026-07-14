@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::runtime::WorkspaceContext as AppHandle;
-use crate::workspace::bulk::{merge_pull_block_reason_with_mode, repo_dirty_count};
+use crate::workspace::bulk::repo_dirty_count;
 use crate::workspace::github::{
     clear_github_project_repo_cache, github_auth_header, normalize_github_repo_input,
     normalize_optional_string, token_for_binding,
@@ -26,11 +26,12 @@ use crate::workspace::settings::{
 use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitDiffHunk, CommitDiffLine, CommitFileChange, CommitSummary,
-    LanguageStat, RepoChange, RepoConflictChoice, RepoConflictFile, RepoConflictHunk,
-    RepoConflictState, RepoDetail, RepoDetailPatch, RepoDetailPatchRequest, RepoMergePullResult,
-    RepoOperationResult, RepoPullLocalChangesMode, RepoRefreshRequest, RepoRefreshSummaryOptions,
-    RepoRemote, RepoStashDetail, RepoStashEntry, RepoSummary, RepoWorktree,
-    WorkspaceCreateLocalRepoRequest, WorkspaceSettings,
+    LanguageStat, RepoChange, RepoCommitResult, RepoConflictChoice, RepoConflictFile,
+    RepoConflictHunk, RepoConflictState, RepoDetail, RepoDetailPatch, RepoDetailPatchRequest,
+    RepoMergePullResult, RepoOperationResult, RepoPullLocalChangesMode, RepoRefreshRequest,
+    RepoRefreshSummaryOptions, RepoRemote, RepoRemoteBranchState, RepoRemoteOperationStep,
+    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoStashDetail, RepoStashEntry, RepoSummary,
+    RepoSyncOperationResult, RepoWorktree, WorkspaceCreateLocalRepoRequest, WorkspaceSettings,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
@@ -623,16 +624,6 @@ pub(super) fn should_retry_clone_with_system_git(remote: &str, error: &str) -> b
         && (error.contains("当前 GitHub 绑定无权限") || error.contains("无法认证 GitHub 仓库"))
 }
 
-pub(super) fn origin_remote_url(path: &Path) -> Option<String> {
-    git_command_lossy(path, &["remote", "get-url", "origin"]).filter(|value| !value.is_empty())
-}
-
-pub(super) fn map_remote_git_error(path: &Path, error: String) -> String {
-    origin_remote_url(path)
-        .map(|remote| normalize_git_remote_error(&remote, error.clone()))
-        .unwrap_or(error)
-}
-
 pub(super) fn repo_uses_system_git(app: &AppHandle, path: &Path) -> bool {
     let Ok(root) = workspace_root(app) else {
         return false;
@@ -909,7 +900,20 @@ fn summarize_repo_from_status(
         }
     }
 
-    let remote_url = git_command_lossy(path, &["remote", "get-url", "origin"]);
+    let upstream_remote = current_branch_upstream_remote(path);
+    let remote_url = upstream_remote
+        .as_deref()
+        .and_then(|remote| git_command_lossy(path, &["remote", "get-url", remote]))
+        .or_else(|| git_command_lossy(path, &["remote", "get-url", "origin"]));
+    let remote_branch_states = repo_remote_branch_states(path);
+    let remotes_needing_pull = remote_branch_states
+        .iter()
+        .filter(|state| state.needs_pull)
+        .count();
+    let remotes_needing_push = remote_branch_states
+        .iter()
+        .filter(|state| state.needs_push)
+        .count();
     let last_commit = git_command_lossy(path, &["log", "-1", "--format=%ct%x1f%s"]);
     let last_commit_at = last_commit
         .as_deref()
@@ -939,6 +943,9 @@ fn summarize_repo_from_status(
         remote_url,
         ahead: status.ahead,
         behind: status.behind,
+        remote_branch_states,
+        remotes_needing_pull,
+        remotes_needing_push,
         staged_count,
         unstaged_count,
         untracked_count,
@@ -968,6 +975,9 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
         github_full_name: None,
         ahead: 0,
         behind: 0,
+        remote_branch_states: Vec::new(),
+        remotes_needing_pull: 0,
+        remotes_needing_push: 0,
         staged_count: 0,
         unstaged_count: 0,
         untracked_count: 0,
@@ -1592,10 +1602,17 @@ pub async fn repo_refresh_summary(
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
             let fetch_error = if fetched_remote {
-                summarize_repo(&root, &path)
-                    .remote_url
-                    .as_ref()
-                    .and_then(|_| run_fetch(&app, &path).err())
+                match require_valid_remote_sync_config(&app, &repo_id, &path) {
+                    Ok(config) => {
+                        let errors = run_multi_remote_fetch(&app, &path, &config)
+                            .into_iter()
+                            .filter(|step| step.status == "error")
+                            .map(|step| format!("{}：{}", step.remote, step.message))
+                            .collect::<Vec<_>>();
+                        (!errors.is_empty()).then(|| errors.join("；"))
+                    }
+                    Err(error) => Some(error),
+                }
             } else {
                 None
             };
@@ -1800,10 +1817,16 @@ pub(super) fn refresh_repo_for_scheduler(
     let root = workspace_root(app)?;
     let path = repo_path_by_id(app, &request.repo_id)?;
     let remote_checked_at = if request.mode == "remote" {
-        if origin_remote_url(&path).is_none() {
-            return Err("仓库没有可抓取的远端".to_string());
+        let config = require_valid_remote_sync_config(app, &request.repo_id, &path)?;
+        let steps = run_multi_remote_fetch(app, &path, &config);
+        let errors = steps
+            .iter()
+            .filter(|step| step.status == "error")
+            .map(|step| format!("{}：{}", step.remote, step.message))
+            .collect::<Vec<_>>();
+        if !errors.is_empty() {
+            return Err(errors.join("；"));
         }
-        run_fetch(app, &path)?;
         Some(now_millis())
     } else {
         None
@@ -1903,13 +1926,162 @@ pub async fn repo_add_files_to_gitignore(
     .await
 }
 
+pub(super) fn run_configured_pull(
+    app: &AppHandle,
+    root: &Path,
+    repo_id: &str,
+    path: &Path,
+    local_changes_mode: Option<RepoPullLocalChangesMode>,
+    force_merge: bool,
+) -> Result<RepoSyncOperationResult, String> {
+    let config = require_valid_remote_sync_config(app, repo_id, path)?;
+    run_configured_pull_with_config(app, root, path, &config, local_changes_mode, force_merge)
+}
+
+pub(super) fn run_configured_pull_with_config(
+    app: &AppHandle,
+    root: &Path,
+    path: &Path,
+    config: &RepoRemoteSyncConfig,
+    local_changes_mode: Option<RepoPullLocalChangesMode>,
+    force_merge: bool,
+) -> Result<RepoSyncOperationResult, String> {
+    if config.resolved_policy.pull_remotes.is_empty() {
+        return Err("未配置拉取源".to_string());
+    }
+    let summary = summarize_repo(root, path);
+    if !repo_conflicts(path).files.is_empty() || summary.conflict_count > 0 {
+        return Err("当前仓库存在未处理冲突，已阻止拉取".to_string());
+    }
+    let local_changes = prepare_pull_local_changes(
+        path,
+        &summary,
+        local_changes_mode,
+        if force_merge { "合并拉取" } else { "pull" },
+    )?;
+    let mut steps = run_multi_remote_fetch(app, path, config);
+    if steps.iter().any(|step| step.status == "error") {
+        let restore_error = restore_pull_local_changes(path, local_changes).err();
+        if let Some(error) = restore_error {
+            steps.push(RepoRemoteOperationStep {
+                remote: String::new(),
+                operation: "restore".to_string(),
+                status: "error".to_string(),
+                message: error,
+                target_branch: None,
+            });
+        }
+        return Ok(sync_result(
+            root,
+            path,
+            steps,
+            "部分远端抓取失败，未修改本地分支",
+        ));
+    }
+
+    let local_branch = summary
+        .current_branch
+        .as_deref()
+        .ok_or_else(|| "当前 HEAD 未指向命名分支，无法拉取".to_string())?;
+    let pull_remotes = ordered_policy_remotes(
+        &config.resolved_policy.primary_remote,
+        &config.resolved_policy.pull_remotes,
+    );
+    let multiple = pull_remotes.len() > 1;
+    for remote in pull_remotes {
+        let target = remote_target_branch(path, &remote, local_branch);
+        let remote_ref = format!("refs/remotes/{remote}/{target}");
+        if git_command_lossy(path, &["show-ref", "--verify", &remote_ref]).is_none() {
+            steps.push(RepoRemoteOperationStep {
+                remote,
+                operation: "merge".to_string(),
+                status: "skipped".to_string(),
+                message: "远端不存在对应分支，已跳过".to_string(),
+                target_branch: Some(target),
+            });
+            continue;
+        }
+        let merge_args = if force_merge || multiple {
+            vec!["merge", "--no-edit", remote_ref.as_str()]
+        } else {
+            vec!["merge", "--ff-only", remote_ref.as_str()]
+        };
+        match git_command(path, &merge_args, None) {
+            Ok(_) => steps.push(RepoRemoteOperationStep {
+                remote,
+                operation: "merge".to_string(),
+                status: "success".to_string(),
+                message: "合并完成".to_string(),
+                target_branch: Some(target),
+            }),
+            Err(message) => {
+                let conflicts = repo_conflicts(path);
+                let has_conflicts = !conflicts.files.is_empty();
+                steps.push(RepoRemoteOperationStep {
+                    remote,
+                    operation: "merge".to_string(),
+                    status: if has_conflicts { "conflicts" } else { "error" }.to_string(),
+                    message: if has_conflicts {
+                        "合并产生冲突，请处理后继续".to_string()
+                    } else {
+                        message
+                    },
+                    target_branch: Some(target),
+                });
+                if !has_conflicts {
+                    if let Err(error) = restore_pull_local_changes(path, local_changes.clone()) {
+                        steps.push(RepoRemoteOperationStep {
+                            remote: String::new(),
+                            operation: "restore".to_string(),
+                            status: "error".to_string(),
+                            message: error,
+                            target_branch: None,
+                        });
+                    }
+                }
+                return Ok(sync_result(
+                    root,
+                    path,
+                    steps,
+                    if has_conflicts {
+                        "合并产生冲突，已停止后续远端"
+                    } else {
+                        "合并失败，已停止后续远端"
+                    },
+                ));
+            }
+        }
+    }
+    if let Err(error) = restore_pull_local_changes(path, local_changes) {
+        steps.push(RepoRemoteOperationStep {
+            remote: String::new(),
+            operation: "restore".to_string(),
+            status: if repo_conflicts(path).files.is_empty() {
+                "error"
+            } else {
+                "conflicts"
+            }
+            .to_string(),
+            message: error,
+            target_branch: None,
+        });
+        return Ok(sync_result(
+            root,
+            path,
+            steps,
+            "拉取完成，但还原本地修改失败",
+        ));
+    }
+    Ok(sync_result(root, path, steps, "拉取完成"))
+}
+
 pub async fn repo_commit(
     app: AppHandle,
     repo_id: String,
     files: Vec<String>,
     message: String,
     push_after: bool,
-) -> Result<RepoSummary, String> {
+) -> Result<RepoCommitResult, String> {
     run_repo_blocking(
         app.clone(),
         repo_id.clone(),
@@ -1924,10 +2096,33 @@ pub async fn repo_commit(
             }
             let _selected = selected_repo_files(&path, files)?;
             git_command(&path, &["commit", "-m", trimmed], None)?;
-            if push_after {
-                run_push(&app, &path)?;
-            }
-            Ok(summarize_repo(&root, &path))
+            let push_result = if push_after {
+                let pushed =
+                    require_valid_remote_sync_config(&app, &repo_id, &path).and_then(|config| {
+                        run_multi_remote_push(&app, &path, &config, None, None, false)
+                    });
+                Some(match pushed {
+                    Ok(steps) => sync_result(&root, &path, steps, "提交完成，推送已执行"),
+                    Err(message) => sync_result(
+                        &root,
+                        &path,
+                        vec![RepoRemoteOperationStep {
+                            remote: String::new(),
+                            operation: "push".to_string(),
+                            status: "error".to_string(),
+                            message: message.clone(),
+                            target_branch: None,
+                        }],
+                        message,
+                    ),
+                })
+            } else {
+                None
+            };
+            Ok(RepoCommitResult {
+                summary: summarize_repo(&root, &path),
+                push_result,
+            })
         },
     )
     .await
@@ -1937,7 +2132,7 @@ pub async fn repo_pull(
     app: AppHandle,
     repo_id: String,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
-) -> Result<RepoSummary, String> {
+) -> Result<RepoSyncOperationResult, String> {
     run_repo_blocking(
         app.clone(),
         repo_id.clone(),
@@ -1946,23 +2141,7 @@ pub async fn repo_pull(
         move || {
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
-            let summary = summarize_repo(&root, &path);
-            let local_changes =
-                prepare_pull_local_changes(&path, &summary, local_changes_mode, "pull")?;
-            if let Err(err) = run_pull(&app, &path) {
-                return Err(restore_pull_local_changes_after_error(
-                    &path,
-                    local_changes,
-                    err,
-                ));
-            }
-            if let Err(err) = restore_pull_local_changes(&path, local_changes) {
-                let conflicts = repo_conflicts(&path);
-                if conflicts.files.is_empty() {
-                    return Err(err);
-                }
-            }
-            Ok(summarize_repo(&root, &path))
+            run_configured_pull(&app, &root, &repo_id, &path, local_changes_mode, false)
         },
     )
     .await
@@ -1972,7 +2151,7 @@ pub async fn repo_merge_pull(
     app: AppHandle,
     repo_id: String,
     local_changes_mode: Option<RepoPullLocalChangesMode>,
-) -> Result<RepoMergePullResult, String> {
+) -> Result<RepoSyncOperationResult, String> {
     run_repo_blocking(
         app.clone(),
         repo_id.clone(),
@@ -1981,68 +2160,16 @@ pub async fn repo_merge_pull(
         move || {
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
-            let summary = summarize_repo(&root, &path);
-            let mode = local_changes_mode.unwrap_or_default();
-            if let Some(reason) = merge_pull_block_reason_with_mode(
-                &summary,
-                current_branch_upstream(&path).is_some(),
-                mode,
-            ) {
-                return Err(reason);
-            }
-            let local_changes =
-                prepare_pull_local_changes(&path, &summary, Some(mode), "合并拉取")?;
-
-            if let Err(err) = run_fetch(&app, &path) {
-                return Err(restore_pull_local_changes_after_error(
-                    &path,
-                    local_changes,
-                    err,
-                ));
-            }
-            match git_command(&path, &["merge", "--no-edit", "@{u}"], None) {
-                Ok(_) => {
-                    if let Some(result) = restore_pull_local_changes_for_merge_result(
-                        &root,
-                        &path,
-                        local_changes,
-                        "拉取完成，stash 还原产生冲突，请处理后提交",
-                    )? {
-                        return Ok(result);
-                    }
-                    let summary = summarize_repo(&root, &path);
-                    Ok(RepoMergePullResult {
-                        status: "success".to_string(),
-                        message: "合并完成".to_string(),
-                        conflicts: repo_conflicts(&path),
-                        summary,
-                    })
-                }
-                Err(err) => {
-                    let conflicts = repo_conflicts(&path);
-                    let summary = summarize_repo(&root, &path);
-                    if conflicts.files.is_empty() {
-                        Err(restore_pull_local_changes_after_error(
-                            &path,
-                            local_changes,
-                            err,
-                        ))
-                    } else {
-                        Ok(RepoMergePullResult {
-                            status: "conflicts".to_string(),
-                            message: "合并产生冲突，请处理后提交".to_string(),
-                            summary,
-                            conflicts,
-                        })
-                    }
-                }
-            }
+            run_configured_pull(&app, &root, &repo_id, &path, local_changes_mode, true)
         },
     )
     .await
 }
 
-pub async fn repo_fetch(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+pub async fn repo_fetch(
+    app: AppHandle,
+    repo_id: String,
+) -> Result<RepoSyncOperationResult, String> {
     run_repo_blocking(
         app.clone(),
         repo_id.clone(),
@@ -2051,11 +2178,18 @@ pub async fn repo_fetch(app: AppHandle, repo_id: String) -> Result<RepoSummary, 
         move || {
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
-            run_fetch(&app, &path)?;
-            let summary = summarize_repo(&root, &path);
-            let settings = load_settings(&app);
-            write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis())?;
-            Ok(summary)
+            let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
+            let steps = run_multi_remote_fetch(&app, &path, &config);
+            let result = sync_result(&root, &path, steps, "远端抓取已执行");
+            if result.status == "success" {
+                write_startup_repo_summary_after_fetch(
+                    &app,
+                    &load_settings(&app),
+                    &result.summary,
+                    now_millis(),
+                )?;
+            }
+            Ok(result)
         },
     )
     .await
@@ -2076,12 +2210,18 @@ pub async fn repo_start_rebase(
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
             ensure_repo_has_no_conflicts(&root, &path, "rebase")?;
+            let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
+            if config.resolved_policy.pull_remotes.len() != 1 {
+                return Err("配置了多个拉取源，请使用合并多个远端".to_string());
+            }
             let summary = summarize_repo(&root, &path);
             let local_changes =
                 prepare_pull_local_changes(&path, &summary, local_changes_mode, "rebase")?;
-            let target = normalize_rebase_target(&path, onto_ref)?;
+            let target =
+                configured_rebase_target(&path, &config.resolved_policy.pull_remotes[0], onto_ref)?;
             if target == "@{u}" || target.contains('/') {
-                if let Err(err) = run_fetch(&app, &path) {
+                let remote = &config.resolved_policy.pull_remotes[0];
+                if let Err(err) = run_fetch_remote(&app, &path, remote) {
                     return Err(restore_pull_local_changes_after_error(
                         &path,
                         local_changes,
@@ -2114,7 +2254,11 @@ pub async fn repo_start_rebase(
     .await
 }
 
-pub async fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, String> {
+pub async fn repo_push(
+    app: AppHandle,
+    repo_id: String,
+    remote_names: Option<Vec<String>>,
+) -> Result<RepoSyncOperationResult, String> {
     run_repo_blocking(
         app.clone(),
         repo_id.clone(),
@@ -2123,8 +2267,9 @@ pub async fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, S
         move || {
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
-            run_push(&app, &path)?;
-            Ok(summarize_repo(&root, &path))
+            let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
+            let steps = run_multi_remote_push(&app, &path, &config, remote_names, None, false)?;
+            Ok(sync_result(&root, &path, steps, "推送已执行"))
         },
     )
     .await
@@ -2133,9 +2278,9 @@ pub async fn repo_push(app: AppHandle, repo_id: String) -> Result<RepoSummary, S
 pub async fn repo_push_new_branch(
     app: AppHandle,
     repo_id: String,
-    remote_name: Option<String>,
+    remote_names: Option<Vec<String>>,
     branch_name: Option<String>,
-) -> Result<RepoSummary, String> {
+) -> Result<RepoSyncOperationResult, String> {
     run_repo_blocking(
         app.clone(),
         repo_id.clone(),
@@ -2152,15 +2297,10 @@ pub async fn repo_push_new_branch(
                     .unwrap_or(""),
                 "分支名不能为空",
             )?;
-            let remote = normalize_remote_name(remote_name.as_deref().unwrap_or("origin"))?;
-            let auth = git_auth_for_repo(&app, &path)?;
-            git_command(
-                &path,
-                &["push", "-u", remote.as_str(), branch.as_str()],
-                auth.as_deref(),
-            )
-            .map_err(|error| map_remote_git_error(&path, error))?;
-            Ok(summarize_repo(&root, &path))
+            let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
+            let steps =
+                run_multi_remote_push(&app, &path, &config, remote_names, Some(branch), false)?;
+            Ok(sync_result(&root, &path, steps, "新分支推送已执行"))
         },
     )
     .await
@@ -2169,7 +2309,8 @@ pub async fn repo_push_new_branch(
 pub async fn repo_push_with_system_git(
     app: AppHandle,
     repo_id: String,
-) -> Result<RepoSummary, String> {
+    remote_names: Option<Vec<String>>,
+) -> Result<RepoSyncOperationResult, String> {
     run_repo_blocking(
         app.clone(),
         repo_id.clone(),
@@ -2178,9 +2319,9 @@ pub async fn repo_push_with_system_git(
         move || {
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
-            run_system_git_push(&path)?;
-            remember_repo_uses_system_git(&app, &path)?;
-            Ok(summarize_repo(&root, &path))
+            let config = require_valid_remote_sync_config(&app, &repo_id, &path)?;
+            let steps = run_multi_remote_push(&app, &path, &config, remote_names, None, true)?;
+            Ok(sync_result(&root, &path, steps, "系统 Git 推送已执行"))
         },
     )
     .await
@@ -2825,30 +2966,6 @@ pub(super) fn restore_pull_local_changes_for_operation_result(
                 Err(err)
             } else {
                 Ok(Some(RepoOperationResult {
-                    status: "conflicts".to_string(),
-                    message: conflict_message.to_string(),
-                    summary: summarize_repo(root, path),
-                    conflicts,
-                }))
-            }
-        }
-    }
-}
-
-pub(super) fn restore_pull_local_changes_for_merge_result(
-    root: &Path,
-    path: &Path,
-    local_changes: PullLocalChanges,
-    conflict_message: &str,
-) -> Result<Option<RepoMergePullResult>, String> {
-    match restore_pull_local_changes(path, local_changes) {
-        Ok(()) => Ok(None),
-        Err(err) => {
-            let conflicts = repo_conflicts(path);
-            if conflicts.files.is_empty() {
-                Err(err)
-            } else {
-                Ok(Some(RepoMergePullResult {
                     status: "conflicts".to_string(),
                     message: conflict_message.to_string(),
                     summary: summarize_repo(root, path),
@@ -3993,6 +4110,152 @@ pub(super) fn repo_remotes(path: &Path) -> Result<Vec<RepoRemote>, String> {
     Ok(remotes)
 }
 
+pub(super) fn current_branch_upstream_remote(path: &Path) -> Option<String> {
+    let branch = git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    git_command_lossy(
+        path,
+        &["config", "--get", &format!("branch.{branch}.remote")],
+    )
+    .filter(|remote| !remote.is_empty() && remote != ".")
+}
+
+fn current_branch_upstream_target(path: &Path) -> Option<(String, String)> {
+    let branch = git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    let remote = current_branch_upstream_remote(path)?;
+    let target = git_command_lossy(
+        path,
+        &["config", "--get", &format!("branch.{branch}.merge")],
+    )?
+    .strip_prefix("refs/heads/")
+    .map(str::to_string)
+    .filter(|value| !value.is_empty())?;
+    Some((remote, target))
+}
+
+fn rev_list_ahead_behind(path: &Path, remote_ref: &str) -> Option<(i32, i32)> {
+    let range = format!("HEAD...{remote_ref}");
+    let output = git_command_lossy(path, &["rev-list", "--left-right", "--count", &range])?;
+    let mut values = output.split_whitespace();
+    Some((values.next()?.parse().ok()?, values.next()?.parse().ok()?))
+}
+
+pub(super) fn repo_remote_branch_states(path: &Path) -> Vec<RepoRemoteBranchState> {
+    let Some(local_branch) =
+        git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+    else {
+        return Vec::new();
+    };
+    let upstream = current_branch_upstream_target(path);
+    repo_remotes(path)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|remote| {
+            let upstream_for_remote = upstream.as_ref().filter(|(name, _)| name == &remote.name);
+            let target = upstream_for_remote
+                .map(|(_, target)| target.clone())
+                .unwrap_or_else(|| local_branch.clone());
+            let remote_ref = format!("refs/remotes/{}/{target}", remote.name);
+            let exists = git_command_lossy(path, &["show-ref", "--verify", &remote_ref]).is_some();
+            let (ahead, behind) = if exists {
+                rev_list_ahead_behind(path, &remote_ref).unwrap_or_default()
+            } else {
+                (1, 0)
+            };
+            RepoRemoteBranchState {
+                remote: remote.name,
+                remote_branch: target,
+                exists,
+                ahead,
+                behind,
+                needs_pull: behind > 0,
+                needs_push: !exists || ahead > 0,
+                upstream: upstream_for_remote.is_some(),
+            }
+        })
+        .collect()
+}
+
+fn normalize_remote_names(values: &[String]) -> Vec<String> {
+    let mut normalized = values
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+pub(super) fn resolve_remote_sync_config(
+    settings: &WorkspaceSettings,
+    repo_id: &str,
+    path: &Path,
+) -> Result<RepoRemoteSyncConfig, String> {
+    let remotes = repo_remotes(path)?;
+    let names = remotes
+        .iter()
+        .map(|remote| remote.name.clone())
+        .collect::<HashSet<_>>();
+    let policy = settings.repo_remote_sync_policies.get(repo_id).cloned();
+    let resolved_policy = policy.clone().unwrap_or_else(|| {
+        let primary_remote = current_branch_upstream_remote(path)
+            .filter(|remote| names.contains(remote))
+            .or_else(|| names.contains("origin").then(|| "origin".to_string()))
+            .or_else(|| (remotes.len() == 1).then(|| remotes[0].name.clone()))
+            .unwrap_or_default();
+        let selected = (!primary_remote.is_empty())
+            .then(|| vec![primary_remote.clone()])
+            .unwrap_or_default();
+        RepoRemoteSyncPolicy {
+            primary_remote,
+            pull_remotes: selected.clone(),
+            push_remotes: selected,
+        }
+    });
+    let mut validation_errors = Vec::new();
+    if resolved_policy.primary_remote.trim().is_empty() {
+        validation_errors.push("仓库没有可用的主远端".to_string());
+    } else if !names.contains(resolved_policy.primary_remote.trim()) {
+        validation_errors.push(format!(
+            "主远端 {} 已不存在",
+            resolved_policy.primary_remote
+        ));
+    }
+    let pull_remotes = normalize_remote_names(&resolved_policy.pull_remotes);
+    let push_remotes = normalize_remote_names(&resolved_policy.push_remotes);
+    if !pull_remotes.contains(&resolved_policy.primary_remote) {
+        validation_errors.push("主远端必须属于拉取源".to_string());
+    }
+    for remote in pull_remotes.iter().chain(push_remotes.iter()) {
+        if !names.contains(remote) {
+            validation_errors.push(format!("远端 {remote} 已不存在"));
+        }
+    }
+    Ok(RepoRemoteSyncConfig {
+        remotes,
+        policy,
+        resolved_policy: RepoRemoteSyncPolicy {
+            primary_remote: resolved_policy.primary_remote.trim().to_string(),
+            pull_remotes,
+            push_remotes,
+        },
+        validation_errors,
+    })
+}
+
+pub(super) fn require_valid_remote_sync_config(
+    app: &AppHandle,
+    repo_id: &str,
+    path: &Path,
+) -> Result<RepoRemoteSyncConfig, String> {
+    let config = resolve_remote_sync_config(&load_settings(app), repo_id, path)?;
+    if config.validation_errors.is_empty() {
+        Ok(config)
+    } else {
+        Err(config.validation_errors.join("；"))
+    }
+}
+
 pub(super) fn stash_branch_from_message(message: &str) -> Option<String> {
     let trimmed = message.trim();
     let branch = trimmed
@@ -4032,14 +4295,6 @@ pub(super) fn normalize_branch_ref(value: &str, error_message: &str) -> Result<S
     Ok(trimmed.to_string())
 }
 
-pub(super) fn normalize_remote_name(value: &str) -> Result<String, String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err("remote 名称不能为空".to_string());
-    }
-    Ok(trimmed.to_string())
-}
-
 pub(super) fn normalize_stash_id(stash_id: &str) -> Result<String, String> {
     let trimmed = stash_id.trim();
     if trimmed.is_empty() {
@@ -4062,14 +4317,18 @@ pub(super) fn normalize_reset_mode(mode: Option<String>) -> Result<String, Strin
     }
 }
 
-pub(super) fn normalize_rebase_target(
+pub(super) fn configured_rebase_target(
     path: &Path,
+    remote: &str,
     onto_ref: Option<String>,
 ) -> Result<String, String> {
     if let Some(target) = normalize_optional_string(onto_ref) {
         return Ok(target);
     }
-    current_branch_upstream(path).ok_or_else(|| "当前分支没有 upstream".to_string())
+    let branch = git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok_or_else(|| "当前 HEAD 未指向命名分支，无法 rebase".to_string())?;
+    let target = remote_target_branch(path, remote, &branch);
+    Ok(format!("{remote}/{target}"))
 }
 
 pub(super) fn ensure_repo_ready_for_rewrite(
@@ -4097,23 +4356,168 @@ pub(super) fn ensure_repo_has_no_conflicts(
     Ok(())
 }
 
-pub(super) fn run_pull(app: &AppHandle, path: &Path) -> Result<(), String> {
+pub(super) fn run_fetch_remote(app: &AppHandle, path: &Path, remote: &str) -> Result<(), String> {
     let auth = git_auth_for_repo(app, path)?;
-    lilia_github_git::run_pull(path, auth.as_deref())
+    lilia_github_git::run_fetch_remote(path, remote, auth.as_deref())
 }
 
-pub(super) fn run_fetch(app: &AppHandle, path: &Path) -> Result<(), String> {
-    let auth = git_auth_for_repo(app, path)?;
-    lilia_github_git::run_fetch(path, auth.as_deref())
+fn run_push_remote_once(
+    app: &AppHandle,
+    path: &Path,
+    remote: &str,
+    target_branch: &str,
+    set_upstream: bool,
+    system_git: bool,
+) -> Result<(), String> {
+    let auth = if system_git {
+        None
+    } else {
+        token_for_binding(app).map(|token| token.map(|value| github_auth_header(&value)))?
+    };
+    lilia_github_git::run_push_remote(path, remote, target_branch, set_upstream, auth.as_deref())
 }
 
-pub(super) fn run_push(app: &AppHandle, path: &Path) -> Result<(), String> {
-    let auth = git_auth_for_repo(app, path)?;
-    lilia_github_git::run_push(path, auth.as_deref())
+fn ordered_policy_remotes(primary: &str, remotes: &[String]) -> Vec<String> {
+    let mut ordered = remotes.to_vec();
+    ordered.sort();
+    ordered.dedup();
+    if let Some(index) = ordered.iter().position(|remote| remote == primary) {
+        let primary = ordered.remove(index);
+        ordered.insert(0, primary);
+    }
+    ordered
 }
 
-pub(super) fn run_system_git_push(path: &Path) -> Result<(), String> {
-    lilia_github_git::run_push(path, None)
+fn operation_status(steps: &[RepoRemoteOperationStep], conflicts: bool) -> String {
+    if conflicts {
+        return "conflicts".to_string();
+    }
+    let succeeded = steps.iter().any(|step| step.status == "success");
+    let failed = steps.iter().any(|step| step.status == "error");
+    match (succeeded, failed) {
+        (true, true) => "partial",
+        (false, true) => "error",
+        _ => "success",
+    }
+    .to_string()
+}
+
+pub(super) fn sync_result(
+    root: &Path,
+    path: &Path,
+    steps: Vec<RepoRemoteOperationStep>,
+    message: impl Into<String>,
+) -> RepoSyncOperationResult {
+    let conflicts = repo_conflicts(path);
+    RepoSyncOperationResult {
+        status: operation_status(&steps, !conflicts.files.is_empty()),
+        message: message.into(),
+        summary: summarize_repo(root, path),
+        conflicts,
+        steps,
+    }
+}
+
+fn remote_target_branch(path: &Path, remote: &str, local_branch: &str) -> String {
+    current_branch_upstream_target(path)
+        .filter(|(upstream_remote, _)| upstream_remote == remote)
+        .map(|(_, branch)| branch)
+        .unwrap_or_else(|| local_branch.to_string())
+}
+
+fn run_multi_remote_fetch(
+    app: &AppHandle,
+    path: &Path,
+    config: &RepoRemoteSyncConfig,
+) -> Vec<RepoRemoteOperationStep> {
+    ordered_policy_remotes(
+        &config.resolved_policy.primary_remote,
+        &config.resolved_policy.pull_remotes,
+    )
+    .into_iter()
+    .map(|remote| match run_fetch_remote(app, path, &remote) {
+        Ok(()) => RepoRemoteOperationStep {
+            remote,
+            operation: "fetch".to_string(),
+            status: "success".to_string(),
+            message: "抓取完成".to_string(),
+            target_branch: None,
+        },
+        Err(message) => RepoRemoteOperationStep {
+            remote,
+            operation: "fetch".to_string(),
+            status: "error".to_string(),
+            message,
+            target_branch: None,
+        },
+    })
+    .collect()
+}
+
+pub(super) fn run_multi_remote_push(
+    app: &AppHandle,
+    path: &Path,
+    config: &RepoRemoteSyncConfig,
+    selected_remotes: Option<Vec<String>>,
+    target_branch_override: Option<String>,
+    force_system_git: bool,
+) -> Result<Vec<RepoRemoteOperationStep>, String> {
+    let local_branch = git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok_or_else(|| "当前 HEAD 未指向命名分支，无法推送".to_string())?;
+    let configured = config
+        .resolved_policy
+        .push_remotes
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let remotes = if let Some(selected) = selected_remotes {
+        let selected = normalize_remote_names(&selected);
+        if let Some(remote) = selected.iter().find(|remote| !configured.contains(*remote)) {
+            return Err(format!("远端 {remote} 不是已配置的推送目标"));
+        }
+        selected
+    } else {
+        config.resolved_policy.push_remotes.clone()
+    };
+    if remotes.is_empty() {
+        return Err("未配置推送目标".to_string());
+    }
+    let remotes = ordered_policy_remotes(&config.resolved_policy.primary_remote, &remotes);
+    let initially_has_upstream = current_branch_upstream_target(path).is_some();
+    let mut upstream_assigned = initially_has_upstream;
+    let mut system_git_recorded = false;
+    let mut steps = Vec::new();
+    for remote in remotes {
+        let target = target_branch_override
+            .as_deref()
+            .map(str::to_string)
+            .unwrap_or_else(|| remote_target_branch(path, &remote, &local_branch));
+        let set_upstream = !upstream_assigned;
+        match run_push_remote_once(app, path, &remote, &target, set_upstream, force_system_git) {
+            Ok(()) => {
+                if force_system_git && !system_git_recorded {
+                    remember_repo_uses_system_git(app, path)?;
+                    system_git_recorded = true;
+                }
+                upstream_assigned = true;
+                steps.push(RepoRemoteOperationStep {
+                    remote,
+                    operation: "push".to_string(),
+                    status: "success".to_string(),
+                    message: "推送完成".to_string(),
+                    target_branch: Some(target),
+                });
+            }
+            Err(message) => steps.push(RepoRemoteOperationStep {
+                remote,
+                operation: "push".to_string(),
+                status: "error".to_string(),
+                message,
+                target_branch: Some(target),
+            }),
+        }
+    }
+    Ok(steps)
 }
 
 pub(super) fn current_branch_upstream(path: &Path) -> Option<String> {

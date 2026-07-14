@@ -117,6 +117,8 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "repo_get_branches",
     "repo_get_conflicts",
     "repo_get_detail",
+    "repo_get_remote_sync_config",
+    "repo_set_remote_sync_policy",
     "repo_refresh_detail_patch",
     "repo_get_launch_config",
     "repo_list_launch_candidates",

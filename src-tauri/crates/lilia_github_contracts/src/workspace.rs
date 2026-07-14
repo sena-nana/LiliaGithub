@@ -13,6 +13,8 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub repo_sync_preferences: HashMap<String, RepoSyncPreference>,
     #[serde(default)]
+    pub repo_remote_sync_policies: HashMap<String, RepoRemoteSyncPolicy>,
+    #[serde(default)]
     pub hidden_repo_ids: Vec<String>,
     #[serde(default)]
     pub managed_repo_ids: Vec<String>,
@@ -146,6 +148,16 @@ pub struct RepoSyncPreference {
     pub include_in_home_contribution_stats: bool,
     #[serde(default = "default_true")]
     pub calculate_home_timeline: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoRemoteSyncPolicy {
+    pub primary_remote: String,
+    #[serde(default)]
+    pub pull_remotes: Vec<String>,
+    #[serde(default)]
+    pub push_remotes: Vec<String>,
 }
 
 fn default_true() -> bool {
@@ -401,6 +413,12 @@ pub struct RepoSummary {
     pub github_full_name: Option<String>,
     pub ahead: i32,
     pub behind: i32,
+    #[serde(default)]
+    pub remote_branch_states: Vec<RepoRemoteBranchState>,
+    #[serde(default)]
+    pub remotes_needing_pull: usize,
+    #[serde(default)]
+    pub remotes_needing_push: usize,
     pub staged_count: usize,
     pub unstaged_count: usize,
     pub untracked_count: usize,
@@ -651,6 +669,59 @@ pub struct RepoRemote {
     pub current: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoRemoteBranchState {
+    pub remote: String,
+    pub remote_branch: String,
+    pub exists: bool,
+    pub ahead: i32,
+    pub behind: i32,
+    pub needs_pull: bool,
+    pub needs_push: bool,
+    pub upstream: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoRemoteSyncConfig {
+    pub remotes: Vec<RepoRemote>,
+    pub policy: Option<RepoRemoteSyncPolicy>,
+    pub resolved_policy: RepoRemoteSyncPolicy,
+    #[serde(default)]
+    pub validation_errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoRemoteOperationStep {
+    pub remote: String,
+    pub operation: String,
+    pub status: String,
+    pub message: String,
+    #[serde(default)]
+    pub target_branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSyncOperationResult {
+    pub status: String,
+    pub message: String,
+    pub summary: RepoSummary,
+    pub conflicts: RepoConflictState,
+    #[serde(default)]
+    pub steps: Vec<RepoRemoteOperationStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoCommitResult {
+    pub summary: RepoSummary,
+    #[serde(default)]
+    pub push_result: Option<RepoSyncOperationResult>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchSummary {
@@ -741,6 +812,8 @@ pub struct BulkSyncResult {
     pub status: String,
     pub message: String,
     pub summary: Option<RepoSummary>,
+    #[serde(default)]
+    pub steps: Vec<RepoRemoteOperationStep>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,6 +5,7 @@ import {
   finishRecentSyncRetry,
   finishRepoSync,
   rememberRecentSync,
+  recordRepoSyncResult,
   state,
   replaceRepos,
   removeRepo,
@@ -31,7 +32,10 @@ import type {
   RepoConflictChoice,
   RepoPullLocalChangesMode,
   RepoDetailPatchRequest,
+  RepoCommitResult,
   RepoSummary,
+  RepoRemoteSyncPolicy,
+  RepoSyncOperationResult,
   WorkspaceCreateLocalRepoRequest,
   BulkSyncPreview,
   BulkSyncResult,
@@ -237,7 +241,35 @@ export async function requestRepoStatusRefresh(
 }
 
 function repoNeedsSync(summary: RepoSummary) {
-  return summary.ahead > 0 || summary.behind > 0;
+  const counts = effectiveRemoteSyncCounts(summary);
+  return counts.pull > 0 || counts.push > 0;
+}
+
+function effectiveRemoteSyncCounts(summary: RepoSummary) {
+  if (!summary.remoteBranchStates.length) {
+    return {
+      pull: summary.behind > 0 ? 1 : 0,
+      push: summary.ahead > 0 ? 1 : 0,
+    };
+  }
+  const configured = state.settings?.repoRemoteSyncPolicies?.[summary.id] ?? null;
+  let pullRemotes: Set<string>;
+  let pushRemotes: Set<string>;
+  if (configured) {
+    pullRemotes = new Set(configured.pullRemotes);
+    pushRemotes = new Set(configured.pushRemotes);
+  } else {
+    const remoteNames = Array.from(new Set(summary.remoteBranchStates.map((branch) => branch.remote)));
+    const legacyRemote = summary.remoteBranchStates.find((branch) => branch.upstream)?.remote
+      ?? remoteNames.find((remote) => remote === "origin")
+      ?? (remoteNames.length === 1 ? remoteNames[0] : null);
+    pullRemotes = new Set(legacyRemote ? [legacyRemote] : []);
+    pushRemotes = new Set(legacyRemote ? [legacyRemote] : []);
+  }
+  return {
+    pull: summary.remoteBranchStates.filter((branch) => pullRemotes.has(branch.remote) && branch.needsPull).length,
+    push: summary.remoteBranchStates.filter((branch) => pushRemotes.has(branch.remote) && branch.needsPush).length,
+  };
 }
 
 function repoDirtyCount(summary: RepoSummary) {
@@ -246,10 +278,12 @@ function repoDirtyCount(summary: RepoSummary) {
 
 function autoSyncBlockReason(summary: RepoSummary) {
   const dirty = repoDirtyCount(summary);
-  if (!summary.remoteUrl) return "没有 origin remote，已跳过自动同步";
+  const counts = effectiveRemoteSyncCounts(summary);
   if (!summary.currentBranch) return "当前不是命名分支，已跳过自动同步";
   if (summary.conflictCount > 0) return "已有冲突需要先处理，已跳过自动同步";
-  if (dirty > 0 && summary.behind > 0) return "存在未提交变更且远端有更新，已跳过自动同步";
+  if (dirty > 0 && counts.pull > 0) {
+    return "存在未提交变更且远端有更新，已跳过自动同步";
+  }
   return null;
 }
 
@@ -303,7 +337,7 @@ export async function autoSyncRepoIfNeeded(
     setRepoActionError(summary.id, blockReason);
     return null;
   }
-  const operation = repoDirtyCount(summary) > 0 ? "push" : "sync";
+  const operation = effectiveRemoteSyncCounts(summary).pull > 0 ? "sync" : "push";
   const localChangesMode: RepoPullLocalChangesMode = operation === "push" ? "reject" : "stash";
 
   autoSyncRunningRepoIds.add(summary.id);
@@ -319,6 +353,7 @@ export async function autoSyncRepoIfNeeded(
         status: "error",
         message: String(err),
         summary: null,
+        steps: [],
       };
       rememberAutoSyncFailure(summary, operation, failedResult);
       setRepoActionError(summary.id, failedResult.message);
@@ -847,6 +882,7 @@ function removeLocalRepoState(repoId: string) {
   delete state.launchStatuses[repoId];
   delete state.launchLogs[repoId];
   delete state.launchHistory[repoId];
+  delete state.repoSyncResults[repoId];
 }
 
 export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
@@ -967,11 +1003,22 @@ export async function commit(repoId: string, files: string[], message: string, p
   const service = await loadWorkspaceService();
   applyOptimisticCommit(repoId, files, message, pushAfter);
   try {
+    let commitResult: RepoCommitResult | null = null;
     await applyRepoMutation(
       repoId,
-      () => service.commitRepo(repoId, files, message, pushAfter),
+      async () => {
+        commitResult = await service.commitRepo(repoId, files, message, pushAfter);
+        return commitResult.summary;
+      },
       { includeCommits: true, includeBranches: pushAfter },
     );
+    const result = commitResult as RepoCommitResult | null;
+    if (result?.pushResult) {
+      recordRepoSyncResult(repoId, result.pushResult);
+      if (result.pushResult.status === "success") clearRepoActionError(repoId);
+      else setRepoActionError(repoId, result.pushResult.message);
+    }
+    return result;
   } catch (err) {
     await rollbackOptimisticRepoState(repoId, { includeCommits: true });
     throw err;
@@ -980,21 +1027,18 @@ export async function commit(repoId: string, files: string[], message: string, p
 
 export async function pull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
-  await applyRepoMutation(
-    repoId,
-    () => service.pullRepo(repoId, localChangesMode),
-    { includeCommits: true },
-  );
+  return applyRepoSyncOperation(repoId, () => service.pullRepo(repoId, localChangesMode), { includeCommits: true });
 }
 
 export async function mergePull(repoId: string, localChangesMode: RepoPullLocalChangesMode = "reject") {
   const service = await loadWorkspaceService();
   clearRepoActionError(repoId);
   try {
-    await applyRepoMutation(repoId, async () => {
-      const result = await service.mergePullRepo(repoId, localChangesMode);
-      return result.summary;
-    }, { includeCommits: true });
+    return await applyRepoSyncOperation(
+      repoId,
+      () => service.mergePullRepo(repoId, localChangesMode),
+      { includeCommits: true },
+    );
   } catch (err) {
     setRepoActionError(repoId, String(err));
     throw err;
@@ -1028,22 +1072,39 @@ export async function startRebase(
   );
 }
 
-async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSummary>) {
+async function applyRepoSyncOperation(
+  repoId: string,
+  loadResult: () => Promise<RepoSyncOperationResult>,
+  refreshScope: RepoDetailPatchRequest = {},
+) {
+  const result = await loadResult();
+  upsertRepo(result.summary);
+  recordRepoSyncResult(repoId, result);
+  if (result.status === "success") clearRepoActionError(repoId);
+  else setRepoActionError(repoId, result.message);
+  await requestRepoStatusRefresh(repoId, refreshScope, { immediate: true });
+  return result;
+}
+
+async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSyncOperationResult>) {
   const updateRecentSync = beginRecentSyncRetry(repoId);
   applyOptimisticPush(repoId);
   try {
-    await applyRepoMutation(repoId, async () => {
-      const summary = await pushRepo();
-      if (updateRecentSync) {
-        finishRecentSyncRetry({
-          repoId,
-          status: "success",
-          message: "完成",
-          summary,
-        });
-      }
-      return summary;
-    }, { includeCommits: true, includeBranches: true });
+    const result = await applyRepoSyncOperation(
+      repoId,
+      pushRepo,
+      { includeCommits: true, includeBranches: true },
+    );
+    if (updateRecentSync) {
+      finishRecentSyncRetry({
+        repoId,
+        status: result.status,
+        message: result.message,
+        summary: result.summary,
+        steps: result.steps,
+      });
+    }
+    return result;
   } catch (err) {
     await rollbackOptimisticRepoState(repoId, { includeCommits: true });
     if (updateRecentSync) {
@@ -1052,26 +1113,41 @@ async function runPushMutation(repoId: string, pushRepo: () => Promise<RepoSumma
         status: "error",
         message: String(err),
         summary: null,
+        steps: [],
       });
     }
     throw err;
   }
 }
 
-export async function push(repoId: string) {
+export async function push(repoId: string, remoteNames?: string[] | null) {
   const service = await loadWorkspaceService();
-  await runPushMutation(repoId, () => service.pushRepo(repoId));
+  return runPushMutation(repoId, () => service.pushRepo(repoId, remoteNames));
 }
 
-export async function pushNewBranch(repoId: string, remoteName?: string | null, branchName?: string | null) {
+export async function pushNewBranch(repoId: string, remoteNames?: string[] | null, branchName?: string | null) {
   const service = await loadWorkspaceService();
-  await runPushMutation(repoId, () => service.pushNewBranchRepo(repoId, remoteName, branchName));
+  return runPushMutation(repoId, () => service.pushNewBranchRepo(repoId, remoteNames, branchName));
 }
 
-export async function pushWithSystemGit(repoId: string) {
+export async function pushWithSystemGit(repoId: string, remoteNames?: string[] | null) {
   const service = await loadWorkspaceService();
-  await runPushMutation(repoId, () => service.pushRepoWithSystemGit(repoId));
+  const result = await runPushMutation(repoId, () => service.pushRepoWithSystemGit(repoId, remoteNames));
   state.settings = await service.getWorkspaceSettings();
+  return result;
+}
+
+export async function getRemoteSyncConfig(repoId: string) {
+  const service = await loadWorkspaceService();
+  return service.getRepoRemoteSyncConfig(repoId);
+}
+
+export async function setRemoteSyncPolicy(repoId: string, policy: RepoRemoteSyncPolicy) {
+  const service = await loadWorkspaceService();
+  const config = await service.setRepoRemoteSyncPolicy(repoId, policy);
+  state.settings = await service.getWorkspaceSettings();
+  clearRepoActionError(repoId);
+  return config;
 }
 
 export async function useDefaultTokenAuthForRepo(repoId: string) {

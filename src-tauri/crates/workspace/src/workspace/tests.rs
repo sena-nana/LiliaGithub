@@ -1,8 +1,4 @@
-use super::bulk::{
-    build_bulk_preview, build_bulk_push_preview_with_lookup, build_bulk_sync_preview_with_lookup,
-    build_bulk_sync_preview_with_lookup_and_mode, merge_pull_block_reason,
-    should_retry_push_with_system_git, sync_repo,
-};
+use super::bulk::{remote_sync_needs, sync_repo};
 use super::file_browser::{
     delete_repo_file, repo_file_entries, repo_file_preview, MAX_FILE_PREVIEW_BYTES,
 };
@@ -52,18 +48,19 @@ use super::repo_guard::repo_resource_id;
 use super::repos::{
     add_repo_files_to_gitignore, cached_managed_repos, canonical_repo_path, checkout_branch_at,
     commit_file_change_from_status, commit_file_changes_from_outputs, commit_file_numstats,
-    commit_file_patches, commit_file_statuses, conflict_operation_args, create_branch_at,
-    current_branch_upstream, delete_branch_at, discard_all_repo_local_changes, discard_repo_files,
-    expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_common_dir,
+    commit_file_patches, commit_file_statuses, configured_rebase_target, conflict_operation_args,
+    create_branch_at, current_branch_upstream, delete_branch_at, discard_all_repo_local_changes,
+    discard_repo_files, expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_common_dir,
     git_worktree_entries, infer_clone_directory_name, is_conflict_status, language_for_path,
     lightweight_managed_repos, local_branch_exists, managed_repo_paths,
     managed_repo_paths_and_prune_stale, merge_branch_at, normalize_clone_directory_name,
     normalize_git_remote_error, normalize_stash_id, parse_conflict_hunks, parse_github_remote,
     parse_status_snapshot, prepare_pull_local_changes, rename_branch_at, repo_branches,
     repo_changes, repo_head_language_stats, repo_history, repo_id, repo_status_entries,
-    resolve_conflict_content, resolve_repo_worktree, restore_pull_local_changes,
+    resolve_conflict_content, resolve_remote_sync_config, resolve_repo_worktree,
+    restore_pull_local_changes, run_configured_pull_with_config, run_multi_remote_push,
     selected_repo_files, should_retry_clone_with_system_git, should_skip_language_path,
-    status_pair, summarize_repo, validate_clone_directory_name, RepoStatusEntry,
+    status_pair, summarize_repo, sync_result, validate_clone_directory_name, RepoStatusEntry,
 };
 use super::settings::{
     add_managed_repo_id, create_repo_group, delete_repo_group, move_repo_to_group,
@@ -86,8 +83,9 @@ use lilia_github_contracts::workspace::{
     GitHubProjectCache, GitHubPullRequest, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoWorkflowPermissionsRequest,
     GitHubUpdateRepoSettingsRequest, LanguageStat, LocalContributionDayCache, ProjectLaunchConfig,
-    RemoteRepoShortcut, RepoConflictChoice, RepoPullLocalChangesMode, RepoSummary, RepoWorktree,
-    WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
+    RemoteRepoShortcut, RepoConflictChoice, RepoPullLocalChangesMode, RepoRemoteBranchState,
+    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoWorktree, WorkspaceRepoGroup,
+    WorkspaceSettings, WorkspaceStartupCache,
 };
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
@@ -281,11 +279,312 @@ fn run_git(path: &Path, args: &[&str]) {
     );
 }
 
+fn git_stdout(path: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 fn init_git_repo(path: &Path) {
     fs::create_dir_all(path).unwrap();
     run_git(path, &["init"]);
     run_git(path, &["config", "user.email", "test@example.com"]);
     run_git(path, &["config", "user.name", "Test User"]);
+}
+
+#[test]
+fn remote_sync_defaults_to_upstream_without_origin() {
+    let root = temp_dir("remote-policy-upstream");
+    let repo = root.join("repo");
+    let remote = root.join("fork.git");
+    init_git_repo(&repo);
+    fs::write(repo.join("tracked.txt"), "initial\n").unwrap();
+    run_git(&repo, &["add", "tracked.txt"]);
+    run_git(&repo, &["commit", "-m", "initial"]);
+    run_git(&repo, &["branch", "-M", "main"]);
+    fs::create_dir_all(&remote).unwrap();
+    run_git(&remote, &["init", "--bare"]);
+    run_git(
+        &repo,
+        &["remote", "add", "fork", remote.to_string_lossy().as_ref()],
+    );
+    run_git(&repo, &["push", "--set-upstream", "fork", "main"]);
+
+    let config = resolve_remote_sync_config(&WorkspaceSettings::default(), "repo", &repo).unwrap();
+
+    assert_eq!(config.policy, None);
+    assert_eq!(config.resolved_policy.primary_remote, "fork");
+    assert_eq!(config.resolved_policy.pull_remotes, vec!["fork"]);
+    assert_eq!(config.resolved_policy.push_remotes, vec!["fork"]);
+    assert!(config.validation_errors.is_empty());
+    assert_eq!(
+        summarize_repo(&root, &repo).remote_url.as_deref(),
+        Some(remote.to_string_lossy().as_ref())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn saved_remote_sync_policy_reports_deleted_remote() {
+    let root = temp_dir("remote-policy-stale");
+    let repo = root.join("repo");
+    init_git_repo(&repo);
+    let mut settings = WorkspaceSettings::default();
+    settings.repo_remote_sync_policies.insert(
+        "repo".to_string(),
+        RepoRemoteSyncPolicy {
+            primary_remote: "missing".to_string(),
+            pull_remotes: vec!["missing".to_string()],
+            push_remotes: Vec::new(),
+        },
+    );
+
+    let config = resolve_remote_sync_config(&settings, "repo", &repo).unwrap();
+
+    assert!(!config.validation_errors.is_empty());
+    assert!(config
+        .validation_errors
+        .iter()
+        .any(|message| message.contains("missing")));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn remote_sync_needs_only_counts_configured_roles() {
+    let summary = test_repo_summary(|summary| {
+        summary.remote_branch_states = vec![
+            RepoRemoteBranchState {
+                remote: "source".to_string(),
+                remote_branch: "main".to_string(),
+                exists: true,
+                ahead: 1,
+                behind: 2,
+                needs_pull: true,
+                needs_push: true,
+                upstream: true,
+            },
+            RepoRemoteBranchState {
+                remote: "mirror".to_string(),
+                remote_branch: "main".to_string(),
+                exists: true,
+                ahead: 1,
+                behind: 0,
+                needs_pull: false,
+                needs_push: true,
+                upstream: false,
+            },
+        ];
+    });
+    let policy = RepoRemoteSyncPolicy {
+        primary_remote: "source".to_string(),
+        pull_remotes: vec!["source".to_string()],
+        push_remotes: vec!["mirror".to_string()],
+    };
+
+    let needs = remote_sync_needs(&summary, &policy);
+
+    assert!(needs.pull);
+    assert!(needs.push);
+    assert!(needs.divergent);
+    assert!(needs.unpushable_commits);
+}
+
+#[test]
+fn default_rebase_target_uses_configured_pull_remote() {
+    let root = temp_dir("configured-rebase-target");
+    let repo = root.join("repo");
+    init_git_repo(&repo);
+    fs::write(repo.join("tracked.txt"), "initial\n").unwrap();
+    run_git(&repo, &["add", "tracked.txt"]);
+    run_git(&repo, &["commit", "-m", "initial"]);
+    run_git(&repo, &["branch", "-M", "topic"]);
+    run_git(
+        &repo,
+        &["remote", "add", "old", "https://example.com/old.git"],
+    );
+    run_git(
+        &repo,
+        &["remote", "add", "new", "https://example.com/new.git"],
+    );
+    run_git(&repo, &["config", "branch.topic.remote", "old"]);
+    run_git(
+        &repo,
+        &["config", "branch.topic.merge", "refs/heads/review"],
+    );
+
+    assert_eq!(
+        configured_rebase_target(&repo, "new", None).unwrap(),
+        "new/topic"
+    );
+    assert_eq!(
+        configured_rebase_target(&repo, "new", Some("old/review".to_string())).unwrap(),
+        "old/review"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn multi_remote_fetch_failure_does_not_change_head() {
+    let root = temp_dir("multi-fetch-atomic");
+    let repo = root.join("repo");
+    let primary = root.join("primary.git");
+    init_git_repo(&repo);
+    fs::write(repo.join("tracked.txt"), "initial\n").unwrap();
+    run_git(&repo, &["add", "tracked.txt"]);
+    run_git(&repo, &["commit", "-m", "initial"]);
+    run_git(&repo, &["branch", "-M", "main"]);
+    fs::create_dir_all(&primary).unwrap();
+    run_git(&primary, &["init", "--bare"]);
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "primary",
+            primary.to_string_lossy().as_ref(),
+        ],
+    );
+    run_git(&repo, &["push", "--set-upstream", "primary", "main"]);
+    let initial_head = git_stdout(&repo, &["rev-parse", "HEAD"]);
+    fs::write(repo.join("tracked.txt"), "remote update\n").unwrap();
+    run_git(&repo, &["add", "tracked.txt"]);
+    run_git(&repo, &["commit", "-m", "remote update"]);
+    run_git(&repo, &["push", "primary", "main"]);
+    run_git(&repo, &["reset", "--hard", &initial_head]);
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "broken",
+            root.join("missing.git").to_string_lossy().as_ref(),
+        ],
+    );
+    let config = RepoRemoteSyncConfig {
+        remotes: Vec::new(),
+        policy: None,
+        resolved_policy: RepoRemoteSyncPolicy {
+            primary_remote: "primary".to_string(),
+            pull_remotes: vec!["primary".to_string(), "broken".to_string()],
+            push_remotes: Vec::new(),
+        },
+        validation_errors: Vec::new(),
+    };
+    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
+
+    let result = run_configured_pull_with_config(
+        &app,
+        &root,
+        &repo,
+        &config,
+        Some(RepoPullLocalChangesMode::Reject),
+        true,
+    )
+    .unwrap();
+
+    assert_eq!(git_stdout(&repo, &["rev-parse", "HEAD"]), initial_head);
+    assert_eq!(result.status, "partial");
+    assert!(result
+        .steps
+        .iter()
+        .any(|step| step.remote == "primary" && step.status == "success"));
+    assert!(result
+        .steps
+        .iter()
+        .any(|step| step.remote == "broken" && step.status == "error"));
+    assert!(!result.steps.iter().any(|step| step.operation == "merge"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn multi_remote_push_continues_after_non_fast_forward_failure() {
+    let root = temp_dir("multi-push-partial");
+    let repo = root.join("repo");
+    let competing = root.join("competing");
+    let primary = root.join("primary.git");
+    let mirror = root.join("mirror.git");
+    for bare in [&primary, &mirror] {
+        fs::create_dir_all(bare).unwrap();
+        run_git(bare, &["init", "--bare"]);
+    }
+    init_git_repo(&repo);
+    fs::write(repo.join("tracked.txt"), "local\n").unwrap();
+    run_git(&repo, &["add", "tracked.txt"]);
+    run_git(&repo, &["commit", "-m", "local"]);
+    run_git(&repo, &["branch", "-M", "main"]);
+    init_git_repo(&competing);
+    fs::write(competing.join("tracked.txt"), "remote\n").unwrap();
+    run_git(&competing, &["add", "tracked.txt"]);
+    run_git(&competing, &["commit", "-m", "remote"]);
+    run_git(&competing, &["branch", "-M", "main"]);
+    run_git(
+        &competing,
+        &[
+            "remote",
+            "add",
+            "primary",
+            primary.to_string_lossy().as_ref(),
+        ],
+    );
+    run_git(&competing, &["push", "primary", "main"]);
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "primary",
+            primary.to_string_lossy().as_ref(),
+        ],
+    );
+    run_git(
+        &repo,
+        &["remote", "add", "mirror", mirror.to_string_lossy().as_ref()],
+    );
+    let config = RepoRemoteSyncConfig {
+        remotes: Vec::new(),
+        policy: None,
+        resolved_policy: RepoRemoteSyncPolicy {
+            primary_remote: "primary".to_string(),
+            pull_remotes: vec!["primary".to_string()],
+            push_remotes: vec!["primary".to_string(), "mirror".to_string()],
+        },
+        validation_errors: Vec::new(),
+    };
+    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
+
+    let steps = run_multi_remote_push(&app, &repo, &config, None, None, false).unwrap();
+    let result = sync_result(&root, &repo, steps, "push");
+
+    assert_eq!(result.status, "partial");
+    assert!(result
+        .steps
+        .iter()
+        .any(|step| step.remote == "primary" && step.status == "error"));
+    assert!(result
+        .steps
+        .iter()
+        .any(|step| step.remote == "mirror" && step.status == "success"));
+    assert_eq!(
+        git_stdout(&mirror, &["rev-parse", "refs/heads/main"]),
+        git_stdout(&repo, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(
+        git_stdout(
+            &repo,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+        ),
+        "mirror/main"
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -462,6 +761,9 @@ fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         github_full_name: Some("a/repo".to_string()),
         ahead: 0,
         behind: 0,
+        remote_branch_states: Vec::new(),
+        remotes_needing_pull: 0,
+        remotes_needing_push: 0,
         staged_count: 0,
         unstaged_count: 0,
         untracked_count: 0,
@@ -2205,32 +2507,6 @@ fn rejects_missing_or_unknown_conflict_operations() {
 }
 
 #[test]
-fn merge_pull_blocks_unsafe_states() {
-    assert_eq!(
-        merge_pull_block_reason(
-            &test_repo_summary(|summary| summary.conflict_count = 1),
-            true
-        ),
-        Some("已有冲突需要先处理".to_string())
-    );
-    assert_eq!(
-        merge_pull_block_reason(
-            &test_repo_summary(|summary| summary.unstaged_count = 1),
-            true
-        ),
-        Some("存在未提交变更，已阻止合并拉取".to_string())
-    );
-    assert_eq!(
-        merge_pull_block_reason(&test_repo_summary(|_| {}), false),
-        Some("当前分支没有 upstream".to_string())
-    );
-    assert_eq!(
-        merge_pull_block_reason(&test_repo_summary(|_| {}), true),
-        None
-    );
-}
-
-#[test]
 fn repo_history_reads_all_branch_topology() {
     let path = temp_dir("history-all-branches");
     init_git_repo(&path);
@@ -2242,7 +2518,7 @@ fn repo_history_reads_all_branch_topology() {
     fs::write(path.join("feature.txt"), "feature").unwrap();
     run_git(&path, &["add", "feature.txt"]);
     run_git(&path, &["commit", "-m", "feature"]);
-    run_git(&path, &["checkout", "-b", "main", "HEAD~1"]);
+    run_git(&path, &["checkout", "-b", "history-main", "HEAD~1"]);
     fs::write(path.join("main.txt"), "main").unwrap();
     run_git(&path, &["add", "main.txt"]);
     run_git(&path, &["commit", "-m", "main"]);
@@ -2972,113 +3248,6 @@ fn rejects_empty_stash_id() {
 }
 
 #[test]
-fn bulk_preview_blocks_dirty_pull_and_allows_push() {
-    let dirty_pull_repo = test_repo_summary(|summary| {
-        summary.id = "app".to_string();
-        summary.ahead = 1;
-        summary.behind = 2;
-        summary.unstaged_count = 1;
-    });
-    let pull = build_bulk_preview("pull".to_string(), vec![dirty_pull_repo]);
-    assert_eq!(pull.blocked.len(), 1);
-
-    let push_repo = test_repo_summary(|summary| {
-        summary.id = "push".to_string();
-        summary.ahead = 1;
-        summary.unstaged_count = 1;
-    });
-    let push = build_bulk_push_preview_with_lookup(vec![push_repo], |_| true);
-    assert_eq!(push.eligible.len(), 1);
-    assert_eq!(push.warnings.len(), 1);
-}
-
-#[test]
-fn push_preview_blocks_missing_remote_detached_and_behind() {
-    let no_remote = test_repo_summary(|summary| {
-        summary.id = "no-remote".to_string();
-        summary.remote_url = None;
-        summary.github_full_name = None;
-        summary.ahead = 1;
-    });
-    let detached = test_repo_summary(|summary| {
-        summary.id = "detached".to_string();
-        summary.current_branch = None;
-        summary.ahead = 1;
-    });
-    let behind = test_repo_summary(|summary| {
-        summary.id = "behind".to_string();
-        summary.ahead = 1;
-        summary.behind = 2;
-    });
-
-    let preview = build_bulk_push_preview_with_lookup(vec![no_remote, detached, behind], |_| true);
-
-    assert_eq!(preview.blocked.len(), 3);
-    assert!(preview
-        .blocked
-        .iter()
-        .any(|item| item.reason == "没有 origin remote"));
-    assert!(preview
-        .blocked
-        .iter()
-        .any(|item| item.reason == "当前不是命名分支"));
-    assert!(preview
-        .blocked
-        .iter()
-        .any(|item| item.reason == "当前分支落后于 upstream"));
-}
-
-#[test]
-fn push_preview_warns_dirty_push_and_idle_repos() {
-    let ready = test_repo_summary(|summary| {
-        summary.id = "ready".to_string();
-        summary.ahead = 1;
-        summary.staged_count = 1;
-    });
-    let idle = test_repo_summary(|summary| {
-        summary.id = "idle".to_string();
-    });
-
-    let preview = build_bulk_push_preview_with_lookup(vec![ready.clone(), idle.clone()], |_| true);
-
-    assert_eq!(preview.eligible.len(), 1);
-    assert_eq!(preview.eligible[0].repo.id, ready.id);
-    assert!(preview
-        .warnings
-        .iter()
-        .any(|item| item.repo.id == ready.id && item.reason == "存在未提交变更，但仍可执行 push"));
-    assert!(preview
-        .warnings
-        .iter()
-        .any(|item| item.repo.id == idle.id && item.reason == "没有需要推送的提交"));
-}
-
-#[test]
-fn push_preview_publishes_repo_without_upstream_even_without_ahead_commits() {
-    let repo = test_repo_summary(|summary| {
-        summary.id = "no-upstream".to_string();
-    });
-
-    let preview = build_bulk_push_preview_with_lookup(vec![repo], |_| false);
-
-    assert!(preview.blocked.is_empty());
-    assert!(preview.warnings.is_empty());
-    assert_eq!(preview.eligible.len(), 1);
-    assert_eq!(preview.eligible[0].repo.id, "no-upstream");
-}
-
-#[test]
-fn queue_push_fallback_only_matches_github_token_auth_failures() {
-    assert!(should_retry_push_with_system_git(
-        "无法认证 GitHub 仓库 a/repo，请重新绑定 GitHub 后再试。"
-    ));
-    assert!(should_retry_push_with_system_git(
-        "无法访问 GitHub 仓库 a/repo：仓库不存在、是私有仓库且当前 GitHub 绑定无权限，或仓库名输入有误。"
-    ));
-    assert!(!should_retry_push_with_system_git("non-fast-forward"));
-}
-
-#[test]
 fn clone_retry_predicate_only_matches_github_token_auth_failures() {
     assert!(should_retry_clone_with_system_git(
         "https://github.com/sena-nana/private.git",
@@ -3119,108 +3288,6 @@ fn removing_system_git_repo_id_restores_default_token_auth() {
         remove_system_git_repo_id(&mut settings, "   ").unwrap_err(),
         "仓库 ID 不能为空"
     );
-}
-
-#[test]
-fn sync_preview_classifies_pull_push_merge_and_idle_repos() {
-    let pull_only = test_repo_summary(|summary| {
-        summary.id = "pull-only".to_string();
-        summary.behind = 2;
-    });
-    let push_only = test_repo_summary(|summary| {
-        summary.id = "push-only".to_string();
-        summary.ahead = 1;
-    });
-    let diverged = test_repo_summary(|summary| {
-        summary.id = "diverged".to_string();
-        summary.ahead = 1;
-        summary.behind = 1;
-    });
-    let idle = test_repo_summary(|summary| {
-        summary.id = "idle".to_string();
-    });
-
-    let preview =
-        build_bulk_sync_preview_with_lookup(vec![pull_only, push_only, diverged, idle], |_| true);
-
-    assert_eq!(preview.operation, "sync");
-    assert!(preview
-        .eligible
-        .iter()
-        .any(|item| { item.repo.id == "pull-only" && item.reason == "可拉取远端更新" }));
-    assert!(preview
-        .eligible
-        .iter()
-        .any(|item| { item.repo.id == "push-only" && item.reason == "有本地提交待推送" }));
-    assert!(preview.eligible.iter().any(|item| {
-        item.repo.id == "diverged" && item.reason == "需先拉取合并后推送"
-    }));
-    assert!(preview
-        .warnings
-        .iter()
-        .any(|item| { item.repo.id == "idle" && item.reason == "没有需要同步的更新" }));
-}
-
-#[test]
-fn sync_preview_blocks_unsafe_merge_states() {
-    let dirty = test_repo_summary(|summary| {
-        summary.id = "dirty".to_string();
-        summary.behind = 1;
-        summary.unstaged_count = 1;
-    });
-    let conflicted = test_repo_summary(|summary| {
-        summary.id = "conflicted".to_string();
-        summary.behind = 1;
-        summary.conflict_count = 1;
-    });
-    let no_upstream = test_repo_summary(|summary| {
-        summary.id = "no-upstream".to_string();
-        summary.behind = 1;
-    });
-    let push_no_upstream = test_repo_summary(|summary| {
-        summary.id = "push-no-upstream".to_string();
-        summary.ahead = 1;
-    });
-
-    let preview = build_bulk_sync_preview_with_lookup(
-        vec![dirty, conflicted, no_upstream, push_no_upstream],
-        |repo| repo.id != "no-upstream" && repo.id != "push-no-upstream",
-    );
-
-    assert_eq!(preview.eligible.len(), 0);
-    assert!(preview
-        .blocked
-        .iter()
-        .any(|item| { item.repo.id == "dirty" && item.reason == "存在未提交变更" }));
-    assert!(preview.blocked.iter().any(|item| {
-        item.repo.id == "conflicted" && item.reason == "已有冲突需要先处理"
-    }));
-    assert!(preview.blocked.iter().any(|item| {
-        item.repo.id == "no-upstream" && item.reason == "当前分支没有 upstream"
-    }));
-    assert!(preview.blocked.iter().any(|item| {
-        item.repo.id == "push-no-upstream" && item.reason == "当前分支没有 upstream"
-    }));
-}
-
-#[test]
-fn sync_preview_allows_dirty_pull_when_local_changes_mode_is_stash() {
-    let dirty = test_repo_summary(|summary| {
-        summary.id = "dirty".to_string();
-        summary.behind = 1;
-        summary.unstaged_count = 1;
-    });
-
-    let preview = build_bulk_sync_preview_with_lookup_and_mode(
-        vec![dirty],
-        |_| true,
-        RepoPullLocalChangesMode::Stash,
-    );
-
-    assert_eq!(preview.blocked.len(), 0);
-    assert!(preview.eligible.iter().any(|item| {
-        item.repo.id == "dirty" && item.reason == "需处理本地修改后拉取远端更新"
-    }));
 }
 
 #[test]
