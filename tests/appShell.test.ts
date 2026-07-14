@@ -444,10 +444,29 @@ describe("AppShell sidebar", () => {
     expect(view.queryByRole("link", { name: /TypeScript/ })).toBeNull();
     const languageEntry = view.getByText("TypeScript").closest(".language-list__link");
     expect(languageEntry).toBeInstanceOf(HTMLElement);
+
+    const languageChart = view.getByLabelText("编程语言占比图");
+    const typeScriptSlice = within(languageChart).getByLabelText(/TypeScript.*75%.*1 KB/);
+    await fireEvent.pointerEnter(typeScriptSlice);
+    expect(view.getByRole("tooltip")).toHaveTextContent("TypeScript：75%，1 KB");
+    expect(languageEntry).toHaveClass("is-hovered");
+
+    await fireEvent.pointerLeave(typeScriptSlice);
+    expect(view.queryByRole("tooltip")).toBeNull();
+    expect(languageEntry).not.toHaveClass("is-hovered");
+
     await fireEvent.click(languageEntry as HTMLElement);
     expect(view.router.currentRoute.value.fullPath).toBe("/");
 
+    await fireEvent.pointerEnter(typeScriptSlice);
+    expect(view.getByRole("tooltip")).toBeInTheDocument();
     await fireEvent.click(view.getByRole("button", { name: "按项目" }));
+    expect(view.queryByRole("tooltip")).toBeNull();
+
+    const alphaSlice = within(languageChart).getByLabelText(/Alpha.*75%.*1 KB/);
+    await fireEvent.pointerEnter(alphaSlice);
+    expect(view.getByRole("tooltip")).toHaveTextContent("Alpha：75%，1 KB");
+
     const projectLink = await within(homeContent(view.container)).findByRole("link", { name: /Alpha/ });
     await fireEvent.click(projectLink);
 
