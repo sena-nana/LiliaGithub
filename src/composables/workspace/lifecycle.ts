@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ref } from "vue";
 import { replaceRepos, state } from "./state";
 import {
+  refreshRepoContributions,
   refreshRepoSummaries,
   refreshRepos,
   requestRepoStatusRefresh,
@@ -80,10 +81,9 @@ export async function initialize() {
     hydrateRepoRemoteCheckedAt(startupCache?.reposById);
     await ensureRepoRefreshEventsReady();
     if (generation !== lifecycleGeneration) return;
-    if (settings.workspaceRoot) {
-      await refreshRepos();
-    }
+    const repos = settings.workspaceRoot ? await refreshRepos() : null;
     if (generation !== lifecycleGeneration) return;
+    if (repos && !startupCache?.contributions) void refreshRepoContributions();
     if (provisionalBindingStatus && !state.bindingStatus) state.bindingStatus = provisionalBindingStatus;
   } catch (err) {
     if (generation !== lifecycleGeneration) return;

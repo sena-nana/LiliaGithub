@@ -333,6 +333,8 @@ describe("workspace incremental refresh", () => {
 
     expect(state.repos).toEqual([cached]);
     expect(state.error).toBe("Error: list failed");
+    expect(service.listRepoContribution).not.toHaveBeenCalled();
+    expect(service.writeStartupContributions).not.toHaveBeenCalled();
   });
 
   it("初始化从启动缓存恢复贡献图，再继续刷新仓库列表", async () => {
@@ -379,6 +381,42 @@ describe("workspace incremental refresh", () => {
     }]);
     expect(state.githubContributions.meta?.repoCount).toBe(1);
     expect(service.listManagedRepos).toHaveBeenCalledTimes(1);
+    expect(service.listRepoContribution).not.toHaveBeenCalled();
+  });
+
+  it("启动缓存无贡献图时在权威仓库列表加载后自动生成并写入缓存", async () => {
+    const repo = repoSummary("Repo1");
+    const settings = {
+      ...workspaceSettings(),
+      managedRepoIds: [repo.id],
+    };
+    const managedRepos = deferred<RepoSummary[]>();
+    service.getWorkspaceSettings.mockResolvedValue(settings);
+    service.readStartupCache.mockResolvedValue(startupCache(settings, [repo]));
+    service.listManagedRepos.mockReturnValue(managedRepos.promise);
+    service.listRepoContribution.mockResolvedValue({
+      days: [{ date: "2026-06-11", count: 2 }],
+      meta: {
+        repoCount: 1,
+        requestedRepoCount: 1,
+        repoLimit: 30,
+        truncated: false,
+        skippedRepoCount: 0,
+        refreshedAt: 1_780_000_000_000,
+      },
+    });
+
+    const initialization = initialize();
+
+    await waitFor(() => expect(service.listManagedRepos).toHaveBeenCalledTimes(1));
+    expect(service.listRepoContribution).not.toHaveBeenCalled();
+
+    managedRepos.resolve([repo]);
+    await initialization;
+    await waitFor(() => {
+      expect(service.listRepoContribution).toHaveBeenCalledWith("local:Repo1");
+      expect(service.writeStartupContributions).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("贡献图刷新完成后写入启动缓存", async () => {

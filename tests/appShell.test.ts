@@ -330,6 +330,35 @@ beforeEach(async () => {
 });
 
 describe("AppShell sidebar", () => {
+  it("首页无贡献快照时展示实时加载状态并在完成后生成热力图", async () => {
+    state.repos = [repoSummary("LiliaGithub")];
+    markWorkspaceReadyForManualRepos();
+    state.githubContributions = {
+      days: [],
+      meta: null,
+      loading: true,
+      error: null,
+    };
+
+    const view = await renderAppShell("/");
+
+    expect(view.getByLabelText("本地提交加载中")).toBeInTheDocument();
+    expect(view.queryByLabelText("本地提交贡献图")).toBeNull();
+
+    const result = contributionResult(4);
+    state.githubContributions = {
+      days: result.days,
+      meta: result.meta,
+      loading: false,
+      error: null,
+    };
+
+    await waitFor(() => {
+      expect(view.getByText(contributionSummaryText(4))).toBeInTheDocument();
+      expect(view.getByLabelText("本地提交贡献图")).toBeInTheDocument();
+    });
+  });
+
   it("首页贡献热力图只跟随启动快照和手动刷新更新", async () => {
     const startupContributions = contributionResult(1);
     const service = await import("../src/services/workspace");
