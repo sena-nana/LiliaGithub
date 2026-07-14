@@ -1,17 +1,14 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepositoriesSection from "../src/pages/settings/RepositoriesSection.vue";
-import { createGitHubRepo, listGitHubRepoOwners, type GitHubRepoSummary } from "../src/services/workspace";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+  const promise = new Promise<T>((promiseResolve) => {
     resolve = promiseResolve;
-    reject = promiseReject;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve };
 }
 
 const workspace = vi.hoisted(() => ({
@@ -61,7 +58,6 @@ const workspace = vi.hoisted(() => ({
   },
   workspaceRoot: { value: "C:\\\\Files\\\\workspace" },
   choosingWorkspaceRoot: { value: false },
-  isAuthorized: { value: true },
   githubBinding: { value: null },
   authBindingStatusText: { value: "尚未绑定 GitHub" },
   deviceFlow: { value: null },
@@ -75,9 +71,6 @@ const workspace = vi.hoisted(() => ({
   listHiddenRepos: vi.fn(async () => []),
   unhideRepo: vi.fn(),
   addLocalRepo: vi.fn(),
-  discoverRepos: vi.fn(),
-  cloneRepo: vi.fn(),
-  refreshRepos: vi.fn(),
   cancelWorkspaceTask: vi.fn(),
   useDefaultTokenAuthForRepo: vi.fn(async (repoId: string) => {
     workspace.state.settings.systemGitRepoIds = workspace.state.settings.systemGitRepoIds.filter((id) => id !== repoId);
@@ -95,27 +88,15 @@ const workspace = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/composables/useWorkspace", async () => {
-  const { ref } = await vi.importActual<typeof import("vue")>("vue");
+  const { reactive, ref } = await vi.importActual<typeof import("vue")>("vue");
+  workspace.state = reactive(workspace.state);
   workspace.choosingWorkspaceRoot = ref(false);
   return {
     useWorkspace: () => workspace,
   };
 });
 
-vi.mock("../src/services/workspace", async () => {
-  const actual = await vi.importActual<typeof import("../src/services/workspace")>("../src/services/workspace");
-  return {
-    ...actual,
-    createGitHubRepo: vi.fn(),
-    listGitHubRepoOwners: vi.fn(async () => []),
-  };
-});
-
 describe("RepositoriesSection", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   beforeEach(() => {
     vi.clearAllMocks();
     workspace.state.settings = {
@@ -142,8 +123,18 @@ describe("RepositoriesSection", () => {
     });
     workspace.refreshRepoContributions.mockClear();
     workspace.listHiddenRepos.mockResolvedValue([]);
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
-    vi.mocked(createGitHubRepo).mockReset();
+  });
+
+  it("按功能展示设置卡片并移除首页已有操作", () => {
+    render(RepositoriesSection);
+
+    expect(screen.getByRole("region", { name: "工作区与仓库" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "GitHub 授权" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "贡献身份" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "系统 git 凭证" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "后台任务" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "后台发现仓库" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
   });
 
   it("展示当前工作区并提供更换入口", async () => {
@@ -154,6 +145,36 @@ describe("RepositoriesSection", () => {
 
     await waitFor(() => {
       expect(workspace.chooseWorkspaceRoot).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("保留添加已有本地仓库入口", async () => {
+    render(RepositoriesSection);
+
+    const panel = screen.getByRole("region", { name: "工作区与仓库" });
+    await fireEvent.click(within(panel).getByRole("button", { name: "添加本地仓库" }));
+
+    await waitFor(() => {
+      expect(workspace.addLocalRepo).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("隐藏仓库名称与 ID 相同时只显示一次并可恢复", async () => {
+    workspace.listHiddenRepos
+      .mockResolvedValueOnce([{ id: "HiddenRepo", name: "HiddenRepo" }])
+      .mockResolvedValueOnce([]);
+
+    render(RepositoriesSection);
+
+    const panel = screen.getByRole("region", { name: "工作区与仓库" });
+    expect(await within(panel).findByText("HiddenRepo")).toBeInTheDocument();
+    expect(within(panel).getAllByText("HiddenRepo")).toHaveLength(1);
+
+    await fireEvent.click(within(panel).getByRole("button", { name: "恢复管理" }));
+
+    await waitFor(() => {
+      expect(workspace.unhideRepo).toHaveBeenCalledWith("HiddenRepo");
+      expect(within(panel).queryByText("HiddenRepo")).not.toBeInTheDocument();
     });
   });
 
@@ -175,15 +196,15 @@ describe("RepositoriesSection", () => {
 
     await waitFor(() => {
       expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleName("更换中");
     });
-    expect(button.querySelector(".sb-spin")).toBeInTheDocument();
 
     changeWorkspace.resolve("D:\\NewWorkspace");
 
     await waitFor(() => {
       expect(button).toBeEnabled();
+      expect(button).toHaveAccessibleName("更换工作区");
     });
-    expect(button.querySelector(".sb-spin")).not.toBeInTheDocument();
   });
 
   it("已绑定 GitHub 时通过二次确认解绑", async () => {
@@ -284,13 +305,13 @@ describe("RepositoriesSection", () => {
     render(RepositoriesSection);
 
     const panel = screen.getByRole("region", { name: "系统 git 凭证" });
-    expect(within(panel).getByText("LiliaGithub", { selector: ".system-git-list__name" })).toBeInTheDocument();
-    expect(within(panel).getByText("LiliaGithub", { selector: ".system-git-list__id" })).toBeInTheDocument();
+    expect(within(panel).getAllByText("LiliaGithub")).toHaveLength(1);
 
     await fireEvent.click(within(panel).getByRole("button", { name: "恢复默认 token" }));
 
     await waitFor(() => {
       expect(workspace.useDefaultTokenAuthForRepo).toHaveBeenCalledWith("LiliaGithub");
+      expect(screen.queryByRole("region", { name: "系统 git 凭证" })).not.toBeInTheDocument();
     });
   });
 
@@ -298,6 +319,7 @@ describe("RepositoriesSection", () => {
     workspace.state.tasks = [
       {
         id: "task-pending",
+        title: "检查远端状态",
         kind: "repoStatus",
         priority: "high",
         repoId: null,
@@ -308,6 +330,7 @@ describe("RepositoriesSection", () => {
       },
       {
         id: "task-error",
+        title: "发现仓库",
         kind: "discoverRepos",
         priority: "normal",
         repoId: null,
@@ -318,6 +341,7 @@ describe("RepositoriesSection", () => {
       },
       {
         id: "task-cancelled",
+        title: "统计语言",
         kind: "languageStats",
         priority: "low",
         repoId: "LiliaGithub",
@@ -342,11 +366,10 @@ describe("RepositoriesSection", () => {
 
     render(RepositoriesSection);
 
-    const taskPanel = screen.getByText("后台任务").closest(".workspace-task-list");
-    if (!(taskPanel instanceof HTMLElement)) throw new Error("未找到后台任务区");
-    expect(within(taskPanel).getByText("等待中")).toBeInTheDocument();
-    expect(within(taskPanel).getByText("失败")).toBeInTheDocument();
-    expect(within(taskPanel).getAllByText("已取消").length).toBeGreaterThan(0);
+    const taskPanel = screen.getByRole("region", { name: "后台任务" });
+    expect(within(taskPanel).getByText("等待检查远端状态")).toBeInTheDocument();
+    expect(within(taskPanel).queryByText("扫描失败")).not.toBeInTheDocument();
+    expect(within(taskPanel).queryByText("已取消")).not.toBeInTheDocument();
     expect(within(taskPanel).getAllByRole("button", { name: "取消" })).toHaveLength(1);
 
     const cancelButton = within(taskPanel).getByRole("button", { name: "取消" });
@@ -358,14 +381,14 @@ describe("RepositoriesSection", () => {
     resolveCancel?.();
 
     await waitFor(() => {
-      expect(within(taskPanel).queryByRole("button", { name: "取消中" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "后台任务" })).not.toBeInTheDocument();
     });
-    expect(within(taskPanel).queryAllByRole("button", { name: "取消" })).toHaveLength(0);
   });
 
   it("后台任务取消失败时仅在任务行内显示错误", async () => {
     workspace.state.tasks = [{
       id: "task-pending",
+      title: "检查远端状态",
       kind: "repoStatus",
       priority: "high",
       repoId: null,
@@ -378,170 +401,15 @@ describe("RepositoriesSection", () => {
 
     render(RepositoriesSection);
 
-    const taskPanel = screen.getByText("后台任务").closest(".workspace-task-list");
-    if (!(taskPanel instanceof HTMLElement)) throw new Error("未找到后台任务区");
+    const taskPanel = screen.getByRole("region", { name: "后台任务" });
 
     await fireEvent.click(within(taskPanel).getByRole("button", { name: "取消" }));
 
     await waitFor(() => {
       expect(within(taskPanel).getByText("Error: 取消失败：任务已结束")).toBeInTheDocument();
     });
-    expect(screen.getByText("没有隐藏仓库。")).toBeInTheDocument();
-    expect(screen.queryByText("Error: 取消失败：任务已结束", { selector: ".repo-settings__error" })).toBeNull();
+    expect(screen.getAllByText("Error: 取消失败：任务已结束")).toHaveLength(1);
     expect(within(taskPanel).getByRole("button", { name: "取消" })).toBeEnabled();
   });
 
-  it("创建仓库请求返回前关闭弹窗时忽略旧结果", async () => {
-    const createRequest = deferred<GitHubRepoSummary>();
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
-    vi.mocked(createGitHubRepo).mockReturnValue(createRequest.promise);
-
-    render(RepositoriesSection);
-
-    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
-    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    await within(dialog).findByRole("button", { name: "sena-nana · user" });
-    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "new-repo");
-    expect(within(dialog).queryByRole("button", { name: "取消" })).toBeNull();
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
-
-    expect(vi.mocked(createGitHubRepo)).toHaveBeenCalledWith(expect.objectContaining({
-      owner: "sena-nana",
-      name: "new-repo",
-    }));
-
-    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
-    expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
-
-    createRequest.resolve({
-      id: 1,
-      name: "new-repo",
-      fullName: "sena-nana/new-repo",
-      ownerLogin: "sena-nana",
-      private: false,
-      disabled: false,
-      archived: false,
-      description: null,
-      defaultBranch: "main",
-      createdAt: "2026-06-20T00:00:00Z",
-      updatedAt: "2026-06-20T00:00:00Z",
-      cloneUrl: "https://github.com/sena-nana/new-repo.git",
-      htmlUrl: "https://github.com/sena-nana/new-repo",
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
-    });
-    expect(screen.queryByText("sena-nana/new-repo")).not.toBeInTheDocument();
-    expect(workspace.cloneRepo).not.toHaveBeenCalled();
-    expect(workspace.refreshRepos).not.toHaveBeenCalled();
-  });
-
-  it("创建 GitHub 仓库时默认选择 user owner 并将 user 排在最上方", async () => {
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([
-      { login: "sena-nana", kind: "org" },
-      { login: "team-lilia", kind: "org" },
-      { login: "lilia-user", kind: "user" },
-    ]);
-
-    render(RepositoriesSection);
-
-    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
-    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    const ownerTrigger = await within(dialog).findByRole("button", { name: "lilia-user · user" });
-    await fireEvent.click(ownerTrigger);
-
-    const ownerOptions = await screen.findAllByRole("option");
-    expect(ownerOptions.map((option) => option.textContent?.trim())).toEqual([
-      "lilia-user · user",
-      "sena-nana · org",
-      "team-lilia · org",
-    ]);
-  });
-
-  it("可只创建远程 GitHub 仓库并关闭弹窗", async () => {
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
-    vi.mocked(createGitHubRepo).mockResolvedValue({
-      id: 3,
-      name: "remote-only",
-      fullName: "sena-nana/remote-only",
-      ownerLogin: "sena-nana",
-      private: false,
-      disabled: false,
-      archived: false,
-      description: null,
-      defaultBranch: "main",
-      createdAt: "2026-06-20T00:00:00Z",
-      updatedAt: "2026-06-20T00:00:00Z",
-      cloneUrl: "https://github.com/sena-nana/remote-only.git",
-      htmlUrl: "https://github.com/sena-nana/remote-only",
-    });
-
-    render(RepositoriesSection);
-
-    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
-    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    expect(within(dialog).queryByText("仓库分组")).toBeNull();
-    await within(dialog).findByRole("button", { name: "sena-nana · user" });
-    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "remote-only");
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
-
-    await waitFor(() => {
-      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
-        owner: "sena-nana",
-        name: "remote-only",
-      }));
-      expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
-    });
-    expect(workspace.cloneRepo).not.toHaveBeenCalled();
-    expect(workspace.refreshRepos).not.toHaveBeenCalled();
-  });
-
-  it("创建 GitHub 仓库时传递模板仓库字段并自动克隆", async () => {
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
-    vi.mocked(createGitHubRepo).mockResolvedValue({
-      id: 2,
-      name: "from-template",
-      fullName: "sena-nana/from-template",
-      ownerLogin: "sena-nana",
-      private: true,
-      disabled: false,
-      archived: false,
-      description: "template repo",
-      defaultBranch: "main",
-      createdAt: "2026-06-20T00:00:00Z",
-      updatedAt: "2026-06-20T00:00:00Z",
-      cloneUrl: "https://github.com/sena-nana/from-template.git",
-      htmlUrl: "https://github.com/sena-nana/from-template",
-    });
-    workspace.cloneRepo.mockResolvedValue(repoSummary("from-template"));
-
-    render(RepositoriesSection);
-
-    await fireEvent.click(screen.getByRole("button", { name: "新建 GitHub 仓库" }));
-    const dialog = await screen.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    await within(dialog).findByRole("button", { name: "sena-nana · user" });
-    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "from-template");
-    await fireEvent.update(within(dialog).getByLabelText("描述"), "template repo");
-    await fireEvent.click(within(dialog).getByLabelText("Private"));
-    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
-    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/template");
-    await fireEvent.click(within(dialog).getByLabelText("包含所有分支"));
-    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
-
-    await waitFor(() => {
-      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
-        owner: "sena-nana",
-        ownerKind: "user",
-        name: "from-template",
-        description: "template repo",
-        private: true,
-        autoInit: false,
-        templateFullName: "sena-nana/template",
-        includeAllBranches: true,
-      }));
-      expect(workspace.cloneRepo).toHaveBeenCalledWith("https://github.com/sena-nana/from-template.git", "from-template");
-      expect(workspace.refreshRepos).toHaveBeenCalled();
-    });
-  });
 });
