@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   retryPush: [remoteNames: string[]];
+  resolveConflicts: [];
 }>();
 
 const failedPushRemotes = computed(() =>
@@ -106,6 +107,17 @@ function stepAgentId(step: RepoRemoteOperationStep) {
             >
               <LoaderCircle v-if="retrying" class="sync-result-dialog__spinner" :size="15" aria-hidden="true" />
               {{ retrying ? "重试中…" : `重试失败推送（${failedPushRemotes.length}）` }}
+            </button>
+            <button
+              v-if="result.status === 'conflicts'"
+              type="button"
+              class="primary"
+              data-agent-id="repo.remote-sync.resolve-conflicts"
+              :disabled="retrying"
+              @click="emit('resolveConflicts')"
+            >
+              <GitMerge :size="15" aria-hidden="true" />
+              处理冲突
             </button>
           </footer>
     </template>

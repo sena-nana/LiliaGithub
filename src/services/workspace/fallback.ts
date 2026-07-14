@@ -2462,6 +2462,7 @@ let fallbackBulkExecuteOverride:
     ) => BulkSyncResult[] | Promise<BulkSyncResult[]>)
   | null = null;
 let fallbackConflictOverride: ((repoId: string) => RepoConflictState | null) | null = null;
+const fallbackConflictStates = new Map<string, RepoConflictState>();
 let fallbackRepoContributionOverride: ((repoFullName: string) => GitHubContributionResult) | null = null;
 let fallbackGitHubWorkflowRunsOverride:
   ((repoFullName: string, perPage: number | null) => GitHubWorkflowRun[] | Promise<GitHubWorkflowRun[]>) | null = null;
@@ -2581,6 +2582,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackSettings = createFallbackSettings();
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
+  fallbackConflictStates.clear();
   fallbackRepoContributionOverride = null;
   fallbackGitHubWorkflowRunsOverride = null;
   fallbackRepoRemoteSyncOverride = null;
@@ -2687,6 +2689,7 @@ export function setFallbackConflictOverrideForTests(
   override: ((repoId: string) => RepoConflictState | null) | null,
 ) {
   fallbackConflictOverride = override;
+  fallbackConflictStates.clear();
 }
 
 export function setFallbackRepoContributionOverrideForTests(
@@ -6295,9 +6298,7 @@ function emptyConflictState(): RepoConflictState {
   };
 }
 
-function fallbackConflictState(repoId: string): RepoConflictState {
-  const override = fallbackConflictOverride?.(repoId);
-  if (override) return override;
+function initialFallbackConflictState(repoId: string): RepoConflictState {
   if (repoId !== "Lilia") return emptyConflictState();
   return {
     operation: "merge",
@@ -6337,6 +6338,20 @@ function fallbackConflictState(repoId: string): RepoConflictState {
       },
     ],
   };
+}
+
+function setFallbackConflictState(repoId: string, state: RepoConflictState) {
+  const next = cloneFallbackData(state);
+  next.allResolved = next.files.length === 0;
+  fallbackConflictStates.set(repoId, next);
+}
+
+function fallbackConflictState(repoId: string): RepoConflictState {
+  const existing = fallbackConflictStates.get(repoId);
+  if (existing) return cloneFallbackData(existing);
+  const initial = fallbackConflictOverride?.(repoId) ?? initialFallbackConflictState(repoId);
+  setFallbackConflictState(repoId, initial);
+  return cloneFallbackData(fallbackConflictStates.get(repoId)!);
 }
 
 function fallbackLaunchConfig(repoId: string): ProjectLaunchConfig | null {
@@ -7363,9 +7378,32 @@ export function getRepoConflicts(repoId: string): Promise<RepoConflictState> {
   return call("repo_get_conflicts", { repoId }, () => fallbackConflictState(repoId));
 }
 
-function resolvedFallbackRepo(repoId: string): RepoSummary {
+function resolveFallbackConflictFile(repoId: string, path: string, stage: boolean): RepoSummary {
+  const conflicts = fallbackConflictState(repoId);
+  const files = conflicts.files.filter((file) => file.path !== path);
+  if (files.length === conflicts.files.length) {
+    throw new Error(`未找到冲突文件：${path}`);
+  }
+  setFallbackConflictState(repoId, { ...conflicts, files });
   const repo = fallbackRepo(repoId);
-  return { ...repo, conflictCount: 0, stagedCount: repo.stagedCount + 1 };
+  return updateFallbackRepo({
+    ...repo,
+    conflictCount: files.length,
+    stagedCount: repo.stagedCount + (stage ? 1 : 0),
+  });
+}
+
+function assertFallbackConflictOperation(operation: string, action: "继续" | "终止") {
+  if (operation === "none") throw new Error("当前没有进行中的冲突操作");
+  if (!["merge", "rebase", "cherry-pick"].includes(operation)) {
+    throw new Error(`不支持${action} ${operation} 冲突`);
+  }
+}
+
+function finishFallbackConflictOperation(repoId: string): RepoSummary {
+  setFallbackConflictState(repoId, emptyConflictState());
+  const repo = fallbackRepo(repoId);
+  return updateFallbackRepo({ ...repo, conflictCount: 0 });
 }
 
 export function acceptConflictFile(
@@ -7374,7 +7412,9 @@ export function acceptConflictFile(
   side: "ours" | "theirs",
   stage = true,
 ): Promise<RepoSummary> {
-  return call("repo_accept_conflict_file", { repoId, path, side, stage }, () => resolvedFallbackRepo(repoId));
+  return call("repo_accept_conflict_file", { repoId, path, side, stage }, () =>
+    resolveFallbackConflictFile(repoId, path, stage),
+  );
 }
 
 export function resolveConflictFile(
@@ -7383,24 +7423,29 @@ export function resolveConflictFile(
   choices: RepoConflictChoice[],
   stage = true,
 ): Promise<RepoSummary> {
-  return call("repo_resolve_conflict_file", { repoId, path, choices, stage }, () => resolvedFallbackRepo(repoId));
+  return call("repo_resolve_conflict_file", { repoId, path, choices, stage }, () =>
+    resolveFallbackConflictFile(repoId, path, stage),
+  );
 }
 
 export function markFileResolved(repoId: string, path: string): Promise<RepoSummary> {
-  return call("repo_mark_file_resolved", { repoId, path }, () => resolvedFallbackRepo(repoId));
+  return call("repo_mark_file_resolved", { repoId, path }, () => resolveFallbackConflictFile(repoId, path, true));
 }
 
 export function abortConflictOperation(repoId: string): Promise<RepoSummary> {
   return call("repo_abort_conflict_operation", { repoId }, () => {
-    const repo = fallbackRepo(repoId);
-    return { ...repo, conflictCount: 0 };
+    const conflicts = fallbackConflictState(repoId);
+    assertFallbackConflictOperation(conflicts.operation, "终止");
+    return finishFallbackConflictOperation(repoId);
   });
 }
 
 export function continueConflictOperation(repoId: string): Promise<RepoSummary> {
   return call("repo_continue_conflict_operation", { repoId }, () => {
-    const repo = fallbackRepo(repoId);
-    return { ...repo, conflictCount: 0 };
+    const conflicts = fallbackConflictState(repoId);
+    if (conflicts.files.length) throw new Error("仍有冲突文件未解决");
+    assertFallbackConflictOperation(conflicts.operation, "继续");
+    return finishFallbackConflictOperation(repoId);
   });
 }
 

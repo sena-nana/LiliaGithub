@@ -3,7 +3,7 @@ import { createMemoryHistory } from "vue-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
 import { refreshRepoSummaries } from "../src/composables/workspace/repositories";
-import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";
+import { resetWorkspaceStateForTests, state } from "../src/composables/workspace/state";
 import { useWorkspace } from "../src/composables/useWorkspace";
 import { createLiliaGithubApp } from "../src/createLiliaGithubApp";
 import { workspaceFallbackForTests } from "../src/services/workspace";
@@ -888,6 +888,60 @@ describe("基础路由", () => {
 
     expect(await screen.findByRole("button", { name: "推送" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "发布" })).toBeNull();
+  });
+
+  it("冲突深链只自动打开一次，并可从仓库工具栏重新打开", async () => {
+    const summary = repoSummary("LiliaGithub", { conflictCount: 1 });
+    state.repoDetails[summary.id] = repoDetail(summary, {
+      conflicts: { operation: "none", files: [], allResolved: true },
+    });
+    mockRepoDetail(summary, {
+      conflicts: {
+        operation: "merge",
+        allResolved: false,
+        files: [{
+          path: "src/main.ts",
+          status: "UU",
+          resolved: false,
+          binary: false,
+          hunks: [],
+        }],
+      },
+    });
+
+    const { router } = await renderAt("/repos/LiliaGithub/changes?resolveConflicts=1");
+
+    expect(await screen.findByRole("dialog", { name: "合并冲突" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/changes");
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "关闭冲突处理" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "合并冲突" })).toBeNull();
+    });
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/changes");
+
+    const toolbarEntry = screen.getByRole("button", { name: "处理冲突" });
+    expect(toolbarEntry).toHaveAttribute("data-agent-id", "repo.toolbar.conflict.resolve");
+    await fireEvent.click(toolbarEntry);
+    expect(await screen.findByRole("dialog", { name: "合并冲突" })).toBeInTheDocument();
+  });
+
+  it("过期冲突深链停留在变更页且不打开冲突卡片", async () => {
+    const summary = repoSummary("LiliaGithub", { conflictCount: 0 });
+    mockRepoDetail(summary, {
+      conflicts: { operation: "none", files: [], allResolved: true },
+    });
+
+    const { router } = await renderAt("/repos/LiliaGithub/changes?resolveConflicts=1");
+
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/changes");
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "处理冲突" })).toBeNull();
+    expect(await screen.findByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("仓库详情页右上角刷新项目缓存后重读当前项目页和详情", async () => {

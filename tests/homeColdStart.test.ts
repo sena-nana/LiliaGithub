@@ -343,6 +343,50 @@ describe("Home cold start pending items", () => {
     expect(actionLink).toHaveAttribute("href", "/repos/LiliaGithub?projectTab=actions&run=90");
   });
 
+  it("routes conflict status and pending actions to the conflict resolver", async () => {
+    const conflictRepo = repoSummary("LiliaGithub", {
+      githubFullName: repoFullName,
+      ahead: 0,
+      behind: 0,
+      conflictCount: 2,
+      lastCommitAt: 1_782_390_000,
+    });
+    workspaceFallback.setFallbackRepoOverridesForTests({ LiliaGithub: conflictRepo });
+    const settings = await workspaceFallback.getWorkspaceSettings();
+    workspaceFallback.setFallbackStartupCacheForTests({
+      workspaceRoot: settings.workspaceRoot,
+      bindingLogin: settings.githubBinding?.login ?? null,
+      reposById: {
+        LiliaGithub: {
+          summary: conflictRepo,
+          cachedAt: Date.now(),
+        },
+      },
+      contributions: null,
+    });
+    workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => []);
+    workspaceFallback.setFallbackGitHubActionNotificationsOverrideForTests(() => []);
+    resetWorkspaceStateForTests();
+
+    const rendered = await renderHomeFromStoredSnapshot();
+    const route = "/repos/LiliaGithub/changes?resolveConflicts=1";
+    const conflictAction = await screen.findByRole("link", { name: "处理冲突" });
+    expect(conflictAction).toHaveAttribute("href", route);
+    expect(conflictAction).toHaveAttribute(
+      "data-agent-id",
+      `home.repo-status.${repoFullName}.action.conflict`,
+    );
+
+    const pendingRow = await screen.findByLabelText(/冲突待处理 2 个冲突文件/);
+    expect(pendingRow).toHaveAttribute("data-agent-id", "home.pending.conflict.LiliaGithub");
+    const pendingLink = within(pendingRow).getByRole("link", { name: "打开 冲突待处理" });
+    expect(pendingLink).toHaveAttribute("href", route);
+    expect(pendingLink).toHaveAttribute("data-agent-id", "home.pending.conflict.LiliaGithub.open");
+
+    await fireEvent.click(pendingLink);
+    await waitFor(() => expect(rendered.router.currentRoute.value.fullPath).toBe(route));
+  });
+
   it("opens pending item targets from the row and the jump button without confirmation", async () => {
     workspaceFallback.setFallbackGitHubAccountIssuesOverrideForTests(() => [
       accountIssueItem(12, "Navigate issue"),

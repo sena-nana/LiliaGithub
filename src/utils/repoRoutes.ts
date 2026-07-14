@@ -15,6 +15,10 @@ export function repoRoute(repoId: string, tab: RepoRouteTab = "repo") {
   return tab === "repo" ? base : `${base}/${tab}`;
 }
 
+export function repoConflictRoute(repoId: string) {
+  return `${repoRoute(repoId, "changes")}?resolveConflicts=1`;
+}
+
 export function repoProjectRoute(
   repoId: string,
   projectTab: Exclude<RepoProjectTab, "readme">,

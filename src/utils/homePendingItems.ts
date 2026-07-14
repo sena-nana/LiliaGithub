@@ -14,6 +14,7 @@ export type HomePendingItemKind = "operation" | "issue" | "pull" | "workflow";
 export type HomePendingItemTarget = {
   kind: "repo";
   repoId: string;
+  view?: "conflicts";
 } | {
   kind: "issue";
   repoFullName: string;
@@ -128,7 +129,7 @@ function buildHomePendingItemsForRepo(source: HomePendingRepoSource): HomePendin
       summary: githubRepo.fullName,
       timestamp: repoPendingTimestamp(githubRepo, localRepo),
       priority: PRIORITY_CONFLICT,
-      target: { kind: "repo", repoId: localRepo.id },
+      target: { kind: "repo", repoId: localRepo.id, view: "conflicts" },
       tone: "error",
     });
   }
