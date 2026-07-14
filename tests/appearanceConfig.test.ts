@@ -9,6 +9,7 @@ describe("appearance shell configuration", () => {
   it("uses the shared appearance section with platform backdrop defaults", () => {
     expect(SETTINGS_SECTIONS.appearance).toBe(LiliaAppearanceSection);
     expect(LILIA_UI_CONFIG.appearance).toEqual({
+      backdropTarget: "sidebar",
       backdropOpacity: 0.64,
       platformDefaults: {
         macos: { backdropMode: "system" },
