@@ -1214,33 +1214,59 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("首页远端仓库 clone 失败后恢复按钮可用", async () => {
-    const remoteRepo = githubRepoSummary("sena-nana/RemoteClone");
+  it("首页远端仓库按行隔离 clone 进行中状态", async () => {
+    const firstRemoteRepo = githubRepoSummary("sena-nana/FirstRemoteClone");
+    const secondRemoteRepo = githubRepoSummary("sena-nana/SecondRemoteClone");
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
-        items: [remoteRepo],
+        items: [firstRemoteRepo, secondRemoteRepo],
         nextPage: null,
       },
     ]);
     const repositories = await import("../src/composables/workspace/repositories");
-    const clone = deferred<Awaited<ReturnType<typeof repositories.cloneRepo>>>();
-    const cloneRepo = vi.spyOn(repositories, "cloneRepo").mockReturnValue(clone.promise);
+    const firstClone = deferred<Awaited<ReturnType<typeof repositories.cloneRepo>>>();
+    const secondClone = deferred<Awaited<ReturnType<typeof repositories.cloneRepo>>>();
+    const cloneRepo = vi.spyOn(repositories, "cloneRepo")
+      .mockReturnValueOnce(firstClone.promise)
+      .mockReturnValueOnce(secondClone.promise);
     const view = await renderAppShell("/");
     try {
-      const row = await waitFor(() => repoStatusRowForText(view.container, remoteRepo.fullName));
-      const cloneButton = within(row).getByRole("button", { name: "clone" });
-      await fireEvent.click(cloneButton);
+      const firstRow = await waitFor(() => repoStatusRowForText(view.container, firstRemoteRepo.fullName));
+      const secondRow = repoStatusRowForText(view.container, secondRemoteRepo.fullName);
+      const firstCloneButton = within(firstRow).getByRole("button", { name: "clone" });
+      const secondCloneButton = within(secondRow).getByRole("button", { name: "clone" });
+      await fireEvent.click(firstCloneButton);
 
       await waitFor(() => {
-        expect(cloneRepo).toHaveBeenCalledWith(remoteRepo.cloneUrl, remoteRepo.name);
-        expect(cloneButton).toBeDisabled();
+        expect(firstCloneButton).toBeDisabled();
+        expect(secondCloneButton).not.toBeDisabled();
       });
 
-      clone.reject(new Error("clone failed"));
+      await fireEvent.click(firstCloneButton);
+      expect(cloneRepo).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(secondCloneButton);
+      await waitFor(() => {
+        expect(cloneRepo.mock.calls).toEqual([
+          [firstRemoteRepo.cloneUrl, firstRemoteRepo.name],
+          [secondRemoteRepo.cloneUrl, secondRemoteRepo.name],
+        ]);
+        expect(firstCloneButton).toBeDisabled();
+        expect(secondCloneButton).toBeDisabled();
+      });
+
+      secondClone.reject(new Error("second clone failed"));
 
       await waitFor(() => {
-        expect(cloneButton).not.toBeDisabled();
-        expect(view.getByText(`克隆 ${remoteRepo.fullName} 失败：Error: clone failed`)).toBeInTheDocument();
+        expect(firstCloneButton).toBeDisabled();
+        expect(secondCloneButton).not.toBeDisabled();
+        expect(view.getByText(`克隆 ${secondRemoteRepo.fullName} 失败：Error: second clone failed`)).toBeInTheDocument();
+      });
+
+      firstClone.reject(new Error("first clone failed"));
+
+      await waitFor(() => {
+        expect(firstCloneButton).not.toBeDisabled();
       });
     } finally {
       cloneRepo.mockRestore();
