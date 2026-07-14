@@ -700,7 +700,7 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["settings.tab.repositories"],
-      waits: ["settings.repositories.github.bind", "settings.repositories.create-remote"],
+      waits: ["settings.repositories.github.bind", "settings.repositories.contribution-identities"],
       observe: "settings-repositories",
     },
     {

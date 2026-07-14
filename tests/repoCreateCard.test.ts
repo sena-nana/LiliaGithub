@@ -1,0 +1,207 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import RepoCreateCard from "../src/components/sidebar/RepoCreateCard.vue";
+import {
+  createGitHubRepo,
+  listGitHubRepoOwners,
+  type GitHubRepoSummary,
+} from "../src/services/workspace";
+import { repoSummary } from "./fixtures/workspace";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function githubRepo(name: string, id: number): GitHubRepoSummary {
+  return {
+    id,
+    name,
+    fullName: `sena-nana/${name}`,
+    ownerLogin: "sena-nana",
+    private: false,
+    disabled: false,
+    archived: false,
+    description: null,
+    defaultBranch: "main",
+    createdAt: "2026-06-20T00:00:00Z",
+    updatedAt: "2026-06-20T00:00:00Z",
+    cloneUrl: `https://github.com/sena-nana/${name}.git`,
+    htmlUrl: `https://github.com/sena-nana/${name}`,
+  };
+}
+
+const workspace = vi.hoisted(() => ({
+  createLocalRepo: vi.fn(),
+  cloneRepo: vi.fn(),
+  refreshRepos: vi.fn(),
+}));
+
+vi.mock("../src/composables/useWorkspace", () => ({
+  useWorkspace: () => workspace,
+}));
+
+vi.mock("../src/services/workspace", async () => {
+  const actual = await vi.importActual<typeof import("../src/services/workspace")>("../src/services/workspace");
+  return {
+    ...actual,
+    createGitHubRepo: vi.fn(),
+    listGitHubRepoOwners: vi.fn(async () => []),
+  };
+});
+
+async function renderRemoteRepoCard() {
+  const view = render(RepoCreateCard, {
+    props: {
+      open: false,
+      mode: "remote",
+      workspaceReady: true,
+      githubReady: true,
+    },
+  });
+  await view.rerender({
+    open: true,
+    mode: "remote",
+    workspaceReady: true,
+    githubReady: true,
+  });
+  return view;
+}
+
+describe("RepoCreateCard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
+    vi.mocked(createGitHubRepo).mockReset();
+    workspace.cloneRepo.mockReset();
+    workspace.refreshRepos.mockReset();
+    workspace.refreshRepos.mockResolvedValue(undefined);
+  });
+
+  it("创建仓库请求返回前关闭弹窗时忽略旧结果", async () => {
+    const createRequest = deferred<GitHubRepoSummary>();
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(createGitHubRepo).mockReturnValue(createRequest.promise);
+    const view = await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await within(dialog).findByRole("button", { name: "sena-nana · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "new-repo");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
+
+    expect(vi.mocked(createGitHubRepo)).toHaveBeenCalledWith(expect.objectContaining({
+      owner: "sena-nana",
+      name: "new-repo",
+    }));
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    expect(view.emitted("close")).toHaveLength(1);
+    await view.rerender({
+      open: false,
+      mode: "remote",
+      workspaceReady: true,
+      githubReady: true,
+    });
+    expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
+
+    createRequest.resolve(githubRepo("new-repo", 1));
+    await createRequest.promise;
+    await Promise.resolve();
+
+    expect(view.emitted("remoteCloned")).toBeUndefined();
+    expect(workspace.cloneRepo).not.toHaveBeenCalled();
+    expect(workspace.refreshRepos).not.toHaveBeenCalled();
+  });
+
+  it("创建 GitHub 仓库时默认选择 user owner 并将 user 排在最上方", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([
+      { login: "sena-nana", kind: "org" },
+      { login: "team-lilia", kind: "org" },
+      { login: "lilia-user", kind: "user" },
+    ]);
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    const ownerTrigger = await within(dialog).findByRole("button", { name: "lilia-user · user" });
+    await fireEvent.click(ownerTrigger);
+
+    const ownerOptions = await screen.findAllByRole("option");
+    expect(ownerOptions.map((option) => option.textContent?.trim())).toEqual([
+      "lilia-user · user",
+      "sena-nana · org",
+      "team-lilia · org",
+    ]);
+  });
+
+  it("可只创建远程 GitHub 仓库并关闭弹窗", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(createGitHubRepo).mockResolvedValue(githubRepo("remote-only", 3));
+    const view = await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await within(dialog).findByRole("button", { name: "sena-nana · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "remote-only");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
+        owner: "sena-nana",
+        name: "remote-only",
+      }));
+      expect(view.emitted("close")).toHaveLength(1);
+    });
+    expect(view.emitted("remoteCloned")).toBeUndefined();
+    expect(workspace.cloneRepo).not.toHaveBeenCalled();
+    expect(workspace.refreshRepos).not.toHaveBeenCalled();
+  });
+
+  it("创建 GitHub 仓库时传递模板仓库字段并自动克隆", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(createGitHubRepo).mockResolvedValue({
+      ...githubRepo("from-template", 2),
+      private: true,
+      description: "template repo",
+    });
+    workspace.cloneRepo.mockResolvedValue(repoSummary("from-template"));
+    const view = await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await within(dialog).findByRole("button", { name: "sena-nana · user" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "from-template");
+    await fireEvent.update(within(dialog).getByLabelText("描述"), "template repo");
+    await fireEvent.click(within(dialog).getByLabelText("Private"));
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/template");
+    await fireEvent.click(within(dialog).getByLabelText("包含所有分支"));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
+
+    await waitFor(() => {
+      expect(createGitHubRepo).toHaveBeenCalledWith(expect.objectContaining({
+        owner: "sena-nana",
+        ownerKind: "user",
+        name: "from-template",
+        description: "template repo",
+        private: true,
+        autoInit: false,
+        templateFullName: "sena-nana/template",
+        includeAllBranches: true,
+      }));
+      expect(workspace.cloneRepo).toHaveBeenCalledWith(
+        "https://github.com/sena-nana/from-template.git",
+        "from-template",
+      );
+      expect(workspace.refreshRepos).toHaveBeenCalledTimes(1);
+    });
+    expect(view.emitted("remoteCloned")?.[0]).toEqual([
+      repoSummary("from-template"),
+      expect.objectContaining({ fullName: "sena-nana/from-template" }),
+      null,
+    ]);
+    expect(view.emitted("close")).toHaveLength(1);
+  });
+});

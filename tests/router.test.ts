@@ -1437,13 +1437,16 @@ describe("基础路由", () => {
 
     await renderAt("/settings?tab=repositories");
 
-    expect(await screen.findByRole("heading", { level: 1, name: "仓库" })).toBeInTheDocument();
-    expect(await screen.findByText("LiliaGithub")).toBeInTheDocument();
-
+    expect(await screen.findAllByRole("heading", { name: "仓库" })).toHaveLength(1);
+    expect(await screen.findByRole("region", { name: "工作区与仓库" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "GitHub 授权" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "贡献身份" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "后台发现仓库" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
     await fireEvent.click(await screen.findByRole("button", { name: "恢复管理" }));
 
     await waitFor(() => {
-      expect(screen.getByText("没有隐藏仓库。")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "恢复管理" })).not.toBeInTheDocument();
     });
     expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
   });
@@ -1463,22 +1466,6 @@ describe("基础路由", () => {
     expect(await screen.findByText("等待 GitHub 授权确认")).toBeInTheDocument();
     expect(await screen.findByText("授权码已复制，请在 GitHub 授权页粘贴。")).toBeInTheDocument();
     expect(screen.getByText("ABCD-1234")).toBeInTheDocument();
-  });
-
-  it("设置页仓库 tab 可新建 GitHub 仓库并克隆到工作区", async () => {
-    const service = await import("../src/services/workspace");
-    await renderAt("/settings?tab=repositories");
-
-    await fireEvent.click(await screen.findByRole("button", { name: "新建 GitHub 仓库" }));
-    expect(await screen.findByRole("dialog", { name: "新建 GitHub 仓库" })).toBeInTheDocument();
-    await fireEvent.update(screen.getByPlaceholderText("new-repo"), "NewRepo");
-    await fireEvent.update(screen.getByPlaceholderText("Node"), "Node");
-    await fireEvent.click(screen.getByRole("button", { name: "创建并克隆" }));
-
-    await waitFor(async () => {
-      expect((await service.refreshRepos()).some((repo) => repo.id === "NewRepo")).toBe(true);
-    });
-    expect(screen.queryByRole("dialog", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
   });
 
   it("未知路由回到首页", async () => {
