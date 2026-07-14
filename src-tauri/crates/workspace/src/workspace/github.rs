@@ -36,11 +36,12 @@ use lilia_github_contracts::workspace::{
     GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
     GitHubRepoPage, GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
-    GitHubRepoWorkflowPermissionsRequest, GitHubRulesetSummary, GitHubUpdateIssueRequest,
-    GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest, GitHubUpdateRepoSettingsRequest,
-    GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry, GitHubWorkflowDefinition,
-    GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep, GitHubWorkflowRun,
-    GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview, RepoFileTreeEntry,
+    GitHubRepoTemplate, GitHubRepoWorkflowPermissionsRequest, GitHubRulesetSummary,
+    GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
+    GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry,
+    GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
+    GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview,
+    RepoFileTreeEntry,
 };
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
@@ -94,6 +95,19 @@ pub(super) struct GitHubUserResponse {
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubRepoOwnerResponse {
     pub(super) login: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubRepoTemplateResponse {
+    pub(super) id: u64,
+    pub(super) name: String,
+    pub(super) full_name: String,
+    pub(super) private: bool,
+    #[serde(default)]
+    pub(super) description: Option<String>,
+    #[serde(default)]
+    pub(super) is_template: bool,
+    pub(super) owner: GitHubRepoOwnerResponse,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1220,6 +1234,25 @@ pub(super) fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> Git
         clone_url: repo.clone_url,
         html_url: repo.html_url,
     }
+}
+
+pub(super) fn github_repo_templates_from_page(
+    repos: Vec<GitHubRepoTemplateResponse>,
+    seen: &mut HashSet<String>,
+) -> Vec<GitHubRepoTemplate> {
+    repos
+        .into_iter()
+        .filter(|repo| repo.is_template)
+        .filter(|repo| seen.insert(repo.full_name.clone()))
+        .map(|repo| GitHubRepoTemplate {
+            id: repo.id,
+            name: repo.name,
+            full_name: repo.full_name,
+            owner_login: repo.owner.login,
+            private: repo.private,
+            description: repo.description,
+        })
+        .collect()
 }
 
 pub(super) fn normalize_remote_repo_shortcut(
@@ -3684,6 +3717,55 @@ pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwn
                 kind: "org".to_string(),
             }));
             Ok(owners)
+        },
+    )
+    .await
+}
+
+pub async fn github_list_repo_templates(app: AppHandle) -> Result<Vec<GitHubRepoTemplate>, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 模板仓库",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let mut page = 1_u32;
+            let mut templates = Vec::new();
+            let mut seen = HashSet::new();
+            loop {
+                let page_string = page.to_string();
+                let response = github_send(
+                    &app,
+                    "读取 GitHub 模板仓库失败",
+                    github_headers(
+                        client.get("https://api.github.com/user/repos").query(&[
+                            ("affiliation", "owner,organization_member"),
+                            ("visibility", "all"),
+                            ("sort", "full_name"),
+                            ("per_page", "100"),
+                            ("page", page_string.as_str()),
+                        ]),
+                        Some(&token),
+                    ),
+                )?;
+                let next_page = parse_next_page(
+                    response
+                        .headers()
+                        .get(LINK)
+                        .and_then(|value| value.to_str().ok()),
+                );
+                let repos = github_json::<Vec<GitHubRepoTemplateResponse>>(
+                    "读取 GitHub 模板仓库失败",
+                    response,
+                )?;
+                templates.extend(github_repo_templates_from_page(repos, &mut seen));
+                let Some(next_page) = next_page else {
+                    break;
+                };
+                page = next_page;
+            }
+            Ok(templates)
         },
     )
     .await

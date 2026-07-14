@@ -339,6 +339,18 @@ pub struct GitHubRepoSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct GitHubRepoTemplate {
+    pub id: u64,
+    pub name: String,
+    pub full_name: String,
+    pub owner_login: String,
+    pub private: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteRepoShortcut {
     pub full_name: String,
     pub name: String,

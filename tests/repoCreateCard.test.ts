@@ -4,7 +4,9 @@ import RepoCreateCard from "../src/components/sidebar/RepoCreateCard.vue";
 import {
   createGitHubRepo,
   listGitHubRepoOwners,
+  listGitHubRepoTemplates,
   type GitHubRepoSummary,
+  type GitHubRepoTemplate,
 } from "../src/services/workspace";
 import { repoSummary } from "./fixtures/workspace";
 
@@ -36,6 +38,22 @@ function githubRepo(name: string, id: number): GitHubRepoSummary {
   };
 }
 
+function githubTemplate(
+  name: string,
+  id: number,
+  overrides: Partial<GitHubRepoTemplate> = {},
+): GitHubRepoTemplate {
+  return {
+    id,
+    name,
+    fullName: `sena-nana/${name}`,
+    ownerLogin: "sena-nana",
+    private: false,
+    description: null,
+    ...overrides,
+  };
+}
+
 const workspace = vi.hoisted(() => ({
   createLocalRepo: vi.fn(),
   cloneRepo: vi.fn(),
@@ -52,6 +70,7 @@ vi.mock("../src/services/workspace", async () => {
     ...actual,
     createGitHubRepo: vi.fn(),
     listGitHubRepoOwners: vi.fn(async () => []),
+    listGitHubRepoTemplates: vi.fn(async () => []),
   };
 });
 
@@ -77,6 +96,7 @@ describe("RepoCreateCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([]);
+    vi.mocked(listGitHubRepoTemplates).mockResolvedValue([]);
     vi.mocked(createGitHubRepo).mockReset();
     workspace.cloneRepo.mockReset();
     workspace.refreshRepos.mockReset();
@@ -162,6 +182,9 @@ describe("RepoCreateCard", () => {
 
   it("创建 GitHub 仓库时传递模板仓库字段并自动克隆", async () => {
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoTemplates).mockResolvedValue([
+      githubTemplate("template", 20, { description: "template source" }),
+    ]);
     vi.mocked(createGitHubRepo).mockResolvedValue({
       ...githubRepo("from-template", 2),
       private: true,
@@ -176,7 +199,12 @@ describe("RepoCreateCard", () => {
     await fireEvent.update(within(dialog).getByLabelText("描述"), "template repo");
     await fireEvent.click(within(dialog).getByLabelText("Private"));
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
-    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/template");
+    const templateTrigger = await within(dialog).findByRole("button", { name: "选择模板仓库" });
+    expect(templateTrigger).toHaveAttribute("data-agent-id", "repo-create.template.trigger");
+    await fireEvent.click(templateTrigger);
+    const templateOption = await screen.findByRole("option", { name: /sena-nana\/template/ });
+    expect(templateOption).toHaveAttribute("data-agent-id", "repo-create.template.option.20");
+    await fireEvent.click(templateOption);
     await fireEvent.click(within(dialog).getByLabelText("包含所有分支"));
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
@@ -203,5 +231,143 @@ describe("RepoCreateCard", () => {
       null,
     ]);
     expect(view.emitted("close")).toHaveLength(1);
+  });
+
+  it("仅在启用模板时加载，并在同一弹窗会话复用成功结果、新会话重新加载", async () => {
+    const firstLoad = deferred<GitHubRepoTemplate[]>();
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoTemplates)
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockResolvedValueOnce([githubTemplate("second-session", 22)]);
+    const view = await renderRemoteRepoCard();
+    let dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+
+    expect(listGitHubRepoTemplates).not.toHaveBeenCalled();
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("正在加载模板仓库");
+    expect(within(dialog).getByRole("button", { name: "创建" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "创建并克隆" })).toBeDisabled();
+
+    firstLoad.resolve([githubTemplate("first-session", 21)]);
+    const firstTemplateTrigger = within(dialog).getByRole("button", { name: "选择模板仓库" });
+    await waitFor(() => expect(firstTemplateTrigger).toBeEnabled());
+    await fireEvent.click(firstTemplateTrigger);
+    await fireEvent.click(await screen.findByRole("option", { name: /sena-nana\/first-session/ }));
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByRole("button", { name: "选择模板仓库" })).toBeEnabled();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    await view.rerender({
+      open: false,
+      mode: "remote",
+      workspaceReady: true,
+      githubReady: true,
+    });
+    await view.rerender({
+      open: true,
+      mode: "remote",
+      workspaceReady: true,
+      githubReady: true,
+    });
+    dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(2));
+    expect(await within(dialog).findByRole("button", { name: "选择模板仓库" })).toBeEnabled();
+  });
+
+  it("远端没有模板仓库时显示空态并保持创建操作不可用", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoTemplates).mockResolvedValue([]);
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "empty-template");
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+
+    expect(await within(dialog).findByText("没有可用的模板仓库。")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "选择模板仓库" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "创建" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "创建并克隆" })).toBeDisabled();
+  });
+
+  it("模板仓库加载失败后可重试", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoTemplates)
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce([githubTemplate("retry-template", 23)]);
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    expect(await within(dialog).findByText("模板仓库加载失败。")).toBeInTheDocument();
+
+    const retry = within(dialog).getByRole("button", { name: "重试" });
+    expect(retry).toHaveAttribute("data-agent-id", "repo-create.template.retry");
+    await fireEvent.click(retry);
+
+    await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(2));
+    const trigger = await within(dialog).findByRole("button", { name: "选择模板仓库" });
+    expect(trigger).toBeEnabled();
+    await fireEvent.click(trigger);
+    expect(await screen.findByRole("option", { name: /sena-nana\/retry-template/ })).toBeInTheDocument();
+  });
+
+  it("取消模板模式后忽略迟到的模板列表并在再次启用时重新加载", async () => {
+    const staleLoad = deferred<GitHubRepoTemplate[]>();
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoTemplates)
+      .mockReturnValueOnce(staleLoad.promise)
+      .mockResolvedValueOnce([]);
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    const useTemplate = within(dialog).getByLabelText("使用模板");
+    await fireEvent.click(useTemplate);
+    await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(1));
+    await fireEvent.click(useTemplate);
+    staleLoad.resolve([githubTemplate("stale-template", 24)]);
+    await staleLoad.promise;
+    await Promise.resolve();
+
+    await fireEvent.click(useTemplate);
+    await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(2));
+    expect(await within(dialog).findByText("没有可用的模板仓库。")).toBeInTheDocument();
+    expect(screen.queryByText("sena-nana/stale-template")).not.toBeInTheDocument();
+  });
+
+  it("关闭弹窗后忽略迟到的模板列表", async () => {
+    const staleLoad = deferred<GitHubRepoTemplate[]>();
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoTemplates)
+      .mockReturnValueOnce(staleLoad.promise)
+      .mockResolvedValueOnce([]);
+    const view = await renderRemoteRepoCard();
+
+    let dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(1));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    await view.rerender({
+      open: false,
+      mode: "remote",
+      workspaceReady: true,
+      githubReady: true,
+    });
+    staleLoad.resolve([githubTemplate("stale-template", 25)]);
+    await staleLoad.promise;
+
+    await view.rerender({
+      open: true,
+      mode: "remote",
+      workspaceReady: true,
+      githubReady: true,
+    });
+    dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await fireEvent.click(within(dialog).getByLabelText("使用模板"));
+    await waitFor(() => expect(listGitHubRepoTemplates).toHaveBeenCalledTimes(2));
+    expect(await within(dialog).findByText("没有可用的模板仓库。")).toBeInTheDocument();
+    expect(screen.queryByText("sena-nana/stale-template")).not.toBeInTheDocument();
   });
 });

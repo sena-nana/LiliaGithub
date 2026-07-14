@@ -44,6 +44,7 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
@@ -694,6 +695,19 @@ function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
   return [
     { login: "lilia-user", kind: "user" },
     { login: "sena-nana", kind: "org" },
+  ];
+}
+
+function createFallbackGitHubRepoTemplates(): GitHubRepoTemplate[] {
+  return [
+    {
+      id: 9101,
+      name: "LiliaTemplate",
+      fullName: "sena-nana/LiliaTemplate",
+      ownerLogin: "sena-nana",
+      private: false,
+      description: "Lilia desktop application template",
+    },
   ];
 }
 
@@ -2274,6 +2288,7 @@ function fallbackPullRequestDiscussion(pullRequest: GitHubPullRequest): GitHubPu
 }
 
 let fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
+let fallbackGitHubRepoTemplates = createFallbackGitHubRepoTemplates();
 let fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
 let fallbackGitHubIssues = createFallbackGitHubIssues();
 let fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
@@ -2541,6 +2556,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackRepos = baseFallbackRepos.map(cloneRepoSummary);
   fallbackGitHubRepos = createFallbackGitHubRepos();
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
+  fallbackGitHubRepoTemplates = createFallbackGitHubRepoTemplates();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
   fallbackGitHubIssues = createFallbackGitHubIssues();
   fallbackGitHubPullRequests = createFallbackGitHubPullRequests();
@@ -4657,6 +4673,10 @@ function renameFallbackGitHubRepoReferences(fromFullName: string, toFullName: st
 
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
   return call("github_list_repo_owners", undefined, () => fallbackGitHubRepoOwners.map((owner) => ({ ...owner })));
+}
+
+export function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
+  return call("github_list_repo_templates", undefined, () => fallbackGitHubRepoTemplates.map((template) => ({ ...template })));
 }
 
 export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitHubRepoSummary> {

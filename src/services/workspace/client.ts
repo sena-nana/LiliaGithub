@@ -37,6 +37,7 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
@@ -789,6 +790,10 @@ export function listGitHubActionNotifications(
 
 export function listGitHubRepoOwners(): Promise<GitHubRepoOwner[]> {
   return call("github_list_repo_owners", undefined, () => workspaceFallback().listGitHubRepoOwners());
+}
+
+export function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
+  return call("github_list_repo_templates", undefined, () => workspaceFallback().listGitHubRepoTemplates());
 }
 
 export async function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitHubRepoSummary> {

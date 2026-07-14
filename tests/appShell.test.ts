@@ -710,7 +710,10 @@ describe("AppShell sidebar", () => {
     await selectCreateRepoGroup(view, dialog, "前端");
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "template-made");
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
-    await fireEvent.update(within(dialog).getByLabelText("模板仓库"), "sena-nana/LiliaGithub");
+    const templateTrigger = within(dialog).getByRole("button", { name: "选择模板仓库" });
+    await waitFor(() => expect(templateTrigger).toBeEnabled());
+    await fireEvent.click(templateTrigger);
+    await fireEvent.click(await view.findByRole("option", { name: /sena-nana\/LiliaTemplate/ }));
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(() => {

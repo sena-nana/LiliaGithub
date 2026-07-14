@@ -9,14 +9,17 @@ import { Dropdown } from "@lilia/ui";
 import {
   createGitHubRepo,
   listGitHubRepoOwners,
+  listGitHubRepoTemplates,
   type GitHubCreateRepoRequest,
   type GitHubRepoOwner,
   type GitHubRepoSummary,
+  type GitHubRepoTemplate,
   type RepoSummary,
 } from "../../services/workspace";
 
 type RepoCreateMode = "local" | "remote";
 type RepoCreateAction = "local" | "remote-only" | "remote-clone";
+type RepoTemplatesStatus = "idle" | "loading" | "loaded" | "error";
 type RepoCreateGroup = {
   readonly id: string;
   readonly name: string;
@@ -41,10 +44,13 @@ const emit = defineEmits<{
 const workspace = useWorkspace();
 const componentEpoch = useComponentEpoch();
 const repoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
+const repoTemplatesLoader = createLatestAsyncLoader({ componentEpoch });
 const createRepoLoader = createLatestAsyncLoader({ componentEpoch });
 const createActionTracker = createPendingTaskTracker();
 const firstInput = ref<HTMLInputElement | null>(null);
 const repoOwners = ref<GitHubRepoOwner[]>([]);
+const repoTemplates = ref<GitHubRepoTemplate[]>([]);
+const repoTemplatesStatus = ref<RepoTemplatesStatus>("idle");
 const activeCreateAction = ref<RepoCreateAction | null>(null);
 const cloningCreatedRepo = ref(false);
 const createdRepo = ref<GitHubRepoSummary | null>(null);
@@ -91,6 +97,16 @@ const repoOwnerOptions = computed(() =>
     agentId: `repo-create.owner.option.${owner.kind}.${owner.login}`,
   }))
 );
+const repoTemplateOptions = computed(() =>
+  repoTemplates.value.map((template) => ({
+    value: template.fullName,
+    label: template.fullName,
+    hint: [template.private ? "Private" : "Public", template.description]
+      .filter(Boolean)
+      .join(" · "),
+    agentId: `repo-create.template.option.${template.id}`,
+  }))
+);
 const selectedOwnerValue = computed({
   get: () => form.value.owner,
   set: (value: string) => {
@@ -121,7 +137,10 @@ const submitDisabled = computed(() => (
   || cloningCreatedRepo.value
   || !form.value.name.trim()
   || (isRemoteMode.value && !form.value.owner)
-  || (isRemoteMode.value && form.value.useTemplate && !form.value.templateFullName.trim())
+  || (isRemoteMode.value && form.value.useTemplate && (
+    repoTemplatesStatus.value !== "loaded"
+    || !form.value.templateFullName
+  ))
 ));
 const groupPickerDisabled = computed(() => (
   Boolean(blockedReason.value)
@@ -131,6 +150,9 @@ const groupPickerDisabled = computed(() => (
 ));
 
 function resetForm() {
+  repoTemplatesLoader.invalidate();
+  repoTemplates.value = [];
+  repoTemplatesStatus.value = "idle";
   const defaultOwner = repoOwners.value[0];
   form.value = {
     owner: defaultOwner?.login ?? "",
@@ -152,6 +174,13 @@ function resetForm() {
   createdRepo.value = null;
   createError.value = null;
   selectedGroupId.value = null;
+}
+
+function cancelTemplateLoading() {
+  repoTemplatesLoader.invalidate();
+  if (repoTemplatesStatus.value !== "loaded") repoTemplatesStatus.value = "idle";
+  form.value.templateFullName = "";
+  form.value.includeAllBranches = false;
 }
 
 function sortRepoOwners(owners: readonly GitHubRepoOwner[]) {
@@ -180,6 +209,22 @@ async function loadRepoOwners() {
   });
 }
 
+async function loadRepoTemplates() {
+  if (repoTemplatesStatus.value === "loaded") return;
+  await repoTemplatesLoader.run("repo-templates", async (runId) => {
+    repoTemplatesStatus.value = "loading";
+    try {
+      const templates = await listGitHubRepoTemplates();
+      if (!repoTemplatesLoader.isCurrent(runId) || !props.open || !form.value.useTemplate) return;
+      repoTemplates.value = templates;
+      repoTemplatesStatus.value = "loaded";
+    } catch {
+      if (!repoTemplatesLoader.isCurrent(runId) || !props.open || !form.value.useTemplate) return;
+      repoTemplatesStatus.value = "error";
+    }
+  }, { reusePending: true });
+}
+
 function syncOwnerKind() {
   const owner = repoOwners.value.find((item) => item.login === form.value.owner);
   if (owner) form.value.ownerKind = owner.kind;
@@ -204,6 +249,7 @@ function buildGitHubCreateRepoRequest(): GitHubCreateRepoRequest {
 }
 
 function closeCard() {
+  cancelTemplateLoading();
   createRepoLoader.invalidate();
   emit("close");
 }
@@ -294,15 +340,30 @@ async function submitCreateRepo() {
 watch(
   () => [props.open, props.mode] as const,
   ([open]) => {
-    if (!open) return;
+    if (!open) {
+      cancelTemplateLoading();
+      return;
+    }
     resetForm();
     if (props.mode === "remote") void loadRepoOwners();
     void nextTick(() => firstInput.value?.focus());
   },
 );
 
+watch(
+  () => form.value.useTemplate,
+  (useTemplate) => {
+    if (!useTemplate) {
+      cancelTemplateLoading();
+      return;
+    }
+    if (props.open && isRemoteMode.value) void loadRepoTemplates();
+  },
+);
+
 onUnmounted(() => {
   repoOwnersLoader.invalidate();
+  repoTemplatesLoader.invalidate();
   createRepoLoader.invalidate();
   createActionTracker.reset();
 });
@@ -381,10 +442,41 @@ onUnmounted(() => {
       </div>
 
       <template v-if="isRemoteMode && form.useTemplate">
-        <label>
+        <div class="repo-create-field">
           <span>模板仓库</span>
-          <input v-model="form.templateFullName" type="text" placeholder="owner/template-repo" />
-        </label>
+          <Dropdown
+            v-model="form.templateFullName"
+            :options="repoTemplateOptions"
+            placeholder="选择模板仓库"
+            placement="bottom"
+            button-class="repo-create-template-picker"
+            agent-id="repo-create.template.trigger"
+            menu-label="选择模板仓库"
+            menu-width="100%"
+            :disabled="repoTemplatesStatus !== 'loaded' || !repoTemplates.length"
+          />
+          <p v-if="repoTemplatesStatus === 'loading'" class="repo-create-template-state" role="status">
+            <LoaderCircle :size="13" aria-hidden="true" class="sb-spin" />
+            正在加载模板仓库…
+          </p>
+          <p v-else-if="repoTemplatesStatus === 'error'" class="repo-create-template-state repo-create-card__error">
+            <span>模板仓库加载失败。</span>
+            <button
+              type="button"
+              class="ghost repo-create-template-retry"
+              data-agent-id="repo-create.template.retry"
+              @click="loadRepoTemplates"
+            >
+              重试
+            </button>
+          </p>
+          <p
+            v-else-if="repoTemplatesStatus === 'loaded' && !repoTemplates.length"
+            class="repo-create-template-state"
+          >
+            没有可用的模板仓库。
+          </p>
+        </div>
         <div class="repo-create-checks">
           <label class="repo-create-check">
             <input v-model="form.includeAllBranches" type="checkbox" />
@@ -537,7 +629,8 @@ onUnmounted(() => {
 }
 
 :deep(.repo-create-group-picker),
-:deep(.repo-create-owner-picker) {
+:deep(.repo-create-owner-picker),
+:deep(.repo-create-template-picker) {
   width: 100%;
   height: 32px;
   justify-content: flex-start;
@@ -546,7 +639,8 @@ onUnmounted(() => {
 }
 
 :deep(.repo-create-group-picker .chat-chip__label),
-:deep(.repo-create-owner-picker .chat-chip__label) {
+:deep(.repo-create-owner-picker .chat-chip__label),
+:deep(.repo-create-template-picker .dd__button-label) {
   max-width: none;
 }
 
@@ -574,6 +668,21 @@ onUnmounted(() => {
   margin: 0;
   color: var(--err);
   font-size: 12px;
+}
+
+.repo-create-template-state {
+  min-height: 24px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.repo-create-template-retry {
+  min-height: 24px;
+  padding: 0 6px;
 }
 
 .repo-create-result {

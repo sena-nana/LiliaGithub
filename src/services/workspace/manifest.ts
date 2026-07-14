@@ -54,6 +54,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_list_action_notifications",
     "github_list_repo_contribution",
     "github_list_repo_owners",
+    "github_list_repo_templates",
     "github_create_repo",
     "github_get_repo_management",
     "github_update_repo_settings",
