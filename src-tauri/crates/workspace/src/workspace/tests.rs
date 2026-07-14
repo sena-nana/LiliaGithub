@@ -45,6 +45,8 @@ use super::launch::{
     clear_launch_logs, infer_launch_candidates, infer_launch_config, launch_logs, push_launch_log,
     LaunchOutputParser,
 };
+#[cfg(target_os = "macos")]
+use super::launch::{macos_launch_process, resolve_macos_launch_shell, stop_launch_process_tree};
 use super::readme::readme_image_data_urls;
 use super::repo_guard::repo_resource_id;
 use super::repos::{
@@ -88,10 +90,18 @@ use lilia_github_contracts::workspace::{
     WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
 };
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(target_os = "macos")]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::process::Stdio;
 use std::sync::Arc;
 
 pub(super) struct NoopWorkspaceRuntime;
@@ -142,6 +152,119 @@ fn temp_dir(name: &str) -> PathBuf {
 
 fn write_package(path: &Path, body: &str) {
     fs::write(path.join("package.json"), body).unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_launch_process_loads_user_shell_profiles() {
+    let resolution_home = temp_dir("macos-launch-shell-resolution");
+    let non_executable_shell = resolution_home.join("non-executable");
+    fs::write(&non_executable_shell, "#!/bin/sh\n").unwrap();
+    assert_eq!(
+        resolve_macos_launch_shell(Some(OsStr::new("/bin/zsh"))),
+        PathBuf::from("/bin/zsh")
+    );
+    for shell in [
+        Some(OsStr::new("zsh")),
+        Some(OsStr::new("/missing/lilia-shell")),
+        Some(non_executable_shell.as_os_str()),
+        None,
+    ] {
+        assert_eq!(resolve_macos_launch_shell(shell), PathBuf::from("/bin/zsh"));
+    }
+    fs::remove_dir_all(resolution_home).unwrap();
+
+    for (name, shell, profiles) in [
+        (
+            "zsh",
+            "/bin/zsh",
+            &[
+                (".zprofile", "export LILIA_PROFILE=loaded\n"),
+                (".zshrc", "export PATH=\"$HOME/bin:$PATH\"\n"),
+            ][..],
+        ),
+        (
+            "bash",
+            "/bin/bash",
+            &[(
+                ".bash_profile",
+                "export LILIA_PROFILE=loaded\nexport PATH=\"$HOME/bin:$PATH\"\n",
+            )][..],
+        ),
+    ] {
+        let home = temp_dir(&format!("macos-launch-{name}-profile"));
+        let bin = home.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let yarn = bin.join("yarn");
+        fs::write(
+            &yarn,
+            "#!/bin/sh\nprintf '%s:lilia-yarn\\n' \"$LILIA_PROFILE\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&yarn, fs::Permissions::from_mode(0o755)).unwrap();
+        for (file, contents) in profiles {
+            fs::write(home.join(file), contents).unwrap();
+        }
+
+        let output = macos_launch_process(Path::new(shell), "yarn --version")
+            .env_clear()
+            .env("HOME", &home)
+            .env("USER", "lilia-test")
+            .env("LOGNAME", "lilia-test")
+            .env("SHELL", shell)
+            .env("PATH", "/usr/bin:/bin")
+            .env("ZDOTDIR", &home)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{name} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "loaded:lilia-yarn"
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_stop_launch_forces_stubborn_shell_process_group_to_exit() {
+    let home = temp_dir("macos-stubborn-launch-process");
+    let ready = home.join("ready");
+    let mut process = macos_launch_process(
+        Path::new("/bin/dash"),
+        "trap '' TERM; : > \"$LILIA_READY\"; while :; do sleep 1; done",
+    );
+    unsafe {
+        process.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = process
+        .env("LILIA_READY", &ready)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    for _ in 0..100 {
+        if ready.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(ready.exists(), "stubborn shell did not become ready");
+    stop_launch_process_tree(child.id()).unwrap();
+    assert!(!child.wait().unwrap().success());
+    fs::remove_dir_all(home).unwrap();
 }
 
 fn run_git(path: &Path, args: &[&str]) {

@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
@@ -516,6 +518,31 @@ pub(super) fn resolve_launch_cwd(repo_path: &Path, cwd: Option<&str>) -> Result<
     Ok(resolved)
 }
 
+#[cfg(target_os = "macos")]
+pub(super) fn resolve_macos_launch_shell(shell: Option<&std::ffi::OsStr>) -> PathBuf {
+    shell
+        .map(PathBuf::from)
+        .filter(|path| {
+            path.is_absolute()
+                && fs::metadata(path).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+        })
+        .unwrap_or_else(|| PathBuf::from("/bin/zsh"))
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn macos_launch_process(shell: &Path, command: &str) -> Command {
+    let shell_name = shell
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("zsh"));
+    let mut process = Command::new(shell);
+    process
+        .arg0(format!("-{}", shell_name.to_string_lossy()))
+        .args(["-i", "-c", command]);
+    process
+}
+
 pub(super) fn spawn_launch_command(command: &str, cwd: &Path) -> Result<Child, String> {
     #[cfg(target_os = "windows")]
     let mut process = {
@@ -525,21 +552,29 @@ pub(super) fn spawn_launch_command(command: &str, cwd: &Path) -> Result<Child, S
         command_process
     };
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    let mut process = {
+        let configured_shell = std::env::var_os("SHELL");
+        let shell = resolve_macos_launch_shell(configured_shell.as_deref());
+        macos_launch_process(&shell, command)
+    };
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     let mut process = {
         let mut command_process = Command::new("sh");
         command_process.args(["-c", command]);
-        #[cfg(unix)]
-        unsafe {
-            command_process.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
         command_process
     };
+
+    #[cfg(unix)]
+    unsafe {
+        process.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 
     process
         .current_dir(cwd)
@@ -588,6 +623,25 @@ pub(super) fn stop_launch_process_tree(pid: u32) -> Result<(), String> {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() != Some(libc::ESRCH) {
                 return Err(format!("停止项目进程组失败：{err}"));
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        for _ in 0..10 {
+            if libc::kill(-pgid, 0) == -1 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::ESRCH) {
+                    return Ok(());
+                }
+            }
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        #[cfg(target_os = "macos")]
+        if libc::kill(-pgid, libc::SIGKILL) == -1 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ESRCH) {
+                return Err(format!("强制停止项目进程组失败：{err}"));
             }
         }
     }
