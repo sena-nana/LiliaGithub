@@ -89,7 +89,7 @@ use lilia_github_contracts::workspace::{
     RemoteRepoShortcut, RepoConflictChoice, RepoPullLocalChangesMode, RepoSummary, RepoWorktree,
     WorkspaceRepoGroup, WorkspaceSettings, WorkspaceStartupCache,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
 use std::ffi::OsStr;
 use std::fs;
@@ -3381,6 +3381,57 @@ fn parses_github_next_page_from_link_header() {
         None
     );
     assert_eq!(parse_next_page(None), None);
+}
+
+fn github_repo_template_response(
+    id: u64,
+    full_name: &str,
+    is_template: bool,
+) -> super::github::GitHubRepoTemplateResponse {
+    let (owner, name) = full_name.split_once('/').unwrap();
+    super::github::GitHubRepoTemplateResponse {
+        id,
+        name: name.to_string(),
+        full_name: full_name.to_string(),
+        private: id % 2 == 0,
+        description: Some(format!("{name} description")),
+        is_template,
+        owner: GitHubRepoOwnerResponse {
+            login: owner.to_string(),
+        },
+    }
+}
+
+#[test]
+fn filters_maps_and_deduplicates_github_repo_templates() {
+    let mut seen = HashSet::new();
+    let mut templates = super::github::github_repo_templates_from_page(
+        vec![
+            github_repo_template_response(1, "lilia/shared-template", true),
+            github_repo_template_response(3, "lilia/ordinary-repo", false),
+        ],
+        &mut seen,
+    );
+    templates.extend(super::github::github_repo_templates_from_page(
+        vec![
+            github_repo_template_response(1, "lilia/shared-template", true),
+            github_repo_template_response(2, "lilia/private-template", true),
+        ],
+        &mut seen,
+    ));
+
+    assert_eq!(templates.len(), 2);
+    assert_eq!(templates[0].id, 1);
+    assert_eq!(templates[0].name, "shared-template");
+    assert_eq!(templates[0].full_name, "lilia/shared-template");
+    assert_eq!(templates[0].owner_login, "lilia");
+    assert!(!templates[0].private);
+    assert_eq!(
+        templates[0].description.as_deref(),
+        Some("shared-template description")
+    );
+    assert_eq!(templates[1].full_name, "lilia/private-template");
+    assert!(templates[1].private);
 }
 
 #[test]

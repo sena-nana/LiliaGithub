@@ -32,6 +32,7 @@ import type {
   GitHubRepoActionsPermissionsRequest,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
@@ -157,6 +158,7 @@ export interface WorkspaceCommandContracts {
   }, GitHubActionNotification[]>;
   github_list_repo_contribution: CommandContract<{ repoFullName: string }, GitHubContributionResult>;
   github_list_repo_owners: CommandContract<NoArgs, GitHubRepoOwner[]>;
+  github_list_repo_templates: CommandContract<NoArgs, GitHubRepoTemplate[]>;
   github_create_repo: CommandContract<{ request: GitHubCreateRepoRequest }, GitHubRepoSummary>;
   github_get_repo_management: CommandContract<RepoFullNameArg & ForceRefreshArg, GitHubRepoManagement>;
   github_update_repo_settings: CommandContract<

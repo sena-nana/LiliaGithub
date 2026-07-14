@@ -236,6 +236,15 @@ export interface GitHubRepoOwner {
   kind: "user" | "org" | string;
 }
 
+export interface GitHubRepoTemplate {
+  id: number;
+  name: string;
+  fullName: string;
+  ownerLogin: string;
+  private: boolean;
+  description: string | null;
+}
+
 export interface WorkspaceCreateLocalRepoRequest {
   name: string;
   description?: string | null;
