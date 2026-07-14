@@ -695,7 +695,7 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["sidebar.footer.settings", "settings.tab.appearance"],
-      waits: ["settings.appearance.theme.dark", "settings.appearance.corner.radius"],
+      waits: ["settings.appearance.theme.dark", "settings.appearance.corner-radius"],
       observe: "settings-appearance",
     },
     {

@@ -5,7 +5,11 @@ import {
   Palette,
   Sparkles,
 } from "@lucide/vue";
-import type { LiliaAppConfig, LiliaSidebarConfigInput } from "@lilia/ui";
+import {
+  LiliaAppearanceSection,
+  type LiliaAppConfig,
+  type LiliaSidebarConfigInput,
+} from "@lilia/ui";
 import type { Component } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
@@ -70,7 +74,6 @@ export const SETTINGS_TABS: SettingsTab[] = [
 
 export const DEFAULT_SETTINGS_TAB: SettingsTabKey = "appearance";
 
-const appearanceSection = createCachedAsyncComponent(() => import("../pages/settings/AppearanceSection.vue"));
 const repositoriesSection = createCachedAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue"));
 const aboutSection = createCachedAsyncComponent(() => import("../pages/settings/AboutSection.vue"));
 const agentDebugEnabled = import.meta.env.VITE_LILIA_AGENT_DEBUG === "1" ||
@@ -78,7 +81,7 @@ const agentDebugEnabled = import.meta.env.VITE_LILIA_AGENT_DEBUG === "1" ||
   import.meta.env.MODE === "agent-debug";
 
 export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
-  appearance: appearanceSection.component,
+  appearance: LiliaAppearanceSection,
   repositories: repositoriesSection.component,
   about: aboutSection.component,
 };
@@ -89,6 +92,14 @@ export const LILIA_UI_CONFIG = {
   version: "1.0.0",
   identifier: "com.lilia.github",
   storageKeyPrefix: "lilia-github",
+  appearance: {
+    backdropOpacity: 0.64,
+    platformDefaults: {
+      macos: { backdropMode: "system" },
+      windows: { backdropMode: "mica" },
+      linux: { backdropMode: "solid" },
+    },
+  },
   runtime: {
     agentDebug: agentDebugEnabled,
   },
