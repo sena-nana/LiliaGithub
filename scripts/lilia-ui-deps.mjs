@@ -55,7 +55,10 @@ function runYarn(args) {
     fail("Run this script through a root Yarn command, for example: yarn liliaui:local");
   }
 
-  const result = spawnSync(process.execPath, [yarnCli, ...args], {
+  const isWindowsShim = process.platform === "win32" && /\.(?:cmd|bat)$/i.test(yarnCli);
+  const command = isWindowsShim ? process.env.ComSpec || "cmd.exe" : yarnCli;
+  const commandArgs = isWindowsShim ? ["/d", "/s", "/c", yarnCli, ...args] : args;
+  const result = spawnSync(command, commandArgs, {
     cwd: repoRoot,
     stdio: "inherit",
     env: process.env,
