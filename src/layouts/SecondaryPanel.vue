@@ -254,7 +254,7 @@ async function openSidebarOrganizationAuthorization(recoveryUrl: string | null =
     await workspace.openUrl(url);
     return;
   }
-  await router.push({ path: "/settings", query: { tab: "repositories" } });
+  await router.push({ path: "/settings", query: { tab: "account" } });
 }
 
 watch(

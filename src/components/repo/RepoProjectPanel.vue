@@ -37,6 +37,7 @@ import { invalidateSessionContextSnapshot } from "../../composables/sessionConte
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
+import { useAccountPreferences } from "../../composables/useAccountPreferences";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
@@ -380,6 +381,7 @@ const emit = defineEmits<{
   retrySync: [];
 }>();
 const workspace = useWorkspace();
+const accountPreferences = useAccountPreferences();
 const route = useRoute();
 const router = useRouter();
 const resolvedRepoContext = computed(() => props.repoContext);
@@ -1281,15 +1283,15 @@ function routeEnum<T extends string>(value: unknown, allowed: readonly T[]) {
 }
 
 function issueStateFromRoute(): IssueState {
-  return routeEnum(route.query[issueRouteKeys.state], issueStates) ?? "open";
+  return routeEnum(route.query[issueRouteKeys.state], issueStates) ?? accountPreferences.value.issues.state;
 }
 
 function pullRequestStateFromRoute(): PullRequestState {
-  return routeEnum(route.query[pullRequestRouteKeys.state], pullRequestStates) ?? "open";
+  return routeEnum(route.query[pullRequestRouteKeys.state], pullRequestStates) ?? accountPreferences.value.pullRequests.state;
 }
 
 function actionStateFromRoute(): ActionState {
-  return routeEnum(route.query[actionRouteKeys.state], actionStates) ?? "all";
+  return routeEnum(route.query[actionRouteKeys.state], actionStates) ?? accountPreferences.value.actions.state;
 }
 
 function releaseTypeFilterFromRoute(): ReleaseTypeFilter {
@@ -1314,18 +1316,30 @@ function sharedPanelFiltersFromRoute<T extends SharedPanelFilters>(
 }
 
 function issuePanelFiltersFromRoute(): IssuePanelFilters {
-  return sharedPanelFiltersFromRoute(issueRouteKeys, blankIssuePanelFilters());
+  return sharedPanelFiltersFromRoute(issueRouteKeys, {
+    ...blankIssuePanelFilters(),
+    sort: accountPreferences.value.issues.sort,
+    direction: accountPreferences.value.issues.direction,
+  });
 }
 
 function pullRequestPanelFiltersFromRoute(): PullRequestPanelFilters {
   return {
-    ...sharedPanelFiltersFromRoute(pullRequestRouteKeys, blankPullRequestPanelFilters()),
+    ...sharedPanelFiltersFromRoute(pullRequestRouteKeys, {
+      ...blankPullRequestPanelFilters(),
+      sort: accountPreferences.value.pullRequests.sort,
+      direction: accountPreferences.value.pullRequests.direction,
+    }),
     review: routeEnum(route.query[pullRequestRouteKeys.review ?? ""], pullRequestReviews),
   };
 }
 
 function actionPanelFiltersFromRoute(): ActionPanelFilters {
-  const defaults = blankActionPanelFilters();
+  const defaults = {
+    ...blankActionPanelFilters(),
+    sort: accountPreferences.value.actions.sort,
+    direction: accountPreferences.value.actions.direction,
+  };
   return {
     ...defaults,
     workflow: routeStringValue(route.query[actionRouteKeys.workflow]),

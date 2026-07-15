@@ -80,7 +80,7 @@ import type {
   RepoFileTreeEntry,
 } from "../src/services/workspace/types";
 import { resolveRepoContext } from "../src/utils/repoContext";
-import { repoSummary } from "./fixtures/workspace";
+import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
 const githubSettings: GitHubRepoManagement = {
   fullName: "sena-nana/remote-repo",
@@ -2676,6 +2676,83 @@ describe("RepoProjectPanel", () => {
       "sena-nana/remote-repo",
       expect.objectContaining({ state: "closed", sort: "created", direction: "desc" }),
     );
+  });
+
+  it("Issues 使用账户默认值", async () => {
+    state.settings = {
+      ...workspaceSettings(),
+      accountPreferences: {
+        ...workspaceSettings().accountPreferences,
+        issues: { state: "closed", sort: "updated", direction: "asc" },
+      },
+    };
+    const defaultsView = await renderProjectPanel({ repoFullName: "sena-nana/remote-repo" });
+    await fireEvent.click(defaultsView.getByRole("tab", { name: "Issues" }));
+    await waitFor(() => {
+      expect(listGitHubIssues).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ state: "closed", sort: "updated", direction: "asc" }),
+      );
+    });
+  });
+
+  it("Pull Requests 使用账户默认值", async () => {
+    state.settings = {
+      ...workspaceSettings(),
+      accountPreferences: {
+        ...workspaceSettings().accountPreferences,
+        pullRequests: { state: "merged", sort: "comments", direction: "asc" },
+      },
+    };
+    vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
+
+    await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "pulls",
+    });
+
+    await waitFor(() => {
+      expect(listGitHubPullRequests).toHaveBeenCalledWith(
+        "sena-nana/remote-repo",
+        expect.objectContaining({ state: "merged", sort: "comments", direction: "asc" }),
+      );
+    });
+  });
+
+  it("Actions 使用账户默认值且 URL 查询参数优先", async () => {
+    state.settings = {
+      ...workspaceSettings(),
+      accountPreferences: {
+        ...workspaceSettings().accountPreferences,
+        actions: { state: "completed", sort: "run-number", direction: "asc" },
+      },
+    };
+    const activeRun = {
+      ...githubWorkflowRuns[0],
+      id: 1311,
+      displayTitle: "feature deploy",
+      status: "in_progress",
+      conclusion: null,
+    };
+    vi.mocked(listGitHubWorkflowRuns).mockResolvedValue([githubWorkflowRuns[0], activeRun]);
+
+    const defaultsView = await renderProjectPanel({
+      repoFullName: "sena-nana/remote-repo",
+      projectTab: "actions",
+    });
+    expect(await defaultsView.findByRole("button", { name: /release pipeline/ })).toBeInTheDocument();
+    expect(defaultsView.queryByRole("button", { name: /feature deploy/ })).toBeNull();
+    expect(within(defaultsView.getByLabelText("Actions 状态")).getByRole("button", { name: "Done" })).toHaveAttribute("aria-pressed", "true");
+    expect(defaultsView.getByRole("button", { name: "Run 编号（升序）" })).toBeInTheDocument();
+    defaultsView.unmount();
+
+    const routedView = await renderProjectPanel(
+      { repoFullName: "sena-nana/remote-repo", projectTab: "actions" },
+      "/repos/local-repo?projectTab=actions&actionState=active&actionSort=created&actionDirection=desc",
+    );
+    expect(await routedView.findByRole("button", { name: /feature deploy/ })).toBeInTheDocument();
+    expect(routedView.queryByRole("button", { name: /release pipeline/ })).toBeNull();
+    expect(routedView.getByRole("button", { name: "最新创建" })).toBeInTheDocument();
   });
 
   it("Issues 搜索通过远程接口刷新列表", async () => {

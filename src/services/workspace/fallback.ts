@@ -7,6 +7,7 @@ import {
   withRepoSettingPreference,
 } from "../../config/repoSettingsManifest";
 import type {
+  AccountPreferences,
   BulkOperation,
   BulkSyncPreview,
   BulkSyncResult,
@@ -17,6 +18,8 @@ import type {
   ContributionIdentityRecommendationResult,
   GitHubActionNotification,
   GitHubAccountIssueItem,
+  GitHubAccountProfile,
+  GitHubAuthPurpose,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubBindingStatus,
   GitHubBranchProtection,
@@ -59,6 +62,7 @@ import type {
   GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
+  GitHubUpdateAccountProfileRequest,
   GitHubUpdateReleaseRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
@@ -2431,11 +2435,29 @@ type FallbackGitHubRepoFilePreviewCall = {
   refName: string | null;
 };
 
-function createFallbackSettings(): WorkspaceSettings {
+function createDefaultAccountPreferences(workspaceRoot: string | null): AccountPreferences {
+  return {
+    defaultWorkspaceRoot: workspaceRoot,
+    repositoryScope: { kind: "all" },
+    repositorySort: { key: "updated", direction: "desc" },
+    issues: { state: "open", sort: "created", direction: "desc" },
+    pullRequests: { state: "open", sort: "updated", direction: "desc" },
+    actions: { state: "all", sort: "updated", direction: "desc" },
+  };
+}
+
+function createFallbackSettings(
+  githubBinding: WorkspaceSettings["githubBinding"] = defaultFallbackBinding.binding,
+  inheritDefaultWorkspace = true,
+): WorkspaceSettings {
+  const workspaceRoot = inheritDefaultWorkspace
+    ? (useDefaultFallback ? "C:\\Files\\workspace" : "D:\\PROJECT\\workspace")
+    : null;
   if (useDefaultFallback) {
     return {
-      workspaceRoot: "C:\\Files\\workspace",
-      githubBinding: defaultFallbackBinding.binding,
+      workspaceRoot,
+      githubBinding,
+      accountPreferences: createDefaultAccountPreferences(workspaceRoot),
       projectLaunchConfigs: {},
       repoSyncPreferences: {},
       repoRemoteSyncPolicies: {},
@@ -2450,8 +2472,9 @@ function createFallbackSettings(): WorkspaceSettings {
     };
   }
   return {
-    workspaceRoot: "D:\\PROJECT\\workspace",
-    githubBinding: defaultFallbackBinding.binding,
+    workspaceRoot,
+    githubBinding,
+    accountPreferences: createDefaultAccountPreferences(workspaceRoot),
     projectLaunchConfigs: {
       LiliaGithub: {
         command: "yarn tauri:dev",
@@ -2487,6 +2510,10 @@ function createFallbackSettings(): WorkspaceSettings {
 }
 
 let fallbackSettings: WorkspaceSettings = createFallbackSettings();
+const FALLBACK_ANONYMOUS_ACCOUNT_KEY = "__anonymous__";
+let fallbackSettingsByAccount = new Map<string, WorkspaceSettings>();
+let fallbackAccountProfiles = new Map<string, GitHubAccountProfile>();
+let fallbackPendingAuthPurpose: GitHubAuthPurpose = "binding";
 let fallbackBulkExecuteOverride:
   | ((
       operation: BulkOperation,
@@ -2613,6 +2640,9 @@ export function resetWorkspaceFallbacksForTests() {
   }
   fallbackOperationResources.clear();
   fallbackSettings = createFallbackSettings();
+  fallbackSettingsByAccount = new Map();
+  fallbackAccountProfiles = new Map();
+  fallbackPendingAuthPurpose = "binding";
   fallbackBulkExecuteOverride = null;
   fallbackConflictOverride = null;
   fallbackConflictStates.clear();
@@ -2794,11 +2824,7 @@ export function setFallbackStopLaunchOverrideForTests(
 }
 
 export function setFallbackGitHubBindingStatusForTests(binding: GitHubBindingStatus) {
-  fallbackBinding = binding;
-  fallbackSettings = {
-    ...fallbackSettings,
-    githubBinding: binding.binding,
-  };
+  switchFallbackAccount(binding);
 }
 
 export function setFallbackStartupCacheForTests(cache: WorkspaceStartupCache | null) {
@@ -3158,6 +3184,10 @@ function normalizeRemoteRepoIdKey(fullName: string): string | null {
 function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings {
   return {
     ...settings,
+    githubBinding: settings.githubBinding
+      ? { ...settings.githubBinding, scopes: [...settings.githubBinding.scopes] }
+      : null,
+    accountPreferences: cloneAccountPreferences(settings.accountPreferences),
     projectLaunchConfigs: { ...settings.projectLaunchConfigs },
     repoSyncPreferences: Object.fromEntries(
       Object.entries(settings.repoSyncPreferences ?? {}).map(([repoId, preference]) => [
@@ -3189,6 +3219,45 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
       ]),
     ),
   };
+}
+
+function cloneAccountPreferences(preferences: AccountPreferences): AccountPreferences {
+  return {
+    ...preferences,
+    repositoryScope: { ...preferences.repositoryScope },
+    repositorySort: { ...preferences.repositorySort },
+    issues: { ...preferences.issues },
+    pullRequests: { ...preferences.pullRequests },
+    actions: { ...preferences.actions },
+  };
+}
+
+function fallbackAccountKey(login: string | null | undefined): string {
+  return login?.trim().toLocaleLowerCase() || FALLBACK_ANONYMOUS_ACCOUNT_KEY;
+}
+
+function switchFallbackAccount(binding: GitHubBindingStatus): void {
+  const previousKey = fallbackAccountKey(fallbackSettings.githubBinding?.login);
+  fallbackSettingsByAccount.set(previousKey, cloneWorkspaceSettings(fallbackSettings));
+
+  fallbackBinding = {
+    ...binding,
+    binding: binding.binding
+      ? { ...binding.binding, scopes: [...binding.binding.scopes] }
+      : null,
+  };
+  const nextKey = fallbackAccountKey(fallbackBinding.binding?.login);
+  const nextSettings = fallbackSettingsByAccount.get(nextKey)
+    ?? createFallbackSettings(fallbackBinding.binding, false);
+  fallbackSettings = {
+    ...cloneWorkspaceSettings(nextSettings),
+    githubBinding: fallbackBinding.binding,
+  };
+  fallbackStartupCache = null;
+  fallbackActiveRepoId = null;
+  fallbackRemoteFailureCounts.clear();
+  fallbackRemoteRetryAt.clear();
+  fallbackBaselineRepoKeys.clear();
 }
 
 function currentFallbackGitHubAccountLogin(): string | null {
@@ -3803,6 +3872,8 @@ export function writeStartupContributions(
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => {
+    const normalizedRoot = workspaceRoot.trim();
+    if (!normalizedRoot) throw new Error("工作区路径不能为空");
     const pendingTaskIds = fallbackTasks
       .filter((task) => task.status === "pending" && task.cancellable)
       .map((task) => task.id);
@@ -3811,8 +3882,80 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
     fallbackRemoteFailureCounts.clear();
     fallbackRemoteRetryAt.clear();
     fallbackBaselineRepoKeys.clear();
-    fallbackSettings = { ...fallbackSettings, workspaceRoot };
+    fallbackSettings = {
+      ...fallbackSettings,
+      workspaceRoot: normalizedRoot,
+      accountPreferences: {
+        ...fallbackSettings.accountPreferences,
+        defaultWorkspaceRoot: normalizedRoot,
+      },
+    };
     fallbackStartupCache = null;
+    return visibleFallbackSettings();
+  });
+}
+
+function normalizeAccountPreferences(preferences: AccountPreferences): AccountPreferences {
+  const oneOf = <T extends string>(value: T, allowed: readonly T[]) => {
+    if (!allowed.includes(value)) throw new Error("账号偏好值无效");
+    return value;
+  };
+  const direction = (value: AccountPreferences["repositorySort"]["direction"]) =>
+    oneOf(value, ["asc", "desc"] as const);
+  const scope = preferences.repositoryScope;
+  if (!scope || !["all", "personal", "organization"].includes(scope.kind)) {
+    throw new Error("仓库范围无效");
+  }
+  const repositoryScope = scope.kind === "all"
+    ? { kind: "all" } as const
+    : { kind: scope.kind, login: scope.login.trim() };
+  if (repositoryScope.kind !== "all" && !repositoryScope.login) {
+    throw new Error("仓库范围账号不能为空");
+  }
+  return {
+    defaultWorkspaceRoot: preferences.defaultWorkspaceRoot?.trim() || null,
+    repositoryScope,
+    repositorySort: {
+      key: oneOf(preferences.repositorySort.key, ["name", "created", "updated"] as const),
+      direction: direction(preferences.repositorySort.direction),
+    },
+    issues: {
+      state: oneOf(preferences.issues.state, ["open", "closed", "all"] as const),
+      sort: oneOf(preferences.issues.sort, ["created", "updated", "comments"] as const),
+      direction: direction(preferences.issues.direction),
+    },
+    pullRequests: {
+      state: oneOf(preferences.pullRequests.state, ["open", "closed", "merged"] as const),
+      sort: oneOf(preferences.pullRequests.sort, ["created", "updated", "comments"] as const),
+      direction: direction(preferences.pullRequests.direction),
+    },
+    actions: {
+      state: oneOf(preferences.actions.state, ["all", "active", "completed"] as const),
+      sort: oneOf(preferences.actions.sort, ["updated", "created", "run-number"] as const),
+      direction: direction(preferences.actions.direction),
+    },
+  };
+}
+
+export function updateAccountPreferences(preferences: AccountPreferences): Promise<WorkspaceSettings> {
+  return call("workspace_update_account_preferences", { preferences }, () => {
+    const normalized = normalizeAccountPreferences(preferences);
+    const rootChanged = normalized.defaultWorkspaceRoot !== fallbackSettings.workspaceRoot;
+    fallbackSettings = {
+      ...fallbackSettings,
+      workspaceRoot: normalized.defaultWorkspaceRoot,
+      accountPreferences: normalized,
+    };
+    if (rootChanged) {
+      for (const task of fallbackTasks.filter((item) => item.status === "pending" && item.cancellable)) {
+        cancelPendingFallbackTask(task.id, "工作区已切换");
+      }
+      fallbackActiveRepoId = null;
+      fallbackRemoteFailureCounts.clear();
+      fallbackRemoteRetryAt.clear();
+      fallbackBaselineRepoKeys.clear();
+      fallbackStartupCache = null;
+    }
     return visibleFallbackSettings();
   });
 }
@@ -4686,17 +4829,25 @@ function emitFallbackWorkspaceEvent(name: string, payload: unknown) {
 }
 
 export function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
-  return call("github_get_binding_status", undefined, () => fallbackBinding);
+  return call("github_get_binding_status", undefined, () => ({
+    ...fallbackBinding,
+    binding: fallbackBinding.binding
+      ? { ...fallbackBinding.binding, scopes: [...fallbackBinding.binding.scopes] }
+      : null,
+  }));
 }
 
-export function startGitHubDeviceFlow(): Promise<GitHubDeviceFlowStart> {
-  return call("github_start_device_flow", undefined, () => ({
-    deviceCode: "device-code",
-    userCode: "ABCD-1234",
-    verificationUri: "https://github.com/login/device",
-    expiresAt: Date.now() + 600_000,
-    intervalSeconds: 5,
-  }));
+export function startGitHubDeviceFlow(purpose: GitHubAuthPurpose = "binding"): Promise<GitHubDeviceFlowStart> {
+  return call("github_start_device_flow", { purpose }, () => {
+    fallbackPendingAuthPurpose = purpose;
+    return {
+      deviceCode: `device-code-${purpose}`,
+      userCode: "ABCD-1234",
+      verificationUri: "https://github.com/login/device",
+      expiresAt: Date.now() + 600_000,
+      intervalSeconds: 5,
+    };
+  });
 }
 
 export function pollGitHubDeviceFlow(
@@ -4704,22 +4855,27 @@ export function pollGitHubDeviceFlow(
   intervalSeconds?: number | null,
 ): Promise<GitHubDeviceFlowPollResult> {
   return call("github_poll_device_flow", { deviceCode, intervalSeconds: intervalSeconds ?? null }, () => {
-    if (fallbackBinding.state !== "bound") {
-      fallbackBinding = {
-        ...defaultFallbackBinding,
-        binding: defaultFallbackBinding.binding
-          ? { ...defaultFallbackBinding.binding, scopes: [...defaultFallbackBinding.binding.scopes] }
-          : null,
-      };
-      fallbackSettings = {
-        ...fallbackSettings,
-        githubBinding: fallbackBinding.binding,
-      };
-    }
+    const currentBinding = fallbackBinding.state === "bound" && fallbackBinding.binding
+      ? fallbackBinding.binding
+      : defaultFallbackBinding.binding!;
+    const scopes = new Set(currentBinding.scopes);
+    if (fallbackPendingAuthPurpose === "profileWrite") scopes.add("user");
+    switchFallbackAccount({
+      state: "bound",
+      clientIdConfigured: true,
+      clientIdSource: fallbackBinding.clientIdSource,
+      binding: { ...currentBinding, scopes: [...scopes] },
+    });
+    fallbackPendingAuthPurpose = "binding";
     return {
       status: "authorized",
-      intervalSeconds: 5,
-      bindingStatus: fallbackBinding,
+      intervalSeconds: intervalSeconds ?? 5,
+      bindingStatus: {
+        ...fallbackBinding,
+        binding: fallbackBinding.binding
+          ? { ...fallbackBinding.binding, scopes: [...fallbackBinding.binding.scopes] }
+          : null,
+      },
       error: null,
     };
   });
@@ -4727,16 +4883,68 @@ export function pollGitHubDeviceFlow(
 
 export function unbindGitHub(): Promise<void> {
   return call("github_unbind", undefined, () => {
-    fallbackBinding = {
+    switchFallbackAccount({
       state: "unbound",
       clientIdConfigured: true,
       clientIdSource: defaultFallbackBinding.clientIdSource,
       binding: null,
+    });
+  });
+}
+
+function fallbackGitHubAccountProfile(): GitHubAccountProfile {
+  const binding = fallbackBinding.binding;
+  if (fallbackBinding.state !== "bound" || !binding) throw new Error("GitHub 账号未绑定");
+  const key = fallbackAccountKey(binding.login);
+  const existing = fallbackAccountProfiles.get(key);
+  if (existing) return { ...existing };
+  const profile: GitHubAccountProfile = {
+    login: binding.login,
+    avatarUrl: binding.avatarUrl,
+    name: null,
+    email: null,
+    bio: null,
+    company: null,
+    location: null,
+    blog: null,
+    twitterUsername: null,
+    hireable: null,
+  };
+  fallbackAccountProfiles.set(key, profile);
+  return { ...profile };
+}
+
+export function getGitHubAccountProfile(): Promise<GitHubAccountProfile> {
+  return call("github_get_account_profile", undefined, fallbackGitHubAccountProfile);
+}
+
+function normalizedProfileValue(value: string | null): string | null {
+  return value?.trim() || null;
+}
+
+export function updateGitHubAccountProfile(
+  request: GitHubUpdateAccountProfileRequest,
+): Promise<GitHubAccountProfile> {
+  return call("github_update_account_profile", { request }, () => {
+    const binding = fallbackBinding.binding;
+    if (fallbackBinding.state !== "bound" || !binding) throw new Error("GitHub 账号未绑定");
+    if (!binding.scopes.some((scope) => scope.trim().toLocaleLowerCase() === "user")) {
+      throw new Error("GitHub 资料编辑权限不足");
+    }
+    const current = fallbackGitHubAccountProfile();
+    const profile: GitHubAccountProfile = {
+      ...current,
+      name: normalizedProfileValue(request.name),
+      email: normalizedProfileValue(request.email),
+      bio: normalizedProfileValue(request.bio),
+      company: normalizedProfileValue(request.company),
+      location: normalizedProfileValue(request.location),
+      blog: normalizedProfileValue(request.blog),
+      twitterUsername: normalizedProfileValue(request.twitterUsername),
+      hireable: request.hireable,
     };
-    fallbackSettings = {
-      ...fallbackSettings,
-      githubBinding: null,
-    };
+    fallbackAccountProfiles.set(fallbackAccountKey(binding.login), profile);
+    return { ...profile };
   });
 }
 

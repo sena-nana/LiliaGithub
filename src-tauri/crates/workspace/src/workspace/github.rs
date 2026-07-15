@@ -17,7 +17,9 @@ use crate::workspace::file_browser::{file_preview_mime, MAX_FILE_PREVIEW_BYTES};
 use crate::workspace::operations::OperationKind;
 use crate::workspace::readme::image_mime_for_path;
 use crate::workspace::repos::{commit_file_patches, run_repo_analysis_blocking};
-use crate::workspace::settings::{load_settings, repo_path_by_id, save_settings, STORE_FILE};
+use crate::workspace::settings::{
+    clear_github_binding, load_settings, repo_path_by_id, switch_github_binding, STORE_FILE,
+};
 use crate::workspace::shared::{
     collect_local_contribution_counts, current_utc_day_index, github_contribution_days,
     github_contribution_meta, local_contribution_identities, normalize_local_contribution_repo_id,
@@ -26,28 +28,32 @@ use crate::workspace::shared::{
 use crate::workspace::{run_core_operation, run_core_operation_as};
 use lilia_github_contracts::workspace::{
     BranchSummary, CommitDetail, CommitFileChange, CommitSummary, GitHubAccountIssueItem,
-    GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest, GitHubBindingMetadata,
-    GitHubBindingStatus, GitHubContributionResult, GitHubCreateIssueRequest,
-    GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest, GitHubCreateRepoRequest,
-    GitHubDevelopmentItem, GitHubDeviceFlowPollResult, GitHubDeviceFlowStart,
-    GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion, GitHubIssueFilterMetadata,
-    GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest, GitHubOwnerKind,
-    GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
-    GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
+    GitHubAccountProfile, GitHubActionNotification, GitHubAttachWorkflowArtifactAssetRequest,
+    GitHubAuthPurpose, GitHubBindingMetadata, GitHubBindingStatus, GitHubContributionResult,
+    GitHubCreateIssueRequest, GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest,
+    GitHubCreateRepoRequest, GitHubDevelopmentItem, GitHubDeviceFlowPollResult,
+    GitHubDeviceFlowStart, GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion,
+    GitHubIssueFilterMetadata, GitHubIssueMilestone, GitHubIssueProjectItem,
+    GitHubMergePullRequestRequest, GitHubOwnerKind, GitHubProjectCache, GitHubProjectRepoCache,
+    GitHubPullRequest, GitHubPullRequestCheck, GitHubPullRequestDiscussion,
+    GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
     GitHubRepoPage, GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
     GitHubRepoTemplate, GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner,
     GitHubRepositoryPermissions, GitHubRepositoryScope, GitHubRulesetSummary,
-    GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
-    GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry,
-    GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
-    GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut, RepoFilePreview,
-    RepoFileTreeEntry,
+    GitHubUpdateAccountProfileRequest, GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest,
+    GitHubUpdateReleaseRequest, GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact,
+    GitHubWorkflowArtifactEntry, GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog,
+    GitHubWorkflowJobStep, GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut,
+    RepoFilePreview, RepoFileTreeEntry,
 };
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 pub(super) const GITHUB_SCOPE: &str =
     "repo workflow read:user read:org delete_repo read:project notifications";
+pub(super) const GITHUB_PROFILE_WRITE_SCOPE: &str =
+    "repo workflow user read:org delete_repo read:project notifications";
+pub(super) const GITHUB_USER_SCOPE: &str = "user";
 pub(super) const GITHUB_REPO_SCOPE: &str = "repo";
 pub(super) const GITHUB_READ_ORG_SCOPE: &str = "read:org";
 pub(super) const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
@@ -92,6 +98,39 @@ pub(super) struct GitHubErrorResponse {
 pub(super) struct GitHubUserResponse {
     pub(super) login: String,
     pub(super) avatar_url: Option<String>,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) email: Option<String>,
+    #[serde(default)]
+    pub(super) bio: Option<String>,
+    #[serde(default)]
+    pub(super) company: Option<String>,
+    #[serde(default)]
+    pub(super) location: Option<String>,
+    #[serde(default)]
+    pub(super) blog: Option<String>,
+    #[serde(default)]
+    pub(super) twitter_username: Option<String>,
+    #[serde(default)]
+    pub(super) hireable: Option<bool>,
+}
+
+impl From<GitHubUserResponse> for GitHubAccountProfile {
+    fn from(user: GitHubUserResponse) -> Self {
+        Self {
+            login: user.login,
+            avatar_url: user.avatar_url,
+            name: user.name,
+            email: user.email,
+            bio: user.bio,
+            company: user.company,
+            location: user.location,
+            blog: user.blog,
+            twitter_username: user.twitter_username,
+            hireable: user.hireable,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1413,13 +1452,12 @@ pub(super) fn github_commit_list_cache_key(per_page: Option<u32>, sha: Option<&s
 pub(super) fn github_require_token(
     app: &AppHandle,
 ) -> Result<(GitHubBindingMetadata, String), String> {
-    let mut settings = load_settings(app);
+    let settings = load_settings(app);
     let Some(binding) = settings.github_binding.clone() else {
         return Err("请先绑定 GitHub".to_string());
     };
     let Some(token) = read_token(&binding.login)? else {
-        settings.github_binding = None;
-        save_settings(app, &settings)?;
+        clear_github_binding(app)?;
         return Err("GitHub 绑定已失效，请重新绑定".to_string());
     };
     Ok((binding, token))
@@ -1445,9 +1483,7 @@ pub(super) fn github_send(
         .send()
         .map_err(|e| format!("{prefix}：GitHub API 连接失败，请检查网络、代理或系统证书：{e}"))?;
     if github_binding_expired_status(response.status()) {
-        let mut settings = load_settings(app);
-        settings.github_binding = None;
-        save_settings(app, &settings)?;
+        clear_github_binding(app)?;
         return Err("GitHub 绑定已失效，请重新绑定".to_string());
     }
     Ok(response)
@@ -3764,18 +3800,102 @@ pub(super) fn token_for_binding(app: &AppHandle) -> Result<Option<String>, Strin
 }
 
 pub fn github_get_binding_status(app: AppHandle) -> Result<GitHubBindingStatus, String> {
-    let mut settings = load_settings(&app);
+    let settings = load_settings(&app);
     if let Some(binding) = settings.github_binding.clone() {
         if read_token(&binding.login)?.is_some() {
             return Ok(binding_status(Some(binding)));
         }
-        settings.github_binding = None;
-        save_settings(&app, &settings)?;
+        clear_github_binding(&app)?;
     }
     Ok(binding_status(None))
 }
 
-pub async fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlowStart, String> {
+pub async fn github_get_account_profile(app: AppHandle) -> Result<GitHubAccountProfile, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 个人资料",
+        move || {
+            let (_, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 个人资料失败",
+                github_headers(client.get("https://api.github.com/user"), Some(&token)),
+            )?;
+            github_json::<GitHubUserResponse>("读取 GitHub 个人资料失败", response).map(Into::into)
+        },
+    )
+    .await
+}
+
+fn github_update_account_profile_payload(
+    request: &GitHubUpdateAccountProfileRequest,
+) -> serde_json::Value {
+    let mut payload = serde_json::Map::from_iter([
+        (
+            "name".to_string(),
+            serde_json::json!(request.name.as_deref().unwrap_or_default()),
+        ),
+        (
+            "email".to_string(),
+            serde_json::json!(request.email.as_deref().unwrap_or_default()),
+        ),
+        (
+            "bio".to_string(),
+            serde_json::json!(request.bio.as_deref().unwrap_or_default()),
+        ),
+        (
+            "company".to_string(),
+            serde_json::json!(request.company.as_deref().unwrap_or_default()),
+        ),
+        (
+            "location".to_string(),
+            serde_json::json!(request.location.as_deref().unwrap_or_default()),
+        ),
+        (
+            "blog".to_string(),
+            serde_json::json!(request.blog.as_deref().unwrap_or_default()),
+        ),
+        (
+            "twitter_username".to_string(),
+            serde_json::json!(request.twitter_username.as_deref()),
+        ),
+    ]);
+    if let Some(hireable) = request.hireable {
+        payload.insert("hireable".to_string(), serde_json::json!(hireable));
+    }
+    serde_json::Value::Object(payload)
+}
+
+pub async fn github_update_account_profile(
+    app: AppHandle,
+    request: GitHubUpdateAccountProfileRequest,
+) -> Result<GitHubAccountProfile, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新 GitHub 个人资料",
+        move || {
+            let (binding, token) = github_require_token(&app)?;
+            github_require_scope(&binding, GITHUB_USER_SCOPE)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "更新 GitHub 个人资料失败",
+                github_headers(client.patch("https://api.github.com/user"), Some(&token))
+                    .json(&github_update_account_profile_payload(&request)),
+            )?;
+            github_json::<GitHubUserResponse>("更新 GitHub 个人资料失败", response).map(Into::into)
+        },
+    )
+    .await
+}
+
+pub async fn github_start_device_flow(
+    app: AppHandle,
+    purpose: Option<GitHubAuthPurpose>,
+) -> Result<GitHubDeviceFlowStart, String> {
     run_core_operation(
         app.clone(),
         OperationKind::GitHubRead,
@@ -3785,9 +3905,13 @@ pub async fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlow
                 return Err("GitHub Client ID 未配置".to_string());
             };
             let client = build_client()?;
+            let scope = match purpose.unwrap_or_default() {
+                GitHubAuthPurpose::Binding => GITHUB_SCOPE,
+                GitHubAuthPurpose::ProfileWrite => GITHUB_PROFILE_WRITE_SCOPE,
+            };
             let response =
                 github_oauth_headers(client.post("https://github.com/login/device/code"))
-                    .form(&[("client_id", client_id), ("scope", GITHUB_SCOPE)])
+                    .form(&[("client_id", client_id), ("scope", scope)])
                     .send()
                     .map_err(|e| format!("启动 GitHub 设备授权失败：{e}"))?;
             if !response.status().is_success() {
@@ -3852,7 +3976,6 @@ pub async fn github_poll_device_flow(
                     .json::<GitHubUserResponse>()
                     .map_err(|e| format!("解析 GitHub 账号信息失败：{e}"))?;
                 write_token(&user.login, &token)?;
-                let mut settings = load_settings(&app);
                 let binding = GitHubBindingMetadata {
                     login: user.login,
                     avatar_url: user.avatar_url,
@@ -3860,8 +3983,7 @@ pub async fn github_poll_device_flow(
                     scopes: normalize_scope_list(body.scope.as_deref()),
                     client_id_source: client_id_source().to_string(),
                 };
-                settings.github_binding = Some(binding.clone());
-                save_settings(&app, &settings)?;
+                switch_github_binding(&app, binding.clone())?;
                 return Ok(GitHubDeviceFlowPollResult {
                     status: "authorized".to_string(),
                     interval_seconds: interval_seconds.unwrap_or(5),
@@ -3903,9 +4025,7 @@ pub async fn github_poll_device_flow(
 }
 
 pub fn github_unbind(app: AppHandle) -> Result<(), String> {
-    let mut settings = load_settings(&app);
-    settings.github_binding = None;
-    save_settings(&app, &settings)
+    clear_github_binding(&app).map(|_| ())
 }
 
 fn github_fetch_repo_response_page(
@@ -4350,6 +4470,54 @@ mod repository_scope_tests {
         assert!(normalize_scope_list(Some(GITHUB_SCOPE))
             .iter()
             .any(|scope| scope == GITHUB_READ_ORG_SCOPE));
+    }
+
+    #[test]
+    fn profile_write_scope_upgrades_read_user_to_user() {
+        let scopes = normalize_scope_list(Some(GITHUB_PROFILE_WRITE_SCOPE));
+        assert!(scopes.iter().any(|scope| scope == GITHUB_USER_SCOPE));
+        assert!(!scopes.iter().any(|scope| scope == "read:user"));
+    }
+
+    #[test]
+    fn account_profile_payload_uses_github_names_and_string_clears() {
+        let payload = github_update_account_profile_payload(&GitHubUpdateAccountProfileRequest {
+            name: None,
+            email: Some("public@example.com".to_string()),
+            bio: None,
+            company: None,
+            location: None,
+            blog: None,
+            twitter_username: None,
+            hireable: None,
+        });
+        assert_eq!(payload["name"], "");
+        assert_eq!(payload["email"], "public@example.com");
+        assert_eq!(payload["bio"], "");
+        assert!(payload.get("twitter_username").unwrap().is_null());
+        assert!(payload.get("twitterUsername").is_none());
+        assert!(payload.get("hireable").is_none());
+    }
+
+    #[test]
+    fn github_user_response_maps_all_public_profile_fields() {
+        let response: GitHubUserResponse = serde_json::from_value(json!({
+            "login": "octocat",
+            "avatar_url": "https://avatars.example/octocat.png",
+            "name": "The Octocat",
+            "email": "octocat@example.com",
+            "bio": "GitHub mascot",
+            "company": "@github",
+            "location": "San Francisco",
+            "blog": "https://github.blog",
+            "twitter_username": "github",
+            "hireable": true
+        }))
+        .unwrap();
+        let profile = GitHubAccountProfile::from(response);
+        assert_eq!(profile.login, "octocat");
+        assert_eq!(profile.twitter_username.as_deref(), Some("github"));
+        assert_eq!(profile.hireable, Some(true));
     }
 
     #[test]

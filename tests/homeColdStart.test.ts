@@ -22,7 +22,7 @@ import Home from "../src/pages/Home.vue";
 import { repoSummary } from "./fixtures/workspace";
 
 const STORAGE_KEY = "lilia-github.home.overviewSnapshot.v1";
-const SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
+const SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v2:lilia-user";
 const repoFullName = "sena-nana/LiliaGithub";
 const accountLogin = "lilia-user";
 

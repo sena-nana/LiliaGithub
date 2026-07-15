@@ -96,6 +96,14 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
   return {
     workspaceRoot: "C:\\Files\\workspace",
     githubBinding: null,
+    accountPreferences: {
+      defaultWorkspaceRoot: "C:\\Files\\workspace",
+      repositoryScope: { kind: "all" },
+      repositorySort: { key: "updated", direction: "desc" },
+      issues: { state: "open", sort: "created", direction: "desc" },
+      pullRequests: { state: "open", sort: "updated", direction: "desc" },
+      actions: { state: "all", sort: "updated", direction: "desc" },
+    },
     projectLaunchConfigs: {},
     repoSyncPreferences: {},
     repoRemoteSyncPolicies: {},

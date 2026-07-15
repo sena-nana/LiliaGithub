@@ -3,6 +3,7 @@ import type {
   BulkOperation,
   BulkSyncPreview,
   BulkSyncResult,
+  AccountPreferences,
   CommitDetail,
   CommitSummary,
   ContributionIdentity,
@@ -12,6 +13,8 @@ import type {
   GitHubActionNotification,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubAccountIssueItem,
+  GitHubAccountProfile,
+  GitHubAuthPurpose,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
   GitHubCreatePullRequestRequest,
@@ -40,6 +43,7 @@ import type {
   GitHubRuleset,
   GitHubRulesetSummary,
   GitHubUpdateIssueRequest,
+  GitHubUpdateAccountProfileRequest,
   GitHubUpdatePullRequestRequest,
   GitHubUpdateReleaseRequest,
   GitHubUpdateRepoSettingsRequest,
@@ -110,6 +114,10 @@ export interface WorkspaceCommandContracts {
     WorkspaceStartupCache
   >;
   workspace_set_root: CommandContract<{ workspaceRoot: string }, WorkspaceSettings>;
+  workspace_update_account_preferences: CommandContract<
+    { preferences: AccountPreferences },
+    WorkspaceSettings
+  >;
   workspace_set_contribution_identities: CommandContract<
     { identities: ContributionIdentity[] },
     WorkspaceSettings
@@ -144,12 +152,17 @@ export interface WorkspaceCommandContracts {
   workspace_enqueue_repo_refresh: CommandContract<{ request: WorkspaceRepoRefreshRequest }, string>;
 
   github_get_binding_status: CommandContract<NoArgs, GitHubBindingStatus>;
-  github_start_device_flow: CommandContract<NoArgs, GitHubDeviceFlowStart>;
+  github_start_device_flow: CommandContract<{ purpose?: GitHubAuthPurpose }, GitHubDeviceFlowStart>;
   github_poll_device_flow: CommandContract<
     { deviceCode: string; intervalSeconds: Maybe<number> },
     GitHubDeviceFlowPollResult
   >;
   github_unbind: CommandContract<NoArgs, void>;
+  github_get_account_profile: CommandContract<NoArgs, GitHubAccountProfile>;
+  github_update_account_profile: CommandContract<
+    { request: GitHubUpdateAccountProfileRequest },
+    GitHubAccountProfile
+  >;
   github_list_repos: CommandContract<{
     scope: GitHubRepositoryScope;
     page: Maybe<number>;

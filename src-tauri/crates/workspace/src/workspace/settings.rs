@@ -21,7 +21,7 @@ use crate::workspace::shared::{
     repo_git_identity,
 };
 use lilia_github_contracts::workspace::{
-    CachedContributionResult, CachedRepoSummary, ContributionIdentity,
+    AccountPreferences, CachedContributionResult, CachedRepoSummary, ContributionIdentity,
     ContributionIdentityRecommendation, ContributionIdentityRecommendationConfidence,
     ContributionIdentityRecommendationRepo, ContributionIdentityRecommendationResult,
     ContributionIdentityRecommendationSource, HiddenRepo, RemoteRepoShortcut, RepoRemoteSyncConfig,
@@ -35,18 +35,129 @@ pub(super) const SETTINGS_KEY: &str = "workspace.settings";
 pub(super) const STARTUP_CACHE_KEY: &str = "workspace.startupCache.v1";
 #[cfg(target_os = "windows")]
 const NTFS_REQUIRED: &str = "工作区必须位于 NTFS 文件系统";
+const SETTINGS_VERSION: u32 = 2;
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSettingsDocument {
+    version: u32,
+    #[serde(default)]
+    binding: Option<lilia_github_contracts::workspace::GitHubBindingMetadata>,
+    #[serde(default)]
+    anonymous: WorkspaceSettings,
+    #[serde(default)]
+    profiles: HashMap<String, WorkspaceSettings>,
+}
+
+impl Default for WorkspaceSettingsDocument {
+    fn default() -> Self {
+        Self {
+            version: SETTINGS_VERSION,
+            binding: None,
+            anonymous: WorkspaceSettings::default(),
+            profiles: HashMap::new(),
+        }
+    }
+}
 
 fn startup_cache_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub(super) fn load_settings(app: &AppHandle) -> WorkspaceSettings {
-    app.store(STORE_FILE)
+fn settings_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn normalized_login(login: &str) -> Option<String> {
+    let login = login.trim();
+    (!login.is_empty()).then(|| login.to_ascii_lowercase())
+}
+
+fn profile_from_settings(mut settings: WorkspaceSettings) -> WorkspaceSettings {
+    settings.github_binding = None;
+    settings
+}
+
+fn migrate_legacy_settings(mut legacy: WorkspaceSettings) -> WorkspaceSettingsDocument {
+    if legacy.account_preferences.default_workspace_root.is_none() {
+        legacy.account_preferences.default_workspace_root = legacy.workspace_root.clone();
+    }
+    let binding = legacy.github_binding.clone();
+    let profile = profile_from_settings(legacy);
+    let mut document = WorkspaceSettingsDocument {
+        binding: binding.clone(),
+        ..WorkspaceSettingsDocument::default()
+    };
+    if let Some(key) = binding
+        .as_ref()
+        .and_then(|binding| normalized_login(&binding.login))
+    {
+        document.profiles.insert(key, profile);
+    } else {
+        document.anonymous = profile;
+    }
+    document
+}
+
+fn read_settings_document(app: &AppHandle) -> (WorkspaceSettingsDocument, bool) {
+    let Some(value) = app
+        .store(STORE_FILE)
         .ok()
         .and_then(|store| store.get(SETTINGS_KEY))
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default()
+    else {
+        return (WorkspaceSettingsDocument::default(), false);
+    };
+    if value.get("version").is_some() {
+        if let Ok(mut document) = serde_json::from_value::<WorkspaceSettingsDocument>(value.clone())
+        {
+            document.version = SETTINGS_VERSION;
+            return (document, false);
+        }
+    }
+    serde_json::from_value::<WorkspaceSettings>(value)
+        .map(|legacy| (migrate_legacy_settings(legacy), true))
+        .unwrap_or_else(|_| (WorkspaceSettingsDocument::default(), false))
+}
+
+fn write_settings_document(
+    app: &AppHandle,
+    document: &WorkspaceSettingsDocument,
+) -> Result<(), String> {
+    let store = app
+        .store(STORE_FILE)
+        .map_err(|e| format!("打开配置存储失败：{e}"))?;
+    store.set(
+        SETTINGS_KEY,
+        serde_json::to_value(document).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| format!("保存配置失败：{e}"))
+}
+
+fn settings_from_document(document: &WorkspaceSettingsDocument) -> WorkspaceSettings {
+    let mut settings = document
+        .binding
+        .as_ref()
+        .and_then(|binding| normalized_login(&binding.login))
+        .and_then(|key| document.profiles.get(&key).cloned())
+        .unwrap_or_else(|| {
+            if document.binding.is_some() {
+                WorkspaceSettings::default()
+            } else {
+                document.anonymous.clone()
+            }
+        });
+    settings.github_binding = document.binding.clone();
+    settings
+}
+
+pub(super) fn load_settings(app: &AppHandle) -> WorkspaceSettings {
+    let (document, migrated) = read_settings_document(app);
+    if migrated {
+        let _ = write_settings_document(app, &document);
+    }
+    settings_from_document(&document)
 }
 
 fn current_github_account_login(settings: &WorkspaceSettings) -> Option<String> {
@@ -88,6 +199,12 @@ pub(super) fn migrate_remote_repo_shortcuts(settings: &mut WorkspaceSettings) ->
 
 pub(super) fn visible_workspace_settings(mut settings: WorkspaceSettings) -> WorkspaceSettings {
     migrate_remote_repo_shortcuts(&mut settings);
+    if settings.workspace_root.as_deref().is_some_and(|root| {
+        let path = Path::new(root);
+        !path.is_dir() || ensure_ntfs_path(path).is_err()
+    }) {
+        settings.workspace_root = None;
+    }
     let Some(account_login) = current_github_account_login(&settings) else {
         settings.remote_repo_shortcuts.clear();
         return settings;
@@ -104,14 +221,47 @@ pub(super) fn visible_workspace_settings(mut settings: WorkspaceSettings) -> Wor
 pub(super) fn save_settings(app: &AppHandle, settings: &WorkspaceSettings) -> Result<(), String> {
     let mut settings = settings.clone();
     migrate_remote_repo_shortcuts(&mut settings);
-    let store = app
-        .store(STORE_FILE)
-        .map_err(|e| format!("打开配置存储失败：{e}"))?;
-    store.set(
-        SETTINGS_KEY,
-        serde_json::to_value(&settings).map_err(|e| e.to_string())?,
-    );
-    store.save().map_err(|e| format!("保存配置失败：{e}"))
+    let (mut document, _) = read_settings_document(app);
+    let profile = profile_from_settings(settings);
+    if let Some(key) = document
+        .binding
+        .as_ref()
+        .and_then(|binding| normalized_login(&binding.login))
+    {
+        document.profiles.insert(key, profile);
+    } else {
+        document.anonymous = profile;
+    }
+    write_settings_document(app, &document)
+}
+
+fn reset_workspace_runtime_state(app: &AppHandle) {
+    crate::workspace::refresh::reset_refresh_scheduler();
+    let _ = clear_startup_cache(app);
+    crate::workspace::watcher::clear_repo_watchers();
+}
+
+pub(super) fn switch_github_binding(
+    app: &AppHandle,
+    binding: lilia_github_contracts::workspace::GitHubBindingMetadata,
+) -> Result<WorkspaceSettings, String> {
+    let (mut document, _) = read_settings_document(app);
+    document.binding = Some(binding);
+    write_settings_document(app, &document)?;
+    reset_workspace_runtime_state(app);
+    Ok(visible_workspace_settings(settings_from_document(
+        &document,
+    )))
+}
+
+pub(super) fn clear_github_binding(app: &AppHandle) -> Result<WorkspaceSettings, String> {
+    let (mut document, _) = read_settings_document(app);
+    document.binding = None;
+    write_settings_document(app, &document)?;
+    reset_workspace_runtime_state(app);
+    Ok(visible_workspace_settings(settings_from_document(
+        &document,
+    )))
 }
 
 pub(super) fn load_startup_cache(app: &AppHandle) -> Option<WorkspaceStartupCache> {
@@ -620,11 +770,65 @@ pub fn workspace_set_root(
     }
     ensure_ntfs_path(&root)?;
     let mut settings = load_settings(&app);
-    settings.workspace_root = Some(root.to_string_lossy().to_string());
+    let workspace_root = root.to_string_lossy().to_string();
+    settings.workspace_root = Some(workspace_root.clone());
+    settings.account_preferences.default_workspace_root = Some(workspace_root);
     save_settings(&app, &settings)?;
-    crate::workspace::refresh::reset_refresh_scheduler();
-    let _ = clear_startup_cache(&app);
-    crate::workspace::watcher::clear_repo_watchers();
+    reset_workspace_runtime_state(&app);
+    Ok(visible_workspace_settings(settings))
+}
+
+fn validate_repository_scope(
+    scope: &lilia_github_contracts::workspace::GitHubRepositoryScope,
+) -> Result<(), String> {
+    use lilia_github_contracts::workspace::GitHubRepositoryScope;
+    let login = match scope {
+        GitHubRepositoryScope::All => return Ok(()),
+        GitHubRepositoryScope::Personal { login }
+        | GitHubRepositoryScope::Organization { login } => login.trim(),
+    };
+    if login.is_empty()
+        || login.len() > 39
+        || login.starts_with('-')
+        || login.ends_with('-')
+        || !login
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err("GitHub 账号或组织名称无效".to_string());
+    }
+    Ok(())
+}
+
+pub fn workspace_update_account_preferences(
+    app: AppHandle,
+    mut preferences: AccountPreferences,
+) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    validate_repository_scope(&preferences.repository_scope)?;
+    preferences.default_workspace_root = preferences
+        .default_workspace_root
+        .as_deref()
+        .map(str::trim)
+        .filter(|root| !root.is_empty())
+        .map(str::to_string);
+    if let Some(root) = preferences.default_workspace_root.as_deref() {
+        let path = PathBuf::from(root);
+        if !path.exists() || !path.is_dir() {
+            return Err(format!("工作区不存在或不是文件夹：{}", path.display()));
+        }
+        ensure_ntfs_path(&path)?;
+    }
+    let mut settings = load_settings(&app);
+    let root_changed = settings.workspace_root != preferences.default_workspace_root;
+    settings.workspace_root = preferences.default_workspace_root.clone();
+    settings.account_preferences = preferences;
+    save_settings(&app, &settings)?;
+    if root_changed {
+        reset_workspace_runtime_state(&app);
+    }
     Ok(visible_workspace_settings(settings))
 }
 
@@ -1308,4 +1512,222 @@ pub fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo> {
             HiddenRepo { id, name }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod account_profile_storage_tests {
+    use super::*;
+    use crate::runtime::{WorkspaceContext, WorkspaceRuntime};
+    use lilia_github_contracts::workspace::{
+        GitHubBindingMetadata, GitHubRepositoryScope, PullRequestListSortKey, SortDirection,
+    };
+    use serde_json::Value;
+    use std::sync::Arc;
+
+    #[derive(Default)]
+    struct MemoryRuntime {
+        values: Mutex<HashMap<(String, String), Value>>,
+    }
+
+    impl MemoryRuntime {
+        fn insert(&self, file: &str, key: &str, value: Value) {
+            self.values
+                .lock()
+                .unwrap()
+                .insert((file.to_string(), key.to_string()), value);
+        }
+
+        fn value(&self, file: &str, key: &str) -> Option<Value> {
+            self.values
+                .lock()
+                .unwrap()
+                .get(&(file.to_string(), key.to_string()))
+                .cloned()
+        }
+    }
+
+    impl WorkspaceRuntime for MemoryRuntime {
+        fn store_get(&self, file: &str, key: &str) -> Result<Option<Value>, String> {
+            Ok(self.value(file, key))
+        }
+
+        fn store_set(&self, file: &str, key: &str, value: Value) -> Result<(), String> {
+            self.insert(file, key, value);
+            Ok(())
+        }
+
+        fn store_delete(&self, file: &str, key: &str) -> Result<(), String> {
+            self.values
+                .lock()
+                .unwrap()
+                .remove(&(file.to_string(), key.to_string()));
+            Ok(())
+        }
+
+        fn store_save(&self, _file: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn pick_folder(&self, _title: Option<&str>) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        fn pick_files(&self, _title: Option<&str>) -> Result<Option<Vec<String>>, String> {
+            Ok(None)
+        }
+
+        fn open_path(&self, _path: &str, _with: Option<&str>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn open_url(&self, _url: &str, _with: Option<&str>) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn emit(&self, _event: &str, _payload: Value) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn binding(login: &str) -> GitHubBindingMetadata {
+        GitHubBindingMetadata {
+            login: login.to_string(),
+            avatar_url: None,
+            bound_at: 1,
+            scopes: vec!["repo".to_string()],
+            client_id_source: "bundled".to_string(),
+        }
+    }
+
+    #[test]
+    fn legacy_settings_migrate_and_profiles_are_isolated_by_normalized_login() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let mut legacy = WorkspaceSettings {
+            workspace_root: Some("/legacy-root".to_string()),
+            github_binding: Some(binding("Alice")),
+            ..WorkspaceSettings::default()
+        };
+        legacy.hidden_repo_ids.push("alice/repo".to_string());
+        let mut legacy_value = serde_json::to_value(&legacy).unwrap();
+        legacy_value
+            .as_object_mut()
+            .unwrap()
+            .remove("accountPreferences");
+        runtime.insert(STORE_FILE, SETTINGS_KEY, legacy_value);
+        let app = WorkspaceContext::new(runtime.clone());
+
+        let alice = load_settings(&app);
+        assert_eq!(alice.workspace_root.as_deref(), Some("/legacy-root"));
+        assert_eq!(
+            alice.account_preferences.default_workspace_root.as_deref(),
+            Some("/legacy-root")
+        );
+        let persisted = runtime.value(STORE_FILE, SETTINGS_KEY).unwrap();
+        assert_eq!(persisted["version"], SETTINGS_VERSION);
+        assert!(persisted["profiles"].get("alice").is_some());
+        assert_eq!(persisted["binding"]["login"], "Alice");
+        assert!(persisted["profiles"]["alice"]["githubBinding"].is_null());
+
+        let mut bob = switch_github_binding(&app, binding("Bob")).unwrap();
+        assert!(bob.workspace_root.is_none());
+        bob.hidden_repo_ids.push("bob/repo".to_string());
+        save_settings(&app, &bob).unwrap();
+
+        let restored = switch_github_binding(&app, binding("ALICE")).unwrap();
+        assert_eq!(restored.hidden_repo_ids, vec!["alice/repo"]);
+        let anonymous = clear_github_binding(&app).unwrap();
+        assert!(anonymous.hidden_repo_ids.is_empty());
+        assert!(anonymous.github_binding.is_none());
+    }
+
+    #[test]
+    fn unbound_legacy_settings_migrate_into_the_anonymous_profile() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let mut legacy = WorkspaceSettings {
+            workspace_root: Some("/anonymous-root".to_string()),
+            ..WorkspaceSettings::default()
+        };
+        legacy.hidden_repo_ids.push("anonymous/repo".to_string());
+        let mut legacy_value = serde_json::to_value(&legacy).unwrap();
+        legacy_value
+            .as_object_mut()
+            .unwrap()
+            .remove("accountPreferences");
+        runtime.insert(STORE_FILE, SETTINGS_KEY, legacy_value);
+        let app = WorkspaceContext::new(runtime.clone());
+
+        let migrated = load_settings(&app);
+
+        assert_eq!(migrated.workspace_root.as_deref(), Some("/anonymous-root"));
+        assert_eq!(
+            migrated
+                .account_preferences
+                .default_workspace_root
+                .as_deref(),
+            Some("/anonymous-root")
+        );
+        assert_eq!(migrated.hidden_repo_ids, vec!["anonymous/repo"]);
+        let persisted = runtime.value(STORE_FILE, SETTINGS_KEY).unwrap();
+        assert_eq!(persisted["anonymous"]["workspaceRoot"], "/anonymous-root");
+        assert!(persisted["profiles"].as_object().unwrap().is_empty());
+        assert!(persisted["binding"].is_null());
+    }
+
+    #[test]
+    fn account_preferences_update_workspace_root_atomically() {
+        let runtime = Arc::new(MemoryRuntime::default());
+        let app = WorkspaceContext::new(runtime);
+        let root = std::env::temp_dir().join(format!(
+            "lilia-account-preferences-{}",
+            crate::workspace::shared::now_millis()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut preferences = AccountPreferences {
+            default_workspace_root: Some(root.to_string_lossy().to_string()),
+            repository_scope: GitHubRepositoryScope::Organization {
+                login: "lilia-org".to_string(),
+            },
+            ..AccountPreferences::default()
+        };
+        preferences.pull_requests.sort = PullRequestListSortKey::Updated;
+        preferences.pull_requests.direction = SortDirection::Desc;
+
+        let settings = workspace_update_account_preferences(app.clone(), preferences).unwrap();
+        assert_eq!(
+            settings.workspace_root,
+            settings.account_preferences.default_workspace_root
+        );
+        assert_eq!(
+            load_settings(&app).account_preferences,
+            settings.account_preferences
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unavailable_account_workspace_is_inactive_but_preference_is_preserved() {
+        let missing_root = std::env::temp_dir()
+            .join(format!(
+                "lilia-missing-account-workspace-{}",
+                crate::workspace::shared::now_millis()
+            ))
+            .to_string_lossy()
+            .to_string();
+        let settings = WorkspaceSettings {
+            workspace_root: Some(missing_root.clone()),
+            account_preferences: AccountPreferences {
+                default_workspace_root: Some(missing_root.clone()),
+                ..AccountPreferences::default()
+            },
+            ..WorkspaceSettings::default()
+        };
+
+        let visible = visible_workspace_settings(settings);
+
+        assert_eq!(visible.workspace_root, None);
+        assert_eq!(
+            visible.account_preferences.default_workspace_root,
+            Some(missing_root)
+        );
+    }
 }

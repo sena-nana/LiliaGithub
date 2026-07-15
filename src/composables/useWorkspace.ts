@@ -107,6 +107,14 @@ import {
   openUrl,
   copyText,
 } from "./workspace/system";
+import {
+  getAccountProfile,
+  getAccountRepositoryOwners,
+  pickAccountWorkspaceRoot,
+  reloadAccountWorkspace,
+  updateAccountPreferences,
+  updateAccountProfile,
+} from "./workspace/account";
 
 export function useWorkspace() {
   return {
@@ -204,5 +212,11 @@ export function useWorkspace() {
     openPathTarget,
     openUrl,
     copyText,
+    getAccountProfile,
+    getAccountRepositoryOwners,
+    updateAccountProfile,
+    pickAccountWorkspaceRoot,
+    updateAccountPreferences,
+    reloadAccountWorkspace,
   };
 }

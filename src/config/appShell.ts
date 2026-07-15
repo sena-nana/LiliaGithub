@@ -4,6 +4,7 @@ import {
   Info,
   Palette,
   Sparkles,
+  UserRound,
 } from "@lucide/vue";
 import {
   LiliaAppearanceSection,
@@ -42,7 +43,7 @@ const footerStatus = {
   icon: Sparkles,
 } satisfies NonNullable<LiliaSidebarConfigInput["footerStatus"]>;
 
-export type SettingsTabKey = "appearance" | "repositories" | "about";
+export type SettingsTabKey = "appearance" | "account" | "repositories" | "about";
 
 export interface SettingsTab {
   key: SettingsTabKey;
@@ -57,6 +58,12 @@ export const SETTINGS_TABS: SettingsTab[] = [
     label: "外观",
     icon: Palette,
     to: { path: "/settings", query: { tab: "appearance" } },
+  },
+  {
+    key: "account",
+    label: "账户",
+    icon: UserRound,
+    to: { path: "/settings", query: { tab: "account" } },
   },
   {
     key: "repositories",
@@ -75,6 +82,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
 export const DEFAULT_SETTINGS_TAB: SettingsTabKey = "appearance";
 
 const repositoriesSection = createCachedAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue"));
+const accountSection = createCachedAsyncComponent(() => import("../pages/settings/AccountSection.vue"));
 const aboutSection = createCachedAsyncComponent(() => import("../pages/settings/AboutSection.vue"));
 const agentDebugEnabled = import.meta.env.VITE_LILIA_AGENT_DEBUG === "1" ||
   import.meta.env.VITE_LILIA_GITHUB_AGENT_DEBUG === "1" ||
@@ -82,6 +90,7 @@ const agentDebugEnabled = import.meta.env.VITE_LILIA_AGENT_DEBUG === "1" ||
 
 export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
   appearance: LiliaAppearanceSection,
+  account: accountSection.component,
   repositories: repositoriesSection.component,
   about: aboutSection.component,
 };
@@ -112,7 +121,7 @@ export const LILIA_UI_CONFIG = {
     workspaceEmptyText: "选择工作区后显示 Git 仓库。",
     statusLabel: footerStatus.label,
     statusTitle: footerStatus.title,
-    settingsDescription: "管理外观、仓库、GitHub 授权和应用信息。",
+    settingsDescription: "管理外观、账户、仓库和应用信息。",
   },
   sidebar: {
     ...SIDEBAR_CONFIG,

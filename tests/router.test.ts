@@ -1483,7 +1483,7 @@ describe("基础路由", () => {
 
     expect(await screen.findAllByRole("heading", { name: "仓库" })).toHaveLength(1);
     expect(await screen.findByRole("region", { name: "工作区与仓库" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "GitHub 授权" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "GitHub 账户" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "贡献身份" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "后台发现仓库" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
@@ -1495,17 +1495,17 @@ describe("基础路由", () => {
     expect((await service.refreshRepos()).some((repo) => repo.id === "LiliaGithub")).toBe(true);
   });
 
-  it("设置页仓库 tab 可重新绑定 GitHub", async () => {
+  it("设置页账户 tab 可更换 GitHub 账号", async () => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
         writeText: vi.fn(async () => undefined),
       },
     });
-    await renderAt("/settings?tab=repositories");
+    await renderAt("/settings?tab=account");
 
-    expect(await screen.findByText("lilia-user")).toBeInTheDocument();
-    await fireEvent.click(await screen.findByRole("button", { name: "重新绑定 GitHub" }));
+    expect(await screen.findAllByText("lilia-user")).not.toHaveLength(0);
+    await fireEvent.click(await screen.findByRole("button", { name: "更换 GitHub 账号" }));
 
     expect(await screen.findByText("等待 GitHub 授权确认")).toBeInTheDocument();
     expect(await screen.findByText("授权码已复制，请在 GitHub 授权页粘贴。")).toBeInTheDocument();
