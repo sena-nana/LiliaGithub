@@ -68,10 +68,11 @@ use super::repos::{
 #[cfg(target_os = "windows")]
 use super::repos::{validate_clone_target_length, MAX_PORTABLE_CLONE_TARGET_UTF16};
 use super::settings::{
-    add_managed_repo_id, create_repo_group, delete_repo_group, migrate_remote_repo_shortcuts,
-    move_repo_to_group, prune_deleted_repo_settings, remove_managed_repo_path,
-    remove_system_git_repo_id, rename_repo_group, repo_path_from_id,
-    scan_contribution_identity_recommendations, visible_workspace_settings, workspace_set_root,
+    add_managed_repo_id, create_repo_group, delete_repo_group, load_settings,
+    migrate_remote_repo_shortcuts, move_repo_to_group, prune_deleted_repo_settings,
+    remove_managed_repo_path, remove_system_git_repo_id, rename_repo_group, repo_path_from_id,
+    save_settings, scan_contribution_identity_recommendations, visible_workspace_settings,
+    workspace_set_root,
 };
 use super::shared::{
     cached_local_contribution_count, collect_local_contribution_counts, compatible_path_text,
@@ -106,7 +107,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub(super) struct NoopWorkspaceRuntime;
 
@@ -120,6 +121,51 @@ impl WorkspaceRuntime for NoopWorkspaceRuntime {
     }
 
     fn store_delete(&self, _file: &str, _key: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn store_save(&self, _file: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn pick_folder(&self, _title: Option<&str>) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+
+    fn pick_files(&self, _title: Option<&str>) -> Result<Option<Vec<String>>, String> {
+        Ok(None)
+    }
+
+    fn open_path(&self, _path: &str, _with: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn open_url(&self, _url: &str, _with: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn emit(&self, _event: &str, _payload: serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct SettingsStoreRuntime {
+    value: Mutex<Option<serde_json::Value>>,
+}
+
+impl WorkspaceRuntime for SettingsStoreRuntime {
+    fn store_get(&self, _file: &str, _key: &str) -> Result<Option<serde_json::Value>, String> {
+        Ok(self.value.lock().unwrap().clone())
+    }
+
+    fn store_set(&self, _file: &str, _key: &str, value: serde_json::Value) -> Result<(), String> {
+        *self.value.lock().unwrap() = Some(value);
+        Ok(())
+    }
+
+    fn store_delete(&self, _file: &str, _key: &str) -> Result<(), String> {
+        *self.value.lock().unwrap() = None;
         Ok(())
     }
 
@@ -837,6 +883,7 @@ fn test_remote_shortcut(full_name: &str) -> RemoteRepoShortcut {
         html_url: format!("https://github.com/{full_name}"),
         clone_url: format!("https://github.com/{full_name}.git"),
         canonical_remote_url: None,
+        favorite: false,
         opened_at: 1,
     }
 }
@@ -844,8 +891,9 @@ fn test_remote_shortcut(full_name: &str) -> RemoteRepoShortcut {
 #[test]
 fn remote_repo_shortcuts_are_upserted_by_full_name() {
     let mut shortcuts = Vec::new();
-    remember_remote_repo_shortcut(&mut shortcuts, test_remote_shortcut("sena-nana/Remote"))
-        .unwrap();
+    let mut favorite = test_remote_shortcut("sena-nana/Remote");
+    favorite.favorite = true;
+    remember_remote_repo_shortcut(&mut shortcuts, favorite).unwrap();
     let first_opened_at = shortcuts[0].opened_at;
     let mut updated = test_remote_shortcut("https://github.com/sena-nana/Remote.git");
     updated.private = true;
@@ -856,11 +904,38 @@ fn remote_repo_shortcuts_are_upserted_by_full_name() {
     assert_eq!(shortcuts.len(), 1);
     assert_eq!(shortcuts[0].full_name, "sena-nana/Remote");
     assert!(shortcuts[0].private);
+    assert!(shortcuts[0].favorite);
     assert_eq!(
         shortcuts[0].clone_url,
         "https://github.com/sena-nana/Remote-updated.git"
     );
     assert!(shortcuts[0].opened_at >= first_opened_at);
+}
+
+#[test]
+fn favorites_and_workspace_groups_survive_settings_round_trip() {
+    let runtime = Arc::new(SettingsStoreRuntime::default());
+    let app = WorkspaceContext::new(runtime);
+    let mut remote = test_remote_shortcut("sena-nana/Remote");
+    remote.favorite = true;
+    let settings = WorkspaceSettings {
+        favorite_repo_ids: vec!["local/repo".to_string()],
+        repo_groups: vec![WorkspaceRepoGroup {
+            id: "daily".to_string(),
+            name: "日常".to_string(),
+            repo_ids: vec!["local/repo".to_string()],
+        }],
+        remote_repo_shortcuts: vec![remote],
+        ..WorkspaceSettings::default()
+    };
+
+    save_settings(&app, &settings).unwrap();
+    let restored = load_settings(&app);
+
+    assert_eq!(restored.favorite_repo_ids, vec!["local/repo"]);
+    assert_eq!(restored.repo_groups.len(), 1);
+    assert_eq!(restored.repo_groups[0].repo_ids, vec!["local/repo"]);
+    assert!(restored.remote_repo_shortcuts[0].favorite);
 }
 
 #[test]
@@ -978,6 +1053,7 @@ fn legacy_remote_repo_shortcut_deserializes_without_identity_fields() {
     assert_eq!(shortcut.account_login, None);
     assert_eq!(shortcut.repository_id, None);
     assert_eq!(shortcut.canonical_remote_url, None);
+    assert!(!shortcut.favorite);
 }
 
 #[test]
@@ -4791,6 +4867,7 @@ fn prune_deleted_repo_settings_clears_all_repo_scoped_state() {
         managed_repo_ids: vec!["repo".to_string(), "other".to_string()],
         hidden_repo_ids: vec!["repo".to_string()],
         system_git_repo_ids: vec!["repo".to_string()],
+        favorite_repo_ids: vec!["repo".to_string(), "other".to_string()],
         repo_groups: vec![WorkspaceRepoGroup {
             id: "group".to_string(),
             name: "分组".to_string(),
@@ -4823,6 +4900,7 @@ fn prune_deleted_repo_settings_clears_all_repo_scoped_state() {
     assert_eq!(settings.managed_repo_ids, vec!["other"]);
     assert!(settings.hidden_repo_ids.is_empty());
     assert!(settings.system_git_repo_ids.is_empty());
+    assert_eq!(settings.favorite_repo_ids, vec!["other"]);
     assert_eq!(settings.repo_groups[0].repo_ids, vec!["other".to_string()]);
     assert!(settings.project_launch_configs.is_empty());
     assert!(settings.local_contribution_cache.is_empty());

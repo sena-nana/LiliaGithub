@@ -2717,6 +2717,7 @@ async function syncRenamedSettingsIdentity(previousFullName: string, next: GitHu
       defaultBranch: next.defaultBranch || (currentShortcut?.defaultBranch ?? null),
       htmlUrl: next.htmlUrl,
       cloneUrl: renamedRemoteCloneUrl(previousFullName, next.fullName, currentShortcut?.cloneUrl),
+      favorite: currentShortcut?.favorite ?? false,
       openedAt: Date.now(),
     });
     const query: LocationQueryRaw = { ...route.query, projectTab: "settings" };

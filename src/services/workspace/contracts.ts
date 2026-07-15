@@ -143,8 +143,10 @@ export interface WorkspaceCommandContracts {
   workspace_rename_repo_group: CommandContract<{ groupId: string; name: string }, WorkspaceSettings>;
   workspace_delete_repo_group: CommandContract<{ groupId: string }, WorkspaceSettings>;
   workspace_move_repo_to_group: CommandContract<{ repoId: string; groupId: Maybe<string> }, WorkspaceSettings>;
+  workspace_set_local_repo_favorite: CommandContract<{ repoId: string; favorite: boolean }, WorkspaceSettings>;
   workspace_delete_local_repo: CommandContract<RepoArg, WorkspaceSettings>;
   workspace_remember_remote_repo: CommandContract<{ repo: RemoteRepoShortcut }, WorkspaceSettings>;
+  workspace_set_remote_repo_favorite: CommandContract<{ repo: RemoteRepoShortcut; favorite: boolean }, WorkspaceSettings>;
   workspace_forget_remote_repo: CommandContract<{ fullName: string }, WorkspaceSettings>;
   workspace_unhide_repo: CommandContract<RepoArg, WorkspaceSettings>;
   workspace_list_hidden_repos: CommandContract<NoArgs, HiddenRepo[]>;

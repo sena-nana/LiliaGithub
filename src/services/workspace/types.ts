@@ -11,6 +11,7 @@ export interface WorkspaceSettings {
   managedRepoIds: string[];
   systemGitRepoIds: string[];
   repoBindings: Record<string, WorkspaceRepositoryBinding>;
+  favoriteRepoIds: string[];
   repoGroups: WorkspaceRepoGroup[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
@@ -344,6 +345,7 @@ export interface RemoteRepoShortcut {
   htmlUrl: string;
   cloneUrl: string;
   canonicalRemoteUrl?: string | null;
+  favorite?: boolean;
   openedAt: number;
 }
 
