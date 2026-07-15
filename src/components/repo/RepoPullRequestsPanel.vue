@@ -15,7 +15,13 @@ import type {
   PullRequestPanelFilters,
   PullRequestState,
 } from "./pullRequestPanelTypes";
+import RepoMilestoneGroup from "./RepoMilestoneGroup.vue";
 import RepoPullRequestDetail from "./RepoPullRequestDetail.vue";
+import {
+  groupRepoItemsByMilestone,
+  repoMilestoneGroupAgentSuffix,
+  type RepoMilestoneGroup as RepoMilestoneGroupModel,
+} from "./repoMilestoneGroups";
 
 const props = defineProps<{
   pulls: GitHubPullRequest[];
@@ -43,6 +49,7 @@ type PullRequestChip = {
 
 type PullRequestDisplayRow = {
   pull: GitHubPullRequest;
+  milestone: GitHubPullRequest["milestone"];
   statusText: string;
   updatedText: string;
   chips: PullRequestChip[];
@@ -67,19 +74,21 @@ const focusedPullRequest = computed(() => {
   return props.pulls.find((pull) => pull.number === pullNumber) ?? null;
 });
 
-const visiblePulls = computed(() => props.pulls.slice(0, visiblePullCount.value));
-const visiblePullRows = computed<PullRequestDisplayRow[]>(() =>
-  visiblePulls.value.map((pull) => ({
+const pullRows = computed<PullRequestDisplayRow[]>(() =>
+  props.pulls.map((pull) => ({
     pull,
+    milestone: pull.milestone,
     statusText: pullStatusText(pull),
     updatedText: pullUpdatedText(pull),
     chips: pullChips(pull),
     closed: pull.state !== "open" || pull.merged,
   })),
 );
-const hiddenPullCount = computed(() =>
-  Math.max(0, props.pulls.length - visiblePullRows.value.length),
+const pullGrouping = computed(() =>
+  groupRepoItemsByMilestone(pullRows.value, visiblePullCount.value),
 );
+const pullGroups = computed(() => pullGrouping.value.groups);
+const hiddenPullCount = computed(() => pullGrouping.value.hiddenCount);
 
 watch(
   () => [
@@ -101,6 +110,10 @@ watch(
 
 function showMorePulls() {
   visiblePullCount.value += PULL_RENDER_PAGE_SIZE;
+}
+
+function pullGroupAgentId(group: RepoMilestoneGroupModel<PullRequestDisplayRow>) {
+  return `repo.pulls.group.${repoMilestoneGroupAgentSuffix(group)}`;
 }
 
 function checksFor(pullNumber: number) {
@@ -154,18 +167,28 @@ function pullChips(pull: GitHubPullRequest) {
     />
 
     <template v-else>
-    <h3 class="pulls-panel__sr-title">Pull Requests</h3>
-    <div class="pulls-list" role="list" aria-label="Pull Requests">
-      <div
-        v-for="row in visiblePullRows"
-        :key="row.pull.number"
-        class="pulls-list__item project-row--pull repo-list-row repo-list-row--with-actions"
-        :class="{ 'is-target': isFocused(row.pull.number) }"
-        :data-pull-number="row.pull.number"
-        :data-agent-id="`repo.pulls.${row.pull.number}.open`"
-        role="listitem"
-        @click="emit('focus', row.pull)"
-      >
+      <h3 class="pulls-panel__sr-title">Pull Requests</h3>
+      <div class="pulls-list" role="list" aria-label="Pull Requests">
+        <RepoMilestoneGroup
+          v-for="group in pullGroups"
+          :key="group.id"
+          :title="group.title"
+          :state="group.state"
+          :visible-count="group.items.length"
+          :total-count="group.totalCount"
+          item-label="Pull Requests"
+          :agent-id="pullGroupAgentId(group)"
+        >
+          <div
+            v-for="row in group.items"
+            :key="row.pull.number"
+            class="pulls-list__item project-row--pull repo-list-row repo-list-row--with-actions"
+            :class="{ 'is-target': isFocused(row.pull.number) }"
+            :data-pull-number="row.pull.number"
+            :data-agent-id="`repo.pulls.${row.pull.number}.open`"
+            role="listitem"
+            @click="emit('focus', row.pull)"
+          >
         <span class="pulls-list__status repo-list-row__status" :class="{ 'is-closed': row.closed }" :title="row.statusText">
           <GitMerge v-if="row.pull.merged" :size="15" aria-hidden="true" />
           <GitPullRequest v-else-if="row.pull.state === 'open'" :size="15" aria-hidden="true" />
@@ -188,7 +211,8 @@ function pullChips(pull: GitHubPullRequest) {
           </div>
         </div>
         <ArrowRight class="pulls-list__arrow" :size="15" aria-hidden="true" />
-      </div>
+          </div>
+        </RepoMilestoneGroup>
 
       <p v-if="!pulls.length && !loading" class="muted repo-empty pulls-list__empty">
         没有匹配的 Pull Request。
@@ -205,7 +229,7 @@ function pullChips(pull: GitHubPullRequest) {
       >
         显示更多 {{ hiddenPullCount }} 个
       </button>
-    </div>
+      </div>
     </template>
   </div>
 </template>
@@ -228,6 +252,7 @@ function pullChips(pull: GitHubPullRequest) {
 
 .pulls-list {
   display: grid;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -278,7 +303,7 @@ function pullChips(pull: GitHubPullRequest) {
 }
 
 .pulls-list__status {
-  color: var(--success);
+  color: var(--ok);
 }
 
 .pulls-list__status.is-closed {
@@ -328,8 +353,8 @@ function pullChips(pull: GitHubPullRequest) {
 .pulls-list__more {
   width: 100%;
   min-height: 34px;
-  border: 0;
-  border-top: 1px solid var(--border-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font: inherit;

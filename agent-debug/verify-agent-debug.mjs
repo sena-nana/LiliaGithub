@@ -635,17 +635,8 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.toolbar.tab.repo"],
-      waits: ["repo.project.sidebar.milestones"],
+      waits: ["repo.project.sidebar.issues"],
       observe: "repo-readme-about",
-    },
-    {
-      clicks: ["repo.project.sidebar.milestones"],
-      waits: [
-        "repo.milestones.refresh",
-        "repo.milestones.filters.type.all",
-        "repo.milestones.filters.milestone.all",
-      ],
-      observe: "project-milestones",
     },
     {
       clicks: ["repo.project.sidebar.issues"],

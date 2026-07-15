@@ -1,7 +1,7 @@
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
 export type RepoRouteTab = "files" | "repo" | "changes" | "history" | "stash" | "run";
-export type RepoProjectTab = "readme" | "milestones" | "issues" | "pulls" | "actions" | "release" | "settings";
+export type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "release" | "settings";
 export type RepoProjectCreateFlow = "issue" | "pull" | "release";
 
 const createFlowTabs: Record<RepoProjectCreateFlow, Exclude<RepoProjectTab, "readme">> = {

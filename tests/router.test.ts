@@ -624,32 +624,19 @@ describe("基础路由", () => {
     });
   });
 
-  it("直接进入 milestones 分区时按需拉取并显示里程碑视图", async () => {
-    const repoFullName = "sena-nana/LiliaGithub";
-    workspaceFallback.setFallbackGitHubIssuesForTests({
-      [repoFullName]: [
-        {
-          ...githubIssue(repoFullName, 11, "2026-06-18T08:00:00Z"),
-          milestone: { number: 1, title: "v1", state: "open" },
-        },
-      ],
-    });
-
+  it("旧 projectTab=milestones 不再提供标签并按无效值回落 README", async () => {
     const { router } = await renderAt("/repos/LiliaGithub?projectTab=milestones");
 
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Milestones" })).toHaveAttribute("aria-selected", "true");
-    });
-    expect(router.currentRoute.value.query).toMatchObject({ projectTab: "milestones" });
-    expect(await screen.findByLabelText("Milestones board")).toBeInTheDocument();
-    expect(screen.getByLabelText("v1 milestone")).toHaveTextContent("1");
+    expect(await screen.findByLabelText("README 内容")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Milestones" })).toBeNull();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub?projectTab=milestones");
   });
 
   it("旧 projectTab=board 不再激活视图并回落 README", async () => {
     const { router } = await renderAt("/repos/LiliaGithub?projectTab=board");
 
     expect(await screen.findByLabelText("README 内容")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Milestones" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Issues" })).toHaveAttribute("aria-selected", "false");
     expect(router.currentRoute.value.query).toMatchObject({ projectTab: "board" });
   });
 

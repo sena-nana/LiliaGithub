@@ -1736,109 +1736,105 @@ describe("RepoProjectPanel", () => {
     });
   });
 
-  it("Milestones 分区按里程碑分组展示事项并通过侧栏筛选和打开详情", async () => {
-    const v2Issue: GitHubIssue = {
+  it("Issues 默认按里程碑分组且相同标题的里程碑保持独立", async () => {
+    const issues: GitHubIssue[] = [
+      githubIssues[0],
+      {
+        ...githubIssues[0],
+        number: 66,
+        title: "整理文档",
+        milestone: { number: 2, title: "v2", state: "closed" },
+        htmlUrl: "https://github.com/sena-nana/remote-repo/issues/66",
+      },
+      {
+        ...githubIssues[0],
+        number: 77,
+        title: "准备补丁版本",
+        milestone: { number: 3, title: "v1", state: "open" },
+        htmlUrl: "https://github.com/sena-nana/remote-repo/issues/77",
+      },
+      {
+        ...githubIssues[0],
+        number: 88,
+        title: "未排期事项",
+        milestone: null,
+        htmlUrl: "https://github.com/sena-nana/remote-repo/issues/88",
+      },
+      {
+        ...githubIssues[0],
+        number: 99,
+        title: "补充发布说明",
+        milestone: { number: 1, title: "v1", state: "open" },
+        htmlUrl: "https://github.com/sena-nana/remote-repo/issues/99",
+      },
+    ];
+    vi.mocked(listGitHubIssues).mockResolvedValue(issues);
+    const view = await renderProjectPanel({ repoFullName: "sena-nana/remote-repo" });
+
+    expect(view.queryByRole("tab", { name: "Milestones" })).toBeNull();
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+
+    await view.findByText("#12 修复懒加载");
+    const issueList = await view.findByRole("list", { name: "Issues" });
+    expect(within(issueList).getAllByLabelText("v1 Issues")).toHaveLength(2);
+    expect(within(issueList).getByLabelText("v2 Issues")).toHaveTextContent("#66 整理文档");
+    expect(within(issueList).getByLabelText("无里程碑 Issues")).toHaveTextContent("#88 未排期事项");
+    expect(issueList.querySelector('[data-agent-id="repo.issues.group.milestone.1"]')).not.toBeNull();
+    expect(issueList.querySelector('[data-agent-id="repo.issues.group.milestone.3"]')).not.toBeNull();
+    expect(issueList.querySelector('[data-agent-id="repo.issues.group.none"]')).not.toBeNull();
+    expect([
+      ...issueList.querySelectorAll<HTMLElement>(":scope > [data-agent-id^='repo.issues.group.']"),
+    ].map((group) => group.dataset.agentId)).toEqual([
+      "repo.issues.group.milestone.1",
+      "repo.issues.group.milestone.3",
+      "repo.issues.group.milestone.2",
+      "repo.issues.group.none",
+    ]);
+    const v1Group = issueList.querySelector<HTMLElement>('[data-agent-id="repo.issues.group.milestone.1"]')!;
+    expect(within(v1Group).getAllByRole("button").filter((button) => button.dataset.agentId?.endsWith(".open"))
+      .map((button) => button.textContent?.trim())).toEqual([
+        "#12 修复懒加载",
+        "#99 补充发布说明",
+      ]);
+    expect(view.queryByText("#52 接入 Pull Request 工作流")).toBeNull();
+    expect(listGitHubPullRequests).not.toHaveBeenCalled();
+  });
+
+  it("Issues 分组在全局渐进显示时保留完整计数且不遗漏事项", async () => {
+    const issues = Array.from({ length: 52 }, (_, index): GitHubIssue => ({
       ...githubIssues[0],
-      number: 66,
-      title: "整理文档",
-      labels: ["documentation", "area: docs"],
-      milestone: { number: 2, title: "v2", state: "closed" },
-      projectItems: [],
-      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/66",
-      updatedAt: "2026-06-19T08:00:00Z",
-    };
-    const unassignedIssue: GitHubIssue = {
-      ...githubIssues[0],
-      number: 88,
-      title: "整理文档",
-      labels: ["bug", "documentation", "area: docs", "v2.0 roadmap"],
-      milestone: null,
-      projectItems: [],
-      htmlUrl: "https://github.com/sena-nana/remote-repo/issues/88",
-      updatedAt: "2026-06-17T08:00:00Z",
-    };
-    const closedV2Issue: GitHubIssue = {
-      ...closedGitHubIssues[0],
-      milestone: { number: 2, title: "v2", state: "closed" },
-    };
-    vi.mocked(getGitHubIssueFilterMetadata).mockResolvedValue({
-      authors: ["sena"],
-      labels: ["bug", "needs triage", "documentation"],
-      assignees: ["mika", "sena"],
-      milestones: [{ number: 1, title: "v1", state: "open" }, { number: 2, title: "v2", state: "closed" }],
-      projects: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
-    });
-    vi.mocked(listGitHubIssues).mockResolvedValue([githubIssues[0], v2Issue, unassignedIssue, closedV2Issue]);
-    vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
-    vi.mocked(listGitHubPullRequestChecks).mockResolvedValue(githubPullRequestChecks);
-    const view = await renderProjectPanel({
-      repoFullName: "sena-nana/remote-repo",
-    });
+      number: 100 + index,
+      title: `批量事项 ${index + 1}`,
+      milestone: index < 51 ? { number: 1, title: "v1", state: "open" } : null,
+      htmlUrl: `https://github.com/sena-nana/remote-repo/issues/${100 + index}`,
+    }));
+    vi.mocked(listGitHubIssues).mockResolvedValue(issues);
+    const view = await renderProjectPanel({ repoFullName: "sena-nana/remote-repo" });
 
-    await fireEvent.click(view.getByRole("tab", { name: "Milestones" }));
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    await view.findByText("#100 批量事项 1");
+    const issueList = await view.findByRole("list", { name: "Issues" });
+    expect(within(issueList).getByLabelText("50 / 51 Issues")).toBeInTheDocument();
+    expect(within(issueList).queryByLabelText("无里程碑 Issues")).toBeNull();
 
-    const milestonesBoard = await view.findByLabelText("Milestones board", {}, { timeout: 5000 });
-    await within(milestonesBoard).findByRole("button", { name: /#12 修复懒加载/ });
-    const groupList = within(milestonesBoard).getByRole("list", { name: "Milestone groups" });
-    const projectSidebar = view.container.querySelector(".project-sidebar") as HTMLElement;
-    expect(projectSidebar).toBeInTheDocument();
-    const milestoneFilters = await waitFor(() =>
-      within(projectSidebar).getByRole("navigation", { name: "Milestone filters" })
-    );
-    expect(within(milestonesBoard).queryByLabelText("Milestones filters")).toBeNull();
-    expect(within(milestoneFilters).getByRole("button", { name: /All milestones/ })).toBeInTheDocument();
-    expect(within(milestoneFilters).getByRole("button", { name: /v1/ })).toBeInTheDocument();
-    expect(within(milestoneFilters).getByRole("button", { name: /v2/ })).toBeInTheDocument();
-    expect(within(milestoneFilters).getByRole("button", { name: /No milestone/ })).toBeInTheDocument();
-    expect(within(projectSidebar).getByRole("button", { name: "刷新 Milestones" })).toBeInTheDocument();
-    expect(within(milestonesBoard).getByLabelText("v1 milestone")).toHaveTextContent("2");
-    expect(within(milestonesBoard).getByLabelText("v2 milestone")).toHaveTextContent("1");
-    expect(within(milestonesBoard).getByLabelText("No milestone milestone")).toHaveTextContent("1");
-    expect(within(milestonesBoard).getByRole("button", { name: /#12 修复懒加载/ })).toBeInTheDocument();
-    expect(within(milestonesBoard).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
-    expect(within(milestonesBoard).getByRole("button", { name: /#66 整理文档/ })).toBeInTheDocument();
-    const unassignedButton = within(milestonesBoard).getByRole("button", { name: /#88 整理文档/ });
-    expect(unassignedButton).toBeInTheDocument();
-    expect(within(unassignedButton).getByText("area: docs")).toBeInTheDocument();
-    expect(within(unassignedButton).getByText("v2.0 roadmap")).toBeInTheDocument();
-    expect(within(unassignedButton).getByText("+2")).toBeInTheDocument();
-    expect(unassignedButton).not.toHaveTextContent("No milestone");
-    expect(unassignedButton).not.toHaveTextContent("sena");
-    const overview = within(projectSidebar).getByLabelText("Milestones 摘要");
-    expect(overview).toHaveTextContent("Overview4");
-    expect(listGitHubIssues).toHaveBeenCalledWith(
-      "sena-nana/remote-repo",
-      expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
-      { forceRefresh: false },
-    );
-    expect(listGitHubPullRequests).toHaveBeenCalledWith(
-      "sena-nana/remote-repo",
-      expect.objectContaining({ state: "all", sort: "updated", direction: "desc", perPage: 100 }),
-      { forceRefresh: false },
-    );
+    await fireEvent.click(within(issueList).getByRole("button", { name: "显示更多 2 个" }));
+    expect(within(issueList).getByLabelText("51 / 51 Issues")).toBeInTheDocument();
+    expect(within(issueList).getByLabelText("无里程碑 Issues")).toHaveTextContent("#151 批量事项 52");
+    expect(within(issueList).queryByRole("button", { name: /显示更多/ })).toBeNull();
+  });
 
-    await fireEvent.click(within(milestoneFilters).getByRole("button", { name: /v2/ }));
-    expect(within(milestonesBoard).getByRole("button", { name: /#66 整理文档/ })).toBeInTheDocument();
-    expect(within(milestonesBoard).queryByRole("button", { name: /#12 修复懒加载/ })).toBeNull();
-    expect(within(milestonesBoard).queryByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeNull();
-    expect(within(milestonesBoard).queryByRole("button", { name: /#88 整理文档/ })).toBeNull();
+  it("Issues 首次请求完成前显示真实加载状态", async () => {
+    const pending = deferred<GitHubIssue[]>();
+    vi.mocked(listGitHubIssues).mockReturnValue(pending.promise);
+    const view = await renderProjectPanel({ repoFullName: "sena-nana/remote-repo" });
 
-    await fireEvent.click(within(milestoneFilters).getByRole("button", { name: /All milestones/ }));
-    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "PRs" }));
-    expect(within(milestonesBoard).getByRole("button", { name: /#52 接入 Pull Request 工作流/ })).toBeInTheDocument();
-    expect(within(milestonesBoard).queryByRole("button", { name: /#12 修复懒加载/ })).toBeNull();
+    await fireEvent.click(view.getByRole("tab", { name: "Issues" }));
+    expect(await view.findByText("正在读取 Issues。")).toBeInTheDocument();
+    expect(view.queryByText("没有匹配的 Issue。")).toBeNull();
 
-    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "全部" }));
-    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "Closed" }));
-    expect(within(milestonesBoard).getByRole("button", { name: /#34 已关闭问题/ })).toBeInTheDocument();
-    expect(within(milestonesBoard).queryByRole("button", { name: /#66 整理文档/ })).toBeNull();
-
-    await fireEvent.click(within(projectSidebar).getByRole("button", { name: "Open" }));
-    await fireEvent.click(within(milestonesBoard).getByRole("button", { name: /#52 接入 Pull Request 工作流/ }));
-    expect(await view.findByRole("heading", { level: 3, name: "#52 接入 Pull Request 工作流" }, { timeout: 5000 })).toBeInTheDocument();
-    await waitFor(() => {
-      expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });
-    });
+    pending.resolve(githubIssues);
+    expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
+    expect(view.queryByText("正在读取 Issues。")).toBeNull();
   });
 
   it("Actions 列表同一行显示标题与右侧信息，并省略同名来源", async () => {
@@ -2179,6 +2175,10 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
+    const pullGroup = view.getByLabelText("v1 Pull Requests");
+    expect(pullGroup).toHaveTextContent("#52 接入 Pull Request 工作流");
+    expect(pullGroup).not.toHaveTextContent("#12 修复懒加载");
+    expect(pullGroup).toHaveAttribute("data-agent-id", "repo.pulls.group.milestone.1");
     expect(view.queryByRole("button", { name: "合并" })).toBeNull();
     expect(view.queryByRole("button", { name: "关闭" })).toBeNull();
     expect(listGitHubPullRequests).toHaveBeenCalledWith(
@@ -2323,6 +2323,7 @@ describe("RepoProjectPanel", () => {
 
     await fireEvent.click(view.getByRole("tab", { name: "Pull Requests" }));
     expect(await view.findByText("#55 无元数据 PR")).toBeInTheDocument();
+    expect(view.getByLabelText("无里程碑 Pull Requests")).toHaveTextContent("#55 无元数据 PR");
     expect(view.getByText("无标签 · 未分配 · 无项目")).toBeInTheDocument();
   });
 
