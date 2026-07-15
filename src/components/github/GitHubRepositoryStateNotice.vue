@@ -3,6 +3,7 @@ import { AlertTriangle, LoaderCircle, RefreshCw } from "@lucide/vue";
 
 withDefaults(defineProps<{
   state: "loading" | "empty" | "limited" | "error";
+  agentId?: string;
   message?: string;
   retryable?: boolean;
   compact?: boolean;
@@ -25,6 +26,7 @@ const emit = defineEmits<{
     class="github-repository-state"
     :class="[`is-${state}`, { 'is-compact': compact }]"
     :role="state === 'error' ? 'alert' : 'status'"
+    :data-agent-id="agentId"
   >
     <LoaderCircle v-if="state === 'loading'" :size="14" aria-hidden="true" class="sb-spin" />
     <AlertTriangle v-else-if="state === 'limited' || state === 'error'" :size="14" aria-hidden="true" />
@@ -33,7 +35,7 @@ const emit = defineEmits<{
       v-if="state === 'limited'"
       type="button"
       class="ghost github-repository-state__action"
-      data-agent-id="github.repository-state.authorize"
+      :data-agent-id="agentId ? `${agentId}.authorize` : 'github.repository-state.authorize'"
       @click="emit('authorize')"
     >
       {{ actionLabel }}
@@ -42,7 +44,7 @@ const emit = defineEmits<{
       v-else-if="state === 'error' && retryable"
       type="button"
       class="ghost github-repository-state__action"
-      data-agent-id="github.repository-state.retry"
+      :data-agent-id="agentId ? `${agentId}.retry` : 'github.repository-state.retry'"
       @click="emit('retry')"
     >
       <RefreshCw :size="12" aria-hidden="true" />

@@ -272,6 +272,17 @@ describe("基础路由", () => {
     workspaceFallback.setFallbackStopLaunchOverrideForTests(null);
   });
 
+  it("用户资料与组织仓库深链进入独立页面", async () => {
+    const profile = await renderAt("/profile");
+    expect(profile.router.currentRoute.value.fullPath).toBe("/profile");
+    expect(await screen.findByRole("heading", { level: 1, name: "用户资料" })).toBeInTheDocument();
+
+    const organization = await renderAt("/organizations/sena-nana");
+    expect(organization.router.currentRoute.value.fullPath).toBe("/organizations/sena-nana");
+    expect(await screen.findByRole("heading", { level: 1, name: "sena-nana" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("组织仓库")).toBeInTheDocument();
+  });
+
   it("总览页项目代码占比展示本地项目占比", async () => {
     const service = await import("../src/services/workspace");
     const repos = [
