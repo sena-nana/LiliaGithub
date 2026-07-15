@@ -14,6 +14,12 @@ import type {
   GitHubIssue,
 } from "../../services/workspace/types";
 import RepoIssueDetail from "./RepoIssueDetail.vue";
+import RepoMilestoneGroup from "./RepoMilestoneGroup.vue";
+import {
+  groupRepoItemsByMilestone,
+  repoMilestoneGroupAgentSuffix,
+  type RepoMilestoneGroup as RepoMilestoneGroupModel,
+} from "./repoMilestoneGroups";
 
 type IssueState = "open" | "closed" | "all";
 type IssueSort = "created" | "updated" | "comments";
@@ -31,6 +37,7 @@ type IssuePanelFilters = {
 
 type IssueDisplayRow = {
   issue: GitHubIssue;
+  milestone: GitHubIssue["milestone"];
   metaText: string;
   closed: boolean;
 };
@@ -76,17 +83,19 @@ const focusedIssue = computed(() =>
     : props.issues.find((issue) => issue.number === props.focusedIssueNumber) ?? null
 );
 
-const visibleIssues = computed(() => props.issues.slice(0, visibleIssueCount.value));
-const visibleIssueRows = computed<IssueDisplayRow[]>(() =>
-  visibleIssues.value.map((issue) => ({
+const issueRows = computed<IssueDisplayRow[]>(() =>
+  props.issues.map((issue) => ({
     issue,
+    milestone: issue.milestone,
     metaText: issueMetaText(issue),
     closed: issue.state !== "open",
   })),
 );
-const hiddenIssueCount = computed(() =>
-  Math.max(0, props.issues.length - visibleIssueRows.value.length),
+const issueGrouping = computed(() =>
+  groupRepoItemsByMilestone(issueRows.value, visibleIssueCount.value),
 );
+const issueGroups = computed(() => issueGrouping.value.groups);
+const hiddenIssueCount = computed(() => issueGrouping.value.hiddenCount);
 
 watch(
   () => [
@@ -107,6 +116,10 @@ watch(
 
 function showMoreIssues() {
   visibleIssueCount.value += ISSUE_RENDER_PAGE_SIZE;
+}
+
+function issueGroupAgentId(group: RepoMilestoneGroupModel<IssueDisplayRow>) {
+  return `repo.issues.group.${repoMilestoneGroupAgentSuffix(group)}`;
 }
 
 function formatIssueDate(value: string) {
@@ -140,20 +153,30 @@ function issueMetaText(issue: GitHubIssue) {
     />
 
     <template v-else>
-    <h3 class="issues-panel__sr-title">Issues</h3>
-    <div class="issues-list" role="list" aria-label="Issues">
-      <div
-        v-for="row in visibleIssueRows"
-        :key="row.issue.number"
-        class="issues-list__item project-row--issue"
-        :class="{
-          'is-target': isFocused(row.issue.number),
-          'repo-list-row': editingIssueNumber !== row.issue.number,
-          'repo-list-row--with-actions': editingIssueNumber !== row.issue.number,
-        }"
-        :data-issue-number="row.issue.number"
-        role="listitem"
-      >
+      <h3 class="issues-panel__sr-title">Issues</h3>
+      <div class="issues-list" role="list" aria-label="Issues">
+        <RepoMilestoneGroup
+          v-for="group in issueGroups"
+          :key="group.id"
+          :title="group.title"
+          :state="group.state"
+          :visible-count="group.items.length"
+          :total-count="group.totalCount"
+          item-label="Issues"
+          :agent-id="issueGroupAgentId(group)"
+        >
+          <div
+            v-for="row in group.items"
+            :key="row.issue.number"
+            class="issues-list__item project-row--issue"
+            :class="{
+              'is-target': isFocused(row.issue.number),
+              'repo-list-row': editingIssueNumber !== row.issue.number,
+              'repo-list-row--with-actions': editingIssueNumber !== row.issue.number,
+            }"
+            :data-issue-number="row.issue.number"
+            role="listitem"
+          >
         <template v-if="editingIssueNumber !== row.issue.number">
           <span class="issues-list__status repo-list-row__status" :class="{ 'is-closed': row.closed }" :title="row.issue.state">
             <CircleDot v-if="row.issue.state === 'open'" :size="15" aria-hidden="true" />
@@ -249,7 +272,8 @@ function issueMetaText(issue: GitHubIssue) {
             @input="emit('update:editingBody', ($event.target as HTMLTextAreaElement).value)"
           ></textarea>
         </form>
-      </div>
+          </div>
+        </RepoMilestoneGroup>
 
       <p v-if="!issues.length && !loading" class="muted repo-empty issues-list__empty">
         没有匹配的 Issue。
@@ -266,7 +290,7 @@ function issueMetaText(issue: GitHubIssue) {
       >
         显示更多 {{ hiddenIssueCount }} 个
       </button>
-    </div>
+      </div>
     </template>
   </div>
 </template>
@@ -289,6 +313,7 @@ function issueMetaText(issue: GitHubIssue) {
 
 .issues-list {
   display: grid;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -390,8 +415,8 @@ function issueMetaText(issue: GitHubIssue) {
 .issues-list__more {
   width: 100%;
   min-height: 34px;
-  border: 0;
-  border-top: 1px solid var(--border-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font: inherit;

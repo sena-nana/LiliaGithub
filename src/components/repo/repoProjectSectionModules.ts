@@ -6,7 +6,6 @@ export type RepoProjectSectionKey =
   | "history"
   | "files"
   | "readme"
-  | "milestones"
   | "issues"
   | "pulls"
   | "actions"
@@ -28,8 +27,6 @@ const repoLanguageStatsCardModule = createCachedAsyncComponent(() => import("./R
 const repoActionsPanelModule = createCachedAsyncComponent(() => import("./RepoActionsPanel.vue"));
 const repoActionsInfoSidebarModule = createCachedAsyncComponent(() => import("./RepoActionsInfoSidebar.vue"));
 const repoActionsSidebarControlsModule = createCachedAsyncComponent(() => import("./RepoActionsSidebarControls.vue"));
-const repoMilestonesBoardModule = createCachedAsyncComponent(() => import("./RepoMilestonesBoard.vue"));
-const repoMilestonesSidebarModule = createCachedAsyncComponent(() => import("./RepoMilestonesSidebar.vue"));
 const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
 const repoPullRequestsSidebarControlsModule = createCachedAsyncComponent(() => import("./RepoPullRequestsSidebarControls.vue"));
 const repoReleasesPanelModule = createCachedAsyncComponent(() => import("./RepoReleasesPanel.vue"));
@@ -49,8 +46,6 @@ export const RepoLanguageStatsCard = repoLanguageStatsCardModule.component;
 export const RepoActionsPanel = repoActionsPanelModule.component;
 export const RepoActionsInfoSidebar = repoActionsInfoSidebarModule.component;
 export const RepoActionsSidebarControls = repoActionsSidebarControlsModule.component;
-export const RepoMilestonesBoard = repoMilestonesBoardModule.component;
-export const RepoMilestonesSidebar = repoMilestonesSidebarModule.component;
 export const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
 export const RepoPullRequestsSidebarControls = repoPullRequestsSidebarControlsModule.component;
 export const RepoReleasesPanel = repoReleasesPanelModule.component;
@@ -61,7 +56,6 @@ export function preloadRepoProjectSection(section: string) {
   if (section === "history") return Promise.all([repoHistoryPanelModule.load(), commitDetailCardModule.load()]);
   if (section === "files") return Promise.all([repoFilePreviewPaneModule.load(), repoFileTreeCardModule.load()]);
   if (section === "readme") return Promise.all([markdownReadmeModule.load(), repoLanguageStatsCardModule.load()]);
-  if (section === "milestones") return Promise.all([repoMilestonesBoardModule.load(), repoMilestonesSidebarModule.load()]);
   if (section === "issues") return Promise.all([
     repoIssuesPanelModule.load(),
     repoIssuesSidebarControlsModule.load(),
