@@ -9,10 +9,18 @@ export interface WorkspaceSettings {
   hiddenRepoIds: string[];
   managedRepoIds: string[];
   systemGitRepoIds: string[];
+  repoBindings: Record<string, WorkspaceRepositoryBinding>;
   repoGroups: WorkspaceRepoGroup[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
   contributionIdentities: ContributionIdentity[];
+}
+
+export interface WorkspaceRepositoryBinding {
+  repositoryId: number | null;
+  remoteFullName: string;
+  canonicalRemoteUrl: string;
+  localPath: string;
 }
 
 export interface WorkspaceStartupCache {
@@ -205,6 +213,7 @@ export interface GitHubRepoSummary {
   id: number;
   name: string;
   fullName: string;
+  /** @deprecated Prefer owner.login. Kept for persisted data compatibility. */
   ownerLogin: string;
   private: boolean;
   disabled: boolean;
@@ -215,11 +224,44 @@ export interface GitHubRepoSummary {
   updatedAt: string;
   cloneUrl: string;
   htmlUrl: string;
+  owner?: GitHubRepositoryOwner | null;
+  permissions?: GitHubRepositoryPermissions | null;
 }
 
 export interface GitHubRepoPage {
   items: GitHubRepoSummary[];
   nextPage: number | null;
+  scope?: GitHubRepositoryScope;
+}
+
+export type GitHubOwnerKind = "user" | "organization";
+
+export interface GitHubRepositoryOwner {
+  login: string;
+  kind: GitHubOwnerKind;
+  avatarUrl: string | null;
+}
+
+export interface GitHubRepositoryPermissions {
+  pull: boolean;
+  push: boolean;
+  admin: boolean;
+}
+
+export type GitHubRepositoryScope =
+  | { kind: "all" }
+  | { kind: "personal"; login: string }
+  | { kind: "organization"; login: string };
+
+export type GitHubOrganizationSource = "membership" | "repository_access" | "both";
+
+export interface GitHubOrganizationSummary {
+  login: string;
+  avatarUrl: string | null;
+  membershipVisible: boolean;
+  membershipComplete: boolean;
+  repositoryAccessVisible: boolean;
+  source: GitHubOrganizationSource;
 }
 
 export interface GitHubCommitListOptions {
@@ -228,6 +270,8 @@ export interface GitHubCommitListOptions {
 }
 
 export interface RemoteRepoShortcut {
+  accountLogin?: string | null;
+  repositoryId?: number | null;
   fullName: string;
   name: string;
   private: boolean;
@@ -235,12 +279,20 @@ export interface RemoteRepoShortcut {
   defaultBranch: string | null;
   htmlUrl: string;
   cloneUrl: string;
+  canonicalRemoteUrl?: string | null;
   openedAt: number;
 }
 
 export interface GitHubRepoOwner {
   login: string;
-  kind: "user" | "org" | string;
+  kind: GitHubOwnerKind;
+  avatarUrl: string | null;
+  membershipVisible: boolean;
+  membershipComplete: boolean;
+  membershipRestriction?: "scope_missing" | "sso_required" | "forbidden" | null;
+  membershipRecoveryUrl?: string | null;
+  repositoryAccessVisible: boolean;
+  source: "authenticated_user" | GitHubOrganizationSource;
 }
 
 export interface GitHubRepoTemplate {
@@ -260,9 +312,25 @@ export interface WorkspaceCreateLocalRepoRequest {
   licenseTemplate?: string | null;
 }
 
+export interface WorkspaceCloneRepositoryRef {
+  id: number;
+  fullName: string;
+  cloneUrl: string;
+}
+
+export type WorkspaceCloneTarget =
+  | { kind: "default" }
+  | { kind: "custom"; path: string };
+
+export interface WorkspaceCloneRepoRequest {
+  remoteUrl: string;
+  repository?: WorkspaceCloneRepositoryRef | null;
+  target: WorkspaceCloneTarget;
+}
+
 export interface GitHubCreateRepoRequest {
   owner: string;
-  ownerKind: "user" | "org" | string;
+  ownerKind: GitHubOwnerKind | "org" | string;
   name: string;
   description?: string | null;
   private: boolean;
@@ -740,6 +808,8 @@ export interface RepoSummary {
   currentBranch: string | null;
   remoteUrl: string | null;
   githubFullName: string | null;
+  githubRepositoryId?: number | null;
+  canonicalRemoteUrl?: string | null;
   ahead: number;
   behind: number;
   remoteBranchStates: readonly RepoRemoteBranchState[];

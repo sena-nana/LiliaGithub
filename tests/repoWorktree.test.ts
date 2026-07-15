@@ -56,6 +56,18 @@ describe("repoWorktree helpers", () => {
 
     const mapped = representativeReposByGitHubFullName([secondClone, linked, main]);
 
-    expect(mapped.get("sena-nana/LiliaGithub")).toEqual(main);
+    expect(mapped.get("sena-nana/liliagithub")).toEqual(main);
+  });
+
+  it("GitHub 仓库身份忽略 owner 和仓库名大小写，但不混合不同 owner", () => {
+    const first = repoSummary("first", { githubFullName: "Sena-Nana/Same" });
+    const sameIdentity = repoSummary("second", { githubFullName: "sena-nana/same" });
+    const otherOwner = repoSummary("third", { githubFullName: "other/same" });
+
+    const mapped = representativeReposByGitHubFullName([first, sameIdentity, otherOwner]);
+
+    expect(mapped.size).toBe(2);
+    expect(mapped.has("sena-nana/same")).toBe(true);
+    expect(mapped.has("other/same")).toBe(true);
   });
 });

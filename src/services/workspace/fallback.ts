@@ -46,6 +46,7 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepositoryScope,
   GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
@@ -100,6 +101,7 @@ import type {
   WorkspaceRepoGroup,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
+  WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
 
@@ -412,7 +414,7 @@ const defaultFallbackBinding: GitHubBindingStatus = {
     login: "lilia-user",
     avatarUrl: null,
     boundAt: Date.now(),
-    scopes: ["repo", "workflow", "read:user", "delete_repo", "notifications"],
+    scopes: ["repo", "workflow", "read:user", "read:org", "delete_repo", "notifications"],
     clientIdSource: "bundled",
   },
 };
@@ -536,7 +538,19 @@ function createFallbackGitHubRepos(): GitHubRepoSummary[] {
 let fallbackGitHubRepos: GitHubRepoSummary[] = createFallbackGitHubRepos();
 
 function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
-  return { ...repo };
+  return {
+    ...repo,
+    owner: repo.owner ? { ...repo.owner } : {
+      login: repo.ownerLogin,
+      kind: repo.ownerLogin === "lilia-user" ? "user" : "organization",
+      avatarUrl: null,
+    },
+    permissions: repo.permissions ? { ...repo.permissions } : {
+      pull: true,
+      push: true,
+      admin: true,
+    },
+  };
 }
 
 function renamedGitHubRepoSummary(repo: GitHubRepoSummary, fullName: string, name: string): GitHubRepoSummary {
@@ -546,6 +560,7 @@ function renamedGitHubRepoSummary(repo: GitHubRepoSummary, fullName: string, nam
     name,
     fullName,
     ownerLogin,
+    owner: repo.owner ? { ...repo.owner, login: ownerLogin } : repo.owner,
     cloneUrl: `https://github.com/${fullName}.git`,
     htmlUrl: `https://github.com/${fullName}`,
   };
@@ -725,8 +740,24 @@ function cloneRepoRemote(remote: RepoRemote): RepoRemote {
 
 function createFallbackGitHubRepoOwners(): GitHubRepoOwner[] {
   return [
-    { login: "lilia-user", kind: "user" },
-    { login: "sena-nana", kind: "org" },
+    {
+      login: "lilia-user",
+      kind: "user",
+      avatarUrl: null,
+      membershipVisible: true,
+      membershipComplete: true,
+      repositoryAccessVisible: true,
+      source: "authenticated_user",
+    },
+    {
+      login: "sena-nana",
+      kind: "organization",
+      avatarUrl: null,
+      membershipVisible: true,
+      membershipComplete: true,
+      repositoryAccessVisible: true,
+      source: "both",
+    },
   ];
 }
 
@@ -2411,6 +2442,7 @@ function createFallbackSettings(): WorkspaceSettings {
       hiddenRepoIds: [],
       managedRepoIds: fallbackRepos.map((repo) => repo.id),
       systemGitRepoIds: [],
+      repoBindings: {},
       repoGroups: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
@@ -2443,6 +2475,7 @@ function createFallbackSettings(): WorkspaceSettings {
     hiddenRepoIds: [],
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     systemGitRepoIds: [],
+    repoBindings: {},
     repoGroups: [
       { id: "group-lilia-apps", name: "Lilia Apps", repoIds: ["LiliaGithub", "Lilia", "LiliaTodo"] },
       { id: "group-runtime-docs", name: "Runtime & Docs", repoIds: ["Mutsuki", "LiliaDocs"] },
@@ -3141,6 +3174,9 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     hiddenRepoIds: [...settings.hiddenRepoIds],
     managedRepoIds: [...settings.managedRepoIds],
     systemGitRepoIds: [...settings.systemGitRepoIds],
+    repoBindings: Object.fromEntries(
+      Object.entries(settings.repoBindings ?? {}).map(([repoId, binding]) => [repoId, { ...binding }]),
+    ),
     repoGroups: settings.repoGroups.map(cloneWorkspaceRepoGroup),
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
     contributionIdentities: (settings.contributionIdentities ?? []).map((identity) => ({ ...identity })),
@@ -3153,6 +3189,38 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
       ]),
     ),
   };
+}
+
+function currentFallbackGitHubAccountLogin(): string | null {
+  return fallbackSettings.githubBinding?.login.trim() || null;
+}
+
+function migrateFallbackRemoteRepoShortcuts(): void {
+  const accountLogin = currentFallbackGitHubAccountLogin();
+  if (!accountLogin) return;
+  fallbackSettings = {
+    ...fallbackSettings,
+    remoteRepoShortcuts: fallbackSettings.remoteRepoShortcuts.map((shortcut) => {
+      const fullName = normalizeRemoteRepoId(shortcut.fullName);
+      return {
+        ...shortcut,
+        accountLogin: shortcut.accountLogin?.trim() || accountLogin,
+        canonicalRemoteUrl: fullName ? `https://github.com/${fullName}.git` : shortcut.canonicalRemoteUrl,
+      };
+    }),
+  };
+}
+
+function visibleFallbackSettings(): WorkspaceSettings {
+  migrateFallbackRemoteRepoShortcuts();
+  const settings = cloneWorkspaceSettings(fallbackSettings);
+  const accountLogin = currentFallbackGitHubAccountLogin();
+  settings.remoteRepoShortcuts = accountLogin
+    ? settings.remoteRepoShortcuts.filter(
+      (shortcut) => shortcut.accountLogin?.toLowerCase() === accountLogin.toLowerCase(),
+    )
+    : [];
+  return settings;
 }
 
 function cloneContributionIdentityRecommendationResult(
@@ -3663,7 +3731,7 @@ function recordFallbackTask(
 }
 
 export function getWorkspaceSettings(): Promise<WorkspaceSettings> {
-  return call("workspace_get_settings", undefined, () => cloneWorkspaceSettings(fallbackSettings));
+  return call("workspace_get_settings", undefined, visibleFallbackSettings);
 }
 
 function startupCacheMatchesSettings(cache: WorkspaceStartupCache | null) {
@@ -3745,7 +3813,7 @@ export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettin
     fallbackBaselineRepoKeys.clear();
     fallbackSettings = { ...fallbackSettings, workspaceRoot };
     fallbackStartupCache = null;
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -3765,7 +3833,7 @@ export function setContributionIdentities(
     });
     fallbackSettings = { ...fallbackSettings, contributionIdentities };
     fallbackStartupCache = null;
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -3798,7 +3866,7 @@ export function setRepoSetting(
         value,
       ),
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -3814,7 +3882,7 @@ export function setRepoAutoSync(repoId: string, autoSync: boolean): Promise<Work
         autoSync,
       ),
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -3959,17 +4027,29 @@ function inferRepoDirectoryName(remoteUrl: string) {
   return parts[parts.length - 1] || `cloned-repo-${fallbackCloneIndex++}`;
 }
 
-export function cloneRepo(remoteUrl: string, directoryName?: string | null): Promise<RepoSummary> {
-  return call("workspace_clone_repo", { remoteUrl, directoryName: directoryName ?? null }, () => {
-    const name = directoryName?.trim() || inferRepoDirectoryName(remoteUrl);
+export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<RepoSummary> {
+  return call("workspace_clone_repo", { request }, () => {
+    const remoteUrl = request.repository?.cloneUrl || request.remoteUrl;
+    const inferredName = inferRepoDirectoryName(remoteUrl);
+    const fullName = request.repository?.fullName
+      ?? remoteUrl.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/i)?.slice(1, 3).join("/")
+      ?? null;
+    const defaultRelativePath = fullName ?? inferredName;
+    const targetPath = request.target.kind === "custom"
+      ? request.target.path.trim()
+      : `C:\\Files\\workspace\\${defaultRelativePath.split("/").join("\\")}`;
+    const name = inferRepoDirectoryName(targetPath || inferredName);
+    const relativePath = request.target.kind === "default" ? defaultRelativePath : name;
     const repo: RepoSummary = {
-      id: name,
+      id: relativePath,
       name,
-      path: `C:\\Files\\workspace\\${name}`,
-      relativePath: name,
+      path: targetPath,
+      relativePath,
       currentBranch: "main",
       remoteUrl,
-      githubFullName: remoteUrl.includes("github.com") ? `sena-nana/${name}` : null,
+      githubFullName: fullName,
+      githubRepositoryId: request.repository?.id ?? null,
+      canonicalRemoteUrl: fullName ? `https://github.com/${fullName}.git` : null,
       ahead: 0,
       behind: 0,
       remoteBranchStates: [{
@@ -3994,7 +4074,7 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
       languageStatsUpdatedAt: Date.now(),
       worktree: {
         role: "standalone",
-        sharedRepoKey: `repo:${name}`,
+        sharedRepoKey: `repo:${relativePath}`,
         mainRepoId: null,
       },
     };
@@ -4002,6 +4082,15 @@ export function cloneRepo(remoteUrl: string, directoryName?: string | null): Pro
     fallbackSettings = {
       ...fallbackSettings,
       managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, repo.id])).sort(),
+      repoBindings: fullName ? {
+        ...fallbackSettings.repoBindings,
+        [repo.id]: {
+          repositoryId: request.repository?.id ?? null,
+          remoteFullName: fullName,
+          canonicalRemoteUrl: `https://github.com/${fullName}.git`,
+          localPath: targetPath,
+        },
+      } : fallbackSettings.repoBindings,
     };
     return { ...repo };
   });
@@ -4098,7 +4187,7 @@ export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
         localContributionCache,
       };
     }
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4133,7 +4222,7 @@ export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
         },
       ],
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4159,7 +4248,7 @@ export function renameRepoGroup(groupId: string, name: string): Promise<Workspac
         group.id === normalizedGroupId ? { ...group, name: normalizedName } : group
       ),
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4175,7 +4264,7 @@ export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
       ...fallbackSettings,
       repoGroups: nextGroups,
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4200,7 +4289,7 @@ export function moveRepoToGroup(repoId: string, groupId: string | null): Promise
         ].sort(),
       })),
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4215,10 +4304,13 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
     delete projectLaunchConfigs[repoId];
     const repoSyncPreferences = { ...fallbackSettings.repoSyncPreferences };
     delete repoSyncPreferences[repoId];
+    const repoBindings = { ...fallbackSettings.repoBindings };
+    delete repoBindings[repoId];
     fallbackSettings = {
       ...fallbackSettings,
       projectLaunchConfigs,
       repoSyncPreferences,
+      repoBindings,
       managedRepoIds: fallbackSettings.managedRepoIds.filter((id) => id !== repoId),
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
       systemGitRepoIds: fallbackSettings.systemGitRepoIds.filter((id) => id !== repoId),
@@ -4237,7 +4329,7 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
       delete cache.reposById[repoId];
       fallbackStartupCache = cache;
     }
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4246,6 +4338,8 @@ function normalizeRemoteRepoShortcut(repo: RemoteRepoShortcut): RemoteRepoShortc
   const parts = fullName.split("/").filter(Boolean);
   const name = repo.name.trim() || parts[parts.length - 1] || fullName;
   return {
+    accountLogin: currentFallbackGitHubAccountLogin(),
+    repositoryId: repo.repositoryId ?? null,
     fullName,
     name,
     private: repo.private,
@@ -4253,12 +4347,16 @@ function normalizeRemoteRepoShortcut(repo: RemoteRepoShortcut): RemoteRepoShortc
     defaultBranch: repo.defaultBranch?.trim() || null,
     htmlUrl: repo.htmlUrl.trim() || `https://github.com/${fullName}`,
     cloneUrl: repo.cloneUrl.trim() || `https://github.com/${fullName}.git`,
+    canonicalRemoteUrl: `https://github.com/${fullName}.git`,
     openedAt: Date.now(),
   };
 }
 
 export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
   return call("workspace_remember_remote_repo", { repo }, () => {
+    migrateFallbackRemoteRepoShortcuts();
+    const accountLogin = currentFallbackGitHubAccountLogin();
+    if (!accountLogin) throw new Error("请先绑定 GitHub 账号");
     const shortcut = normalizeRemoteRepoShortcut(repo);
     const shortcutKey = normalizeRemoteRepoIdKey(shortcut.fullName);
     fallbackSettings = {
@@ -4267,26 +4365,31 @@ export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceS
         shortcut,
         ...fallbackSettings.remoteRepoShortcuts.filter((item) => {
           const key = normalizeRemoteRepoIdKey(item.fullName);
-          return key === null || key !== shortcutKey;
+          const sameAccount = item.accountLogin?.toLowerCase() === accountLogin.toLowerCase();
+          return !sameAccount || key === null || key !== shortcutKey;
         }),
       ].sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
 export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {
   return call("workspace_forget_remote_repo", { fullName }, () => {
+    migrateFallbackRemoteRepoShortcuts();
+    const accountLogin = currentFallbackGitHubAccountLogin();
+    if (!accountLogin) throw new Error("请先绑定 GitHub 账号");
     const target = normalizeRemoteRepoIdKey(fullName);
-    if (!target) return cloneWorkspaceSettings(fallbackSettings);
+    if (!target) return visibleFallbackSettings();
     fallbackSettings = {
       ...fallbackSettings,
       remoteRepoShortcuts: fallbackSettings.remoteRepoShortcuts.filter((repo) => {
         const key = normalizeRemoteRepoIdKey(repo.fullName);
-        return key === null || key !== target;
+        const sameAccount = repo.accountLogin?.toLowerCase() === accountLogin.toLowerCase();
+        return !sameAccount || key === null || key !== target;
       }),
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4296,7 +4399,7 @@ export function unhideRepo(repoId: string): Promise<WorkspaceSettings> {
       ...fallbackSettings,
       hiddenRepoIds: fallbackSettings.hiddenRepoIds.filter((id) => id !== repoId),
     };
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 
@@ -4637,20 +4740,37 @@ export function unbindGitHub(): Promise<void> {
   });
 }
 
-export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
-  return call("github_list_repos", { page: page ?? null }, () => {
+export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage>;
+export function listGitHubRepos(scope: GitHubRepositoryScope, page?: number | null): Promise<GitHubRepoPage>;
+export function listGitHubRepos(
+  scopeOrPage: GitHubRepositoryScope | number | null = { kind: "all" },
+  requestedPage?: number | null,
+): Promise<GitHubRepoPage> {
+  const scope = typeof scopeOrPage === "object" && scopeOrPage !== null
+    ? scopeOrPage
+    : { kind: "all" } satisfies GitHubRepositoryScope;
+  const page = typeof scopeOrPage === "number" ? scopeOrPage : requestedPage ?? 1;
+  return call("github_list_repos", { scope, page }, () => {
     if (fallbackGitHubReposError) throw new Error(fallbackGitHubReposError);
-    if (fallbackGitHubRepoPagesOverride) {
-      const pageIndex = Math.max(0, (page ?? 1) - 1);
+    if (scope.kind === "all" && fallbackGitHubRepoPagesOverride) {
+      const pageIndex = Math.max(0, page - 1);
       const fallbackPage = fallbackGitHubRepoPagesOverride[pageIndex] ?? { items: [], nextPage: null };
       return {
         items: fallbackPage.items.map(cloneGitHubRepoSummary),
         nextPage: fallbackPage.nextPage,
+        scope,
       };
     }
+    const login = scope.kind === "all" ? null : scope.login.trim().toLocaleLowerCase();
+    const matching = allFallbackGitHubRepos().filter((repo) =>
+      login === null || (repo.owner?.login ?? repo.ownerLogin).toLocaleLowerCase() === login
+    );
+    const start = Math.max(0, page - 1) * 100;
+    const items = matching.slice(start, start + 100);
     return {
-      items: fallbackGitHubRepos.map(cloneGitHubRepoSummary),
-      nextPage: null,
+      items: items.map(cloneGitHubRepoSummary),
+      nextPage: start + items.length < matching.length ? page + 1 : null,
+      scope,
     };
   });
 }
@@ -4782,6 +4902,14 @@ export function createGitHubRepo(request: GitHubCreateRepoRequest): Promise<GitH
       updatedAt: now,
       cloneUrl: `https://github.com/${fullName}.git`,
       htmlUrl: `https://github.com/${fullName}`,
+      owner: {
+        login: owner,
+        kind: request.ownerKind === "organization" || request.ownerKind === "org"
+          ? "organization"
+          : "user",
+        avatarUrl: null,
+      },
+      permissions: { pull: true, push: true, admin: true },
     };
     fallbackGitHubRepos.push(repo);
     fallbackGitHubRepoManagement[fullName] = {
@@ -7096,7 +7224,7 @@ export function pushRepoWithSystemGit(
 export function useDefaultTokenAuthForRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("repo_use_default_token_auth", { repoId }, () => {
     fallbackSettings.systemGitRepoIds = fallbackSettings.systemGitRepoIds.filter((id) => id !== repoId);
-    return cloneWorkspaceSettings(fallbackSettings);
+    return visibleFallbackSettings();
   });
 }
 

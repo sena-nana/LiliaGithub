@@ -37,6 +37,7 @@ import type {
   RepoRemoteSyncPolicy,
   RepoSyncOperationResult,
   WorkspaceCreateLocalRepoRequest,
+  WorkspaceCloneRepoRequest,
   BulkSyncPreview,
   BulkSyncResult,
 } from "../../services/workspace";
@@ -820,10 +821,10 @@ export function resetRepositoryRuntimeForTests() {
   addLocalRepoPromise = null;
 }
 
-export async function cloneRepo(remoteUrl: string, directoryName?: string | null) {
+export async function cloneRepo(request: WorkspaceCloneRepoRequest) {
   state.error = null;
   const service = await loadWorkspaceService();
-  const summary = await service.cloneRepo(remoteUrl, directoryName);
+  const summary = await service.cloneRepo(request);
   upsertRepo(summary);
   return summary;
 }

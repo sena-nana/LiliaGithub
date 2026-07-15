@@ -5,6 +5,7 @@ import {
   createGitHubRepo,
   listGitHubRepoOwners,
   listGitHubRepoTemplates,
+  type GitHubRepoOwner,
   type GitHubRepoSummary,
   type GitHubRepoTemplate,
 } from "../src/services/workspace";
@@ -35,6 +36,18 @@ function githubRepo(name: string, id: number): GitHubRepoSummary {
     updatedAt: "2026-06-20T00:00:00Z",
     cloneUrl: `https://github.com/sena-nana/${name}.git`,
     htmlUrl: `https://github.com/sena-nana/${name}`,
+  };
+}
+
+function githubOwner(login: string, kind: GitHubRepoOwner["kind"]): GitHubRepoOwner {
+  return {
+    login,
+    kind,
+    avatarUrl: null,
+    membershipVisible: kind === "user" || kind === "organization",
+    membershipComplete: true,
+    repositoryAccessVisible: kind === "user",
+    source: kind === "user" ? "authenticated_user" : "membership",
   };
 }
 
@@ -105,12 +118,12 @@ describe("RepoCreateCard", () => {
 
   it("创建仓库请求返回前关闭弹窗时忽略旧结果", async () => {
     const createRequest = deferred<GitHubRepoSummary>();
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(createGitHubRepo).mockReturnValue(createRequest.promise);
     const view = await renderRemoteRepoCard();
 
     const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
-    await within(dialog).findByRole("button", { name: "sena-nana · user" });
+    await within(dialog).findByRole("button", { name: "sena-nana · 个人" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "new-repo");
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
@@ -140,31 +153,61 @@ describe("RepoCreateCard", () => {
 
   it("创建 GitHub 仓库时默认选择 user owner 并将 user 排在最上方", async () => {
     vi.mocked(listGitHubRepoOwners).mockResolvedValue([
-      { login: "sena-nana", kind: "org" },
-      { login: "team-lilia", kind: "org" },
-      { login: "lilia-user", kind: "user" },
+      githubOwner("sena-nana", "organization"),
+      githubOwner("team-lilia", "organization"),
+      githubOwner("lilia-user", "user"),
     ]);
     await renderRemoteRepoCard();
 
     const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
-    const ownerTrigger = await within(dialog).findByRole("button", { name: "lilia-user · user" });
+    const ownerTrigger = await within(dialog).findByRole("button", { name: "lilia-user · 个人" });
     await fireEvent.click(ownerTrigger);
 
     const ownerOptions = await screen.findAllByRole("option");
     expect(ownerOptions.map((option) => option.textContent?.trim())).toEqual([
-      "lilia-user · user",
-      "sena-nana · org",
-      "team-lilia · org",
+      "lilia-user · 个人",
+      "sena-nana · 组织",
+      "team-lilia · 组织",
     ]);
   });
 
+  it("owner 加载失败时显示错误并可重试", async () => {
+    vi.mocked(listGitHubRepoOwners)
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce([githubOwner("sena-nana", "user")]);
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    expect(await within(dialog).findByText(/账号与组织加载失败/)).toBeInTheDocument();
+    const retry = within(dialog).getByRole("button", { name: "重试" });
+    expect(retry).toHaveAttribute("data-agent-id", "repo-create.owner.retry");
+    await fireEvent.click(retry);
+
+    expect(await within(dialog).findByRole("button", { name: "sena-nana · 个人" })).toBeEnabled();
+    expect(listGitHubRepoOwners).toHaveBeenCalledTimes(2);
+  });
+
+  it("选择组织时不预判创建权限", async () => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([
+      githubOwner("sena-nana", "user"),
+      githubOwner("team-lilia", "organization"),
+    ]);
+    await renderRemoteRepoCard();
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await fireEvent.click(await within(dialog).findByRole("button", { name: "sena-nana · 个人" }));
+    await fireEvent.click(await screen.findByRole("option", { name: "team-lilia · 组织" }));
+
+    expect(within(dialog).getByText("组织将根据当前账号权限确认创建请求。")).toBeInTheDocument();
+  });
+
   it("可只创建远程 GitHub 仓库并关闭弹窗", async () => {
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(createGitHubRepo).mockResolvedValue(githubRepo("remote-only", 3));
     const view = await renderRemoteRepoCard();
 
     const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
-    await within(dialog).findByRole("button", { name: "sena-nana · user" });
+    await within(dialog).findByRole("button", { name: "sena-nana · 个人" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "remote-only");
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建" }));
 
@@ -181,7 +224,7 @@ describe("RepoCreateCard", () => {
   });
 
   it("创建 GitHub 仓库时传递模板仓库字段并自动克隆", async () => {
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(listGitHubRepoTemplates).mockResolvedValue([
       githubTemplate("template", 20, { description: "template source" }),
     ]);
@@ -194,7 +237,7 @@ describe("RepoCreateCard", () => {
     const view = await renderRemoteRepoCard();
 
     const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
-    await within(dialog).findByRole("button", { name: "sena-nana · user" });
+    await within(dialog).findByRole("button", { name: "sena-nana · 个人" });
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "from-template");
     await fireEvent.update(within(dialog).getByLabelText("描述"), "template repo");
     await fireEvent.click(within(dialog).getByLabelText("Private"));
@@ -219,10 +262,15 @@ describe("RepoCreateCard", () => {
         templateFullName: "sena-nana/template",
         includeAllBranches: true,
       }));
-      expect(workspace.cloneRepo).toHaveBeenCalledWith(
-        "https://github.com/sena-nana/from-template.git",
-        "from-template",
-      );
+      expect(workspace.cloneRepo).toHaveBeenCalledWith({
+        remoteUrl: "https://github.com/sena-nana/from-template.git",
+        repository: {
+          id: 2,
+          fullName: "sena-nana/from-template",
+          cloneUrl: "https://github.com/sena-nana/from-template.git",
+        },
+        target: { kind: "default" },
+      });
       expect(workspace.refreshRepos).toHaveBeenCalledTimes(1);
     });
     expect(view.emitted("remoteCloned")?.[0]).toEqual([
@@ -235,7 +283,7 @@ describe("RepoCreateCard", () => {
 
   it("仅在启用模板时加载，并在同一弹窗会话复用成功结果、新会话重新加载", async () => {
     const firstLoad = deferred<GitHubRepoTemplate[]>();
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(listGitHubRepoTemplates)
       .mockReturnValueOnce(firstLoad.promise)
       .mockResolvedValueOnce([githubTemplate("second-session", 22)]);
@@ -278,7 +326,7 @@ describe("RepoCreateCard", () => {
   });
 
   it("远端没有模板仓库时显示空态并保持创建操作不可用", async () => {
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(listGitHubRepoTemplates).mockResolvedValue([]);
     await renderRemoteRepoCard();
 
@@ -293,7 +341,7 @@ describe("RepoCreateCard", () => {
   });
 
   it("模板仓库加载失败后可重试", async () => {
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(listGitHubRepoTemplates)
       .mockRejectedValueOnce(new Error("network unavailable"))
       .mockResolvedValueOnce([githubTemplate("retry-template", 23)]);
@@ -316,7 +364,7 @@ describe("RepoCreateCard", () => {
 
   it("取消模板模式后忽略迟到的模板列表并在再次启用时重新加载", async () => {
     const staleLoad = deferred<GitHubRepoTemplate[]>();
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(listGitHubRepoTemplates)
       .mockReturnValueOnce(staleLoad.promise)
       .mockResolvedValueOnce([]);
@@ -339,7 +387,7 @@ describe("RepoCreateCard", () => {
 
   it("关闭弹窗后忽略迟到的模板列表", async () => {
     const staleLoad = deferred<GitHubRepoTemplate[]>();
-    vi.mocked(listGitHubRepoOwners).mockResolvedValue([{ login: "sena-nana", kind: "user" }]);
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([githubOwner("sena-nana", "user")]);
     vi.mocked(listGitHubRepoTemplates)
       .mockReturnValueOnce(staleLoad.promise)
       .mockResolvedValueOnce([]);

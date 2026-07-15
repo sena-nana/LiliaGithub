@@ -31,12 +31,13 @@ use lilia_github_contracts::workspace::{
     GitHubCreatePullRequestRequest, GitHubCreateReleaseRequest, GitHubCreateRepoRequest,
     GitHubDevelopmentItem, GitHubDeviceFlowPollResult, GitHubDeviceFlowStart,
     GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion, GitHubIssueFilterMetadata,
-    GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest,
+    GitHubIssueMilestone, GitHubIssueProjectItem, GitHubMergePullRequestRequest, GitHubOwnerKind,
     GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest, GitHubPullRequestCheck,
     GitHubPullRequestDiscussion, GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
     GitHubRepoPage, GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
-    GitHubRepoTemplate, GitHubRepoWorkflowPermissionsRequest, GitHubRulesetSummary,
+    GitHubRepoTemplate, GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner,
+    GitHubRepositoryPermissions, GitHubRepositoryScope, GitHubRulesetSummary,
     GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
     GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact, GitHubWorkflowArtifactEntry,
     GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog, GitHubWorkflowJobStep,
@@ -46,8 +47,9 @@ use lilia_github_contracts::workspace::{
 
 pub(super) const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 pub(super) const GITHUB_SCOPE: &str =
-    "repo workflow read:user delete_repo read:project notifications";
+    "repo workflow read:user read:org delete_repo read:project notifications";
 pub(super) const GITHUB_REPO_SCOPE: &str = "repo";
+pub(super) const GITHUB_READ_ORG_SCOPE: &str = "read:org";
 pub(super) const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
 pub(super) const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";
 pub(super) const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
@@ -95,6 +97,20 @@ pub(super) struct GitHubUserResponse {
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubRepoOwnerResponse {
     pub(super) login: String,
+    #[serde(rename = "type", default)]
+    pub(super) account_type: Option<String>,
+    #[serde(default)]
+    pub(super) avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(super) struct GitHubRepoPermissionsResponse {
+    #[serde(default)]
+    pub(super) pull: bool,
+    #[serde(default)]
+    pub(super) push: bool,
+    #[serde(default)]
+    pub(super) admin: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +155,8 @@ pub(super) struct GitHubRepoResponse {
     pub(super) clone_url: String,
     pub(super) html_url: String,
     pub(super) owner: GitHubRepoOwnerResponse,
+    #[serde(default)]
+    pub(super) permissions: Option<GitHubRepoPermissionsResponse>,
     #[serde(default)]
     pub(super) homepage: Option<String>,
     #[serde(default)]
@@ -216,6 +234,14 @@ pub(super) struct GitHubContentFileResponse {
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubOrgResponse {
     pub(super) login: String,
+    #[serde(default)]
+    pub(super) avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrgMembershipResponse {
+    pub(super) state: String,
+    pub(super) organization: GitHubOrgResponse,
 }
 
 #[derive(Debug, Deserialize)]
@@ -856,27 +882,236 @@ pub(super) fn github_oauth_headers(builder: RequestBuilder) -> RequestBuilder {
 
 pub(super) fn github_http_error(prefix: &str, response: Response) -> String {
     let status = response.status();
+    let sso = response
+        .headers()
+        .get("X-GitHub-SSO")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
     let body = response.text().unwrap_or_default();
-    github_http_error_from_text(prefix, status, &body)
+    github_http_error_from_parts(prefix, status, &body, sso.as_deref())
 }
 
 fn github_http_error_from_text(prefix: &str, status: StatusCode, body: &str) -> String {
+    github_http_error_from_parts(prefix, status, body, None)
+}
+
+fn github_http_error_from_parts(
+    prefix: &str,
+    status: StatusCode,
+    body: &str,
+    sso: Option<&str>,
+) -> String {
+    let code = if status == StatusCode::UNAUTHORIZED {
+        Some("github_authentication_required")
+    } else if status == StatusCode::FORBIDDEN && sso.is_some() {
+        Some("github_org_sso_required")
+    } else if status == StatusCode::FORBIDDEN {
+        Some("github_forbidden")
+    } else if status == StatusCode::NOT_FOUND {
+        Some("github_repository_not_accessible")
+    } else {
+        None
+    };
     let trimmed = body.trim();
-    if trimmed.is_empty() {
-        return format!("{prefix}：HTTP {status}");
-    }
-    if let Ok(error) = serde_json::from_str::<GitHubErrorResponse>(trimmed) {
+    let detail = if let Ok(error) = serde_json::from_str::<GitHubErrorResponse>(trimmed) {
         if let Some(detail) = error
             .error_description
             .or(error.message)
             .or(error.error)
             .filter(|value| !value.trim().is_empty())
         {
-            return format!("{prefix}：HTTP {status}：{detail}");
+            detail
+        } else {
+            trimmed.chars().take(240).collect::<String>()
+        }
+    } else {
+        trimmed.chars().take(240).collect::<String>()
+    };
+    let message = if detail.is_empty() {
+        format!("{prefix}：HTTP {status}")
+    } else {
+        format!("{prefix}：HTTP {status}：{detail}")
+    };
+    if let Some(code) = code {
+        format!("{code}：{message}")
+    } else {
+        message
+    }
+}
+
+fn github_create_error_signal_text(body: &str) -> String {
+    fn collect_strings(value: &serde_json::Value, strings: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(value) => strings.push(value.to_ascii_lowercase()),
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    collect_strings(value, strings);
+                }
+            }
+            serde_json::Value::Object(values) => {
+                for value in values.values() {
+                    collect_strings(value, strings);
+                }
+            }
+            _ => {}
         }
     }
-    let detail = trimmed.chars().take(240).collect::<String>();
-    format!("{prefix}：HTTP {status}：{detail}")
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return body.to_ascii_lowercase();
+    };
+    let mut strings = Vec::new();
+    collect_strings(&value, &mut strings);
+    strings.join(" ")
+}
+
+fn github_create_error_is_name_conflict(body: &str) -> bool {
+    let signal = github_create_error_signal_text(body);
+    if [
+        "already exists",
+        "already been taken",
+        "name exists",
+        "repository exists",
+    ]
+    .iter()
+    .any(|pattern| signal.contains(pattern))
+    {
+        return true;
+    }
+
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("errors")
+                .and_then(|errors| errors.as_array())
+                .cloned()
+        })
+        .is_some_and(|errors| {
+            errors.iter().any(|error| {
+                let field_is_name = error
+                    .get("field")
+                    .and_then(|field| field.as_str())
+                    .is_some_and(|field| field.eq_ignore_ascii_case("name"));
+                let code_is_conflict = error
+                    .get("code")
+                    .and_then(|code| code.as_str())
+                    .is_some_and(|code| {
+                        matches!(
+                            code.to_ascii_lowercase().as_str(),
+                            "already_exists" | "already-exists" | "exists"
+                        )
+                    });
+                field_is_name && code_is_conflict
+            })
+        })
+}
+
+fn github_create_error_is_policy_restricted(body: &str) -> bool {
+    let signal = github_create_error_signal_text(body);
+    [
+        "organization policy",
+        "repository creation is disabled",
+        "repository creation has been disabled",
+        "repository creation is restricted",
+        "members are not allowed to create",
+        "members cannot create",
+        "outside collaborators cannot create",
+        "visibility is restricted",
+    ]
+    .iter()
+    .any(|pattern| signal.contains(pattern))
+}
+
+fn github_create_repo_error_from_parts(
+    prefix: &str,
+    status: StatusCode,
+    body: &str,
+    sso: Option<&str>,
+    organization_owner: bool,
+) -> String {
+    let (code, guidance) = if status == StatusCode::UNAUTHORIZED {
+        (
+            "github_authentication_required",
+            "GitHub 授权已失效，请重新授权后再创建仓库。",
+        )
+    } else if status == StatusCode::FORBIDDEN && sso.is_some() {
+        (
+            "github_org_sso_required",
+            "组织启用了 SAML SSO，请先为当前 GitHub 授权启用组织访问后重试。",
+        )
+    } else if status == StatusCode::FORBIDDEN
+        && organization_owner
+        && !github_create_error_is_policy_restricted(body)
+    {
+        (
+            "github_org_membership_forbidden",
+            "当前账号不是可创建仓库的组织成员，或组织未向成员开放创建权限。请确认组织成员身份与仓库创建权限。",
+        )
+    } else if status == StatusCode::FORBIDDEN {
+        (
+            "github_repository_policy_restricted",
+            "GitHub 或组织策略禁止创建该仓库。请检查仓库创建策略、可见性限制，或联系组织管理员。",
+        )
+    } else if status == StatusCode::NOT_FOUND {
+        (
+            "github_owner_not_found",
+            "未找到目标 owner，或当前授权无法访问。请检查账号或组织名称与授权范围。",
+        )
+    } else if status == StatusCode::UNPROCESSABLE_ENTITY
+        && github_create_error_is_name_conflict(body)
+    {
+        (
+            "github_repository_name_conflict",
+            "目标 owner 下已存在同名仓库，请更换仓库名后重试。",
+        )
+    } else if status == StatusCode::UNPROCESSABLE_ENTITY
+        && github_create_error_is_policy_restricted(body)
+    {
+        (
+            "github_repository_policy_restricted",
+            "GitHub 或组织策略禁止创建该仓库。请检查仓库创建策略、可见性限制，或联系组织管理员。",
+        )
+    } else if status == StatusCode::UNPROCESSABLE_ENTITY {
+        (
+            "github_repository_invalid",
+            "GitHub 拒绝了仓库参数。请检查仓库名、可见性、模板和初始化选项后重试。",
+        )
+    } else {
+        (
+            "github_repository_create_failed",
+            "GitHub 暂时无法创建仓库，请稍后重试。",
+        )
+    };
+    format!("{code}：{prefix}：HTTP {status}：{guidance}")
+}
+
+fn github_create_repo_error(prefix: &str, response: Response, organization_owner: bool) -> String {
+    let status = response.status();
+    let sso = response
+        .headers()
+        .get("X-GitHub-SSO")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let body = response.text().unwrap_or_default();
+    github_create_repo_error_from_parts(prefix, status, &body, sso.as_deref(), organization_owner)
+}
+
+fn github_create_repo_from_response(
+    prefix: &str,
+    response: Response,
+    organization_owner: bool,
+) -> Result<GitHubRepoResponse, String> {
+    if !response.status().is_success() {
+        return Err(github_create_repo_error(
+            prefix,
+            response,
+            organization_owner,
+        ));
+    }
+    response
+        .json::<GitHubRepoResponse>()
+        .map_err(|error| format!("{prefix}：解析响应失败：{error}"))
 }
 
 fn github_branch_protection_from_response(
@@ -1219,11 +1454,17 @@ pub(super) fn github_send(
 }
 
 pub(super) fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> GitHubRepoSummary {
+    let owner_login = repo.owner.login.clone();
+    let owner = GitHubRepositoryOwner {
+        login: repo.owner.login,
+        kind: github_owner_kind(repo.owner.account_type.as_deref()),
+        avatar_url: repo.owner.avatar_url,
+    };
     GitHubRepoSummary {
         id: repo.id,
         name: repo.name,
         full_name: repo.full_name,
-        owner_login: repo.owner.login,
+        owner_login,
         private: repo.private,
         disabled: repo.disabled,
         archived: repo.archived,
@@ -1233,6 +1474,22 @@ pub(super) fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> Git
         updated_at: repo.updated_at,
         clone_url: repo.clone_url,
         html_url: repo.html_url,
+        owner: Some(owner),
+        permissions: repo
+            .permissions
+            .map(|permissions| GitHubRepositoryPermissions {
+                pull: permissions.pull,
+                push: permissions.push,
+                admin: permissions.admin,
+            }),
+    }
+}
+
+fn github_owner_kind(account_type: Option<&str>) -> GitHubOwnerKind {
+    if account_type.is_some_and(|kind| kind.eq_ignore_ascii_case("organization")) {
+        GitHubOwnerKind::Organization
+    } else {
+        GitHubOwnerKind::User
     }
 }
 
@@ -1260,6 +1517,7 @@ pub(super) fn normalize_remote_repo_shortcut(
 ) -> Result<RemoteRepoShortcut, String> {
     let repo = normalize_github_repo_input(&shortcut.full_name)?;
     shortcut.full_name = repo.full_name;
+    shortcut.account_login = normalize_optional_string(shortcut.account_login);
     shortcut.name =
         normalize_optional_string(Some(shortcut.name)).unwrap_or_else(|| repo.name.clone());
     shortcut.default_branch = normalize_optional_string(shortcut.default_branch);
@@ -1267,6 +1525,7 @@ pub(super) fn normalize_remote_repo_shortcut(
         .unwrap_or_else(|| format!("https://github.com/{}", shortcut.full_name));
     shortcut.clone_url =
         normalize_optional_string(Some(shortcut.clone_url)).unwrap_or(repo.clone_url);
+    shortcut.canonical_remote_url = Some(format!("https://github.com/{}.git", shortcut.full_name));
     shortcut.opened_at = now_millis();
     Ok(shortcut)
 }
@@ -1277,10 +1536,17 @@ pub(super) fn remember_remote_repo_shortcut(
 ) -> Result<(), String> {
     let shortcut = normalize_remote_repo_shortcut(shortcut)?;
     let target = normalize_github_repo_input(&shortcut.full_name)?.full_name;
+    let target_account = shortcut.account_login.as_deref();
     shortcuts.retain(|item| {
-        normalize_github_repo_input(&item.full_name)
-            .map(|repo| !repo.full_name.eq_ignore_ascii_case(&target))
-            .unwrap_or(true)
+        let same_account = match (item.account_login.as_deref(), target_account) {
+            (Some(current), Some(target)) => current.eq_ignore_ascii_case(target),
+            (None, None) => true,
+            _ => false,
+        };
+        !same_account
+            || normalize_github_repo_input(&item.full_name)
+                .map(|repo| !repo.full_name.eq_ignore_ascii_case(&target))
+                .unwrap_or(true)
     });
     shortcuts.push(shortcut);
     shortcuts.sort_by(|a, b| {
@@ -1294,13 +1560,19 @@ pub(super) fn remember_remote_repo_shortcut(
 pub(super) fn forget_remote_repo_shortcut(
     shortcuts: &mut Vec<RemoteRepoShortcut>,
     full_name: &str,
+    account_login: &str,
 ) -> Result<(), String> {
     let repo = normalize_github_repo_input(full_name)?;
     let target = repo.full_name;
     shortcuts.retain(|item| {
-        normalize_github_repo_input(&item.full_name)
-            .map(|current| !current.full_name.eq_ignore_ascii_case(&target))
-            .unwrap_or(true)
+        let same_account = item
+            .account_login
+            .as_deref()
+            .is_some_and(|current| current.eq_ignore_ascii_case(account_login));
+        !same_account
+            || normalize_github_repo_input(&item.full_name)
+                .map(|current| !current.full_name.eq_ignore_ascii_case(&target))
+                .unwrap_or(true)
     });
     Ok(())
 }
@@ -3636,8 +3908,111 @@ pub fn github_unbind(app: AppHandle) -> Result<(), String> {
     save_settings(&app, &settings)
 }
 
+fn github_fetch_repo_response_page(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    affiliation: &str,
+    page: u32,
+) -> Result<(Vec<GitHubRepoResponse>, Option<u32>), String> {
+    let page_string = page.max(1).to_string();
+    let response = github_send(
+        app,
+        "读取 GitHub 仓库失败",
+        github_headers(
+            client.get("https://api.github.com/user/repos").query(&[
+                ("affiliation", affiliation),
+                ("visibility", "all"),
+                ("sort", "full_name"),
+                ("per_page", "100"),
+                ("page", page_string.as_str()),
+            ]),
+            Some(token),
+        ),
+    )?;
+    let next_page = parse_next_page(
+        response
+            .headers()
+            .get(LINK)
+            .and_then(|value| value.to_str().ok()),
+    );
+    let repos = github_json::<Vec<GitHubRepoResponse>>("读取 GitHub 仓库失败", response)?;
+    Ok((repos, next_page))
+}
+
+fn github_organization_repos_endpoint(owner_login: &str) -> Result<String, String> {
+    let login = owner_login.trim();
+    if login.is_empty()
+        || login.len() > 100
+        || !login
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        return Err("github_repository_scope_invalid：组织 login 无效".to_string());
+    }
+    Ok(format!("https://api.github.com/orgs/{login}/repos"))
+}
+
+fn github_fetch_organization_repo_page(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    owner_login: &str,
+    page: u32,
+) -> Result<(Vec<GitHubRepoResponse>, Option<u32>), String> {
+    let page_string = page.max(1).to_string();
+    let endpoint = github_organization_repos_endpoint(owner_login)?;
+    let response = github_send(
+        app,
+        "读取 GitHub 组织仓库失败",
+        github_headers(
+            client.get(endpoint).query(&[
+                ("type", "all"),
+                ("sort", "full_name"),
+                ("direction", "asc"),
+                ("per_page", "100"),
+                ("page", page_string.as_str()),
+            ]),
+            Some(token),
+        ),
+    )?;
+    let next_page = parse_next_page(
+        response
+            .headers()
+            .get(LINK)
+            .and_then(|value| value.to_str().ok()),
+    );
+    let repos = github_json::<Vec<GitHubRepoResponse>>("读取 GitHub 组织仓库失败", response)?;
+    Ok((repos, next_page))
+}
+
+fn github_fetch_all_accessible_repo_responses(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+) -> Result<Vec<GitHubRepoResponse>, String> {
+    let mut page = 1;
+    let mut repos = Vec::new();
+    loop {
+        let (items, next_page) = github_fetch_repo_response_page(
+            app,
+            client,
+            token,
+            "owner,collaborator,organization_member",
+            page,
+        )?;
+        repos.extend(items);
+        let Some(next_page) = next_page else {
+            break;
+        };
+        page = next_page;
+    }
+    Ok(repos)
+}
+
 pub async fn github_list_repos(
     app: AppHandle,
+    scope: Option<GitHubRepositoryScope>,
     page: Option<u32>,
 ) -> Result<GitHubRepoPage, String> {
     run_core_operation(
@@ -3646,36 +4021,30 @@ pub async fn github_list_repos(
         "读取 GitHub 仓库",
         move || {
             let page = page.unwrap_or(1).max(1);
-            let (_binding, token) = github_require_token(&app)?;
+            let scope = scope.unwrap_or_default();
+            let (binding, token) = github_require_token(&app)?;
             let client = build_client()?;
-            let response = github_send(
-                &app,
-                "读取 GitHub 仓库失败",
-                github_headers(
-                    client.get("https://api.github.com/user/repos").query(&[
-                        ("affiliation", "owner"),
-                        ("visibility", "all"),
-                        ("sort", "updated"),
-                        ("per_page", "100"),
-                        ("page", &page.to_string()),
-                    ]),
-                    Some(&token),
-                ),
-            )?;
-
-            if !response.status().is_success() {
-                return Err(github_http_error("读取 GitHub 仓库失败", response));
-            }
-
-            let next_page = parse_next_page(
-                response
-                    .headers()
-                    .get(LINK)
-                    .and_then(|value| value.to_str().ok()),
-            );
-            let repos = response
-                .json::<Vec<GitHubRepoResponse>>()
-                .map_err(|e| format!("解析 GitHub 仓库列表失败：{e}"))?;
+            let (repos, next_page) = match &scope {
+                GitHubRepositoryScope::All => github_fetch_repo_response_page(
+                    &app,
+                    &client,
+                    &token,
+                    "owner,collaborator,organization_member",
+                    page,
+                )?,
+                GitHubRepositoryScope::Personal { login } => {
+                    if !login.eq_ignore_ascii_case(&binding.login) {
+                        return Err(
+                            "github_repository_scope_invalid：个人仓库范围必须是当前认证账号"
+                                .to_string(),
+                        );
+                    }
+                    github_fetch_repo_response_page(&app, &client, &token, "owner", page)?
+                }
+                GitHubRepositoryScope::Organization { login } => {
+                    github_fetch_organization_repo_page(&app, &client, &token, login, page)?
+                }
+            };
 
             Ok(GitHubRepoPage {
                 items: repos
@@ -3683,10 +4052,131 @@ pub async fn github_list_repos(
                     .map(github_repo_summary_from_response)
                     .collect(),
                 next_page,
+                scope,
             })
         },
     )
     .await
+}
+
+#[derive(Debug, Default)]
+struct GitHubMembershipResult {
+    memberships: Vec<GitHubOrgMembershipResponse>,
+    complete: bool,
+    restriction: Option<String>,
+    recovery_url: Option<String>,
+}
+
+fn github_sso_recovery_url(header: Option<&str>) -> Option<String> {
+    header?
+        .split([';', ','])
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix("url="))
+        .map(str::trim)
+        .filter(|url| url.starts_with("https://github.com/"))
+        .map(str::to_string)
+}
+
+fn github_membership_restriction(sso_header: Option<&str>) -> &'static str {
+    if sso_header.is_some_and(|value| {
+        value
+            .split([';', ','])
+            .any(|part| part.trim().eq_ignore_ascii_case("required"))
+    }) {
+        "sso_required"
+    } else {
+        "forbidden"
+    }
+}
+
+fn github_fetch_active_memberships(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+) -> Result<GitHubMembershipResult, String> {
+    let mut page = 1_u32;
+    let mut memberships = Vec::new();
+    loop {
+        let page_string = page.to_string();
+        let response = github_send(
+            app,
+            "读取 GitHub 组织成员关系失败",
+            github_headers(
+                client
+                    .get("https://api.github.com/user/memberships/orgs")
+                    .query(&[
+                        ("state", "active"),
+                        ("per_page", "100"),
+                        ("page", page_string.as_str()),
+                    ]),
+                Some(token),
+            ),
+        )?;
+        if response.status() == StatusCode::FORBIDDEN {
+            let sso_header = response
+                .headers()
+                .get("x-github-sso")
+                .and_then(|value| value.to_str().ok());
+            return Ok(GitHubMembershipResult {
+                memberships,
+                complete: false,
+                restriction: Some(github_membership_restriction(sso_header).to_string()),
+                recovery_url: github_sso_recovery_url(sso_header),
+            });
+        }
+        let next_page = parse_next_page(
+            response
+                .headers()
+                .get(LINK)
+                .and_then(|value| value.to_str().ok()),
+        );
+        memberships.extend(github_json::<Vec<GitHubOrgMembershipResponse>>(
+            "读取 GitHub 组织成员关系失败",
+            response,
+        )?);
+        let Some(next_page) = next_page else {
+            break;
+        };
+        page = next_page;
+    }
+    Ok(GitHubMembershipResult {
+        memberships,
+        complete: true,
+        restriction: None,
+        recovery_url: None,
+    })
+}
+
+fn merge_github_repo_owner(
+    owners: &mut HashMap<String, GitHubRepoOwner>,
+    owner: GitHubRepositoryOwner,
+    membership_visible: bool,
+    repository_access_visible: bool,
+) {
+    let key = owner.login.to_ascii_lowercase();
+    let item = owners.entry(key).or_insert_with(|| GitHubRepoOwner {
+        login: owner.login.clone(),
+        kind: owner.kind,
+        avatar_url: owner.avatar_url.clone(),
+        membership_visible: false,
+        membership_complete: false,
+        membership_restriction: None,
+        membership_recovery_url: None,
+        repository_access_visible: false,
+        source: String::new(),
+    });
+    if item.avatar_url.is_none() {
+        item.avatar_url = owner.avatar_url;
+    }
+    item.membership_visible |= membership_visible;
+    item.repository_access_visible |= repository_access_visible;
+    item.source = match (item.membership_visible, item.repository_access_visible) {
+        (true, true) => "both",
+        (true, false) => "membership",
+        (false, true) => "repository_access",
+        (false, false) => "repository_access",
+    }
+    .to_string();
 }
 
 pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwner>, String> {
@@ -3697,29 +4187,274 @@ pub async fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwn
         move || {
             let (binding, token) = github_require_token(&app)?;
             let client = build_client()?;
-            let response = github_send(
-                &app,
-                "读取 GitHub 组织失败",
-                github_headers(
-                    client
-                        .get("https://api.github.com/user/orgs")
-                        .query(&[("per_page", "100")]),
-                    Some(&token),
-                ),
-            )?;
-            let orgs = github_json::<Vec<GitHubOrgResponse>>("读取 GitHub 组织失败", response)?;
+            let repos = github_fetch_all_accessible_repo_responses(&app, &client, &token)?;
+            let mut organizations = HashMap::new();
+            for repo in repos {
+                let owner = GitHubRepositoryOwner {
+                    login: repo.owner.login,
+                    kind: github_owner_kind(repo.owner.account_type.as_deref()),
+                    avatar_url: repo.owner.avatar_url,
+                };
+                if owner.kind == GitHubOwnerKind::Organization {
+                    merge_github_repo_owner(&mut organizations, owner, false, true);
+                }
+            }
+            let mut membership_result = GitHubMembershipResult {
+                restriction: Some("scope_missing".to_string()),
+                ..GitHubMembershipResult::default()
+            };
+            if github_binding_has_scope(&binding, GITHUB_READ_ORG_SCOPE) {
+                membership_result = github_fetch_active_memberships(&app, &client, &token)?;
+                for membership in &membership_result.memberships {
+                    if !membership.state.eq_ignore_ascii_case("active") {
+                        continue;
+                    }
+                    merge_github_repo_owner(
+                        &mut organizations,
+                        GitHubRepositoryOwner {
+                            login: membership.organization.login.clone(),
+                            kind: GitHubOwnerKind::Organization,
+                            avatar_url: membership.organization.avatar_url.clone(),
+                        },
+                        true,
+                        false,
+                    );
+                }
+            }
+            let mut organizations = organizations.into_values().collect::<Vec<_>>();
+            for owner in &mut organizations {
+                owner.membership_complete = membership_result.complete;
+                owner.membership_restriction = membership_result.restriction.clone();
+                owner.membership_recovery_url = membership_result.recovery_url.clone();
+            }
+            organizations.sort_by(|left, right| {
+                left.login
+                    .to_ascii_lowercase()
+                    .cmp(&right.login.to_ascii_lowercase())
+            });
             let mut owners = vec![GitHubRepoOwner {
                 login: binding.login,
-                kind: "user".to_string(),
+                kind: GitHubOwnerKind::User,
+                avatar_url: binding.avatar_url,
+                membership_visible: true,
+                membership_complete: membership_result.complete,
+                membership_restriction: membership_result.restriction,
+                membership_recovery_url: membership_result.recovery_url,
+                repository_access_visible: true,
+                source: "authenticated_user".to_string(),
             }];
-            owners.extend(orgs.into_iter().map(|org| GitHubRepoOwner {
-                login: org.login,
-                kind: "org".to_string(),
-            }));
+            owners.extend(organizations);
             Ok(owners)
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod repository_scope_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn repo(owner: &str, owner_kind: &str, id: u64) -> GitHubRepoResponse {
+        serde_json::from_value(json!({
+            "id": id,
+            "name": format!("repo-{id}"),
+            "full_name": format!("{owner}/repo-{id}"),
+            "private": false,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "clone_url": format!("https://github.com/{owner}/repo-{id}.git"),
+            "html_url": format!("https://github.com/{owner}/repo-{id}"),
+            "owner": {
+                "login": owner,
+                "type": owner_kind,
+                "avatar_url": "https://avatars.example/owner.png"
+            },
+            "permissions": { "pull": true, "push": id % 2 == 0, "admin": false }
+        }))
+        .expect("repository response")
+    }
+
+    #[test]
+    fn organization_scope_uses_direct_paginated_endpoint() {
+        assert_eq!(
+            github_organization_repos_endpoint("Example-Org").expect("valid owner"),
+            "https://api.github.com/orgs/Example-Org/repos"
+        );
+    }
+
+    #[test]
+    fn organization_scope_rejects_unsafe_owner_path_segments() {
+        assert!(github_organization_repos_endpoint("").is_err());
+        assert!(github_organization_repos_endpoint("example/../other").is_err());
+        assert!(github_organization_repos_endpoint("example?page=2").is_err());
+    }
+
+    #[test]
+    fn repository_mapping_preserves_owner_kind_avatar_and_permissions() {
+        let summary = github_repo_summary_from_response(repo("example-org", "Organization", 2));
+        let owner = summary.owner.expect("owner");
+        let permissions = summary.permissions.expect("permissions");
+
+        assert_eq!(owner.kind, GitHubOwnerKind::Organization);
+        assert_eq!(owner.login, "example-org");
+        assert!(owner.avatar_url.is_some());
+        assert!(permissions.pull);
+        assert!(permissions.push);
+        assert!(!permissions.admin);
+    }
+
+    #[test]
+    fn owner_sources_merge_membership_and_repository_access() {
+        let mut owners = HashMap::new();
+        let owner = GitHubRepositoryOwner {
+            login: "Example-Org".to_string(),
+            kind: GitHubOwnerKind::Organization,
+            avatar_url: None,
+        };
+        merge_github_repo_owner(&mut owners, owner.clone(), false, true);
+        merge_github_repo_owner(&mut owners, owner, true, false);
+
+        let merged = owners.get("example-org").expect("merged owner");
+        assert!(merged.membership_visible);
+        assert!(merged.repository_access_visible);
+        assert_eq!(merged.source, "both");
+    }
+
+    #[test]
+    fn sso_recovery_url_accepts_only_github_https_urls() {
+        assert_eq!(
+            github_sso_recovery_url(Some("required; url=https://github.com/orgs/example/sso")),
+            Some("https://github.com/orgs/example/sso".to_string())
+        );
+        assert_eq!(
+            github_sso_recovery_url(Some("required; url=https://example.test/phishing")),
+            None
+        );
+        assert_eq!(github_sso_recovery_url(Some("required")), None);
+        assert_eq!(
+            github_membership_restriction(Some(
+                "required; url=https://github.com/orgs/example/sso"
+            )),
+            "sso_required"
+        );
+        assert_eq!(
+            github_membership_restriction(Some("partial-results; organizations=example")),
+            "forbidden"
+        );
+        assert_eq!(github_membership_restriction(None), "forbidden");
+    }
+
+    #[test]
+    fn oauth_scope_requests_read_org() {
+        assert!(normalize_scope_list(Some(GITHUB_SCOPE))
+            .iter()
+            .any(|scope| scope == GITHUB_READ_ORG_SCOPE));
+    }
+
+    #[test]
+    fn github_errors_distinguish_authentication_sso_and_forbidden() {
+        let body = r#"{"message":"Resource protected"}"#;
+        assert!(
+            github_http_error_from_parts("读取失败", StatusCode::UNAUTHORIZED, body, None)
+                .starts_with("github_authentication_required：")
+        );
+        assert!(github_http_error_from_parts(
+            "读取失败",
+            StatusCode::FORBIDDEN,
+            body,
+            Some("required; url=https://github.com/orgs/example/sso")
+        )
+        .starts_with("github_org_sso_required："));
+        assert!(
+            github_http_error_from_parts("读取失败", StatusCode::FORBIDDEN, body, None)
+                .starts_with("github_forbidden：")
+        );
+    }
+
+    #[test]
+    fn create_repo_errors_distinguish_sso_membership_and_policy() {
+        let sso = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::FORBIDDEN,
+            r#"{"message":"Resource protected by organization SAML enforcement"}"#,
+            Some("required; url=https://github.com/orgs/example/sso"),
+            true,
+        );
+        assert!(sso.starts_with("github_org_sso_required："));
+
+        let membership = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::FORBIDDEN,
+            r#"{"message":"Forbidden"}"#,
+            None,
+            true,
+        );
+        assert!(membership.starts_with("github_org_membership_forbidden："));
+
+        let policy = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::FORBIDDEN,
+            r#"{"message":"Members are not allowed to create repositories"}"#,
+            None,
+            true,
+        );
+        assert!(policy.starts_with("github_repository_policy_restricted："));
+    }
+
+    #[test]
+    fn create_repo_errors_distinguish_owner_name_conflict_policy_and_invalid_input() {
+        let owner = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::NOT_FOUND,
+            r#"{"message":"Not Found"}"#,
+            None,
+            true,
+        );
+        assert!(owner.starts_with("github_owner_not_found："));
+
+        let conflict = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            r#"{"message":"Repository creation failed","errors":[{"resource":"Repository","field":"name","code":"custom","message":"name already exists on this account"}]}"#,
+            None,
+            true,
+        );
+        assert!(conflict.starts_with("github_repository_name_conflict："));
+
+        let policy = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            r#"{"message":"Repository creation is disabled by organization policy"}"#,
+            None,
+            true,
+        );
+        assert!(policy.starts_with("github_repository_policy_restricted："));
+
+        let invalid = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            r#"{"message":"Validation Failed","errors":[{"resource":"Repository","field":"name","code":"invalid"}]}"#,
+            None,
+            false,
+        );
+        assert!(invalid.starts_with("github_repository_invalid："));
+    }
+
+    #[test]
+    fn create_repo_errors_never_echo_response_secrets() {
+        let secret = "ghp_super-secret-token";
+        let error = github_create_repo_error_from_parts(
+            "创建失败",
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!(r#"{{"message":"Validation failed: {secret}"}}"#),
+            None,
+            false,
+        );
+
+        assert!(!error.contains(secret));
+        assert!(error.contains("请检查仓库名"));
+    }
 }
 
 pub async fn github_list_repo_templates(app: AppHandle) -> Result<Vec<GitHubRepoTemplate>, String> {
@@ -3786,6 +4521,7 @@ pub async fn github_create_repo(
             if owner.is_empty() || name.is_empty() {
                 return Err("owner 和仓库名不能为空".to_string());
             }
+            let organization_owner = matches!(request.owner_kind.as_str(), "org" | "organization");
             let template = normalize_optional_string(request.template_full_name.clone())
                 .map(|value| normalize_github_repo_input(&value))
                 .transpose()?;
@@ -3812,8 +4548,11 @@ pub async fn github_create_repo(
                     "从模板创建 GitHub 仓库失败",
                     github_headers(client.post(url).json(&payload), Some(&token)),
                 )?;
-                let repo =
-                    github_json::<GitHubRepoResponse>("从模板创建 GitHub 仓库失败", response)?;
+                let repo = github_create_repo_from_response(
+                    "从模板创建 GitHub 仓库失败",
+                    response,
+                    organization_owner,
+                )?;
                 return Ok(github_repo_summary_from_response(repo));
             }
             let mut payload = serde_json::json!({
@@ -3841,7 +4580,7 @@ pub async fn github_create_repo(
                 }
             }
             let client = build_client()?;
-            let url = if request.owner_kind == "org" {
+            let url = if organization_owner {
                 format!(
                     "https://api.github.com/orgs/{}/repos",
                     url_encode_path_segment(owner)
@@ -3854,7 +4593,11 @@ pub async fn github_create_repo(
                 "创建 GitHub 仓库失败",
                 github_headers(client.post(url).json(&payload), Some(&token)),
             )?;
-            let repo = github_json::<GitHubRepoResponse>("创建 GitHub 仓库失败", response)?;
+            let repo = github_create_repo_from_response(
+                "创建 GitHub 仓库失败",
+                response,
+                organization_owner,
+            )?;
             Ok(github_repo_summary_from_response(repo))
         },
     )

@@ -21,6 +21,10 @@ export function normalizeRemoteRepoFullName(fullName: string) {
   return fullName.trim().replace(/^\/+|\/+$/g, "");
 }
 
+export function githubRepositoryIdentityKey(fullName: string) {
+  return normalizeRemoteRepoFullName(fullName).toLocaleLowerCase();
+}
+
 export function isRemoteRepoFullName(fullName: string) {
   const parts = normalizeRemoteRepoFullName(fullName).split("/").filter(Boolean);
   return parts.length === 2;
@@ -33,6 +37,7 @@ export function remoteRepoName(fullName: string) {
 
 export function shortcutFromGitHubRepo(repo: GitHubRepoSummary): RemoteRepoShortcut {
   return {
+    repositoryId: repo.id,
     fullName: normalizeRemoteRepoFullName(repo.fullName),
     name: repo.name || remoteRepoName(repo.fullName),
     private: repo.private,

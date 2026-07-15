@@ -6,7 +6,7 @@ delegate_command!(async repos; fn workspace_scan_repos(app: AppHandle) -> Result
 delegate_command!(async repos; fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>, String>);
 delegate_command!(async repos; fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn workspace_create_local_repo(app: AppHandle, request: WorkspaceCreateLocalRepoRequest,) -> Result<RepoSummary, String>);
-delegate_command!(async repos; fn workspace_clone_repo(app: AppHandle, remote_url: String, directory_name: Option<String>,) -> Result<RepoSummary, String>);
+delegate_command!(async repos; fn workspace_clone_repo(app: AppHandle, request: WorkspaceCloneRepoRequest,) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSummary, String>);
 delegate_command!(async repos; fn repo_clear_local_cache(app: AppHandle, repo_id: String, repo_full_name: Option<String>,) -> Result<(), String>);
 delegate_command!(async repos; fn repo_refresh_summary(app: AppHandle, repo_id: String, options: Option<RepoRefreshSummaryOptions>,) -> Result<RepoSummary, String>);

@@ -21,6 +21,8 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub system_git_repo_ids: Vec<String>,
     #[serde(default)]
+    pub repo_bindings: HashMap<String, WorkspaceRepositoryBinding>,
+    #[serde(default)]
     pub repo_groups: Vec<WorkspaceRepoGroup>,
     #[serde(default)]
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
@@ -28,6 +30,16 @@ pub struct WorkspaceSettings {
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
     #[serde(default)]
     pub contribution_identities: Vec<ContributionIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRepositoryBinding {
+    #[serde(default)]
+    pub repository_id: Option<u64>,
+    pub remote_full_name: String,
+    pub canonical_remote_url: String,
+    pub local_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -347,6 +359,76 @@ pub struct GitHubRepoSummary {
     pub updated_at: String,
     pub clone_url: String,
     pub html_url: String,
+    #[serde(default)]
+    pub owner: Option<GitHubRepositoryOwner>,
+    #[serde(default)]
+    pub permissions: Option<GitHubRepositoryPermissions>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubOwnerKind {
+    #[default]
+    User,
+    #[serde(alias = "org")]
+    Organization,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepositoryOwner {
+    pub login: String,
+    #[serde(default)]
+    pub kind: GitHubOwnerKind,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepositoryPermissions {
+    #[serde(default)]
+    pub pull: bool,
+    #[serde(default)]
+    pub push: bool,
+    #[serde(default)]
+    pub admin: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum GitHubRepositoryScope {
+    #[default]
+    All,
+    Personal {
+        login: String,
+    },
+    Organization {
+        login: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubOrganizationSource {
+    Membership,
+    RepositoryAccess,
+    Both,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationSummary {
+    pub login: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub membership_visible: bool,
+    #[serde(default)]
+    pub membership_complete: bool,
+    #[serde(default)]
+    pub repository_access_visible: bool,
+    pub source: GitHubOrganizationSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -364,6 +446,10 @@ pub struct GitHubRepoTemplate {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteRepoShortcut {
+    #[serde(default)]
+    pub account_login: Option<String>,
+    #[serde(default)]
+    pub repository_id: Option<u64>,
     pub full_name: String,
     pub name: String,
     pub private: bool,
@@ -372,6 +458,8 @@ pub struct RemoteRepoShortcut {
     pub default_branch: Option<String>,
     pub html_url: String,
     pub clone_url: String,
+    #[serde(default)]
+    pub canonical_remote_url: Option<String>,
     #[serde(default)]
     pub opened_at: i64,
 }
@@ -382,6 +470,8 @@ pub struct GitHubRepoPage {
     pub items: Vec<GitHubRepoSummary>,
     #[serde(default)]
     pub next_page: Option<u32>,
+    #[serde(default)]
+    pub scope: GitHubRepositoryScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -411,6 +501,10 @@ pub struct RepoSummary {
     pub current_branch: Option<String>,
     pub remote_url: Option<String>,
     pub github_full_name: Option<String>,
+    #[serde(default)]
+    pub github_repository_id: Option<u64>,
+    #[serde(default)]
+    pub canonical_remote_url: Option<String>,
     pub ahead: i32,
     pub behind: i32,
     #[serde(default)]
@@ -847,7 +941,50 @@ pub struct WorkspaceTask {
 #[serde(rename_all = "camelCase")]
 pub struct GitHubRepoOwner {
     pub login: String,
-    pub kind: String,
+    #[serde(default)]
+    pub kind: GitHubOwnerKind,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub membership_visible: bool,
+    #[serde(default)]
+    pub membership_complete: bool,
+    #[serde(default)]
+    pub membership_restriction: Option<String>,
+    #[serde(default)]
+    pub membership_recovery_url: Option<String>,
+    #[serde(default)]
+    pub repository_access_visible: bool,
+    #[serde(default)]
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCloneRepositoryRef {
+    pub id: u64,
+    pub full_name: String,
+    pub clone_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum WorkspaceCloneTarget {
+    #[default]
+    Default,
+    Custom {
+        path: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCloneRepoRequest {
+    pub remote_url: String,
+    #[serde(default)]
+    pub repository: Option<WorkspaceCloneRepositoryRef>,
+    #[serde(default)]
+    pub target: WorkspaceCloneTarget,
 }
 
 #[derive(Debug, Clone, Deserialize)]
