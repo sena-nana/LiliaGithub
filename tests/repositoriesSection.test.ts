@@ -14,6 +14,7 @@ const workspace = vi.hoisted(() => ({
       managedRepoIds: [],
       systemGitRepoIds: ["LiliaGithub"],
       repoBindings: {},
+      favoriteRepoIds: [],
       repoGroups: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},

@@ -2468,6 +2468,7 @@ function createFallbackSettings(
       managedRepoIds: fallbackRepos.map((repo) => repo.id),
       systemGitRepoIds: [],
       repoBindings: {},
+      favoriteRepoIds: [],
       repoGroups: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
@@ -2502,6 +2503,7 @@ function createFallbackSettings(
     managedRepoIds: fallbackRepos.map((repo) => repo.id),
     systemGitRepoIds: [],
     repoBindings: {},
+    favoriteRepoIds: ["LiliaGithub"],
     repoGroups: [
       { id: "group-lilia-apps", name: "Lilia Apps", repoIds: ["LiliaGithub", "Lilia", "LiliaTodo"] },
       { id: "group-runtime-docs", name: "Runtime & Docs", repoIds: ["Mutsuki", "LiliaDocs"] },
@@ -3240,6 +3242,7 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     repoBindings: Object.fromEntries(
       Object.entries(settings.repoBindings ?? {}).map(([repoId, binding]) => [repoId, { ...binding }]),
     ),
+    favoriteRepoIds: [...(settings.favoriteRepoIds ?? [])],
     repoGroups: settings.repoGroups.map(cloneWorkspaceRepoGroup),
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
     contributionIdentities: (settings.contributionIdentities ?? []).map((identity) => ({ ...identity })),
@@ -4460,6 +4463,24 @@ export function moveRepoToGroup(repoId: string, groupId: string | null): Promise
   });
 }
 
+export function setLocalRepoFavorite(repoId: string, favorite: boolean): Promise<WorkspaceSettings> {
+  return call("workspace_set_local_repo_favorite", { repoId, favorite }, () => {
+    const normalized = repoId.trim();
+    if (!normalized) throw new Error("仓库 ID 不能为空");
+    if (favorite && !allFallbackRepos().some((repo) => repo.id === normalized)) {
+      throw new Error(`未找到 Git 仓库：${normalized}`);
+    }
+    const next = new Set(fallbackSettings.favoriteRepoIds ?? []);
+    if (favorite) next.add(normalized);
+    else next.delete(normalized);
+    fallbackSettings = {
+      ...fallbackSettings,
+      favoriteRepoIds: [...next].sort(),
+    };
+    return visibleFallbackSettings();
+  });
+}
+
 export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_local_repo", { repoId }, () => {
     if (!allFallbackRepos().some((repo) => repo.id === repoId)) {
@@ -4515,27 +4536,59 @@ function normalizeRemoteRepoShortcut(repo: RemoteRepoShortcut): RemoteRepoShortc
     htmlUrl: repo.htmlUrl.trim() || `https://github.com/${fullName}`,
     cloneUrl: repo.cloneUrl.trim() || `https://github.com/${fullName}.git`,
     canonicalRemoteUrl: `https://github.com/${fullName}.git`,
+    favorite: repo.favorite ?? false,
     openedAt: Date.now(),
   };
 }
 
+function rememberRemoteRepoInFallback(repo: RemoteRepoShortcut): WorkspaceSettings {
+  migrateFallbackRemoteRepoShortcuts();
+  const accountLogin = currentFallbackGitHubAccountLogin();
+  if (!accountLogin) throw new Error("请先绑定 GitHub 账号");
+  const shortcut = normalizeRemoteRepoShortcut(repo);
+  const shortcutKey = normalizeRemoteRepoIdKey(shortcut.fullName);
+  const current = fallbackSettings.remoteRepoShortcuts.find((item) => {
+    const key = normalizeRemoteRepoIdKey(item.fullName);
+    const sameAccount = item.accountLogin?.toLowerCase() === accountLogin.toLowerCase();
+    return sameAccount && key === shortcutKey;
+  });
+  shortcut.favorite = Boolean(shortcut.favorite || current?.favorite);
+  fallbackSettings = {
+    ...fallbackSettings,
+    remoteRepoShortcuts: [
+      shortcut,
+      ...fallbackSettings.remoteRepoShortcuts.filter((item) => {
+        const key = normalizeRemoteRepoIdKey(item.fullName);
+        const sameAccount = item.accountLogin?.toLowerCase() === accountLogin.toLowerCase();
+        return !sameAccount || key === null || key !== shortcutKey;
+      }),
+    ].sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
+  };
+  return visibleFallbackSettings();
+}
+
 export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
-  return call("workspace_remember_remote_repo", { repo }, () => {
+  return call("workspace_remember_remote_repo", { repo }, () => rememberRemoteRepoInFallback(repo));
+}
+
+export function setRemoteRepoFavorite(
+  repo: RemoteRepoShortcut,
+  favorite: boolean,
+): Promise<WorkspaceSettings> {
+  return call("workspace_set_remote_repo_favorite", { repo, favorite }, () => {
+    if (favorite) return rememberRemoteRepoInFallback({ ...repo, favorite: true });
     migrateFallbackRemoteRepoShortcuts();
     const accountLogin = currentFallbackGitHubAccountLogin();
     if (!accountLogin) throw new Error("请先绑定 GitHub 账号");
-    const shortcut = normalizeRemoteRepoShortcut(repo);
-    const shortcutKey = normalizeRemoteRepoIdKey(shortcut.fullName);
+    const target = normalizeRemoteRepoIdKey(repo.fullName);
+    if (!target) throw new Error("GitHub 仓库地址无效");
     fallbackSettings = {
       ...fallbackSettings,
-      remoteRepoShortcuts: [
-        shortcut,
-        ...fallbackSettings.remoteRepoShortcuts.filter((item) => {
-          const key = normalizeRemoteRepoIdKey(item.fullName);
-          const sameAccount = item.accountLogin?.toLowerCase() === accountLogin.toLowerCase();
-          return !sameAccount || key === null || key !== shortcutKey;
-        }),
-      ].sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
+      remoteRepoShortcuts: fallbackSettings.remoteRepoShortcuts.map((item) => {
+        const key = normalizeRemoteRepoIdKey(item.fullName);
+        const sameAccount = item.accountLogin?.toLowerCase() === accountLogin.toLowerCase();
+        return sameAccount && key === target ? { ...item, favorite: false } : item;
+      }),
     };
     return visibleFallbackSettings();
   });

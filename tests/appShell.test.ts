@@ -676,6 +676,49 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("收藏仓库在首页与侧栏同步呈现并支持本地、远程来源取消", async () => {
+    const view = await renderAppShell("/");
+
+    await waitFor(() => {
+      expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
+    });
+
+    await fireEvent.contextMenu(sidebarRowForText(view.container, "LiliaGithub"));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "收藏仓库" }));
+
+    const organizer = view.getByRole("region", { name: "收藏与常用工作区" });
+    await waitFor(() => {
+      expect(within(organizer).getByRole("button", { name: "打开收藏 LiliaGithub" })).toBeInTheDocument();
+      expect(view.getByRole("link", { name: "打开收藏 LiliaGithub" })).toBeInTheDocument();
+      expect(view.getByRole("button", { name: "取消收藏 sena-nana/LiliaGithub" })).toBeInTheDocument();
+      expect(state.settings?.favoriteRepoIds).toContain("LiliaGithub");
+    });
+
+    await fireEvent.click(within(organizer).getByRole("button", { name: "取消收藏 LiliaGithub" }));
+    await waitFor(() => {
+      expect(within(organizer).queryByRole("button", { name: "打开收藏 LiliaGithub" })).toBeNull();
+      expect(view.queryByRole("link", { name: "打开收藏 LiliaGithub" })).toBeNull();
+      expect(view.getByRole("button", { name: "收藏 sena-nana/LiliaGithub" })).toBeInTheDocument();
+      expect(state.settings?.favoriteRepoIds).not.toContain("LiliaGithub");
+    });
+
+    const remoteFavoriteButton = await view.findByRole("button", { name: "收藏 sena-nana/LiliaGithub" });
+    await fireEvent.click(remoteFavoriteButton);
+    await waitFor(() => {
+      expect(within(organizer).getByRole("button", { name: "打开收藏 LiliaGithub" })).toBeInTheDocument();
+      expect(view.getByRole("link", { name: "打开收藏 LiliaGithub" })).toBeInTheDocument();
+      expect(state.settings?.remoteRepoShortcuts.some((repo) =>
+        repo.fullName === "sena-nana/LiliaGithub" && repo.favorite
+      )).toBe(true);
+    });
+
+    await fireEvent.click(within(organizer).getByRole("button", { name: "取消收藏 LiliaGithub" }));
+    await waitFor(() => {
+      expect(within(organizer).queryByRole("button", { name: "打开收藏 LiliaGithub" })).toBeNull();
+      expect(state.settings?.remoteRepoShortcuts.some((repo) => repo.favorite)).toBe(false);
+    });
+  });
+
   it("首页入口可创建本地仓库并打开", async () => {
     const view = await renderAppShell("/");
 
@@ -738,6 +781,7 @@ describe("AppShell sidebar", () => {
     await waitFor(() => {
       expect(sidebarGroupForText(view.container, "未分组仓库", 1)).toBeInTheDocument();
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
+      expect(view.getByRole("button", { name: "打开工作区 前端 / LiliaGithub" })).toBeInTheDocument();
     });
 
     await fireEvent.click(view.getByRole("button", { name: "删除分组 前端" }));

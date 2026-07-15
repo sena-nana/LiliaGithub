@@ -111,6 +111,7 @@ export function workspaceSettings(hiddenRepoIds: string[] = []): WorkspaceSettin
     managedRepoIds: [],
     systemGitRepoIds: [],
     repoBindings: {},
+    favoriteRepoIds: [],
     repoGroups: [],
     remoteRepoShortcuts: [],
     localContributionCache: {},

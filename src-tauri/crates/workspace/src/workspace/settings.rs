@@ -720,6 +720,7 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
     settings.hidden_repo_ids.retain(|id| id != repo_id);
     settings.system_git_repo_ids.retain(|id| id != repo_id);
     settings.repo_bindings.remove(repo_id);
+    settings.favorite_repo_ids.retain(|id| id != repo_id);
     for group in &mut settings.repo_groups {
         group.repo_ids.retain(|id| id != repo_id);
     }
@@ -1368,6 +1369,9 @@ pub fn workspace_create_repo_group(
     app: AppHandle,
     name: String,
 ) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
     create_repo_group(&mut settings, &name)?;
     save_settings(&app, &settings)?;
@@ -1379,6 +1383,9 @@ pub fn workspace_rename_repo_group(
     group_id: String,
     name: String,
 ) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
     rename_repo_group(&mut settings, &group_id, &name)?;
     save_settings(&app, &settings)?;
@@ -1389,6 +1396,9 @@ pub fn workspace_delete_repo_group(
     app: AppHandle,
     group_id: String,
 ) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
     delete_repo_group(&mut settings, &group_id)?;
     save_settings(&app, &settings)?;
@@ -1405,8 +1415,36 @@ pub fn workspace_move_repo_to_group(
         return Err("仓库 ID 不能为空".to_string());
     }
     repo_path_by_id(&app, normalized)?;
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
     move_repo_to_group(&mut settings, normalized, group_id.as_deref())?;
+    save_settings(&app, &settings)?;
+    Ok(visible_workspace_settings(settings))
+}
+
+pub fn workspace_set_local_repo_favorite(
+    app: AppHandle,
+    repo_id: String,
+    favorite: bool,
+) -> Result<WorkspaceSettings, String> {
+    let normalized = repo_id.trim();
+    if normalized.is_empty() {
+        return Err("仓库 ID 不能为空".to_string());
+    }
+    if favorite {
+        repo_path_by_id(&app, normalized)?;
+    }
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut settings = load_settings(&app);
+    settings.favorite_repo_ids.retain(|id| id != normalized);
+    if favorite {
+        settings.favorite_repo_ids.push(normalized.to_string());
+        sort_dedup(&mut settings.favorite_repo_ids);
+    }
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
 }
@@ -1431,6 +1469,9 @@ pub async fn workspace_delete_local_repo(
             let path = repo_path_by_id(&app, normalized)?;
             let worktree = resolve_repo_worktree(&root, &path);
             remove_managed_repo_path(&root, &path, &worktree)?;
+            let _guard = settings_write_lock()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let mut settings = load_settings(&app);
             prune_deleted_repo_settings(&mut settings, normalized);
             save_settings(&app, &settings)?;
@@ -1446,6 +1487,9 @@ pub fn workspace_remember_remote_repo(
     app: AppHandle,
     mut repo: RemoteRepoShortcut,
 ) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
     migrate_remote_repo_shortcuts(&mut settings);
     let account_login = current_github_account_login(&settings)
@@ -1456,10 +1500,48 @@ pub fn workspace_remember_remote_repo(
     Ok(visible_workspace_settings(settings))
 }
 
+pub fn workspace_set_remote_repo_favorite(
+    app: AppHandle,
+    mut repo: RemoteRepoShortcut,
+    favorite: bool,
+) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut settings = load_settings(&app);
+    migrate_remote_repo_shortcuts(&mut settings);
+    let account_login = current_github_account_login(&settings)
+        .ok_or_else(|| "请先绑定 GitHub 账号".to_string())?;
+    repo.account_login = Some(account_login.clone());
+    if favorite {
+        repo.favorite = true;
+        remember_remote_repo_shortcut(&mut settings.remote_repo_shortcuts, repo)?;
+    } else {
+        let target = normalize_github_repo_input(&repo.full_name)?.full_name;
+        for shortcut in &mut settings.remote_repo_shortcuts {
+            let same_account = shortcut
+                .account_login
+                .as_deref()
+                .is_some_and(|login| login.eq_ignore_ascii_case(&account_login));
+            let same_repo = normalize_github_repo_input(&shortcut.full_name)
+                .map(|current| current.full_name.eq_ignore_ascii_case(&target))
+                .unwrap_or(false);
+            if same_account && same_repo {
+                shortcut.favorite = false;
+            }
+        }
+    }
+    save_settings(&app, &settings)?;
+    Ok(visible_workspace_settings(settings))
+}
+
 pub fn workspace_forget_remote_repo(
     app: AppHandle,
     full_name: String,
 ) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
     migrate_remote_repo_shortcuts(&mut settings);
     let account_login = current_github_account_login(&settings)

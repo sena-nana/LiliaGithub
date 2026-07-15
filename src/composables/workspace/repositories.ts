@@ -65,6 +65,7 @@ let workspaceTaskRefreshGeneration = 0;
 let languageStatsLoadingGenerations = new Map<string, number>();
 const autoSyncRunningRepoIds = new Set<string>();
 let addLocalRepoPromise: Promise<RepoSummary | null> | null = null;
+let workspaceSettingsMutationQueue: Promise<void> = Promise.resolve();
 type RepoStatusRefreshOptions = {
   immediate?: boolean;
 };
@@ -77,6 +78,15 @@ type OptimisticRepoState = {
 
 function targetPathSet(files: readonly string[]) {
   return new Set(files.map((file) => file.trim()).filter(Boolean));
+}
+
+async function updateWorkspaceSettings(
+  mutation: () => Promise<NonNullable<typeof state.settings>>,
+) {
+  const result = workspaceSettingsMutationQueue.then(mutation);
+  workspaceSettingsMutationQueue = result.then(() => undefined, () => undefined);
+  state.settings = await result;
+  return state.settings;
 }
 
 function summaryWithChanges(summary: RepoSummary, changes: readonly RepoChange[]): RepoSummary {
@@ -819,6 +829,7 @@ export function resetRepositoryRuntimeForTests() {
   contributionRefreshStartedAt = 0;
   contributionRefreshError = null;
   addLocalRepoPromise = null;
+  workspaceSettingsMutationQueue = Promise.resolve();
 }
 
 export async function cloneRepo(request: WorkspaceCloneRepoRequest) {
@@ -846,26 +857,27 @@ export async function hideRepo(repoId: string) {
 
 export async function createRepoGroup(name: string) {
   const service = await loadWorkspaceService();
-  state.settings = await service.createRepoGroup(name);
-  return state.settings;
+  return updateWorkspaceSettings(() => service.createRepoGroup(name));
 }
 
 export async function renameRepoGroup(groupId: string, name: string) {
   const service = await loadWorkspaceService();
-  state.settings = await service.renameRepoGroup(groupId, name);
-  return state.settings;
+  return updateWorkspaceSettings(() => service.renameRepoGroup(groupId, name));
 }
 
 export async function deleteRepoGroup(groupId: string) {
   const service = await loadWorkspaceService();
-  state.settings = await service.deleteRepoGroup(groupId);
-  return state.settings;
+  return updateWorkspaceSettings(() => service.deleteRepoGroup(groupId));
 }
 
 export async function moveRepoToGroup(repoId: string, groupId: string | null) {
   const service = await loadWorkspaceService();
-  state.settings = await service.moveRepoToGroup(repoId, groupId);
-  return state.settings;
+  return updateWorkspaceSettings(() => service.moveRepoToGroup(repoId, groupId));
+}
+
+export async function setLocalRepoFavorite(repoId: string, favorite: boolean) {
+  const service = await loadWorkspaceService();
+  return updateWorkspaceSettings(() => service.setLocalRepoFavorite(repoId, favorite));
 }
 
 export async function deleteLocalRepo(repoId: string) {
@@ -888,8 +900,12 @@ function removeLocalRepoState(repoId: string) {
 
 export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
   const service = await loadWorkspaceService();
-  state.settings = await service.rememberRemoteRepo(repo);
-  return state.settings;
+  return updateWorkspaceSettings(() => service.rememberRemoteRepo(repo));
+}
+
+export async function setRemoteRepoFavorite(repo: RemoteRepoShortcut, favorite: boolean) {
+  const service = await loadWorkspaceService();
+  return updateWorkspaceSettings(() => service.setRemoteRepoFavorite(repo, favorite));
 }
 
 export async function setRepoSetting(repoId: string, key: RepoSettingKey, value: boolean) {
@@ -924,8 +940,7 @@ export async function scanContributionIdentities() {
 
 export async function forgetRemoteRepo(fullName: string) {
   const service = await loadWorkspaceService();
-  state.settings = await service.forgetRemoteRepo(fullName);
-  return state.settings;
+  return updateWorkspaceSettings(() => service.forgetRemoteRepo(fullName));
 }
 
 export async function unhideRepo(repoId: string) {

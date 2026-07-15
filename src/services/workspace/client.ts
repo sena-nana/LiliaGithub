@@ -680,12 +680,28 @@ export function moveRepoToGroup(repoId: string, groupId: string | null): Promise
   return call("workspace_move_repo_to_group", { repoId, groupId }, () => workspaceFallback().moveRepoToGroup(repoId, groupId));
 }
 
+export function setLocalRepoFavorite(repoId: string, favorite: boolean): Promise<WorkspaceSettings> {
+  return call(
+    "workspace_set_local_repo_favorite",
+    { repoId, favorite },
+    () => workspaceFallback().setLocalRepoFavorite(repoId, favorite),
+  );
+}
+
 export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_local_repo", { repoId }, () => workspaceFallback().deleteLocalRepo(repoId));
 }
 
 export function rememberRemoteRepo(repo: RemoteRepoShortcut): Promise<WorkspaceSettings> {
   return call("workspace_remember_remote_repo", { repo }, () => workspaceFallback().rememberRemoteRepo(repo));
+}
+
+export function setRemoteRepoFavorite(repo: RemoteRepoShortcut, favorite: boolean): Promise<WorkspaceSettings> {
+  return call(
+    "workspace_set_remote_repo_favorite",
+    { repo, favorite },
+    () => workspaceFallback().setRemoteRepoFavorite(repo, favorite),
+  );
 }
 
 export function forgetRemoteRepo(fullName: string): Promise<WorkspaceSettings> {

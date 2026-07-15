@@ -25,6 +25,8 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub repo_bindings: HashMap<String, WorkspaceRepositoryBinding>,
     #[serde(default)]
+    pub favorite_repo_ids: Vec<String>,
+    #[serde(default)]
     pub repo_groups: Vec<WorkspaceRepoGroup>,
     #[serde(default)]
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
@@ -686,6 +688,8 @@ pub struct RemoteRepoShortcut {
     pub clone_url: String,
     #[serde(default)]
     pub canonical_remote_url: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
     #[serde(default)]
     pub opened_at: i64,
 }

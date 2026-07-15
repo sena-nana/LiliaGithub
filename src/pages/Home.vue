@@ -24,6 +24,7 @@ import {
   RotateCw,
   Search,
   ShieldCheck,
+  Star,
   X,
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
@@ -72,10 +73,17 @@ import {
 import ContributionIdentityRecommendations from "../components/ContributionIdentityRecommendations.vue";
 import HomeContributionCard from "../components/home/HomeContributionCard.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
+import HomeWorkspaceOrganizer, {
+  type HomeWorkspaceGroup,
+} from "../components/home/HomeWorkspaceOrganizer.vue";
 import GitHubRepositoryScopeControl from "../components/github/GitHubRepositoryScopeControl.vue";
 import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
-import { bulkResultTone, repoDisplayName } from "../utils/repoDisplay";
+import { bulkResultTone, repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
+import {
+  favoriteRepositories,
+  type FavoriteRepositoryEntry,
+} from "../utils/repoFavorites";
 import {
   buildHomePendingItems,
   type HomePendingItem,
@@ -135,6 +143,8 @@ const searchInput = ref<HTMLInputElement | null>(null);
 const cloneDialog = useCloneRepoDialog({
   onCloned: placeCreatedRepo,
 });
+const favoritePendingKeys = ref<Set<string>>(new Set());
+const favoriteError = ref<string | null>(null);
 
 async function chooseWorkspaceRoot() {
   try {
@@ -326,6 +336,84 @@ let repoStatusSortBindingIdentity: string | null | undefined;
 let repoStatusSortSelectedOnPage = false;
 let homeContributionRefreshGeneration = 0;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
+const homeFavorites = computed(() =>
+  favoriteRepositories(workspace.state.settings, workspace.state.repos),
+);
+const homeFavoritesByKey = computed(() => new Map(
+  homeFavorites.value.map((favorite) => [favorite.key, favorite]),
+));
+const homeWorkspaceGroups = computed<HomeWorkspaceGroup[]>(() => {
+  const reposById = new Map(workspace.state.repos.map((repo) => [repo.id, repo]));
+  return repoGroups.value.map((group) => ({
+    id: group.id,
+    name: group.name,
+    items: group.repoIds.flatMap((repoId) => {
+      const repo = reposById.get(repoId);
+      return repo ? [{
+        repoId,
+        name: repoDisplayName(repo),
+        title: repoDisplayTitle(repo),
+      }] : [];
+    }),
+  }));
+});
+
+function favoritePending(key: string) {
+  return favoritePendingKeys.value.has(key);
+}
+
+async function runFavoriteMutation(key: string, mutation: () => Promise<unknown>) {
+  if (favoritePending(key)) return;
+  favoriteError.value = null;
+  favoritePendingKeys.value = new Set(favoritePendingKeys.value).add(key);
+  try {
+    await mutation();
+  } catch (err) {
+    favoriteError.value = `收藏更新失败：${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    const next = new Set(favoritePendingKeys.value);
+    next.delete(key);
+    favoritePendingKeys.value = next;
+  }
+}
+
+function githubRepoFavorite(repo: GitHubRepoSummary) {
+  return homeFavoritesByKey.value.has(`github:${githubRepositoryIdentityKey(repo.fullName)}`);
+}
+
+async function toggleGitHubRepoFavorite(repo: GitHubRepoSummary) {
+  const key = `github:${githubRepositoryIdentityKey(repo.fullName)}`;
+  const current = homeFavoritesByKey.value.get(key);
+  if (current) {
+    await removeHomeFavorite(current);
+    return;
+  }
+  const localRepo = localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(repo.fullName));
+  await runFavoriteMutation(key, () => localRepo
+    ? workspace.setLocalRepoFavorite(localRepo.id, true)
+    : workspace.setRemoteRepoFavorite(shortcutFromGitHubRepo(repo), true));
+}
+
+async function removeHomeFavorite(favorite: FavoriteRepositoryEntry) {
+  await runFavoriteMutation(favorite.key, async () => {
+    if (favorite.localFavorite && favorite.localRepo) {
+      await workspace.setLocalRepoFavorite(favorite.localRepo.id, false);
+    }
+    if (favorite.remoteFavorite && favorite.remoteShortcut) {
+      await workspace.setRemoteRepoFavorite({ ...favorite.remoteShortcut }, false);
+    }
+  });
+}
+
+async function openHomeFavorite(favorite: FavoriteRepositoryEntry) {
+  if (favorite.localRepo) {
+    await router.push(repoRoute(favorite.localRepo.id));
+    return;
+  }
+  if (favorite.remoteShortcut) {
+    await router.push(remoteRepoRoute(favorite.remoteShortcut.fullName));
+  }
+}
 const githubOrganizationOwnerOptions = computed(() => githubOrganizationOwners(githubRepoOwners.value));
 const githubOrganizationVisibilityLimited = computed(() =>
   githubOrganizationAccessLimited(workspace.githubBinding.value?.scopes, githubRepoOwners.value),
@@ -2191,6 +2279,15 @@ function bulkOperationDescription(operation: BulkOperation) {
         </div>
       </div>
 
+      <HomeWorkspaceOrganizer
+        :favorites="homeFavorites"
+        :groups="homeWorkspaceGroups"
+        :favorite-error="favoriteError"
+        @open-favorite="openHomeFavorite"
+        @remove-favorite="removeHomeFavorite"
+        @open-repo="router.push(repoRoute($event))"
+      />
+
       <div class="overview-grid">
         <div class="contribution-stack">
           <HomeContributionCard
@@ -2534,6 +2631,24 @@ function bulkOperationDescription(operation: BulkOperation) {
                   </span>
                 </span>
                 <span class="repo-status-row__action">
+                  <button
+                    type="button"
+                    class="repo-favorite-button"
+                    :class="{ 'is-favorite': githubRepoFavorite(githubRepo) }"
+                    :data-agent-id="`home.repo-status.${githubRepo.fullName}.favorite`"
+                    :aria-label="`${githubRepoFavorite(githubRepo) ? '取消收藏' : '收藏'} ${githubRepo.fullName}`"
+                    :title="githubRepoFavorite(githubRepo) ? '取消收藏' : '收藏仓库'"
+                    :disabled="favoritePending(`github:${githubRepositoryIdentityKey(githubRepo.fullName)}`)"
+                    @click.stop="toggleGitHubRepoFavorite(githubRepo)"
+                  >
+                    <LoaderCircle
+                      v-if="favoritePending(`github:${githubRepositoryIdentityKey(githubRepo.fullName)}`)"
+                      :size="13"
+                      aria-hidden="true"
+                      class="sb-spin"
+                    />
+                    <Star v-else :size="13" aria-hidden="true" />
+                  </button>
                   <template v-if="localRepo">
                     <button
                       v-if="syncIssue?.retryable"
@@ -2740,7 +2855,7 @@ function bulkOperationDescription(operation: BulkOperation) {
 <style scoped>
 .home-page {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 12px;
   height: 100%;
   min-height: 0;
@@ -3496,6 +3611,39 @@ function bulkOperationDescription(operation: BulkOperation) {
   gap: 6px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.repo-favorite-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.repo-favorite-button:hover,
+.repo-favorite-button:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.repo-favorite-button.is-favorite {
+  color: var(--warn);
+}
+
+.repo-favorite-button.is-favorite :deep(svg) {
+  fill: currentColor;
+}
+
+.repo-favorite-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .repo-action-status {

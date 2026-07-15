@@ -1628,9 +1628,22 @@ pub(super) fn remember_remote_repo_shortcut(
     shortcuts: &mut Vec<RemoteRepoShortcut>,
     shortcut: RemoteRepoShortcut,
 ) -> Result<(), String> {
-    let shortcut = normalize_remote_repo_shortcut(shortcut)?;
+    let mut shortcut = normalize_remote_repo_shortcut(shortcut)?;
     let target = normalize_github_repo_input(&shortcut.full_name)?.full_name;
     let target_account = shortcut.account_login.as_deref();
+    shortcut.favorite = shortcut.favorite
+        || shortcuts.iter().any(|item| {
+            let same_account = match (item.account_login.as_deref(), target_account) {
+                (Some(current), Some(target)) => current.eq_ignore_ascii_case(target),
+                (None, None) => true,
+                _ => false,
+            };
+            same_account
+                && item.favorite
+                && normalize_github_repo_input(&item.full_name)
+                    .map(|repo| repo.full_name.eq_ignore_ascii_case(&target))
+                    .unwrap_or(false)
+        });
     shortcuts.retain(|item| {
         let same_account = match (item.account_login.as_deref(), target_account) {
             (Some(current), Some(target)) => current.eq_ignore_ascii_case(target),
