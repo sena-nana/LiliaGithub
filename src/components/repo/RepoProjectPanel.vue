@@ -163,6 +163,7 @@ type ProjectSectionConfig = {
 };
 type ProjectSidebarMode = "repo" | "files" | Exclude<ProjectTab, "readme">;
 type ProjectSidebarButtonMode = "repo" | Exclude<ProjectTab, "readme">;
+type RefreshableProjectSection = Extract<ProjectTab, "issues" | "pulls" | "actions" | "release">;
 type ProjectSidebarButtonConfig = {
   key: ProjectSidebarButtonMode;
   label: string;
@@ -357,8 +358,6 @@ const props = defineProps<{
   projectPullRequestNumber?: number | null;
   projectRunId?: number | null;
   projectJobId?: number | null;
-  projectRefreshToken?: number;
-  projectCacheResetToken?: number;
 }>();
 
 const emit = defineEmits<{
@@ -464,6 +463,8 @@ const aboutTopicDraft = ref("");
 const aboutTopicList = ref<HTMLElement | null>(null);
 const aboutTopicMeasureList = ref<HTMLElement | null>(null);
 const repoReleasesPanel = ref<{ openCreate: () => void } | null>(null);
+const actionsInfoSidebar = ref<{ refreshCurrentRun: () => Promise<void> } | null>(null);
+const refreshingProjectSection = ref<RefreshableProjectSection | null>(null);
 const aboutTopicsExpanded = ref(false);
 const collapsedAboutTopicCount = ref(0);
 const issueState = ref<IssueState>(issueStateFromRoute());
@@ -1062,6 +1063,10 @@ function isProjectSidebarButtonActive(section: ProjectSidebarMode) {
   return projectSidebarMode.value === section;
 }
 
+function isRefreshableProjectSection(section: ProjectContentMode): section is RefreshableProjectSection {
+  return section === "issues" || section === "pulls" || section === "actions" || section === "release";
+}
+
 const projectSidebarMode = computed<ProjectSidebarMode>(() => {
   if (activeSection.value === "files") return "files";
   if (
@@ -1082,6 +1087,29 @@ const projectSidebarContentUnavailable = computed(() =>
   (projectSidebarMode.value === "release" && Boolean(releasesAccessUnavailable.value)) ||
   (projectSidebarMode.value === "settings" && Boolean(settingsAccessUnavailable.value))
 );
+const refreshableProjectSection = computed<RefreshableProjectSection | null>(() =>
+  isRefreshableProjectSection(activeSection.value) ? activeSection.value : null
+);
+const currentProjectSectionRefreshRunning = computed(() => {
+  const section = refreshableProjectSection.value;
+  return Boolean(section && refreshingProjectSection.value === section);
+});
+const currentProjectSectionBusy = computed(() => {
+  const section = refreshableProjectSection.value;
+  if (!section) return false;
+  if (currentProjectSectionRefreshRunning.value) return true;
+  if (section === "issues") {
+    return issuesLoading.value || issueDiscussionLoading.value || issueFilterMetadataLoading.value;
+  }
+  if (section === "pulls") {
+    return pullsLoading.value ||
+      pullRequestDiscussionLoading.value ||
+      pullChecksLoading.value ||
+      issueFilterMetadataLoading.value;
+  }
+  if (section === "actions") return actionsLoading.value;
+  return releasesLoading.value;
+});
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectCreateFlow = computed(() => normalizeProjectCreateFlow(route.query.create));
@@ -1212,15 +1240,6 @@ watch(
     void applyProjectRouteState();
   },
 );
-
-watch(() => props.projectRefreshToken, () => {
-  void refreshLoadedSectionData();
-});
-
-watch(() => props.projectCacheResetToken, () => {
-  resetProjectSectionState();
-  void ensureSectionData(activeSection.value);
-});
 
 watch(() => props.activeGitTab, (tab) => {
   activeSection.value = routeTabToSection(tab);
@@ -2299,10 +2318,6 @@ async function loadReleases(force = false) {
   }, { reusePending: !force });
 }
 
-async function refreshActionsPanel() {
-  await loadActions(true);
-}
-
 async function loadRemoteSectionData(section: ProjectContentMode, tasks: Promise<unknown>[]) {
   await Promise.all([
     preloadRepoProjectSection(section),
@@ -2349,47 +2364,39 @@ async function ensureSectionData(section: ProjectContentMode) {
   await preload;
 }
 
-async function refreshLoadedSectionData() {
-  if (activeSection.value === "readme") {
-    if (readmeLoaded.value || settingsLoaded.value) {
+async function refreshCurrentSectionData(section: RefreshableProjectSection) {
+  if (refreshingProjectSection.value === section) return;
+  refreshingProjectSection.value = section;
+  try {
+    if (section === "issues") {
+      const issueNumber = focusedIssueNumber.value;
       await Promise.all([
-        readmeLoaded.value ? loadReadme(true) : Promise.resolve(),
-        resolvedRepoContext.value.capabilities.settings.available && settingsLoaded.value
-          ? loadSettings(true)
-          : Promise.resolve(),
+        loadIssues(true),
+        loadIssueFilterMetadata(true),
+        issueNumber ? loadIssueDiscussion(issueNumber, true) : Promise.resolve(),
       ]);
+      return;
     }
-    return;
-  }
-  if (activeSection.value === "issues" && issuesLoadedKey.value) {
-    await Promise.all([
-      loadIssues(true),
-      issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
-      focusedIssueNumber.value ? loadIssueDiscussion(focusedIssueNumber.value, true) : Promise.resolve(),
-    ]);
-    return;
-  }
-  if (activeSection.value === "pulls" && pullsLoadedKey.value) {
-    await Promise.all([
-      loadPullRequests(true),
-      issueFilterMetadataLoadedRepo.value ? loadIssueFilterMetadata(true) : Promise.resolve(),
-      focusedPullRequestNumber.value ? loadPullRequestDiscussion(focusedPullRequestNumber.value, true) : Promise.resolve(),
-    ]);
-    return;
-  }
-  if (activeSection.value === "actions" && actionsLoaded.value) {
-    await Promise.all([
-      loadActions(true),
-      releasesLoaded.value ? loadReleases(true) : Promise.resolve(),
-    ]);
-    return;
-  }
-  if (activeSection.value === "release" && releasesLoaded.value) {
+    if (section === "pulls") {
+      const pullNumber = focusedPullRequestNumber.value;
+      await Promise.all([
+        loadPullRequests(true),
+        loadIssueFilterMetadata(true),
+        pullNumber ? loadPullRequestDiscussion(pullNumber, true) : Promise.resolve(),
+      ]);
+      return;
+    }
+    if (section === "actions") {
+      await Promise.all([
+        loadActions(true),
+        releasesLoaded.value ? loadReleases(true) : Promise.resolve(),
+      ]);
+      await actionsInfoSidebar.value?.refreshCurrentRun();
+      return;
+    }
     await loadReleases(true);
-    return;
-  }
-  if (activeSection.value === "settings" && settingsLoaded.value) {
-    await loadSettings(true);
+  } finally {
+    if (refreshingProjectSection.value === section) refreshingProjectSection.value = null;
   }
 }
 
@@ -2458,6 +2465,7 @@ function clearBlockedGitHubState() {
 
 function resetProjectSectionState() {
   activeSection.value = routeTabToSection(props.activeGitTab);
+  refreshingProjectSection.value = null;
   readmeLoader.invalidate();
   invalidateRepoMutations();
   readmePreview.value = null;
@@ -3810,7 +3818,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :loading="actionsLoading"
             :focused-run-id="focusedRunId"
             @focus-run="focusActionRun"
-            @refresh="refreshActionsPanel"
           />
         </section>
 
@@ -4157,24 +4164,38 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         <div
           v-if="projectSidebarMode !== 'files'"
           class="project-sidebar-switcher"
-          role="tablist"
-          aria-label="右侧面板"
+          aria-label="右侧面板工具栏"
         >
+          <div class="project-sidebar-switcher__tabs" role="tablist" aria-label="右侧面板">
+            <button
+              v-for="tab in projectSidebarButtons"
+              :key="tab.key"
+              type="button"
+              class="project-sidebar-switcher__button"
+              :class="{ 'is-active': isProjectSidebarButtonActive(tab.key) }"
+              role="tab"
+              :data-agent-id="`repo.project.sidebar.${tab.key}`"
+              :aria-selected="isProjectSidebarButtonActive(tab.key)"
+              :aria-label="tab.label"
+              :title="tab.label"
+              :disabled="tab.disabled"
+              @click="activateProjectSidebarButton(tab.key)"
+            >
+              <component :is="tab.icon" :size="15" aria-hidden="true" />
+            </button>
+          </div>
           <button
-            v-for="tab in projectSidebarButtons"
-            :key="tab.key"
+            v-if="refreshableProjectSection"
             type="button"
-            class="project-sidebar-switcher__button"
-            :class="{ 'is-active': isProjectSidebarButtonActive(tab.key) }"
-            role="tab"
-            :data-agent-id="`repo.project.sidebar.${tab.key}`"
-            :aria-selected="isProjectSidebarButtonActive(tab.key)"
-            :aria-label="tab.label"
-            :title="tab.label"
-            :disabled="tab.disabled"
-            @click="activateProjectSidebarButton(tab.key)"
+            class="project-sidebar-switcher__button project-sidebar-switcher__refresh"
+            data-agent-id="repo.project.sidebar.refresh"
+            :aria-label="currentProjectSectionRefreshRunning ? '正在刷新当前页' : '刷新当前页'"
+            :title="currentProjectSectionRefreshRunning ? '正在刷新当前页' : '刷新当前页'"
+            :disabled="currentProjectSectionBusy || projectSidebarContentUnavailable"
+            @click="refreshCurrentSectionData(refreshableProjectSection)"
           >
-            <component :is="tab.icon" :size="15" aria-hidden="true" />
+            <LoaderCircle v-if="currentProjectSectionBusy" :size="15" aria-hidden="true" class="sb-spin" />
+            <RotateCw v-else :size="15" aria-hidden="true" />
           </button>
         </div>
 
@@ -4380,10 +4401,10 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :loaded="actionsLoaded"
             @update:state="setActionState"
             @update:filters="setActionPanelFilters"
-            @refresh="loadActions(true)"
           />
           <RepoActionsInfoSidebar
             v-if="repoFullName"
+            ref="actionsInfoSidebar"
             :repo-full-name="repoFullName"
             :runs="filteredActionRuns"
             :focused-run-id="focusedRunId"
@@ -4392,7 +4413,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :attach-asset-mutating="releaseAssetUploadTracker.running.value"
             @attach-artifact-asset="attachWorkflowArtifactAsset"
             @focus-job="focusActionJob"
-            @refresh="loadActions(true)"
           />
         </template>
 
@@ -4415,17 +4435,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             >
               <Plus :size="14" aria-hidden="true" />
               新建 Release
-            </button>
-            <button
-              type="button"
-              class="ghost project-sidebar-summary-card__action"
-              data-agent-id="repo.release.refresh"
-              :disabled="releasesLoading || !!releasesAccessUnavailable"
-              @click="loadReleases(true)"
-            >
-              <LoaderCircle v-if="releasesLoading" :size="14" aria-hidden="true" class="sb-spin" />
-              <RotateCw v-else :size="14" aria-hidden="true" />
-              刷新 Release
             </button>
           </div>
           <button
@@ -4724,6 +4733,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   background: var(--bg-subtle);
 }
 
+.project-sidebar-switcher__tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .project-sidebar-switcher__button {
   display: inline-flex;
   align-items: center;
@@ -4753,6 +4770,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-sidebar-switcher__button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.project-sidebar-switcher__refresh {
+  flex: 0 0 var(--repo-sidebar-icon-button-size);
+  margin-left: 2px;
+  border-left: 1px solid var(--border-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .project-sidebar-error-card {

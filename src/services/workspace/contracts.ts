@@ -346,7 +346,6 @@ export interface WorkspaceCommandContracts {
 
   repo_get_summary: CommandContract<RepoArg, RepoSummary>;
   repo_get_storage_stats: CommandContract<RepoArg, RepoStorageStats>;
-  repo_clear_local_cache: CommandContract<RepoArg & { repoFullName: Maybe<string> }, void>;
   repo_refresh_summary: CommandContract<RepoArg & { options: RepoRefreshSummaryOptions }, RepoSummary>;
   repo_refresh_language_stats: CommandContract<RepoArg, RepoSummary>;
   repo_list_files: CommandContract<RepoArg & { parentPath: Maybe<string> }, RepoFileTreeEntry[]>;

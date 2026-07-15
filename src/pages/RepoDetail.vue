@@ -47,8 +47,6 @@ const {
   activeProjectJob,
   activeFilePath,
   activeFileHash,
-  projectRefreshToken,
-  projectCacheResetToken,
   toolbarTabs,
   launchCommandOptions,
   activeLaunchValue,
@@ -82,9 +80,8 @@ const {
   unstageStagedChanges,
   runChangeAction,
   commitSelected,
-  refreshAndFetchRepo,
   requestGitHubBranches,
-  refreshProjectCache,
+  refreshGitInfo,
   selectOpenTarget,
   selectPullStrategy,
   setRepoSetting,
@@ -160,14 +157,14 @@ const {
         :push-remote-names="pushRemoteNames"
         :remote-sync-unavailable-reason="remoteSyncUnavailableReason"
         :launch-command="launchConfig?.command"
-        @refresh-project-cache="refreshProjectCache"
+        @refresh-git-info="refreshGitInfo"
         @checkout="checkout"
         @update-current-branch="updateCurrentBranch"
         @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
         @rename-branch="renameBranchTo($event.oldName, $event.newName)"
         @merge-branch="mergeBranch"
         @delete-branch="deleteBranch"
-        @refresh-branches="refreshAndFetchRepo"
+        @refresh-branches="refreshGitInfo"
         @request-branches="requestGitHubBranches"
         @push-with-upstream="pushCurrentBranchWithUpstream"
         @set-upstream="setCurrentBranchUpstream"
@@ -236,8 +233,6 @@ const {
           :project-pull-request-number="activeProjectPullRequest"
           :project-run-id="activeProjectRun"
           :project-job-id="activeProjectJob"
-          :project-refresh-token="projectRefreshToken"
-          :project-cache-reset-token="projectCacheResetToken"
           @update-commit-message="commitMessage = $event"
           @stage-unstaged-changes="stageUnstagedChanges"
           @unstage-staged-changes="unstageStagedChanges"

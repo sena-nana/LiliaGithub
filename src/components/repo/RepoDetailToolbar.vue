@@ -104,7 +104,7 @@ const emit = defineEmits<{
   selectLaunchCandidate: [value: string];
   runLaunchCommand: [command: string];
   stopLaunch: [];
-  refreshProjectCache: [];
+  refreshGitInfo: [];
   updateSetting: [key: RepoSettingKey, value: boolean];
   useDefaultTokenAuth: [];
   openSelectedTarget: [];
@@ -328,18 +328,19 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
           </RouterLink>
         </div>
 
-        <div v-if="repoContext.capabilities.open.available" class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目操作">
+        <div class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目操作">
           <button
             type="button"
             class="repo-toolbar__btn"
-            title="刷新项目缓存"
-            aria-label="刷新项目缓存"
-            data-agent-id="repo.toolbar.refresh-project-cache"
-            :disabled="actionRunning"
-            @click="emit('refreshProjectCache')"
+            title="刷新 Git 信息"
+            aria-label="刷新 Git 信息"
+            data-agent-id="repo.toolbar.refresh-git-info"
+            :disabled="actionRunning || (!repoContext.capabilities.branchBrowse.available && !repoContext.capabilities.history.available)"
+            @click="emit('refreshGitInfo')"
           >
             <RotateCw :size="17" aria-hidden="true" />
           </button>
+          <template v-if="repoContext.capabilities.open.available">
           <RepoToolbarSettingsMenu
             :values="repoSettingValues"
             :disabled="actionRunning"
@@ -459,6 +460,7 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             <span v-if="pushRemoteNames.length > 1 && remotesNeedingPush" class="repo-toolbar__badge">{{ remotesNeedingPush }}</span>
             <span v-else-if="aheadCount" class="repo-toolbar__badge">{{ aheadCount }}</span>
           </button>
+          </template>
         </div>
       </div>
     </div>

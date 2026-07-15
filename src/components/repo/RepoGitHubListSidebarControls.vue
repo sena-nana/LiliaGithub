@@ -23,13 +23,14 @@ type SidebarFilterControl = {
   disabled?: boolean;
 };
 
-defineProps<{
+withDefaults(defineProps<{
   title: string;
   panelLabel: string;
   icon: Component;
-  createIcon: Component;
-  createLabel: string;
-  createAgentId: string;
+  createIcon?: Component;
+  createLabel?: string;
+  createAgentId?: string;
+  showCreate?: boolean;
   createDisabled?: boolean;
   creating?: boolean;
   states: readonly SidebarControlOption[];
@@ -45,7 +46,9 @@ defineProps<{
   sortOptions: readonly SidebarControlOption[];
   sortAgentId: string;
   sortButtonClass: string;
-}>();
+}>(), {
+  showCreate: true,
+});
 
 const emit = defineEmits<{
   create: [];
@@ -64,6 +67,7 @@ const emit = defineEmits<{
         <strong>{{ title }}</strong>
       </div>
       <button
+        v-if="showCreate !== false && createIcon && createLabel"
         type="button"
         class="primary project-sidebar-filter-card__create"
         :data-agent-id="createAgentId"

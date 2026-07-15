@@ -640,7 +640,7 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.project.sidebar.issues"],
-      waits: ["repo.issues.create"],
+      waits: ["repo.project.sidebar.refresh", "repo.issues.create"],
       observe: "issues-panel",
     },
     {
@@ -662,12 +662,12 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.project.sidebar.actions"],
-      waits: ["repo.actions.refresh", "repo.actions.sidebar.refresh"],
+      waits: ["repo.project.sidebar.refresh"],
       observe: "actions-panel",
     },
     {
       clicks: ["repo.project.sidebar.release"],
-      waits: ["repo.release.refresh", "repo.release.filters.type"],
+      waits: ["repo.project.sidebar.refresh", "repo.release.filters.type"],
       observe: "release-panel",
     },
     {

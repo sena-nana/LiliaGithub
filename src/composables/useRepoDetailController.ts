@@ -99,8 +99,6 @@ export function useRepoDetailController() {
   const syncOperationResult = ref<RepoSyncOperationResult | null>(null);
   const conflictDialogOpen = ref(false);
   const failedPushRetrying = ref(false);
-  const projectRefreshToken = ref(0);
-  const projectCacheResetToken = ref(0);
   const componentEpoch = useComponentEpoch();
   const repoDetailLoader = createLatestAsyncLoader({ componentEpoch });
   const githubBranchesLoader = createLatestAsyncLoader({ componentEpoch });
@@ -596,10 +594,10 @@ export function useRepoDetailController() {
     }
   }
 
-  async function loadRemoteGitHubData(repoFullName: string | null) {
+  async function loadRemoteGitHubData(repoFullName: string | null, forceRefresh = false) {
     await Promise.all([
-      loadGitHubBranches(repoFullName),
-      loadGitHubCommits(repoFullName),
+      loadGitHubBranches(repoFullName, forceRefresh),
+      loadGitHubCommits(repoFullName, forceRefresh),
     ]);
   }
 
@@ -612,7 +610,7 @@ export function useRepoDetailController() {
     void loadGitHubBranches(githubRepoFullName.value);
   }
 
-  async function loadGitHubBranches(repoFullName: string | null) {
+  async function loadGitHubBranches(repoFullName: string | null, forceRefresh = false) {
     if (!repoFullName) return;
     if (!canUseGitHubData.value) {
       resetGitHubRemoteState();
@@ -624,7 +622,7 @@ export function useRepoDetailController() {
       githubDefaultBranch.value = null;
       try {
         const [management, branches] = await Promise.all([
-          getGitHubRepoManagement(repoFullName),
+          getGitHubRepoManagement(repoFullName, { forceRefresh }),
           listGitHubBranches(repoFullName),
         ]);
         if (!githubBranchesLoader.isCurrent(runId) || repoFullName !== githubRepoFullName.value) return;
@@ -648,13 +646,17 @@ export function useRepoDetailController() {
     });
   }
 
-  async function loadGitHubCommits(repoFullName: string | null) {
+  async function loadGitHubCommits(repoFullName: string | null, forceRefresh = false) {
     if (!repoFullName) return;
     if (!canUseGitHubData.value) return;
     await githubCommitsLoader.run(repoFullName, async (runId) => {
       githubCommits.value = [];
       try {
-        const commits = await listGitHubRepoCommits(repoFullName, { perPage: 100 });
+        const commits = await listGitHubRepoCommits(
+          repoFullName,
+          { perPage: 100 },
+          { forceRefresh },
+        );
         if (!githubCommitsLoader.isCurrent(runId) || repoFullName !== githubRepoFullName.value) return;
         githubCommits.value = commits;
       } catch (err) {
@@ -923,41 +925,22 @@ export function useRepoDetailController() {
     });
   }
 
-  function refreshAndFetchRepo() {
+  function refreshGitInfo() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
     const localRepo = hasLocalRepo.value;
+    const repoFullName = githubRepoFullName.value;
+    const includeCommits = activeTab.value === "history";
 
     void runAction(async () => {
       if (!localRepo) {
-        await loadRemoteGitHubData(githubRepoFullName.value);
-        projectRefreshToken.value += 1;
+        await loadRemoteGitHubData(repoFullName, true);
         return;
       }
       await requestManualRepoRemoteRefresh(targetRepoId, {
-        includeCommits: activeTab.value === "history",
+        includeCommits,
         includeBranches: true,
       });
-      projectRefreshToken.value += 1;
-    });
-  }
-
-  function refreshProjectCache() {
-    const targetRepoId = repoId.value;
-    if (!targetRepoId) return;
-
-    void runAction(async () => {
-      const repoFullName = githubRepoFullName.value;
-      await workspace.clearRepoLocalCache(targetRepoId, repoFullName);
-      if (repoId.value !== targetRepoId) return;
-      projectCacheResetToken.value += 1;
-      await nextTick();
-      if (repoId.value !== targetRepoId) return;
-      if (!hasLocalRepo.value) {
-        await loadRemoteGitHubData(repoFullName);
-      } else {
-        await load();
-      }
     });
   }
 
@@ -1368,8 +1351,6 @@ export function useRepoDetailController() {
       activeProjectJob,
       activeFilePath,
       activeFileHash,
-      projectRefreshToken,
-      projectCacheResetToken,
       toolbarTabs,
       launchCommandOptions,
       activeLaunchValue,
@@ -1403,9 +1384,8 @@ export function useRepoDetailController() {
       unstageStagedChanges,
       runChangeAction,
       commitSelected,
-      refreshAndFetchRepo,
       requestGitHubBranches,
-      refreshProjectCache,
+      refreshGitInfo,
       selectPullStrategy,
       setRepoSetting,
       openRemoteSyncSettings,
