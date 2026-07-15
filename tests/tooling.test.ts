@@ -29,6 +29,7 @@ function runTauriInstallDryRun(rustflags: string) {
       env: {
         ...process.env,
         LILIA_GITHUB_INSTALL_DRY_RUN: "1",
+        npm_config_user_agent: "yarn/4.17.1 npm/? node/v26.5.0",
         RUSTFLAGS: rustflags,
       },
       encoding: "utf-8",

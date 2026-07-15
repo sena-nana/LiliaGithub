@@ -148,12 +148,12 @@ LiliaGithub/
 
 ## 早期开发
 
-LiliaGithub 通过 Corepack 使用 Yarn 4.14.1。先启用 Corepack，再从仓库根目录通过根 `yarn ...` 脚本运行贡献命令。`npm`、`pnpm`、全局 Yarn 1.x 和偏离包管理器约束的路径都不作为贡献路径支持。
+LiliaGithub 固定使用 Node.js 26.5.0、Corepack 0.35.0 和 Yarn 4.17.1。Node.js 26 不再内置 Corepack，因此首次使用时需显式安装，再从仓库根目录运行贡献命令。
 
 ```bash
-# 1) 启用 Corepack 并激活仓库要求的 Yarn 版本
-corepack enable
-corepack prepare yarn@4.14.1 --activate
+# 1) 安装 Corepack 并启用仓库要求的 Yarn shim
+npm install --global corepack@0.35.0
+corepack enable yarn
 
 # 2) 安装依赖
 yarn install
@@ -173,7 +173,7 @@ yarn docs:build
 yarn docs:preview
 ```
 
-如果启用 Corepack 后 `yarn --version` 仍显示 `1.x`，请显式通过 Corepack 运行命令，例如 `corepack yarn install` 和 `corepack yarn dev`。
+如果 `yarn --version` 不是 `4.17.1`，请显式通过 Corepack 运行命令，例如 `corepack yarn install` 和 `corepack yarn dev`。
 
 ## 首发发布打包
 
