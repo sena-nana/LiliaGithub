@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LoaderCircle, Play, RefreshCw } from "@lucide/vue";
+import { Play } from "@lucide/vue";
 import { computed } from "vue";
 import type { GitHubWorkflowRun } from "../../services/workspace/types";
 import RepoGitHubListSidebarControls from "./RepoGitHubListSidebarControls.vue";
@@ -30,7 +30,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   "update:state": [value: ActionState];
   "update:filters": [value: ActionPanelFilters];
-  refresh: [];
 }>();
 
 const states: readonly { value: ActionState; label: string }[] = [
@@ -115,10 +114,7 @@ function updateSort(value: string) {
       title="Actions"
       panel-label="Actions 筛选项"
       :icon="Play"
-      :create-icon="loading ? LoaderCircle : RefreshCw"
-      create-label="刷新"
-      create-agent-id="repo.actions.sidebar.refresh"
-      :creating="loading"
+      :show-create="false"
       :states="states"
       :state="state"
       state-aria-label="Actions 状态"
@@ -132,7 +128,6 @@ function updateSort(value: string) {
       :sort-options="sortOptions"
       sort-agent-id="repo.actions.filters.sort"
       sort-button-class="action-filter-dropdown"
-      @create="emit('refresh')"
       @state="(value) => emit('update:state', value as ActionState)"
       @query="(value) => updateFilters({ query: value })"
       @filter="updateFilter"

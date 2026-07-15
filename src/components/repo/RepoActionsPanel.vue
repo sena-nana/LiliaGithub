@@ -2,8 +2,6 @@
 import {
   CheckCircle2,
   CircleDot,
-  LoaderCircle,
-  RefreshCw,
   XCircle,
 } from "@lucide/vue";
 import { computed, ref, watch } from "vue";
@@ -19,7 +17,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   focusRun: [runId: number | null];
-  refresh: [];
 }>();
 
 const RUN_RENDER_PAGE_SIZE = 50;
@@ -57,10 +54,6 @@ function runToneClass(run: GitHubWorkflowRun) {
           <strong>运行</strong>
           <span>{{ runs.length }} 条运行</span>
         </div>
-        <button type="button" class="ghost actions-icon-btn" data-agent-id="repo.actions.refresh" aria-label="刷新 Actions" title="刷新" @click="emit('refresh')">
-          <LoaderCircle v-if="loading" :size="14" aria-hidden="true" class="sb-spin" />
-          <RefreshCw v-else :size="14" aria-hidden="true" />
-        </button>
       </div>
 
       <p v-if="loading && !runs.length" class="muted actions-empty">正在读取 GitHub Actions。</p>

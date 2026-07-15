@@ -376,28 +376,6 @@ function clearGitHubProjectRepoCache(repoFullName: string) {
   githubProjectCache.delete(githubProjectRepoKey(repoFullName));
 }
 
-function clearPendingWorkspaceReadsForRepo(repoId: string, repoFullName?: string | null) {
-  const remoteRepoId = repoFullName ? `github:${repoFullName}` : null;
-  for (const key of pendingWorkspaceReads.keys()) {
-    const separatorIndex = key.indexOf(":");
-    if (separatorIndex < 0) continue;
-    try {
-      const rawArgs = JSON.parse(key.slice(separatorIndex + 1));
-      if (!rawArgs || typeof rawArgs !== "object") continue;
-      const args = rawArgs as { repoId?: unknown; repoFullName?: unknown };
-      if (
-        args.repoId === repoId ||
-        (remoteRepoId != null && args.repoId === remoteRepoId) ||
-        (repoFullName != null && args.repoFullName === repoFullName)
-      ) {
-        pendingWorkspaceReads.delete(key);
-      }
-    } catch {
-      continue;
-    }
-  }
-}
-
 function githubIssueCacheKey(options: GitHubIssueListOptions) {
   const state = options.state ?? "open";
   const perPage = Math.min(100, Math.max(1, options.perPage ?? 100));
@@ -673,14 +651,6 @@ export function getRepoSummary(repoId: string): Promise<RepoSummary> {
 
 export function getRepoStorageStats(repoId: string): Promise<RepoStorageStats> {
   return call("repo_get_storage_stats", { repoId }, () => workspaceFallback().getRepoStorageStats(repoId));
-}
-
-export async function clearRepoLocalCache(repoId: string, repoFullName?: string | null): Promise<void> {
-  await call("repo_clear_local_cache", { repoId, repoFullName: repoFullName ?? null }, () =>
-    workspaceFallback().clearRepoLocalCache(repoId, repoFullName ?? null)
-  );
-  if (repoFullName) clearGitHubProjectRepoCache(repoFullName);
-  clearPendingWorkspaceReadsForRepo(repoId, repoFullName);
 }
 
 export function refreshRepoSummary(

@@ -51,7 +51,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   attachArtifactAsset: [request: GitHubAttachWorkflowArtifactAssetRequest];
   focusJob: [jobId: number | null];
-  refresh: [];
 }>();
 
 const selectedArtifactId = ref<number | null>(null);
@@ -148,8 +147,14 @@ async function loadDetail(runId: number, force = false) {
 
 function refreshDiagnostics() {
   if (detailRun.value) void loadDetail(detailRun.value.id, true);
-  emit("refresh");
 }
+
+async function refreshCurrentRun() {
+  if (props.focusedRunId == null) return;
+  await loadDetail(props.focusedRunId, true);
+}
+
+defineExpose({ refreshCurrentRun });
 
 async function selectArtifact(artifact: GitHubWorkflowArtifact) {
   if (artifact.expired) return;

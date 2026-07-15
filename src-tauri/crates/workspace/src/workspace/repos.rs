@@ -8,8 +8,7 @@ use std::process::{Command, Stdio};
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::bulk::repo_dirty_count;
 use crate::workspace::github::{
-    clear_github_project_repo_cache, github_auth_header, normalize_github_repo_input,
-    normalize_optional_string, token_for_binding,
+    github_auth_header, normalize_github_repo_input, normalize_optional_string, token_for_binding,
 };
 use crate::workspace::operations::{
     run_operation, run_operation_with_completion, OperationKind, OperationSpec,
@@ -21,9 +20,8 @@ use crate::workspace::repo_guard::{
 use crate::workspace::run_core_operation_as;
 use crate::workspace::settings::{
     add_managed_repo_id, cached_repo_summary, load_settings, matching_startup_cache,
-    prune_deleted_repo_settings, remove_startup_cache_repo, repo_path_by_id, repo_path_from_id,
-    save_settings, sort_dedup, workspace_root, write_startup_repo_summary,
-    write_startup_repo_summary_after_fetch,
+    prune_deleted_repo_settings, repo_path_by_id, repo_path_from_id, save_settings, sort_dedup,
+    workspace_root, write_startup_repo_summary, write_startup_repo_summary_after_fetch,
 };
 use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
 use lilia_github_contracts::workspace::{
@@ -2105,31 +2103,6 @@ pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSum
                 save_settings(&app, &settings)?;
             }
             Ok(summarize_workspace_repo(&root, &path, &settings))
-        },
-    )
-    .await
-}
-
-pub async fn repo_clear_local_cache(
-    app: AppHandle,
-    repo_id: String,
-    repo_full_name: Option<String>,
-) -> Result<(), String> {
-    run_repo_blocking(
-        app.clone(),
-        repo_id.clone(),
-        OperationKind::LocalWrite,
-        "清理项目缓存",
-        move || {
-            remove_startup_cache_repo(&app, &repo_id)?;
-            if let Some(repo_full_name) = repo_full_name
-                .as_deref()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
-                clear_github_project_repo_cache(&app, repo_full_name)?;
-            }
-            Ok(())
         },
     )
     .await

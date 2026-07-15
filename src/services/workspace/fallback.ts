@@ -3879,15 +3879,6 @@ export function clearStartupCache(): Promise<void> {
   });
 }
 
-export function clearRepoLocalCache(repoId: string, repoFullName?: string | null): Promise<void> {
-  return call("repo_clear_local_cache", { repoId, repoFullName: repoFullName ?? null }, () => {
-    if (!startupCacheMatchesSettings(fallbackStartupCache)) return;
-    const cache = cloneStartupCache(fallbackStartupCache!);
-    delete cache.reposById[repoId];
-    fallbackStartupCache = cache;
-  });
-}
-
 export function writeStartupContributions(
   contributions: WorkspaceStartupContributions,
 ): Promise<WorkspaceStartupCache> {

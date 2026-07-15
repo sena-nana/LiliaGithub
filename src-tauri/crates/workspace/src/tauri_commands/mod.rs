@@ -303,7 +303,6 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_delete_release_asset,
         repos::repo_get_summary,
         storage::repo_get_storage_stats,
-        repos::repo_clear_local_cache,
         repos::repo_refresh_summary,
         repos::repo_refresh_language_stats,
         file_browser::repo_list_files,

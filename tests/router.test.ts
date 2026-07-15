@@ -934,32 +934,29 @@ describe("基础路由", () => {
     expect(await screen.findByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("仓库详情页右上角刷新项目缓存后重读当前项目页和详情", async () => {
-    const service = await import("../src/services/workspace");
-    const workspaceClient = await import("../src/services/workspace/client");
-    const clearRepoLocalCache = vi.spyOn(service, "clearRepoLocalCache");
-    const listRepoFiles = vi.spyOn(workspaceClient, "listRepoFiles").mockResolvedValue([]);
+  it("仓库详情页右上角只刷新 Git 信息，不重读当前 GitHub 项目内容", async () => {
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      "sena-nana/LiliaGithub": [
+        githubIssue("sena-nana/LiliaGithub", 12, "2026-06-18T08:00:00Z"),
+      ],
+    });
     const summary = repoSummary("LiliaGithub");
     const detailRequests = mockRepoDetail(summary, {});
-    await renderAt("/repos/LiliaGithub");
+    await renderAt("/repos/LiliaGithub?projectTab=issues");
     await waitForRepoTitle("LiliaGithub");
     await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
-    await waitFor(() => expect(listRepoFiles).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
+        expect.objectContaining({ repoFullName: "sena-nana/LiliaGithub" }),
+      );
+    });
     const initialRequestCount = detailRequests.length;
-    const initialFileRequestCount = listRepoFiles.mock.calls.length;
+    const initialIssueRequestCount = workspaceFallback.getFallbackGitHubIssueListCallsForTests().length;
 
-    try {
-      await fireEvent.click(screen.getByRole("button", { name: "刷新项目缓存" }));
+    await fireEvent.click(screen.getByRole("button", { name: "刷新 Git 信息" }));
 
-      await waitFor(() => {
-        expect(clearRepoLocalCache).toHaveBeenCalledWith("LiliaGithub", "sena-nana/LiliaGithub");
-      });
-      await waitFor(() => expect(listRepoFiles.mock.calls.length).toBeGreaterThan(initialFileRequestCount));
-      await waitFor(() => expect(detailRequests.length).toBeGreaterThan(initialRequestCount));
-    } finally {
-      clearRepoLocalCache.mockRestore();
-      listRepoFiles.mockRestore();
-    }
+    await waitFor(() => expect(detailRequests.length).toBeGreaterThan(initialRequestCount));
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(initialIssueRequestCount);
   });
 
   it("仓库详情页打开目标按钮可下拉切换并立即打开目标", async () => {
