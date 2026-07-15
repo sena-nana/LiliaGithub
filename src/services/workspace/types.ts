@@ -287,6 +287,17 @@ export interface GitHubRepoPage {
   scope?: GitHubRepositoryScope;
 }
 
+export type GitHubRepositorySubscriptionMode = "watching" | "participating" | "ignored";
+
+export interface GitHubRepositorySubscription {
+  mode: GitHubRepositorySubscriptionMode;
+}
+
+export interface GitHubWatchedRepoPage {
+  items: GitHubRepoSummary[];
+  nextPage: number | null;
+}
+
 export type GitHubOwnerKind = "user" | "organization";
 
 export interface GitHubRepositoryOwner {

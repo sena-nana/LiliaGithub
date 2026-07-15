@@ -700,6 +700,28 @@ pub struct GitHubRepoPage {
     pub scope: GitHubRepositoryScope,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubRepositorySubscriptionMode {
+    Watching,
+    Participating,
+    Ignored,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubRepositorySubscription {
+    pub mode: GitHubRepositorySubscriptionMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubWatchedRepoPage {
+    pub items: Vec<GitHubRepoSummary>,
+    #[serde(default)]
+    pub next_page: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LanguageStat {

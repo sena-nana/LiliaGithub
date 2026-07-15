@@ -49,6 +49,8 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepositorySubscription,
+  GitHubRepositorySubscriptionMode,
   GitHubRepositoryScope,
   GitHubRepoTemplate,
   GitHubRepoSettingsSection,
@@ -56,6 +58,7 @@ import type {
   GitHubRepoSummary,
   GitHubRuleset,
   GitHubRulesetSummary,
+  GitHubWatchedRepoPage,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
   GitHubWorkflowRun,
@@ -2540,6 +2543,7 @@ type FallbackGitHubActionNotificationsOverride = (
 let fallbackBinding = defaultFallbackBinding;
 let fallbackGitHubReposError: string | null = null;
 let fallbackGitHubRepoPagesOverride: GitHubRepoPage[] | null = null;
+let fallbackGitHubRepositorySubscriptions = createFallbackGitHubRepositorySubscriptions();
 let fallbackGitHubAccountIssuesOverride: FallbackGitHubAccountIssuesOverride | null = null;
 let fallbackGitHubActionNotificationsOverride: FallbackGitHubActionNotificationsOverride | null = null;
 let fallbackGitHubIssueListCalls: FallbackGitHubIssueListCall[] = [];
@@ -2618,6 +2622,19 @@ const fallbackRemoteRetryAt = new Map<string, number>();
 let fallbackStartupCache: WorkspaceStartupCache | null = null;
 let fallbackContributionIdentityRecommendations: ContributionIdentityRecommendationResult | null = null;
 
+function fallbackGitHubRepositorySubscriptionKey(repoFullName: string) {
+  return `${fallbackAccountKey(fallbackBinding.binding?.login)}:${repoFullName.trim().toLocaleLowerCase()}`;
+}
+
+function createFallbackGitHubRepositorySubscriptions() {
+  const subscriptions = new Map<string, GitHubRepositorySubscriptionMode>();
+  const accountKey = fallbackAccountKey(defaultFallbackBinding.binding?.login);
+  for (const repo of fallbackGitHubRepos.slice(0, 2)) {
+    subscriptions.set(`${accountKey}:${repo.fullName.toLocaleLowerCase()}`, "watching");
+  }
+  return subscriptions;
+}
+
 const fallbackLaunchStatuses: Record<string, ProjectLaunchStatus> = {};
 const fallbackLaunchLogs: Record<string, ProjectLaunchLog[]> = {};
 const fallbackLaunchHistory: Record<string, ProjectLaunchHistoryEntry[]> = {};
@@ -2658,6 +2675,7 @@ export function resetWorkspaceFallbacksForTests() {
   fallbackGitHubActionNotificationsOverride = null;
   fallbackRepos = baseFallbackRepos.map(cloneRepoSummary);
   fallbackGitHubRepos = createFallbackGitHubRepos();
+  fallbackGitHubRepositorySubscriptions = createFallbackGitHubRepositorySubscriptions();
   fallbackGitHubRepoOwners = createFallbackGitHubRepoOwners();
   fallbackGitHubRepoTemplates = createFallbackGitHubRepoTemplates();
   fallbackGitHubRepoManagement = createFallbackGitHubRepoManagement();
@@ -2840,6 +2858,21 @@ export function setFallbackGitHubRepoPagesForTests(pages: GitHubRepoPage[] | nul
     items: page.items.map(cloneGitHubRepoSummary),
     nextPage: page.nextPage,
   })) ?? null;
+}
+
+export function setFallbackGitHubRepositorySubscriptionsForTests(
+  subscriptions: Record<string, GitHubRepositorySubscriptionMode>,
+) {
+  const accountPrefix = `${fallbackAccountKey(fallbackBinding.binding?.login)}:`;
+  for (const key of fallbackGitHubRepositorySubscriptions.keys()) {
+    if (key.startsWith(accountPrefix)) fallbackGitHubRepositorySubscriptions.delete(key);
+  }
+  for (const [repoFullName, mode] of Object.entries(subscriptions)) {
+    fallbackGitHubRepositorySubscriptions.set(
+      fallbackGitHubRepositorySubscriptionKey(repoFullName),
+      mode,
+    );
+  }
 }
 
 export function setFallbackGitHubAccountIssuesOverrideForTests(
@@ -4980,6 +5013,68 @@ export function listGitHubRepos(
       nextPage: start + items.length < matching.length ? page + 1 : null,
       scope,
     };
+  });
+}
+
+function requireFallbackGitHubNotificationsScope() {
+  const binding = fallbackBinding.binding;
+  if (fallbackBinding.state !== "bound" || !binding) {
+    throw new Error("github_authentication_required：请先绑定 GitHub");
+  }
+  if (!binding.scopes.some((scope) => scope.trim().toLocaleLowerCase() === "notifications")) {
+    throw new Error("github_notifications_scope_required：GitHub 绑定缺少 notifications 权限，请重新绑定 GitHub 后再试");
+  }
+}
+
+function fallbackGitHubRepository(repoFullName: string) {
+  const key = repoFullName.trim().toLocaleLowerCase();
+  const repo = allFallbackGitHubRepos().find((item) => item.fullName.toLocaleLowerCase() === key);
+  if (!repo) throw new Error(`github_repository_not_accessible：未找到 GitHub 仓库：${repoFullName}`);
+  return repo;
+}
+
+export function listGitHubWatchedRepos(page: number | null = 1): Promise<GitHubWatchedRepoPage> {
+  return call("github_list_watched_repos", { page }, () => {
+    requireFallbackGitHubNotificationsScope();
+    const pageNo = Math.max(1, page ?? 1);
+    const watched = allFallbackGitHubRepos().filter((repo) =>
+      fallbackGitHubRepositorySubscriptions.get(fallbackGitHubRepositorySubscriptionKey(repo.fullName)) === "watching"
+    );
+    const start = (pageNo - 1) * 100;
+    const items = watched.slice(start, start + 100);
+    return {
+      items: items.map(cloneGitHubRepoSummary),
+      nextPage: start + items.length < watched.length ? pageNo + 1 : null,
+    };
+  });
+}
+
+export function getGitHubRepositorySubscription(
+  repoFullName: string,
+): Promise<GitHubRepositorySubscription> {
+  return call("github_get_repo_subscription", { repoFullName }, () => {
+    requireFallbackGitHubNotificationsScope();
+    const repo = fallbackGitHubRepository(repoFullName);
+    return {
+      mode: fallbackGitHubRepositorySubscriptions.get(
+        fallbackGitHubRepositorySubscriptionKey(repo.fullName),
+      ) ?? "participating",
+    };
+  });
+}
+
+export function updateGitHubRepositorySubscription(
+  repoFullName: string,
+  mode: GitHubRepositorySubscriptionMode,
+): Promise<GitHubRepositorySubscription> {
+  return call("github_update_repo_subscription", { repoFullName, mode }, () => {
+    requireFallbackGitHubNotificationsScope();
+    const repo = fallbackGitHubRepository(repoFullName);
+    fallbackGitHubRepositorySubscriptions.set(
+      fallbackGitHubRepositorySubscriptionKey(repo.fullName),
+      mode,
+    );
+    return { mode };
   });
 }
 

@@ -40,9 +40,10 @@ use lilia_github_contracts::workspace::{
     GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
     GitHubRepoPage, GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
     GitHubRepoTemplate, GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner,
-    GitHubRepositoryPermissions, GitHubRepositoryScope, GitHubRulesetSummary,
-    GitHubUpdateAccountProfileRequest, GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest,
-    GitHubUpdateReleaseRequest, GitHubUpdateRepoSettingsRequest, GitHubWorkflowArtifact,
+    GitHubRepositoryPermissions, GitHubRepositoryScope, GitHubRepositorySubscription,
+    GitHubRepositorySubscriptionMode, GitHubRulesetSummary, GitHubUpdateAccountProfileRequest,
+    GitHubUpdateIssueRequest, GitHubUpdatePullRequestRequest, GitHubUpdateReleaseRequest,
+    GitHubUpdateRepoSettingsRequest, GitHubWatchedRepoPage, GitHubWorkflowArtifact,
     GitHubWorkflowArtifactEntry, GitHubWorkflowDefinition, GitHubWorkflowJob, GitHubWorkflowJobLog,
     GitHubWorkflowJobStep, GitHubWorkflowRun, GitHubWorkflowRunDetail, RemoteRepoShortcut,
     RepoFilePreview, RepoFileTreeEntry,
@@ -58,6 +59,7 @@ pub(super) const GITHUB_REPO_SCOPE: &str = "repo";
 pub(super) const GITHUB_READ_ORG_SCOPE: &str = "read:org";
 pub(super) const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
 pub(super) const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";
+pub(super) const GITHUB_NOTIFICATIONS_SCOPE: &str = "notifications";
 pub(super) const GITHUB_SERVICE: &str = "com.lilia.desktop.github";
 pub(super) const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 pub(super) const GITHUB_OAUTH_ACCEPT: &str = "application/json";
@@ -244,6 +246,14 @@ pub(super) struct GitHubRepoResponse {
     pub(super) forks_count: u64,
     #[serde(default)]
     pub(super) license: Option<GitHubRepoLicenseResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubRepositorySubscriptionResponse {
+    #[serde(default)]
+    pub(super) subscribed: bool,
+    #[serde(default)]
+    pub(super) ignored: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -921,17 +931,30 @@ pub(super) fn github_oauth_headers(builder: RequestBuilder) -> RequestBuilder {
 
 pub(super) fn github_http_error(prefix: &str, response: Response) -> String {
     let status = response.status();
+    let rate_limited = status == StatusCode::TOO_MANY_REQUESTS
+        || (status == StatusCode::FORBIDDEN
+            && response
+                .headers()
+                .get("X-RateLimit-Remaining")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.trim() == "0"));
     let sso = response
         .headers()
         .get("X-GitHub-SSO")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
     let body = response.text().unwrap_or_default();
-    github_http_error_from_parts(prefix, status, &body, sso.as_deref())
+    github_http_error_from_parts(prefix, status, &body, sso.as_deref(), rate_limited)
 }
 
 fn github_http_error_from_text(prefix: &str, status: StatusCode, body: &str) -> String {
-    github_http_error_from_parts(prefix, status, body, None)
+    github_http_error_from_parts(
+        prefix,
+        status,
+        body,
+        None,
+        status == StatusCode::TOO_MANY_REQUESTS,
+    )
 }
 
 fn github_http_error_from_parts(
@@ -939,8 +962,11 @@ fn github_http_error_from_parts(
     status: StatusCode,
     body: &str,
     sso: Option<&str>,
+    rate_limited: bool,
 ) -> String {
-    let code = if status == StatusCode::UNAUTHORIZED {
+    let code = if rate_limited {
+        Some("github_rate_limited")
+    } else if status == StatusCode::UNAUTHORIZED {
         Some("github_authentication_required")
     } else if status == StatusCode::FORBIDDEN && sso.is_some() {
         Some("github_org_sso_required")
@@ -1474,6 +1500,13 @@ pub(super) fn github_require_scope(
     lilia_github_github::github_require_scope(binding, scope)
 }
 
+pub(super) fn github_require_notifications_scope(
+    binding: &GitHubBindingMetadata,
+) -> Result<(), String> {
+    github_require_scope(binding, GITHUB_NOTIFICATIONS_SCOPE)
+        .map_err(|message| format!("github_notifications_scope_required：{message}"))
+}
+
 pub(super) fn github_send(
     app: &AppHandle,
     prefix: &str,
@@ -1518,6 +1551,31 @@ pub(super) fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> Git
                 push: permissions.push,
                 admin: permissions.admin,
             }),
+    }
+}
+
+pub(super) fn github_repository_subscription_from_api(
+    response: Option<GitHubRepositorySubscriptionResponse>,
+) -> GitHubRepositorySubscription {
+    let mode = match response {
+        Some(response) if response.ignored => GitHubRepositorySubscriptionMode::Ignored,
+        Some(response) if response.subscribed => GitHubRepositorySubscriptionMode::Watching,
+        Some(_) | None => GitHubRepositorySubscriptionMode::Participating,
+    };
+    GitHubRepositorySubscription { mode }
+}
+
+pub(super) fn github_repository_subscription_payload(
+    mode: GitHubRepositorySubscriptionMode,
+) -> serde_json::Value {
+    match mode {
+        GitHubRepositorySubscriptionMode::Watching => {
+            serde_json::json!({ "subscribed": true, "ignored": false })
+        }
+        GitHubRepositorySubscriptionMode::Ignored => {
+            serde_json::json!({ "subscribed": false, "ignored": true })
+        }
+        GitHubRepositorySubscriptionMode::Participating => serde_json::Value::Null,
     }
 }
 
@@ -4179,6 +4237,153 @@ pub async fn github_list_repos(
     .await
 }
 
+fn github_repository_subscription_url(repo_full_name: &str) -> Result<String, String> {
+    Ok(format!(
+        "{}/subscription",
+        github_repo_api_url(repo_full_name)?
+    ))
+}
+
+pub async fn github_list_watched_repos(
+    app: AppHandle,
+    page: Option<u32>,
+) -> Result<GitHubWatchedRepoPage, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取关注仓库",
+        move || {
+            let page = page.unwrap_or(1).max(1);
+            let (binding, token) = github_require_token(&app)?;
+            github_require_notifications_scope(&binding)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取关注仓库失败",
+                github_headers(
+                    client
+                        .get("https://api.github.com/user/subscriptions")
+                        .query(&[("per_page", 100_u32), ("page", page)]),
+                    Some(&token),
+                ),
+            )?;
+            let next_page = parse_next_page(
+                response
+                    .headers()
+                    .get(LINK)
+                    .and_then(|value| value.to_str().ok()),
+            );
+            let repos = github_json::<Vec<GitHubRepoResponse>>("读取关注仓库失败", response)?;
+            Ok(GitHubWatchedRepoPage {
+                items: repos
+                    .into_iter()
+                    .map(github_repo_summary_from_response)
+                    .collect(),
+                next_page,
+            })
+        },
+    )
+    .await
+}
+
+fn github_get_repo_subscription_sync(
+    app: &AppHandle,
+    repo_full_name: &str,
+) -> Result<GitHubRepositorySubscription, String> {
+    let (binding, token) = github_require_token(app)?;
+    github_require_notifications_scope(&binding)?;
+    let client = build_client()?;
+    let response = github_send(
+        app,
+        "读取仓库通知订阅失败",
+        github_headers(
+            client.get(github_repository_subscription_url(repo_full_name)?),
+            Some(&token),
+        ),
+    )?;
+
+    if response.status() == StatusCode::NOT_FOUND {
+        let access_response = github_send(
+            app,
+            "确认 GitHub 仓库访问权限失败",
+            github_headers(
+                client.get(github_repo_api_url(repo_full_name)?),
+                Some(&token),
+            ),
+        )?;
+        if !access_response.status().is_success() {
+            return Err(github_http_error(
+                "确认 GitHub 仓库访问权限失败",
+                access_response,
+            ));
+        }
+        return Ok(github_repository_subscription_from_api(None));
+    }
+
+    let response =
+        github_json::<GitHubRepositorySubscriptionResponse>("读取仓库通知订阅失败", response)?;
+    Ok(github_repository_subscription_from_api(Some(response)))
+}
+
+pub async fn github_get_repo_subscription(
+    app: AppHandle,
+    repo_full_name: String,
+) -> Result<GitHubRepositorySubscription, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取仓库通知订阅",
+        move || github_get_repo_subscription_sync(&app, &repo_full_name),
+    )
+    .await
+}
+
+pub async fn github_update_repo_subscription(
+    app: AppHandle,
+    repo_full_name: String,
+    mode: GitHubRepositorySubscriptionMode,
+) -> Result<GitHubRepositorySubscription, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubWrite,
+        "更新仓库通知订阅",
+        move || {
+            let (binding, token) = github_require_token(&app)?;
+            github_require_notifications_scope(&binding)?;
+            let client = build_client()?;
+            let url = github_repository_subscription_url(&repo_full_name)?;
+            if mode == GitHubRepositorySubscriptionMode::Participating {
+                let response = github_send(
+                    &app,
+                    "更新仓库通知订阅失败",
+                    github_headers(client.delete(url), Some(&token)),
+                )?;
+                if !response.status().is_success() {
+                    return Err(github_http_error("更新仓库通知订阅失败", response));
+                }
+                return Ok(GitHubRepositorySubscription { mode });
+            }
+
+            let response = github_send(
+                &app,
+                "更新仓库通知订阅失败",
+                github_headers(
+                    client
+                        .put(url)
+                        .json(&github_repository_subscription_payload(mode)),
+                    Some(&token),
+                ),
+            )?;
+            let response = github_json::<GitHubRepositorySubscriptionResponse>(
+                "更新仓库通知订阅失败",
+                response,
+            )?;
+            Ok(github_repository_subscription_from_api(Some(response)))
+        },
+    )
+    .await
+}
+
 #[derive(Debug, Default)]
 struct GitHubMembershipResult {
     memberships: Vec<GitHubOrgMembershipResponse>,
@@ -4425,6 +4630,74 @@ mod repository_scope_tests {
     }
 
     #[test]
+    fn repository_subscription_mapping_covers_watching_participating_ignored_and_verified_404() {
+        let response = |subscribed, ignored| GitHubRepositorySubscriptionResponse {
+            subscribed,
+            ignored,
+        };
+
+        assert_eq!(
+            github_repository_subscription_from_api(Some(response(true, false))).mode,
+            GitHubRepositorySubscriptionMode::Watching
+        );
+        assert_eq!(
+            github_repository_subscription_from_api(Some(response(false, false))).mode,
+            GitHubRepositorySubscriptionMode::Participating
+        );
+        assert_eq!(
+            github_repository_subscription_from_api(Some(response(true, true))).mode,
+            GitHubRepositorySubscriptionMode::Ignored
+        );
+        assert_eq!(
+            github_repository_subscription_from_api(None).mode,
+            GitHubRepositorySubscriptionMode::Participating
+        );
+    }
+
+    #[test]
+    fn repository_subscription_write_payload_matches_github_api() {
+        assert_eq!(
+            github_repository_subscription_payload(GitHubRepositorySubscriptionMode::Watching),
+            json!({ "subscribed": true, "ignored": false })
+        );
+        assert_eq!(
+            github_repository_subscription_payload(GitHubRepositorySubscriptionMode::Ignored),
+            json!({ "subscribed": false, "ignored": true })
+        );
+        assert!(github_repository_subscription_payload(
+            GitHubRepositorySubscriptionMode::Participating
+        )
+        .is_null());
+    }
+
+    #[test]
+    fn repository_subscription_requires_notifications_scope() {
+        let mut binding = GitHubBindingMetadata {
+            login: "lilia-user".to_string(),
+            avatar_url: None,
+            bound_at: 1,
+            scopes: vec!["repo".to_string()],
+            client_id_source: "test".to_string(),
+        };
+        assert!(github_require_notifications_scope(&binding)
+            .expect_err("notifications scope should be required")
+            .starts_with("github_notifications_scope_required："));
+
+        binding.scopes.push(GITHUB_NOTIFICATIONS_SCOPE.to_string());
+        assert!(github_require_notifications_scope(&binding).is_ok());
+    }
+
+    #[test]
+    fn watched_repository_pagination_uses_next_link() {
+        assert_eq!(
+            parse_next_page(Some(
+                r#"<https://api.github.com/user/subscriptions?per_page=100&page=2>; rel="next", <https://api.github.com/user/subscriptions?per_page=100&page=3>; rel="last""#,
+            )),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn owner_sources_merge_membership_and_repository_access() {
         let mut owners = HashMap::new();
         let owner = GitHubRepositoryOwner {
@@ -4523,20 +4796,29 @@ mod repository_scope_tests {
     #[test]
     fn github_errors_distinguish_authentication_sso_and_forbidden() {
         let body = r#"{"message":"Resource protected"}"#;
-        assert!(
-            github_http_error_from_parts("读取失败", StatusCode::UNAUTHORIZED, body, None)
-                .starts_with("github_authentication_required：")
-        );
+        assert!(github_http_error_from_parts(
+            "读取失败",
+            StatusCode::UNAUTHORIZED,
+            body,
+            None,
+            false
+        )
+        .starts_with("github_authentication_required："));
         assert!(github_http_error_from_parts(
             "读取失败",
             StatusCode::FORBIDDEN,
             body,
-            Some("required; url=https://github.com/orgs/example/sso")
+            Some("required; url=https://github.com/orgs/example/sso"),
+            false,
         )
         .starts_with("github_org_sso_required："));
         assert!(
-            github_http_error_from_parts("读取失败", StatusCode::FORBIDDEN, body, None)
+            github_http_error_from_parts("读取失败", StatusCode::FORBIDDEN, body, None, false)
                 .starts_with("github_forbidden：")
+        );
+        assert!(
+            github_http_error_from_parts("读取失败", StatusCode::FORBIDDEN, body, None, true,)
+                .starts_with("github_rate_limited：")
         );
     }
 
