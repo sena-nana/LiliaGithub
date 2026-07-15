@@ -37,6 +37,7 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepositoryScope,
   GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
@@ -88,6 +89,7 @@ import type {
   WorkspaceSettings,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
+  WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
 
@@ -126,12 +128,15 @@ type GitHubProjectRepoClientCache = {
   settingsSections: Partial<Record<GitHubRepoSettingsSectionKey, GitHubRepoSettingsSection>>;
 };
 
-let githubRepoCache: {
+type GitHubRepoCacheEntry = {
   items: GitHubRepoPage["items"];
   nextPage: number | null;
+  scope?: GitHubRepositoryScope;
   fetchedAt: number;
-} | null = null;
-let githubRepoPreloadPromise: Promise<GitHubRepoPage> | null = null;
+};
+const githubRepoCache = new Map<string, GitHubRepoCacheEntry>();
+const githubRepoPreloadPromises = new Map<string, Promise<GitHubRepoPage>>();
+let githubRepoBindingRevision = "unknown";
 let githubAccountIssueCache: {
   key: string;
   items: GitHubAccountIssueItem[];
@@ -265,8 +270,13 @@ export function pickWorkspaceRoot(): Promise<string | null> {
 
 function cloneRepoPage(page: GitHubRepoPage): GitHubRepoPage {
   return {
-    items: page.items.map((repo) => ({ ...repo })),
+    items: page.items.map((repo) => ({
+      ...repo,
+      owner: repo.owner ? { ...repo.owner } : repo.owner,
+      permissions: repo.permissions ? { ...repo.permissions } : repo.permissions,
+    })),
     nextPage: page.nextPage,
+    scope: page.scope ? { ...page.scope } : page.scope,
   };
 }
 
@@ -518,22 +528,50 @@ function removeGitHubReleaseAsset(repoFullName: string, releaseId: number, asset
   });
 }
 
-function writeGitHubRepoCache(page: GitHubRepoPage) {
-  githubRepoCache = {
-    items: page.items.map((repo) => ({ ...repo })),
-    nextPage: page.nextPage,
-    fetchedAt: Date.now(),
-  };
+const ALL_GITHUB_REPOSITORIES: GitHubRepositoryScope = { kind: "all" };
+
+function githubScopeCacheKey(scope: GitHubRepositoryScope) {
+  if (scope.kind === "all") return "all";
+  return `${scope.kind}:${scope.login.trim().toLocaleLowerCase()}`;
 }
 
-export function readCachedGitHubRepos(): GitHubRepoPage | null {
-  if (!githubRepoCache) return null;
-  return cloneRepoPage(githubRepoCache);
+function githubRepositoryCacheKey(scope: GitHubRepositoryScope, page: number) {
+  return `${githubRepoBindingRevision}:${githubScopeCacheKey(scope)}:${page}`;
+}
+
+function bindingRevision(status: GitHubBindingStatus) {
+  if (status.state !== "bound" || !status.binding) return "unbound";
+  const scopes = [...status.binding.scopes].sort().join(",");
+  return `${status.binding.login.toLocaleLowerCase()}:${status.binding.boundAt}:${scopes}`;
+}
+
+function applyGitHubBindingRevision(status: GitHubBindingStatus) {
+  const next = bindingRevision(status);
+  if (next === githubRepoBindingRevision) return;
+  clearGitHubRepoCache();
+  githubRepoBindingRevision = next;
+}
+
+function writeGitHubRepoCache(cacheKey: string, scope: GitHubRepositoryScope, page: GitHubRepoPage) {
+  githubRepoCache.set(cacheKey, {
+    items: page.items.map((repo) => ({ ...repo })),
+    nextPage: page.nextPage,
+    scope: page.scope ?? scope,
+    fetchedAt: Date.now(),
+  });
+}
+
+export function readCachedGitHubRepos(
+  scope: GitHubRepositoryScope = ALL_GITHUB_REPOSITORIES,
+  page = 1,
+): GitHubRepoPage | null {
+  const cached = githubRepoCache.get(githubRepositoryCacheKey(scope, page));
+  return cached ? cloneRepoPage(cached) : null;
 }
 
 export function clearGitHubRepoCache() {
-  githubRepoCache = null;
-  githubRepoPreloadPromise = null;
+  githubRepoCache.clear();
+  githubRepoPreloadPromises.clear();
   invalidateGitHubAccountIssueCache();
   githubActionNotificationCache = null;
   githubProjectCache.clear();
@@ -544,24 +582,28 @@ export function isGitHubBindingExpiredError(err: unknown): boolean {
   const message = String(err);
   return message.includes("GitHub 绑定已失效") ||
     message.includes("HTTP 401") ||
-    message.includes("HTTP 403") ||
     message.toLowerCase().includes("bad credentials");
 }
 
-export function preloadGitHubRepos(opts: { force?: boolean } = {}): Promise<GitHubRepoPage> {
+export function preloadGitHubRepos(
+  opts: { force?: boolean; scope?: GitHubRepositoryScope } = {},
+): Promise<GitHubRepoPage> {
+  const scope = opts.scope ?? ALL_GITHUB_REPOSITORIES;
+  const cacheKey = githubRepositoryCacheKey(scope, 1);
   const now = Date.now();
-  if (
-    !opts.force &&
-    githubRepoCache &&
-    now - githubRepoCache.fetchedAt < GITHUB_REPO_CACHE_TTL_MS
-  ) {
-    return Promise.resolve(cloneRepoPage(githubRepoCache));
+  const cached = githubRepoCache.get(cacheKey);
+  if (!opts.force && cached && now - cached.fetchedAt < GITHUB_REPO_CACHE_TTL_MS) {
+    return Promise.resolve(cloneRepoPage(cached));
   }
-  if (!opts.force && githubRepoPreloadPromise) return githubRepoPreloadPromise;
-  githubRepoPreloadPromise = listGitHubRepos(1).finally(() => {
-    githubRepoPreloadPromise = null;
+  const pending = githubRepoPreloadPromises.get(cacheKey);
+  if (!opts.force && pending) return pending;
+  const promise = listGitHubRepos(scope, 1).finally(() => {
+    if (githubRepoPreloadPromises.get(cacheKey) === promise) {
+      githubRepoPreloadPromises.delete(cacheKey);
+    }
   });
-  return githubRepoPreloadPromise;
+  githubRepoPreloadPromises.set(cacheKey, promise);
+  return promise;
 }
 
 export function pickRepo(): Promise<string | null> {
@@ -592,9 +634,9 @@ export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promi
   return call("workspace_create_local_repo", { request }, () => workspaceFallback().createLocalRepo(request));
 }
 
-export function cloneRepo(remoteUrl: string, directoryName?: string | null): Promise<RepoSummary> {
-  return call("workspace_clone_repo", { remoteUrl, directoryName: directoryName ?? null }, () =>
-    workspaceFallback().cloneRepo(remoteUrl, directoryName),
+export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<RepoSummary> {
+  return call("workspace_clone_repo", { request }, () =>
+    workspaceFallback().cloneRepo(request),
   );
 }
 
@@ -683,7 +725,7 @@ export function enqueueRepoRefresh(request: WorkspaceRepoRefreshRequest): Promis
 
 export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
   const status = await call("github_get_binding_status", undefined, () => workspaceFallback().getGitHubBindingStatus());
-  if (status.state !== "bound") clearGitHubRepoCache();
+  applyGitHubBindingRevision(status);
   return status;
 }
 
@@ -691,13 +733,17 @@ export function startGitHubDeviceFlow(): Promise<GitHubDeviceFlowStart> {
   return call("github_start_device_flow", undefined, () => workspaceFallback().startGitHubDeviceFlow());
 }
 
-export function pollGitHubDeviceFlow(
+export async function pollGitHubDeviceFlow(
   deviceCode: string,
   intervalSeconds?: number | null,
 ): Promise<GitHubDeviceFlowPollResult> {
-  return call("github_poll_device_flow", { deviceCode, intervalSeconds: intervalSeconds ?? null }, () =>
+  const result = await call("github_poll_device_flow", { deviceCode, intervalSeconds: intervalSeconds ?? null }, () =>
     workspaceFallback().pollGitHubDeviceFlow(deviceCode, intervalSeconds),
   );
+  if (result.status === "authorized" && result.bindingStatus) {
+    applyGitHubBindingRevision(result.bindingStatus);
+  }
+  return result;
 }
 
 export async function unbindGitHub(): Promise<void> {
@@ -711,15 +757,34 @@ export function listRepoContribution(repoScope: string): Promise<GitHubContribut
   );
 }
 
-export async function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage> {
-  const pageNo = page ?? null;
-  const result = await cachedCall("github_list_repos", { page: pageNo }, () =>
-    workspaceFallback().listGitHubRepos(pageNo),
+export function listGitHubRepos(page?: number | null): Promise<GitHubRepoPage>;
+export function listGitHubRepos(
+  scope: GitHubRepositoryScope,
+  page?: number | null,
+): Promise<GitHubRepoPage>;
+export async function listGitHubRepos(
+  scopeOrPage: GitHubRepositoryScope | number | null = ALL_GITHUB_REPOSITORIES,
+  requestedPage?: number | null,
+): Promise<GitHubRepoPage> {
+  const scope = typeof scopeOrPage === "object" && scopeOrPage !== null
+    ? scopeOrPage
+    : ALL_GITHUB_REPOSITORIES;
+  const pageNo = typeof scopeOrPage === "number" ? scopeOrPage : requestedPage ?? 1;
+  const requestRevision = githubRepoBindingRevision;
+  const cacheKey = githubRepositoryCacheKey(scope, pageNo);
+  const cached = githubRepoCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < GITHUB_REPO_CACHE_TTL_MS) {
+    return cloneRepoPage(cached);
+  }
+  const result = await cachedCall("github_list_repos", { scope, page: pageNo }, () =>
+    workspaceFallback().listGitHubRepos(scope, pageNo),
   ).catch((err) => {
     if (isGitHubBindingExpiredError(err)) clearGitHubRepoCache();
     throw err;
   });
-  if ((pageNo ?? 1) === 1) writeGitHubRepoCache(result);
+  if (requestRevision === githubRepoBindingRevision) {
+    writeGitHubRepoCache(cacheKey, scope, result);
+  }
   return cloneRepoPage(result);
 }
 
@@ -832,8 +897,8 @@ export function updateGitHubRepoSettings(
   return call("github_update_repo_settings", { repoFullName, request }, () =>
     workspaceFallback().updateGitHubRepoSettings(repoFullName, request),
   ).then((repo) => {
-    githubRepoCache = null;
-    githubRepoPreloadPromise = null;
+    githubRepoCache.clear();
+    githubRepoPreloadPromises.clear();
     if (githubProjectRepoKey(repo.fullName) !== githubProjectRepoKey(repoFullName)) {
       clearGitHubProjectRepoCache(repoFullName);
     }

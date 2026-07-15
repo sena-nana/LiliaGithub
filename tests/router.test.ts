@@ -281,7 +281,10 @@ describe("基础路由", () => {
       ["RepoD", 700],
     ] as const;
     for (const [repoId] of repos.slice(2)) {
-      await service.cloneRepo(`https://github.com/sena-nana/${repoId}.git`, repoId);
+      await service.cloneRepo({
+        remoteUrl: `https://github.com/sena-nana/${repoId}.git`,
+        target: { kind: "custom", path: `C:\\Files\\workspace\\${repoId}` },
+      });
     }
     workspaceFallback.setFallbackRepoOverridesForTests(Object.fromEntries(
       repos.map(([repoId, bytes]) => [repoId, repoSummary(repoId, {

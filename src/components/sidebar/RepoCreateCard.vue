@@ -16,10 +16,12 @@ import {
   type GitHubRepoTemplate,
   type RepoSummary,
 } from "../../services/workspace";
+import { githubUserFacingError } from "../../utils/githubRepositoryScope";
 
 type RepoCreateMode = "local" | "remote";
 type RepoCreateAction = "local" | "remote-only" | "remote-clone";
 type RepoTemplatesStatus = "idle" | "loading" | "loaded" | "error";
+type RepoOwnersStatus = "idle" | "loading" | "loaded" | "error";
 type RepoCreateGroup = {
   readonly id: string;
   readonly name: string;
@@ -49,6 +51,8 @@ const createRepoLoader = createLatestAsyncLoader({ componentEpoch });
 const createActionTracker = createPendingTaskTracker();
 const firstInput = ref<HTMLInputElement | null>(null);
 const repoOwners = ref<GitHubRepoOwner[]>([]);
+const repoOwnersStatus = ref<RepoOwnersStatus>("idle");
+const repoOwnersError = ref<string | null>(null);
 const repoTemplates = ref<GitHubRepoTemplate[]>([]);
 const repoTemplatesStatus = ref<RepoTemplatesStatus>("idle");
 const activeCreateAction = ref<RepoCreateAction | null>(null);
@@ -93,10 +97,17 @@ const repoGroupOptions = computed(() => [
 const repoOwnerOptions = computed(() =>
   repoOwners.value.map((owner) => ({
     value: owner.login,
-    label: `${owner.login} · ${owner.kind}`,
+    label: `${owner.login} · ${owner.kind === "user" ? "个人" : "组织"}`,
     agentId: `repo-create.owner.option.${owner.kind}.${owner.login}`,
   }))
 );
+const selectedOwner = computed(() =>
+  repoOwners.value.find((owner) => owner.login === form.value.owner) ?? null,
+);
+const selectedOwnerHint = computed(() => {
+  if (selectedOwner.value?.kind !== "organization") return null;
+  return "组织将根据当前账号权限确认创建请求。";
+});
 const repoTemplateOptions = computed(() =>
   repoTemplates.value.map((template) => ({
     value: template.fullName,
@@ -173,6 +184,7 @@ function resetForm() {
   cloningCreatedRepo.value = false;
   createdRepo.value = null;
   createError.value = null;
+  repoOwnersError.value = null;
   selectedGroupId.value = null;
 }
 
@@ -193,18 +205,23 @@ function sortRepoOwners(owners: readonly GitHubRepoOwner[]) {
 
 async function loadRepoOwners() {
   await repoOwnersLoader.run("repo-owners", async (runId) => {
+    repoOwnersStatus.value = "loading";
+    repoOwnersError.value = null;
     try {
       const owners = await listGitHubRepoOwners();
-      if (!repoOwnersLoader.isCurrent(runId)) return;
+      if (!repoOwnersLoader.isCurrent(runId) || !props.open) return;
       const sortedOwners = sortRepoOwners(owners);
       repoOwners.value = sortedOwners;
+      repoOwnersStatus.value = "loaded";
       if (!form.value.owner && sortedOwners.length) {
         form.value.owner = sortedOwners[0].login;
         form.value.ownerKind = sortedOwners[0].kind;
       }
-    } catch {
-      if (!repoOwnersLoader.isCurrent(runId)) return;
+    } catch (err) {
+      if (!repoOwnersLoader.isCurrent(runId) || !props.open) return;
       repoOwners.value = [];
+      repoOwnersStatus.value = "error";
+      repoOwnersError.value = `账号与组织加载失败：${githubUserFacingError(err)}`;
     }
   });
 }
@@ -271,7 +288,7 @@ async function submitLocalRepo() {
       emit("close");
     } catch (err) {
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
-      createError.value = String(err);
+      createError.value = githubUserFacingError(err);
     } finally {
       if (createRepoLoader.isCurrent(runId)) activeCreateAction.value = null;
     }
@@ -285,7 +302,11 @@ async function cloneCreatedRepo() {
   createError.value = null;
   try {
     await createActionTracker.run(async () => {
-        const clonedRepo = await workspace.cloneRepo(repo.cloneUrl, repo.name);
+        const clonedRepo = await workspace.cloneRepo({
+          remoteUrl: repo.cloneUrl,
+          repository: { id: repo.id, fullName: repo.fullName, cloneUrl: repo.cloneUrl },
+          target: { kind: "default" },
+        });
         if (!componentEpoch.assertAlive() || !props.open) return clonedRepo;
         emit("remoteCloned", clonedRepo, repo, selectedGroupId.value);
         emit("close");
@@ -294,7 +315,7 @@ async function cloneCreatedRepo() {
       });
   } catch (err) {
     if (!componentEpoch.assertAlive() || !props.open) return;
-    createError.value = String(err);
+    createError.value = githubUserFacingError(err);
   } finally {
     if (componentEpoch.assertAlive()) cloningCreatedRepo.value = false;
   }
@@ -321,7 +342,7 @@ async function submitRemoteRepo(cloneAfterCreate = true) {
       await cloneCreatedRepo();
     } catch (err) {
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
-      createError.value = String(err);
+      createError.value = githubUserFacingError(err);
     } finally {
       if (createRepoLoader.isCurrent(runId)) activeCreateAction.value = null;
     }
@@ -395,10 +416,31 @@ onUnmounted(() => {
             placement="bottom"
             button-class="repo-create-owner-picker"
             agent-id="repo-create.owner.trigger"
-            menu-label="选择 GitHub owner"
+            menu-label="选择 GitHub 账号或组织"
             menu-width="100%"
-            :disabled="Boolean(blockedReason)"
+            :disabled="Boolean(blockedReason) || repoOwnersStatus !== 'loaded' || !repoOwners.length"
           />
+          <p v-if="repoOwnersStatus === 'loading'" class="repo-create-owner-state" role="status">
+            <LoaderCircle :size="13" aria-hidden="true" class="sb-spin" />
+            正在加载可用账号与组织…
+          </p>
+          <p v-else-if="repoOwnersStatus === 'error'" class="repo-create-owner-state repo-create-card__error">
+            <span>{{ repoOwnersError }}</span>
+            <button
+              type="button"
+              class="ghost repo-create-owner-retry"
+              data-agent-id="repo-create.owner.retry"
+              @click="loadRepoOwners"
+            >
+              重试
+            </button>
+          </p>
+          <p v-else-if="repoOwnersStatus === 'loaded' && !repoOwners.length" class="repo-create-owner-state">
+            当前账号没有可用的仓库归属。
+          </p>
+          <p v-else-if="selectedOwnerHint" class="repo-create-owner-state">
+            {{ selectedOwnerHint }}
+          </p>
         </div>
         <label>
           <span>仓库名</span>
@@ -670,6 +712,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+.repo-create-owner-state,
 .repo-create-template-state {
   min-height: 24px;
   margin: 0;
@@ -680,6 +723,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+.repo-create-owner-retry,
 .repo-create-template-retry {
   min-height: 24px;
   padding: 0 6px;

@@ -5,7 +5,8 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::github::{
-    forget_remote_repo_shortcut, remember_remote_repo_shortcut, GITHUB_CONTRIBUTION_DAYS,
+    forget_remote_repo_shortcut, normalize_github_repo_input, remember_remote_repo_shortcut,
+    GITHUB_CONTRIBUTION_DAYS,
 };
 use crate::workspace::operations::{run_operation, OperationKind, OperationSpec, VisibleOperation};
 use crate::workspace::repo_guard::{repo_resource_id, with_repo_guards, RepoAccess};
@@ -48,13 +49,67 @@ pub(super) fn load_settings(app: &AppHandle) -> WorkspaceSettings {
         .unwrap_or_default()
 }
 
+fn current_github_account_login(settings: &WorkspaceSettings) -> Option<String> {
+    settings
+        .github_binding
+        .as_ref()
+        .map(|binding| binding.login.trim().to_string())
+        .filter(|login| !login.is_empty())
+}
+
+pub(super) fn migrate_remote_repo_shortcuts(settings: &mut WorkspaceSettings) -> bool {
+    let Some(account_login) = current_github_account_login(settings) else {
+        return false;
+    };
+    let mut changed = false;
+    for shortcut in &mut settings.remote_repo_shortcuts {
+        let normalized_account = shortcut
+            .account_login
+            .as_deref()
+            .map(str::trim)
+            .filter(|login| !login.is_empty());
+        if normalized_account.is_none() {
+            shortcut.account_login = Some(account_login.clone());
+            changed = true;
+        } else if shortcut.account_login.as_deref() != normalized_account {
+            shortcut.account_login = normalized_account.map(str::to_string);
+            changed = true;
+        }
+        if let Ok(repo) = normalize_github_repo_input(&shortcut.full_name) {
+            let canonical_remote_url = format!("https://github.com/{}.git", repo.full_name);
+            if shortcut.canonical_remote_url.as_deref() != Some(canonical_remote_url.as_str()) {
+                shortcut.canonical_remote_url = Some(canonical_remote_url);
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+pub(super) fn visible_workspace_settings(mut settings: WorkspaceSettings) -> WorkspaceSettings {
+    migrate_remote_repo_shortcuts(&mut settings);
+    let Some(account_login) = current_github_account_login(&settings) else {
+        settings.remote_repo_shortcuts.clear();
+        return settings;
+    };
+    settings.remote_repo_shortcuts.retain(|shortcut| {
+        shortcut
+            .account_login
+            .as_deref()
+            .is_some_and(|login| login.eq_ignore_ascii_case(&account_login))
+    });
+    settings
+}
+
 pub(super) fn save_settings(app: &AppHandle, settings: &WorkspaceSettings) -> Result<(), String> {
+    let mut settings = settings.clone();
+    migrate_remote_repo_shortcuts(&mut settings);
     let store = app
         .store(STORE_FILE)
         .map_err(|e| format!("打开配置存储失败：{e}"))?;
     store.set(
         SETTINGS_KEY,
-        serde_json::to_value(settings).map_err(|e| e.to_string())?,
+        serde_json::to_value(&settings).map_err(|e| e.to_string())?,
     );
     store.save().map_err(|e| format!("保存配置失败：{e}"))
 }
@@ -514,6 +569,7 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
     settings.managed_repo_ids.retain(|id| id != repo_id);
     settings.hidden_repo_ids.retain(|id| id != repo_id);
     settings.system_git_repo_ids.retain(|id| id != repo_id);
+    settings.repo_bindings.remove(repo_id);
     for group in &mut settings.repo_groups {
         group.repo_ids.retain(|id| id != repo_id);
     }
@@ -524,7 +580,11 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
 }
 
 pub fn workspace_get_settings(app: AppHandle) -> WorkspaceSettings {
-    load_settings(&app)
+    let mut settings = load_settings(&app);
+    if migrate_remote_repo_shortcuts(&mut settings) {
+        let _ = save_settings(&app, &settings);
+    }
+    visible_workspace_settings(settings)
 }
 
 pub fn workspace_read_startup_cache(app: AppHandle) -> Option<WorkspaceStartupCache> {
@@ -565,7 +625,7 @@ pub fn workspace_set_root(
     crate::workspace::refresh::reset_refresh_scheduler();
     let _ = clear_startup_cache(&app);
     crate::workspace::watcher::clear_repo_watchers();
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_set_contribution_identities(
@@ -576,7 +636,7 @@ pub fn workspace_set_contribution_identities(
     settings.contribution_identities = normalize_contribution_identities(identities);
     save_settings(&app, &settings)?;
     let _ = clear_startup_cache(&app);
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub async fn workspace_scan_contribution_identities(
@@ -961,7 +1021,7 @@ pub fn repo_set_preference(
     let mut settings = load_settings(&app);
     set_repo_preference_value(&mut settings, normalized, key.trim(), value)?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn repo_set_auto_sync(
@@ -976,7 +1036,7 @@ pub fn repo_set_auto_sync(
     let mut settings = load_settings(&app);
     set_repo_preference_value(&mut settings, normalized, "autoSync", auto_sync)?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn repo_get_remote_sync_config(
@@ -1097,7 +1157,7 @@ pub fn workspace_hide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceS
     save_settings(&app, &settings)?;
     remove_startup_cache_repo(&app, normalized)?;
     crate::workspace::watcher::sync_repo_watchers(&app);
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_create_repo_group(
@@ -1107,7 +1167,7 @@ pub fn workspace_create_repo_group(
     let mut settings = load_settings(&app);
     create_repo_group(&mut settings, &name)?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_rename_repo_group(
@@ -1118,7 +1178,7 @@ pub fn workspace_rename_repo_group(
     let mut settings = load_settings(&app);
     rename_repo_group(&mut settings, &group_id, &name)?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_delete_repo_group(
@@ -1128,7 +1188,7 @@ pub fn workspace_delete_repo_group(
     let mut settings = load_settings(&app);
     delete_repo_group(&mut settings, &group_id)?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_move_repo_to_group(
@@ -1144,7 +1204,7 @@ pub fn workspace_move_repo_to_group(
     let mut settings = load_settings(&app);
     move_repo_to_group(&mut settings, normalized, group_id.as_deref())?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub async fn workspace_delete_local_repo(
@@ -1172,7 +1232,7 @@ pub async fn workspace_delete_local_repo(
             save_settings(&app, &settings)?;
             remove_startup_cache_repo(&app, normalized)?;
             crate::workspace::watcher::sync_repo_watchers(&app);
-            Ok(settings)
+            Ok(visible_workspace_settings(settings))
         },
     )
     .await
@@ -1180,12 +1240,16 @@ pub async fn workspace_delete_local_repo(
 
 pub fn workspace_remember_remote_repo(
     app: AppHandle,
-    repo: RemoteRepoShortcut,
+    mut repo: RemoteRepoShortcut,
 ) -> Result<WorkspaceSettings, String> {
     let mut settings = load_settings(&app);
+    migrate_remote_repo_shortcuts(&mut settings);
+    let account_login = current_github_account_login(&settings)
+        .ok_or_else(|| "请先绑定 GitHub 账号".to_string())?;
+    repo.account_login = Some(account_login);
     remember_remote_repo_shortcut(&mut settings.remote_repo_shortcuts, repo)?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_forget_remote_repo(
@@ -1193,9 +1257,16 @@ pub fn workspace_forget_remote_repo(
     full_name: String,
 ) -> Result<WorkspaceSettings, String> {
     let mut settings = load_settings(&app);
-    forget_remote_repo_shortcut(&mut settings.remote_repo_shortcuts, &full_name)?;
+    migrate_remote_repo_shortcuts(&mut settings);
+    let account_login = current_github_account_login(&settings)
+        .ok_or_else(|| "请先绑定 GitHub 账号".to_string())?;
+    forget_remote_repo_shortcut(
+        &mut settings.remote_repo_shortcuts,
+        &full_name,
+        &account_login,
+    )?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<WorkspaceSettings, String> {
@@ -1204,7 +1275,7 @@ pub fn workspace_unhide_repo(app: AppHandle, repo_id: String) -> Result<Workspac
     settings.hidden_repo_ids.retain(|id| id != normalized);
     save_settings(&app, &settings)?;
     crate::workspace::watcher::sync_repo_watchers(&app);
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn repo_use_default_token_auth(
@@ -1214,7 +1285,7 @@ pub fn repo_use_default_token_auth(
     let mut settings = load_settings(&app);
     remove_system_git_repo_id(&mut settings, &repo_id)?;
     save_settings(&app, &settings)?;
-    Ok(settings)
+    Ok(visible_workspace_settings(settings))
 }
 
 pub fn workspace_list_hidden_repos(app: AppHandle) -> Vec<HiddenRepo> {

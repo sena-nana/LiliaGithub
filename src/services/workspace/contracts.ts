@@ -32,6 +32,7 @@ import type {
   GitHubRepoActionsPermissionsRequest,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepositoryScope,
   GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
@@ -83,6 +84,7 @@ import type {
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
   WorkspaceTask,
+  WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
 
@@ -124,7 +126,7 @@ export interface WorkspaceCommandContracts {
   workspace_discover_repos: CommandContract<NoArgs, RepoSummary[]>;
   workspace_add_repo: CommandContract<{ repoPath: string }, RepoSummary>;
   workspace_create_local_repo: CommandContract<{ request: WorkspaceCreateLocalRepoRequest }, RepoSummary>;
-  workspace_clone_repo: CommandContract<{ remoteUrl: string; directoryName: Maybe<string> }, RepoSummary>;
+  workspace_clone_repo: CommandContract<{ request: WorkspaceCloneRepoRequest }, RepoSummary>;
   workspace_hide_repo: CommandContract<RepoArg, WorkspaceSettings>;
   workspace_create_repo_group: CommandContract<{ name: string }, WorkspaceSettings>;
   workspace_rename_repo_group: CommandContract<{ groupId: string; name: string }, WorkspaceSettings>;
@@ -148,7 +150,10 @@ export interface WorkspaceCommandContracts {
     GitHubDeviceFlowPollResult
   >;
   github_unbind: CommandContract<NoArgs, void>;
-  github_list_repos: CommandContract<{ page: Maybe<number> }, GitHubRepoPage>;
+  github_list_repos: CommandContract<{
+    scope: GitHubRepositoryScope;
+    page: Maybe<number>;
+  }, GitHubRepoPage>;
   github_list_account_issues: CommandContract<{
     state: Maybe<string>;
     perPage: Maybe<number>;

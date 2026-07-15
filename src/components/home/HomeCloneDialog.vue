@@ -2,7 +2,16 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { FolderInput, LoaderCircle, Lock, Search, Sparkles, X } from "@lucide/vue";
 import { Dropdown } from "@lilia/ui";
-import type { GitHubBindingStatus, GitHubRepoSummary } from "../../services/workspace";
+import type {
+  GitHubBindingStatus,
+  GitHubRepoOwner,
+  GitHubRepoSummary,
+  GitHubRepositoryScope,
+} from "../../services/workspace";
+import GitHubRepositoryScopeControl from "../github/GitHubRepositoryScopeControl.vue";
+import GitHubRepositoryStateNotice from "../github/GitHubRepositoryStateNotice.vue";
+import { githubRepositoryPermissionLabel } from "../../utils/githubRepositoryScope";
+import { githubRepositoryIdentityKey } from "../../utils/remoteRepo";
 
 type RepoCloneGroup = {
   readonly id: string;
@@ -29,6 +38,16 @@ const props = defineProps<{
   nextRepoPage: number | null;
   selectedRepo: GitHubRepoSummary | null;
   directRepo: string | null;
+  repositoryScope: GitHubRepositoryScope;
+  personalLogin: string;
+  organizations: readonly GitHubRepoOwner[];
+  ownersLoading: boolean;
+  ownersError: string | null;
+  organizationAccessLimited: boolean;
+  organizationAccessMessage: string;
+  organizationRecoveryUrl: string | null;
+  localRepoFullNames: readonly string[];
+  repoLoaded: boolean;
   repoGroups: readonly RepoCloneGroup[];
   selectedGroupId: string | null;
 }>();
@@ -37,6 +56,7 @@ const emit = defineEmits<{
   close: [];
   submit: [];
   openSettings: [];
+  openOrganizationAuthorization: [];
   loadMore: [];
   openRepoDropdown: [];
   handleRepoInput: [];
@@ -46,6 +66,9 @@ const emit = defineEmits<{
   updateSelectedGroup: [groupId: string | null];
   markDirectoryTouched: [];
   clearSelectedRepo: [];
+  updateRepositoryScope: [scope: GitHubRepositoryScope];
+  retryOwners: [];
+  retryRepos: [];
 }>();
 
 const cloneInput = ref<HTMLInputElement | null>(null);
@@ -69,6 +92,11 @@ const selectedGroupValue = computed({
     emit("updateSelectedGroup", value === UNGROUPED_REPO_GROUP_VALUE ? null : value);
   },
 });
+const localRepoIdentityKeys = computed(() => new Set(props.localRepoFullNames.map(githubRepositoryIdentityKey)));
+
+function repoIsLocal(repo: GitHubRepoSummary) {
+  return localRepoIdentityKeys.value.has(githubRepositoryIdentityKey(repo.fullName));
+}
 
 function focusCloneInput() {
   void nextTick(() => cloneInput.value?.focus());
@@ -115,6 +143,31 @@ watch(() => props.gitHubBound, focusCloneInput);
       </label>
       <div v-else class="clone-field">
         <span>GitHub 仓库</span>
+        <GitHubRepositoryScopeControl
+          :model-value="repositoryScope"
+          :personal-login="personalLogin"
+          :organizations="organizations"
+          :loading="ownersLoading"
+          :disabled="busy"
+          compact
+          @update:model-value="emit('updateRepositoryScope', $event)"
+        />
+        <GitHubRepositoryStateNotice
+          v-if="ownersError"
+          state="error"
+          compact
+          retryable
+          :message="ownersError"
+          @retry="emit('retryOwners')"
+        />
+        <GitHubRepositoryStateNotice
+          v-if="organizationAccessLimited"
+          state="limited"
+          compact
+          :message="organizationAccessMessage"
+          :action-label="organizationRecoveryUrl ? '在 GitHub 授权' : '补充组织权限'"
+          @authorize="emit('openOrganizationAuthorization')"
+        />
         <div class="clone-repo-picker">
           <Search :size="13" aria-hidden="true" />
           <input
@@ -144,6 +197,11 @@ watch(() => props.gitHubBound, focusCloneInput);
               <span class="clone-repo-item__meta">
                 <Lock v-if="repo.private" :size="11" aria-hidden="true" />
                 {{ repo.private ? "私有" : "公开" }}
+                <span v-if="repo.archived">· 已归档</span>
+                <span v-if="repoIsLocal(repo)">· 已在本地</span>
+                <span v-if="githubRepositoryPermissionLabel(repo.permissions)">
+                  · {{ githubRepositoryPermissionLabel(repo.permissions) }}
+                </span>
               </span>
             </button>
             <button
@@ -170,9 +228,21 @@ watch(() => props.gitHubBound, focusCloneInput);
                 手动输入
               </span>
             </button>
-            <p v-else-if="repoLoadError" class="clone-repo-empty">{{ repoLoadError }}</p>
+            <GitHubRepositoryStateNotice
+              v-else-if="repoLoadError"
+              state="error"
+              compact
+              retryable
+              :message="repoLoadError"
+              @retry="emit('retryRepos')"
+            />
             <p v-else-if="repoLoading" class="clone-repo-empty">正在加载仓库...</p>
-            <p v-else class="clone-repo-empty">没有匹配仓库</p>
+            <p
+              v-else-if="repoLoaded && !filteredRepos.length && !directRepo && !nextRepoPage"
+              class="clone-repo-empty"
+            >
+              没有匹配仓库
+            </p>
           </div>
         </div>
         <p v-if="bindingStatus?.binding" class="clone-dialog__hint">
