@@ -28,6 +28,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+!.env.yarn
 *.pem
 *.key
 .secrets/

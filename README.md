@@ -148,12 +148,12 @@ LiliaGithub/
 
 ## Early Development
 
-LiliaGithub uses Yarn 4.14.1 through Corepack and pins Rust through the repository root `rust-toolchain.toml`. Enable Corepack first, then run contributor commands from the repository root through the root `yarn ...` scripts. `npm`, `pnpm`, global Yarn 1.x, and direct package-manager drift are guarded and not supported as the contributor path.
+LiliaGithub uses Node.js 26.5.0, Corepack 0.35.0, and the repository-pinned Yarn 4.17.1. Rust is pinned through the repository root `rust-toolchain.toml`. Install Corepack explicitly because Node.js 26 no longer bundles it, then run contributor commands from the repository root.
 
 ```bash
-# 1) Enable Corepack and activate the repository Yarn version
-corepack enable
-corepack prepare yarn@4.14.1 --activate
+# 1) Install Corepack and enable the repository Yarn shim
+npm install --global corepack@0.35.0
+corepack enable yarn
 
 # 2) Install dependencies
 yarn install
@@ -173,7 +173,7 @@ yarn docs:build
 yarn docs:preview
 ```
 
-If `yarn --version` still reports `1.x` after enabling Corepack, run commands through Corepack explicitly, for example `corepack yarn install` and `corepack yarn dev`.
+If `yarn --version` does not report `4.17.1`, run commands through Corepack explicitly, for example `corepack yarn install` and `corepack yarn dev`.
 
 ## First Release Packaging
 

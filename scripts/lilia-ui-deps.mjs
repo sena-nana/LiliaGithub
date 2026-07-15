@@ -50,12 +50,12 @@ function assertLocalPackages(packageRoots) {
 }
 
 function runYarn(args) {
-  const yarnJs = resolveYarnJs(process.env.npm_execpath);
-  if (!yarnJs) {
+  const yarnCli = process.env.npm_execpath;
+  if (!yarnCli) {
     fail("Run this script through a root Yarn command, for example: yarn liliaui:local");
   }
 
-  const result = spawnSync(process.execPath, [yarnJs, ...args], {
+  const result = spawnSync(process.execPath, [yarnCli, ...args], {
     cwd: repoRoot,
     stdio: "inherit",
     env: process.env,
@@ -80,16 +80,6 @@ function printStatus() {
 
 function readRootManifest() {
   return JSON.parse(readFileSync(rootManifestPath, "utf8"));
-}
-
-function resolveYarnJs(yarnCli) {
-  if (!yarnCli) return null;
-  if (/\.[cm]?js$/i.test(yarnCli)) return yarnCli;
-
-  const content = readFileSync(yarnCli, "utf8");
-  if (content.startsWith("#!/usr/bin/env node")) return yarnCli;
-
-  return content.match(/['"]([^'"]*corepack[^'"]*yarn\.js)['"]/i)?.[1] ?? null;
 }
 
 function fail(message) {

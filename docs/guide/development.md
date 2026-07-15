@@ -19,13 +19,13 @@ LiliaGithub/
 
 ## 本地运行
 
-本仓库通过 Corepack 使用 Yarn 4.14.1,并通过根目录 `rust-toolchain.toml` 固定 Rust 工具链。建议从仓库根目录通过根 `yarn ...` 脚本运行贡献命令,让本机、CI 和 release 都读取同一份工具链约定。
+本仓库固定使用 Node.js 26.5.0、Corepack 0.35.0 和 Yarn 4.17.1,并通过根目录 `rust-toolchain.toml` 固定 Rust 工具链。Node.js 26 不再内置 Corepack,首次使用需显式安装。建议从仓库根目录运行贡献命令,让本机、CI 和 release 都读取同一份工具链约定。
 
 框架核心能力使用 LiliaUI:`@lilia/ui` 提供共享 TitleBar、Dropdown、ContextMenu、主题/圆角、滚动条、CSS token、shell/page 公共样式和 Agent 友好基础结构。LiliaGithub 本仓库只保留 GitHub 工作区业务、应用专属 Tauri command 和业务样式补充。
 
 ```bash
-corepack enable
-corepack prepare yarn@4.14.1 --activate
+npm install --global corepack@0.35.0
+corepack enable yarn
 yarn install
 yarn dev
 yarn tauri:dev
