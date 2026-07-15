@@ -1172,6 +1172,19 @@ describe("RepoProjectPanel", () => {
     expect(view.queryByText("删除本地仓库")).toBeNull();
   });
 
+  it("仓库通知卡仅在存在 GitHub 仓库标识时接入默认 Repo 侧栏", async () => {
+    const remoteView = await renderProjectPanel({
+      repoId: "github:sena-nana/remote-repo",
+      repoFullName: "sena-nana/remote-repo",
+      repoPath: "",
+    });
+    expect(await remoteView.findByRole("region", { name: "仓库通知" })).toBeInTheDocument();
+    remoteView.unmount();
+
+    const localView = await renderProjectPanel({ repoFullName: null });
+    expect(localView.queryByRole("region", { name: "仓库通知" })).toBeNull();
+  });
+
   it("远程仓库历史可打开只读提交详情", async () => {
     const view = await renderProjectPanel({
       repoId: "github:sena-nana/remote-repo",

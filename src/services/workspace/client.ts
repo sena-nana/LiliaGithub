@@ -40,6 +40,8 @@ import type {
   GitHubRepoManagement,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepositorySubscription,
+  GitHubRepositorySubscriptionMode,
   GitHubRepositoryScope,
   GitHubRepoTemplate,
   GitHubRepoSettingsSection,
@@ -47,6 +49,7 @@ import type {
   GitHubRepoSummary,
   GitHubRuleset,
   GitHubRulesetSummary,
+  GitHubWatchedRepoPage,
   GitHubWorkflowArtifactEntry,
   GitHubWorkflowJobLog,
   GitHubWorkflowRun,
@@ -595,6 +598,20 @@ export function isGitHubBindingExpiredError(err: unknown): boolean {
     message.toLowerCase().includes("bad credentials");
 }
 
+export function githubErrorCode(error: unknown): string | null {
+  const message = (error instanceof Error ? error.message : String(error))
+    .replace(/^Error:\s*/, "")
+    .trim();
+  return message.match(/^(github_[a-z0-9_]+)\s*[:：]/i)?.[1]?.toLocaleLowerCase() ?? null;
+}
+
+export function isGitHubPermissionError(error: unknown): boolean {
+  const code = githubErrorCode(error);
+  return code === "github_forbidden"
+    || code === "github_org_sso_required"
+    || code === "github_notifications_scope_required";
+}
+
 export function preloadGitHubRepos(
   opts: { force?: boolean; scope?: GitHubRepositoryScope } = {},
 ): Promise<GitHubRepoPage> {
@@ -808,6 +825,30 @@ export async function listGitHubRepos(
     writeGitHubRepoCache(cacheKey, scope, result);
   }
   return cloneRepoPage(result);
+}
+
+export function listGitHubWatchedRepos(page: number | null = 1): Promise<GitHubWatchedRepoPage> {
+  const pageNo = Math.max(1, page ?? 1);
+  return cachedCall("github_list_watched_repos", { page: pageNo }, () =>
+    workspaceFallback().listGitHubWatchedRepos(pageNo),
+  );
+}
+
+export function getGitHubRepositorySubscription(
+  repoFullName: string,
+): Promise<GitHubRepositorySubscription> {
+  return cachedCall("github_get_repo_subscription", { repoFullName }, () =>
+    workspaceFallback().getGitHubRepositorySubscription(repoFullName),
+  );
+}
+
+export function updateGitHubRepositorySubscription(
+  repoFullName: string,
+  mode: GitHubRepositorySubscriptionMode,
+): Promise<GitHubRepositorySubscription> {
+  return call("github_update_repo_subscription", { repoFullName, mode }, () =>
+    workspaceFallback().updateGitHubRepositorySubscription(repoFullName, mode),
+  );
 }
 
 export function listGitHubAccountIssues(

@@ -26,6 +26,7 @@ import {
 } from "@lucide/vue";
 import { Dropdown, SettingsRow, UiSwitch } from "@lilia/ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
+import RepoNotificationPreferencesCard from "./RepoNotificationPreferencesCard.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
 import {
   blankPullRequestPanelFilters,
@@ -4302,6 +4303,11 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             </template>
           </div>
         </section>
+
+        <RepoNotificationPreferencesCard
+          v-if="repoFullName && projectSidebarMode === 'repo'"
+          :repo-full-name="repoFullName"
+        />
 
         <RepoFileTreeCard
           v-if="projectSidebarMode === 'files' && canBrowseFiles"

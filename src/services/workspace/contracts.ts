@@ -35,11 +35,14 @@ import type {
   GitHubRepoActionsPermissionsRequest,
   GitHubRepoOwner,
   GitHubRepoPage,
+  GitHubRepositorySubscription,
+  GitHubRepositorySubscriptionMode,
   GitHubRepositoryScope,
   GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
   GitHubRepoSummary,
+  GitHubWatchedRepoPage,
   GitHubRuleset,
   GitHubRulesetSummary,
   GitHubUpdateIssueRequest,
@@ -167,6 +170,12 @@ export interface WorkspaceCommandContracts {
     scope: GitHubRepositoryScope;
     page: Maybe<number>;
   }, GitHubRepoPage>;
+  github_list_watched_repos: CommandContract<{ page: Maybe<number> }, GitHubWatchedRepoPage>;
+  github_get_repo_subscription: CommandContract<RepoFullNameArg, GitHubRepositorySubscription>;
+  github_update_repo_subscription: CommandContract<
+    RepoFullNameArg & { mode: GitHubRepositorySubscriptionMode },
+    GitHubRepositorySubscription
+  >;
   github_list_account_issues: CommandContract<{
     state: Maybe<string>;
     perPage: Maybe<number>;

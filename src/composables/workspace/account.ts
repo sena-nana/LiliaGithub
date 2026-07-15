@@ -2,7 +2,10 @@ import type {
   AccountPreferences,
   GitHubAccountProfile,
   GitHubRepoOwner,
+  GitHubRepositorySubscription,
+  GitHubRepositorySubscriptionMode,
   GitHubUpdateAccountProfileRequest,
+  GitHubWatchedRepoPage,
 } from "../../services/workspace";
 import { loadWorkspaceService } from "./serviceLoader";
 import { refreshRepos } from "./repositories";
@@ -54,4 +57,24 @@ export async function updateAccountProfile(
 export async function getAccountRepositoryOwners(): Promise<GitHubRepoOwner[]> {
   const service = await loadWorkspaceService();
   return service.listGitHubRepoOwners();
+}
+
+export async function listGitHubWatchedRepos(page: number | null = 1): Promise<GitHubWatchedRepoPage> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubWatchedRepos(page);
+}
+
+export async function getGitHubRepositorySubscription(
+  repoFullName: string,
+): Promise<GitHubRepositorySubscription> {
+  const service = await loadWorkspaceService();
+  return service.getGitHubRepositorySubscription(repoFullName);
+}
+
+export async function updateGitHubRepositorySubscription(
+  repoFullName: string,
+  mode: GitHubRepositorySubscriptionMode,
+): Promise<GitHubRepositorySubscription> {
+  const service = await loadWorkspaceService();
+  return service.updateGitHubRepositorySubscription(repoFullName, mode);
 }

@@ -110,10 +110,13 @@ import {
 import {
   getAccountProfile,
   getAccountRepositoryOwners,
+  getGitHubRepositorySubscription,
+  listGitHubWatchedRepos,
   pickAccountWorkspaceRoot,
   reloadAccountWorkspace,
   updateAccountPreferences,
   updateAccountProfile,
+  updateGitHubRepositorySubscription,
 } from "./workspace/account";
 
 export function useWorkspace() {
@@ -214,6 +217,9 @@ export function useWorkspace() {
     copyText,
     getAccountProfile,
     getAccountRepositoryOwners,
+    listGitHubWatchedRepos,
+    getGitHubRepositorySubscription,
+    updateGitHubRepositorySubscription,
     updateAccountProfile,
     pickAccountWorkspaceRoot,
     updateAccountPreferences,
