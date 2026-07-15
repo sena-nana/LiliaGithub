@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, reactive, ref, shallowRef, watch, type Component } from "vue";
-import { RouterLink, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import {
   AlertCircle,
   ArrowDownAZ,
@@ -38,8 +38,10 @@ import {
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import {
+  clearGitHubRepoCache,
   isGitHubBindingExpiredError,
   listGitHubRepos,
+  listGitHubRepoOwners,
   listGitHubAccountIssues,
   listGitHubActionNotifications,
   mergeGitHubPullRequest,
@@ -51,6 +53,8 @@ import {
   type GitHubIssue,
   type GitHubPullRequest,
   type GitHubRepoSummary,
+  type GitHubRepoOwner,
+  type GitHubRepositoryScope,
   type ContributionIdentityRecommendation,
   type ContributionIdentityRecommendationResult,
   type BulkOperation,
@@ -67,6 +71,8 @@ import {
 import ContributionIdentityRecommendations from "../components/ContributionIdentityRecommendations.vue";
 import HomeContributionCard from "../components/home/HomeContributionCard.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
+import GitHubRepositoryScopeControl from "../components/github/GitHubRepositoryScopeControl.vue";
+import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
 import { bulkResultTone, repoDisplayName } from "../utils/repoDisplay";
 import {
@@ -79,7 +85,7 @@ import {
   repoIncludedInHomeCodeStats,
 } from "../config/repoSettingsManifest";
 import { representativeReposByGitHubFullName, representativeReposBySharedGroup } from "../utils/repoWorktree";
-import { remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
+import { githubRepositoryIdentityKey, remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
 import { repoConflictRoute, repoProjectRoute, repoRoute } from "../utils/repoRoutes";
 import {
   buildLanguageOverviewFromRepos,
@@ -102,9 +108,22 @@ import {
   contributionIdentityKey,
   mergeContributionIdentity,
 } from "../utils/contributionIdentities";
+import {
+  ALL_GITHUB_REPOSITORIES,
+  githubOrganizationAccessLimited,
+  githubOrganizationAccessMessage,
+  githubOrganizationAccessRecovery,
+  githubOrganizationOwners,
+  githubRepositoryPermissionLabel,
+  githubRepositoryScopeFromQuery,
+  githubRepositoryScopeKey,
+  githubUserFacingError,
+  githubRepositoryScopeQuery,
+} from "../utils/githubRepositoryScope";
 
 const workspace = useWorkspace();
 const router = useRouter();
+const route = useRoute();
 const syncingRepoId = ref<string | null>(null);
 const bulkLocalChangesMode = ref<RepoPullLocalChangesMode>("stash");
 const createRepoCardOpen = ref(false);
@@ -260,6 +279,11 @@ const githubReposNextPage = ref<number | null>(null);
 const githubReposLoading = ref(false);
 const githubReposLoadingMore = ref(false);
 const githubReposError = ref<string | null>(null);
+const githubReposLoaded = ref(false);
+const githubRepoOwners = ref<GitHubRepoOwner[]>([]);
+const githubRepoOwnersLoading = ref(false);
+const githubRepoOwnersError = ref<string | null>(null);
+const githubRepositoryScope = ref<GitHubRepositoryScope>(ALL_GITHUB_REPOSITORIES);
 const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
 const githubPullRequestsByRepo = ref<Record<string, GitHubPullRequest[] | undefined>>({});
 const githubAccountIssuesLoading = ref(false);
@@ -283,10 +307,24 @@ const homeContributionIdentityPanelOpen = ref(false);
 const componentEpoch = useComponentEpoch();
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
+const githubRepoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
+const githubScopePages = new Map<string, {
+  items: GitHubRepoSummary[];
+  nextPage: number | null;
+  error: string | null;
+  loaded: boolean;
+}>();
 let searchRepoPagesLoading = false;
 let homeOverviewInitialized = false;
+let activeHomeBindingIdentity: string | null | undefined;
 let homeContributionRefreshGeneration = 0;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
+const githubOrganizationOwnerOptions = computed(() => githubOrganizationOwners(githubRepoOwners.value));
+const githubOrganizationVisibilityLimited = computed(() =>
+  githubOrganizationAccessLimited(workspace.githubBinding.value?.scopes, githubRepoOwners.value),
+);
+const githubOrganizationRecovery = computed(() => githubOrganizationAccessRecovery(githubRepoOwners.value));
+const githubOrganizationVisibilityMessage = computed(() => githubOrganizationAccessMessage(githubRepoOwners.value));
 const emptySyncIssuesByRepoId = new Map<string, RepoSyncIssueDisplay>();
 function cloneOverviewSettings(settings: typeof workspace.state.settings): HomeOverviewSettingsSnapshot {
   if (!settings) return null;
@@ -511,7 +549,7 @@ const homeSearchResults = computed<HomeSearchResult[]>(() => {
 
   const remoteResults = overviewGitHubRepos.value
     .filter((repo) => !repo.disabled)
-    .filter((repo) => !searchLocalRepoByGitHubFullName.has(repo.fullName))
+    .filter((repo) => !searchLocalRepoByGitHubFullName.has(githubRepositoryIdentityKey(repo.fullName)))
     .filter((repo) => githubRepoMatchesHomeSearch(repo, query))
     .map((repo): HomeSearchResult => ({
       key: `remote:${repo.fullName}`,
@@ -538,7 +576,7 @@ const repoStatusSortLabel = computed(() =>
 
 const repoStatusRows = computed<RepoStatusRow[]>(() =>
   overviewGitHubRepos.value.filter((repo) => !repo.disabled).map((githubRepo) => {
-    const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
+    const localRepo = localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null;
     return {
       githubRepo,
       localRepo,
@@ -578,13 +616,13 @@ function hasHomeTimelineRepoData(repo: GitHubRepoSummary, localRepo: RepoSummary
 function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
   return homeTimelineRepos.value
     .filter((githubRepo) => {
-      const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
+      const localRepo = localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null;
       return hasHomeTimelineRepoData(githubRepo, localRepo);
     })
     .map((githubRepo) => {
       return {
         githubRepo,
-        localRepo: localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null,
+        localRepo: localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null,
         syncIssue: repoSyncIssueForTimeline(githubRepo),
         issues: overviewIssuesByRepo.value[githubRepo.fullName] ?? [],
         pullRequests: overviewPullRequestsByRepo.value[githubRepo.fullName] ?? [],
@@ -626,22 +664,42 @@ watch(
   },
 );
 
+watch(
+  () => [route.query.githubScope, route.query.githubOwner, githubRepoOwners.value] as const,
+  () => {
+    if (githubRepoOwnersLoading.value) return;
+    const scope = githubRepositoryScopeFromQuery(
+      route.query.githubScope,
+      route.query.githubOwner,
+      workspace.githubBinding.value?.login ?? "",
+      githubRepoOwners.value,
+    );
+    if (githubRepositoryScopeKey(scope) !== githubRepositoryScopeKey(githubRepositoryScope.value)) {
+      void selectHomeRepositoryScope(scope, false);
+    }
+  },
+);
+
 onUnmounted(() => {
   githubPendingGeneration += 1;
   homeContributionRefreshGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
+  githubRepoOwnersLoader.invalidate();
 });
 
 watch(
-  () => workspace.isReady.value,
-  (ready) => {
+  () => [workspace.isReady.value, currentGitHubBindingIdentity()] as const,
+  ([ready, bindingIdentity]) => {
+    const bindingChanged = activeHomeBindingIdentity !== undefined
+      && activeHomeBindingIdentity !== bindingIdentity;
+    activeHomeBindingIdentity = bindingIdentity;
     if (!ready) {
-      homeOverviewInitialized = false;
-      homeContributionRefreshGeneration += 1;
-      homeContributionSnapshot.value = null;
+      resetHomeGitHubBindingState({ clearAccountCaches: bindingChanged });
       return;
     }
+    if (bindingChanged) resetHomeGitHubBindingState({ clearAccountCaches: true });
+    void loadGitHubRepoOwners();
     if (homeOverviewInitialized) return;
     homeOverviewInitialized = true;
     commitHomeOverviewSnapshot();
@@ -652,7 +710,7 @@ watch(
       }
       return;
     }
-    void loadGitHubRepoStatus();
+    void loadGitHubRepoStatus({ force: bindingChanged });
   },
   { immediate: true },
 );
@@ -691,11 +749,31 @@ function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
   const seen = new Set<string>();
   const next: GitHubRepoSummary[] = [];
   for (const item of items) {
-    if (seen.has(item.fullName)) continue;
-    seen.add(item.fullName);
+    const key = githubRepositoryIdentityKey(item.fullName);
+    if (seen.has(key)) continue;
+    seen.add(key);
     next.push(item);
   }
   return next;
+}
+
+function rememberGitHubScopePage(loaded = true) {
+  githubScopePages.set(githubRepositoryScopeKey(githubRepositoryScope.value), {
+    items: githubRepos.value.map((repo) => ({ ...repo })),
+    nextPage: githubReposNextPage.value,
+    error: githubReposError.value,
+    loaded,
+  });
+}
+
+function restoreGitHubScopePage(scope: GitHubRepositoryScope) {
+  const page = githubScopePages.get(githubRepositoryScopeKey(scope));
+  githubRepos.value = page?.items.map((repo) => ({ ...repo })) ?? [];
+  githubReposNextPage.value = page?.nextPage ?? null;
+  githubReposError.value = page?.error ?? null;
+  githubReposLoaded.value = page?.loaded ?? false;
+  commitHomeOverviewSnapshotFromGitHubState();
+  return page?.loaded ?? false;
 }
 
 function applyGitHubRepoPage(
@@ -709,13 +787,106 @@ function applyGitHubRepoPage(
   githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
   githubReposNextPage.value = page.nextPage;
   githubReposError.value = null;
+  githubReposLoaded.value = true;
+  rememberGitHubScopePage();
   commitHomeOverviewSnapshotFromGitHubState();
   writeGitHubRepoOverviewSnapshot();
   prepareGitHubTimeline(page.items, refreshIssues);
 }
 
+async function loadGitHubRepoOwners() {
+  await githubRepoOwnersLoader.run("home-github-owners", async (runId) => {
+    githubRepoOwnersLoading.value = true;
+    githubRepoOwnersError.value = null;
+    try {
+      const owners = await listGitHubRepoOwners();
+      if (!githubRepoOwnersLoader.isCurrent(runId)) return;
+      githubRepoOwners.value = owners;
+      const routeScope = githubRepositoryScopeFromQuery(
+        route.query.githubScope,
+        route.query.githubOwner,
+        workspace.githubBinding.value?.login ?? "",
+        owners,
+      );
+      if (githubRepositoryScopeKey(routeScope) !== githubRepositoryScopeKey(githubRepositoryScope.value)) {
+        await selectHomeRepositoryScope(routeScope, false);
+      }
+    } catch (err) {
+      if (!githubRepoOwnersLoader.isCurrent(runId)) return;
+      githubRepoOwnersError.value = `账号与组织加载失败：${githubUserFacingError(err)}`;
+    } finally {
+      if (githubRepoOwnersLoader.isCurrent(runId)) githubRepoOwnersLoading.value = false;
+    }
+  });
+}
+
+async function selectHomeRepositoryScope(scope: GitHubRepositoryScope, updateRoute = true) {
+  if (githubRepositoryScopeKey(scope) === githubRepositoryScopeKey(githubRepositoryScope.value)) return;
+  rememberGitHubScopePage(githubReposLoaded.value);
+  githubRepositoryScope.value = scope;
+  const restored = restoreGitHubScopePage(scope);
+  repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
+  if (updateRoute) {
+    await router.replace({ query: { ...route.query, ...githubRepositoryScopeQuery(scope) } });
+  }
+  if (!restored) await loadGitHubRepoStatus();
+}
+
+async function openOrganizationAuthorization() {
+  if (githubOrganizationRecovery.value.url) {
+    await workspace.openUrl(githubOrganizationRecovery.value.url);
+    return;
+  }
+  await router.push({ path: "/settings", query: { tab: "repositories" } });
+}
+
 function currentGitHubAccountLogin() {
   return workspace.githubBinding.value?.login ?? null;
+}
+
+function currentGitHubBindingIdentity() {
+  const binding = workspace.githubBinding.value;
+  if (!binding) return null;
+  return JSON.stringify([
+    binding.login.toLocaleLowerCase(),
+    binding.boundAt,
+    [...binding.scopes].sort(),
+  ]);
+}
+
+function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } = {}) {
+  homeOverviewInitialized = false;
+  homeContributionRefreshGeneration += 1;
+  githubPendingGeneration += 1;
+  githubAccountIssuesGeneration += 1;
+  githubRepoStatusLoader.invalidate();
+  githubRepoMoreLoader.invalidate();
+  githubRepoOwnersLoader.invalidate();
+  searchRepoPagesLoading = false;
+  githubRepos.value = [];
+  githubReposNextPage.value = null;
+  githubReposLoading.value = false;
+  githubReposLoadingMore.value = false;
+  githubReposError.value = null;
+  githubReposLoaded.value = false;
+  githubRepoOwners.value = [];
+  githubRepoOwnersLoading.value = false;
+  githubRepoOwnersError.value = null;
+  githubScopePages.clear();
+  githubRepositoryScope.value = ALL_GITHUB_REPOSITORIES;
+  githubIssuesByRepo.value = {};
+  githubPullRequestsByRepo.value = {};
+  githubActionNotificationsByRepo.value = {};
+  githubAccountIssuesLoading.value = false;
+  githubActionNotificationsLoading.value = false;
+  githubTimelineError.value = null;
+  homeOverviewSnapshot.value = null;
+  homeContributionSnapshot.value = null;
+  repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
+  if (options.clearAccountCaches) {
+    clearGitHubRepoCache();
+    clearHomeGitHubOverviewSnapshot();
+  }
 }
 
 function restoreGitHubOverviewSnapshot() {
@@ -727,16 +898,19 @@ function restoreGitHubOverviewSnapshot() {
   }
   githubRepos.value = snapshot.repos;
   githubReposNextPage.value = snapshot.nextPage;
+  githubReposLoaded.value = true;
   githubIssuesByRepo.value = snapshot.issuesByRepo;
   githubPullRequestsByRepo.value = snapshot.pullRequestsByRepo;
   githubActionNotificationsByRepo.value = snapshot.actionNotificationsByRepo;
   githubReposError.value = null;
   commitHomeOverviewSnapshotFromGitHubState();
+  rememberGitHubScopePage();
   prepareGitHubTimeline(snapshot.repos);
   return snapshot;
 }
 
 function writeGitHubRepoOverviewSnapshot() {
+  if (githubRepositoryScope.value.kind !== "all") return;
   writeHomeGitHubOverviewSnapshot({
     schemaVersion: 3,
     accountLogin: currentGitHubAccountLogin(),
@@ -756,7 +930,7 @@ function githubRepoLoadErrorMessage(err: unknown) {
     clearGitHubPendingItems();
     return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
   }
-  return `GitHub 仓库列表加载失败：${String(err)}`;
+  return `GitHub 仓库列表加载失败：${githubUserFacingError(err)}`;
 }
 
 async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh = false) {
@@ -795,7 +969,7 @@ async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh 
       return;
     }
     if (isCurrent()) {
-      githubTimelineError.value = `Issue / PR 加载失败：${String(err)}`;
+      githubTimelineError.value = `Issue / PR 加载失败：${githubUserFacingError(err)}`;
     }
   } finally {
     if (isCurrent()) {
@@ -830,7 +1004,7 @@ async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], re
       return;
     }
     if (generation === githubPendingGeneration) {
-      githubTimelineError.value = `Actions 通知加载失败：${String(err)}`;
+      githubTimelineError.value = `Actions 通知加载失败：${githubUserFacingError(err)}`;
     }
   } finally {
     if (generation === githubPendingGeneration) {
@@ -994,14 +1168,17 @@ function repoIncludedInHomeTimeline(repo: GitHubRepoSummary) {
 
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
   if (!workspace.isReady.value || githubReposLoading.value) return;
+  const scope = githubRepositoryScope.value;
+  const scopeKey = githubRepositoryScopeKey(scope);
   githubRepoMoreLoader.invalidate();
   githubReposLoadingMore.value = false;
   await githubRepoStatusLoader.run(options.force ? "overview-repos:force" : "overview-repos", async (runId) => {
     githubReposLoading.value = true;
     githubReposError.value = null;
     try {
-      const page = await preloadGitHubRepos({ force: options.force });
+      const page = await preloadGitHubRepos({ force: options.force, scope });
       if (!githubRepoStatusLoader.isCurrent(runId) || !workspace.isReady.value) return;
+      if (githubRepositoryScopeKey(githubRepositoryScope.value) !== scopeKey) return;
       applyGitHubRepoPage(page, false, options.force);
     } catch (err) {
       if (!githubRepoStatusLoader.isCurrent(runId) || !workspace.isReady.value) return;
@@ -1009,8 +1186,10 @@ async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
       if (isGitHubBindingExpiredError(err)) {
         githubRepos.value = [];
         githubReposNextPage.value = null;
+        githubReposLoaded.value = false;
         commitHomeOverviewSnapshotFromGitHubState();
       }
+      rememberGitHubScopePage(githubReposLoaded.value);
     } finally {
       if (githubRepoStatusLoader.isCurrent(runId)) {
         githubReposLoading.value = false;
@@ -1022,16 +1201,20 @@ async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
 async function loadMoreGitHubRepos() {
   const pageNumber = githubReposNextPage.value;
   if (!pageNumber || githubReposLoading.value || githubReposLoadingMore.value) return;
+  const scope = githubRepositoryScope.value;
+  const scopeKey = githubRepositoryScopeKey(scope);
   await githubRepoMoreLoader.run(`overview-repos-more:${pageNumber}`, async (runId) => {
     githubReposLoadingMore.value = true;
     githubReposError.value = null;
     try {
-      const page = await listGitHubRepos(pageNumber);
+      const page = await listGitHubRepos(scope, pageNumber);
       if (!githubRepoMoreLoader.isCurrent(runId) || githubReposNextPage.value !== pageNumber) return;
+      if (githubRepositoryScopeKey(githubRepositoryScope.value) !== scopeKey) return;
       applyGitHubRepoPage(page, true);
     } catch (err) {
       if (!githubRepoMoreLoader.isCurrent(runId)) return;
       githubReposError.value = githubRepoLoadErrorMessage(err);
+      rememberGitHubScopePage(githubReposLoaded.value);
     } finally {
       if (githubRepoMoreLoader.isCurrent(runId)) {
         githubReposLoadingMore.value = false;
@@ -1566,12 +1749,16 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
   cloningFullNames.add(repo.fullName);
   githubReposError.value = null;
   try {
-    await workspace.cloneRepo(repo.cloneUrl, repo.name);
+    await workspace.cloneRepo({
+      remoteUrl: repo.cloneUrl,
+      repository: { id: repo.id, fullName: repo.fullName, cloneUrl: repo.cloneUrl },
+      target: { kind: "default" },
+    });
     await refreshHomeAfterRepoMutation();
   } catch (err) {
     githubReposError.value = isGitHubBindingExpiredError(err)
       ? "GitHub 绑定已失效，请重新绑定后再克隆仓库。"
-      : `克隆 ${repo.fullName} 失败：${String(err)}`;
+      : `克隆 ${repo.fullName} 失败：${githubUserFacingError(err)}`;
   } finally {
     cloningFullNames.delete(repo.fullName);
   }
@@ -2188,6 +2375,32 @@ function bulkOperationDescription(operation: BulkOperation) {
               </button>
             </div>
           </div>
+          <div class="repo-status-scope">
+            <GitHubRepositoryScopeControl
+              :model-value="githubRepositoryScope"
+              :personal-login="workspace.githubBinding.value?.login ?? ''"
+              :organizations="githubOrganizationOwnerOptions"
+              :loading="githubRepoOwnersLoading"
+              :disabled="githubReposLoading"
+              @update:model-value="selectHomeRepositoryScope"
+            />
+            <GitHubRepositoryStateNotice
+              v-if="githubRepoOwnersError"
+              state="error"
+              compact
+              retryable
+              :message="githubRepoOwnersError"
+              @retry="loadGitHubRepoOwners"
+            />
+            <GitHubRepositoryStateNotice
+              v-if="githubOrganizationVisibilityLimited"
+              state="limited"
+              compact
+              :message="githubOrganizationVisibilityMessage"
+              :action-label="githubOrganizationRecovery.url ? '在 GitHub 授权' : '补充组织权限'"
+              @authorize="openOrganizationAuthorization"
+            />
+          </div>
           <p v-if="githubReposError" class="repo-status-error">
             {{ githubReposError }}
             <button type="button" class="ghost" :disabled="githubReposLoading" @click="loadGitHubRepoStatus({ force: true })">
@@ -2200,6 +2413,11 @@ function bulkOperationDescription(operation: BulkOperation) {
               aria-label="仓库状态列表"
             >
               <p v-if="githubReposLoading && !repoStatusRows.length" class="repo-status-empty">正在加载 GitHub 项目...</p>
+              <GitHubRepositoryStateNotice
+                v-else-if="githubReposLoaded && !repoStatusRows.length && !githubReposError"
+                state="empty"
+                :message="githubRepositoryScope.kind === 'all' ? '没有可见仓库。' : '当前范围没有可见仓库。'"
+              />
               <div
                 v-for="{ githubRepo, localRepo, action, syncIssue } in visibleRepoStatusRows"
                 :key="githubRepo.fullName"
@@ -2220,6 +2438,13 @@ function bulkOperationDescription(operation: BulkOperation) {
                   </strong>
                   <span v-if="githubRepo.archived" class="repo-status-row__badge repo-status-row__badge--archived">Archive</span>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
+                  <span
+                    v-if="githubRepositoryPermissionLabel(githubRepo.permissions)"
+                    class="repo-status-row__badge"
+                    :title="`当前账号权限：${githubRepositoryPermissionLabel(githubRepo.permissions)}`"
+                  >
+                    {{ githubRepositoryPermissionLabel(githubRepo.permissions) }}
+                  </span>
                   <span
                     v-if="syncIssue"
                     class="repo-status-row__issue"
@@ -3056,6 +3281,12 @@ function bulkOperationDescription(operation: BulkOperation) {
   gap: 4px;
   min-width: 0;
   height: 22px;
+}
+
+.repo-status-scope {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .repo-status-sort-button {

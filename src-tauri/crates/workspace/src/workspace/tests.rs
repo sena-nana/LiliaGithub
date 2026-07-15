@@ -49,24 +49,29 @@ use super::repos::{
     add_repo_files_to_gitignore, cached_managed_repos, canonical_repo_path, checkout_branch_at,
     commit_file_change_from_status, commit_file_changes_from_outputs, commit_file_numstats,
     commit_file_patches, commit_file_statuses, configured_rebase_target, conflict_operation_args,
-    create_branch_at, current_branch_upstream, delete_branch_at, discard_all_repo_local_changes,
-    discard_repo_files, expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_common_dir,
-    git_worktree_entries, infer_clone_directory_name, is_conflict_status, language_for_path,
-    lightweight_managed_repos, local_branch_exists, managed_repo_paths,
-    managed_repo_paths_and_prune_stale, merge_branch_at, normalize_clone_directory_name,
-    normalize_git_remote_error, normalize_stash_id, parse_conflict_hunks, parse_github_remote,
-    parse_status_snapshot, prepare_pull_local_changes, rename_branch_at, repo_branches,
+    create_branch_at, create_clone_parent_directories, current_branch_upstream, delete_branch_at,
+    discard_all_repo_local_changes, discard_repo_files, expand_repo_paths_with_root_worktrees,
+    filter_hidden_repos, git_common_dir, git_worktree_entries, infer_clone_directory_name,
+    inspect_clone_target, is_conflict_status, language_for_path, lightweight_managed_repos,
+    local_branch_exists, managed_repo_paths, managed_repo_paths_and_prune_stale, merge_branch_at,
+    normalize_clone_directory_name, normalize_git_remote_error, normalize_stash_id,
+    parse_conflict_hunks, parse_github_remote, parse_status_snapshot, plan_workspace_clone,
+    prepare_pull_local_changes, remove_created_empty_directories, rename_branch_at, repo_branches,
     repo_changes, repo_head_language_stats, repo_history, repo_id, repo_status_entries,
     resolve_conflict_content, resolve_remote_sync_config, resolve_repo_worktree,
     restore_pull_local_changes, run_configured_pull_with_config, run_multi_remote_push,
-    selected_repo_files, should_retry_clone_with_system_git, should_skip_language_path,
-    status_pair, summarize_repo, sync_result, validate_clone_directory_name, RepoStatusEntry,
+    sanitize_clone_path_segment, selected_repo_files, should_retry_clone_with_system_git,
+    should_skip_language_path, status_pair, summarize_repo, summarize_workspace_repo, sync_result,
+    upsert_workspace_repo_binding, validate_clone_directory_name, CloneTargetDisposition,
+    RepoStatusEntry,
 };
+#[cfg(target_os = "windows")]
+use super::repos::{validate_clone_target_length, MAX_PORTABLE_CLONE_TARGET_UTF16};
 use super::settings::{
-    add_managed_repo_id, create_repo_group, delete_repo_group, move_repo_to_group,
-    prune_deleted_repo_settings, remove_managed_repo_path, remove_system_git_repo_id,
-    rename_repo_group, repo_path_from_id, scan_contribution_identity_recommendations,
-    workspace_set_root,
+    add_managed_repo_id, create_repo_group, delete_repo_group, migrate_remote_repo_shortcuts,
+    move_repo_to_group, prune_deleted_repo_settings, remove_managed_repo_path,
+    remove_system_git_repo_id, rename_repo_group, repo_path_from_id,
+    scan_contribution_identity_recommendations, visible_workspace_settings, workspace_set_root,
 };
 use super::shared::{
     cached_local_contribution_count, collect_local_contribution_counts, compatible_path_text,
@@ -84,8 +89,9 @@ use lilia_github_contracts::workspace::{
     GitHubRepoActionsPermissionsRequest, GitHubRepoWorkflowPermissionsRequest,
     GitHubUpdateRepoSettingsRequest, LanguageStat, LocalContributionDayCache, ProjectLaunchConfig,
     RemoteRepoShortcut, RepoConflictChoice, RepoPullLocalChangesMode, RepoRemoteBranchState,
-    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoWorktree, WorkspaceRepoGroup,
-    WorkspaceSettings, WorkspaceStartupCache,
+    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoWorktree,
+    WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef, WorkspaceCloneTarget,
+    WorkspaceRepoGroup, WorkspaceRepositoryBinding, WorkspaceSettings, WorkspaceStartupCache,
 };
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
@@ -759,6 +765,8 @@ fn test_repo_summary(overrides: impl FnOnce(&mut RepoSummary)) -> RepoSummary {
         current_branch: Some("main".to_string()),
         remote_url: Some("https://github.com/a/repo.git".to_string()),
         github_full_name: Some("a/repo".to_string()),
+        github_repository_id: None,
+        canonical_remote_url: Some("https://github.com/a/repo.git".to_string()),
         ahead: 0,
         behind: 0,
         remote_branch_states: Vec::new(),
@@ -819,6 +827,8 @@ fn normalizes_local_contribution_repo_input_only() {
 fn test_remote_shortcut(full_name: &str) -> RemoteRepoShortcut {
     let repo = normalize_github_repo_input(full_name).unwrap();
     RemoteRepoShortcut {
+        account_login: Some("account-a".to_string()),
+        repository_id: None,
         full_name: repo.full_name,
         name: repo.name,
         private: false,
@@ -826,6 +836,7 @@ fn test_remote_shortcut(full_name: &str) -> RemoteRepoShortcut {
         default_branch: Some("main".to_string()),
         html_url: format!("https://github.com/{full_name}"),
         clone_url: format!("https://github.com/{full_name}.git"),
+        canonical_remote_url: None,
         opened_at: 1,
     }
 }
@@ -859,7 +870,12 @@ fn forget_remote_repo_shortcut_removes_only_matching_repo() {
         test_remote_shortcut("sena-nana/Remove"),
     ];
 
-    forget_remote_repo_shortcut(&mut shortcuts, "https://github.com/sena-nana/Remove").unwrap();
+    forget_remote_repo_shortcut(
+        &mut shortcuts,
+        "https://github.com/sena-nana/Remove",
+        "account-a",
+    )
+    .unwrap();
 
     assert_eq!(shortcuts.len(), 1);
     assert_eq!(shortcuts[0].full_name, "sena-nana/Keep");
@@ -876,10 +892,92 @@ fn forget_remote_repo_shortcut_removes_matching_when_stored_as_remote_url() {
         test_remote_shortcut("sena-nana/Remove"),
     ];
 
-    forget_remote_repo_shortcut(&mut shortcuts, "sena-nana/Keep").unwrap();
+    forget_remote_repo_shortcut(&mut shortcuts, "sena-nana/Keep", "account-a").unwrap();
 
     assert_eq!(shortcuts.len(), 1);
     assert_eq!(shortcuts[0].full_name, "sena-nana/Remove");
+}
+
+#[test]
+fn remote_repo_shortcuts_are_isolated_by_account() {
+    let mut first = test_remote_shortcut("sena-nana/Shared");
+    first.repository_id = Some(1);
+    let mut second = test_remote_shortcut("sena-nana/Shared");
+    second.account_login = Some("account-b".to_string());
+    second.repository_id = Some(2);
+    let mut shortcuts = Vec::new();
+
+    remember_remote_repo_shortcut(&mut shortcuts, first).unwrap();
+    remember_remote_repo_shortcut(&mut shortcuts, second).unwrap();
+
+    assert_eq!(shortcuts.len(), 2);
+    assert!(shortcuts.iter().all(|shortcut| {
+        shortcut.canonical_remote_url.as_deref() == Some("https://github.com/sena-nana/Shared.git")
+    }));
+    forget_remote_repo_shortcut(&mut shortcuts, "sena-nana/Shared", "ACCOUNT-A").unwrap();
+    assert_eq!(shortcuts.len(), 1);
+    assert_eq!(shortcuts[0].account_login.as_deref(), Some("account-b"));
+    assert_eq!(shortcuts[0].repository_id, Some(2));
+}
+
+#[test]
+fn legacy_remote_repo_shortcuts_migrate_to_current_account_and_filter_other_accounts() {
+    let mut legacy = test_remote_shortcut("sena-nana/Legacy");
+    legacy.account_login = None;
+    legacy.canonical_remote_url = None;
+    let mut other = test_remote_shortcut("sena-nana/Other");
+    other.account_login = Some("account-b".to_string());
+    let mut settings = WorkspaceSettings {
+        github_binding: Some(GitHubBindingMetadata {
+            login: "account-a".to_string(),
+            avatar_url: None,
+            bound_at: 1,
+            scopes: Vec::new(),
+            client_id_source: "test".to_string(),
+        }),
+        remote_repo_shortcuts: vec![legacy, other],
+        ..WorkspaceSettings::default()
+    };
+
+    assert!(migrate_remote_repo_shortcuts(&mut settings));
+    assert_eq!(
+        settings.remote_repo_shortcuts[0].account_login.as_deref(),
+        Some("account-a")
+    );
+    assert_eq!(
+        settings.remote_repo_shortcuts[0]
+            .canonical_remote_url
+            .as_deref(),
+        Some("https://github.com/sena-nana/Legacy.git")
+    );
+    assert!(!migrate_remote_repo_shortcuts(&mut settings));
+
+    let visible = visible_workspace_settings(settings.clone());
+    assert_eq!(visible.remote_repo_shortcuts.len(), 1);
+    assert_eq!(
+        visible.remote_repo_shortcuts[0].full_name,
+        "sena-nana/Legacy"
+    );
+    assert_eq!(settings.remote_repo_shortcuts.len(), 2);
+}
+
+#[test]
+fn legacy_remote_repo_shortcut_deserializes_without_identity_fields() {
+    let shortcut: RemoteRepoShortcut = serde_json::from_value(serde_json::json!({
+        "fullName": "sena-nana/Legacy",
+        "name": "Legacy",
+        "private": false,
+        "archived": false,
+        "defaultBranch": "main",
+        "htmlUrl": "https://github.com/sena-nana/Legacy",
+        "cloneUrl": "https://github.com/sena-nana/Legacy.git",
+        "openedAt": 1
+    }))
+    .unwrap();
+
+    assert_eq!(shortcut.account_login, None);
+    assert_eq!(shortcut.repository_id, None);
+    assert_eq!(shortcut.canonical_remote_url, None);
 }
 
 #[test]
@@ -902,7 +1000,10 @@ fn github_repo_management_maps_license() {
             html_url: "https://github.com/a/repo".to_string(),
             owner: GitHubRepoOwnerResponse {
                 login: "a".to_string(),
+                account_type: None,
+                avatar_url: None,
             },
+            permissions: None,
             homepage: None,
             has_issues: true,
             has_wiki: false,
@@ -2255,6 +2356,315 @@ fn normalizes_clone_directory_name_with_user_override() {
 }
 
 #[test]
+fn sanitizes_clone_segments_for_portable_paths_with_stable_collision_suffixes() {
+    assert_eq!(
+        sanitize_clone_path_segment("safe-repo").unwrap(),
+        "safe-repo"
+    );
+
+    let invalid = sanitize_clone_path_segment("bad:name. ").unwrap();
+    assert!(invalid.starts_with("bad-name"));
+    assert!(invalid.contains('~'));
+    assert_eq!(invalid, sanitize_clone_path_segment("bad:name. ").unwrap());
+    assert_ne!(invalid, sanitize_clone_path_segment("bad?name. ").unwrap());
+
+    let reserved = sanitize_clone_path_segment("CON.txt").unwrap();
+    assert!(reserved.starts_with("CON.txt-~"));
+    assert!(sanitize_clone_path_segment("   ")
+        .unwrap_err()
+        .starts_with("workspace_path_segment_invalid:"));
+
+    let long = sanitize_clone_path_segment(&"仓库".repeat(80)).unwrap();
+    assert!(long.len() <= 100);
+    assert!(long.contains('~'));
+}
+
+#[test]
+fn plans_default_owner_group_and_preserves_custom_target_path() {
+    let root = temp_dir("clone-plan-owner");
+    let default = WorkspaceCloneRepoRequest {
+        remote_url: "sena-nana/LiliaGithub".to_string(),
+        repository: Some(WorkspaceCloneRepositoryRef {
+            id: 42,
+            full_name: "example-org/LiliaGithub".to_string(),
+            clone_url: "https://github.com/example-org/LiliaGithub.git".to_string(),
+        }),
+        target: WorkspaceCloneTarget::Default,
+    };
+    let plan = plan_workspace_clone(&root, &default).unwrap();
+    assert_eq!(plan.target, root.join("example-org").join("LiliaGithub"));
+    assert_eq!(
+        plan.remote,
+        "https://github.com/example-org/LiliaGithub.git"
+    );
+
+    let custom = WorkspaceCloneRepoRequest {
+        target: WorkspaceCloneTarget::Custom {
+            path: "chosen/nested-target".to_string(),
+        },
+        ..default
+    };
+    let custom_plan = plan_workspace_clone(&root, &custom).unwrap();
+    assert_eq!(
+        custom_plan.target,
+        root.join("chosen").join("nested-target")
+    );
+    assert!(!custom_plan.target.ends_with("example-org/LiliaGithub"));
+
+    let outside = temp_dir("clone-plan-outside").join("repo");
+    let outside_request = WorkspaceCloneRepoRequest {
+        target: WorkspaceCloneTarget::Custom {
+            path: outside.to_string_lossy().into_owned(),
+        },
+        ..custom
+    };
+    assert!(plan_workspace_clone(&root, &outside_request)
+        .unwrap_err()
+        .starts_with("workspace_path_segment_invalid:"));
+
+    let mismatched_identity = WorkspaceCloneRepoRequest {
+        repository: Some(WorkspaceCloneRepositoryRef {
+            id: 42,
+            full_name: "example-org/LiliaGithub".to_string(),
+            clone_url: "https://github.com/other-org/LiliaGithub.git".to_string(),
+        }),
+        target: WorkspaceCloneTarget::Default,
+        ..outside_request
+    };
+    assert!(plan_workspace_clone(&root, &mismatched_identity)
+        .unwrap_err()
+        .starts_with("workspace_existing_remote_mismatch:"));
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(outside.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn plans_github_ssh_default_target_without_repository_metadata() {
+    let root = temp_dir("clone-plan-ssh");
+    let request = WorkspaceCloneRepoRequest {
+        remote_url: "git@github.com:Example-Org/Repo.git".to_string(),
+        repository: None,
+        target: WorkspaceCloneTarget::Default,
+    };
+    let plan = plan_workspace_clone(&root, &request).unwrap();
+    assert_eq!(plan.target, root.join("Example-Org").join("Repo"));
+    assert_eq!(plan.remote, request.remote_url);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn inspects_existing_clone_targets_by_canonical_github_remote() {
+    let root = temp_dir("clone-existing-target");
+    let missing = root.join("missing");
+    assert_eq!(
+        inspect_clone_target(&missing, "https://github.com/Owner/Repo.git").unwrap(),
+        CloneTargetDisposition::Clone
+    );
+
+    let empty = root.join("empty");
+    fs::create_dir(&empty).unwrap();
+    assert_eq!(
+        inspect_clone_target(&empty, "https://github.com/Owner/Repo.git").unwrap(),
+        CloneTargetDisposition::Clone
+    );
+    fs::write(empty.join("keep.txt"), "keep").unwrap();
+    assert!(
+        inspect_clone_target(&empty, "https://github.com/Owner/Repo.git")
+            .unwrap_err()
+            .starts_with("workspace_target_not_empty:")
+    );
+
+    let repo = root.join("repo");
+    init_git_repo(&repo);
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/Owner/Repo.git",
+        ],
+    );
+    assert_eq!(
+        inspect_clone_target(&repo, "git@github.com:owner/repo.git").unwrap(),
+        CloneTargetDisposition::Associate
+    );
+    assert!(
+        inspect_clone_target(&repo, "https://github.com/Owner/Other.git")
+            .unwrap_err()
+            .starts_with("workspace_existing_remote_mismatch:")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn clone_failure_cleanup_removes_only_directories_created_for_the_attempt() {
+    let root = temp_dir("clone-cleanup-empty-only");
+    let target = root.join("owner").join("repo");
+    let mut created = create_clone_parent_directories(&root, &target).unwrap();
+    fs::create_dir(&target).unwrap();
+    created.push(target.clone());
+    remove_created_empty_directories(&created);
+    assert!(!target.exists());
+    assert!(!root.join("owner").exists());
+
+    let preserved_target = root.join("owner").join("repo");
+    let mut created = create_clone_parent_directories(&root, &preserved_target).unwrap();
+    fs::create_dir(&preserved_target).unwrap();
+    fs::write(preserved_target.join("partial-clone-data"), "keep").unwrap();
+    created.push(preserved_target.clone());
+    remove_created_empty_directories(&created);
+    assert!(preserved_target.join("partial-clone-data").exists());
+    assert!(root.join("owner").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn backfills_legacy_workspace_binding_without_moving_the_repo() {
+    let root = temp_dir("clone-binding-legacy-path");
+    let repo = root.join("legacy-repo");
+    init_git_repo(&repo);
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:Example-Org/Legacy.git",
+        ],
+    );
+    let mut settings = WorkspaceSettings {
+        workspace_root: Some(compatible_path_text(&root)),
+        managed_repo_ids: vec!["legacy-repo".to_string()],
+        ..WorkspaceSettings::default()
+    };
+
+    assert!(upsert_workspace_repo_binding(
+        &mut settings,
+        &root,
+        &repo,
+        None
+    ));
+    assert!(repo.exists());
+    assert!(!root.join("Example-Org").exists());
+    let binding = settings.repo_bindings.get("legacy-repo").unwrap();
+    assert_eq!(binding.repository_id, None);
+    assert_eq!(binding.remote_full_name, "Example-Org/Legacy");
+    assert_eq!(
+        binding.canonical_remote_url,
+        "https://github.com/Example-Org/Legacy.git"
+    );
+    assert_eq!(binding.local_path, compatible_path_text(&repo));
+
+    let summary = summarize_workspace_repo(&root, &repo, &settings);
+    assert_eq!(summary.github_repository_id, None);
+    assert_eq!(
+        summary.github_full_name.as_deref(),
+        Some("Example-Org/Legacy")
+    );
+    assert_eq!(
+        summary.canonical_remote_url.as_deref(),
+        Some("https://github.com/Example-Org/Legacy.git")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn clone_repository_metadata_upgrades_binding_and_prune_removes_it() {
+    let root = temp_dir("clone-binding-repository-id");
+    let repo = root.join("example-org").join("repo");
+    init_git_repo(&repo);
+    run_git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example-org/repo.git",
+        ],
+    );
+    let mut settings = WorkspaceSettings::default();
+    settings.repo_bindings.insert(
+        "example-org/repo".to_string(),
+        WorkspaceRepositoryBinding {
+            repository_id: None,
+            remote_full_name: "example-org/repo".to_string(),
+            canonical_remote_url: "https://github.com/example-org/repo.git".to_string(),
+            local_path: compatible_path_text(&repo),
+        },
+    );
+    let repository = WorkspaceCloneRepositoryRef {
+        id: 90210,
+        full_name: "example-org/repo".to_string(),
+        clone_url: "https://github.com/example-org/repo.git".to_string(),
+    };
+    assert!(upsert_workspace_repo_binding(
+        &mut settings,
+        &root,
+        &repo,
+        Some(&repository)
+    ));
+    let summary = summarize_workspace_repo(&root, &repo, &settings);
+    assert_eq!(summary.github_repository_id, Some(90210));
+
+    prune_deleted_repo_settings(&mut settings, "example-org/repo");
+    assert!(!settings.repo_bindings.contains_key("example-org/repo"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workspace_settings_deserializes_without_legacy_repo_bindings_field() {
+    let settings: WorkspaceSettings = serde_json::from_value(serde_json::json!({
+        "workspaceRoot": "/tmp/workspace",
+        "managedRepoIds": ["legacy-repo"]
+    }))
+    .unwrap();
+    assert_eq!(settings.managed_repo_ids, vec!["legacy-repo"]);
+    assert!(settings.repo_bindings.is_empty());
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[test]
+fn rejects_case_folded_owner_directory_conflicts() {
+    let root = temp_dir("clone-owner-case-conflict");
+    fs::create_dir(root.join("Example-Org")).unwrap();
+    let request = WorkspaceCloneRepoRequest {
+        remote_url: "example-org/repo".to_string(),
+        repository: None,
+        target: WorkspaceCloneTarget::Default,
+    };
+    assert!(plan_workspace_clone(&root, &request)
+        .unwrap_err()
+        .starts_with("workspace_owner_path_conflict:"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn linux_allows_distinct_case_sensitive_owner_directories() {
+    let root = temp_dir("clone-owner-case-sensitive");
+    fs::create_dir(root.join("Example-Org")).unwrap();
+    let request = WorkspaceCloneRepoRequest {
+        remote_url: "example-org/repo".to_string(),
+        repository: None,
+        target: WorkspaceCloneTarget::Default,
+    };
+
+    let plan = plan_workspace_clone(&root, &request).expect("Linux paths are case-sensitive");
+    assert_eq!(plan.target, root.join("example-org").join("repo"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_rejects_clone_targets_beyond_utf16_budget() {
+    let long_target =
+        PathBuf::from("C:\\workspace").join("a".repeat(MAX_PORTABLE_CLONE_TARGET_UTF16));
+    let error = validate_clone_target_length(&long_target).unwrap_err();
+    assert!(error.starts_with("workspace_path_segment_invalid:"));
+}
+
+#[test]
 fn normalizes_github_clone_not_found_error() {
     let error = normalize_git_remote_error(
         "https://github.com/meijustory123/TapdClient.git",
@@ -3465,6 +3875,8 @@ fn github_repo_template_response(
         is_template,
         owner: GitHubRepoOwnerResponse {
             login: owner.to_string(),
+            account_type: None,
+            avatar_url: None,
         },
     }
 }

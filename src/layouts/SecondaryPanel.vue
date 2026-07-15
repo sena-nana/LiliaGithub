@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { computed, nextTick, ref, shallowRef, watch, type Component } from "vue";
+import { computed, nextTick, onUnmounted, reactive, ref, shallowRef, watch, type Component } from "vue";
 import {
   ArrowDownAZ,
   ChevronRight,
@@ -25,11 +25,30 @@ import {
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
+import GitHubOwnerSidebarSection, {
+  type GitHubOwnerRepositoryState,
+} from "../components/sidebar/GitHubOwnerSidebarSection.vue";
+import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
 import { SidebarCollapse, openContextMenuAt, type ContextMenuItem, type ContextMenuProvider } from "@lilia/ui";
 import { repoDisplayInfo, repoDisplayTitle, type RepoDisplaySource } from "../utils/repoDisplay";
-import { parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
+import { githubRepositoryIdentityKey, parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
-import type { RepoSummary } from "../services/workspace";
+import {
+  listGitHubRepoOwners,
+  listGitHubRepos,
+  type GitHubRepoPage,
+  type GitHubRepoOwner,
+  type GitHubRepoSummary,
+  type GitHubRepositoryScope,
+  type RepoSummary,
+} from "../services/workspace";
+import { useComponentEpoch } from "../composables/useComponentEpoch";
+import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
+import {
+  githubOrganizationAccessLimited,
+  githubOrganizationAccessRecovery,
+  githubUserFacingError,
+} from "../utils/githubRepositoryScope";
 import {
   DEFAULT_REPO_SORT,
   compareRepoSortItems,
@@ -45,6 +64,13 @@ import {
 const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
+const componentEpoch = useComponentEpoch();
+const githubOwnersLoader = createLatestAsyncLoader({ componentEpoch });
+const githubOwnerRepoLoaders = new Map<string, ReturnType<typeof createLatestAsyncLoader>>();
+const githubOwners = ref<GitHubRepoOwner[]>([]);
+const githubOwnersLoading = ref(false);
+const githubOwnersError = ref<string | null>(null);
+const githubRepositoriesByOwner = reactive<Record<string, GitHubOwnerRepositoryState | undefined>>({});
 const createGroupBusy = ref(false);
 const collapsedGroupIds = ref<Set<string>>(new Set());
 const editingGroupId = ref<string | null>(null);
@@ -96,6 +122,162 @@ const footerStatus = computed(() => {
     tone: "ok" as const,
     icon: GitPullRequestArrow,
   };
+});
+const githubOrganizationVisibilityLimited = computed(() =>
+  githubOrganizationAccessLimited(workspace.githubBinding.value?.scopes, githubOwners.value),
+);
+const githubOrganizationRecovery = computed(() => githubOrganizationAccessRecovery(githubOwners.value));
+
+function sidebarOwnerRepoLoader(login: string) {
+  const key = login.toLocaleLowerCase();
+  let loader = githubOwnerRepoLoaders.get(key);
+  if (!loader) {
+    loader = createLatestAsyncLoader({ componentEpoch });
+    githubOwnerRepoLoaders.set(key, loader);
+  }
+  return loader;
+}
+
+function invalidateSidebarOwnerRepoLoaders() {
+  for (const loader of githubOwnerRepoLoaders.values()) loader.invalidate();
+  githubOwnerRepoLoaders.clear();
+}
+
+function mergeSidebarOwnerRepositories(
+  current: readonly GitHubRepoSummary[],
+  incoming: readonly GitHubRepoSummary[],
+) {
+  const repos = new Map(current.map((repo) => [repo.fullName.toLocaleLowerCase(), repo]));
+  for (const repo of incoming) repos.set(repo.fullName.toLocaleLowerCase(), repo);
+  return [...repos.values()];
+}
+
+async function loadSidebarGitHubOwners() {
+  if (!workspace.isAuthorized.value) return;
+  await githubOwnersLoader.run("sidebar-github-owners", async (runId) => {
+    githubOwnersLoading.value = true;
+    githubOwnersError.value = null;
+    try {
+      const owners = await listGitHubRepoOwners();
+      if (!githubOwnersLoader.isCurrent(runId)) return;
+      githubOwners.value = owners;
+    } catch (err) {
+      if (!githubOwnersLoader.isCurrent(runId)) return;
+      githubOwnersError.value = `账号与组织加载失败：${githubUserFacingError(err)}`;
+    } finally {
+      if (githubOwnersLoader.isCurrent(runId)) githubOwnersLoading.value = false;
+    }
+  });
+}
+
+async function loadSidebarOwnerRepositories(owner: GitHubRepoOwner) {
+  if (githubRepositoriesByOwner[owner.login]?.loading) return;
+  const scope: GitHubRepositoryScope = owner.kind === "user"
+    ? { kind: "personal", login: owner.login }
+    : { kind: "organization", login: owner.login };
+  const current = githubRepositoriesByOwner[owner.login];
+  githubRepositoriesByOwner[owner.login] = {
+    items: current?.items ?? [],
+    loading: true,
+    loaded: current?.loaded ?? false,
+    error: null,
+  };
+  const loader = sidebarOwnerRepoLoader(owner.login);
+  await loader.run(`sidebar-owner:${owner.login}`, async (runId) => {
+    let items: GitHubRepoSummary[] = [];
+    try {
+      let nextPage: number | null = 1;
+      const loadedPages = new Set<number>();
+      while (nextPage !== null && !loadedPages.has(nextPage)) {
+        loadedPages.add(nextPage);
+        const page: GitHubRepoPage = await listGitHubRepos(scope, nextPage);
+        if (!loader.isCurrent(runId)) return;
+        items = mergeSidebarOwnerRepositories(items, page.items);
+        githubRepositoriesByOwner[owner.login] = {
+          items,
+          loading: true,
+          loaded: false,
+          error: null,
+        };
+        nextPage = page.nextPage;
+      }
+      if (!loader.isCurrent(runId)) return;
+      githubRepositoriesByOwner[owner.login] = {
+        items,
+        loading: false,
+        loaded: true,
+        error: null,
+      };
+    } catch (err) {
+      if (!loader.isCurrent(runId)) return;
+      githubRepositoriesByOwner[owner.login] = {
+        items: items.length ? items : current?.items ?? [],
+        loading: false,
+        loaded: false,
+        error: `仓库加载失败：${githubUserFacingError(err)}`,
+      };
+    }
+  });
+}
+
+async function selectSidebarGitHubScope(scope: GitHubRepositoryScope) {
+  await router.push({
+    path: "/",
+    query: scope.kind === "all"
+      ? { githubScope: "all" }
+      : { githubScope: scope.kind, githubOwner: scope.login },
+  });
+}
+
+async function openSidebarLocalRepo(repo: RepoSummary) {
+  await router.push(repoRoute(repo.id));
+}
+
+async function openSidebarGitHubRepo(repo: GitHubRepoSummary) {
+  await workspace.rememberRemoteRepo({
+    repositoryId: repo.id,
+    fullName: repo.fullName,
+    name: repo.name,
+    private: repo.private,
+    archived: repo.archived,
+    defaultBranch: repo.defaultBranch,
+    htmlUrl: repo.htmlUrl,
+    cloneUrl: repo.cloneUrl,
+    openedAt: Date.now(),
+  });
+  await router.push(remoteRepoRoute(repo.fullName));
+}
+
+async function openSidebarOrganizationAuthorization(recoveryUrl: string | null = null) {
+  const url = recoveryUrl ?? githubOrganizationRecovery.value.url;
+  if (url) {
+    await workspace.openUrl(url);
+    return;
+  }
+  await router.push({ path: "/settings", query: { tab: "repositories" } });
+}
+
+watch(
+  () => [
+    workspace.isAuthorized.value,
+    workspace.githubBinding.value?.login,
+    workspace.githubBinding.value?.boundAt,
+    [...(workspace.githubBinding.value?.scopes ?? [])].sort().join(" "),
+  ] as const,
+  ([authorized]) => {
+    githubOwnersLoader.invalidate();
+    invalidateSidebarOwnerRepoLoaders();
+    githubOwners.value = [];
+    githubOwnersError.value = null;
+    for (const key of Object.keys(githubRepositoriesByOwner)) delete githubRepositoriesByOwner[key];
+    if (authorized) void loadSidebarGitHubOwners();
+  },
+  { immediate: true },
+);
+
+onUnmounted(() => {
+  githubOwnersLoader.invalidate();
+  invalidateSidebarOwnerRepoLoaders();
 });
 
 function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {
@@ -371,13 +553,32 @@ const localRepoFullNames = computed(() =>
   new Set(
     repoItems.value
       .map((repo) => repo.githubFullName)
-      .filter((name): name is string => Boolean(name)),
+      .filter((name): name is string => Boolean(name))
+      .map(githubRepositoryIdentityKey),
   ),
 );
 
+function repositoriesForOwnerLogin(login: string) {
+  const key = Object.keys(githubRepositoriesByOwner)
+    .find((candidate) => candidate.toLocaleLowerCase() === login.toLocaleLowerCase());
+  return key ? githubRepositoriesByOwner[key] : undefined;
+}
+
 const remoteRepoItems = computed(() =>
   [...(workspace.state.settings?.remoteRepoShortcuts ?? [])]
-    .filter((repo) => !localRepoFullNames.value.has(repo.fullName))
+    .filter((repo) => {
+      const accountLogin = workspace.githubBinding.value?.login;
+      return !accountLogin || repo.accountLogin?.toLocaleLowerCase() === accountLogin.toLocaleLowerCase();
+    })
+    .filter((repo) => !localRepoFullNames.value.has(githubRepositoryIdentityKey(repo.fullName)))
+    .filter((repo) => {
+      const ownerLogin = repo.fullName.split("/")[0] ?? "";
+      const ownerState = repositoriesForOwnerLogin(ownerLogin);
+      const shortcutKey = githubRepositoryIdentityKey(repo.fullName);
+      return !ownerState?.loaded || !ownerState.items.some(
+        (item) => githubRepositoryIdentityKey(item.fullName) === shortcutKey,
+      );
+    })
     .sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
 );
 const visibleRemoteRepoItems = computed(() =>
@@ -776,6 +977,34 @@ async function deleteGroup(group: { id: string }) {
           </div>
         </SidebarCollapse>
       </div>
+
+      <GitHubRepositoryStateNotice
+        v-if="githubOwnersLoading && !githubOwners.length"
+        state="loading"
+        compact
+        message="正在加载 GitHub 账号与组织…"
+      />
+      <GitHubRepositoryStateNotice
+        v-else-if="githubOwnersError"
+        state="error"
+        compact
+        retryable
+        :message="githubOwnersError"
+        @retry="loadSidebarGitHubOwners"
+      />
+      <GitHubOwnerSidebarSection
+        v-else-if="githubOwners.length"
+        :account-login="workspace.githubBinding.value?.login ?? ''"
+        :owners="githubOwners"
+        :local-repos="workspace.state.repos"
+        :repositories-by-owner="githubRepositoriesByOwner"
+        :organization-access-limited="githubOrganizationVisibilityLimited"
+        @select-scope="selectSidebarGitHubScope"
+        @load-owner="loadSidebarOwnerRepositories"
+        @open-local="openSidebarLocalRepo"
+        @open-remote="openSidebarGitHubRepo"
+        @authorize="openSidebarOrganizationAuthorization"
+      />
 
       <div v-if="remoteRepoItems.length" class="sb-section sb-section--remote">
         <div class="sb-section__header">

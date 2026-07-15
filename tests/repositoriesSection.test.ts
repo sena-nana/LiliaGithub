@@ -21,6 +21,7 @@ const workspace = vi.hoisted(() => ({
       hiddenRepoIds: [],
       managedRepoIds: [],
       systemGitRepoIds: ["LiliaGithub"],
+      repoBindings: {},
       repoGroups: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
@@ -239,6 +240,25 @@ describe("RepositoriesSection", () => {
 
     expect(screen.getByRole("button", { name: "绑定 GitHub" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "解绑 GitHub" })).not.toBeInTheDocument();
+  });
+
+  it("缺少组织读取权限时保留现有能力并提供补充授权入口", async () => {
+    workspace.githubBinding.value = {
+      login: "lilia-user",
+      avatarUrl: null,
+      boundAt: 1,
+      scopes: ["repo"],
+      clientIdSource: "bundled",
+    };
+    workspace.state.settings.githubBinding = workspace.githubBinding.value;
+    workspace.authBindingStatusText.value = "GitHub 已授权";
+
+    render(RepositoriesSection);
+
+    expect(screen.getByText("组织信息可能不完整")).toBeInTheDocument();
+    expect(screen.getByText(/现有仓库仍可继续使用/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "补充组织权限" }));
+    expect(workspace.startAuthFlow).toHaveBeenCalledTimes(1);
   });
 
   it("保存贡献身份映射", async () => {

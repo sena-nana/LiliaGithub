@@ -13,7 +13,10 @@ export default defineConfig({
     sidebar: [
       {
         text: "指南",
-        items: [{ text: "开发启动", link: "/guide/development" }],
+        items: [
+          { text: "开发启动", link: "/guide/development" },
+          { text: "GitHub 个人账号与组织", link: "/guide/github-owners" },
+        ],
       },
       {
         text: "设计",
