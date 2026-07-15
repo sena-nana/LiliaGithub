@@ -9,6 +9,8 @@ pub struct WorkspaceSettings {
     pub workspace_root: Option<String>,
     pub github_binding: Option<GitHubBindingMetadata>,
     #[serde(default)]
+    pub account_preferences: AccountPreferences,
+    #[serde(default)]
     pub project_launch_configs: HashMap<String, ProjectLaunchConfig>,
     #[serde(default)]
     pub repo_sync_preferences: HashMap<String, RepoSyncPreference>,
@@ -30,6 +32,177 @@ pub struct WorkspaceSettings {
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
     #[serde(default)]
     pub contribution_identities: Vec<ContributionIdentity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountPreferences {
+    #[serde(default)]
+    pub default_workspace_root: Option<String>,
+    #[serde(default)]
+    pub repository_scope: GitHubRepositoryScope,
+    #[serde(default)]
+    pub repository_sort: RepositorySortPreferences,
+    #[serde(default)]
+    pub issues: IssueListPreferences,
+    #[serde(default)]
+    pub pull_requests: PullRequestListPreferences,
+    #[serde(default)]
+    pub actions: ActionsListPreferences,
+}
+
+impl Default for AccountPreferences {
+    fn default() -> Self {
+        Self {
+            default_workspace_root: None,
+            repository_scope: GitHubRepositoryScope::default(),
+            repository_sort: RepositorySortPreferences::default(),
+            issues: IssueListPreferences::default(),
+            pull_requests: PullRequestListPreferences::default(),
+            actions: ActionsListPreferences::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SortDirection {
+    Asc,
+    #[default]
+    Desc,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RepositorySortKey {
+    Name,
+    Created,
+    #[default]
+    Updated,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositorySortPreferences {
+    pub key: RepositorySortKey,
+    pub direction: SortDirection,
+}
+
+impl Default for RepositorySortPreferences {
+    fn default() -> Self {
+        Self {
+            key: RepositorySortKey::Updated,
+            direction: SortDirection::Desc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueListState {
+    #[default]
+    Open,
+    Closed,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum IssueListSortKey {
+    #[default]
+    Created,
+    Updated,
+    Comments,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueListPreferences {
+    pub state: IssueListState,
+    pub sort: IssueListSortKey,
+    pub direction: SortDirection,
+}
+
+impl Default for IssueListPreferences {
+    fn default() -> Self {
+        Self {
+            state: IssueListState::Open,
+            sort: IssueListSortKey::Created,
+            direction: SortDirection::Desc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestListState {
+    #[default]
+    Open,
+    Closed,
+    Merged,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestListSortKey {
+    Created,
+    #[default]
+    Updated,
+    Comments,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestListPreferences {
+    pub state: PullRequestListState,
+    pub sort: PullRequestListSortKey,
+    pub direction: SortDirection,
+}
+
+impl Default for PullRequestListPreferences {
+    fn default() -> Self {
+        Self {
+            state: PullRequestListState::Open,
+            sort: PullRequestListSortKey::Updated,
+            direction: SortDirection::Desc,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ActionsListState {
+    #[default]
+    All,
+    Active,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActionsListSortKey {
+    #[default]
+    Updated,
+    Created,
+    RunNumber,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionsListPreferences {
+    pub state: ActionsListState,
+    pub sort: ActionsListSortKey,
+    pub direction: SortDirection,
+}
+
+impl Default for ActionsListPreferences {
+    fn default() -> Self {
+        Self {
+            state: ActionsListState::All,
+            sort: ActionsListSortKey::Updated,
+            direction: SortDirection::Desc,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -275,6 +448,59 @@ pub struct GitHubBindingMetadata {
     #[serde(default)]
     pub scopes: Vec<String>,
     pub client_id_source: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum GitHubAuthPurpose {
+    #[default]
+    Binding,
+    ProfileWrite,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubAccountProfile {
+    pub login: String,
+    #[serde(default, alias = "avatar_url")]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
+    pub company: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub blog: Option<String>,
+    #[serde(default, alias = "twitter_username")]
+    pub twitter_username: Option<String>,
+    #[serde(default)]
+    pub hireable: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubUpdateAccountProfileRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
+    pub company: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub blog: Option<String>,
+    #[serde(default)]
+    pub twitter_username: Option<String>,
+    #[serde(default)]
+    pub hireable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

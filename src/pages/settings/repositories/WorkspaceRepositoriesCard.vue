@@ -38,16 +38,6 @@ async function loadHiddenRepos() {
   });
 }
 
-async function chooseWorkspaceRoot() {
-  error.value = null;
-  try {
-    await workspace.chooseWorkspaceRoot();
-  } catch (err) {
-    if (!componentEpoch.assertAlive()) return;
-    error.value = String(err);
-  }
-}
-
 async function addLocalRepo() {
   if (addingRepo.value) return;
   addingRepo.value = true;
@@ -94,28 +84,6 @@ onUnmounted(() => {
     :loading="loadingHiddenRepos"
     agent-id="settings.repositories.workspace"
   >
-    <SettingsRow
-      class="workspace-card__row"
-      label="工作区"
-      hint="应用会扫描该文件夹下的 Git 仓库。"
-      divided
-      loose
-    >
-      <div class="workspace-card__control">
-        <span class="workspace-card__path" :title="workspace.workspaceRoot.value ?? undefined">
-          {{ workspace.workspaceRoot.value ?? "尚未选择工作区" }}
-        </span>
-        <UiButton
-          size="sm"
-          agent-id="settings.repositories.workspace-root.change"
-          :busy="workspace.choosingWorkspaceRoot.value"
-          @click="chooseWorkspaceRoot"
-        >
-          {{ workspace.choosingWorkspaceRoot.value ? "更换中" : "更换工作区" }}
-        </UiButton>
-      </div>
-    </SettingsRow>
-
     <SettingsRow
       class="workspace-card__row"
       label="本地仓库"
@@ -165,23 +133,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.workspace-card__control {
-  min-width: 0;
-  display: flex;
-  flex: 1 1 420px;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.workspace-card__path {
-  min-width: 0;
-  color: var(--text);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-
 .workspace-card__hidden {
   display: grid;
   margin-top: 4px;
@@ -242,15 +193,5 @@ onUnmounted(() => {
     width: 100%;
   }
 
-  .workspace-card__control {
-    width: 100%;
-    flex: 1 1 auto;
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .workspace-card__path {
-    text-align: left;
-  }
 }
 </style>

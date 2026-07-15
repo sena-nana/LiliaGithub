@@ -3,6 +3,7 @@ export type SystemOpenTarget = "folder" | "terminal" | "vscode" | "liliacode";
 export interface WorkspaceSettings {
   workspaceRoot: string | null;
   githubBinding: GitHubBindingMetadata | null;
+  accountPreferences: AccountPreferences;
   projectLaunchConfigs: Record<string, ProjectLaunchConfig>;
   repoSyncPreferences: Record<string, RepoSyncPreference>;
   repoRemoteSyncPolicies: Record<string, RepoRemoteSyncPolicy>;
@@ -14,6 +15,58 @@ export interface WorkspaceSettings {
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
   contributionIdentities: ContributionIdentity[];
+}
+
+export type GitHubAuthPurpose = "binding" | "profileWrite";
+
+export type AccountPreferenceDirection = "asc" | "desc";
+
+export interface AccountPreferences {
+  defaultWorkspaceRoot: string | null;
+  repositoryScope: GitHubRepositoryScope;
+  repositorySort: {
+    key: "name" | "created" | "updated";
+    direction: AccountPreferenceDirection;
+  };
+  issues: {
+    state: "open" | "closed" | "all";
+    sort: "created" | "updated" | "comments";
+    direction: AccountPreferenceDirection;
+  };
+  pullRequests: {
+    state: "open" | "closed" | "merged";
+    sort: "created" | "updated" | "comments";
+    direction: AccountPreferenceDirection;
+  };
+  actions: {
+    state: "all" | "active" | "completed";
+    sort: "updated" | "created" | "run-number";
+    direction: AccountPreferenceDirection;
+  };
+}
+
+export interface GitHubAccountProfile {
+  login: string;
+  avatarUrl: string | null;
+  name: string | null;
+  email: string | null;
+  bio: string | null;
+  company: string | null;
+  location: string | null;
+  blog: string | null;
+  twitterUsername: string | null;
+  hireable: boolean | null;
+}
+
+export interface GitHubUpdateAccountProfileRequest {
+  name: string | null;
+  email: string | null;
+  bio: string | null;
+  company: string | null;
+  location: string | null;
+  blog: string | null;
+  twitterUsername: string | null;
+  hireable: boolean | null;
 }
 
 export interface WorkspaceRepositoryBinding {

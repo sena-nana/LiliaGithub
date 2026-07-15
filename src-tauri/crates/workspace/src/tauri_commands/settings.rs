@@ -5,6 +5,7 @@ delegate_command!(settings; fn workspace_read_startup_cache(app: AppHandle) -> O
 delegate_command!(settings; fn workspace_clear_startup_cache(app: AppHandle) -> Result<(), String>);
 delegate_command!(settings; fn workspace_write_startup_contributions(app: AppHandle, contributions: WorkspaceStartupContributions,) -> Result<WorkspaceStartupCache, String>);
 delegate_command!(settings; fn workspace_set_root(app: AppHandle, workspace_root: String,) -> Result<WorkspaceSettings, String>);
+delegate_command!(settings; fn workspace_update_account_preferences(app: AppHandle, preferences: AccountPreferences,) -> Result<WorkspaceSettings, String>);
 delegate_command!(settings; fn workspace_set_contribution_identities(app: AppHandle, identities: Vec<ContributionIdentity>,) -> Result<WorkspaceSettings, String>);
 delegate_command!(async settings; fn workspace_scan_contribution_identities(app: AppHandle) -> Result<ContributionIdentityRecommendationResult, String>);
 delegate_command!(settings; fn repo_set_preference(app: AppHandle, repo_id: String, key: String, value: bool,) -> Result<WorkspaceSettings, String>);

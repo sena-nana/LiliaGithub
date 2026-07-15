@@ -4,6 +4,7 @@ import { invalidateSessionContextSnapshot } from "./sessionContext";
 import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { useWorkspace } from "./useWorkspace";
+import { useAccountPreferences } from "./useAccountPreferences";
 import {
   getGitHubBindingStatus,
   isGitHubBindingExpiredError,
@@ -68,6 +69,7 @@ function cloneErrorMessage(err: unknown) {
 
 export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const workspace = useWorkspace();
+  const accountPreferences = useAccountPreferences();
   const router = useRouter();
   const componentEpoch = useComponentEpoch();
   const cloneBindingLoader = createLatestAsyncLoader({ componentEpoch });
@@ -126,6 +128,21 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const localCloneRepoFullNames = computed(() => workspace.state.repos
     .map((repo) => repo.githubFullName)
     .filter((fullName): fullName is string => Boolean(fullName)));
+
+  function preferredCloneRepositoryScope(): GitHubRepositoryScope {
+    const preferred = accountPreferences.value.repositoryScope;
+    const login = cloneBindingStatus.value?.binding?.login ?? workspace.githubBinding.value?.login ?? "";
+    if (preferred.kind === "personal") {
+      return login ? { kind: "personal", login } : ALL_GITHUB_REPOSITORIES;
+    }
+    if (preferred.kind === "organization") {
+      const organization = cloneOrganizationOwners.value.find((owner) =>
+        owner.login.toLocaleLowerCase() === preferred.login.toLocaleLowerCase()
+      );
+      return organization ? { kind: "organization", login: organization.login } : ALL_GITHUB_REPOSITORIES;
+    }
+    return ALL_GITHUB_REPOSITORIES;
+  }
 
   function applyCloneRepoPage(result: { items: GitHubRepoSummary[]; nextPage: number | null }, append = false) {
     cloneRepoLoadError.value = null;
@@ -302,7 +319,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneRepoOwners.value = [];
     cloneRepoOwnersLoading.value = false;
     cloneRepoOwnersError.value = null;
-    cloneRepositoryScope.value = ALL_GITHUB_REPOSITORIES;
+    cloneRepositoryScope.value = preferredCloneRepositoryScope();
     cloneRepoLoaded.value = false;
     cloneScopePages.clear();
     cloneRepoDropdownOpen.value = false;
@@ -318,7 +335,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
         if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
         cloneBindingStatus.value = status;
         if (cloneGitHubBound.value) {
-          void loadCloneRepoOwners();
+          await loadCloneRepoOwners();
+          if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
+          cloneRepositoryScope.value = preferredCloneRepositoryScope();
           const cached = readCachedGitHubRepos(cloneRepositoryScope.value);
           if (cached) {
             applyCloneRepoPage(cached);
@@ -429,7 +448,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneRepoLoading.value = false;
     cloneRepoLoadingMore.value = false;
     cloneRepoOwnersLoading.value = false;
-    await router.push({ path: "/settings", query: { tab: "repositories" } });
+    await router.push({ path: "/settings", query: { tab: "account" } });
   }
 
   async function openOrganizationAuthorization() {

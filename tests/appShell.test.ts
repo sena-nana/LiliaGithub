@@ -1435,6 +1435,52 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("首页与克隆弹窗使用账户仓库范围", async () => {
+    state.repos = [repoSummary("LiliaGithub")];
+    markWorkspaceReadyForManualRepos();
+    state.settings!.accountPreferences = {
+      ...state.settings!.accountPreferences,
+      repositoryScope: { kind: "personal", login: "lilia-user" },
+    };
+    workspaceFallback.setFallbackGitHubBindingStatusForTests({
+      state: "bound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: state.settings!.githubBinding,
+    });
+
+    const view = await renderAppShell("/");
+    const homeScope = await view.findByRole("group", { name: "GitHub 仓库范围" });
+    expect(within(homeScope).getByRole("button", { name: "lilia-user" })).toHaveAttribute("aria-pressed", "true");
+
+    await openHomeCloneDialog(view);
+    const dialog = view.getByRole("dialog", { name: "克隆仓库" });
+    const cloneScope = await within(dialog).findByRole("group", { name: "GitHub 仓库范围" });
+    expect(within(cloneScope).getByRole("button", { name: "lilia-user" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("首页 URL 仓库范围覆盖账户默认值并使用账户排序", async () => {
+    const service = await import("../src/services/workspace");
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{
+      items: [githubRepoSummary("lilia-user/Zeta"), githubRepoSummary("lilia-user/Alpha")],
+      nextPage: null,
+    }]);
+    const currentSettings = await service.getWorkspaceSettings();
+    await service.updateAccountPreferences({
+      ...currentSettings.accountPreferences,
+      repositoryScope: { kind: "personal", login: "lilia-user" },
+      repositorySort: { key: "name", direction: "asc" },
+    });
+    const view = await renderAppShell("/?githubScope=all");
+    const scope = await view.findByRole("group", { name: "GitHub 仓库范围" });
+    expect(within(scope).getByRole("button", { name: "全部" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => {
+      const names = Array.from(view.container.querySelectorAll(".repo-status-row__name"))
+        .map((node) => node.textContent);
+      expect(names).toEqual(["lilia-user/Alpha", "lilia-user/Zeta"]);
+    });
+  });
+
   it("克隆弹窗搜索时耗尽剩余分页，不因首页已有匹配而漏掉后页", async () => {
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
@@ -1561,7 +1607,7 @@ describe("AppShell sidebar", () => {
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.path).toBe("/settings");
-      expect(view.router.currentRoute.value.query.tab).toBe("repositories");
+      expect(view.router.currentRoute.value.query.tab).toBe("account");
     });
   });
 

@@ -41,9 +41,11 @@ const states: readonly { value: ActionState; label: string }[] = [
 
 const sortOptions = [
   { value: "updated-desc", label: "最近更新" },
+  { value: "updated-asc", label: "最早更新" },
   { value: "created-desc", label: "最新创建" },
   { value: "created-asc", label: "最早创建" },
-  { value: "run-number-desc", label: "Run 编号" },
+  { value: "run-number-desc", label: "Run 编号（降序）" },
+  { value: "run-number-asc", label: "Run 编号（升序）" },
 ] as const;
 
 const optionSets = computed(() => ({

@@ -28,6 +28,7 @@ import {
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
+import { useAccountPreferences } from "../composables/useAccountPreferences";
 import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
 import { buildContributionHeatmapModel } from "@lilia/ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
@@ -94,12 +95,11 @@ import {
   formatPercent,
 } from "../utils/languageStats";
 import {
-  DEFAULT_REPO_SORT,
   compareRepoSortItems,
   nextRepoSort,
   nextRepoSortDisplayLabel,
-  repoSortDisplayLabel,
   readRepoSort,
+  repoSortDisplayLabel,
   writeRepoSort,
   type RepoSortState,
   type SortDirection,
@@ -122,6 +122,7 @@ import {
 } from "../utils/githubRepositoryScope";
 
 const workspace = useWorkspace();
+const accountPreferences = useAccountPreferences();
 const router = useRouter();
 const route = useRoute();
 const syncingRepoId = ref<string | null>(null);
@@ -232,7 +233,8 @@ const REPO_STATUS_RENDER_PAGE_SIZE = 60;
 const HOME_PENDING_ITEM_LIMIT = 20;
 const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
 const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
-const REPO_STATUS_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
+const LEGACY_REPO_STATUS_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
+const REPO_STATUS_SORT_STORAGE_PREFIX = "lilia-github.home.repoStatusSort.v2";
 const CONTRIBUTION_SETTINGS_ROUTE = {
   path: "/settings",
   query: { tab: "repositories" },
@@ -283,7 +285,7 @@ const githubReposLoaded = ref(false);
 const githubRepoOwners = ref<GitHubRepoOwner[]>([]);
 const githubRepoOwnersLoading = ref(false);
 const githubRepoOwnersError = ref<string | null>(null);
-const githubRepositoryScope = ref<GitHubRepositoryScope>(ALL_GITHUB_REPOSITORIES);
+const githubRepositoryScope = ref<GitHubRepositoryScope>(repositoryScopeFromRouteOrPreferences([]));
 const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
 const githubPullRequestsByRepo = ref<Record<string, GitHubPullRequest[] | undefined>>({});
 const githubAccountIssuesLoading = ref(false);
@@ -295,7 +297,10 @@ const homePendingArmedAction = ref<{ itemId: string; action: HomePendingAction }
 const cloningFullNames = reactive(new Set<string>());
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
-  readRepoSort(REPO_STATUS_SORT_STORAGE_KEY, repoStatusSortOptions, DEFAULT_REPO_SORT),
+  {
+    sort: accountPreferences.value.repositorySort.key,
+    direction: accountPreferences.value.repositorySort.direction,
+  },
 );
 const homeOverviewSnapshot = shallowRef<HomeOverviewSnapshot | null>(null);
 const homeContributionSnapshot = shallowRef<GitHubContributionsState | null>(null);
@@ -317,6 +322,8 @@ const githubScopePages = new Map<string, {
 let searchRepoPagesLoading = false;
 let homeOverviewInitialized = false;
 let activeHomeBindingIdentity: string | null | undefined;
+let repoStatusSortBindingIdentity: string | null | undefined;
+let repoStatusSortSelectedOnPage = false;
 let homeContributionRefreshGeneration = 0;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const githubOrganizationOwnerOptions = computed(() => githubOrganizationOwners(githubRepoOwners.value));
@@ -668,12 +675,7 @@ watch(
   () => [route.query.githubScope, route.query.githubOwner, githubRepoOwners.value] as const,
   () => {
     if (githubRepoOwnersLoading.value) return;
-    const scope = githubRepositoryScopeFromQuery(
-      route.query.githubScope,
-      route.query.githubOwner,
-      workspace.githubBinding.value?.login ?? "",
-      githubRepoOwners.value,
-    );
+    const scope = repositoryScopeFromRouteOrPreferences(githubRepoOwners.value);
     if (githubRepositoryScopeKey(scope) !== githubRepositoryScopeKey(githubRepositoryScope.value)) {
       void selectHomeRepositoryScope(scope, false);
     }
@@ -711,6 +713,24 @@ watch(
       return;
     }
     void loadGitHubRepoStatus({ force: bindingChanged });
+  },
+  { immediate: true },
+);
+
+watch(
+  () => [
+    workspace.isReady.value,
+    currentGitHubBindingIdentity(),
+    accountPreferences.value.repositorySort.key,
+    accountPreferences.value.repositorySort.direction,
+  ] as const,
+  ([ready, bindingIdentity]) => {
+    if (!ready) return;
+    if (repoStatusSortBindingIdentity === bindingIdentity && repoStatusSortSelectedOnPage) return;
+    const stored = readStoredRepoStatusSort();
+    repoStatusSort.value = stored.value;
+    repoStatusSortBindingIdentity = bindingIdentity;
+    repoStatusSortSelectedOnPage = stored.exists;
   },
   { immediate: true },
 );
@@ -802,12 +822,7 @@ async function loadGitHubRepoOwners() {
       const owners = await listGitHubRepoOwners();
       if (!githubRepoOwnersLoader.isCurrent(runId)) return;
       githubRepoOwners.value = owners;
-      const routeScope = githubRepositoryScopeFromQuery(
-        route.query.githubScope,
-        route.query.githubOwner,
-        workspace.githubBinding.value?.login ?? "",
-        owners,
-      );
+      const routeScope = repositoryScopeFromRouteOrPreferences(owners);
       if (githubRepositoryScopeKey(routeScope) !== githubRepositoryScopeKey(githubRepositoryScope.value)) {
         await selectHomeRepositoryScope(routeScope, false);
       }
@@ -837,7 +852,32 @@ async function openOrganizationAuthorization() {
     await workspace.openUrl(githubOrganizationRecovery.value.url);
     return;
   }
-  await router.push({ path: "/settings", query: { tab: "repositories" } });
+  await router.push({ path: "/settings", query: { tab: "account" } });
+}
+
+function preferredRepositoryScope(owners: readonly GitHubRepoOwner[]): GitHubRepositoryScope {
+  const preferred = accountPreferences.value.repositoryScope;
+  const login = workspace.githubBinding.value?.login ?? "";
+  if (preferred.kind === "personal") {
+    return login ? { kind: "personal", login } : ALL_GITHUB_REPOSITORIES;
+  }
+  if (preferred.kind === "organization") {
+    const organization = owners.find((owner) =>
+      owner.kind === "organization" && owner.login.toLocaleLowerCase() === preferred.login.toLocaleLowerCase()
+    );
+    return organization ? { kind: "organization", login: organization.login } : ALL_GITHUB_REPOSITORIES;
+  }
+  return ALL_GITHUB_REPOSITORIES;
+}
+
+function repositoryScopeFromRouteOrPreferences(owners: readonly GitHubRepoOwner[]) {
+  if (route.query.githubScope == null) return preferredRepositoryScope(owners);
+  return githubRepositoryScopeFromQuery(
+    route.query.githubScope,
+    route.query.githubOwner,
+    workspace.githubBinding.value?.login ?? "",
+    owners,
+  );
 }
 
 function currentGitHubAccountLogin() {
@@ -873,7 +913,7 @@ function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } =
   githubRepoOwnersLoading.value = false;
   githubRepoOwnersError.value = null;
   githubScopePages.clear();
-  githubRepositoryScope.value = ALL_GITHUB_REPOSITORIES;
+  githubRepositoryScope.value = preferredRepositoryScope([]);
   githubIssuesByRepo.value = {};
   githubPullRequestsByRepo.value = {};
   githubActionNotificationsByRepo.value = {};
@@ -890,6 +930,7 @@ function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } =
 }
 
 function restoreGitHubOverviewSnapshot() {
+  if (githubRepositoryScope.value.kind !== "all") return null;
   const snapshot = readHomeGitHubOverviewSnapshot();
   if (!snapshot) return null;
   if (snapshot.accountLogin !== currentGitHubAccountLogin()) {
@@ -1542,6 +1583,32 @@ function repoStatusSortOption(value: unknown) {
   return repoStatusSortOptions.find((option) => option.value === value);
 }
 
+function repoStatusSortStorageKey() {
+  const account = currentGitHubAccountLogin()?.trim().toLocaleLowerCase() || "anonymous";
+  return `${REPO_STATUS_SORT_STORAGE_PREFIX}:${account}`;
+}
+
+function readStoredRepoStatusSort() {
+  const defaultValue: RepoStatusSortState = {
+    sort: accountPreferences.value.repositorySort.key,
+    direction: accountPreferences.value.repositorySort.direction,
+  };
+  const storageKey = repoStatusSortStorageKey();
+  try {
+    if (localStorage.getItem(storageKey) != null) {
+      return { value: readRepoSort(storageKey, repoStatusSortOptions, defaultValue), exists: true };
+    }
+    if (localStorage.getItem(LEGACY_REPO_STATUS_SORT_STORAGE_KEY) != null) {
+      const value = readRepoSort(LEGACY_REPO_STATUS_SORT_STORAGE_KEY, repoStatusSortOptions, defaultValue);
+      writeRepoSort(storageKey, value);
+      localStorage.removeItem(LEGACY_REPO_STATUS_SORT_STORAGE_KEY);
+      return { value, exists: true };
+    }
+  } catch {
+  }
+  return { value: defaultValue, exists: false };
+}
+
 function compareRepoStatusRows(left: RepoStatusRow, right: RepoStatusRow) {
   const archivedCompare = Number(left.githubRepo.archived) - Number(right.githubRepo.archived);
   if (archivedCompare) return archivedCompare;
@@ -1555,7 +1622,9 @@ function compareRepoStatusRows(left: RepoStatusRow, right: RepoStatusRow) {
 
 function selectRepoStatusSort(option: RepoStatusSortOption) {
   repoStatusSort.value = nextRepoSort(repoStatusSort.value, option);
-  writeRepoSort(REPO_STATUS_SORT_STORAGE_KEY, repoStatusSort.value);
+  repoStatusSortBindingIdentity = currentGitHubBindingIdentity();
+  repoStatusSortSelectedOnPage = true;
+  writeRepoSort(repoStatusSortStorageKey(), repoStatusSort.value);
 }
 
 function openRepoStatusSortMenu(event: MouseEvent) {
@@ -1938,7 +2007,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 class="primary"
                 data-agent-id="setup.github.bind"
                 :disabled="workspace.state.authLoading"
-                @click="workspace.startAuthFlow"
+                @click="workspace.startAuthFlow()"
               >
                 <ShieldCheck :size="14" aria-hidden="true" />
                 {{ workspace.deviceFlow.value ? "重新绑定 GitHub" : "绑定 GitHub" }}

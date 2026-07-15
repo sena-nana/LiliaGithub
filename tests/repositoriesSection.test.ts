@@ -3,14 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepositoriesSection from "../src/pages/settings/RepositoriesSection.vue";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
-    resolve = promiseResolve;
-  });
-  return { promise, resolve };
-}
-
 const workspace = vi.hoisted(() => ({
   state: {
     settings: {
@@ -130,23 +122,12 @@ describe("RepositoriesSection", () => {
     render(RepositoriesSection);
 
     expect(screen.getByRole("region", { name: "工作区与仓库" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "GitHub 授权" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "GitHub 授权" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "贡献身份" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "系统 git 凭证" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "后台任务" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "后台发现仓库" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
-  });
-
-  it("展示当前工作区并提供更换入口", async () => {
-    render(RepositoriesSection);
-
-    expect(screen.getByText("C:\\\\Files\\\\workspace")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "更换工作区" }));
-
-    await waitFor(() => {
-      expect(workspace.chooseWorkspaceRoot).toHaveBeenCalledTimes(1);
-    });
   });
 
   it("保留添加已有本地仓库入口", async () => {
@@ -177,88 +158,6 @@ describe("RepositoriesSection", () => {
       expect(workspace.unhideRepo).toHaveBeenCalledWith("HiddenRepo");
       expect(within(panel).queryByText("HiddenRepo")).not.toBeInTheDocument();
     });
-  });
-
-  it("更换工作区期间保持控件 loading 并在完成后复位", async () => {
-    const changeWorkspace = deferred<string>();
-    workspace.chooseWorkspaceRoot.mockImplementation(async () => {
-      workspace.choosingWorkspaceRoot.value = true;
-      try {
-        return await changeWorkspace.promise;
-      } finally {
-        workspace.choosingWorkspaceRoot.value = false;
-      }
-    });
-
-    render(RepositoriesSection);
-
-    const button = screen.getByRole("button", { name: "更换工作区" });
-    await fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(button).toBeDisabled();
-      expect(button).toHaveAccessibleName("更换中");
-    });
-
-    changeWorkspace.resolve("D:\\NewWorkspace");
-
-    await waitFor(() => {
-      expect(button).toBeEnabled();
-      expect(button).toHaveAccessibleName("更换工作区");
-    });
-  });
-
-  it("已绑定 GitHub 时通过二次确认解绑", async () => {
-    workspace.githubBinding.value = {
-      login: "lilia-user",
-      avatarUrl: null,
-      boundAt: 1,
-      scopes: ["repo"],
-      clientIdSource: "bundled",
-    };
-    workspace.state.settings.githubBinding = workspace.githubBinding.value;
-    workspace.authBindingStatusText.value = "GitHub 已授权";
-
-    render(RepositoriesSection);
-
-    await fireEvent.click(screen.getByRole("button", { name: "解绑 GitHub" }));
-    expect(screen.getByRole("button", { name: "确认解绑" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: "确认解绑" }));
-
-    await waitFor(() => {
-      expect(workspace.unbindGitHub).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "确认解绑" })).not.toBeInTheDocument();
-    });
-  });
-
-  it("未绑定 GitHub 时不显示解绑入口", () => {
-    render(RepositoriesSection);
-
-    expect(screen.getByRole("button", { name: "绑定 GitHub" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "解绑 GitHub" })).not.toBeInTheDocument();
-  });
-
-  it("缺少组织读取权限时保留现有能力并提供补充授权入口", async () => {
-    workspace.githubBinding.value = {
-      login: "lilia-user",
-      avatarUrl: null,
-      boundAt: 1,
-      scopes: ["repo"],
-      clientIdSource: "bundled",
-    };
-    workspace.state.settings.githubBinding = workspace.githubBinding.value;
-    workspace.authBindingStatusText.value = "GitHub 已授权";
-
-    render(RepositoriesSection);
-
-    expect(screen.getByText("组织信息可能不完整")).toBeInTheDocument();
-    expect(screen.getByText(/现有仓库仍可继续使用/)).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "补充组织权限" }));
-    expect(workspace.startAuthFlow).toHaveBeenCalledTimes(1);
   });
 
   it("保存贡献身份映射", async () => {

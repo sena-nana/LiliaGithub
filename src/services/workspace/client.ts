@@ -4,6 +4,7 @@ import { parseRemoteRepoId } from "../../utils/remoteRepo";
 import type { WorkspaceCommandArgs, WorkspaceCommandName, WorkspaceCommandResult } from "./contracts";
 import { WORKSPACE_COMMAND_MANIFEST } from "./manifest";
 import type {
+  AccountPreferences,
   BulkOperation,
   BulkSyncPreview,
   BulkSyncResult,
@@ -15,6 +16,8 @@ import type {
   GitHubActionNotification,
   GitHubAttachWorkflowArtifactAssetRequest,
   GitHubAccountIssueItem,
+  GitHubAccountProfile,
+  GitHubAuthPurpose,
   GitHubCommitListOptions,
   GitHubContributionResult,
   GitHubCreateIssueRequest,
@@ -50,6 +53,7 @@ import type {
   GitHubWorkflowRunDetail,
   GitHubCreatePullRequestRequest,
   GitHubUpdatePullRequestRequest,
+  GitHubUpdateAccountProfileRequest,
   GitHubUpdateReleaseRequest,
   GitHubUpdateIssueRequest,
   GitHubUpdateRepoSettingsRequest,
@@ -242,6 +246,12 @@ export function writeStartupContributions(contributions: WorkspaceStartupContrib
 
 export function setWorkspaceRoot(workspaceRoot: string): Promise<WorkspaceSettings> {
   return call("workspace_set_root", { workspaceRoot }, () => workspaceFallback().setWorkspaceRoot(workspaceRoot));
+}
+
+export function updateAccountPreferences(preferences: AccountPreferences): Promise<WorkspaceSettings> {
+  return call("workspace_update_account_preferences", { preferences }, () =>
+    workspaceFallback().updateAccountPreferences(preferences)
+  );
 }
 
 export function setContributionIdentities(identities: import("./types").ContributionIdentity[]): Promise<WorkspaceSettings> {
@@ -729,8 +739,8 @@ export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
   return status;
 }
 
-export function startGitHubDeviceFlow(): Promise<GitHubDeviceFlowStart> {
-  return call("github_start_device_flow", undefined, () => workspaceFallback().startGitHubDeviceFlow());
+export function startGitHubDeviceFlow(purpose: GitHubAuthPurpose = "binding"): Promise<GitHubDeviceFlowStart> {
+  return call("github_start_device_flow", { purpose }, () => workspaceFallback().startGitHubDeviceFlow(purpose));
 }
 
 export async function pollGitHubDeviceFlow(
@@ -749,6 +759,18 @@ export async function pollGitHubDeviceFlow(
 export async function unbindGitHub(): Promise<void> {
   await call("github_unbind", undefined, () => workspaceFallback().unbindGitHub());
   clearGitHubRepoCache();
+}
+
+export function getGitHubAccountProfile(): Promise<GitHubAccountProfile> {
+  return call("github_get_account_profile", undefined, () => workspaceFallback().getGitHubAccountProfile());
+}
+
+export function updateGitHubAccountProfile(
+  request: GitHubUpdateAccountProfileRequest,
+): Promise<GitHubAccountProfile> {
+  return call("github_update_account_profile", { request }, () =>
+    workspaceFallback().updateGitHubAccountProfile(request)
+  );
 }
 
 export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {

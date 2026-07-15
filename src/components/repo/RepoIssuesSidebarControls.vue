@@ -43,7 +43,9 @@ const sortOptions = [
   { value: "created-desc", label: "最新创建" },
   { value: "created-asc", label: "最早创建" },
   { value: "updated-desc", label: "最近更新" },
+  { value: "updated-asc", label: "最早更新" },
   { value: "comments-desc", label: "评论最多" },
+  { value: "comments-asc", label: "评论最少" },
 ] as const;
 
 const optionSets = computed(() => ({
