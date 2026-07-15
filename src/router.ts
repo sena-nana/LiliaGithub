@@ -9,15 +9,21 @@ import { invalidateSessionContextSnapshot } from "./composables/sessionContext";
 import { createCachedAsyncModule } from "./utils/asyncModule";
 
 const homePageModule = createCachedAsyncModule(() => import("./pages/Home.vue"));
+const profilePageModule = createCachedAsyncModule(() => import("./pages/Profile.vue"));
+const organizationPageModule = createCachedAsyncModule(() => import("./pages/Organization.vue"));
 const repoPageModule = createCachedAsyncModule(() => import("./pages/RepoDetail.vue"));
 const commitDetailPageModule = createCachedAsyncModule(() => import("./pages/CommitDetail.vue"));
 
 const HomePage = () => homePageModule.load();
+const ProfilePage = () => profilePageModule.load();
+const OrganizationPage = () => organizationPageModule.load();
 const RepoPage = () => repoPageModule.load();
 const CommitDetailPage = () => commitDetailPageModule.load();
 
 export const LILIA_GITHUB_ROUTES: RouteRecordRaw[] = [
   { path: "", component: HomePage },
+  { path: "profile", name: "github-profile", component: ProfilePage },
+  { path: "organizations/:login", name: "github-organization", component: OrganizationPage },
   { path: "repos/:repoId(.*)/commits/:hash", component: CommitDetailPage },
   { path: "repos/:repoId(.*)/files", component: RepoPage, meta: { repoTab: "files" } },
   { path: "repos/:repoId(.*)/changes", component: RepoPage, meta: { repoTab: "changes" } },

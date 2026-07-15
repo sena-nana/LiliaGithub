@@ -77,6 +77,15 @@ async function renderAppShell(initialRoute = "/") {
         component: { template: "<div>repo</div>" },
       },
       {
+        path: "/profile",
+        component: { template: "<div>profile</div>" },
+      },
+      {
+        path: "/organizations/:login",
+        name: "github-organization",
+        component: { template: "<div>organization</div>" },
+      },
+      {
         path: "/settings",
         component: { template: "<div>settings</div>" },
         meta: { sidebar: "settings", lockSidebar: true, returnable: false },
@@ -404,6 +413,15 @@ describe("AppShell sidebar", () => {
     });
 
     expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
+    const profileRow = sidebarRowForText(view.container, "lilia-user");
+    expect(profileRow).toHaveAttribute("href", "/profile");
+    const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
+    expect(organizationRow).toHaveAttribute("href", "/organizations/sena-nana");
+    const organizationSection = organizationRow.closest(".sb-section");
+    const favoriteSection = view.container.querySelector(".sb-section--favorites");
+    expect(organizationSection).toBeInstanceOf(HTMLElement);
+    expect(favoriteSection).toBeInstanceOf(HTMLElement);
+    expect(organizationSection!.compareDocumentPosition(favoriteSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     expect(view.getByRole("button", { name: "折叠分组 未分组仓库" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "创建仓库分组" })).toBeInTheDocument();
@@ -413,6 +431,11 @@ describe("AppShell sidebar", () => {
     expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "刷新并抓取" })).toBeInTheDocument();
     expect(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "一键同步" })).toBeEnabled();
     expect(view.queryByRole("button", { name: "在 未分组仓库 创建仓库" })).toBeNull();
+
+    await fireEvent.click(profileRow);
+    await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/profile"));
+    await fireEvent.click(organizationRow);
+    await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/organizations/sena-nana"));
 
     await fireEvent.click(sidebarRowForText(view.container, "LiliaGithub"));
 
@@ -493,6 +516,7 @@ describe("AppShell sidebar", () => {
     const footerConnection = view.container.querySelector('[data-agent-id="sidebar.footer.connection"]');
 
     expect(top).toContainElement(mainNav);
+    expect(body).toContainElement(view.getByRole("region", { name: "组织" }));
     expect(body).toContainElement(sidebarGroupForText(view.container, "未分组仓库", 120));
     expect(body).toContainElement(sidebarRowForText(view.container, "Repo-001"));
     expect(footer).toContainElement(footerSettings);
@@ -918,40 +942,6 @@ describe("AppShell sidebar", () => {
       );
       expect(view.queryByText("远程仓库 1")).toBeNull();
     });
-  });
-
-  it("侧边栏按需展开 owner 后加载并去重全部远程仓库分页", async () => {
-    const service = await import("../src/services/workspace");
-    const originalListGitHubRepos = service.listGitHubRepos;
-    const firstPageRepo = githubRepoSummary("sena-nana/OwnerPageOne", { id: 9101 });
-    const duplicateRepo = githubRepoSummary("sena-nana/OwnerPageOne", { id: 9101 });
-    const secondPageRepo = githubRepoSummary("sena-nana/OwnerPageTwo", { id: 9102 });
-    const listGitHubRepos = vi.spyOn(service, "listGitHubRepos").mockImplementation(async (scopeOrPage, page) => {
-      if (typeof scopeOrPage === "object" && scopeOrPage?.kind === "organization") {
-        return page === 2
-          ? { items: [duplicateRepo, secondPageRepo], nextPage: null, scope: scopeOrPage }
-          : { items: [firstPageRepo], nextPage: 2, scope: scopeOrPage };
-      }
-      return originalListGitHubRepos(scopeOrPage, page);
-    });
-
-    try {
-      const view = await renderAppShell("/");
-
-      await fireEvent.click(await view.findByRole("button", { name: "展开 sena-nana" }));
-      expect(await view.findByText("OwnerPageTwo")).toBeInTheDocument();
-      expect(view.getAllByText("OwnerPageOne")).toHaveLength(1);
-      expect(listGitHubRepos).toHaveBeenCalledWith(
-        { kind: "organization", login: "sena-nana" },
-        1,
-      );
-      expect(listGitHubRepos).toHaveBeenCalledWith(
-        { kind: "organization", login: "sena-nana" },
-        2,
-      );
-    } finally {
-      listGitHubRepos.mockRestore();
-    }
   });
 
   it("总览页一键同步运行中显示按钮和仓库行状态", async () => {
