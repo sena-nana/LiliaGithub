@@ -8,12 +8,25 @@ import {
   getGitHubBindingStatus,
   isGitHubBindingExpiredError,
   listGitHubRepos,
+  listGitHubRepoOwners,
   preloadGitHubRepos,
   readCachedGitHubRepos,
   type GitHubBindingStatus,
+  type GitHubRepoOwner,
   type GitHubRepoSummary,
+  type GitHubRepositoryScope,
   type RepoSummary,
 } from "../services/workspace";
+import {
+  ALL_GITHUB_REPOSITORIES,
+  githubOrganizationAccessLimited,
+  githubOrganizationAccessMessage,
+  githubOrganizationAccessRecovery,
+  githubOrganizationOwners,
+  githubRepositoryScopeKey,
+  githubUserFacingError,
+} from "../utils/githubRepositoryScope";
+import { githubRepositoryIdentityKey } from "../utils/remoteRepo";
 
 type UseCloneRepoDialogOptions = {
   onCloned: (repo: RepoSummary, groupId: string | null) => void | Promise<void>;
@@ -41,11 +54,16 @@ function dedupeCloneRepos(items: GitHubRepoSummary[]) {
   const seen = new Set<string>();
   const next: GitHubRepoSummary[] = [];
   for (const item of items) {
-    if (seen.has(item.fullName)) continue;
-    seen.add(item.fullName);
+    const key = githubRepositoryIdentityKey(item.fullName);
+    if (seen.has(key)) continue;
+    seen.add(key);
     next.push(item);
   }
   return next;
+}
+
+function cloneErrorMessage(err: unknown) {
+  return githubUserFacingError(err);
 }
 
 export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
@@ -54,6 +72,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const componentEpoch = useComponentEpoch();
   const cloneBindingLoader = createLatestAsyncLoader({ componentEpoch });
   const cloneRepoPageLoader = createLatestAsyncLoader({ componentEpoch });
+  const cloneRepoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
 
   const cloneOpen = ref(false);
   const cloneRemoteUrl = ref("");
@@ -63,6 +82,11 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const cloneError = ref<string | null>(null);
   const cloneBindingStatus = ref<GitHubBindingStatus | null>(null);
   const cloneRepoItems = ref<GitHubRepoSummary[]>([]);
+  const cloneRepoOwners = ref<GitHubRepoOwner[]>([]);
+  const cloneRepoOwnersLoading = ref(false);
+  const cloneRepoOwnersError = ref<string | null>(null);
+  const cloneRepositoryScope = ref<GitHubRepositoryScope>(ALL_GITHUB_REPOSITORIES);
+  const cloneRepoLoaded = ref(false);
   const cloneRepoDropdownOpen = ref(false);
   const cloneRepoLoading = ref(false);
   const cloneRepoLoadingMore = ref(false);
@@ -70,12 +94,26 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const cloneNextRepoPage = ref<number | null>(null);
   const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
   const cloneSelectedGroupId = ref<string | null>(null);
+  const cloneScopePages = new Map<string, {
+    items: GitHubRepoSummary[];
+    nextPage: number | null;
+    loaded: boolean;
+    error: string | null;
+  }>();
+  let cloneSearchPaginationRun = 0;
+  let cloneSearchPagesLoading = false;
 
   const canSubmitClone = computed(() => cloneRemoteUrl.value.trim().length > 0 && !cloneBusy.value);
   const cloneGitHubBound = computed(() => cloneBindingStatus.value?.state === "bound");
   const cloneQueryTrimmed = computed(() => cloneRemoteUrl.value.trim());
   const cloneBindingExpired = computed(() => cloneError.value?.includes("GitHub 绑定已失效") === true);
   const cloneDirectGitHubRepo = computed(() => normalizeGitHubCloneInput(cloneQueryTrimmed.value));
+  const cloneOrganizationOwners = computed(() => githubOrganizationOwners(cloneRepoOwners.value));
+  const cloneOrganizationAccessLimited = computed(() =>
+    githubOrganizationAccessLimited(cloneBindingStatus.value?.binding?.scopes, cloneRepoOwners.value),
+  );
+  const cloneOrganizationRecovery = computed(() => githubOrganizationAccessRecovery(cloneRepoOwners.value));
+  const cloneOrganizationAccessMessage = computed(() => githubOrganizationAccessMessage(cloneRepoOwners.value));
   const filteredCloneRepos = computed(() => {
     const text = cloneQueryTrimmed.value.toLowerCase();
     if (!text) return cloneRepoItems.value;
@@ -85,6 +123,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       (repo.description ?? "").toLowerCase().includes(text),
     );
   });
+  const localCloneRepoFullNames = computed(() => workspace.state.repos
+    .map((repo) => repo.githubFullName)
+    .filter((fullName): fullName is string => Boolean(fullName)));
 
   function applyCloneRepoPage(result: { items: GitHubRepoSummary[]; nextPage: number | null }, append = false) {
     cloneRepoLoadError.value = null;
@@ -92,19 +133,41 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneRepoItems.value = append
       ? dedupeCloneRepos([...cloneRepoItems.value, ...result.items])
       : result.items;
+    cloneRepoLoaded.value = true;
+    rememberCloneScopePage();
+  }
+
+  function rememberCloneScopePage() {
+    cloneScopePages.set(githubRepositoryScopeKey(cloneRepositoryScope.value), {
+      items: cloneRepoItems.value.map((repo) => ({ ...repo })),
+      nextPage: cloneNextRepoPage.value,
+      loaded: cloneRepoLoaded.value,
+      error: cloneRepoLoadError.value,
+    });
+  }
+
+  function restoreCloneScopePage(scope: GitHubRepositoryScope) {
+    const page = cloneScopePages.get(githubRepositoryScopeKey(scope));
+    cloneRepoItems.value = page?.items.map((repo) => ({ ...repo })) ?? [];
+    cloneNextRepoPage.value = page?.nextPage ?? null;
+    cloneRepoLoaded.value = page?.loaded ?? false;
+    cloneRepoLoadError.value = page?.error ?? null;
+    cloneSelectedRepo.value = null;
   }
 
   function showCloneRepoLoadError(err: unknown) {
     const expired = isGitHubBindingExpiredError(err);
     cloneRepoLoadError.value = expired
       ? "GitHub 绑定已失效，请重新绑定后再加载账号仓库。"
-      : `仓库列表加载失败：${String(err)}`;
+      : `仓库列表加载失败：${githubUserFacingError(err)}`;
     if (expired) {
       cloneError.value = "GitHub 绑定已失效，请重新绑定。";
     }
     cloneRepoItems.value = [];
     cloneNextRepoPage.value = null;
     cloneSelectedRepo.value = null;
+    cloneRepoLoaded.value = false;
+    rememberCloneScopePage();
   }
 
   async function loadCloneRepoPage(
@@ -113,7 +176,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     loadOptions: { force?: boolean; showLoading?: boolean } = {},
   ) {
     if (!cloneGitHubBound.value) return;
-    const key = `${append ? "append" : "replace"}:${page}:${loadOptions.force ? "force" : "cache"}`;
+    const scope = cloneRepositoryScope.value;
+    const scopeKey = githubRepositoryScopeKey(scope);
+    const key = `${scopeKey}:${append ? "append" : "replace"}:${page}:${loadOptions.force ? "force" : "cache"}`;
     await cloneRepoPageLoader.run(key, async (runId) => {
       const showLoading = loadOptions.showLoading ?? !append;
       if (append) {
@@ -123,9 +188,10 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       }
       try {
         const result = page === 1
-          ? await preloadGitHubRepos({ force: loadOptions.force })
-          : await listGitHubRepos(page);
+          ? await preloadGitHubRepos({ force: loadOptions.force, scope })
+          : await listGitHubRepos(scope, page);
         if (!cloneRepoPageLoader.isCurrent(runId) || !cloneOpen.value || !cloneGitHubBound.value) return;
+        if (githubRepositoryScopeKey(cloneRepositoryScope.value) !== scopeKey) return;
         applyCloneRepoPage(result, append);
       } catch (err) {
         if (!cloneRepoPageLoader.isCurrent(runId) || !cloneOpen.value) return;
@@ -140,20 +206,92 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     });
   }
 
+  async function loadCloneRepoOwners() {
+    if (!cloneGitHubBound.value) return;
+    await cloneRepoOwnersLoader.run("clone-repo-owners", async (runId) => {
+      cloneRepoOwnersLoading.value = true;
+      cloneRepoOwnersError.value = null;
+      try {
+        const owners = await listGitHubRepoOwners();
+        if (!cloneRepoOwnersLoader.isCurrent(runId) || !cloneOpen.value) return;
+        cloneRepoOwners.value = owners;
+      } catch (err) {
+        if (!cloneRepoOwnersLoader.isCurrent(runId) || !cloneOpen.value) return;
+        cloneRepoOwnersError.value = `账号与组织加载失败：${githubUserFacingError(err)}`;
+      } finally {
+        if (cloneRepoOwnersLoader.isCurrent(runId)) cloneRepoOwnersLoading.value = false;
+      }
+    });
+  }
+
+  async function selectCloneRepositoryScope(scope: GitHubRepositoryScope) {
+    if (githubRepositoryScopeKey(scope) === githubRepositoryScopeKey(cloneRepositoryScope.value)) return;
+    invalidateCloneSearchPagination();
+    const hadSelectedRepo = cloneSelectedRepo.value !== null;
+    rememberCloneScopePage();
+    cloneRepositoryScope.value = scope;
+    restoreCloneScopePage(scope);
+    if (hadSelectedRepo) cloneRemoteUrl.value = "";
+    if (!cloneRepoLoaded.value) await loadCloneRepoPage(1);
+  }
+
   function startCloneReposLoad() {
-    if (!cloneGitHubBound.value || cloneRepoLoading.value || cloneRepoItems.value.length > 0) return;
+    if (!cloneGitHubBound.value || cloneRepoLoading.value || cloneRepoLoaded.value) return;
     void loadCloneRepoPage(1).catch(() => undefined);
   }
 
   async function maybeLoadMoreCloneRepos() {
+    if (cloneQueryTrimmed.value) {
+      await loadRemainingCloneSearchPages();
+      return;
+    }
     if (!cloneGitHubBound.value || !cloneNextRepoPage.value || cloneRepoLoadingMore.value) return;
-    if (filteredCloneRepos.value.length > 0 && cloneQueryTrimmed.value) return;
     await loadCloneRepoPage(cloneNextRepoPage.value, true);
   }
 
+  function invalidateCloneSearchPagination() {
+    cloneSearchPaginationRun += 1;
+    cloneSearchPagesLoading = false;
+  }
+
+  async function loadRemainingCloneSearchPages() {
+    if (
+      cloneSearchPagesLoading
+      || !cloneOpen.value
+      || !cloneGitHubBound.value
+      || !cloneQueryTrimmed.value
+      || !cloneNextRepoPage.value
+      || cloneRepoLoading.value
+      || cloneRepoLoadingMore.value
+    ) return;
+    const run = ++cloneSearchPaginationRun;
+    cloneSearchPagesLoading = true;
+    try {
+      while (
+        run === cloneSearchPaginationRun
+        && cloneOpen.value
+        && cloneGitHubBound.value
+        && cloneQueryTrimmed.value
+        && cloneNextRepoPage.value
+      ) {
+        const pageNumber: number = cloneNextRepoPage.value;
+        await loadCloneRepoPage(pageNumber, true);
+        if (cloneNextRepoPage.value === pageNumber) break;
+      }
+    } finally {
+      if (run !== cloneSearchPaginationRun) return;
+      cloneSearchPagesLoading = false;
+      if (cloneQueryTrimmed.value && cloneNextRepoPage.value) {
+        void Promise.resolve().then(loadRemainingCloneSearchPages);
+      }
+    }
+  }
+
   async function openCloneDialog(groupId: string | null = null) {
+    invalidateCloneSearchPagination();
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
+    cloneRepoOwnersLoader.invalidate();
     cloneOpen.value = true;
     cloneRemoteUrl.value = "";
     cloneDirectoryName.value = "";
@@ -161,6 +299,12 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneError.value = null;
     cloneBindingStatus.value = null;
     cloneRepoItems.value = [];
+    cloneRepoOwners.value = [];
+    cloneRepoOwnersLoading.value = false;
+    cloneRepoOwnersError.value = null;
+    cloneRepositoryScope.value = ALL_GITHUB_REPOSITORIES;
+    cloneRepoLoaded.value = false;
+    cloneScopePages.clear();
     cloneRepoDropdownOpen.value = false;
     cloneRepoLoading.value = false;
     cloneRepoLoadingMore.value = false;
@@ -174,7 +318,8 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
         if (!cloneBindingLoader.isCurrent(runId) || !cloneOpen.value) return;
         cloneBindingStatus.value = status;
         if (cloneGitHubBound.value) {
-          const cached = readCachedGitHubRepos();
+          void loadCloneRepoOwners();
+          const cached = readCachedGitHubRepos(cloneRepositoryScope.value);
           if (cached) {
             applyCloneRepoPage(cached);
           }
@@ -193,12 +338,15 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   function closeCloneDialog() {
     if (cloneBusy.value) return;
     if (cloneOpen.value) invalidateSessionContextSnapshot();
+    invalidateCloneSearchPagination();
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
+    cloneRepoOwnersLoader.invalidate();
     cloneOpen.value = false;
     cloneError.value = null;
     cloneRepoLoading.value = false;
     cloneRepoLoadingMore.value = false;
+    cloneRepoOwnersLoading.value = false;
   }
 
   async function submitClone() {
@@ -207,20 +355,31 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneError.value = null;
     try {
       const selected = cloneSelectedRepo.value;
-      const remote = selected?.cloneUrl ?? cloneDirectGitHubRepo.value ?? cloneRemoteUrl.value.trim();
-      const summary = await workspace.cloneRepo(
-        remote,
-        cloneDirectoryName.value.trim() || selected?.name || null,
-      );
+      const directGitHubRepo = cloneDirectGitHubRepo.value;
+      const remote = selected?.cloneUrl
+        ?? (directGitHubRepo ? `https://github.com/${directGitHubRepo}.git` : cloneRemoteUrl.value.trim());
+      const customPath = cloneDirectoryName.value.trim();
+      const summary = await workspace.cloneRepo({
+        remoteUrl: remote,
+        repository: selected ? {
+          id: selected.id,
+          fullName: selected.fullName,
+          cloneUrl: selected.cloneUrl,
+        } : null,
+        target: cloneTouchedDirectory.value && customPath
+          ? { kind: "custom", path: customPath }
+          : { kind: "default" },
+      });
       cloneBindingLoader.invalidate();
       cloneRepoPageLoader.invalidate();
+      cloneRepoOwnersLoader.invalidate();
       cloneOpen.value = false;
       await options.onCloned(summary, cloneSelectedGroupId.value);
     } catch (err) {
       if (isGitHubBindingExpiredError(err)) {
         showCloneRepoLoadError(err);
       } else {
-        cloneError.value = String(err);
+        cloneError.value = cloneErrorMessage(err);
       }
     } finally {
       cloneBusy.value = false;
@@ -265,10 +424,20 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     invalidateSessionContextSnapshot();
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
+    cloneRepoOwnersLoader.invalidate();
     cloneOpen.value = false;
     cloneRepoLoading.value = false;
     cloneRepoLoadingMore.value = false;
+    cloneRepoOwnersLoading.value = false;
     await router.push({ path: "/settings", query: { tab: "repositories" } });
+  }
+
+  async function openOrganizationAuthorization() {
+    if (cloneOrganizationRecovery.value.url) {
+      await workspace.openUrl(cloneOrganizationRecovery.value.url);
+      return;
+    }
+    await openGitHubBindingSettings();
   }
 
   watch(cloneRemoteUrl, (value) => {
@@ -276,9 +445,27 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneDirectoryName.value = cloneSelectedRepo.value?.name ?? inferCloneDirectoryName(value);
   });
 
+  watch(
+    () => [
+      cloneOpen.value,
+      cloneQueryTrimmed.value,
+      cloneNextRepoPage.value,
+      cloneRepoLoading.value,
+      cloneRepoLoadingMore.value,
+      githubRepositoryScopeKey(cloneRepositoryScope.value),
+    ] as const,
+    ([open, query, nextPage, loading, loadingMore]) => {
+      if (open && query && nextPage && !loading && !loadingMore) {
+        void loadRemainingCloneSearchPages();
+      }
+    },
+  );
+
   onUnmounted(() => {
+    invalidateCloneSearchPagination();
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
+    cloneRepoOwnersLoader.invalidate();
   });
 
   const props = computed(() => ({
@@ -298,6 +485,16 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     nextRepoPage: cloneNextRepoPage.value,
     selectedRepo: cloneSelectedRepo.value,
     directRepo: cloneDirectGitHubRepo.value,
+    repositoryScope: cloneRepositoryScope.value,
+    personalLogin: cloneBindingStatus.value?.binding?.login ?? "",
+    organizations: cloneOrganizationOwners.value,
+    ownersLoading: cloneRepoOwnersLoading.value,
+    ownersError: cloneRepoOwnersError.value,
+    organizationAccessLimited: cloneOrganizationAccessLimited.value,
+    organizationAccessMessage: cloneOrganizationAccessMessage.value,
+    organizationRecoveryUrl: cloneOrganizationRecovery.value.url,
+    localRepoFullNames: localCloneRepoFullNames.value,
+    repoLoaded: cloneRepoLoaded.value,
     selectedGroupId: cloneSelectedGroupId.value,
   }));
 
@@ -305,6 +502,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     close: closeCloneDialog,
     submit: submitClone,
     openSettings: openGitHubBindingSettings,
+    openOrganizationAuthorization,
     loadMore: maybeLoadMoreCloneRepos,
     openRepoDropdown: openCloneRepoDropdown,
     handleRepoInput: handleCloneRepoInput,
@@ -322,6 +520,9 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     updateSelectedGroup: (groupId: string | null) => {
       cloneSelectedGroupId.value = groupId;
     },
+    updateRepositoryScope: selectCloneRepositoryScope,
+    retryOwners: loadCloneRepoOwners,
+    retryRepos: () => loadCloneRepoPage(1, false, { force: true }),
   };
 
   return reactive({

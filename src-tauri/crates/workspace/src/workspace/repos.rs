@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -31,7 +33,9 @@ use lilia_github_contracts::workspace::{
     RepoMergePullResult, RepoOperationResult, RepoPullLocalChangesMode, RepoRefreshRequest,
     RepoRefreshSummaryOptions, RepoRemote, RepoRemoteBranchState, RepoRemoteOperationStep,
     RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoStashDetail, RepoStashEntry, RepoSummary,
-    RepoSyncOperationResult, RepoWorktree, WorkspaceCreateLocalRepoRequest, WorkspaceSettings,
+    RepoSyncOperationResult, RepoWorktree, WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef,
+    WorkspaceCloneTarget, WorkspaceCreateLocalRepoRequest, WorkspaceRepositoryBinding,
+    WorkspaceSettings,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
@@ -582,6 +586,7 @@ pub(super) fn infer_clone_directory_name(remote_url: &str) -> Result<String, Str
         .ok_or_else(|| "无法从远端 URL 推导目录名".to_string())
 }
 
+#[cfg(test)]
 pub(super) fn normalize_clone_directory_name(
     remote_url: &str,
     directory_name: Option<String>,
@@ -595,6 +600,502 @@ pub(super) fn normalize_clone_directory_name(
         .unwrap_or_else(|| infer_clone_directory_name(remote_url))?;
     validate_clone_directory_name(&name)?;
     Ok(name)
+}
+
+const MAX_PORTABLE_CLONE_SEGMENT_BYTES: usize = 100;
+#[cfg(target_os = "windows")]
+pub(super) const MAX_PORTABLE_CLONE_TARGET_UTF16: usize = 240;
+
+fn clone_error(code: &str, message: impl AsRef<str>) -> String {
+    format!("{code}: {}", message.as_ref())
+}
+
+fn stable_clone_segment_hash(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")[..8].to_string()
+}
+
+fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn windows_reserved_path_segment(value: &str) -> bool {
+    let stem = value
+        .split('.')
+        .next()
+        .unwrap_or(value)
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                suffix.len() == 1 && matches!(suffix.as_bytes().first(), Some(b'1'..=b'9'))
+            })
+}
+
+fn portable_clone_segment_requires_rewrite(value: &str) -> bool {
+    value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.ends_with([' ', '.'])
+        || value.len() > MAX_PORTABLE_CLONE_SEGMENT_BYTES
+        || windows_reserved_path_segment(value)
+        || value
+            .chars()
+            .any(|character| character.is_control() || r#"<>:"/\|?*"#.contains(character))
+}
+
+pub(super) fn sanitize_clone_path_segment(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "仓库路径段不能为空",
+        ));
+    }
+
+    let original = value;
+    let mut rewritten = portable_clone_segment_requires_rewrite(original);
+    let mut sanitized = String::with_capacity(original.len());
+    for character in original.chars() {
+        if character.is_control() || r#"<>:"/\|?*"#.contains(character) {
+            sanitized.push('-');
+            rewritten = true;
+        } else {
+            sanitized.push(character);
+        }
+    }
+    let trimmed_len = sanitized.trim_end_matches([' ', '.']).len();
+    sanitized.truncate(trimmed_len);
+    if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
+        sanitized = "repository".to_string();
+        rewritten = true;
+    }
+    if windows_reserved_path_segment(&sanitized) {
+        sanitized.push('-');
+        rewritten = true;
+    }
+
+    if rewritten || sanitized.len() > MAX_PORTABLE_CLONE_SEGMENT_BYTES {
+        let suffix = format!("~{}", stable_clone_segment_hash(original));
+        let prefix_budget = MAX_PORTABLE_CLONE_SEGMENT_BYTES.saturating_sub(suffix.len());
+        let prefix = truncate_utf8_bytes(&sanitized, prefix_budget).trim_end_matches([' ', '.']);
+        sanitized = format!("{prefix}{suffix}");
+    }
+    if sanitized.is_empty() || sanitized.len() > MAX_PORTABLE_CLONE_SEGMENT_BYTES {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            format!("无法生成合法路径段：{value}"),
+        ));
+    }
+    Ok(sanitized)
+}
+
+fn custom_clone_target(root: &Path, requested: &str) -> Result<PathBuf, String> {
+    let requested = requested.trim();
+    if requested.is_empty() {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "自定义目标路径不能为空",
+        ));
+    }
+    let requested_path = PathBuf::from(requested);
+    if requested_path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "自定义目标路径不能包含上级目录跳转",
+        ));
+    }
+    if !requested_path.is_absolute()
+        && requested_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "自定义目标路径必须位于工作区内",
+        ));
+    }
+    let target = if requested_path.is_absolute() {
+        requested_path
+    } else {
+        root.join(requested_path)
+    };
+    if target == root {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "不能将工作区根目录作为克隆目标",
+        ));
+    }
+
+    let relative = target.strip_prefix(root).map_err(|_| {
+        clone_error(
+            "workspace_path_segment_invalid",
+            "自定义目标路径必须位于工作区内",
+        )
+    })?;
+    for component in relative.components() {
+        if let Component::Normal(value) = component {
+            let value = value.to_string_lossy();
+            if portable_clone_segment_requires_rewrite(&value) {
+                return Err(clone_error(
+                    "workspace_path_segment_invalid",
+                    format!("自定义目标路径包含不可移植的目录名：{value}"),
+                ));
+            }
+        }
+    }
+    validate_clone_target_containment(root, &target)?;
+    Ok(target)
+}
+
+fn validate_clone_target_containment(root: &Path, target: &Path) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("读取工作区路径失败：{error}"))?;
+    let mut existing_ancestor = target;
+    while !existing_ancestor.exists() {
+        existing_ancestor = existing_ancestor
+            .parent()
+            .ok_or_else(|| clone_error("workspace_path_segment_invalid", "自定义目标路径无效"))?;
+    }
+    let canonical_ancestor = existing_ancestor
+        .canonicalize()
+        .map_err(|error| format!("读取目标路径失败：{error}"))?;
+    if !canonical_ancestor.starts_with(&canonical_root) {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "克隆目标路径必须位于工作区内",
+        ));
+    }
+    Ok(())
+}
+
+fn case_fold_sibling_conflict(parent: &Path, desired: &str) -> Option<PathBuf> {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let desired_folded = desired.to_lowercase();
+        fs::read_dir(parent).ok()?.flatten().find_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            (name != desired && name.to_lowercase() == desired_folded).then(|| entry.path())
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (parent, desired);
+        None
+    }
+}
+
+pub(super) fn validate_clone_target_length(target: &Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    if target.as_os_str().encode_wide().count() > MAX_PORTABLE_CLONE_TARGET_UTF16 {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "克隆目标路径过长，请选择更短的工作区路径",
+        ));
+    }
+    let _ = target;
+    Ok(())
+}
+
+fn canonical_clone_remote(remote: &str) -> String {
+    if let Some(full_name) = parse_github_remote(remote) {
+        return format!("github: {}", full_name.to_lowercase());
+    }
+    remote
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_string()
+}
+
+fn canonical_github_remote_url(remote: &str) -> Option<String> {
+    let full_name = parse_github_remote(remote).or_else(|| {
+        normalize_github_repo_input(remote)
+            .ok()
+            .map(|repo| repo.full_name)
+    })?;
+    Some(format!("https://github.com/{full_name}.git"))
+}
+
+fn github_binding_identity(
+    path: &Path,
+    repository: Option<&WorkspaceCloneRepositoryRef>,
+) -> Option<WorkspaceRepositoryBinding> {
+    let (repository_id, remote_full_name) = if let Some(repository) = repository {
+        let normalized = normalize_github_repo_input(&repository.full_name).ok()?;
+        (Some(repository.id), normalized.full_name)
+    } else {
+        let remote = git_command_lossy(path, &["remote", "get-url", "origin"])?;
+        let full_name = parse_github_remote(&remote).or_else(|| {
+            normalize_github_repo_input(&remote)
+                .ok()
+                .map(|repo| repo.full_name)
+        })?;
+        (None, full_name)
+    };
+    Some(WorkspaceRepositoryBinding {
+        repository_id,
+        canonical_remote_url: format!("https://github.com/{remote_full_name}.git"),
+        remote_full_name,
+        local_path: compatible_path_text(path),
+    })
+}
+
+pub(super) fn upsert_workspace_repo_binding(
+    settings: &mut WorkspaceSettings,
+    root: &Path,
+    path: &Path,
+    repository: Option<&WorkspaceCloneRepositoryRef>,
+) -> bool {
+    let Some(mut binding) = github_binding_identity(path, repository) else {
+        return false;
+    };
+    let id = repo_id(root, path);
+    if let Some(existing) = settings.repo_bindings.get(&id) {
+        if binding.repository_id.is_none()
+            && existing
+                .remote_full_name
+                .eq_ignore_ascii_case(&binding.remote_full_name)
+        {
+            binding.repository_id = existing.repository_id;
+        }
+        if existing == &binding {
+            return false;
+        }
+    }
+    settings.repo_bindings.insert(id, binding);
+    true
+}
+
+fn backfill_workspace_repo_bindings(
+    settings: &mut WorkspaceSettings,
+    root: &Path,
+    paths: &[PathBuf],
+) -> bool {
+    paths.iter().fold(false, |changed, path| {
+        upsert_workspace_repo_binding(settings, root, path, None) || changed
+    })
+}
+
+fn apply_workspace_repo_binding(summary: &mut RepoSummary, settings: &WorkspaceSettings) {
+    let Some(binding) = settings.repo_bindings.get(&summary.id) else {
+        return;
+    };
+    summary.github_full_name = Some(binding.remote_full_name.clone());
+    summary.github_repository_id = binding.repository_id;
+    summary.canonical_remote_url = Some(binding.canonical_remote_url.clone());
+}
+
+pub(super) fn summarize_workspace_repo(
+    root: &Path,
+    path: &Path,
+    settings: &WorkspaceSettings,
+) -> RepoSummary {
+    let mut summary = summarize_repo(root, path);
+    apply_workspace_repo_binding(&mut summary, settings);
+    summary
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CloneTargetDisposition {
+    Clone,
+    Associate,
+}
+
+pub(super) fn inspect_clone_target(
+    target: &Path,
+    remote: &str,
+) -> Result<CloneTargetDisposition, String> {
+    if !target.exists() {
+        return Ok(CloneTargetDisposition::Clone);
+    }
+    if is_git_repo(target) {
+        let existing_remote = git_command_lossy(target, &["remote", "get-url", "origin"]);
+        if existing_remote
+            .as_deref()
+            .is_some_and(|value| canonical_clone_remote(value) == canonical_clone_remote(remote))
+        {
+            return Ok(CloneTargetDisposition::Associate);
+        }
+        return Err(clone_error(
+            "workspace_existing_remote_mismatch",
+            format!("目标仓库的 origin 与 {remote} 不一致：{}", target.display()),
+        ));
+    }
+    if target.is_dir()
+        && fs::read_dir(target)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+    {
+        return Ok(CloneTargetDisposition::Clone);
+    }
+    Err(clone_error(
+        "workspace_target_not_empty",
+        format!("目标路径不是空目录：{}", target.display()),
+    ))
+}
+
+pub(super) fn create_clone_parent_directories(
+    root: &Path,
+    target: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| clone_error("workspace_path_segment_invalid", "克隆目标缺少父目录"))?;
+    let mut missing = Vec::new();
+    let mut current = parent;
+    while current != root && !current.exists() {
+        missing.push(current.to_path_buf());
+        current = current.parent().ok_or_else(|| {
+            clone_error("workspace_path_segment_invalid", "克隆目标必须位于工作区内")
+        })?;
+    }
+    if current != root && !current.exists() {
+        return Err(clone_error(
+            "workspace_path_segment_invalid",
+            "克隆目标必须位于工作区内",
+        ));
+    }
+    fs::create_dir_all(parent).map_err(|error| format!("创建克隆目录失败：{error}"))?;
+    missing.reverse();
+    Ok(missing)
+}
+
+pub(super) fn remove_created_empty_directories(paths: &[PathBuf]) {
+    for path in paths.iter().rev() {
+        let _ = fs::remove_dir(path);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkspaceClonePlan {
+    pub(super) remote: String,
+    pub(super) target: PathBuf,
+}
+
+pub(super) fn plan_workspace_clone(
+    root: &Path,
+    request: &WorkspaceCloneRepoRequest,
+) -> Result<WorkspaceClonePlan, String> {
+    let input = request.remote_url.trim();
+    if input.is_empty() {
+        return Err("远端 URL 不能为空".to_string());
+    }
+    let parsed_remote_full_name = parse_github_remote(input);
+    let normalized_input = parsed_remote_full_name
+        .as_deref()
+        .map(normalize_github_repo_input)
+        .unwrap_or_else(|| normalize_github_repo_input(input))
+        .ok();
+    if let Some(repository) = &request.repository {
+        let identity = normalize_github_repo_input(&repository.full_name).map_err(|_| {
+            clone_error(
+                "workspace_path_segment_invalid",
+                format!("GitHub 仓库标识无效：{}", repository.full_name),
+            )
+        })?;
+        let clone_identity = parse_github_remote(&repository.clone_url).ok_or_else(|| {
+            clone_error(
+                "workspace_path_segment_invalid",
+                format!("GitHub clone URL 无效：{}", repository.clone_url),
+            )
+        })?;
+        if !identity.full_name.eq_ignore_ascii_case(&clone_identity) {
+            return Err(clone_error(
+                "workspace_existing_remote_mismatch",
+                "仓库标识与 clone URL 不一致",
+            ));
+        }
+    }
+    let remote = request
+        .repository
+        .as_ref()
+        .map(|repository| repository.clone_url.trim())
+        .filter(|value| !value.is_empty())
+        .or_else(|| parsed_remote_full_name.as_ref().map(|_| input))
+        .or_else(|| {
+            normalized_input
+                .as_ref()
+                .map(|repo| repo.clone_url.as_str())
+        })
+        .unwrap_or(input)
+        .to_string();
+
+    let target = match &request.target {
+        WorkspaceCloneTarget::Custom { path } => custom_clone_target(root, path)?,
+        WorkspaceCloneTarget::Default => {
+            let full_name = request
+                .repository
+                .as_ref()
+                .map(|repository| repository.full_name.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .or_else(|| parsed_remote_full_name.clone())
+                .or_else(|| normalized_input.as_ref().map(|repo| repo.full_name.clone()))
+                .or_else(|| parse_github_remote(&remote));
+            if let Some(full_name) = full_name {
+                let (owner, name) = full_name.split_once('/').ok_or_else(|| {
+                    clone_error(
+                        "workspace_path_segment_invalid",
+                        format!("GitHub 仓库标识无效：{full_name}"),
+                    )
+                })?;
+                if owner.is_empty() || name.is_empty() || name.contains('/') {
+                    return Err(clone_error(
+                        "workspace_path_segment_invalid",
+                        format!("GitHub 仓库标识无效：{full_name}"),
+                    ));
+                }
+                let owner = sanitize_clone_path_segment(owner)?;
+                let name = sanitize_clone_path_segment(name)?;
+                if let Some(conflict) = case_fold_sibling_conflict(root, &owner) {
+                    return Err(clone_error(
+                        "workspace_owner_path_conflict",
+                        format!("owner 目录存在大小写冲突：{}", conflict.display()),
+                    ));
+                }
+                let owner_path = root.join(&owner);
+                if owner_path.exists() && !owner_path.is_dir() {
+                    return Err(clone_error(
+                        "workspace_owner_path_conflict",
+                        format!("owner 路径不是目录：{}", owner_path.display()),
+                    ));
+                }
+                if owner_path.is_dir() {
+                    if let Some(conflict) = case_fold_sibling_conflict(&owner_path, &name) {
+                        return Err(clone_error(
+                            "workspace_owner_path_conflict",
+                            format!("仓库目录存在大小写冲突：{}", conflict.display()),
+                        ));
+                    }
+                }
+                owner_path.join(name)
+            } else {
+                root.join(sanitize_clone_path_segment(&infer_clone_directory_name(
+                    &remote,
+                )?)?)
+            }
+        }
+    };
+    validate_clone_target_containment(root, &target)?;
+    validate_clone_target_length(&target)?;
+    Ok(WorkspaceClonePlan { remote, target })
 }
 
 pub(super) fn normalize_git_remote_error(remote: &str, error: String) -> String {
@@ -940,6 +1441,8 @@ fn summarize_repo_from_status(
         relative_path,
         current_branch: status.current_branch.clone(),
         github_full_name: remote_url.as_deref().and_then(github_full_name_from_remote),
+        github_repository_id: None,
+        canonical_remote_url: remote_url.as_deref().and_then(canonical_github_remote_url),
         remote_url,
         ahead: status.ahead,
         behind: status.behind,
@@ -973,6 +1476,8 @@ pub(super) fn lightweight_repo_summary(root: &Path, path: &Path) -> RepoSummary 
         current_branch: None,
         remote_url: None,
         github_full_name: None,
+        github_repository_id: None,
+        canonical_remote_url: None,
         ahead: 0,
         behind: 0,
         remote_branch_states: Vec::new(),
@@ -1298,7 +1803,13 @@ pub async fn workspace_refresh_repos(app: AppHandle) -> Result<Vec<RepoSummary>,
         let root = workspace_root(&app)?;
         let mut settings = load_settings(&app);
         let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
+        if backfill_workspace_repo_bindings(&mut settings, &root, &paths) {
+            save_settings(&app, &settings)?;
+        }
         let mut repos = summarize_repos(&root, paths);
+        for summary in &mut repos {
+            apply_workspace_repo_binding(summary, &settings);
+        }
         sort_repos(&mut repos);
         for summary in &repos {
             let _ = write_startup_repo_summary(&app, &settings, summary);
@@ -1321,12 +1832,18 @@ pub async fn workspace_list_managed_repos(app: AppHandle) -> Result<Vec<RepoSumm
         let mut settings = load_settings(&app);
         let cache = matching_startup_cache(&app, &settings);
         let paths = managed_repo_paths_and_prune_settings(&app, &root, &mut settings)?;
+        if backfill_workspace_repo_bindings(&mut settings, &root, &paths) {
+            save_settings(&app, &settings)?;
+        }
         let mut repos: Vec<_> = paths
             .into_iter()
             .map(|path| {
                 let common_dir = git_common_dir(&path).unwrap_or_else(|| path.clone());
                 with_repo_guard(common_dir, RepoAccess::Read, || {
-                    cached_repo_summary(&cache, lightweight_repo_summary(&root, &path))
+                    let mut summary =
+                        cached_repo_summary(&cache, lightweight_repo_summary(&root, &path));
+                    apply_workspace_repo_binding(&mut summary, &settings);
+                    summary
                 })
             })
             .collect();
@@ -1357,10 +1874,14 @@ pub async fn workspace_discover_repos(app: AppHandle) -> Result<Vec<RepoSummary>
             for path in &paths {
                 add_managed_repo_id(&mut settings, repo_id(&root, path));
             }
+            backfill_workspace_repo_bindings(&mut settings, &root, &paths);
             save_settings(&app, &settings)?;
             crate::workspace::watcher::sync_repo_watchers(&app);
             let mut repos =
                 filter_hidden_repos(summarize_repos(&root, paths), &settings.hidden_repo_ids);
+            for summary in &mut repos {
+                apply_workspace_repo_binding(summary, &settings);
+            }
             sort_repos(&mut repos);
             Ok(repos)
         },
@@ -1380,17 +1901,18 @@ pub async fn workspace_add_repo(app: AppHandle, repo_path: String) -> Result<Rep
         "添加仓库",
         move || {
             let mut settings = load_settings(&app);
-            for managed_path in
-                expand_repo_paths_with_root_worktrees_unlocked(&root, vec![path.clone()])
-            {
+            let managed_paths =
+                expand_repo_paths_with_root_worktrees_unlocked(&root, vec![path.clone()]);
+            for managed_path in &managed_paths {
                 add_managed_repo_id(&mut settings, repo_id(&root, &managed_path));
             }
+            backfill_workspace_repo_bindings(&mut settings, &root, &managed_paths);
             settings
                 .hidden_repo_ids
                 .retain(|id| id != &selected_repo_id);
             save_settings(&app, &settings)?;
             crate::workspace::watcher::sync_repo_watchers(&app);
-            let summary = summarize_repo(&root, &path);
+            let summary = summarize_workspace_repo(&root, &path, &settings);
             let _ = write_startup_repo_summary(&app, &settings, &summary);
             Ok(summary)
         },
@@ -1485,8 +2007,7 @@ pub async fn workspace_create_local_repo(
 
 pub async fn workspace_clone_repo(
     app: AppHandle,
-    remote_url: String,
-    directory_name: Option<String>,
+    request: WorkspaceCloneRepoRequest,
 ) -> Result<RepoSummary, String> {
     run_core_operation_as(
         app.clone(),
@@ -1495,45 +2016,74 @@ pub async fn workspace_clone_repo(
         "克隆仓库",
         move || {
             let root = workspace_root(&app)?;
-            let input = remote_url.trim();
-            if input.is_empty() {
-                return Err("远端 URL 不能为空".to_string());
-            }
-            let normalized_github = normalize_github_repo_input(input).ok();
-            let remote = normalized_github
-                .as_ref()
-                .map(|repo| repo.clone_url.as_str())
-                .unwrap_or(input);
-            let directory = normalize_clone_directory_name(remote, directory_name)?;
-            let target = root.join(&directory);
-            if target.exists() {
-                return Err(format!("目标目录已存在：{}", target.display()));
-            }
-            if target.parent() != Some(root.as_path()) {
-                return Err("目标目录必须位于工作区内".to_string());
-            }
-            let auth_header =
-                if normalized_github.is_some() || parse_github_remote(remote).is_some() {
+            let plan = plan_workspace_clone(&root, &request)?;
+            let remote = plan.remote;
+            let target = plan.target;
+            let disposition = inspect_clone_target(&target, &remote)?;
+
+            if disposition == CloneTargetDisposition::Clone {
+                let auth_header = if request.repository.is_some()
+                    || normalize_github_repo_input(&request.remote_url).is_ok()
+                    || parse_github_remote(&remote).is_some()
+                {
                     token_for_binding(&app)?.map(|token| github_auth_header(&token))
                 } else {
                     None
                 };
-            let run_clone = |auth: Option<&str>| {
-                git_command(&root, &["clone", remote, directory.as_str()], auth)
-                    .map_err(|error| normalize_git_remote_error(remote, error))
-            };
-            if let Err(error) = run_clone(auth_header.as_deref()) {
-                if !should_retry_clone_with_system_git(remote, &error) {
-                    return Err(error);
+                let target_existed = target.exists();
+                let mut created_directories = create_clone_parent_directories(&root, &target)?;
+                if let Some(parent) = target.parent() {
+                    if let Some(file_name) = target.file_name().and_then(|value| value.to_str()) {
+                        if let Some(conflict) = case_fold_sibling_conflict(parent, file_name) {
+                            remove_created_empty_directories(&created_directories);
+                            return Err(clone_error(
+                                "workspace_owner_path_conflict",
+                                format!("克隆目标存在大小写冲突：{}", conflict.display()),
+                            ));
+                        }
+                    }
                 }
-                run_clone(None)?;
-                remember_repo_uses_system_git(&app, &target)?;
+                let target_text = compatible_path_text(&target);
+                let run_clone = |auth: Option<&str>| {
+                    git_command(
+                        &root,
+                        &["clone", remote.as_str(), target_text.as_str()],
+                        auth,
+                    )
+                    .map_err(|error| normalize_git_remote_error(&remote, error))
+                };
+                if let Err(error) = run_clone(auth_header.as_deref()) {
+                    let final_error = if should_retry_clone_with_system_git(&remote, &error) {
+                        if !target_existed {
+                            let _ = fs::remove_dir(&target);
+                        }
+                        run_clone(None)
+                    } else {
+                        Err(error)
+                    };
+                    if let Err(error) = final_error {
+                        if !target_existed {
+                            created_directories.push(target.clone());
+                        }
+                        remove_created_empty_directories(&created_directories);
+                        return Err(error);
+                    }
+                    remember_repo_uses_system_git(&app, &target)?;
+                }
             }
             let mut settings = load_settings(&app);
-            add_managed_repo_id(&mut settings, repo_id(&root, &target));
+            let cloned_repo_id = repo_id(&root, &target);
+            add_managed_repo_id(&mut settings, cloned_repo_id.clone());
+            settings.hidden_repo_ids.retain(|id| id != &cloned_repo_id);
+            upsert_workspace_repo_binding(
+                &mut settings,
+                &root,
+                &target,
+                request.repository.as_ref(),
+            );
             save_settings(&app, &settings)?;
             crate::workspace::watcher::sync_repo_watchers(&app);
-            let summary = summarize_repo(&root, &target);
+            let summary = summarize_workspace_repo(&root, &target, &settings);
             let _ = write_startup_repo_summary(&app, &settings, &summary);
             Ok(summary)
         },
@@ -1550,7 +2100,11 @@ pub async fn repo_get_summary(app: AppHandle, repo_id: String) -> Result<RepoSum
         move || {
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
-            Ok(summarize_repo(&root, &path))
+            let mut settings = load_settings(&app);
+            if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
+                save_settings(&app, &settings)?;
+            }
+            Ok(summarize_workspace_repo(&root, &path, &settings))
         },
     )
     .await
@@ -1616,8 +2170,11 @@ pub async fn repo_refresh_summary(
             } else {
                 None
             };
-            let summary = summarize_repo(&root, &path);
-            let settings = load_settings(&app);
+            let mut settings = load_settings(&app);
+            if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
+                save_settings(&app, &settings)?;
+            }
+            let summary = summarize_workspace_repo(&root, &path, &settings);
             if fetched_remote && fetch_error.is_none() {
                 let _ =
                     write_startup_repo_summary_after_fetch(&app, &settings, &summary, now_millis());
@@ -1647,8 +2204,12 @@ pub async fn repo_refresh_language_stats(
         move || {
             let root = workspace_root(&app)?;
             let path = repo_path_by_id(&app, &repo_id)?;
-            let summary = summarize_repo_with_language_stats(&root, &path);
-            let settings = load_settings(&app);
+            let mut summary = summarize_repo_with_language_stats(&root, &path);
+            let mut settings = load_settings(&app);
+            if upsert_workspace_repo_binding(&mut settings, &root, &path, None) {
+                save_settings(&app, &settings)?;
+            }
+            apply_workspace_repo_binding(&mut summary, &settings);
             let _ = write_startup_repo_summary(&app, &settings, &summary);
             Ok(summary)
         },

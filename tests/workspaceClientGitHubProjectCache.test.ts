@@ -8,6 +8,7 @@ import {
   deleteGitHubRelease,
   deleteGitHubReleaseAsset,
   getRepoFilePreview,
+  getGitHubBindingStatus,
   getGitHubRepoCommitDetail,
   getGitHubRepoManagement,
   getGitHubRepoSettingsSection,
@@ -399,6 +400,64 @@ describe("workspace GitHub project cache", () => {
     const refreshed = await listGitHubRepos();
     expect(refreshed.items[0]?.description).toBe("Updated repository tools");
     expect(refreshed.items[0]?.defaultBranch).toBe("release");
+  });
+
+  it("仓库列表缓存按账号、scope 和 page 隔离", async () => {
+    const personal = githubRepoSummary({
+      id: 1,
+      name: "personal",
+      fullName: "lilia-user/personal",
+      ownerLogin: "lilia-user",
+    });
+    const organization = githubRepoSummary({
+      id: 2,
+      name: "organization",
+      fullName: "sena-nana/organization",
+      ownerLogin: "sena-nana",
+    });
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{
+      items: [personal, organization],
+      nextPage: null,
+    }]);
+    await getGitHubBindingStatus();
+
+    const personalPage = await listGitHubRepos({ kind: "personal", login: "lilia-user" }, 1);
+    const organizationPage = await listGitHubRepos({ kind: "organization", login: "sena-nana" }, 1);
+
+    expect(personalPage.items.map((repo) => repo.fullName)).toEqual(["lilia-user/personal"]);
+    expect(organizationPage.items.map((repo) => repo.fullName)).toContain("sena-nana/organization");
+    expect(organizationPage.items.every((repo) => repo.ownerLogin === "sena-nana")).toBe(true);
+    expect(personalPage.scope).toEqual({ kind: "personal", login: "lilia-user" });
+    expect(organizationPage.scope).toEqual({ kind: "organization", login: "sena-nana" });
+  });
+
+  it("重新授权后的 scope revision 不复用旧账号仓库缓存", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{
+      items: [githubRepoSummary({ description: "旧授权缓存" })],
+      nextPage: null,
+    }]);
+    await getGitHubBindingStatus();
+    expect((await listGitHubRepos()).items[0]?.description).toBe("旧授权缓存");
+
+    workspaceFallback.setFallbackGitHubBindingStatusForTests({
+      state: "bound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding: {
+        login: "another-user",
+        avatarUrl: null,
+        boundAt: Date.now() + 1,
+        scopes: ["repo", "read:org"],
+        clientIdSource: "bundled",
+      },
+    });
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([{
+      items: [githubRepoSummary({ description: "新授权数据" })],
+      nextPage: null,
+    }]);
+    await getGitHubBindingStatus();
+
+    expect((await listGitHubRepos()).items[0]?.description).toBe("新授权数据");
   });
 
   it("默认分支和分支删除保存后刷新 branches 设置分区", async () => {

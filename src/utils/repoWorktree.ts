@@ -1,4 +1,5 @@
 import type { RepoSummary, RepoWorktreeRole } from "../services/workspace";
+import { githubRepositoryIdentityKey } from "./remoteRepo";
 
 const REPRESENTATIVE_ROLE_PRIORITY: Record<RepoWorktreeRole, number> = {
   main: 0,
@@ -41,9 +42,10 @@ export function representativeReposByGitHubFullName<T extends RepoSummary>(repos
   for (const repo of representativeReposBySharedGroup(repos)) {
     const fullName = repo.githubFullName?.trim();
     if (!fullName) continue;
-    const current = grouped.get(fullName);
+    const key = githubRepositoryIdentityKey(fullName);
+    const current = grouped.get(key);
     if (!current || compareRepoRepresentative(repo, current) < 0) {
-      grouped.set(fullName, repo);
+      grouped.set(key, repo);
     }
   }
   return grouped;

@@ -4,7 +4,7 @@ delegate_command!(github; fn github_get_binding_status(app: AppHandle) -> Result
 delegate_command!(async github; fn github_start_device_flow(app: AppHandle) -> Result<GitHubDeviceFlowStart, String>);
 delegate_command!(async github; fn github_poll_device_flow(app: AppHandle, device_code: String, interval_seconds: Option<i64>,) -> Result<GitHubDeviceFlowPollResult, String>);
 delegate_command!(github; fn github_unbind(app: AppHandle) -> Result<(), String>);
-delegate_command!(async github; fn github_list_repos(app: AppHandle, page: Option<u32>,) -> Result<GitHubRepoPage, String>);
+delegate_command!(async github; fn github_list_repos(app: AppHandle, scope: Option<GitHubRepositoryScope>, page: Option<u32>,) -> Result<GitHubRepoPage, String>);
 delegate_command!(async github; fn github_list_repo_owners(app: AppHandle) -> Result<Vec<GitHubRepoOwner>, String>);
 delegate_command!(async github; fn github_list_repo_templates(app: AppHandle) -> Result<Vec<GitHubRepoTemplate>, String>);
 delegate_command!(async github; fn github_create_repo(app: AppHandle, request: GitHubCreateRepoRequest,) -> Result<GitHubRepoSummary, String>);

@@ -17,6 +17,10 @@ const authError = computed(() => {
   }
   return null;
 });
+const organizationAccessLimited = computed(() => {
+  const binding = workspace.githubBinding.value;
+  return Boolean(binding && !binding.scopes.includes("read:org"));
+});
 
 async function startGitHubAuth() {
   if (workspace.state.authLoading || unbindingGitHub.value) return;
@@ -116,6 +120,22 @@ watch(
           </UiButton>
         </template>
       </div>
+    </SettingsRow>
+
+    <SettingsRow
+      v-if="organizationAccessLimited"
+      label="组织信息可能不完整"
+      hint="现有仓库仍可继续使用；补充授权后可读取完整的关联组织。"
+    >
+      <UiButton
+        size="sm"
+        agent-id="settings.repositories.github.organization-authorize"
+        :disabled="workspace.state.authLoading || unbindingGitHub"
+        :busy="workspace.state.authLoading"
+        @click="startGitHubAuth"
+      >
+        补充组织权限
+      </UiButton>
     </SettingsRow>
 
     <SettingsRow

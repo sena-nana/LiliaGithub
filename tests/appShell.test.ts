@@ -706,7 +706,7 @@ describe("AppShell sidebar", () => {
     await createSidebarRepoGroup(view, "前端");
     await selectHomeCreateRepoAction(view, "创建远程仓库");
     const dialog = await view.findByRole("dialog", { name: "新建 GitHub 仓库" });
-    await within(dialog).findByRole("button", { name: /lilia-user · user/ });
+    await within(dialog).findByRole("button", { name: /lilia-user · 个人/ });
     await selectCreateRepoGroup(view, dialog, "前端");
     await fireEvent.update(within(dialog).getByLabelText("仓库名"), "template-made");
     await fireEvent.click(within(dialog).getByLabelText("使用模板"));
@@ -717,7 +717,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/template-made");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/lilia-user%2Ftemplate-made");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
     await toggleSidebarRepoGroup(view, "前端");
@@ -809,6 +809,7 @@ describe("AppShell sidebar", () => {
       ...state.settings!,
       remoteRepoShortcuts: [
         {
+          accountLogin: "lilia-user",
           fullName: "sena-nana/RemoteOnly",
           name: "RemoteOnly",
           private: true,
@@ -873,6 +874,40 @@ describe("AppShell sidebar", () => {
       );
       expect(view.queryByText("远程仓库 1")).toBeNull();
     });
+  });
+
+  it("侧边栏按需展开 owner 后加载并去重全部远程仓库分页", async () => {
+    const service = await import("../src/services/workspace");
+    const originalListGitHubRepos = service.listGitHubRepos;
+    const firstPageRepo = githubRepoSummary("sena-nana/OwnerPageOne", { id: 9101 });
+    const duplicateRepo = githubRepoSummary("sena-nana/OwnerPageOne", { id: 9101 });
+    const secondPageRepo = githubRepoSummary("sena-nana/OwnerPageTwo", { id: 9102 });
+    const listGitHubRepos = vi.spyOn(service, "listGitHubRepos").mockImplementation(async (scopeOrPage, page) => {
+      if (typeof scopeOrPage === "object" && scopeOrPage?.kind === "organization") {
+        return page === 2
+          ? { items: [duplicateRepo, secondPageRepo], nextPage: null, scope: scopeOrPage }
+          : { items: [firstPageRepo], nextPage: 2, scope: scopeOrPage };
+      }
+      return originalListGitHubRepos(scopeOrPage, page);
+    });
+
+    try {
+      const view = await renderAppShell("/");
+
+      await fireEvent.click(await view.findByRole("button", { name: "展开 sena-nana" }));
+      expect(await view.findByText("OwnerPageTwo")).toBeInTheDocument();
+      expect(view.getAllByText("OwnerPageOne")).toHaveLength(1);
+      expect(listGitHubRepos).toHaveBeenCalledWith(
+        { kind: "organization", login: "sena-nana" },
+        1,
+      );
+      expect(listGitHubRepos).toHaveBeenCalledWith(
+        { kind: "organization", login: "sena-nana" },
+        2,
+      );
+    } finally {
+      listGitHubRepos.mockRestore();
+    }
   });
 
   it("总览页一键同步运行中显示按钮和仓库行状态", async () => {
@@ -1156,6 +1191,35 @@ describe("AppShell sidebar", () => {
     });
   });
 
+  it("原地换绑账号时清空旧 owner 与仓库快照并强制重载", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      { items: [githubRepoSummary("sena-nana/BeforeReauth")], nextPage: null },
+    ]);
+    const view = await renderAppShell("/");
+    expect(await view.findByText("sena-nana/BeforeReauth")).toBeInTheDocument();
+
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      { items: [githubRepoSummary("next-user/AfterReauth")], nextPage: null },
+    ]);
+    const binding: GitHubBindingMetadata = {
+      login: "next-user",
+      avatarUrl: null,
+      boundAt: 1_780_000_000_001,
+      scopes: ["repo", "read:org"],
+      clientIdSource: "bundled",
+    };
+    state.settings = { ...state.settings!, githubBinding: binding };
+    state.bindingStatus = {
+      state: "bound",
+      clientIdConfigured: true,
+      clientIdSource: "bundled",
+      binding,
+    };
+
+    expect(await view.findByText("next-user/AfterReauth")).toBeInTheDocument();
+    expect(view.queryByText("sena-nana/BeforeReauth")).toBeNull();
+  });
+
   it("总览页搜索同名仓库时本地优先并去掉远程重复项", async () => {
     workspaceFallback.setFallbackGitHubRepoPagesForTests([
       {
@@ -1203,7 +1267,10 @@ describe("AppShell sidebar", () => {
     const settings = await workspace.createRepoGroup("即时搜索");
     const groupId = settings.repoGroups.find((group) => group.name === "即时搜索")?.id;
     expect(groupId).toBeTruthy();
-    const repo = await workspace.cloneRepo("https://github.com/sena-nana/InstantSearchRepo.git", "InstantSearchRepo");
+    const repo = await workspace.cloneRepo({
+      remoteUrl: "https://github.com/sena-nana/InstantSearchRepo.git",
+      target: { kind: "default" },
+    });
     await workspace.moveRepoToGroup(repo.id, groupId!);
 
     await fireEvent.click(within(view.getByLabelText("项目总览操作")).getByRole("button", { name: "搜索" }));
@@ -1251,8 +1318,24 @@ describe("AppShell sidebar", () => {
       await fireEvent.click(secondCloneButton);
       await waitFor(() => {
         expect(cloneRepo.mock.calls).toEqual([
-          [firstRemoteRepo.cloneUrl, firstRemoteRepo.name],
-          [secondRemoteRepo.cloneUrl, secondRemoteRepo.name],
+          [{
+            remoteUrl: firstRemoteRepo.cloneUrl,
+            repository: {
+              id: firstRemoteRepo.id,
+              fullName: firstRemoteRepo.fullName,
+              cloneUrl: firstRemoteRepo.cloneUrl,
+            },
+            target: { kind: "default" },
+          }],
+          [{
+            remoteUrl: secondRemoteRepo.cloneUrl,
+            repository: {
+              id: secondRemoteRepo.id,
+              fullName: secondRemoteRepo.fullName,
+              cloneUrl: secondRemoteRepo.cloneUrl,
+            },
+            target: { kind: "default" },
+          }],
         ]);
         expect(firstCloneButton).toBeDisabled();
         expect(secondCloneButton).toBeDisabled();
@@ -1263,7 +1346,7 @@ describe("AppShell sidebar", () => {
       await waitFor(() => {
         expect(firstCloneButton).toBeDisabled();
         expect(secondCloneButton).not.toBeDisabled();
-        expect(view.getByText(`克隆 ${secondRemoteRepo.fullName} 失败：Error: second clone failed`)).toBeInTheDocument();
+        expect(view.getByText(`克隆 ${secondRemoteRepo.fullName} 失败：second clone failed`)).toBeInTheDocument();
       });
 
       firstClone.reject(new Error("first clone failed"));
@@ -1323,6 +1406,11 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
+    state.repos = [
+      ...state.repos,
+      repoSummary("case-local", { githubFullName: "SENA-NANA/LILIAGITHUB" }),
+    ];
+
     await createSidebarRepoGroup(view, "前端");
     await openHomeCloneDialog(view, "前端");
 
@@ -1330,9 +1418,11 @@ describe("AppShell sidebar", () => {
     const dialog = view.getByRole("dialog", { name: "克隆仓库" });
     const input = await view.findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
     expect(view.getByText(/当前绑定账号：/)).toBeInTheDocument();
+    expect(within(dialog).queryByText("没有匹配仓库")).not.toBeInTheDocument();
 
     await fireEvent.focus(input);
     expect(await within(dialog).findByText("sena-nana/Lilia")).toBeInTheDocument();
+    expect(within(dialog).getByText("· 已在本地")).toBeInTheDocument();
 
     await fireEvent.click(within(dialog).getByText("sena-nana/Lilia"));
     expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("Lilia");
@@ -1340,9 +1430,37 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/Lilia");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FLilia");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
+  });
+
+  it("克隆弹窗搜索时耗尽剩余分页，不因首页已有匹配而漏掉后页", async () => {
+    workspaceFallback.setFallbackGitHubRepoPagesForTests([
+      {
+        items: [githubRepoSummary("sena-nana/TargetFirst", { archived: true })],
+        nextPage: 2,
+      },
+      {
+        items: [githubRepoSummary("sena-nana/Unrelated")],
+        nextPage: 3,
+      },
+      {
+        items: [githubRepoSummary("sena-nana/TargetLast")],
+        nextPage: null,
+      },
+    ]);
+    const view = await renderAppShell("/");
+    await openHomeCloneDialog(view);
+    const dialog = await view.findByRole("dialog", { name: "克隆仓库" });
+    const input = await within(dialog).findByPlaceholderText("搜索仓库，或直接输入 owner/repo");
+
+    await fireEvent.update(input, "Target");
+
+    expect(await within(dialog).findByText("sena-nana/TargetFirst")).toBeInTheDocument();
+    expect(within(dialog).getByText("· 已归档")).toBeInTheDocument();
+    expect(await within(dialog).findByText("sena-nana/TargetLast")).toBeInTheDocument();
+    expect(within(dialog).queryByText("sena-nana/Unrelated")).toBeNull();
   });
 
   it("首页入口可打开克隆仓库入口并按分组归位", async () => {
@@ -1365,7 +1483,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(within(dialog).getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/HomeClone");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FHomeClone");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
     await toggleSidebarRepoGroup(view, "前端");
@@ -1390,7 +1508,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/NewRepo");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FNewRepo");
       expect(sidebarRowForText(view.container, "NewRepo")).toBeInTheDocument();
     });
   });
@@ -1419,7 +1537,7 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/repos/TapdClient");
+      expect(view.router.currentRoute.value.fullPath).toBe("/repos/meijustory123%2FTapdClient");
       expect(sidebarRowForText(view.container, "TapdClient")).toBeInTheDocument();
     });
   });
