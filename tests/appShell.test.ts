@@ -707,43 +707,128 @@ describe("AppShell sidebar", () => {
     });
   });
 
-  it("收藏仓库在首页与侧栏同步呈现并支持本地、远程来源取消", async () => {
+  it("本地仓库置顶后只在顶部显示并保留状态与普通仓库操作", async () => {
     const view = await renderAppShell("/");
 
     await waitFor(() => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
+    await createSidebarRepoGroup(view, "前端");
+    upsertRepo(repoSummary("LiliaGithub", { unstagedCount: 2, ahead: 3, behind: 1 }));
 
     await fireEvent.contextMenu(sidebarRowForText(view.container, "LiliaGithub"));
-    await fireEvent.click(await view.findByRole("menuitem", { name: "收藏仓库" }));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "置顶仓库" }));
 
     await waitFor(() => {
-      expect(view.getByRole("link", { name: "打开收藏 LiliaGithub" })).toBeInTheDocument();
-      expect(view.getByRole("button", { name: "取消收藏 sena-nana/LiliaGithub" })).toBeInTheDocument();
+      expect(view.getByText("置顶仓库 1")).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "未分组仓库", 1)).toBeInTheDocument();
+      expect(view.getByRole("button", { name: "取消置顶 sena-nana/LiliaGithub" })).toBeInTheDocument();
       expect(state.settings?.favoriteRepoIds).toContain("LiliaGithub");
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "取消收藏 LiliaGithub" }));
+    const pinnedRow = view.getByRole("link", { name: "打开置顶 LiliaGithub" });
+    expect(view.container.querySelectorAll('[data-sidebar-repo-id="LiliaGithub"]')).toHaveLength(1);
+    expect(within(pinnedRow).getByText("2")).toBeInTheDocument();
+    expect(within(pinnedRow).getByText("↑3")).toBeInTheDocument();
+    expect(within(pinnedRow).getByText("↓1")).toBeInTheDocument();
+    expect(within(pinnedRow).queryByText("本地")).toBeNull();
+    expect(within(pinnedRow).queryByText("远程")).toBeNull();
+    expect(pinnedRow.querySelector(".lucide-star, .lucide-pin")).toBeNull();
+
+    await moveSidebarRepoToGroup(view, "LiliaGithub", "前端");
     await waitFor(() => {
-      expect(view.queryByRole("link", { name: "打开收藏 LiliaGithub" })).toBeNull();
-      expect(view.getByRole("button", { name: "收藏 sena-nana/LiliaGithub" })).toBeInTheDocument();
+      expect(view.getByRole("link", { name: "打开置顶 LiliaGithub" })).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "前端", 0)).toBeInTheDocument();
+      expect(state.settings?.repoGroups.find((group) => group.name === "前端")?.repoIds).toContain("LiliaGithub");
+    });
+
+    await fireEvent.contextMenu(sidebarRowForText(view.container, "LiliaGithub"));
+    expect(await view.findByRole("menuitem", { name: "移动到分组" })).toBeInTheDocument();
+    expect(view.getByRole("menuitem", { name: "隐藏仓库" })).toBeInTheDocument();
+    await fireEvent.click(view.getByRole("menuitem", { name: "取消置顶" }));
+
+    await waitFor(() => {
+      expect(view.getByText("置顶仓库 0")).toBeInTheDocument();
+      expect(view.queryByRole("link", { name: "打开置顶 LiliaGithub" })).toBeNull();
+      expect(view.getByRole("button", { name: "置顶 sena-nana/LiliaGithub" })).toBeInTheDocument();
+      expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
       expect(state.settings?.favoriteRepoIds).not.toContain("LiliaGithub");
     });
+  });
 
-    const remoteFavoriteButton = await view.findByRole("button", { name: "收藏 sena-nana/LiliaGithub" });
-    await fireEvent.click(remoteFavoriteButton);
+  it("仓库状态置顶按钮的键盘事件不会触发父行导航", async () => {
+    const view = await renderAppShell("/");
+    const pinButton = await view.findByRole("button", { name: "置顶 sena-nana/LiliaGithub" });
+
+    pinButton.focus();
+    expect(pinButton).toHaveFocus();
+    await fireEvent.keyDown(pinButton, { key: "Enter" });
+    await fireEvent.keyUp(pinButton, { key: "Enter" });
+
+    expect(view.router.currentRoute.value.fullPath).toBe("/");
+  });
+
+  it("远程仓库置顶后显示普通远程状态并可从侧栏移除", async () => {
+    const view = await renderAppShell("/");
+    const workspace = useWorkspace();
+
+    await workspace.setRemoteRepoFavorite({
+      accountLogin: "lilia-user",
+      fullName: "sena-nana/RemoteOnly",
+      name: "RemoteOnly",
+      private: true,
+      archived: true,
+      defaultBranch: "main",
+      htmlUrl: "https://github.com/sena-nana/RemoteOnly",
+      cloneUrl: "https://github.com/sena-nana/RemoteOnly.git",
+      openedAt: 10,
+    }, true);
+
+    const pinnedRow = await view.findByRole("link", { name: "打开置顶 RemoteOnly" });
+    expect(within(pinnedRow).getByText("ARCH")).toBeInTheDocument();
+    expect(within(pinnedRow).getByText("私有")).toBeInTheDocument();
+    expect(within(pinnedRow).queryByText("远程")).toBeNull();
+    expect(view.queryByText("远程仓库 1")).toBeNull();
+
+    await fireEvent.click(within(pinnedRow).getByRole("button", { name: "移除 sena-nana/RemoteOnly" }));
     await waitFor(() => {
-      expect(view.getByRole("link", { name: "打开收藏 LiliaGithub" })).toBeInTheDocument();
-      expect(view.getByRole("button", { name: "取消收藏 sena-nana/LiliaGithub" })).toBeInTheDocument();
-      expect(state.settings?.remoteRepoShortcuts.some((repo) =>
-        repo.fullName === "sena-nana/LiliaGithub" && repo.favorite
-      )).toBe(true);
+      expect(view.queryByRole("link", { name: "打开置顶 RemoteOnly" })).toBeNull();
+      expect(state.settings?.remoteRepoShortcuts.some((repo) => repo.fullName === "sena-nana/RemoteOnly")).toBe(false);
+      expect(view.queryByText("远程仓库 1")).toBeNull();
+    });
+  });
+
+  it("本地与远程双来源置顶只显示一行并在取消时同时清理", async () => {
+    const view = await renderAppShell("/");
+    const workspace = useWorkspace();
+
+    await workspace.setLocalRepoFavorite("LiliaGithub", true);
+    await workspace.setRemoteRepoFavorite({
+      accountLogin: "lilia-user",
+      fullName: "sena-nana/LiliaGithub",
+      name: "LiliaGithub",
+      private: false,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: "https://github.com/sena-nana/LiliaGithub",
+      cloneUrl: "https://github.com/sena-nana/LiliaGithub.git",
+      openedAt: 10,
+    }, true);
+
+    await waitFor(() => {
+      expect(view.getByText("置顶仓库 1")).toBeInTheDocument();
+      expect(view.container.querySelectorAll('[data-sidebar-repo-id="LiliaGithub"]')).toHaveLength(1);
+      expect(state.settings?.favoriteRepoIds).toContain("LiliaGithub");
+      expect(state.settings?.remoteRepoShortcuts.find((repo) => repo.fullName === "sena-nana/LiliaGithub")?.favorite).toBe(true);
     });
 
-    await fireEvent.click(view.getByRole("button", { name: "取消收藏 LiliaGithub" }));
+    await fireEvent.contextMenu(sidebarRowForText(view.container, "LiliaGithub"));
+    await fireEvent.click(await view.findByRole("menuitem", { name: "取消置顶" }));
     await waitFor(() => {
-      expect(view.queryByRole("link", { name: "打开收藏 LiliaGithub" })).toBeNull();
-      expect(state.settings?.remoteRepoShortcuts.some((repo) => repo.favorite)).toBe(false);
+      expect(view.getByText("置顶仓库 0")).toBeInTheDocument();
+      expect(state.settings?.favoriteRepoIds).not.toContain("LiliaGithub");
+      expect(state.settings?.remoteRepoShortcuts.find((repo) => repo.fullName === "sena-nana/LiliaGithub")?.favorite).toBe(false);
+      expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     });
   });
 
@@ -876,22 +961,17 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    state.settings = {
-      ...state.settings!,
-      remoteRepoShortcuts: [
-        {
-          accountLogin: "lilia-user",
-          fullName: "sena-nana/RemoteOnly",
-          name: "RemoteOnly",
-          private: true,
-          archived: false,
-          defaultBranch: "main",
-          htmlUrl: "https://github.com/sena-nana/RemoteOnly",
-          cloneUrl: "https://github.com/sena-nana/RemoteOnly.git",
-          openedAt: 10,
-        },
-      ],
-    };
+    await useWorkspace().rememberRemoteRepo({
+      accountLogin: "lilia-user",
+      fullName: "sena-nana/RemoteOnly",
+      name: "RemoteOnly",
+      private: true,
+      archived: false,
+      defaultBranch: "main",
+      htmlUrl: "https://github.com/sena-nana/RemoteOnly",
+      cloneUrl: "https://github.com/sena-nana/RemoteOnly.git",
+      openedAt: 10,
+    });
 
     await waitFor(() => {
       expect(view.getByText("远程仓库 1")).toBeInTheDocument();

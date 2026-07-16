@@ -14,6 +14,7 @@ defineProps<{
   name: string;
   title: string;
   href: string;
+  agentId?: string;
   icon: Component;
   iconClass: string;
   active: boolean;
@@ -37,7 +38,7 @@ defineEmits<{
     :href="href"
     class="sb-tree__row sb-tree__row--project"
     :class="{ 'is-active': active }"
-    :data-agent-id="`sidebar.repo.${id}`"
+    :data-agent-id="agentId ?? `sidebar.repo.${id}`"
     :data-sidebar-repo-id="id"
     :title="title"
     @click="$emit('navigate', $event)"
