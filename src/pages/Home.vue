@@ -2349,26 +2349,30 @@ function bulkOperationDescription(operation: BulkOperation) {
           <div v-else class="language-chart" aria-label="编程语言占比图">
             <svg
               class="language-pie"
-              viewBox="0 0 42 42"
+              viewBox="0 0 132 132"
+              shape-rendering="geometricPrecision"
               role="img"
               aria-label="编程语言占比饼图"
             >
-              <circle class="language-pie__track" cx="21" cy="21" r="15.9155" />
-              <circle
-                v-for="slice in activeCodeOverview.slices"
-                :key="slice.key"
-                class="language-pie__slice"
-                cx="21"
-                cy="21"
-                r="15.9155"
-                :title="slice.title"
-                :aria-label="slice.title"
-                :stroke="slice.color"
-                :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
-                :stroke-dashoffset="-slice.offset"
-                @pointerenter="hoveredCodeSlice = slice"
-                @pointerleave="hoveredCodeSlice = null"
-              />
+              <g transform="rotate(-90 66 66)">
+                <circle class="language-pie__track" cx="66" cy="66" r="50" pathLength="100" />
+                <circle
+                  v-for="slice in activeCodeOverview.slices"
+                  :key="slice.key"
+                  class="language-pie__slice"
+                  cx="66"
+                  cy="66"
+                  r="50"
+                  pathLength="100"
+                  :title="slice.title"
+                  :aria-label="slice.title"
+                  :stroke="slice.color"
+                  :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
+                  :stroke-dashoffset="-slice.offset"
+                  @pointerenter="hoveredCodeSlice = slice"
+                  @pointerleave="hoveredCodeSlice = null"
+                />
+              </g>
             </svg>
             <ul class="language-list">
               <li v-for="slice in activeCodeOverview.slices" :key="slice.key">
@@ -3122,13 +3126,12 @@ function bulkOperationDescription(operation: BulkOperation) {
 .language-pie {
   width: 132px;
   height: 132px;
-  transform: rotate(-90deg);
 }
 
 .language-pie__track,
 .language-pie__slice {
   fill: none;
-  stroke-width: 10;
+  stroke-width: 28;
 }
 
 .language-pie__track {
@@ -3142,7 +3145,7 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .language-pie__slice:hover {
-  stroke-width: 11;
+  stroke-width: 30;
 }
 
 .language-list {
