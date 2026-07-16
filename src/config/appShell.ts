@@ -7,10 +7,14 @@ import {
   UserRound,
 } from "@lucide/vue";
 import {
-  LiliaAppearanceSection,
-  type LiliaAppConfig,
   type LiliaSidebarConfigInput,
-} from "@lilia/ui";
+  type LiliaUiConfig,
+} from "@lilia/ui/shell";
+import {
+  createLiliaSettingsModel,
+  LiliaAppearanceSection,
+  normalizeSettingsTab as normalizeLiliaSettingsTab,
+} from "@lilia/ui/settings";
 import type { Component } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
@@ -41,7 +45,7 @@ const footerStatus = {
   title: "GitHub 工作区状态。点击进入设置。",
   tone: "warn",
   icon: Sparkles,
-} satisfies NonNullable<LiliaSidebarConfigInput["footerStatus"]>;
+} satisfies NonNullable<LiliaSidebarConfigInput["footerStatuses"]>[number];
 
 export type SettingsTabKey = "appearance" | "account" | "repositories" | "about";
 
@@ -84,7 +88,7 @@ export const DEFAULT_SETTINGS_TAB: SettingsTabKey = "appearance";
 const repositoriesSection = createCachedAsyncComponent(() => import("../pages/settings/RepositoriesSection.vue"));
 const accountSection = createCachedAsyncComponent(() => import("../pages/settings/AccountSection.vue"));
 const aboutSection = createCachedAsyncComponent(() => import("../pages/settings/AboutSection.vue"));
-const agentDebugEnabled = import.meta.env.VITE_LILIA_AGENT_DEBUG === "1" ||
+export const LILIA_AGENT_DEBUG_ENABLED = import.meta.env.VITE_LILIA_AGENT_DEBUG === "1" ||
   import.meta.env.VITE_LILIA_GITHUB_AGENT_DEBUG === "1" ||
   import.meta.env.MODE === "agent-debug";
 
@@ -94,6 +98,14 @@ export const SETTINGS_SECTIONS: Record<SettingsTabKey, Component> = {
   repositories: repositoriesSection.component,
   about: aboutSection.component,
 };
+
+export const LILIA_SETTINGS_MODEL = createLiliaSettingsModel({
+  path: "/settings",
+  defaultTab: DEFAULT_SETTINGS_TAB,
+  description: "管理外观、账户、仓库和应用信息。",
+  tabs: SETTINGS_TABS,
+  sections: SETTINGS_SECTIONS,
+});
 
 export const LILIA_UI_CONFIG = {
   appName: "lilia-github",
@@ -110,34 +122,13 @@ export const LILIA_UI_CONFIG = {
       linux: { backdropMode: "solid" },
     },
   },
-  runtime: {
-    agentDebug: agentDebugEnabled,
-  },
-  shell: {
-    homeTitle: "概览",
-    homeDescription: "查看本地工作区和 GitHub 协作状态。",
-    workspaceSectionTitle: "工作区",
-    workspaceName: "GitHub Workspace",
-    workspaceEmptyText: "选择工作区后显示 Git 仓库。",
-    statusLabel: footerStatus.label,
-    statusTitle: footerStatus.title,
-    settingsDescription: "管理外观、账户、仓库和应用信息。",
-  },
   sidebar: {
     ...SIDEBAR_CONFIG,
     nav: SIDEBAR_NAV,
-    footerStatus,
+    footerStatuses: [footerStatus],
   },
-  settings: {
-    defaultTab: DEFAULT_SETTINGS_TAB,
-    tabs: SETTINGS_TABS,
-    sections: SETTINGS_SECTIONS,
-  },
-} satisfies LiliaAppConfig;
+} satisfies LiliaUiConfig;
 
 export function normalizeSettingsTab(value: unknown): SettingsTabKey {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  return SETTINGS_TABS.some((tab) => tab.key === candidate)
-    ? (candidate as SettingsTabKey)
-    : DEFAULT_SETTINGS_TAB;
+  return normalizeLiliaSettingsTab(LILIA_SETTINGS_MODEL, value) as SettingsTabKey;
 }

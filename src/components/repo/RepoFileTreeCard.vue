@@ -11,7 +11,7 @@ import {
   SquareTerminal,
   Trash2,
 } from "@lucide/vue";
-import type { ContextMenuItem } from "@lilia/ui";
+import type { ContextMenuItem } from "@lilia/ui/composables/useContextMenu";
 import type { RepoFileBrowser } from "./useRepoFileBrowser";
 import type { RepoFileTreeEntry } from "../../services/workspace/types";
 

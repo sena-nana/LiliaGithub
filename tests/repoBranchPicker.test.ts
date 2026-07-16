@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
-import { ContextMenuHost } from "@lilia/ui";
+import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import RepoBranchPicker from "../src/components/repo/RepoBranchPicker.vue";
-import { closeContextMenu, installContextMenu } from "@lilia/ui";
-import { vContextMenu } from "@lilia/ui";
+import { closeContextMenu, installContextMenu } from "@lilia/ui/composables/useContextMenu";
+import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 
 const branches = [
   {
@@ -136,9 +136,7 @@ function renderPicker(handlers: Record<string, unknown> = {}, pickerProps: Recor
 
   return render(Wrapper, {
     global: {
-      directives: {
-        contextMenu: vContextMenu,
-      },
+      plugins: [liliaContextMenuPlugin],
     },
   });
 }

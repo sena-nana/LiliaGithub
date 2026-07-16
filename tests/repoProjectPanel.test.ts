@@ -8,10 +8,10 @@ import {
   installContextMenu,
   selectContextMenuItem,
   useContextMenu,
-} from "@lilia/ui";
+} from "@lilia/ui/composables/useContextMenu";
 import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
-import { vContextMenu } from "@lilia/ui";
+import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 import {
   createGitHubPullRequest,
   createGitHubIssue,
@@ -807,10 +807,7 @@ async function renderProjectPanel(
       repoContext,
     },
     global: {
-      plugins: [router],
-      directives: {
-        contextMenu: vContextMenu,
-      },
+      plugins: [router, liliaContextMenuPlugin],
     },
   });
   return {

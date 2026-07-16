@@ -29,7 +29,12 @@ import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
-import { SidebarCollapse, openContextMenuAt, type ContextMenuItem, type ContextMenuProvider } from "@lilia/ui";
+import SidebarCollapse from "@lilia/ui/components/sidebar/SidebarCollapse";
+import {
+  openContextMenuAt,
+  type ContextMenuItem,
+  type ContextMenuProvider,
+} from "@lilia/ui/composables/useContextMenu";
 import { repoDisplayInfo, repoDisplayTitle, type RepoDisplaySource } from "../utils/repoDisplay";
 import {
   favoriteRepositories,

@@ -14,7 +14,7 @@ import {
   Search,
   Trash2,
 } from "@lucide/vue";
-import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
+import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui/composables/useContextMenu";
 
 type RepoBranchPickerItem = {
   name: string;

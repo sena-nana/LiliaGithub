@@ -1,5 +1,7 @@
-import { createLiliaRouter, LiliaSettingsPage } from "@lilia/ui";
+import { LiliaSettingsPage } from "@lilia/ui/settings";
+import { LiliaDesktopShell } from "@lilia/ui/shell";
 import {
+  createRouter,
   createWebHistory,
   type RouteRecordRaw,
   type Router,
@@ -47,7 +49,18 @@ export function installLiliaGithubRouterGuards(router: Router) {
 }
 
 export function createLiliaGithubRouter(history: RouterHistory = createWebHistory()) {
-  const router = createLiliaRouter(LILIA_GITHUB_ROUTES, undefined, history);
+  const router = createRouter({
+    history,
+    routes: [
+      {
+        path: "/",
+        component: LiliaDesktopShell,
+        meta: { sidebar: "main", returnable: true },
+        children: LILIA_GITHUB_ROUTES,
+      },
+      { path: "/:pathMatch(.*)*", redirect: "/" },
+    ],
+  });
   installLiliaGithubRouterGuards(router);
   return router;
 }

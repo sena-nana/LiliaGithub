@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
-import { buildContributionHeatmapModel } from "@lilia/ui";
+import { buildCalendarHeatmapModel } from "@lilia/ui/utils/calendarHeatmap";
 import { describe, expect, it } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import HomeContributionCard from "../src/components/home/HomeContributionCard.vue";
@@ -31,7 +31,7 @@ describe("HomeContributionCard", () => {
           hash: "#contribution-identity-list-title",
         },
         hasContributionDays: true,
-        chartModel: buildContributionHeatmapModel([{ date: "2026-06-11", count: 1 }]),
+        chartModel: buildCalendarHeatmapModel([{ date: "2026-06-11", value: 1 }]),
       },
     });
 
@@ -53,7 +53,7 @@ describe("HomeContributionCard", () => {
         skippedRepoCount: 1,
         skippedRepoActionButton: true,
         hasContributionDays: false,
-        chartModel: buildContributionHeatmapModel([]),
+        chartModel: buildCalendarHeatmapModel([]),
       },
     });
 

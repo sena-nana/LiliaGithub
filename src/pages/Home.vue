@@ -30,8 +30,9 @@ import {
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { cloneAccountPreferences, useAccountPreferences } from "../composables/useAccountPreferences";
-import { Dropdown, openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
-import { buildContributionHeatmapModel } from "@lilia/ui";
+import { Dropdown } from "@lilia/ui";
+import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui/composables/useContextMenu";
+import { buildCalendarHeatmapModel } from "@lilia/ui/utils/calendarHeatmap";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../composables/useWorkspace";
 import {
@@ -571,11 +572,14 @@ const overviewContributions = computed(() =>
 );
 
 const contributionHeatmapModel = computed(() =>
-  buildContributionHeatmapModel(overviewContributions.value.days, {
+  buildCalendarHeatmapModel(overviewContributions.value.days.map((day) => ({
+    date: day.date,
+    value: day.count,
+  })), {
     cellSize: 13,
     cellGap: 3,
     cellRadius: 3,
-    formatTitle: (day) => `${day.date}：${day.count} 次提交`,
+    titleFormatter: (day) => `${day.date}：${day.value} 次提交`,
   })
 );
 

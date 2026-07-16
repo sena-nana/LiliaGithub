@@ -1,5 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { ContextMenuHost, closeContextMenu, installContextMenu, uninstallContextMenu, vContextMenu } from "@lilia/ui";
+import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
+import {
+  closeContextMenu,
+  installContextMenu,
+  uninstallContextMenu,
+} from "@lilia/ui/composables/useContextMenu";
+import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
 import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
@@ -42,9 +48,7 @@ async function renderFilesPanel(props: Record<string, unknown> = {}) {
   return render(Wrapper, {
     props: panelProps,
     global: {
-      directives: {
-        contextMenu: vContextMenu,
-      },
+      plugins: [liliaContextMenuPlugin],
       stubs: {
         transition: false,
       },
