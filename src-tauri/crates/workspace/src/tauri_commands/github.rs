@@ -2,6 +2,7 @@ use lilia_github_contracts::workspace::*;
 
 delegate_command!(github; fn github_get_binding_status(app: AppHandle) -> Result<GitHubBindingStatus, String>);
 delegate_command!(async github; fn github_get_account_profile(app: AppHandle) -> Result<GitHubAccountProfile, String>);
+delegate_command!(async github; fn github_get_account_readme(app: AppHandle) -> Result<GitHubProfileReadmeSection, String>);
 delegate_command!(async github; fn github_update_account_profile(app: AppHandle, request: GitHubUpdateAccountProfileRequest,) -> Result<GitHubAccountProfile, String>);
 delegate_command!(async github; fn github_get_organization_profile(app: AppHandle, login: String,) -> Result<GitHubOrganizationProfile, String>);
 delegate_command!(async github; fn github_get_organization_overview(app: AppHandle, login: String, view: GitHubOrganizationProfileView,) -> Result<GitHubOrganizationOverview, String>);

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   getGitHubAccountProfile,
+  getGitHubAccountReadme,
   getGitHubBindingStatus,
   getWorkspaceSettings,
   pollGitHubDeviceFlow,
@@ -104,5 +105,23 @@ describe("workspace account preferences fallback", () => {
       name: null,
       email: null,
     });
+  });
+
+  it("returns the active account's public profile README", async () => {
+    fallback.setFallbackGitHubBindingStatusForTests(binding("Profile-Owner"));
+
+    const readme = await getGitHubAccountReadme();
+
+    expect(readme).toMatchObject({
+      status: "ready",
+      sourceRepo: "Profile-Owner/Profile-Owner",
+      htmlUrl: "https://github.com/Profile-Owner/Profile-Owner/blob/main/README.md",
+      error: null,
+      preview: {
+        path: "README.md",
+        previewKind: "markdown",
+      },
+    });
+    expect(readme.preview?.content).toContain("Profile-Owner");
   });
 });

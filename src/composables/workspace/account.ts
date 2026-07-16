@@ -4,6 +4,7 @@ import type {
   GitHubOrganizationOverview,
   GitHubOrganizationProfile,
   GitHubOrganizationProfileView,
+  GitHubProfileReadmeSection,
   GitHubRepoOwner,
   GitHubRepositorySubscription,
   GitHubRepositorySubscriptionMode,
@@ -48,6 +49,11 @@ export async function updateAccountPreferences(preferences: AccountPreferences) 
 export async function getAccountProfile(): Promise<GitHubAccountProfile> {
   const service = await loadWorkspaceService();
   return service.getGitHubAccountProfile();
+}
+
+export async function getAccountReadme(): Promise<GitHubProfileReadmeSection> {
+  const service = await loadWorkspaceService();
+  return service.getGitHubAccountReadme();
 }
 
 export async function updateAccountProfile(

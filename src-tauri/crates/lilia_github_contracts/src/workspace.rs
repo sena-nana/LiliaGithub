@@ -630,6 +630,15 @@ pub enum GitHubOrganizationSectionStatus {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubReadmeSectionStatus {
+    Ready,
+    Empty,
+    #[default]
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubOrganizationProfile {
@@ -672,8 +681,8 @@ pub struct GitHubOrganizationMember {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct GitHubOrganizationReadmeSection {
-    pub status: GitHubOrganizationSectionStatus,
+pub struct GitHubProfileReadmeSection {
+    pub status: GitHubReadmeSectionStatus,
     #[serde(default)]
     pub preview: Option<RepoFilePreview>,
     #[serde(default)]
@@ -731,7 +740,7 @@ pub struct GitHubOrganizationOverview {
     pub effective_view: GitHubOrganizationProfileView,
     #[serde(default)]
     pub member_view_available: bool,
-    pub readme: GitHubOrganizationReadmeSection,
+    pub readme: GitHubProfileReadmeSection,
     pub featured: GitHubOrganizationFeaturedSection,
     pub recent: GitHubOrganizationRepositorySection,
     pub members: GitHubOrganizationMembersSection,

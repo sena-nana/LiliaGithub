@@ -111,6 +111,7 @@ import {
 } from "./workspace/system";
 import {
   getAccountProfile,
+  getAccountReadme,
   getAccountRepositoryOwners,
   getOrganizationOverview,
   getOrganizationProfile,
@@ -222,6 +223,7 @@ export function useWorkspace() {
     openUrl,
     copyText,
     getAccountProfile,
+    getAccountReadme,
     getAccountRepositoryOwners,
     getOrganizationProfile,
     getOrganizationOverview,
