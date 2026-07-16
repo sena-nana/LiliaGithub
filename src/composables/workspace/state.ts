@@ -486,7 +486,7 @@ function createRepoSyncIssue(
 export function repoSyncIssuesByRepoId() {
   const issues = new Map<string, RepoSyncIssueDisplay>();
   const recentErrors = recentSyncErrorsByRepoId();
-  if (recentErrors.size) {
+  if (state.recentSync) {
     const retryingRepoIds = new Set(state.recentSync?.retryingRepoIds ?? []);
     for (const [repoId, error] of recentErrors) {
       const result = state.recentSync?.results.find((item) => item.repoId === repoId);

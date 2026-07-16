@@ -43,6 +43,7 @@ import {
   bulkSyncRunningRepoIds,
   repoActionErrorForRepo,
   repoActionErrorDetailForRepo,
+  repoSyncIssueForRepo,
   syncErrorByRepoId,
   syncErrorDetailsByRepoId,
   recentSyncErrorForRepo,
@@ -1051,6 +1052,25 @@ describe("workspace incremental refresh", () => {
       message: "合并产生冲突，请处理后推送",
       retrying: true,
     });
+  });
+
+  it("最近同步成功后不再回退到旧批量失败结果", () => {
+    const repo = repoSummary("LiliaGithub", { ahead: 0 });
+    state.bulkPreview = {
+      operation: "sync",
+      eligible: [{ repo, reason: "有本地提交待推送" }],
+      blocked: [],
+      warnings: [],
+    };
+    state.bulkResults = [{ repoId: repo.id, status: "error", message: "认证失败", summary: null }];
+    state.recentSync = {
+      preview: state.bulkPreview,
+      results: [{ repoId: repo.id, status: "success", message: "完成", summary: repo }],
+      retryingRepoIds: [],
+      updatedAt: 2,
+    };
+
+    expect(repoSyncIssueForRepo(repo.id)).toBeNull();
   });
 
   it("push 预检和批量执行失败结果通过主流程状态保存", async () => {

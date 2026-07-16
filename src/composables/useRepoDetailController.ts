@@ -10,7 +10,7 @@ import { useComponentEpoch } from "./useComponentEpoch";
 import { createLatestAsyncLoader } from "./useLatestAsyncLoader";
 import { createPendingTaskTracker } from "./usePendingTaskTracker";
 import { useWorkspace } from "./useWorkspace";
-import { recentSyncErrorForRepo } from "./workspace/state";
+import { repoSyncIssueForRepo } from "./workspace/state";
 import {
   markActiveRepoLocalReady,
   requestManualRepoRemoteRefresh,
@@ -212,9 +212,7 @@ export function useRepoDetailController() {
   const activeFileRepoRef = computed(() =>
     repoContext.value.capabilities.files.provider === "github" ? remoteBrowseBranch.value : null
   );
-  const recentSyncError = computed(() => {
-    return recentSyncErrorForRepo(repoId.value);
-  });
+  const repoSyncIssue = computed(() => repoSyncIssueForRepo(repoId.value));
   const hasConflicts = computed(() =>
     conflicts.value.files.length > 0 || conflicts.value.operation !== "none",
   );
@@ -368,7 +366,6 @@ export function useRepoDetailController() {
       repoSettingValue(workspace.state.settings, repoId.value, setting.key),
     ]),
   ) as Record<RepoSettingKey, boolean>);
-  const repoActionError = computed(() => workspace.state.repoActionErrors[repoId.value]?.message ?? null);
   onMounted(() => {
     void load();
     launchPollTimer = window.setInterval(() => {
@@ -1346,7 +1343,7 @@ export function useRepoDetailController() {
       canLoadFiles,
       activeFileRepoRef,
       filesUnavailableMessage,
-      recentSyncError,
+      repoSyncIssue,
       hasConflicts,
       conflicts,
       conflictDialogOpen,
@@ -1377,7 +1374,6 @@ export function useRepoDetailController() {
       pushRemoteNames,
       remoteSyncUnavailableReason,
       repoSettingValues,
-      repoActionError,
       remoteSyncConfig,
       remoteSyncConfigLoading,
       remoteSyncConfigSaving,
