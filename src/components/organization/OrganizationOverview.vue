@@ -802,6 +802,7 @@ onUnmounted(() => {
 .organization-member {
   width: 100%;
   min-width: 0;
+  justify-content: flex-start;
   gap: 8px;
   min-height: 42px;
   padding: 5px 2px;
