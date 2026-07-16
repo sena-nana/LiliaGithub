@@ -421,17 +421,13 @@ async function refreshCurrentPage() {
   background: var(--bg-hover);
 }
 
+.repo-toolbar__refresh-group,
 .repo-toolbar__actions {
   flex: 0 0 auto;
-  margin-left: auto;
 }
 
-.repo-toolbar__refresh {
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-md);
-  background: var(--bg-subtle);
+.repo-toolbar__refresh-group {
+  margin-left: auto;
 }
 
 .repo-toolbar__open-group,
@@ -1118,7 +1114,7 @@ async function refreshCurrentPage() {
     max-width: 100%;
   }
 
-  .repo-toolbar__actions {
+  .repo-toolbar__refresh-group {
     margin-left: 0;
   }
 
