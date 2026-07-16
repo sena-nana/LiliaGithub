@@ -68,7 +68,7 @@ const workspace = useWorkspace();
 const route = useRoute();
 const router = useRouter();
 const componentEpoch = useComponentEpoch();
-const githubOwnersLoader = createLatestAsyncLoader({ componentEpoch });
+const githubOwnersLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
 const githubOwners = ref<GitHubRepoOwner[]>([]);
 const githubOwnersLoading = ref(false);
 const githubOwnersError = ref<string | null>(null);
@@ -171,6 +171,7 @@ watch(
     githubOwnersLoader.invalidate();
     githubOwners.value = [];
     githubOwnersError.value = null;
+    githubOwnersLoading.value = false;
     if (authorized) void loadSidebarGitHubOwners();
   },
   { immediate: true },
@@ -800,22 +801,66 @@ async function deleteGroup(group: { id: string }) {
             <span class="sb-tree__name">{{ item.label }}</span>
             <SidebarRowTools v-if="item.tools?.length" :tools="item.tools" />
           </RouterLink>
-          <RouterLink
-            v-if="workspace.githubBinding.value"
-            to="/profile"
-            class="sb-tree__row"
-            data-agent-id="sidebar.profile"
-            exact-active-class="is-active"
-          >
-            <img
-              v-if="workspace.githubBinding.value.avatarUrl"
-              :src="workspace.githubBinding.value.avatarUrl"
-              alt=""
-              class="sb-tree__avatar"
+          <template v-if="workspace.githubBinding.value">
+            <RouterLink
+              to="/profile"
+              class="sb-tree__row"
+              data-agent-id="sidebar.profile"
+              exact-active-class="is-active"
+            >
+              <img
+                v-if="workspace.githubBinding.value.avatarUrl"
+                :src="workspace.githubBinding.value.avatarUrl"
+                alt=""
+                class="sb-tree__avatar"
+              />
+              <UserRound v-else :size="14" aria-hidden="true" />
+              <span class="sb-tree__name">{{ workspace.githubBinding.value.login }}</span>
+            </RouterLink>
+            <RouterLink
+              v-for="organization in githubOrganizations"
+              :key="organization.login"
+              :to="{ name: 'github-organization', params: { login: organization.login } }"
+              class="sb-tree__row"
+              active-class="is-active"
+              :data-agent-id="`sidebar.organization.${organization.login}`"
+            >
+              <img
+                v-if="organization.avatarUrl"
+                :src="organization.avatarUrl"
+                alt=""
+                class="sb-tree__avatar"
+              />
+              <Building2 v-else :size="14" aria-hidden="true" />
+              <span class="sb-tree__name">{{ organization.login }}</span>
+              <span v-if="organization.source === 'repository_access'" class="sb-tree__meta">仓库访问</span>
+            </RouterLink>
+            <GitHubRepositoryStateNotice
+              v-if="githubOwnersLoading && !githubOrganizations.length"
+              state="loading"
+              compact
+              message="正在加载组织…"
+              agent-id="sidebar.organizations.loading"
             />
-            <UserRound v-else :size="14" aria-hidden="true" />
-            <span class="sb-tree__name">{{ workspace.githubBinding.value.login }}</span>
-          </RouterLink>
+            <GitHubRepositoryStateNotice
+              v-else-if="githubOwnersError"
+              state="error"
+              compact
+              retryable
+              :message="githubOwnersError"
+              agent-id="sidebar.organizations.error"
+              @retry="loadSidebarGitHubOwners"
+            />
+            <GitHubRepositoryStateNotice
+              v-if="githubOrganizationVisibilityLimited"
+              state="limited"
+              compact
+              :message="githubOrganizationVisibilityMessage"
+              :action-label="githubOrganizationRecovery.url ? '在 GitHub 授权' : '补充组织权限'"
+              agent-id="sidebar.organizations.limited"
+              @authorize="openSidebarOrganizationAuthorization(githubOrganizationRecovery.url)"
+            />
+          </template>
         </nav>
       </div>
     </div>
@@ -824,62 +869,6 @@ async function deleteGroup(group: { id: string }) {
       class="secondary-panel__body"
       v-context-menu="sidebarRepoContextMenuProvider"
     >
-      <section
-        v-if="workspace.githubBinding.value"
-        class="sb-section sb-section--organizations"
-        aria-labelledby="sidebar-organizations-title"
-      >
-        <div class="sb-section__header">
-          <span id="sidebar-organizations-title" class="sb-section__title">组织</span>
-        </div>
-        <div class="sb-tree">
-          <RouterLink
-            v-for="organization in githubOrganizations"
-            :key="organization.login"
-            :to="{ name: 'github-organization', params: { login: organization.login } }"
-            class="sb-tree__row"
-            active-class="is-active"
-            :data-agent-id="`sidebar.organization.${organization.login}`"
-          >
-            <img
-              v-if="organization.avatarUrl"
-              :src="organization.avatarUrl"
-              alt=""
-              class="sb-tree__avatar"
-            />
-            <Building2 v-else :size="14" aria-hidden="true" />
-            <span class="sb-tree__name">{{ organization.login }}</span>
-            <span v-if="organization.source === 'repository_access'" class="sb-tree__meta">仓库访问</span>
-          </RouterLink>
-          <GitHubRepositoryStateNotice
-            v-if="githubOwnersLoading && !githubOrganizations.length"
-            state="loading"
-            compact
-            message="正在加载组织…"
-            agent-id="sidebar.organizations.loading"
-          />
-          <GitHubRepositoryStateNotice
-            v-else-if="githubOwnersError"
-            state="error"
-            compact
-            retryable
-            :message="githubOwnersError"
-            agent-id="sidebar.organizations.error"
-            @retry="loadSidebarGitHubOwners"
-          />
-          <p v-else-if="!githubOrganizations.length" class="sb-tree__empty">没有可见组织。</p>
-          <GitHubRepositoryStateNotice
-            v-if="githubOrganizationVisibilityLimited"
-            state="limited"
-            compact
-            :message="githubOrganizationVisibilityMessage"
-            :action-label="githubOrganizationRecovery.url ? '在 GitHub 授权' : '补充组织权限'"
-            agent-id="sidebar.organizations.limited"
-            @authorize="openSidebarOrganizationAuthorization(githubOrganizationRecovery.url)"
-          />
-        </div>
-      </section>
-
       <div class="sb-section sb-section--favorites">
         <div class="sb-section__header">
           <span class="sb-section__title">收藏仓库 {{ favoriteRepos.length }}</span>
