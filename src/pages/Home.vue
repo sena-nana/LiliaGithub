@@ -415,12 +415,11 @@ const homeRepositoryScopeValue = computed({
   set: (value: string) => {
     const login = workspace.githubBinding.value?.login ?? "";
     if (value === "personal") {
-      if (!login) return;
-      void selectHomeRepositoryScope({ kind: "personal", login });
+      if (login) void selectHomeRepositoryScope({ kind: "personal", login });
       return;
     }
     if (value.startsWith("organization:")) {
-      void selectHomeRepositoryScope({ kind: "organization", login: value.slice("organization:".length) });
+      void selectHomeRepositoryScope({ kind: "organization", login: value.slice(13) });
       return;
     }
     void selectHomeRepositoryScope(ALL_GITHUB_REPOSITORIES);
@@ -937,21 +936,15 @@ async function selectHomeRepositoryScope(scope: GitHubRepositoryScope, updateRou
   repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
   if (updateRoute) {
     await router.replace({ query: { ...route.query, ...githubRepositoryScopeQuery(scope) } });
-    void persistHomeRepositoryScopePreference(scope);
+    try {
+      const next = cloneAccountPreferences(accountPreferences.value);
+      next.repositoryScope = scope.kind === "all" ? { kind: "all" } : { kind: scope.kind, login: scope.login };
+      await workspace.updateAccountPreferences(next);
+    } catch {
+      // Keep scope switch even if preference persistence fails.
+    }
   }
   if (!restored) await loadGitHubRepoStatus();
-}
-
-async function persistHomeRepositoryScopePreference(scope: GitHubRepositoryScope) {
-  try {
-    const next = cloneAccountPreferences(accountPreferences.value);
-    next.repositoryScope = scope.kind === "all"
-      ? { kind: "all" }
-      : { kind: scope.kind, login: scope.login };
-    await workspace.updateAccountPreferences(next);
-  } catch {
-    // Preference persistence must not block scope switching.
-  }
 }
 
 async function openOrganizationAuthorization() {
@@ -2539,6 +2532,14 @@ function bulkOperationDescription(operation: BulkOperation) {
               <LoaderCircle v-if="githubReposLoading" :size="13" aria-hidden="true" class="card-title-loader" />
             </h2>
             <div class="repo-status-heading__tools">
+              <Dropdown
+                v-model="homeRepositoryScopeValue"
+                :options="homeRepositoryScopeOptions"
+                :disabled="githubReposLoading || githubRepoOwnersLoading"
+                placement="bottom"
+                button-class="overview-actions__btn repo-status-sort-button"
+                agent-id="home.repo-status.scope"
+              />
               <button
                 type="button"
                 class="overview-actions__btn repo-status-sort-button"
@@ -2551,15 +2552,10 @@ function bulkOperationDescription(operation: BulkOperation) {
               </button>
             </div>
           </div>
-          <div class="repo-status-scope">
-            <GitHubRepositoryScopeControl
-              :model-value="githubRepositoryScope"
-              :personal-login="workspace.githubBinding.value?.login ?? ''"
-              :organizations="githubOrganizationOwnerOptions"
-              :loading="githubRepoOwnersLoading"
-              :disabled="githubReposLoading"
-              @update:model-value="selectHomeRepositoryScope"
-            />
+          <div
+            v-if="githubRepoOwnersError || githubOrganizationVisibilityLimited"
+            class="repo-status-scope"
+          >
             <GitHubRepositoryStateNotice
               v-if="githubRepoOwnersError"
               state="error"
@@ -3498,6 +3494,26 @@ function bulkOperationDescription(operation: BulkOperation) {
   line-height: 22px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.repo-status-heading__tools :deep(.dd__button) {
+  max-width: min(160px, 34vw);
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  gap: 3px;
+}
+
+.repo-status-heading__tools :deep(.dd__button:hover:not(:disabled)),
+.repo-status-heading__tools :deep(.dd__button.is-open) {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.repo-status-heading__tools :deep(.dd__button-label) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .repo-status-list {
