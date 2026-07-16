@@ -11,6 +11,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update:setting": [key: RepoSettingKey, value: boolean];
+  openRemoteSyncSettings: [];
 }>();
 
 const open = ref(false);
@@ -89,6 +90,19 @@ onBeforeUnmount(() => {
         aria-label="项目设置"
         :style="menuStyle"
       >
+        <button
+          type="button"
+          class="repo-toolbar-settings__item"
+          role="menuitem"
+          data-agent-id="repo.toolbar.remote-sync.settings"
+          :disabled="disabled"
+          @click="close(); emit('openRemoteSyncSettings')"
+        >
+          <span class="repo-toolbar-settings__content">
+            <strong>远端同步设置</strong>
+            <em>配置拉取与推送远端</em>
+          </span>
+        </button>
         <UiSwitch
           v-for="setting in settings"
           :key="setting.key"
@@ -145,6 +159,21 @@ onBeforeUnmount(() => {
   padding: 6px 7px;
   border-radius: var(--radius-sm);
   color: var(--text);
+}
+
+button.repo-toolbar-settings__item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  text-align: left;
+}
+
+button.repo-toolbar-settings__item:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .repo-toolbar-settings__item:hover {
