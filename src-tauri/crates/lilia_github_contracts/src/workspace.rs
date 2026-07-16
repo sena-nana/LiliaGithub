@@ -1372,6 +1372,8 @@ pub struct WorkspaceCloneRepositoryRef {
     pub full_name: String,
     pub clone_url: String,
     #[serde(default)]
+    pub default_branch: Option<String>,
+    #[serde(default)]
     pub owner: Option<GitHubRepositoryOwner>,
 }
 

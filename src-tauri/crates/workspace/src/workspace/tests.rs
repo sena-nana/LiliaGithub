@@ -52,18 +52,20 @@ use super::readme::readme_image_data_urls;
 use super::repo_guard::repo_resource_id;
 use super::repos::{
     add_repo_files_to_gitignore, cached_managed_repos, canonical_repo_path, checkout_branch_at,
+    bootstrap_unborn_from_remotes,
     commit_file_change_from_status, commit_file_changes_from_outputs, commit_file_numstats,
     commit_file_patches, commit_file_statuses, configured_rebase_target, conflict_operation_args,
     create_branch_at, create_clone_parent_directories, current_branch_upstream, delete_branch_at,
     discard_all_repo_local_changes, discard_repo_files, expand_repo_paths_with_root_worktrees,
-    filter_hidden_repos, git_common_dir, git_worktree_entries, infer_clone_directory_name,
+    ensure_clone_checkout, filter_hidden_repos, git_common_dir, git_worktree_entries,
+    infer_clone_directory_name,
     inspect_clone_target, is_conflict_status, language_for_path, lightweight_managed_repos,
     local_branch_exists, managed_repo_paths, managed_repo_paths_and_prune_stale, merge_branch_at,
     normalize_clone_directory_name, normalize_git_remote_error, normalize_stash_id,
     parse_conflict_hunks, parse_github_remote, parse_status_snapshot, plan_workspace_clone,
     prepare_pull_local_changes, remove_created_empty_directories, rename_branch_at, repo_branches,
     repo_changes, repo_head_language_stats, repo_history, repo_id, repo_status_entries,
-    resolve_conflict_content, resolve_remote_sync_config, resolve_repo_worktree,
+    repo_has_head, resolve_conflict_content, resolve_remote_sync_config, resolve_repo_worktree,
     restore_pull_local_changes, run_configured_pull_with_config, run_multi_remote_push,
     sanitize_clone_path_segment, selected_repo_files, should_retry_clone_with_system_git,
     should_skip_language_path, status_pair, summarize_repo, summarize_workspace_repo, sync_result,
@@ -561,6 +563,132 @@ fn multi_remote_fetch_failure_does_not_change_head() {
         .iter()
         .any(|step| step.remote == "broken" && step.status == "error"));
     assert!(!result.steps.iter().any(|step| step.operation == "merge"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn pull_bootstraps_unborn_branch_and_preserves_untracked_files() {
+    let root = temp_dir("pull-unborn-bootstrap");
+    let source = root.join("source");
+    let repo = root.join("repo");
+    let remote = root.join("remote.git");
+    init_git_repo(&source);
+    fs::write(source.join("tracked.txt"), "remote content\n").unwrap();
+    run_git(&source, &["add", "tracked.txt"]);
+    run_git(&source, &["commit", "-m", "initial"]);
+    run_git(&source, &["branch", "-M", "main"]);
+    fs::create_dir_all(&remote).unwrap();
+    run_git(&remote, &["init", "--bare"]);
+    run_git(
+        &source,
+        &["remote", "add", "origin", remote.to_string_lossy().as_ref()],
+    );
+    run_git(&source, &["push", "origin", "main"]);
+
+    init_git_repo(&repo);
+    run_git(
+        &repo,
+        &["remote", "add", "origin", remote.to_string_lossy().as_ref()],
+    );
+    fs::write(repo.join("local.txt"), "local content\n").unwrap();
+    let config = RepoRemoteSyncConfig {
+        remotes: Vec::new(),
+        policy: None,
+        resolved_policy: RepoRemoteSyncPolicy {
+            primary_remote: "origin".to_string(),
+            pull_remotes: vec!["origin".to_string()],
+            push_remotes: vec!["origin".to_string()],
+        },
+        validation_errors: Vec::new(),
+    };
+    let app = WorkspaceContext::new(Arc::new(NoopWorkspaceRuntime));
+
+    let result = run_configured_pull_with_config(
+        &app,
+        &root,
+        &repo,
+        &config,
+        Some(RepoPullLocalChangesMode::Stash),
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(result.status, "success");
+    assert!(repo_has_head(&repo));
+    assert_eq!(result.summary.current_branch.as_deref(), Some("main"));
+    assert_eq!(
+        fs::read_to_string(repo.join("tracked.txt")).unwrap(),
+        "remote content\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join("local.txt")).unwrap(),
+        "local content\n"
+    );
+    assert!(result.steps.iter().all(|step| step.status != "error"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn unborn_bootstrap_rejects_or_discards_local_files_by_selected_mode() {
+    let root = temp_dir("pull-unborn-local-modes");
+    let source = root.join("source");
+    let remote = root.join("remote.git");
+    init_git_repo(&source);
+    fs::write(source.join("tracked.txt"), "remote\n").unwrap();
+    run_git(&source, &["add", "tracked.txt"]);
+    run_git(&source, &["commit", "-m", "initial"]);
+    run_git(&source, &["branch", "-M", "main"]);
+    fs::create_dir_all(&remote).unwrap();
+    run_git(&remote, &["init", "--bare"]);
+    run_git(
+        &source,
+        &["remote", "add", "origin", remote.to_string_lossy().as_ref()],
+    );
+    run_git(&source, &["push", "origin", "main"]);
+    let remotes = vec!["origin".to_string()];
+
+    let rejected = root.join("rejected");
+    init_git_repo(&rejected);
+    run_git(
+        &rejected,
+        &["remote", "add", "origin", remote.to_string_lossy().as_ref()],
+    );
+    run_git(&rejected, &["fetch", "origin"]);
+    fs::write(rejected.join("local.txt"), "keep\n").unwrap();
+    let rejected_summary = summarize_repo(&root, &rejected);
+    assert!(bootstrap_unborn_from_remotes(
+        &rejected,
+        &rejected_summary,
+        &remotes,
+        Some(RepoPullLocalChangesMode::Reject),
+        "pull",
+    )
+    .is_err());
+    assert!(!repo_has_head(&rejected));
+    assert!(rejected.join("local.txt").exists());
+
+    let discarded = root.join("discarded");
+    init_git_repo(&discarded);
+    run_git(
+        &discarded,
+        &["remote", "add", "origin", remote.to_string_lossy().as_ref()],
+    );
+    run_git(&discarded, &["fetch", "origin"]);
+    fs::write(discarded.join("local.txt"), "discard\n").unwrap();
+    run_git(&discarded, &["add", "local.txt"]);
+    let discarded_summary = summarize_repo(&root, &discarded);
+    assert!(bootstrap_unborn_from_remotes(
+        &discarded,
+        &discarded_summary,
+        &remotes,
+        Some(RepoPullLocalChangesMode::Discard),
+        "pull",
+    )
+    .unwrap()
+    .is_some());
+    assert!(repo_has_head(&discarded));
+    assert!(!discarded.join("local.txt").exists());
+    assert!(discarded.join("tracked.txt").exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2664,6 +2792,7 @@ fn plans_default_owner_group_and_preserves_custom_target_path() {
             id: Some(42),
             full_name: "example-org/LiliaGithub".to_string(),
             clone_url: "https://github.com/example-org/LiliaGithub.git".to_string(),
+            default_branch: None,
             owner: None,
         }),
         target: WorkspaceCloneTarget::Default,
@@ -2705,6 +2834,7 @@ fn plans_default_owner_group_and_preserves_custom_target_path() {
             id: Some(42),
             full_name: "example-org/LiliaGithub".to_string(),
             clone_url: "https://github.com/other-org/LiliaGithub.git".to_string(),
+            default_branch: None,
             owner: None,
         }),
         target: WorkspaceCloneTarget::Default,
@@ -2739,14 +2869,17 @@ fn clone_contract_defaults_to_automatic_placement_and_uses_camel_case_group_id()
         "repository": {
             "id": 42,
             "fullName": "example/repo",
-            "cloneUrl": "https://github.com/example/repo.git"
+            "cloneUrl": "https://github.com/example/repo.git",
+            "defaultBranch": "main"
         },
         "target": { "kind": "default" }
     }))
     .unwrap();
 
     assert_eq!(request.placement, WorkspaceRepoPlacement::Automatic);
-    assert_eq!(request.repository.unwrap().owner, None);
+    let repository = request.repository.unwrap();
+    assert_eq!(repository.owner, None);
+    assert_eq!(repository.default_branch.as_deref(), Some("main"));
     assert_eq!(
         serde_json::to_value(WorkspaceRepoPlacement::Group {
             group_id: "group-id".to_string(),
@@ -2798,6 +2931,127 @@ fn inspects_existing_clone_targets_by_canonical_github_remote() {
             .unwrap_err()
             .starts_with("workspace_existing_remote_mismatch:")
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn clone_checkout_recovers_remote_branch_when_remote_head_is_unusable() {
+    let root = temp_dir("clone-checkout-default-branch");
+    let source = root.join("source");
+    let remote = root.join("remote.git");
+    let target = root.join("target");
+    init_git_repo(&source);
+    fs::write(source.join("tracked.txt"), "remote content\n").unwrap();
+    run_git(&source, &["add", "tracked.txt"]);
+    run_git(&source, &["commit", "-m", "initial"]);
+    run_git(&source, &["branch", "-M", "trunk"]);
+    fs::create_dir_all(&remote).unwrap();
+    run_git(&remote, &["init", "--bare"]);
+    run_git(
+        &source,
+        &["remote", "add", "origin", remote.to_string_lossy().as_ref()],
+    );
+    run_git(&source, &["push", "origin", "trunk"]);
+
+    run_git(
+        &root,
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            target.to_string_lossy().as_ref(),
+        ],
+    );
+    assert!(!repo_has_head(&target));
+
+    ensure_clone_checkout(&target, Some("trunk")).unwrap();
+
+    assert!(repo_has_head(&target));
+    assert_eq!(git_stdout(&target, &["branch", "--show-current"]), "trunk");
+    assert_eq!(
+        git_stdout(
+            &target,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+        ),
+        "origin/trunk"
+    );
+    assert_eq!(
+        fs::read_to_string(target.join("tracked.txt")).unwrap(),
+        "remote content\n"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn clone_checkout_uses_unique_branch_but_rejects_ambiguous_remote() {
+    let root = temp_dir("clone-checkout-branch-selection");
+    let source = root.join("source");
+    let remote = root.join("remote.git");
+    init_git_repo(&source);
+    fs::write(source.join("tracked.txt"), "content\n").unwrap();
+    run_git(&source, &["add", "tracked.txt"]);
+    run_git(&source, &["commit", "-m", "initial"]);
+    run_git(&source, &["branch", "-M", "trunk"]);
+    fs::create_dir_all(&remote).unwrap();
+    run_git(&remote, &["init", "--bare"]);
+    run_git(
+        &source,
+        &["remote", "add", "origin", remote.to_string_lossy().as_ref()],
+    );
+    run_git(&source, &["push", "origin", "trunk"]);
+
+    let unique = root.join("unique");
+    run_git(
+        &root,
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            unique.to_string_lossy().as_ref(),
+        ],
+    );
+    ensure_clone_checkout(&unique, None).unwrap();
+    assert_eq!(git_stdout(&unique, &["branch", "--show-current"]), "trunk");
+
+    run_git(&source, &["branch", "review"]);
+    run_git(&source, &["push", "origin", "review"]);
+    let ambiguous = root.join("ambiguous");
+    run_git(
+        &root,
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            ambiguous.to_string_lossy().as_ref(),
+        ],
+    );
+    assert!(ensure_clone_checkout(&ambiguous, None).is_err());
+    assert!(!repo_has_head(&ambiguous));
+    ensure_clone_checkout(&ambiguous, Some("trunk")).unwrap();
+    assert_eq!(
+        git_stdout(&ambiguous, &["branch", "--show-current"]),
+        "trunk"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn clone_checkout_preserves_a_truly_empty_remote() {
+    let root = temp_dir("clone-checkout-empty-remote");
+    let remote = root.join("remote.git");
+    let target = root.join("target");
+    fs::create_dir_all(&remote).unwrap();
+    run_git(&remote, &["init", "--bare"]);
+    run_git(
+        &root,
+        &[
+            "clone",
+            remote.to_string_lossy().as_ref(),
+            target.to_string_lossy().as_ref(),
+        ],
+    );
+
+    ensure_clone_checkout(&target, Some("main")).unwrap();
+
+    assert!(!repo_has_head(&target));
+    assert_eq!(git_stdout(&target, &["branch", "--show-current"]), "main");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2901,6 +3155,7 @@ fn clone_repository_metadata_upgrades_binding_and_prune_removes_it() {
         id: Some(90210),
         full_name: "example-org/repo".to_string(),
         clone_url: "https://github.com/example-org/repo.git".to_string(),
+        default_branch: None,
         owner: None,
     };
     assert!(upsert_workspace_repo_binding(
@@ -3049,6 +3304,12 @@ fn parses_status_snapshot_header_and_entries() {
 
     let detached = parse_status_snapshot("## HEAD (no branch)\0");
     assert_eq!(detached.current_branch, None);
+
+    let unborn = parse_status_snapshot("## No commits yet on main\0");
+    assert_eq!(unborn.current_branch.as_deref(), Some("main"));
+    let unborn_tracking =
+        parse_status_snapshot("## No commits yet on trunk...origin/trunk [gone]\0");
+    assert_eq!(unborn_tracking.current_branch.as_deref(), Some("trunk"));
 }
 
 #[test]
@@ -5101,6 +5362,7 @@ fn explicit_grouping_and_ungrouping_are_not_overridden_by_automatic_placement() 
         id: Some(1),
         full_name: "acme/repo".to_string(),
         clone_url: "https://github.com/acme/repo.git".to_string(),
+        default_branch: None,
         owner: Some(GitHubRepositoryOwner {
             login: "Acme".to_string(),
             kind: GitHubOwnerKind::Organization,
@@ -5156,6 +5418,7 @@ fn automatic_placement_waits_for_owner_metadata_and_groups_known_organizations()
         id: Some(1),
         full_name: "acme/unknown".to_string(),
         clone_url: "https://github.com/acme/unknown.git".to_string(),
+        default_branch: None,
         owner: None,
     };
     apply_repo_placement(
@@ -5194,6 +5457,7 @@ fn automatic_placement_waits_for_owner_metadata_and_groups_known_organizations()
         id: Some(2),
         full_name: "person/repo".to_string(),
         clone_url: "https://github.com/person/repo.git".to_string(),
+        default_branch: None,
         owner: Some(GitHubRepositoryOwner {
             login: "person".to_string(),
             kind: GitHubOwnerKind::User,

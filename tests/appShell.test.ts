@@ -1444,6 +1444,7 @@ describe("AppShell sidebar", () => {
               id: firstRemoteRepo.id,
               fullName: firstRemoteRepo.fullName,
               cloneUrl: firstRemoteRepo.cloneUrl,
+              defaultBranch: firstRemoteRepo.defaultBranch,
               owner: { login: "sena-nana", kind: "organization", avatarUrl: null },
             },
             placement: { kind: "automatic" },
@@ -1455,6 +1456,7 @@ describe("AppShell sidebar", () => {
               id: secondRemoteRepo.id,
               fullName: secondRemoteRepo.fullName,
               cloneUrl: secondRemoteRepo.cloneUrl,
+              defaultBranch: secondRemoteRepo.defaultBranch,
               owner: { login: "sena-nana", kind: "organization", avatarUrl: null },
             },
             placement: { kind: "automatic" },
@@ -1524,6 +1526,8 @@ describe("AppShell sidebar", () => {
   });
 
   it("已绑定 GitHub 时克隆弹窗展示账号仓库列表并可选择克隆", async () => {
+    const repositories = await import("../src/composables/workspace/repositories");
+    const cloneRepo = vi.spyOn(repositories, "cloneRepo");
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -1554,9 +1558,16 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
+      expect(cloneRepo).toHaveBeenCalledWith(expect.objectContaining({
+        repository: expect.objectContaining({
+          fullName: "sena-nana/Lilia",
+          defaultBranch: "main",
+        }),
+      }));
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FLilia");
       expect(sidebarGroupForText(view.container, "前端", 1)).toBeInTheDocument();
     });
+    cloneRepo.mockRestore();
   });
 
   it("首页与克隆弹窗使用账户仓库范围", async () => {
@@ -1659,6 +1670,8 @@ describe("AppShell sidebar", () => {
   });
 
   it("已绑定 GitHub 时支持 owner/repo 直接克隆", async () => {
+    const repositories = await import("../src/composables/workspace/repositories");
+    const cloneRepo = vi.spyOn(repositories, "cloneRepo");
     const view = await renderAppShell("/");
 
     await waitFor(() => {
@@ -1677,11 +1690,18 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
+      expect(cloneRepo).toHaveBeenCalledWith(expect.objectContaining({
+        repository: expect.objectContaining({
+          fullName: "sena-nana/NewRepo",
+          defaultBranch: null,
+        }),
+      }));
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FNewRepo");
       const row = sidebarRowForText(view.container, "NewRepo");
       expect(row).toBeInTheDocument();
       expect(row.closest(".sb-section")?.querySelector(".sb-group-toggle")).toHaveTextContent("sena-nana");
     });
+    cloneRepo.mockRestore();
   });
 
   it("已绑定 GitHub 时支持完整 GitHub 链接直接克隆", async () => {

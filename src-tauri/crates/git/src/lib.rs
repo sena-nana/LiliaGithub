@@ -264,19 +264,25 @@ pub fn status_pair(line: &str) -> (String, String) {
     )
 }
 
+fn parse_status_branch(header: &str) -> Option<&str> {
+    if header.starts_with("HEAD") {
+        return None;
+    }
+    header
+        .strip_prefix("No commits yet on ")
+        .unwrap_or(header)
+        .split("...")
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
 pub fn parse_status_snapshot(status: &str) -> RepoStatusSnapshot {
     let mut snapshot = RepoStatusSnapshot::default();
     let mut parts = status.split('\0').filter(|value| !value.is_empty());
     while let Some(line) = parts.next() {
         if let Some(header) = line.strip_prefix("## ") {
-            if !header.starts_with("HEAD") {
-                let branch = header
-                    .split("...")
-                    .next()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty());
-                snapshot.current_branch = branch.map(str::to_string);
-            }
+            snapshot.current_branch = parse_status_branch(header).map(str::to_string);
             if let Some(info) = header
                 .split('[')
                 .nth(1)
@@ -681,6 +687,30 @@ mod tests {
             .entries
             .iter()
             .any(|entry| is_conflict_status(&entry.index, &entry.worktree)));
+    }
+
+    #[test]
+    fn parses_unborn_and_detached_status_branches() {
+        assert_eq!(
+            parse_status_snapshot("## No commits yet on main\0")
+                .current_branch
+                .as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            parse_status_snapshot("## No commits yet on trunk...origin/trunk [gone]\0")
+                .current_branch
+                .as_deref(),
+            Some("trunk")
+        );
+        assert_eq!(
+            parse_status_snapshot("## HEAD (no branch)\0").current_branch,
+            None
+        );
+        assert_eq!(
+            parse_status_snapshot("## HEAD (detached at a1b2c3d)\0").current_branch,
+            None
+        );
     }
 
     #[test]
