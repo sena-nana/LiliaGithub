@@ -38,7 +38,7 @@ const {
   canLoadFiles,
   activeFileRepoRef,
   filesUnavailableMessage,
-  recentSyncError,
+  repoSyncIssue,
   hasConflicts,
   conflicts,
   conflictDialogOpen,
@@ -69,7 +69,6 @@ const {
   pushRemoteNames,
   remoteSyncUnavailableReason,
   repoSettingValues,
-  repoActionError,
   remoteSyncConfig,
   remoteSyncConfigLoading,
   remoteSyncConfigSaving,
@@ -287,8 +286,7 @@ async function refreshCurrentPage() {
           :launch-logs="launchLogs"
           :launch-error="launchError"
           :action-error="actionError"
-          :repo-action-error="repoActionError"
-          :recent-sync-error="recentSyncError"
+          :repo-sync-issue="repoSyncIssue"
           :launch-terminal-visible="launchTerminalVisible"
           :action-running="actionRunning"
           :launch-running="launchRunning"

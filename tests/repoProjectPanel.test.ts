@@ -1393,8 +1393,13 @@ describe("RepoProjectPanel", () => {
       repoFullName: "sena-nana/local-repo",
       activeGitTab: "changes",
       actionError: "操作失败：无法提交",
-      repoActionError: "仓库错误：自动同步失败",
-      recentSyncError: { message: "认证失败", retrying: false },
+      repoSyncIssue: {
+        label: "最近同步失败",
+        message: "认证失败",
+        retryable: true,
+        retrying: false,
+        updatedAt: 1,
+      },
     });
 
     const errorCard = view.getByRole("region", { name: "仓库错误" });
@@ -1408,9 +1413,50 @@ describe("RepoProjectPanel", () => {
     expect(errorCard).toHaveTextContent("重新绑定 GitHub");
     expect(errorCard).toHaveTextContent("操作失败");
     expect(errorCard).toHaveTextContent("操作失败：无法提交");
-    expect(errorCard).toHaveTextContent("仓库错误：自动同步失败");
     expect(within(errorCard).getByRole("button", { name: "重试" })).toBeInTheDocument();
     expect(view.getByRole("region", { name: "仓库描述" })).toBeInTheDocument();
+  });
+
+  it("同一次仓库操作失败在右侧错误区只显示一次", async () => {
+    const message = "Error: 合并失败：not something we can merge";
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/local-repo",
+      activeGitTab: "changes",
+      actionError: message,
+      repoSyncIssue: {
+        label: "仓库操作失败",
+        message,
+        retryable: false,
+        retrying: false,
+        updatedAt: 1,
+      },
+    });
+
+    const errorCard = view.getByRole("region", { name: "仓库错误" });
+    expect(errorCard).toHaveTextContent("仓库操作失败");
+    expect(within(errorCard).getAllByText(message)).toHaveLength(1);
+    expect(within(errorCard).queryByRole("button", { name: "重试" })).toBeNull();
+  });
+
+  it("最近同步错误去重后保留重试中状态", async () => {
+    const message = "认证失败";
+    const view = await renderProjectPanel({
+      repoFullName: "sena-nana/local-repo",
+      activeGitTab: "changes",
+      actionError: message,
+      repoSyncIssue: {
+        label: "最近同步失败",
+        message,
+        retryable: true,
+        retrying: true,
+        updatedAt: 1,
+      },
+    });
+
+    const errorCard = view.getByRole("region", { name: "仓库错误" });
+    expect(errorCard).toHaveTextContent("最近同步失败");
+    expect(within(errorCard).getAllByText(message)).toHaveLength(1);
+    expect(within(errorCard).getByRole("button", { name: "重试" })).toBeDisabled();
   });
 
   it("仓库描述标签超过两行时显示展开和收起按钮", async () => {

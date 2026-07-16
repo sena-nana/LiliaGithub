@@ -39,6 +39,7 @@ import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader"
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
 import { useAccountPreferences } from "../../composables/useAccountPreferences";
+import type { RepoSyncIssueDisplay } from "../../composables/workspace/state";
 import { clearHomeGitHubOverviewSnapshot } from "../../pages/homeOverviewCache";
 import {
   createGitHubIssue,
@@ -331,8 +332,7 @@ const props = defineProps<{
   launchLogs: readonly ProjectLaunchLog[];
   launchError?: string | null;
   actionError?: string | null;
-  repoActionError?: string | null;
-  recentSyncError?: { message: string; retrying: boolean } | null;
+  repoSyncIssue?: RepoSyncIssueDisplay | null;
   launchTerminalVisible: boolean;
   actionRunning: boolean;
   launchRunning: boolean;
@@ -907,14 +907,15 @@ const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
       guidance: recoveryGuidanceForMessage(message),
     });
   };
-  if (props.recentSyncError) {
-    addError("recent-sync", "最近同步失败", props.recentSyncError.message, {
-      retry: "sync",
-      retrying: props.recentSyncError.retrying,
+  if (props.repoSyncIssue) {
+    addError("repo-sync", props.repoSyncIssue.label, props.repoSyncIssue.message, {
+      retry: props.repoSyncIssue.retryable ? "sync" : undefined,
+      retrying: props.repoSyncIssue.retrying,
     });
   }
-  addError("action", "操作失败", props.actionError);
-  addError("repo-action", "仓库错误", props.repoActionError);
+  if (props.actionError !== props.repoSyncIssue?.message) {
+    addError("action", "操作失败", props.actionError);
+  }
   addError("page-refresh", "页面刷新失败", pageRefreshError.value);
   addError("readme", "README 读取失败", readmeError.value);
   addError("github", "GitHub 请求失败", githubError.value);
@@ -3494,7 +3495,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       <main
         ref="projectMainRef"
         class="project-main"
-        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'release' || activeSection === 'settings' }"
+        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'release' || activeSection === 'settings' }"
       >
         <RepoLaunchTerminalPanel
           v-if="canUseLaunchWorkflow && activeSection === 'launch'"

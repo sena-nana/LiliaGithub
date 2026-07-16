@@ -1485,7 +1485,7 @@ describe("基础路由", () => {
     });
   });
 
-  it("仓库详情页把最近同步失败和仓库操作错误都显示到右侧", async () => {
+  it("仓库详情页优先显示最近同步失败而不重复仓库操作错误", async () => {
     const { setRepoActionError, state } = await import("../src/composables/workspace/state");
     await renderAt("/repos/LiliaGithub");
     await waitForRepoTitle("LiliaGithub");
@@ -1507,7 +1507,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(repoDetailRecentSyncFailure()).toHaveTextContent("认证失败");
     });
-    expect(await findRepoSidebarErrorCard()).toHaveTextContent("自动同步正在执行");
+    expect(await findRepoSidebarErrorCard()).not.toHaveTextContent("自动同步正在执行");
   });
 
   it("仓库详情页右侧错误区出现或消失时保留项目主内容区", async () => {
