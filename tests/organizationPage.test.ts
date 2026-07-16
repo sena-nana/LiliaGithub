@@ -5,7 +5,6 @@ import Organization from "../src/pages/Organization.vue";
 import type {
   GitHubOrganizationOverview,
   GitHubOrganizationProfile,
-  GitHubRepoPage,
   GitHubRepoSummary,
 } from "../src/services/workspace";
 import { repoSummary } from "./fixtures/workspace";
@@ -13,12 +12,10 @@ import { repoSummary } from "./fixtures/workspace";
 const {
   getGitHubOrganizationOverview,
   getGitHubOrganizationProfile,
-  listGitHubRepos,
   workspace,
 } = vi.hoisted(() => ({
   getGitHubOrganizationOverview: vi.fn(),
   getGitHubOrganizationProfile: vi.fn(),
-  listGitHubRepos: vi.fn(),
   workspace: {
     state: {
       repos: [] as ReturnType<typeof repoSummary>[],
@@ -40,7 +37,6 @@ vi.mock("../src/services/workspace", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/services/workspace")>(),
   getGitHubOrganizationOverview,
   getGitHubOrganizationProfile,
-  listGitHubRepos,
 }));
 
 vi.mock("../src/composables/useWorkspace", async () => {
@@ -136,10 +132,6 @@ function organizationOverview(
   };
 }
 
-function page(login: string, items: GitHubRepoSummary[], nextPage: number | null = null): GitHubRepoPage {
-  return { items, nextPage, scope: { kind: "organization", login } };
-}
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -155,11 +147,6 @@ async function renderOrganization(path = "/organizations/alpha-org") {
     history: createMemoryHistory(),
     routes: [
       { path: "/organizations/:login", name: "github-organization", component: Organization },
-      {
-        path: "/organizations/:login/repositories",
-        name: "github-organization-repositories",
-        component: Organization,
-      },
       { path: "/repos/:repoId(.*)", component: { template: "<div>repo</div>" } },
       { path: "/settings", component: { template: "<div>settings</div>" } },
     ],
@@ -184,7 +171,6 @@ describe("GitHub 风格组织页", () => {
     };
     getGitHubOrganizationProfile.mockResolvedValue(organizationProfile());
     getGitHubOrganizationOverview.mockResolvedValue(organizationOverview());
-    listGitHubRepos.mockResolvedValue(page("alpha-org", []));
   });
 
   it("展示真实组织 Overview、安全 README，并在 Public 与 Member 视图间切换", async () => {
@@ -200,7 +186,7 @@ describe("GitHub 风格组织页", () => {
     expect(screen.getByRole("button", { name: /Featured/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Recent/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Octo Cat/ })).toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "组织页面" }).querySelectorAll("a")).toHaveLength(2);
+    expect(screen.queryByRole("navigation", { name: "组织页面" })).toBeNull();
     expect(getGitHubOrganizationOverview).toHaveBeenNthCalledWith(1, "alpha-org", "member");
 
     await fireEvent.click(screen.getByRole("link", { name: "指南" }));
@@ -216,6 +202,10 @@ describe("GitHub 风格组织页", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: /Octo Cat/ }));
     expect(workspace.openUrl).toHaveBeenLastCalledWith("https://github.com/octocat");
+
+    await fireEvent.click(screen.getByRole("button", { name: /Featured/ }));
+    await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Aalpha-org%2FFeatured"));
+    expect(workspace.rememberRemoteRepo).toHaveBeenCalledWith(expect.objectContaining({ fullName: "alpha-org/Featured" }));
   });
 
   it("Overview 各区块独立呈现不可用和空状态，且不泄漏技术错误", async () => {
@@ -235,79 +225,6 @@ describe("GitHub 风格组织页", () => {
     expect(screen.getByText("暂时无法读取成员。")).toBeInTheDocument();
     expect(screen.queryByText(/GraphQL|HTTP 403/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Member" })).toBeNull();
-  });
-
-  it("Repositories 自动读取全部分页，支持搜索、筛选、排序和远程打开", async () => {
-    const publicRepo = githubRepository("alpha-org/Public", {
-      description: "visual editor",
-      language: "TypeScript",
-      topics: ["design-tools"],
-      stargazersCount: 3,
-    });
-    const privateRepo = githubRepository("alpha-org/Private", {
-      private: true,
-      language: "Rust",
-      stargazersCount: 20,
-    });
-    const templateRepo = githubRepository("alpha-org/Template", {
-      isTemplate: true,
-      language: "TypeScript",
-      topics: ["design-tools"],
-      stargazersCount: 8,
-    });
-    const internalRepo = githubRepository("alpha-org/Internal", {
-      visibility: "internal",
-      language: "Go",
-      stargazersCount: 12,
-    });
-    listGitHubRepos
-      .mockResolvedValueOnce(page("alpha-org", [publicRepo, privateRepo, internalRepo], 2))
-      .mockResolvedValueOnce(page("alpha-org", [githubRepository("ALPHA-ORG/public"), templateRepo]));
-
-    const view = await renderOrganization("/organizations/alpha-org/repositories");
-    await waitFor(() => expect(listGitHubRepos).toHaveBeenCalledTimes(2));
-    const repositories = screen.getByLabelText("组织仓库");
-    await waitFor(() => expect(within(repositories).getAllByRole("button")).toHaveLength(4));
-
-    await fireEvent.update(screen.getByLabelText("仓库类型"), "public");
-    expect(within(repositories).getByRole("button", { name: /public/i })).toBeInTheDocument();
-    expect(within(repositories).queryByRole("button", { name: /Internal/ })).toBeNull();
-    expect(within(repositories).queryByRole("button", { name: /Private/ })).toBeNull();
-    await fireEvent.update(screen.getByLabelText("仓库类型"), "all");
-
-    await fireEvent.update(screen.getByPlaceholderText("搜索仓库"), "design-tools");
-    expect(within(repositories).getByRole("button", { name: /Template/ })).toBeInTheDocument();
-    expect(within(repositories).queryByRole("button", { name: /Private/ })).toBeNull();
-
-    await fireEvent.update(screen.getByPlaceholderText("搜索仓库"), "");
-    await fireEvent.update(screen.getByLabelText("仓库类型"), "templates");
-    expect(within(repositories).getByRole("button", { name: /Template/ })).toBeInTheDocument();
-    expect(within(repositories).queryByRole("button", { name: /Public.*远程/ })).toBeNull();
-
-    await fireEvent.update(screen.getByLabelText("仓库类型"), "all");
-    await fireEvent.update(screen.getByLabelText("编程语言"), "Rust");
-    expect(within(repositories).getByRole("button", { name: /Private/ })).toBeInTheDocument();
-
-    await fireEvent.update(screen.getByLabelText("编程语言"), "");
-    await fireEvent.update(screen.getByLabelText("仓库排序"), "stars");
-    expect(within(repositories).getAllByRole("button")[0]).toHaveAccessibleName(/Private/);
-
-    await fireEvent.click(within(repositories).getByRole("button", { name: /Template/ }));
-    await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/repos/github%3Aalpha-org%2FTemplate"));
-    expect(workspace.rememberRemoteRepo).toHaveBeenCalledWith(expect.objectContaining({ fullName: "alpha-org/Template" }));
-  });
-
-  it("分页失败保留已加载仓库，重试后从失败页继续", async () => {
-    listGitHubRepos
-      .mockResolvedValueOnce(page("alpha-org", [githubRepository("alpha-org/First")], 2))
-      .mockRejectedValueOnce(new Error("network"))
-      .mockResolvedValueOnce(page("alpha-org", [githubRepository("alpha-org/Second")]));
-    await renderOrganization("/organizations/alpha-org/repositories");
-
-    expect(await screen.findByRole("button", { name: /First/ })).toBeInTheDocument();
-    await fireEvent.click(await screen.findByRole("button", { name: "重试" }));
-    expect(await screen.findByRole("button", { name: /Second/ })).toBeInTheDocument();
-    expect(listGitHubRepos).toHaveBeenNthCalledWith(3, { kind: "organization", login: "alpha-org" }, 2);
   });
 
   it("组织切换隔离旧 Overview 响应", async () => {
@@ -336,6 +253,5 @@ describe("GitHub 风格组织页", () => {
     await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=account"));
     expect(getGitHubOrganizationProfile).not.toHaveBeenCalled();
     expect(getGitHubOrganizationOverview).not.toHaveBeenCalled();
-    expect(listGitHubRepos).not.toHaveBeenCalled();
   });
 });

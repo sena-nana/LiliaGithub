@@ -24,11 +24,6 @@ export const LILIA_GITHUB_ROUTES: RouteRecordRaw[] = [
   { path: "", component: HomePage },
   { path: "profile", name: "github-profile", component: ProfilePage },
   { path: "organizations/:login", name: "github-organization", component: OrganizationPage },
-  {
-    path: "organizations/:login/repositories",
-    name: "github-organization-repositories",
-    component: OrganizationPage,
-  },
   { path: "repos/:repoId(.*)/commits/:hash", component: CommitDetailPage },
   { path: "repos/:repoId(.*)/files", component: RepoPage, meta: { repoTab: "files" } },
   { path: "repos/:repoId(.*)/changes", component: RepoPage, meta: { repoTab: "changes" } },
