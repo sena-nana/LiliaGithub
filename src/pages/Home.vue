@@ -29,8 +29,8 @@ import {
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
-import { useAccountPreferences } from "../composables/useAccountPreferences";
-import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
+import { cloneAccountPreferences, useAccountPreferences } from "../composables/useAccountPreferences";
+import { Dropdown, openContextMenuAt, type ContextMenuItem } from "@lilia/ui";
 import { buildContributionHeatmapModel } from "@lilia/ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../composables/useWorkspace";
@@ -73,13 +73,9 @@ import {
 import ContributionIdentityRecommendations from "../components/ContributionIdentityRecommendations.vue";
 import HomeContributionCard from "../components/home/HomeContributionCard.vue";
 import HomeCloneDialog from "../components/home/HomeCloneDialog.vue";
-import HomeWorkspaceOrganizer, {
-  type HomeWorkspaceGroup,
-} from "../components/home/HomeWorkspaceOrganizer.vue";
-import GitHubRepositoryScopeControl from "../components/github/GitHubRepositoryScopeControl.vue";
 import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
 import RepoCreateCard from "../components/sidebar/RepoCreateCard.vue";
-import { bulkResultTone, repoDisplayName, repoDisplayTitle } from "../utils/repoDisplay";
+import { bulkResultTone, repoDisplayName } from "../utils/repoDisplay";
 import {
   favoriteRepositories,
   type FavoriteRepositoryEntry,
@@ -336,27 +332,10 @@ let repoStatusSortBindingIdentity: string | null | undefined;
 let repoStatusSortSelectedOnPage = false;
 let homeContributionRefreshGeneration = 0;
 const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
-const homeFavorites = computed(() =>
-  favoriteRepositories(workspace.state.settings, workspace.state.repos),
-);
 const homeFavoritesByKey = computed(() => new Map(
-  homeFavorites.value.map((favorite) => [favorite.key, favorite]),
+  favoriteRepositories(workspace.state.settings, workspace.state.repos)
+    .map((favorite) => [favorite.key, favorite]),
 ));
-const homeWorkspaceGroups = computed<HomeWorkspaceGroup[]>(() => {
-  const reposById = new Map(workspace.state.repos.map((repo) => [repo.id, repo]));
-  return repoGroups.value.map((group) => ({
-    id: group.id,
-    name: group.name,
-    items: group.repoIds.flatMap((repoId) => {
-      const repo = reposById.get(repoId);
-      return repo ? [{
-        repoId,
-        name: repoDisplayName(repo),
-        title: repoDisplayTitle(repo),
-      }] : [];
-    }),
-  }));
-});
 
 function favoritePending(key: string) {
   return favoritePendingKeys.value.has(key);
@@ -405,21 +384,48 @@ async function removeHomeFavorite(favorite: FavoriteRepositoryEntry) {
   });
 }
 
-async function openHomeFavorite(favorite: FavoriteRepositoryEntry) {
-  if (favorite.localRepo) {
-    await router.push(repoRoute(favorite.localRepo.id));
-    return;
-  }
-  if (favorite.remoteShortcut) {
-    await router.push(remoteRepoRoute(favorite.remoteShortcut.fullName));
-  }
-}
 const githubOrganizationOwnerOptions = computed(() => githubOrganizationOwners(githubRepoOwners.value));
 const githubOrganizationVisibilityLimited = computed(() =>
   githubOrganizationAccessLimited(workspace.githubBinding.value?.scopes, githubRepoOwners.value),
 );
 const githubOrganizationRecovery = computed(() => githubOrganizationAccessRecovery(githubRepoOwners.value));
 const githubOrganizationVisibilityMessage = computed(() => githubOrganizationAccessMessage(githubRepoOwners.value));
+const homeRepositoryScopeOptions = computed(() => {
+  const personalLogin = workspace.githubBinding.value?.login ?? "";
+  return [
+    { value: "all", label: "全部", agentId: "home.repo-status.scope.all" },
+    {
+      value: "personal",
+      label: personalLogin || "个人",
+      disabled: !personalLogin,
+      agentId: "home.repo-status.scope.personal",
+    },
+    ...githubOrganizationOwnerOptions.value.map((owner) => ({
+      value: `organization:${owner.login}`,
+      label: owner.login,
+      agentId: `home.repo-status.scope.organization.${owner.login}`,
+    })),
+  ];
+});
+const homeRepositoryScopeValue = computed({
+  get: () => {
+    const scope = githubRepositoryScope.value;
+    return scope.kind === "organization" ? `organization:${scope.login}` : scope.kind;
+  },
+  set: (value: string) => {
+    const login = workspace.githubBinding.value?.login ?? "";
+    if (value === "personal") {
+      if (!login) return;
+      void selectHomeRepositoryScope({ kind: "personal", login });
+      return;
+    }
+    if (value.startsWith("organization:")) {
+      void selectHomeRepositoryScope({ kind: "organization", login: value.slice("organization:".length) });
+      return;
+    }
+    void selectHomeRepositoryScope(ALL_GITHUB_REPOSITORIES);
+  },
+});
 const emptySyncIssuesByRepoId = new Map<string, RepoSyncIssueDisplay>();
 function cloneOverviewSettings(settings: typeof workspace.state.settings): HomeOverviewSettingsSnapshot {
   if (!settings) return null;
@@ -931,8 +937,21 @@ async function selectHomeRepositoryScope(scope: GitHubRepositoryScope, updateRou
   repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
   if (updateRoute) {
     await router.replace({ query: { ...route.query, ...githubRepositoryScopeQuery(scope) } });
+    void persistHomeRepositoryScopePreference(scope);
   }
   if (!restored) await loadGitHubRepoStatus();
+}
+
+async function persistHomeRepositoryScopePreference(scope: GitHubRepositoryScope) {
+  try {
+    const next = cloneAccountPreferences(accountPreferences.value);
+    next.repositoryScope = scope.kind === "all"
+      ? { kind: "all" }
+      : { kind: scope.kind, login: scope.login };
+    await workspace.updateAccountPreferences(next);
+  } catch {
+    // Preference persistence must not block scope switching.
+  }
 }
 
 async function openOrganizationAuthorization() {
@@ -2279,15 +2298,6 @@ function bulkOperationDescription(operation: BulkOperation) {
         </div>
       </div>
 
-      <HomeWorkspaceOrganizer
-        :favorites="homeFavorites"
-        :groups="homeWorkspaceGroups"
-        :favorite-error="favoriteError"
-        @open-favorite="openHomeFavorite"
-        @remove-favorite="removeHomeFavorite"
-        @open-repo="router.push(repoRoute($event))"
-      />
-
       <div class="overview-grid">
         <div class="contribution-stack">
           <HomeContributionCard
@@ -2573,6 +2583,7 @@ function bulkOperationDescription(operation: BulkOperation) {
               重试
             </button>
           </p>
+          <p v-if="favoriteError" class="repo-status-error">{{ favoriteError }}</p>
           <div class="home-scroll-card__body">
             <div
               class="repo-status-list"
@@ -2855,7 +2866,7 @@ function bulkOperationDescription(operation: BulkOperation) {
 <style scoped>
 .home-page {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
   height: 100%;
   min-height: 0;
