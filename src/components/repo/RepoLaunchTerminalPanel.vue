@@ -10,8 +10,10 @@ const props = defineProps<{
 
 const ansiUp = new AnsiUp();
 const terminalBody = ref<HTMLElement | null>(null);
+const followsTerminalEnd = ref(true);
 
 const terminalHtml = computed(() => renderTerminalHtml(props.launchLogs));
+const TERMINAL_END_THRESHOLD = 4;
 
 type TerminalLine = {
   stream: ProjectLaunchLog["stream"];
@@ -20,12 +22,12 @@ type TerminalLine = {
 };
 
 onMounted(() => {
-  void scrollTerminalToEnd();
+  void scrollTerminalToEnd(true);
 });
 
-watch(() => props.launchLogs.length, () => {
+watch([terminalHtml, () => props.launchError], () => {
   void scrollTerminalToEnd();
-});
+}, { flush: "post" });
 
 function renderTerminalHtml(logs: readonly ProjectLaunchLog[]) {
   return buildTerminalLines(logs)
@@ -87,8 +89,15 @@ function applyTerminalSegment(
   }
 }
 
-async function scrollTerminalToEnd() {
+function updateTerminalFollowState() {
+  const body = terminalBody.value;
+  if (!body) return;
+  followsTerminalEnd.value = body.scrollHeight - body.clientHeight - body.scrollTop <= TERMINAL_END_THRESHOLD;
+}
+
+async function scrollTerminalToEnd(force = false) {
   await nextTick();
+  if (!force && !followsTerminalEnd.value) return;
   const body = terminalBody.value;
   if (!body) return;
   body.scrollTop = body.scrollHeight;
@@ -97,7 +106,13 @@ async function scrollTerminalToEnd() {
 
 <template>
   <section class="project-terminal-card">
-    <div ref="terminalBody" class="project-terminal__body" aria-label="启动终端" data-agent-id="repo.launch.terminal">
+    <div
+      ref="terminalBody"
+      class="project-terminal__body"
+      aria-label="启动终端"
+      data-agent-id="repo.launch.terminal"
+      @scroll="updateTerminalFollowState"
+    >
       <div v-if="launchError" class="project-terminal__line project-terminal__line--error">{{ launchError }}</div>
       <pre v-if="launchLogs.length" class="project-terminal__output"><code v-html="terminalHtml"></code></pre>
       <div v-else class="project-terminal__line project-terminal__line--muted">暂无输出。</div>
