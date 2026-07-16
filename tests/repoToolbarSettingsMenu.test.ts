@@ -36,4 +36,13 @@ describe("RepoToolbarSettingsMenu", () => {
 
     expect(screen.getByRole("switch", { name: "自动同步" })).toBeChecked();
   });
+
+  it("emits openRemoteSyncSettings from the menu action", async () => {
+    const view = renderMenu();
+
+    await fireEvent.click(screen.getByRole("button", { name: "设置" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /远端同步设置/ }));
+
+    expect(view.emitted("openRemoteSyncSettings")).toEqual([[]]);
+  });
 });

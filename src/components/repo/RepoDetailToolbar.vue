@@ -13,7 +13,6 @@ import {
   RotateCw,
   RotateCcw,
   ScrollText,
-  Settings2,
   Square,
   SquareTerminal,
   TriangleAlert,
@@ -337,18 +336,8 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
             :values="repoSettingValues"
             :disabled="actionRunning"
             @update:setting="(key, value) => emit('updateSetting', key, value)"
+            @open-remote-sync-settings="emit('openRemoteSyncSettings')"
           />
-          <button
-            type="button"
-            class="repo-toolbar__btn"
-            title="远端同步设置"
-            aria-label="远端同步设置"
-            data-agent-id="repo.toolbar.remote-sync.settings"
-            :disabled="actionRunning"
-            @click="emit('openRemoteSyncSettings')"
-          >
-            <Settings2 :size="17" aria-hidden="true" />
-          </button>
           <button
             v-if="repoContext.tags.includes('system-git')"
             type="button"
