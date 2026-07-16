@@ -2601,8 +2601,8 @@ function bulkOperationDescription(operation: BulkOperation) {
                 :aria-label="`打开 ${githubRepo.fullName}`"
                 :title="localRepo ? localRepo.path : githubRepo.htmlUrl"
                 @click="openGitHubRepo(githubRepo, localRepo)"
-                @keydown.enter.prevent="openGitHubRepo(githubRepo, localRepo)"
-                @keydown.space.prevent="openGitHubRepo(githubRepo, localRepo)"
+                @keydown.enter.self.prevent="openGitHubRepo(githubRepo, localRepo)"
+                @keydown.space.self.prevent="openGitHubRepo(githubRepo, localRepo)"
               >
                 <span class="repo-status-row__identity">
                   <strong class="repo-status-row__name">
@@ -3650,6 +3650,15 @@ function bulkOperationDescription(operation: BulkOperation) {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.repo-status-row:hover .repo-favorite-button,
+.repo-status-row:focus-within .repo-favorite-button {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .repo-favorite-button:hover,
@@ -3668,6 +3677,10 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .repo-favorite-button:disabled {
   cursor: wait;
+}
+
+.repo-status-row:hover .repo-favorite-button:disabled,
+.repo-status-row:focus-within .repo-favorite-button:disabled {
   opacity: 0.65;
 }
 
@@ -3923,7 +3936,8 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 @media (prefers-reduced-motion: reduce) {
   .language-pie__slice,
-  .language-list__link {
+  .language-list__link,
+  .repo-favorite-button {
     transition: none;
   }
 }
