@@ -249,6 +249,8 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_start_device_flow,
         github::github_poll_device_flow,
         github::github_unbind,
+        github::github_get_organization_profile,
+        github::github_get_organization_overview,
         github::github_list_repos,
         github::github_list_watched_repos,
         github::github_get_repo_subscription,

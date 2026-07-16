@@ -272,6 +272,7 @@ export interface GitHubRepoSummary {
   /** @deprecated Prefer owner.login. Kept for persisted data compatibility. */
   ownerLogin: string;
   private: boolean;
+  visibility?: "public" | "private" | "internal" | string | null;
   disabled: boolean;
   archived: boolean;
   description: string | null;
@@ -280,8 +281,78 @@ export interface GitHubRepoSummary {
   updatedAt: string;
   cloneUrl: string;
   htmlUrl: string;
+  fork?: boolean;
+  isTemplate?: boolean;
+  language?: string | null;
+  topics?: string[];
+  stargazersCount?: number;
+  forksCount?: number;
+  licenseSpdxId?: string | null;
   owner?: GitHubRepositoryOwner | null;
   permissions?: GitHubRepositoryPermissions | null;
+}
+
+export type GitHubOrganizationProfileView = "public" | "member";
+export type GitHubOrganizationSectionStatus = "ready" | "empty" | "unavailable";
+
+export interface GitHubOrganizationProfile {
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  description: string | null;
+  htmlUrl: string;
+  location: string | null;
+  websiteUrl: string | null;
+  email: string | null;
+  twitterUsername: string | null;
+  followers: number;
+  publicRepoCount: number;
+  totalRepoCount: number | null;
+  isVerified: boolean;
+}
+
+export interface GitHubOrganizationMember {
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  htmlUrl: string;
+}
+
+export interface GitHubOrganizationReadmeSection {
+  status: GitHubOrganizationSectionStatus;
+  preview: RepoFilePreview | null;
+  sourceRepo: string | null;
+  htmlUrl: string | null;
+  error: string | null;
+}
+
+export interface GitHubOrganizationFeaturedSection {
+  status: GitHubOrganizationSectionStatus;
+  source: "pinned" | "popular" | null;
+  items: GitHubRepoSummary[];
+  error: string | null;
+}
+
+export interface GitHubOrganizationRepositorySection {
+  status: GitHubOrganizationSectionStatus;
+  items: GitHubRepoSummary[];
+  error: string | null;
+}
+
+export interface GitHubOrganizationMembersSection {
+  status: GitHubOrganizationSectionStatus;
+  items: GitHubOrganizationMember[];
+  totalCount: number;
+  error: string | null;
+}
+
+export interface GitHubOrganizationOverview {
+  effectiveView: GitHubOrganizationProfileView;
+  memberViewAvailable: boolean;
+  readme: GitHubOrganizationReadmeSection;
+  featured: GitHubOrganizationFeaturedSection;
+  recent: GitHubOrganizationRepositorySection;
+  members: GitHubOrganizationMembersSection;
 }
 
 export interface GitHubRepoPage {

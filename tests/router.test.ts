@@ -272,15 +272,20 @@ describe("基础路由", () => {
     workspaceFallback.setFallbackStopLaunchOverrideForTests(null);
   });
 
-  it("用户资料与组织仓库深链进入独立页面", async () => {
+  it("用户资料、组织 Overview 与组织仓库深链进入独立页面", async () => {
     const profile = await renderAt("/profile");
     expect(profile.router.currentRoute.value.fullPath).toBe("/profile");
     expect(await screen.findByRole("heading", { level: 1, name: "用户资料" })).toBeInTheDocument();
 
     const organization = await renderAt("/organizations/sena-nana");
     expect(organization.router.currentRoute.value.fullPath).toBe("/organizations/sena-nana");
-    expect(await screen.findByRole("heading", { level: 1, name: "sena-nana" })).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "组织页面" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Overview" })).toHaveClass("router-link-exact-active");
+
+    const repositories = await renderAt("/organizations/sena-nana/repositories");
+    expect(repositories.router.currentRoute.value.fullPath).toBe("/organizations/sena-nana/repositories");
     expect(await screen.findByLabelText("组织仓库")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Repositories" })).toHaveClass("router-link-exact-active");
   });
 
   it("总览页项目代码占比展示本地项目占比", async () => {

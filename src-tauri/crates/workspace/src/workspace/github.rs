@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use crate::workspace::file_browser::{file_preview_mime, MAX_FILE_PREVIEW_BYTES};
 use crate::workspace::operations::OperationKind;
-use crate::workspace::readme::image_mime_for_path;
+use crate::workspace::readme::{image_mime_for_path, readme_image_sources};
 use crate::workspace::repos::{commit_file_patches, run_repo_analysis_blocking};
 use crate::workspace::settings::{
     clear_github_binding, load_settings, repo_path_by_id, switch_github_binding, STORE_FILE,
@@ -35,6 +35,10 @@ use lilia_github_contracts::workspace::{
     GitHubDeviceFlowStart, GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion,
     GitHubIssueFilterMetadata, GitHubIssueMilestone, GitHubIssueProjectItem,
     GitHubMergePullRequestRequest, GitHubOwnerKind, GitHubProjectCache, GitHubProjectRepoCache,
+    GitHubOrganizationFeaturedSection, GitHubOrganizationFeaturedSource,
+    GitHubOrganizationMember, GitHubOrganizationMembersSection, GitHubOrganizationOverview,
+    GitHubOrganizationProfile, GitHubOrganizationProfileView, GitHubOrganizationReadmeSection,
+    GitHubOrganizationRepositorySection, GitHubOrganizationSectionStatus,
     GitHubPullRequest, GitHubPullRequestCheck, GitHubPullRequestDiscussion,
     GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
@@ -188,6 +192,8 @@ pub(super) struct GitHubRepoResponse {
     #[serde(default)]
     pub(super) archived: bool,
     #[serde(default)]
+    pub(super) fork: bool,
+    #[serde(default)]
     pub(super) is_template: bool,
     pub(super) description: Option<String>,
     pub(super) default_branch: Option<String>,
@@ -195,6 +201,10 @@ pub(super) struct GitHubRepoResponse {
     pub(super) updated_at: String,
     pub(super) clone_url: String,
     pub(super) html_url: String,
+    #[serde(default)]
+    pub(super) language: Option<String>,
+    #[serde(default)]
+    pub(super) topics: Vec<String>,
     pub(super) owner: GitHubRepoOwnerResponse,
     #[serde(default)]
     pub(super) permissions: Option<GitHubRepoPermissionsResponse>,
@@ -278,6 +288,8 @@ pub(super) struct GitHubContentFileResponse {
     pub(super) content: Option<String>,
     #[serde(default)]
     pub(super) size: Option<u64>,
+    #[serde(default)]
+    pub(super) html_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,6 +303,50 @@ pub(super) struct GitHubOrgResponse {
 pub(super) struct GitHubOrgMembershipResponse {
     pub(super) state: String,
     pub(super) organization: GitHubOrgResponse,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrganizationMemberResponse {
+    pub(super) login: String,
+    #[serde(default)]
+    pub(super) avatar_url: Option<String>,
+    pub(super) html_url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrganizationProfileResponse {
+    pub(super) login: String,
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) avatar_url: Option<String>,
+    #[serde(default)]
+    pub(super) description: Option<String>,
+    pub(super) html_url: String,
+    #[serde(default)]
+    pub(super) location: Option<String>,
+    #[serde(default)]
+    pub(super) blog: Option<String>,
+    #[serde(default)]
+    pub(super) email: Option<String>,
+    #[serde(default)]
+    pub(super) twitter_username: Option<String>,
+    #[serde(default)]
+    pub(super) followers: u64,
+    #[serde(default)]
+    pub(super) public_repos: u64,
+    #[serde(default)]
+    pub(super) total_private_repos: Option<u64>,
+    #[serde(default)]
+    pub(super) is_verified: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrganizationRepositoryVisibilityResponse {
+    #[serde(default)]
+    pub(super) private: bool,
+    #[serde(default)]
+    pub(super) visibility: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -426,6 +482,118 @@ pub(super) struct GitHubGraphQlResponse<T> {
 #[derive(Debug, Deserialize)]
 pub(super) struct GitHubGraphQlError {
     pub(super) message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct GitHubOrganizationGraphQlData {
+    pub(super) organization: Option<GitHubOrganizationGraphQlOrganization>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct GitHubOrganizationGraphQlOrganization {
+    #[serde(default)]
+    pub(super) item_showcase: Option<GitHubOrganizationGraphQlItemShowcase>,
+    #[serde(default)]
+    pub(super) popular_repositories: Option<GitHubOrganizationGraphQlRepositoryConnection>,
+    #[serde(default)]
+    pub(super) recent_repositories: Option<GitHubOrganizationGraphQlRepositoryConnection>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct GitHubOrganizationGraphQlItemShowcase {
+    #[serde(default)]
+    pub(super) items: GitHubOrganizationGraphQlRepositoryConnection,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct GitHubOrganizationGraphQlRepositoryConnection {
+    #[serde(default)]
+    pub(super) nodes: Vec<Option<GitHubOrganizationGraphQlRepository>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct GitHubOrganizationGraphQlRepository {
+    #[serde(default)]
+    pub(super) database_id: Option<u64>,
+    pub(super) name: String,
+    pub(super) name_with_owner: String,
+    #[serde(default)]
+    pub(super) is_private: bool,
+    pub(super) visibility: String,
+    #[serde(default)]
+    pub(super) is_disabled: bool,
+    #[serde(default)]
+    pub(super) is_archived: bool,
+    #[serde(default)]
+    pub(super) is_fork: bool,
+    #[serde(default)]
+    pub(super) is_template: bool,
+    #[serde(default)]
+    pub(super) description: Option<String>,
+    #[serde(default)]
+    pub(super) default_branch_ref: Option<GitHubOrganizationGraphQlBranch>,
+    pub(super) created_at: String,
+    pub(super) updated_at: String,
+    pub(super) url: String,
+    pub(super) owner: GitHubOrganizationGraphQlOwner,
+    #[serde(default)]
+    pub(super) primary_language: Option<GitHubOrganizationGraphQlLanguage>,
+    #[serde(default)]
+    pub(super) repository_topics: GitHubOrganizationGraphQlTopicConnection,
+    #[serde(default)]
+    pub(super) stargazer_count: u64,
+    #[serde(default)]
+    pub(super) fork_count: u64,
+    #[serde(default)]
+    pub(super) license_info: Option<GitHubOrganizationGraphQlLicense>,
+    #[serde(default)]
+    pub(super) viewer_permission: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrganizationGraphQlBranch {
+    pub(super) name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct GitHubOrganizationGraphQlOwner {
+    pub(super) login: String,
+    #[serde(default)]
+    pub(super) avatar_url: Option<String>,
+    #[serde(rename = "__typename", default)]
+    pub(super) type_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrganizationGraphQlLanguage {
+    pub(super) name: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct GitHubOrganizationGraphQlTopicConnection {
+    #[serde(default)]
+    pub(super) nodes: Vec<Option<GitHubOrganizationGraphQlRepositoryTopic>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrganizationGraphQlRepositoryTopic {
+    pub(super) topic: GitHubOrganizationGraphQlTopic,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GitHubOrganizationGraphQlTopic {
+    pub(super) name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct GitHubOrganizationGraphQlLicense {
+    #[serde(default)]
+    pub(super) spdx_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1535,6 +1703,7 @@ pub(super) fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> Git
         full_name: repo.full_name,
         owner_login,
         private: repo.private,
+        visibility: repo.visibility,
         disabled: repo.disabled,
         archived: repo.archived,
         description: repo.description,
@@ -1543,6 +1712,13 @@ pub(super) fn github_repo_summary_from_response(repo: GitHubRepoResponse) -> Git
         updated_at: repo.updated_at,
         clone_url: repo.clone_url,
         html_url: repo.html_url,
+        fork: repo.fork,
+        is_template: repo.is_template,
+        language: repo.language,
+        topics: repo.topics,
+        stargazers_count: repo.stargazers_count,
+        forks_count: repo.forks_count,
+        license_spdx_id: repo.license.and_then(|license| license.spdx_id),
         owner: Some(owner),
         permissions: repo
             .permissions
@@ -4131,7 +4307,7 @@ fn github_fetch_repo_response_page(
     Ok((repos, next_page))
 }
 
-fn github_organization_repos_endpoint(owner_login: &str) -> Result<String, String> {
+fn github_organization_api_url(owner_login: &str) -> Result<String, String> {
     let login = owner_login.trim();
     if login.is_empty()
         || login.len() > 100
@@ -4141,7 +4317,652 @@ fn github_organization_repos_endpoint(owner_login: &str) -> Result<String, Strin
     {
         return Err("github_repository_scope_invalid：组织 login 无效".to_string());
     }
-    Ok(format!("https://api.github.com/orgs/{login}/repos"))
+    Ok(format!("https://api.github.com/orgs/{login}"))
+}
+
+fn github_organization_repos_endpoint(owner_login: &str) -> Result<String, String> {
+    Ok(format!("{}/repos", github_organization_api_url(owner_login)?))
+}
+
+pub(super) fn github_organization_profile_from_response(
+    profile: GitHubOrganizationProfileResponse,
+) -> GitHubOrganizationProfile {
+    GitHubOrganizationProfile {
+        login: profile.login,
+        name: normalize_optional_string(profile.name),
+        avatar_url: normalize_optional_string(profile.avatar_url),
+        description: normalize_optional_string(profile.description),
+        html_url: profile.html_url,
+        location: normalize_optional_string(profile.location),
+        website_url: normalize_optional_string(profile.blog),
+        email: normalize_optional_string(profile.email),
+        twitter_username: normalize_optional_string(profile.twitter_username),
+        followers: profile.followers,
+        public_repo_count: profile.public_repos,
+        total_repo_count: profile
+            .total_private_repos
+            .map(|private_count| profile.public_repos.saturating_add(private_count)),
+        is_verified: profile.is_verified,
+    }
+}
+
+pub async fn github_get_organization_profile(
+    app: AppHandle,
+    login: String,
+) -> Result<GitHubOrganizationProfile, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 组织资料",
+        move || {
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let response = github_send(
+                &app,
+                "读取 GitHub 组织资料失败",
+                github_headers(client.get(github_organization_api_url(&login)?), Some(&token)),
+            )?;
+            let profile = github_json::<GitHubOrganizationProfileResponse>(
+                "读取 GitHub 组织资料失败",
+                response,
+            )?;
+            Ok(github_organization_profile_from_response(profile))
+        },
+    )
+    .await
+}
+
+fn github_organization_member_view_available(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    login: &str,
+) -> bool {
+    let endpoint = match github_organization_api_url(login) {
+        Ok(endpoint) => endpoint.replacen("/orgs/", "/user/memberships/orgs/", 1),
+        Err(_) => return false,
+    };
+    let response = match github_send(
+        app,
+        "确认 GitHub 组织成员身份失败",
+        github_headers(client.get(endpoint), Some(token)),
+    ) {
+        Ok(response) => response,
+        Err(_) => return false,
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    response
+        .json::<GitHubOrgMembershipResponse>()
+        .ok()
+        .is_some_and(|membership| membership.state.eq_ignore_ascii_case("active"))
+}
+
+pub(super) fn github_organization_graphql_query(
+    view: GitHubOrganizationProfileView,
+) -> &'static str {
+    const PUBLIC_QUERY: &str = r#"
+      query OrganizationOverview($login: String!) {
+        organization(login: $login) {
+          popularRepositories: repositories(first: 6, privacy: PUBLIC, orderBy: {field: STARGAZERS, direction: DESC}) {
+            nodes { ...organizationRepository }
+          }
+          recentRepositories: repositories(first: 10, privacy: PUBLIC, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes { ...organizationRepository }
+          }
+        }
+      }
+      fragment organizationRepository on Repository {
+        databaseId name nameWithOwner visibility isPrivate isDisabled isArchived isFork isTemplate
+        description createdAt updatedAt url viewerPermission
+        defaultBranchRef { name }
+        owner { __typename login avatarUrl }
+        primaryLanguage { name }
+        repositoryTopics(first: 10) { nodes { topic { name } } }
+        stargazerCount forkCount licenseInfo { spdxId }
+      }
+    "#;
+    const MEMBER_QUERY: &str = r#"
+      query OrganizationOverview($login: String!) {
+        organization(login: $login) {
+          itemShowcase { items(first: 6) { nodes { ...organizationRepository } } }
+          popularRepositories: repositories(first: 6, orderBy: {field: STARGAZERS, direction: DESC}) {
+            nodes { ...organizationRepository }
+          }
+          recentRepositories: repositories(first: 10, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes { ...organizationRepository }
+          }
+        }
+      }
+      fragment organizationRepository on Repository {
+        databaseId name nameWithOwner visibility isPrivate isDisabled isArchived isFork isTemplate
+        description createdAt updatedAt url viewerPermission
+        defaultBranchRef { name }
+        owner { __typename login avatarUrl }
+        primaryLanguage { name }
+        repositoryTopics(first: 10) { nodes { topic { name } } }
+        stargazerCount forkCount licenseInfo { spdxId }
+      }
+    "#;
+    match view {
+        GitHubOrganizationProfileView::Public => PUBLIC_QUERY,
+        GitHubOrganizationProfileView::Member => MEMBER_QUERY,
+    }
+}
+
+fn github_organization_graphql(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    login: &str,
+    view: GitHubOrganizationProfileView,
+) -> Result<GitHubOrganizationGraphQlOrganization, String> {
+    let response = github_send(
+        app,
+        "读取 GitHub 组织概览失败",
+        github_headers(
+            client.post("https://api.github.com/graphql").json(&serde_json::json!({
+                "query": github_organization_graphql_query(view),
+                "variables": { "login": login },
+            })),
+            Some(token),
+        ),
+    )?;
+    let result = github_json::<GitHubGraphQlResponse<GitHubOrganizationGraphQlData>>(
+        "读取 GitHub 组织概览失败",
+        response,
+    )?;
+    let organization = result.data.and_then(|data| data.organization);
+    if let Some(organization) = organization {
+        return Ok(organization);
+    }
+    Err("读取 GitHub 组织概览失败".to_string())
+}
+
+fn github_organization_repository_permissions(
+    permission: Option<&str>,
+) -> Option<GitHubRepositoryPermissions> {
+    permission.map(|permission| {
+        let permission = permission.to_ascii_uppercase();
+        GitHubRepositoryPermissions {
+            pull: matches!(permission.as_str(), "READ" | "TRIAGE" | "WRITE" | "MAINTAIN" | "ADMIN"),
+            push: matches!(permission.as_str(), "WRITE" | "MAINTAIN" | "ADMIN"),
+            admin: permission == "ADMIN",
+        }
+    })
+}
+
+fn github_organization_repository_from_graphql(
+    repo: GitHubOrganizationGraphQlRepository,
+) -> Option<GitHubRepoSummary> {
+    let id = repo.database_id?;
+    let owner_login = repo.owner.login.clone();
+    let owner = GitHubRepositoryOwner {
+        login: repo.owner.login,
+        kind: github_owner_kind(repo.owner.type_name.as_deref()),
+        avatar_url: repo.owner.avatar_url,
+    };
+    let permissions = github_organization_repository_permissions(repo.viewer_permission.as_deref());
+    Some(GitHubRepoSummary {
+        id,
+        name: repo.name,
+        full_name: repo.name_with_owner.clone(),
+        owner_login,
+        private: repo.is_private,
+        visibility: Some(repo.visibility.to_ascii_lowercase()),
+        disabled: repo.is_disabled,
+        archived: repo.is_archived,
+        description: repo.description,
+        default_branch: repo.default_branch_ref.map(|branch| branch.name),
+        created_at: repo.created_at,
+        updated_at: repo.updated_at,
+        clone_url: format!("https://github.com/{}.git", repo.name_with_owner),
+        html_url: repo.url,
+        fork: repo.is_fork,
+        is_template: repo.is_template,
+        language: repo.primary_language.map(|language| language.name),
+        topics: repo
+            .repository_topics
+            .nodes
+            .into_iter()
+            .flatten()
+            .map(|topic| topic.topic.name)
+            .collect(),
+        stargazers_count: repo.stargazer_count,
+        forks_count: repo.fork_count,
+        license_spdx_id: repo.license_info.and_then(|license| license.spdx_id),
+        owner: Some(owner),
+        permissions,
+    })
+}
+
+pub(super) fn github_organization_graphql_repositories(
+    connection: GitHubOrganizationGraphQlRepositoryConnection,
+    view: GitHubOrganizationProfileView,
+) -> Vec<GitHubRepoSummary> {
+    connection
+        .nodes
+        .into_iter()
+        .flatten()
+        .filter(|repo| {
+            view == GitHubOrganizationProfileView::Member
+                || repo.visibility.eq_ignore_ascii_case("PUBLIC")
+        })
+        .filter_map(github_organization_repository_from_graphql)
+        .collect()
+}
+
+pub(super) fn github_organization_readme_image_path(
+    readme_path: &str,
+    source: &str,
+) -> Option<String> {
+    let source = source.split(['?', '#']).next()?.trim().replace('\\', "/");
+    let mut parts = if source.starts_with('/') {
+        Vec::new()
+    } else {
+        readme_path
+            .split('/')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .take(readme_path.split('/').count().saturating_sub(1))
+            .map(str::to_string)
+            .collect()
+    };
+    for part in source.trim_start_matches('/').split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            value => parts.push(value.to_string()),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn github_organization_source_repo_is_public(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    source_repo: &str,
+) -> Result<bool, String> {
+    let response = github_send(
+        app,
+        "确认 GitHub 组织 README 可见性失败",
+        github_headers(client.get(github_repo_api_url(source_repo)?), Some(token)),
+    )?;
+    if response.status() == StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    let repository = github_json::<GitHubOrganizationRepositoryVisibilityResponse>(
+        "确认 GitHub 组织 README 可见性失败",
+        response,
+    )?;
+    Ok(github_organization_repository_visibility_is_public(&repository))
+}
+
+pub(super) fn github_organization_repository_visibility_is_public(
+    repository: &GitHubOrganizationRepositoryVisibilityResponse,
+) -> bool {
+    !repository.private
+        && repository
+            .visibility
+            .as_deref()
+            .is_some_and(|visibility| visibility.eq_ignore_ascii_case("PUBLIC"))
+}
+
+fn github_organization_readme_image_data_url(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    source_repo: &str,
+    path: &str,
+) -> Option<String> {
+    let endpoint = github_repo_contents_api_url(source_repo, Some(path)).ok()?;
+    let response = github_send(
+        app,
+        "读取 GitHub 组织 README 图片失败",
+        github_headers(client.get(endpoint), Some(token)),
+    )
+    .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let file = response.json::<GitHubContentFileResponse>().ok()?;
+    github_file_preview_from_content("读取 GitHub 组织 README 图片失败", file)
+        .ok()?
+        .data_url
+}
+
+fn github_organization_readme(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    login: &str,
+    view: GitHubOrganizationProfileView,
+) -> GitHubOrganizationReadmeSection {
+    let source_repositories = match view {
+        GitHubOrganizationProfileView::Public => vec![format!("{login}/.github")],
+        GitHubOrganizationProfileView::Member => {
+            vec![format!("{login}/.github-private"), format!("{login}/.github")]
+        }
+    };
+    let path = "profile/README.md";
+    for source_repo in source_repositories {
+        if view == GitHubOrganizationProfileView::Public {
+            match github_organization_source_repo_is_public(
+                app,
+                client,
+                token,
+                &source_repo,
+            ) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(_) => {
+                    return GitHubOrganizationReadmeSection {
+                        status: GitHubOrganizationSectionStatus::Unavailable,
+                        preview: None,
+                        source_repo: None,
+                        html_url: None,
+                        error: Some("暂时无法读取组织 README".to_string()),
+                    }
+                }
+            }
+        }
+        let endpoint = match github_repo_contents_api_url(&source_repo, Some(path)) {
+            Ok(endpoint) => endpoint,
+            Err(_) => continue,
+        };
+        let response = match github_send(
+            app,
+            "读取 GitHub 组织 README 失败",
+            github_headers(client.get(endpoint), Some(token)),
+        ) {
+            Ok(response) => response,
+            Err(_) => {
+                return GitHubOrganizationReadmeSection {
+                    status: GitHubOrganizationSectionStatus::Unavailable,
+                    preview: None,
+                    source_repo: None,
+                    html_url: None,
+                    error: Some("暂时无法读取组织 README".to_string()),
+                }
+            }
+        };
+        if response.status() == StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !response.status().is_success() {
+            return GitHubOrganizationReadmeSection {
+                status: GitHubOrganizationSectionStatus::Unavailable,
+                preview: None,
+                source_repo: None,
+                html_url: None,
+                error: Some("暂时无法读取组织 README".to_string()),
+            };
+        }
+        let file = match response.json::<GitHubContentFileResponse>() {
+            Ok(file) => file,
+            Err(_) => {
+                return GitHubOrganizationReadmeSection {
+                    status: GitHubOrganizationSectionStatus::Unavailable,
+                    preview: None,
+                    source_repo: None,
+                    html_url: None,
+                    error: Some("暂时无法读取组织 README".to_string()),
+                }
+            }
+        };
+        let html_url = file.html_url.clone();
+        let mut preview = match github_file_preview_from_content("读取 GitHub 组织 README 失败", file) {
+            Ok(preview) => preview,
+            Err(_) => {
+                return GitHubOrganizationReadmeSection {
+                    status: GitHubOrganizationSectionStatus::Unavailable,
+                    preview: None,
+                    source_repo: None,
+                    html_url: None,
+                    error: Some("暂时无法读取组织 README".to_string()),
+                }
+            }
+        };
+        if let Some(content) = preview.content.as_deref() {
+            preview.images = readme_image_sources(content)
+                .into_iter()
+                .take(8)
+                .filter_map(|source| {
+                    let relative = github_organization_readme_image_path(path, &source)?;
+                    let data_url = github_organization_readme_image_data_url(
+                        app,
+                        client,
+                        token,
+                        &source_repo,
+                        &relative,
+                    )?;
+                    Some((source, data_url))
+                })
+                .collect();
+        }
+        return GitHubOrganizationReadmeSection {
+            status: GitHubOrganizationSectionStatus::Ready,
+            preview: Some(preview),
+            source_repo: Some(source_repo),
+            html_url,
+            error: None,
+        };
+    }
+    GitHubOrganizationReadmeSection {
+        status: GitHubOrganizationSectionStatus::Empty,
+        preview: None,
+        source_repo: None,
+        html_url: None,
+        error: None,
+    }
+}
+
+fn github_organization_members(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    login: &str,
+    view: GitHubOrganizationProfileView,
+) -> GitHubOrganizationMembersSection {
+    let suffix = match view {
+        GitHubOrganizationProfileView::Public => "public_members",
+        GitHubOrganizationProfileView::Member => "members",
+    };
+    let endpoint = match github_organization_api_url(login) {
+        Ok(endpoint) => format!("{endpoint}/{suffix}"),
+        Err(_) => {
+            return GitHubOrganizationMembersSection {
+                status: GitHubOrganizationSectionStatus::Unavailable,
+                items: Vec::new(),
+                total_count: 0,
+                error: Some("暂时无法读取组织成员".to_string()),
+            }
+        }
+    };
+    let response = match github_send(
+        app,
+        "读取 GitHub 组织成员失败",
+        github_headers(
+            client.get(endpoint).query(&[("per_page", "100"), ("page", "1")]),
+            Some(token),
+        ),
+    ) {
+        Ok(response) => response,
+        Err(_) => {
+            return GitHubOrganizationMembersSection {
+                status: GitHubOrganizationSectionStatus::Unavailable,
+                items: Vec::new(),
+                total_count: 0,
+                error: Some("暂时无法读取组织成员".to_string()),
+            }
+        }
+    };
+    if !response.status().is_success() {
+        return GitHubOrganizationMembersSection {
+            status: GitHubOrganizationSectionStatus::Unavailable,
+            items: Vec::new(),
+            total_count: 0,
+            error: Some("暂时无法读取组织成员".to_string()),
+        };
+    }
+    let members = match response.json::<Vec<GitHubOrganizationMemberResponse>>() {
+        Ok(members) => members,
+        Err(_) => {
+            return GitHubOrganizationMembersSection {
+                status: GitHubOrganizationSectionStatus::Unavailable,
+                items: Vec::new(),
+                total_count: 0,
+                error: Some("暂时无法读取组织成员".to_string()),
+            }
+        }
+    };
+    let total_count = members.len() as u64;
+    let items = members
+        .into_iter()
+        .take(12)
+        .map(|member| GitHubOrganizationMember {
+            login: member.login,
+            name: None,
+            avatar_url: member.avatar_url,
+            html_url: member.html_url,
+        })
+        .collect::<Vec<_>>();
+    GitHubOrganizationMembersSection {
+        status: if items.is_empty() {
+            GitHubOrganizationSectionStatus::Empty
+        } else {
+            GitHubOrganizationSectionStatus::Ready
+        },
+        items,
+        total_count,
+        error: None,
+    }
+}
+
+pub async fn github_get_organization_overview(
+    app: AppHandle,
+    login: String,
+    view: GitHubOrganizationProfileView,
+) -> Result<GitHubOrganizationOverview, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 组织概览",
+        move || {
+            github_organization_api_url(&login)?;
+            let (_binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let member_view_available = github_organization_member_view_available(
+                &app, &client, &token, &login,
+            );
+            let effective_view = if view == GitHubOrganizationProfileView::Member
+                && member_view_available
+            {
+                GitHubOrganizationProfileView::Member
+            } else {
+                GitHubOrganizationProfileView::Public
+            };
+            let readme = github_organization_readme(
+                &app, &client, &token, &login, effective_view,
+            );
+            let members = github_organization_members(
+                &app, &client, &token, &login, effective_view,
+            );
+            let (featured, recent) = match github_organization_graphql(
+                &app, &client, &token, &login, effective_view,
+            ) {
+                Ok(organization) => {
+                    let pinned = if effective_view == GitHubOrganizationProfileView::Member {
+                        organization
+                            .item_showcase
+                            .map(|showcase| {
+                                github_organization_graphql_repositories(showcase.items, effective_view)
+                            })
+                            .filter(|items| !items.is_empty())
+                    } else {
+                        None
+                    };
+                    let popular = organization.popular_repositories.map(|repositories| {
+                        github_organization_graphql_repositories(repositories, effective_view)
+                    });
+                    let recent_items = organization.recent_repositories.map(|repositories| {
+                        github_organization_graphql_repositories(repositories, effective_view)
+                    });
+                    let featured = if let Some(items) = pinned {
+                        GitHubOrganizationFeaturedSection {
+                            status: GitHubOrganizationSectionStatus::Ready,
+                            source: Some(GitHubOrganizationFeaturedSource::Pinned),
+                            items: items.into_iter().take(6).collect(),
+                            error: None,
+                        }
+                    } else if let Some(items) = popular {
+                        GitHubOrganizationFeaturedSection {
+                            status: if items.is_empty() {
+                                GitHubOrganizationSectionStatus::Empty
+                            } else {
+                                GitHubOrganizationSectionStatus::Ready
+                            },
+                            source: (!items.is_empty())
+                                .then_some(GitHubOrganizationFeaturedSource::Popular),
+                            items: items.into_iter().take(6).collect(),
+                            error: None,
+                        }
+                    } else {
+                        GitHubOrganizationFeaturedSection {
+                            status: GitHubOrganizationSectionStatus::Unavailable,
+                            source: None,
+                            items: Vec::new(),
+                            error: Some("暂时无法读取精选仓库".to_string()),
+                        }
+                    };
+                    let recent = if let Some(items) = recent_items {
+                        GitHubOrganizationRepositorySection {
+                            status: if items.is_empty() {
+                                GitHubOrganizationSectionStatus::Empty
+                            } else {
+                                GitHubOrganizationSectionStatus::Ready
+                            },
+                            items: items.into_iter().take(10).collect(),
+                            error: None,
+                        }
+                    } else {
+                        GitHubOrganizationRepositorySection {
+                            status: GitHubOrganizationSectionStatus::Unavailable,
+                            items: Vec::new(),
+                            error: Some("暂时无法读取近期仓库".to_string()),
+                        }
+                    };
+                    (featured, recent)
+                }
+                Err(_) => (
+                    GitHubOrganizationFeaturedSection {
+                        status: GitHubOrganizationSectionStatus::Unavailable,
+                        source: None,
+                        items: Vec::new(),
+                        error: Some("暂时无法读取精选仓库".to_string()),
+                    },
+                    GitHubOrganizationRepositorySection {
+                        status: GitHubOrganizationSectionStatus::Unavailable,
+                        items: Vec::new(),
+                        error: Some("暂时无法读取近期仓库".to_string()),
+                    },
+                ),
+            };
+            Ok(GitHubOrganizationOverview {
+                effective_view,
+                member_view_available,
+                readme,
+                featured,
+                recent,
+                members,
+            })
+        },
+    )
+    .await
 }
 
 fn github_fetch_organization_repo_page(

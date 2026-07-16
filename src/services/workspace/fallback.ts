@@ -39,6 +39,9 @@ import type {
   GitHubIssueMilestone,
   GitHubIssueListOptions,
   GitHubMergePullRequestRequest,
+  GitHubOrganizationOverview,
+  GitHubOrganizationProfile,
+  GitHubOrganizationProfileView,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
@@ -549,6 +552,7 @@ let fallbackGitHubRepos: GitHubRepoSummary[] = createFallbackGitHubRepos();
 function cloneGitHubRepoSummary(repo: GitHubRepoSummary): GitHubRepoSummary {
   return {
     ...repo,
+    topics: repo.topics ? [...repo.topics] : [],
     owner: repo.owner ? { ...repo.owner } : {
       login: repo.ownerLogin,
       kind: repo.ownerLogin === "lilia-user" ? "user" : "organization",
@@ -5167,6 +5171,111 @@ export function updateGitHubAccountProfile(
     };
     fallbackAccountProfiles.set(fallbackAccountKey(binding.login), profile);
     return { ...profile };
+  });
+}
+
+function fallbackOrganizationLogin(login: string): string {
+  const normalized = login.trim();
+  if (!normalized) throw new Error("组织 login 不能为空");
+  return normalized;
+}
+
+function fallbackOrganizationRepos(login: string, includePrivate: boolean): GitHubRepoSummary[] {
+  const key = login.toLocaleLowerCase();
+  return allFallbackGitHubRepos()
+    .filter((repo) => (repo.owner?.login ?? repo.ownerLogin).toLocaleLowerCase() === key)
+    .filter((repo) => includePrivate || !repo.private)
+    .map(cloneGitHubRepoSummary);
+}
+
+export function getGitHubOrganizationProfile(login: string): Promise<GitHubOrganizationProfile> {
+  return call("github_get_organization_profile", { login }, () => {
+    const normalized = fallbackOrganizationLogin(login);
+    const repos = fallbackOrganizationRepos(normalized, true);
+    const publicRepoCount = repos.filter((repo) => !repo.private).length;
+    return {
+      login: normalized,
+      name: normalized,
+      avatarUrl: null,
+      description: null,
+      htmlUrl: `https://github.com/${normalized}`,
+      location: null,
+      websiteUrl: null,
+      email: null,
+      twitterUsername: null,
+      followers: 0,
+      publicRepoCount,
+      totalRepoCount: repos.length,
+      isVerified: false,
+    };
+  });
+}
+
+export function getGitHubOrganizationOverview(
+  login: string,
+  view: GitHubOrganizationProfileView,
+): Promise<GitHubOrganizationOverview> {
+  return call("github_get_organization_overview", { login, view }, () => {
+    const normalized = fallbackOrganizationLogin(login);
+    const memberViewAvailable = fallbackBinding.state === "bound"
+      && Boolean(fallbackBinding.binding?.scopes.some((scope) => scope.toLocaleLowerCase() === "read:org"));
+    const effectiveView = view === "member" && memberViewAvailable ? "member" : "public";
+    const repos = fallbackOrganizationRepos(normalized, effectiveView === "member");
+    const featured = [...repos]
+      .sort((left, right) => (right.stargazersCount ?? 0) - (left.stargazersCount ?? 0))
+      .slice(0, 6);
+    const recent = [...repos]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 10);
+    const sourceRepo = effectiveView === "member" ? `${normalized}/.github-private` : `${normalized}/.github`;
+    const readmePath = "profile/README.md";
+    const preview: RepoFilePreview = {
+      path: readmePath,
+      name: "README.md",
+      previewKind: "markdown",
+      content: `# ${normalized}\n\n欢迎来到 ${normalized}。`,
+      dataUrl: null,
+      images: {},
+      size: normalized.length + 20,
+      mimeType: "text/markdown",
+      truncated: false,
+    };
+    const member = effectiveView === "member" && fallbackBinding.binding
+      ? [{
+          login: fallbackBinding.binding.login,
+          name: null,
+          avatarUrl: fallbackBinding.binding.avatarUrl,
+          htmlUrl: `https://github.com/${fallbackBinding.binding.login}`,
+        }]
+      : [];
+    return {
+      effectiveView,
+      memberViewAvailable,
+      readme: {
+        status: "ready",
+        preview,
+        sourceRepo,
+        htmlUrl: `https://github.com/${sourceRepo}/blob/main/${readmePath}`,
+        error: null,
+      },
+      featured: {
+        status: featured.length ? "ready" : "empty",
+        source: featured.length ? "popular" : null,
+        items: featured,
+        error: null,
+      },
+      recent: {
+        status: recent.length ? "ready" : "empty",
+        items: recent,
+        error: null,
+      },
+      members: {
+        status: member.length ? "ready" : "empty",
+        items: member,
+        totalCount: member.length,
+        error: null,
+      },
+    };
   });
 }
 

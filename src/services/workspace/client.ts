@@ -30,6 +30,9 @@ import type {
   GitHubIssueFilterMetadata,
   GitHubIssueListOptions,
   GitHubMergePullRequestRequest,
+  GitHubOrganizationOverview,
+  GitHubOrganizationProfile,
+  GitHubOrganizationProfileView,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
@@ -783,6 +786,21 @@ export function updateGitHubAccountProfile(
   return call("github_update_account_profile", { request }, () =>
     workspaceFallback().updateGitHubAccountProfile(request)
   );
+}
+
+export function getGitHubOrganizationProfile(login: string): Promise<GitHubOrganizationProfile> {
+  return cachedCall("github_get_organization_profile", { login }, () =>
+    workspaceFallback().getGitHubOrganizationProfile(login)
+  ).then(cloneProjectData);
+}
+
+export function getGitHubOrganizationOverview(
+  login: string,
+  view: GitHubOrganizationProfileView,
+): Promise<GitHubOrganizationOverview> {
+  return cachedCall("github_get_organization_overview", { login, view }, () =>
+    workspaceFallback().getGitHubOrganizationOverview(login, view)
+  ).then(cloneProjectData);
 }
 
 export function listRepoContribution(repoScope: string): Promise<GitHubContributionResult> {

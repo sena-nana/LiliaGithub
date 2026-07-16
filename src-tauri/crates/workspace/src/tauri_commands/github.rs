@@ -3,6 +3,8 @@ use lilia_github_contracts::workspace::*;
 delegate_command!(github; fn github_get_binding_status(app: AppHandle) -> Result<GitHubBindingStatus, String>);
 delegate_command!(async github; fn github_get_account_profile(app: AppHandle) -> Result<GitHubAccountProfile, String>);
 delegate_command!(async github; fn github_update_account_profile(app: AppHandle, request: GitHubUpdateAccountProfileRequest,) -> Result<GitHubAccountProfile, String>);
+delegate_command!(async github; fn github_get_organization_profile(app: AppHandle, login: String,) -> Result<GitHubOrganizationProfile, String>);
+delegate_command!(async github; fn github_get_organization_overview(app: AppHandle, login: String, view: GitHubOrganizationProfileView,) -> Result<GitHubOrganizationOverview, String>);
 delegate_command!(async github; fn github_start_device_flow(app: AppHandle, purpose: Option<GitHubAuthPurpose>,) -> Result<GitHubDeviceFlowStart, String>);
 delegate_command!(async github; fn github_poll_device_flow(app: AppHandle, device_code: String, interval_seconds: Option<i64>,) -> Result<GitHubDeviceFlowPollResult, String>);
 delegate_command!(github; fn github_unbind(app: AppHandle) -> Result<(), String>);
