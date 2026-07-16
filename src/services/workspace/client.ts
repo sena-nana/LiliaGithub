@@ -1667,9 +1667,14 @@ export function getGitHubRepoFilePreview(
     });
 }
 
-export function listRepoFiles(repoId: string, parentPath?: string | null, repoRef?: string | null): Promise<RepoFileTreeEntry[]> {
+export function listRepoFiles(
+  repoId: string,
+  parentPath?: string | null,
+  repoRef?: string | null,
+  options: GitHubProjectFetchOptions = {},
+): Promise<RepoFileTreeEntry[]> {
   const remoteFullName = parseRemoteRepoId(repoId);
-  if (remoteFullName) return listGitHubRepoFiles(remoteFullName, parentPath, repoRef);
+  if (remoteFullName) return listGitHubRepoFiles(remoteFullName, parentPath, repoRef, options);
   const args = { repoId, parentPath: parentPath ?? null };
   const cacheArgs = { ...args, repoRef: repoRef ?? null };
   return cachedCall("repo_list_files", args, () =>
@@ -1678,9 +1683,14 @@ export function listRepoFiles(repoId: string, parentPath?: string | null, repoRe
   );
 }
 
-export function getRepoFilePreview(repoId: string, path: string, repoRef?: string | null): Promise<RepoFilePreview> {
+export function getRepoFilePreview(
+  repoId: string,
+  path: string,
+  repoRef?: string | null,
+  options: GitHubProjectFetchOptions = {},
+): Promise<RepoFilePreview> {
   const remoteFullName = parseRemoteRepoId(repoId);
-  if (remoteFullName) return getGitHubRepoFilePreview(remoteFullName, path, repoRef);
+  if (remoteFullName) return getGitHubRepoFilePreview(remoteFullName, path, repoRef, options);
   const args = { repoId, path };
   const cacheArgs = { ...args, repoRef: repoRef ?? null };
   return cachedCall("repo_get_file_preview", args, () =>
@@ -1700,9 +1710,13 @@ export function refreshRepoLanguageStats(repoId: string): Promise<RepoSummary> {
   return call("repo_refresh_language_stats", { repoId }, () => workspaceFallback().refreshRepoLanguageStats(repoId));
 }
 
-export function getRepoCommitDetail(repoId: string, hash: string): Promise<CommitDetail> {
+export function getRepoCommitDetail(
+  repoId: string,
+  hash: string,
+  options: GitHubProjectFetchOptions = {},
+): Promise<CommitDetail> {
   const remoteFullName = parseRemoteRepoId(repoId);
-  if (remoteFullName) return getGitHubRepoCommitDetail(remoteFullName, hash);
+  if (remoteFullName) return getGitHubRepoCommitDetail(remoteFullName, hash, options);
   return cachedCall("repo_get_commit_detail", { repoId, hash }, () =>
     workspaceFallback().getRepoCommitDetail(repoId, hash)
   );

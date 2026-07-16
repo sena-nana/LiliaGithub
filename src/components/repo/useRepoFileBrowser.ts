@@ -53,6 +53,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
   const panelLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
   const previewLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
   let directoryLoadPromises = new Map<string, Promise<RepoFileTreeEntry[]>>();
+  const directoryLoadRuns = new Map<string, number>();
 
   const repoPath = computed(() => input.repoPath.value ?? null);
   const repoLocationLabel = computed(() => repoPath.value || currentRepoRef() || "");
@@ -119,6 +120,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     panelLoader.invalidate();
     previewLoader.invalidate();
     directoryLoadPromises.clear();
+    directoryLoadRuns.clear();
   });
 
   watch(
@@ -195,7 +197,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
 
   async function loadDirectory(
     parentPath: string | null,
-    options: { force?: boolean; repoId?: string; repoRef?: string | null } = {},
+    options: { force?: boolean; forceRefresh?: boolean; repoId?: string; repoRef?: string | null } = {},
   ) {
     const key = parentPath ?? ROOT_KEY;
     const repoId = options.repoId ?? input.repoId.value;
@@ -208,13 +210,17 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       return pending;
     }
     directoryLoading.value = [...directoryLoading.value, key];
+    const loadRun = (directoryLoadRuns.get(key) ?? 0) + 1;
+    directoryLoadRuns.set(key, loadRun);
     let loadPromise!: Promise<RepoFileTreeEntry[]>;
     loadPromise = (async () => {
       try {
-        const entries = repoRef
-          ? await listRepoFiles(repoId, parentPath, repoRef)
-          : await listRepoFiles(repoId, parentPath);
-        if (isCurrentRepoRequest(repoId, repoRef)) {
+        const entries = options.forceRefresh
+          ? await listRepoFiles(repoId, parentPath, repoRef, { forceRefresh: true })
+          : repoRef
+            ? await listRepoFiles(repoId, parentPath, repoRef)
+            : await listRepoFiles(repoId, parentPath);
+        if (isCurrentRepoRequest(repoId, repoRef) && directoryLoadRuns.get(key) === loadRun) {
           directoryEntries.value = {
             ...directoryEntries.value,
             [key]: entries,
@@ -257,7 +263,11 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     return isCurrentRepoRequest(repoId, repoRef);
   }
 
-  async function selectFile(path: string, hash?: string | null) {
+  async function selectFile(
+    path: string,
+    hash?: string | null,
+    options: { forceRefresh?: boolean } = {},
+  ) {
     const repoId = input.repoId.value;
     const repoRef = currentRepoRef();
     selectedPath.value = path;
@@ -267,9 +277,11 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
       try {
         const ancestorsReady = await expandAncestors(path, repoId);
         if (!ancestorsReady || !previewLoader.isCurrent(runId)) return;
-        const nextPreview = repoRef
-          ? await getRepoFilePreview(repoId, path, repoRef)
-          : await getRepoFilePreview(repoId, path);
+        const nextPreview = options.forceRefresh
+          ? await getRepoFilePreview(repoId, path, repoRef, { forceRefresh: true })
+          : repoRef
+            ? await getRepoFilePreview(repoId, path, repoRef)
+            : await getRepoFilePreview(repoId, path);
         if (
           !previewLoader.isCurrent(runId) ||
           !isCurrentRepoRequest(repoId, repoRef) ||
@@ -292,6 +304,84 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
         if (previewLoader.isCurrent(runId)) {
           previewLoading.value = false;
         }
+      }
+    });
+  }
+
+  async function refreshCurrentPage() {
+    if (!isEnabled()) return;
+    const repoId = input.repoId.value;
+    const repoRef = currentRepoRef();
+    const expandedSnapshot = [...expandedDirectories.value]
+      .sort((left, right) => pathDepth(left) - pathDepth(right));
+    const selectedSnapshot = selectedPath.value;
+
+    await panelLoader.run(`${repoId}:${repoRef ?? ""}:refresh`, async (runId) => {
+      previewLoader.invalidate();
+      directoryLoadPromises.clear();
+      directoryLoading.value = [];
+      treeLoading.value = true;
+      treeError.value = null;
+
+      try {
+        const refreshedDirectoryKeys = new Set([ROOT_KEY]);
+        const rootEntries = await loadDirectory(null, {
+          force: true,
+          forceRefresh: true,
+          repoId,
+          repoRef,
+        });
+        if (!panelLoader.isCurrent(runId) || !isCurrentRepoRequest(repoId, repoRef)) return;
+
+        const nextExpanded: string[] = [];
+        for (const path of expandedSnapshot) {
+          const parentKey = fileParentPath(path) || ROOT_KEY;
+          const parentEntries = directoryEntries.value[parentKey] ?? [];
+          if (!parentEntries.some((entry) => entry.kind === "dir" && entry.path === path)) continue;
+          await loadDirectory(path, {
+            force: true,
+            forceRefresh: true,
+            repoId,
+            repoRef,
+          });
+          if (!panelLoader.isCurrent(runId) || !isCurrentRepoRequest(repoId, repoRef)) return;
+          nextExpanded.push(path);
+          refreshedDirectoryKeys.add(path);
+        }
+        expandedDirectories.value = nextExpanded;
+        directoryEntries.value = Object.fromEntries(
+          [...refreshedDirectoryKeys].map((key) => [key, directoryEntries.value[key] ?? []]),
+        );
+
+        const selectedStillExists = selectedSnapshot
+          ? Object.values(directoryEntries.value)
+            .flat()
+            .some((entry) => entry.kind === "file" && entry.path === selectedSnapshot)
+          : false;
+        const nextPath = selectedStillExists
+          ? selectedSnapshot
+          : rootEntries.find((entry) => entry.kind === "file" && entry.path === "README.md")?.path
+            ?? rootEntries.find((entry) => entry.kind === "file")?.path
+            ?? null;
+
+        if (nextPath) {
+          await selectFile(
+            nextPath,
+            nextPath === input.targetPath.value ? input.targetHash.value : null,
+            { forceRefresh: true },
+          );
+        } else {
+          selectedPath.value = null;
+          preview.value = null;
+          textPreviewTargetLine.value = null;
+          previewLoading.value = false;
+          previewError.value = null;
+        }
+      } catch (err) {
+        if (!panelLoader.isCurrent(runId)) return;
+        treeError.value = String(err);
+      } finally {
+        if (panelLoader.isCurrent(runId)) treeLoading.value = false;
       }
     });
   }
@@ -464,6 +554,7 @@ export function useRepoFileBrowser(input: RepoFileBrowserInput) {
     openTreeFile,
     openPreviewFile,
     openPreviewLink,
+    refreshCurrentPage,
     selectFile,
     toggleDirectory,
   };
@@ -486,6 +577,10 @@ function lineHashNumber(hash?: string | null) {
 
 function fileParentPath(path: string) {
   return path.split("/").slice(0, -1).join("/");
+}
+
+function pathDepth(path: string) {
+  return path.split("/").filter(Boolean).length;
 }
 
 function absoluteRepoPath(repoPath: string | null, path: string) {

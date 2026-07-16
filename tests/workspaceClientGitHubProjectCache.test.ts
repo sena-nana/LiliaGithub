@@ -6,9 +6,9 @@ import {
   deleteGitHubBranch,
   deleteGitHubRelease,
   deleteGitHubReleaseAsset,
+  getRepoCommitDetail,
   getRepoFilePreview,
   getGitHubBindingStatus,
-  getGitHubRepoCommitDetail,
   getGitHubRepoManagement,
   getGitHubRepoSettingsSection,
   getGitHubWorkflowRunDetail,
@@ -647,7 +647,8 @@ describe("workspace GitHub project cache", () => {
       },
     });
 
-    const first = await getGitHubRepoCommitDetail(repoFullName, firstCommit.hash);
+    const repoId = `github:${repoFullName}`;
+    const first = await getRepoCommitDetail(repoId, firstCommit.hash);
     expect(first.body).toBe("缓存前详情");
     expect(workspaceFallback.getFallbackGitHubCommitDetailCallsForTests()).toHaveLength(1);
 
@@ -657,11 +658,11 @@ describe("workspace GitHub project cache", () => {
         [firstCommit.hash]: commitDetail(firstCommit, { body: "远端新详情" }),
       },
     });
-    const cached = await getGitHubRepoCommitDetail(repoFullName, firstCommit.hash);
+    const cached = await getRepoCommitDetail(repoId, firstCommit.hash);
     expect(cached.body).toBe("缓存前详情");
     expect(workspaceFallback.getFallbackGitHubCommitDetailCallsForTests()).toHaveLength(1);
 
-    const refreshed = await getGitHubRepoCommitDetail(repoFullName, firstCommit.hash, { forceRefresh: true });
+    const refreshed = await getRepoCommitDetail(repoId, firstCommit.hash, { forceRefresh: true });
     expect(refreshed.body).toBe("远端新详情");
     expect(workspaceFallback.getFallbackGitHubCommitDetailCallsForTests()).toHaveLength(2);
   });
@@ -798,7 +799,7 @@ describe("workspace GitHub project cache", () => {
     expect(workspaceFallback.getFallbackGitHubReleaseListCallsForTests()).toHaveLength(1);
   });
 
-  it("github repoId 文件树和预览按远程仓库与 ref 分派", async () => {
+  it("github repoId 文件树和预览按 ref 分派并支持强制刷新", async () => {
     workspaceFallback.setFallbackGitHubRepoFilesForTests({
       [repoFullName]: {
         "": [{ path: "README.md", name: "README.md", kind: "file", hasChildren: false }],
@@ -831,5 +832,47 @@ describe("workspace GitHub project cache", () => {
     expect(workspaceFallback.getFallbackGitHubRepoFilePreviewCallsForTests()).toEqual([
       { repoFullName, path: "README.md", refName: "feature/tree" },
     ]);
+
+    workspaceFallback.setFallbackGitHubRepoFilesForTests({
+      [repoFullName]: {
+        "": [{ path: "src", name: "src", kind: "dir", hasChildren: true }],
+      },
+    });
+    workspaceFallback.setFallbackGitHubRepoFilePreviewsForTests({
+      [repoFullName]: {
+        "README.md": {
+          path: "README.md",
+          name: "README.md",
+          previewKind: "markdown",
+          content: "# Refreshed\n",
+          dataUrl: null,
+          images: {},
+          size: 12,
+          mimeType: "text/markdown",
+          truncated: false,
+        },
+      },
+    });
+
+    expect(await listRepoFiles(`github:${repoFullName}`, null, "feature/tree")).toEqual(entries);
+    expect((await getRepoFilePreview(`github:${repoFullName}`, "README.md", "feature/tree")).content).toBe("# Remote\n");
+
+    const refreshedEntries = await listRepoFiles(
+      `github:${repoFullName}`,
+      null,
+      "feature/tree",
+      { forceRefresh: true },
+    );
+    const refreshedPreview = await getRepoFilePreview(
+      `github:${repoFullName}`,
+      "README.md",
+      "feature/tree",
+      { forceRefresh: true },
+    );
+
+    expect(refreshedEntries).toEqual([{ path: "src", name: "src", kind: "dir", hasChildren: true }]);
+    expect(refreshedPreview.content).toBe("# Refreshed\n");
+    expect(workspaceFallback.getFallbackGitHubRepoFileListCallsForTests()).toHaveLength(2);
+    expect(workspaceFallback.getFallbackGitHubRepoFilePreviewCallsForTests()).toHaveLength(2);
   });
 });

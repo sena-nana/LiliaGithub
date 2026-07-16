@@ -600,6 +600,15 @@ async function runRepoLaunchFlow(sessionId) {
   await waitForRouteIncludes(sessionId, "/repos/LiliaGithub-linked-worktree");
 }
 
+async function refreshCurrentRepoPage(sessionId, routePart, pageTarget, observeLabel) {
+  await waitForAgentElement(sessionId, "repo.toolbar.refresh-page", 30_000, true);
+  await clickAgentTarget(sessionId, "repo.toolbar.refresh-page");
+  await waitForAgentElement(sessionId, "repo.toolbar.refresh-page", 30_000, true);
+  await waitForRouteIncludes(sessionId, routePart);
+  await waitForAgentElement(sessionId, pageTarget);
+  await observeAgentStep(sessionId, observeLabel);
+}
+
 async function runRegressionFlow(sessionId) {
   const steps = [
     {
@@ -640,8 +649,13 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.project.sidebar.issues"],
-      waits: ["repo.project.sidebar.refresh", "repo.issues.create"],
+      waits: ["repo.toolbar.refresh-page", "repo.issues.create"],
       observe: "issues-panel",
+      refreshCurrentPage: {
+        routePart: "projectTab=issues",
+        pageTarget: "repo.issues.create",
+        observe: "issues-panel-refreshed",
+      },
     },
     {
       clicks: ["repo.issues.create"],
@@ -662,12 +676,12 @@ async function runRegressionFlow(sessionId) {
     },
     {
       clicks: ["repo.project.sidebar.actions"],
-      waits: ["repo.project.sidebar.refresh"],
+      waits: ["repo.toolbar.refresh-page"],
       observe: "actions-panel",
     },
     {
       clicks: ["repo.project.sidebar.release"],
-      waits: ["repo.project.sidebar.refresh", "repo.release.filters.type"],
+      waits: ["repo.toolbar.refresh-page", "repo.release.filters.type"],
       observe: "release-panel",
     },
     {
@@ -711,6 +725,14 @@ async function runRegressionFlow(sessionId) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;
       if (step.observe === "home-overview") await runHomePendingFlow(sessionId);
+    }
+    if (step.refreshCurrentPage) {
+      await refreshCurrentRepoPage(
+        sessionId,
+        step.refreshCurrentPage.routePart,
+        step.refreshCurrentPage.pageTarget,
+        step.refreshCurrentPage.observe,
+      );
     }
     if (step.observe === "linked-worktree-repo") await runRepoLaunchFlow(sessionId);
     for (const target of step.after ?? []) await clickAgentTarget(sessionId, target);

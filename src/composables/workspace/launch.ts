@@ -47,9 +47,17 @@ function mergeLaunchLogs(
   return [...byIndex.values()].sort((a, b) => a.index - b.index).slice(-500);
 }
 
-export async function loadLaunch(repoId: string) {
+export async function loadLaunch(repoId: string, options: { forceRefresh?: boolean } = {}) {
   const pending = pendingLaunchLoads.get(repoId);
-  if (pending) return pending;
+  if (pending) {
+    if (!options.forceRefresh) return pending;
+    try {
+      await pending;
+    } catch {
+      // A user refresh should retry after an in-flight load fails.
+    }
+    return loadLaunch(repoId);
+  }
   beginLaunchLoad();
   state.error = null;
   const generation = currentLaunchGeneration(repoId);
