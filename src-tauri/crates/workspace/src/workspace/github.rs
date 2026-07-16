@@ -37,8 +37,8 @@ use lilia_github_contracts::workspace::{
     GitHubMergePullRequestRequest, GitHubOwnerKind, GitHubProjectCache, GitHubProjectRepoCache,
     GitHubOrganizationFeaturedSection, GitHubOrganizationFeaturedSource,
     GitHubOrganizationMember, GitHubOrganizationMembersSection, GitHubOrganizationOverview,
-    GitHubOrganizationProfile, GitHubOrganizationProfileView, GitHubOrganizationReadmeSection,
-    GitHubOrganizationRepositorySection, GitHubOrganizationSectionStatus,
+    GitHubOrganizationProfile, GitHubOrganizationProfileView, GitHubOrganizationRepositorySection,
+    GitHubOrganizationSectionStatus, GitHubProfileReadmeSection, GitHubReadmeSectionStatus,
     GitHubPullRequest, GitHubPullRequestCheck, GitHubPullRequestDiscussion,
     GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
@@ -342,7 +342,7 @@ pub(super) struct GitHubOrganizationProfileResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct GitHubOrganizationRepositoryVisibilityResponse {
+pub(super) struct GitHubRepositoryVisibilityResponse {
     #[serde(default)]
     pub(super) private: bool,
     #[serde(default)]
@@ -4076,6 +4076,33 @@ pub async fn github_get_account_profile(app: AppHandle) -> Result<GitHubAccountP
     .await
 }
 
+pub async fn github_get_account_readme(
+    app: AppHandle,
+) -> Result<GitHubProfileReadmeSection, String> {
+    run_core_operation(
+        app.clone(),
+        OperationKind::GitHubRead,
+        "读取 GitHub 个人 README",
+        move || {
+            let (binding, token) = github_require_token(&app)?;
+            let client = build_client()?;
+            let source_repo = format!("{0}/{0}", binding.login);
+            Ok(github_readme_section(
+                &app,
+                &client,
+                &token,
+                vec![GitHubReadmeSource {
+                    source_repo,
+                    location: GitHubReadmeLocation::RepositoryReadme,
+                    require_public: true,
+                }],
+                "暂时无法读取个人 README",
+            ))
+        },
+    )
+    .await
+}
+
 fn github_update_account_profile_payload(
     request: &GitHubUpdateAccountProfileRequest,
 ) -> serde_json::Value {
@@ -4553,10 +4580,36 @@ pub(super) fn github_organization_graphql_repositories(
         .collect()
 }
 
-pub(super) fn github_organization_readme_image_path(
-    readme_path: &str,
-    source: &str,
-) -> Option<String> {
+const GITHUB_README_IMAGE_LIMIT: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum GitHubReadmeLocation {
+    RepositoryReadme,
+    Contents(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitHubReadmeSource {
+    source_repo: String,
+    location: GitHubReadmeLocation,
+    require_public: bool,
+}
+
+pub(super) fn github_readme_endpoint(
+    source_repo: &str,
+    location: &GitHubReadmeLocation,
+) -> Result<String, String> {
+    match location {
+        GitHubReadmeLocation::RepositoryReadme => {
+            Ok(format!("{}/readme", github_repo_api_url(source_repo)?))
+        }
+        GitHubReadmeLocation::Contents(path) => {
+            github_repo_contents_api_url(source_repo, Some(path))
+        }
+    }
+}
+
+pub(super) fn github_readme_image_path(readme_path: &str, source: &str) -> Option<String> {
     let source = source.split(['?', '#']).next()?.trim().replace('\\', "/");
     let mut parts = if source.starts_with('/') {
         Vec::new()
@@ -4581,7 +4634,20 @@ pub(super) fn github_organization_readme_image_path(
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-fn github_organization_source_repo_is_public(
+pub(super) fn github_readme_image_paths(
+    readme_path: &str,
+    content: &str,
+) -> Vec<(String, String)> {
+    readme_image_sources(content)
+        .into_iter()
+        .take(GITHUB_README_IMAGE_LIMIT)
+        .filter_map(|source| {
+            github_readme_image_path(readme_path, &source).map(|path| (source, path))
+        })
+        .collect()
+}
+
+fn github_source_repo_is_public(
     app: &AppHandle,
     client: &Client,
     token: &str,
@@ -4589,21 +4655,21 @@ fn github_organization_source_repo_is_public(
 ) -> Result<bool, String> {
     let response = github_send(
         app,
-        "确认 GitHub 组织 README 可见性失败",
+        "确认 GitHub README 可见性失败",
         github_headers(client.get(github_repo_api_url(source_repo)?), Some(token)),
     )?;
     if response.status() == StatusCode::NOT_FOUND {
         return Ok(false);
     }
-    let repository = github_json::<GitHubOrganizationRepositoryVisibilityResponse>(
-        "确认 GitHub 组织 README 可见性失败",
+    let repository = github_json::<GitHubRepositoryVisibilityResponse>(
+        "确认 GitHub README 可见性失败",
         response,
     )?;
-    Ok(github_organization_repository_visibility_is_public(&repository))
+    Ok(github_repository_visibility_is_public(&repository))
 }
 
-pub(super) fn github_organization_repository_visibility_is_public(
-    repository: &GitHubOrganizationRepositoryVisibilityResponse,
+pub(super) fn github_repository_visibility_is_public(
+    repository: &GitHubRepositoryVisibilityResponse,
 ) -> bool {
     !repository.private
         && repository
@@ -4612,7 +4678,7 @@ pub(super) fn github_organization_repository_visibility_is_public(
             .is_some_and(|visibility| visibility.eq_ignore_ascii_case("PUBLIC"))
 }
 
-fn github_organization_readme_image_data_url(
+fn github_readme_image_data_url(
     app: &AppHandle,
     client: &Client,
     token: &str,
@@ -4622,7 +4688,7 @@ fn github_organization_readme_image_data_url(
     let endpoint = github_repo_contents_api_url(source_repo, Some(path)).ok()?;
     let response = github_send(
         app,
-        "读取 GitHub 组织 README 图片失败",
+        "读取 GitHub README 图片失败",
         github_headers(client.get(endpoint), Some(token)),
     )
     .ok()?;
@@ -4630,9 +4696,94 @@ fn github_organization_readme_image_data_url(
         return None;
     }
     let file = response.json::<GitHubContentFileResponse>().ok()?;
-    github_file_preview_from_content("读取 GitHub 组织 README 图片失败", file)
+    github_file_preview_from_content("读取 GitHub README 图片失败", file)
         .ok()?
         .data_url
+}
+
+fn github_readme_unavailable(error: &str) -> GitHubProfileReadmeSection {
+    GitHubProfileReadmeSection {
+        status: GitHubReadmeSectionStatus::Unavailable,
+        preview: None,
+        source_repo: None,
+        html_url: None,
+        error: Some(error.to_string()),
+    }
+}
+
+fn github_readme_section(
+    app: &AppHandle,
+    client: &Client,
+    token: &str,
+    sources: Vec<GitHubReadmeSource>,
+    unavailable_message: &str,
+) -> GitHubProfileReadmeSection {
+    for source in sources {
+        if source.require_public {
+            match github_source_repo_is_public(app, client, token, &source.source_repo) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(_) => return github_readme_unavailable(unavailable_message),
+            }
+        }
+        let endpoint = match github_readme_endpoint(&source.source_repo, &source.location) {
+            Ok(endpoint) => endpoint,
+            Err(_) => return github_readme_unavailable(unavailable_message),
+        };
+        let response = match github_send(
+            app,
+            "读取 GitHub README 失败",
+            github_headers(client.get(endpoint), Some(token)),
+        ) {
+            Ok(response) => response,
+            Err(_) => return github_readme_unavailable(unavailable_message),
+        };
+        if response.status() == StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !response.status().is_success() {
+            return github_readme_unavailable(unavailable_message);
+        }
+        let file = match response.json::<GitHubContentFileResponse>() {
+            Ok(file) => file,
+            Err(_) => return github_readme_unavailable(unavailable_message),
+        };
+        let html_url = file.html_url.clone();
+        let readme_path = file.path.clone();
+        let mut preview = match github_file_preview_from_content("读取 GitHub README 失败", file) {
+            Ok(preview) => preview,
+            Err(_) => return github_readme_unavailable(unavailable_message),
+        };
+        if let Some(content) = preview.content.as_deref() {
+            preview.images = github_readme_image_paths(&readme_path, content)
+                .into_iter()
+                .filter_map(|(image_source, relative)| {
+                    let data_url = github_readme_image_data_url(
+                        app,
+                        client,
+                        token,
+                        &source.source_repo,
+                        &relative,
+                    )?;
+                    Some((image_source, data_url))
+                })
+                .collect();
+        }
+        return GitHubProfileReadmeSection {
+            status: GitHubReadmeSectionStatus::Ready,
+            preview: Some(preview),
+            source_repo: Some(source.source_repo),
+            html_url,
+            error: None,
+        };
+    }
+    GitHubProfileReadmeSection {
+        status: GitHubReadmeSectionStatus::Empty,
+        preview: None,
+        source_repo: None,
+        html_url: None,
+        error: None,
+    }
 }
 
 fn github_organization_readme(
@@ -4641,124 +4792,28 @@ fn github_organization_readme(
     token: &str,
     login: &str,
     view: GitHubOrganizationProfileView,
-) -> GitHubOrganizationReadmeSection {
+) -> GitHubProfileReadmeSection {
     let source_repositories = match view {
-        GitHubOrganizationProfileView::Public => vec![format!("{login}/.github")],
-        GitHubOrganizationProfileView::Member => {
-            vec![format!("{login}/.github-private"), format!("{login}/.github")]
-        }
+        GitHubOrganizationProfileView::Public => vec![(format!("{login}/.github"), true)],
+        GitHubOrganizationProfileView::Member => vec![
+            (format!("{login}/.github-private"), false),
+            (format!("{login}/.github"), false),
+        ],
     };
-    let path = "profile/README.md";
-    for source_repo in source_repositories {
-        if view == GitHubOrganizationProfileView::Public {
-            match github_organization_source_repo_is_public(
-                app,
-                client,
-                token,
-                &source_repo,
-            ) {
-                Ok(true) => {}
-                Ok(false) => continue,
-                Err(_) => {
-                    return GitHubOrganizationReadmeSection {
-                        status: GitHubOrganizationSectionStatus::Unavailable,
-                        preview: None,
-                        source_repo: None,
-                        html_url: None,
-                        error: Some("暂时无法读取组织 README".to_string()),
-                    }
-                }
-            }
-        }
-        let endpoint = match github_repo_contents_api_url(&source_repo, Some(path)) {
-            Ok(endpoint) => endpoint,
-            Err(_) => continue,
-        };
-        let response = match github_send(
-            app,
-            "读取 GitHub 组织 README 失败",
-            github_headers(client.get(endpoint), Some(token)),
-        ) {
-            Ok(response) => response,
-            Err(_) => {
-                return GitHubOrganizationReadmeSection {
-                    status: GitHubOrganizationSectionStatus::Unavailable,
-                    preview: None,
-                    source_repo: None,
-                    html_url: None,
-                    error: Some("暂时无法读取组织 README".to_string()),
-                }
-            }
-        };
-        if response.status() == StatusCode::NOT_FOUND {
-            continue;
-        }
-        if !response.status().is_success() {
-            return GitHubOrganizationReadmeSection {
-                status: GitHubOrganizationSectionStatus::Unavailable,
-                preview: None,
-                source_repo: None,
-                html_url: None,
-                error: Some("暂时无法读取组织 README".to_string()),
-            };
-        }
-        let file = match response.json::<GitHubContentFileResponse>() {
-            Ok(file) => file,
-            Err(_) => {
-                return GitHubOrganizationReadmeSection {
-                    status: GitHubOrganizationSectionStatus::Unavailable,
-                    preview: None,
-                    source_repo: None,
-                    html_url: None,
-                    error: Some("暂时无法读取组织 README".to_string()),
-                }
-            }
-        };
-        let html_url = file.html_url.clone();
-        let mut preview = match github_file_preview_from_content("读取 GitHub 组织 README 失败", file) {
-            Ok(preview) => preview,
-            Err(_) => {
-                return GitHubOrganizationReadmeSection {
-                    status: GitHubOrganizationSectionStatus::Unavailable,
-                    preview: None,
-                    source_repo: None,
-                    html_url: None,
-                    error: Some("暂时无法读取组织 README".to_string()),
-                }
-            }
-        };
-        if let Some(content) = preview.content.as_deref() {
-            preview.images = readme_image_sources(content)
-                .into_iter()
-                .take(8)
-                .filter_map(|source| {
-                    let relative = github_organization_readme_image_path(path, &source)?;
-                    let data_url = github_organization_readme_image_data_url(
-                        app,
-                        client,
-                        token,
-                        &source_repo,
-                        &relative,
-                    )?;
-                    Some((source, data_url))
-                })
-                .collect();
-        }
-        return GitHubOrganizationReadmeSection {
-            status: GitHubOrganizationSectionStatus::Ready,
-            preview: Some(preview),
-            source_repo: Some(source_repo),
-            html_url,
-            error: None,
-        };
-    }
-    GitHubOrganizationReadmeSection {
-        status: GitHubOrganizationSectionStatus::Empty,
-        preview: None,
-        source_repo: None,
-        html_url: None,
-        error: None,
-    }
+    github_readme_section(
+        app,
+        client,
+        token,
+        source_repositories
+            .into_iter()
+            .map(|(source_repo, require_public)| GitHubReadmeSource {
+                source_repo,
+                location: GitHubReadmeLocation::Contents("profile/README.md".to_string()),
+                require_public,
+            })
+            .collect(),
+        "暂时无法读取组织 README",
+    )
 }
 
 fn github_organization_members(

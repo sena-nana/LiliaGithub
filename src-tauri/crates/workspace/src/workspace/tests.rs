@@ -11,8 +11,8 @@ use super::github::{
     github_file_preview_from_content, github_graphql_errors_require_read_project,
     github_issue_cache_key, github_issue_from_response, github_issue_project_items_from_graphql,
     github_organization_graphql_repositories, github_organization_profile_from_response,
-    github_organization_readme_image_path,
-    github_organization_repository_visibility_is_public,
+    github_readme_endpoint, github_readme_image_path, github_readme_image_paths,
+    github_repository_visibility_is_public,
     github_project_cache_repo_key, github_pull_request_cache_key,
     github_pull_request_reviewers_from_requested, github_pull_request_search_query,
     github_pull_request_search_required, github_release_asset_bytes, github_release_asset_name,
@@ -32,7 +32,7 @@ use super::github::{
     GitHubIssueProjectsGraphQlData, GitHubIssueResponse, GitHubIssueTimelineResponse,
     GitHubIssueTimelineSourceIssueResponse, GitHubIssueTimelineSourceResponse, GitHubLabelResponse,
     GitHubOrganizationGraphQlOrganization, GitHubOrganizationGraphQlRepositoryConnection,
-    GitHubOrganizationProfileResponse, GitHubOrganizationRepositoryVisibilityResponse,
+    GitHubOrganizationProfileResponse, GitHubReadmeLocation, GitHubRepositoryVisibilityResponse,
     GitHubPullRequestReviewCommentResponse, GitHubPullRequestReviewResponse,
     GitHubPullRequestUserResponse, GitHubReleaseAssetResponse, GitHubReleaseResponse,
     GitHubReleaseUserResponse, GitHubRepoLicenseResponse, GitHubRepoOwnerResponse,
@@ -1248,44 +1248,75 @@ fn github_organization_partial_graphql_sections_deserialize_independently() {
 }
 
 #[test]
-fn github_organization_public_readme_requires_public_repository_visibility() {
-    let public = GitHubOrganizationRepositoryVisibilityResponse {
+fn github_readmes_require_public_repository_visibility() {
+    let public = GitHubRepositoryVisibilityResponse {
         private: false,
         visibility: Some("public".to_string()),
     };
-    let internal = GitHubOrganizationRepositoryVisibilityResponse {
+    let internal = GitHubRepositoryVisibilityResponse {
         private: false,
         visibility: Some("internal".to_string()),
     };
-    let private = GitHubOrganizationRepositoryVisibilityResponse {
+    let private = GitHubRepositoryVisibilityResponse {
         private: true,
         visibility: Some("private".to_string()),
     };
-    let unknown = GitHubOrganizationRepositoryVisibilityResponse {
+    let unknown = GitHubRepositoryVisibilityResponse {
         private: false,
         visibility: None,
     };
 
-    assert!(github_organization_repository_visibility_is_public(&public));
-    assert!(!github_organization_repository_visibility_is_public(&internal));
-    assert!(!github_organization_repository_visibility_is_public(&private));
-    assert!(!github_organization_repository_visibility_is_public(&unknown));
+    assert!(github_repository_visibility_is_public(&public));
+    assert!(!github_repository_visibility_is_public(&internal));
+    assert!(!github_repository_visibility_is_public(&private));
+    assert!(!github_repository_visibility_is_public(&unknown));
 }
 
 #[test]
-fn github_organization_readme_images_stay_within_the_source_repository() {
+fn github_readme_endpoints_support_profile_and_organization_sources() {
     assert_eq!(
-        github_organization_readme_image_path("profile/README.md", "images/logo.png"),
-        Some("profile/images/logo.png".to_string())
+        github_readme_endpoint("octocat/octocat", &GitHubReadmeLocation::RepositoryReadme).unwrap(),
+        "https://api.github.com/repos/octocat/octocat/readme"
     );
     assert_eq!(
-        github_organization_readme_image_path("profile/README.md", "/assets/logo.png"),
+        github_readme_endpoint(
+            "octo-org/.github",
+            &GitHubReadmeLocation::Contents("profile/README.md".to_string())
+        )
+        .unwrap(),
+        "https://api.github.com/repos/octo-org/.github/contents/profile/README.md"
+    );
+}
+
+#[test]
+fn github_readme_images_use_actual_path_and_stay_within_source_repository() {
+    assert_eq!(
+        github_readme_image_path("docs/PROFILE.md", "images/logo.png"),
+        Some("docs/images/logo.png".to_string())
+    );
+    assert_eq!(
+        github_readme_image_path("docs/PROFILE.md", "/assets/logo.png"),
         Some("assets/logo.png".to_string())
     );
     assert_eq!(
-        github_organization_readme_image_path("profile/README.md", "../../secret.png"),
+        github_readme_image_path("docs/PROFILE.md", "../../secret.png"),
         None
     );
+}
+
+#[test]
+fn github_readme_image_proxy_is_limited_to_eight_sources() {
+    let content = (0..10)
+        .map(|index| format!("![image {index}](images/{index}.png)"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let images = github_readme_image_paths("docs/PROFILE.md", &content);
+
+    assert_eq!(images.len(), 8);
+    assert!(images.iter().all(|(source, path)| {
+        path == &format!("docs/{source}") && source.starts_with("images/")
+    }));
 }
 
 #[test]

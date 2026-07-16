@@ -1,8 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Profile from "../src/pages/Profile.vue";
-import type { GitHubAccountProfile } from "../src/services/workspace";
+import type {
+  GitHubAccountProfile,
+  GitHubProfileReadmeSection,
+} from "../src/services/workspace";
 
 type GitHubBinding = {
   login: string;
@@ -34,6 +37,7 @@ const { workspace } = vi.hoisted(() => ({
     authPendingStatusText: { value: null as string | null },
     authRemainingText: { value: null as string | null },
     getAccountProfile: vi.fn(),
+    getAccountReadme: vi.fn(),
     updateAccountProfile: vi.fn(),
     startAuthFlow: vi.fn(async () => undefined),
     openUrl: vi.fn(async () => undefined),
@@ -65,6 +69,28 @@ function accountProfile(
     blog: "https://octocat.example",
     twitterUsername: "octocat",
     hireable: false,
+    ...overrides,
+  };
+}
+
+function accountReadme(
+  login = "octocat",
+  overrides: Partial<GitHubProfileReadmeSection> = {},
+): GitHubProfileReadmeSection {
+  return {
+    status: "ready",
+    preview: {
+      path: "README.md",
+      name: "README.md",
+      previewKind: "markdown",
+      content: `# ${login}\n\n[指南](docs/guide.md)<script>alert('unsafe')</script>`,
+      images: {},
+      size: 72,
+      truncated: false,
+    },
+    sourceRepo: `${login}/${login}`,
+    htmlUrl: `https://github.com/${login}/${login}/blob/main/README.md`,
+    error: null,
     ...overrides,
   };
 }
@@ -119,6 +145,7 @@ describe("用户资料页", () => {
       boundAt: "2026-07-15T00:00:00Z",
     };
     workspace.getAccountProfile.mockResolvedValue(accountProfile());
+    workspace.getAccountReadme.mockResolvedValue(accountReadme());
     workspace.updateAccountProfile.mockImplementation(async (request) => accountProfile("octocat", request));
   });
 
@@ -131,6 +158,97 @@ describe("用户资料页", () => {
     expect(editor).toHaveTextContent("Builds developer tools");
     expect(view.container.querySelector('[data-agent-id="profile.name"]')).toBeNull();
     expect(agent(view.container, "profile.edit")).toBeEnabled();
+  });
+
+  it("左侧展示个人资料，右侧安全渲染 README 并打开相对链接", async () => {
+    const view = await renderProfile();
+
+    const sidebar = await waitFor(() => agent(view.container, "profile.sidebar"));
+    const readme = await waitFor(() => agent(view.container, "profile.readme"));
+    expect(sidebar).toHaveTextContent("Octo Cat");
+    expect(within(readme).getByRole("heading", { name: "octocat" })).toBeInTheDocument();
+    expect(readme.querySelector("script")).toBeNull();
+
+    await fireEvent.click(within(readme).getByRole("link", { name: "指南" }));
+    const toolbar = await screen.findByRole("toolbar", { name: "链接操作" });
+    await fireEvent.click(within(toolbar).getByRole("button", { name: "打开" }));
+
+    expect(workspace.openUrl).toHaveBeenCalledWith(
+      "https://github.com/octocat/octocat/blob/main/docs/guide.md",
+    );
+  });
+
+  it("README 不存在时展示独立空态", async () => {
+    workspace.getAccountReadme.mockResolvedValueOnce(accountReadme("octocat", {
+      status: "empty",
+      preview: null,
+      sourceRepo: null,
+      htmlUrl: null,
+    }));
+    const view = await renderProfile();
+
+    const readme = await waitFor(() => agent(view.container, "profile.readme"));
+    expect(within(readme).getByText("尚未公开个人 README。")).toBeInTheDocument();
+    expect(within(readme).queryByRole("button", { name: "重试" })).toBeNull();
+  });
+
+  it("README 不可用时可独立重试并恢复内容", async () => {
+    workspace.getAccountReadme
+      .mockResolvedValueOnce(accountReadme("octocat", {
+        status: "unavailable",
+        preview: null,
+        sourceRepo: null,
+        htmlUrl: null,
+        error: "HTTP 502",
+      }))
+      .mockResolvedValueOnce(accountReadme("octocat", {
+        preview: {
+          ...accountReadme().preview!,
+          content: "# Recovered README",
+        },
+      }));
+    const view = await renderProfile();
+
+    const readme = await waitFor(() => agent(view.container, "profile.readme"));
+    await fireEvent.click(within(readme).getByRole("button", { name: "重试" }));
+
+    expect(await within(readme).findByRole("heading", { name: "Recovered README" })).toBeInTheDocument();
+    expect(workspace.getAccountReadme).toHaveBeenCalledTimes(2);
+    expect(readme).not.toHaveTextContent("HTTP 502");
+  });
+
+  it("账号切换后忽略旧账号的延迟 README", async () => {
+    const oldReadme = deferred<GitHubProfileReadmeSection>();
+    workspace.getAccountReadme
+      .mockReturnValueOnce(oldReadme.promise)
+      .mockResolvedValueOnce(accountReadme("mona", {
+        preview: {
+          ...accountReadme("mona").preview!,
+          content: "# Mona README",
+        },
+      }));
+    workspace.getAccountProfile
+      .mockResolvedValueOnce(accountProfile())
+      .mockResolvedValueOnce(accountProfile("mona", { name: "Mona" }));
+    const view = await renderProfile();
+    await waitFor(() => expect(workspace.getAccountReadme).toHaveBeenCalledTimes(1));
+
+    workspace.githubBinding.value = {
+      login: "mona",
+      avatarUrl: "https://avatars.example/mona.png",
+      scopes: ["repo", "user"],
+      boundAt: "2026-07-15T01:00:00Z",
+    };
+    expect(await screen.findByRole("heading", { name: "Mona README" })).toBeInTheDocument();
+
+    oldReadme.resolve(accountReadme("octocat", {
+      preview: {
+        ...accountReadme().preview!,
+        content: "# Late Octocat README",
+      },
+    }));
+    await Promise.resolve();
+    expect(view.container).not.toHaveTextContent("Late Octocat README");
   });
 
   it("取消编辑后恢复服务端资料快照", async () => {
@@ -302,6 +420,7 @@ describe("用户资料页", () => {
     await fireEvent.click(agent(view.container, "profile.open-account-settings"));
     await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=account"));
     expect(workspace.getAccountProfile).not.toHaveBeenCalled();
+    expect(workspace.getAccountReadme).not.toHaveBeenCalled();
   });
 
   it("通过资料页入口在 GitHub 打开当前账号", async () => {

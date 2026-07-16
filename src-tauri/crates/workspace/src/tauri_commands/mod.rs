@@ -245,6 +245,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         tasks::workspace_cancel_task,
         github::github_get_binding_status,
         github::github_get_account_profile,
+        github::github_get_account_readme,
         github::github_update_account_profile,
         github::github_start_device_flow,
         github::github_poll_device_flow,

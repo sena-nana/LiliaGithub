@@ -293,6 +293,7 @@ export interface GitHubRepoSummary {
 }
 
 export type GitHubOrganizationProfileView = "public" | "member";
+export type GitHubReadmeSectionStatus = "ready" | "empty" | "unavailable";
 export type GitHubOrganizationSectionStatus = "ready" | "empty" | "unavailable";
 
 export interface GitHubOrganizationProfile {
@@ -318,8 +319,8 @@ export interface GitHubOrganizationMember {
   htmlUrl: string;
 }
 
-export interface GitHubOrganizationReadmeSection {
-  status: GitHubOrganizationSectionStatus;
+export interface GitHubProfileReadmeSection {
+  status: GitHubReadmeSectionStatus;
   preview: RepoFilePreview | null;
   sourceRepo: string | null;
   htmlUrl: string | null;
@@ -349,7 +350,7 @@ export interface GitHubOrganizationMembersSection {
 export interface GitHubOrganizationOverview {
   effectiveView: GitHubOrganizationProfileView;
   memberViewAvailable: boolean;
-  readme: GitHubOrganizationReadmeSection;
+  readme: GitHubProfileReadmeSection;
   featured: GitHubOrganizationFeaturedSection;
   recent: GitHubOrganizationRepositorySection;
   members: GitHubOrganizationMembersSection;

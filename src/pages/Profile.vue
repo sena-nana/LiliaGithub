@@ -41,7 +41,7 @@ const workspace = useWorkspace();
 }
 
 .profile-page__inner {
-  width: min(100%, 1040px);
+  width: min(100%, 1120px);
   margin: 0 auto;
 }
 

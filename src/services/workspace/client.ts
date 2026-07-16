@@ -33,6 +33,7 @@ import type {
   GitHubOrganizationOverview,
   GitHubOrganizationProfile,
   GitHubOrganizationProfileView,
+  GitHubProfileReadmeSection,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
@@ -778,6 +779,10 @@ export async function unbindGitHub(): Promise<void> {
 
 export function getGitHubAccountProfile(): Promise<GitHubAccountProfile> {
   return call("github_get_account_profile", undefined, () => workspaceFallback().getGitHubAccountProfile());
+}
+
+export function getGitHubAccountReadme(): Promise<GitHubProfileReadmeSection> {
+  return call("github_get_account_readme", undefined, () => workspaceFallback().getGitHubAccountReadme());
 }
 
 export function updateGitHubAccountProfile(

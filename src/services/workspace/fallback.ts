@@ -42,6 +42,7 @@ import type {
   GitHubOrganizationOverview,
   GitHubOrganizationProfile,
   GitHubOrganizationProfileView,
+  GitHubProfileReadmeSection,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
@@ -5142,6 +5143,33 @@ function fallbackGitHubAccountProfile(): GitHubAccountProfile {
 
 export function getGitHubAccountProfile(): Promise<GitHubAccountProfile> {
   return call("github_get_account_profile", undefined, fallbackGitHubAccountProfile);
+}
+
+export function getGitHubAccountReadme(): Promise<GitHubProfileReadmeSection> {
+  return call("github_get_account_readme", undefined, () => {
+    const binding = fallbackBinding.binding;
+    if (fallbackBinding.state !== "bound" || !binding) throw new Error("GitHub 账号未绑定");
+    const sourceRepo = `${binding.login}/${binding.login}`;
+    const path = "README.md";
+    const content = `# ${binding.login}\n\n欢迎来到 ${binding.login} 的 GitHub Profile。`;
+    return {
+      status: "ready",
+      preview: {
+        path,
+        name: path,
+        previewKind: "markdown",
+        content,
+        dataUrl: null,
+        images: {},
+        size: content.length,
+        mimeType: "text/markdown",
+        truncated: false,
+      },
+      sourceRepo,
+      htmlUrl: `https://github.com/${sourceRepo}/blob/main/${path}`,
+      error: null,
+    };
+  });
 }
 
 function normalizedProfileValue(value: string | null): string | null {

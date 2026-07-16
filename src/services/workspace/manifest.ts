@@ -54,6 +54,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_poll_device_flow",
     "github_unbind",
     "github_get_account_profile",
+    "github_get_account_readme",
     "github_update_account_profile",
     "github_get_organization_profile",
     "github_get_organization_overview",

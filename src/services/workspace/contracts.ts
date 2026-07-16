@@ -29,6 +29,7 @@ import type {
   GitHubOrganizationOverview,
   GitHubOrganizationProfile,
   GitHubOrganizationProfileView,
+  GitHubProfileReadmeSection,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
@@ -172,6 +173,7 @@ export interface WorkspaceCommandContracts {
   >;
   github_unbind: CommandContract<NoArgs, void>;
   github_get_account_profile: CommandContract<NoArgs, GitHubAccountProfile>;
+  github_get_account_readme: CommandContract<NoArgs, GitHubProfileReadmeSection>;
   github_update_account_profile: CommandContract<
     { request: GitHubUpdateAccountProfileRequest },
     GitHubAccountProfile
