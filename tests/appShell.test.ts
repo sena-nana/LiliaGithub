@@ -417,11 +417,10 @@ describe("AppShell sidebar", () => {
     expect(profileRow).toHaveAttribute("href", "/profile");
     const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
     expect(organizationRow).toHaveAttribute("href", "/organizations/sena-nana");
-    const organizationSection = organizationRow.closest(".sb-section");
-    const favoriteSection = view.container.querySelector(".sb-section--favorites");
-    expect(organizationSection).toBeInstanceOf(HTMLElement);
-    expect(favoriteSection).toBeInstanceOf(HTMLElement);
-    expect(organizationSection!.compareDocumentPosition(favoriteSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const mainNav = view.getByRole("navigation", { name: "主导航" });
+    expect(mainNav).toContainElement(profileRow);
+    expect(mainNav).toContainElement(organizationRow);
+    expect(view.container.querySelector(".sb-section--favorites")).toBeInstanceOf(HTMLElement);
     expect(sidebarGroupForText(view.container, "未分组仓库", 2)).toBeInTheDocument();
     expect(view.getByRole("button", { name: "折叠分组 未分组仓库" })).toBeInTheDocument();
     expect(view.getByRole("button", { name: "创建仓库分组" })).toBeInTheDocument();
@@ -514,9 +513,11 @@ describe("AppShell sidebar", () => {
     const mainNav = view.getByRole("navigation", { name: "主导航" });
     const footerSettings = view.container.querySelector('[data-agent-id="sidebar.footer.settings"]');
     const footerConnection = view.container.querySelector('[data-agent-id="sidebar.footer.connection"]');
+    const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
 
     expect(top).toContainElement(mainNav);
-    expect(body).toContainElement(view.getByRole("region", { name: "组织" }));
+    expect(mainNav).toContainElement(organizationRow);
+    expect(body).not.toContainElement(organizationRow);
     expect(body).toContainElement(sidebarGroupForText(view.container, "未分组仓库", 120));
     expect(body).toContainElement(sidebarRowForText(view.container, "Repo-001"));
     expect(footer).toContainElement(footerSettings);
