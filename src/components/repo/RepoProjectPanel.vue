@@ -12,6 +12,7 @@ import {
   GitPullRequest,
   LoaderCircle,
   Monitor,
+  MessagesSquare,
   Package,
   Pencil,
   Play,
@@ -109,7 +110,13 @@ import {
 import type { ReadmeLinkTarget } from "../../utils/readmeLinks";
 import { parseRemoteRepoId, remoteRepoRoute } from "../../utils/remoteRepo";
 import { recoveryGuidanceForMessage, type RecoveryGuidance } from "../../utils/recoveryGuidance";
-import { repoRoute, type RepoProjectCreateFlow, type RepoProjectTab, type RepoRouteTab } from "../../utils/repoRoutes";
+import {
+  normalizeRepoProjectCreateFlow,
+  normalizeRepoProjectTab,
+  repoRoute,
+  type RepoProjectTab,
+  type RepoRouteTab,
+} from "../../utils/repoRoutes";
 import {
   CommitDetailCard,
   MarkdownReadme,
@@ -127,6 +134,8 @@ import {
   RepoLanguageStatsCard,
   RepoPullRequestsPanel,
   RepoPullRequestsSidebarControls,
+  RepoDiscussionsPanel,
+  RepoDiscussionsSidebarControls,
   RepoReleasesPanel,
   RepoTopicEditor,
   preloadRepoProjectSection,
@@ -164,7 +173,7 @@ type ProjectSectionConfig = {
 };
 type ProjectSidebarMode = "repo" | "files" | Exclude<ProjectTab, "readme">;
 type ProjectSidebarButtonMode = "repo" | Exclude<ProjectTab, "readme">;
-type RefreshableProjectSection = Extract<ProjectTab, "issues" | "pulls" | "actions" | "release">;
+type RefreshableProjectSection = Extract<ProjectTab, "issues" | "pulls" | "discussions" | "actions" | "release">;
 type ProjectSidebarButtonConfig = {
   key: ProjectSidebarButtonMode;
   label: string;
@@ -173,7 +182,7 @@ type ProjectSidebarButtonConfig = {
 };
 type PendingTaskTracker = ReturnType<typeof createPendingTaskTracker>;
 type GitHubMutationResult<T> = { ok: true; value: T } | { ok: false };
-type GitHubAccessSection = "Issues" | "Pull Requests" | "Actions" | "Release" | "Settings";
+type GitHubAccessSection = "Issues" | "Pull Requests" | "Discussions" | "Actions" | "Release" | "Settings";
 type ReleaseTypeFilter = "all" | "stable" | "latest" | "prerelease" | "draft";
 type GitHubAccessUnavailable = {
   title: string;
@@ -357,6 +366,7 @@ const props = defineProps<{
   projectTab?: ProjectTab;
   projectIssueNumber?: number | null;
   projectPullRequestNumber?: number | null;
+  projectDiscussionNumber?: number | null;
   projectRunId?: number | null;
   projectJobId?: number | null;
 }>();
@@ -421,6 +431,8 @@ const pullsLoading = ref(false);
 const pullChecksLoading = ref(false);
 const pullsLoadedKey = ref<string | null>(null);
 const focusedPullRequestNumber = ref<number | null>(null);
+const focusedDiscussionNumber = ref<number | null>(null);
+const discussionCreateView = ref(false);
 const pullRequestTitle = ref("");
 const pullRequestBody = ref("");
 const pullRequestBase = ref("");
@@ -464,6 +476,7 @@ const aboutTopicDraft = ref("");
 const aboutTopicList = ref<HTMLElement | null>(null);
 const aboutTopicMeasureList = ref<HTMLElement | null>(null);
 const repoReleasesPanel = ref<{ openCreate: () => void } | null>(null);
+const repoDiscussionsPanel = ref<RefreshHandle | null>(null);
 const actionsInfoSidebar = ref<{ refreshCurrentRun: () => Promise<void> } | null>(null);
 const commitDetailCard = ref<RefreshHandle | null>(null);
 const settingsDetailSectionRefs = ref<RefreshHandle[]>([]);
@@ -748,6 +761,9 @@ const issuesAccessUnavailable = computed(() =>
 const pullsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Pull Requests", githubError.value, resolvedRepoContext.value.capabilities.pulls)
 );
+const discussionsAccessUnavailable = computed(() =>
+  githubAccessUnavailable("Discussions", null, resolvedRepoContext.value.capabilities.discussions)
+);
 const actionsAccessUnavailable = computed(() =>
   githubAccessUnavailable("Actions", actionsError.value, resolvedRepoContext.value.capabilities.actions)
 );
@@ -816,6 +832,7 @@ const currentBranchName = computed(() => workspace.repoById(props.repoId)?.curre
 const projectSections: readonly ProjectSectionConfig[] = [
   { key: "issues", label: "Issues", icon: CircleDot },
   { key: "pulls", label: "Pull Requests", icon: GitPullRequest },
+  { key: "discussions", label: "Discussions", icon: MessagesSquare },
   { key: "actions", label: "Actions", icon: Play },
   { key: "release", label: "Release", icon: Package },
   { key: "settings", label: "Settings", icon: Settings2 },
@@ -930,6 +947,7 @@ const showProjectSidebar = computed(() =>
   activeSection.value === "readme" ||
   activeSection.value === "issues" ||
   activeSection.value === "pulls" ||
+  activeSection.value === "discussions" ||
   activeSection.value === "actions" ||
   activeSection.value === "release" ||
   activeSection.value === "settings",
@@ -1082,7 +1100,7 @@ function isProjectSidebarButtonActive(section: ProjectSidebarMode) {
 }
 
 function isRefreshableProjectSection(section: ProjectContentMode): section is RefreshableProjectSection {
-  return section === "issues" || section === "pulls" || section === "actions" || section === "release";
+  return section === "issues" || section === "pulls" || section === "discussions" || section === "actions" || section === "release";
 }
 
 const projectSidebarMode = computed<ProjectSidebarMode>(() => {
@@ -1090,6 +1108,7 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
   if (
     activeSection.value === "issues" ||
     activeSection.value === "pulls" ||
+    activeSection.value === "discussions" ||
     activeSection.value === "actions" ||
     activeSection.value === "release" ||
     activeSection.value === "settings"
@@ -1101,17 +1120,19 @@ const projectSidebarMode = computed<ProjectSidebarMode>(() => {
 const projectSidebarContentUnavailable = computed(() =>
   (projectSidebarMode.value === "issues" && Boolean(issuesAccessUnavailable.value)) ||
   (projectSidebarMode.value === "pulls" && Boolean(pullsAccessUnavailable.value)) ||
+  (projectSidebarMode.value === "discussions" && Boolean(discussionsAccessUnavailable.value)) ||
   (projectSidebarMode.value === "actions" && Boolean(actionsAccessUnavailable.value)) ||
   (projectSidebarMode.value === "release" && Boolean(releasesAccessUnavailable.value)) ||
   (projectSidebarMode.value === "settings" && Boolean(settingsAccessUnavailable.value))
 );
-const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
-const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
-const routedProjectCreateFlow = computed(() => normalizeProjectCreateFlow(route.query.create));
+const routedProjectTab = computed(() => normalizeRepoProjectTab(route.query.projectTab));
+const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeRepoProjectTab(props.projectTab) ?? "readme");
+const routedProjectCreateFlow = computed(() => normalizeRepoProjectCreateFlow(route.query.create));
 const routedReleaseTag = computed(() => routeStringValue(route.query.releaseTag));
 const routedReleaseType = computed(() => releaseTypeFilterFromRoute());
 const routedProjectIssue = computed(() => normalizePositiveNumber(route.query.issue));
 const routedProjectPullRequest = computed(() => normalizePositiveNumber(route.query.pr));
+const routedProjectDiscussion = computed(() => normalizePositiveNumber(route.query.discussion));
 const routedIssueFilterState = computed(() => JSON.stringify({
   state: issueStateFromRoute(),
   filters: issuePanelFiltersFromRoute(),
@@ -1228,6 +1249,8 @@ watch(
       routedProjectIssue,
       () => props.projectIssueNumber,
       routedProjectPullRequest,
+      routedProjectDiscussion,
+      () => props.projectDiscussionNumber,
       () => props.projectRunId,
       () => props.projectJobId,
     ],
@@ -1257,24 +1280,6 @@ async function loadStorageStats() {
       }
     }
   });
-}
-
-function normalizeProjectTab(value: unknown): ProjectTab | null {
-  if (
-    value === "readme" ||
-    value === "issues" ||
-    value === "pulls" ||
-    value === "actions" ||
-    value === "release" ||
-    value === "settings"
-  ) return value;
-  return null;
-}
-
-function normalizeProjectCreateFlow(value: unknown): RepoProjectCreateFlow | null {
-  const next = Array.isArray(value) ? value[0] : value;
-  if (next === "issue" || next === "pull" || next === "release") return next;
-  return null;
 }
 
 function routeStringValue(value: unknown) {
@@ -1379,7 +1384,7 @@ function normalizePositiveNumber(value: unknown) {
 function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
   if (tab === "repo") {
     if (route.path.endsWith("/files")) return "files";
-    return normalizeProjectTab(route.query.projectTab) ?? normalizeProjectTab(props.projectTab) ?? "readme";
+    return normalizeRepoProjectTab(route.query.projectTab) ?? normalizeRepoProjectTab(props.projectTab) ?? "readme";
   }
   if (tab === "run") return "launch";
   return tab;
@@ -1388,6 +1393,7 @@ function routeTabToSection(tab: RepoRouteTab): ProjectContentMode {
 function isGitHubProjectSection(section: ProjectContentMode) {
   return section === "issues" ||
     section === "pulls" ||
+    section === "discussions" ||
     section === "actions" ||
     section === "release" ||
     section === "settings";
@@ -1534,6 +1540,7 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
   const query: LocationQueryRaw = { ...route.query };
   delete query.issue;
   delete query.pr;
+  delete query.discussion;
   delete query.run;
   delete query.job;
   delete query.releaseTag;
@@ -1562,6 +1569,9 @@ function projectTabRouteQuery(tab: ProjectTab): LocationQueryRaw {
       blankPullRequestPanelFilters(),
     );
     if (focusedPullRequestNumber.value) query.pr = String(focusedPullRequestNumber.value);
+  } else if (tab === "discussions") {
+    if (focusedDiscussionNumber.value) query.discussion = String(focusedDiscussionNumber.value);
+    if (discussionCreateView.value) query.create = "discussion";
   } else if (tab === "actions") {
     applyActionRouteFilters(query);
     if (focusedRunId.value) query.run = String(focusedRunId.value);
@@ -1705,6 +1715,8 @@ function releaseTagSelector(tag: string) {
 function clearProjectTargets() {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
+  focusedDiscussionNumber.value = null;
+  discussionCreateView.value = false;
   issueDiscussion.value = null;
   issueDiscussionError.value = null;
   pullRequestDiscussion.value = null;
@@ -1809,6 +1821,8 @@ function rebindGitHub() {
 
 async function focusIssue(issueNumber: number | null | undefined) {
   focusedPullRequestNumber.value = null;
+  focusedDiscussionNumber.value = null;
+  discussionCreateView.value = false;
   pullRequestDiscussion.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
@@ -1842,6 +1856,8 @@ async function focusIssue(issueNumber: number | null | undefined) {
 async function focusRun(runId: number | null | undefined) {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
+  focusedDiscussionNumber.value = null;
+  discussionCreateView.value = false;
   focusedJobId.value = props.projectJobId ?? null;
   focusedReleaseTag.value = null;
   if (!runId) {
@@ -1870,6 +1886,8 @@ async function focusRun(runId: number | null | undefined) {
 
 async function focusPullRequest(pullNumber: number | null | undefined) {
   focusedIssueNumber.value = null;
+  focusedDiscussionNumber.value = null;
+  discussionCreateView.value = false;
   issueDiscussion.value = null;
   focusedRunId.value = null;
   focusedJobId.value = null;
@@ -1910,6 +1928,8 @@ async function focusPullRequest(pullNumber: number | null | undefined) {
 async function focusReleaseTag(tag: string | null | undefined, updateRoute = false) {
   focusedIssueNumber.value = null;
   focusedPullRequestNumber.value = null;
+  focusedDiscussionNumber.value = null;
+  discussionCreateView.value = false;
   focusedRunId.value = null;
   focusedJobId.value = null;
   await loadReleases();
@@ -1963,6 +1983,13 @@ async function applyProjectRouteState() {
     await applyProjectCreateForm(targetTab);
     return;
   }
+  if (targetTab === "discussions") {
+    focusedDiscussionNumber.value = props.projectDiscussionNumber ?? routedProjectDiscussion.value;
+    discussionCreateView.value =
+      routedProjectCreateFlow.value === "discussion" && !discussionsAccessUnavailable.value;
+    await ensureSectionData(targetTab);
+    return;
+  }
   if (targetTab === "actions") {
     await focusRun(props.projectRunId);
     return;
@@ -1982,6 +2009,34 @@ async function applyProjectCreateForm(targetTab: ProjectTab) {
   } else if (targetTab === "pulls" && createFlow === "pull" && !pullsAccessUnavailable.value) {
     await openPullRequestCreateView();
   }
+}
+
+async function focusDiscussion(discussionNumber: number) {
+  focusedDiscussionNumber.value = discussionNumber;
+  discussionCreateView.value = false;
+  await pushProjectTabRoute("discussions");
+}
+
+async function closeDiscussionDetail() {
+  focusedDiscussionNumber.value = null;
+  await pushProjectTabRoute("discussions");
+}
+
+async function openDiscussionCreateView() {
+  focusedDiscussionNumber.value = null;
+  discussionCreateView.value = true;
+  await pushProjectTabRoute("discussions");
+}
+
+async function closeDiscussionCreateView() {
+  discussionCreateView.value = false;
+  await pushProjectTabRoute("discussions");
+}
+
+async function handleDiscussionCreated(discussionNumber: number) {
+  discussionCreateView.value = false;
+  focusedDiscussionNumber.value = discussionNumber;
+  await pushProjectTabRoute("discussions");
 }
 
 function applySettingsForm(next: GitHubRepoManagement) {
@@ -2381,6 +2436,10 @@ async function refreshCurrentSectionData(section: RefreshableProjectSection) {
         loadIssueFilterMetadata(true),
         pullNumber ? loadPullRequestDiscussion(pullNumber, true) : Promise.resolve(),
       ]);
+      return;
+    }
+    if (section === "discussions") {
+      await repoDiscussionsPanel.value?.refresh();
       return;
     }
     if (section === "actions") {
@@ -3495,7 +3554,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
       <main
         ref="projectMainRef"
         class="project-main"
-        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'release' || activeSection === 'settings' }"
+        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'discussions' || activeSection === 'release' || activeSection === 'settings' }"
       >
         <RepoLaunchTerminalPanel
           v-if="canUseLaunchWorkflow && activeSection === 'launch'"
@@ -3836,6 +3895,27 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             @back="closePullRequestDetail"
             @focus="focusPullRequestRow"
             @merge="mergePullRequest"
+          />
+        </section>
+
+        <section v-else-if="activeSection === 'discussions'" class="project-section project-github-section">
+          <RepoGitHubUnavailableNotice
+            v-if="discussionsAccessUnavailable"
+            :title="discussionsAccessUnavailable.title"
+            :reason="discussionsAccessUnavailable.reason"
+            :loading="githubAuthLoading"
+            @rebind="rebindGitHub"
+          />
+          <RepoDiscussionsPanel
+            v-else-if="repoFullName"
+            ref="repoDiscussionsPanel"
+            :repo-full-name="repoFullName"
+            :focused-discussion-number="focusedDiscussionNumber"
+            :create-view="discussionCreateView"
+            @focus="focusDiscussion"
+            @back="closeDiscussionDetail"
+            @cancel-create="closeDiscussionCreateView"
+            @created="handleDiscussionCreated"
           />
         </section>
 
@@ -4418,6 +4498,15 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
           @update:state="setPullRequestState"
           @update:filters="setPullRequestPanelFilters"
           @create="openPullRequestCreateView"
+        />
+
+        <RepoDiscussionsSidebarControls
+          v-else-if="projectSidebarMode === 'discussions' && repoFullName"
+          :repo-full-name="repoFullName"
+          :create-view="discussionCreateView"
+          :focused-discussion-number="focusedDiscussionNumber"
+          :unavailable-reason="discussionsAccessUnavailable?.reason ?? null"
+          @create="openDiscussionCreateView"
         />
 
         <template v-if="projectSidebarMode === 'actions'">

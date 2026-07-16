@@ -32,7 +32,7 @@ import type {
 import { formatRelativeRepoTime, formatRepoTime, repoDisplayName } from "../utils/repoDisplay";
 import { hasRepoTag, resolveRepoContext } from "../utils/repoContext";
 import { parseRemoteRepoId, remoteRepoName } from "../utils/remoteRepo";
-import { repoRoute, repoRouteTabFromRoute, type RepoProjectTab, type RepoRouteTab } from "../utils/repoRoutes";
+import { normalizeRepoProjectTab, repoRoute, repoRouteTabFromRoute, type RepoProjectTab, type RepoRouteTab } from "../utils/repoRoutes";
 
 type RepoToolbarTab = Extract<RepoRouteTab, "files" | "repo" | "changes" | "history" | "stash">;
 type RepoPullStrategy = "pull" | "merge" | "rebase";
@@ -65,10 +65,11 @@ export function useRepoDetailController() {
   const workspace = useWorkspace();
   const activeTab = computed<RepoRouteTab>(() => repoRouteTabFromRoute(route));
   const activeProjectTab = computed<RepoProjectTab>(
-    () => normalizeProjectTab(route.query.projectTab) ?? "readme",
+    () => normalizeRepoProjectTab(route.query.projectTab) ?? "readme",
   );
   const activeProjectIssue = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.issue));
   const activeProjectPullRequest = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.pr));
+  const activeProjectDiscussion = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.discussion));
   const activeProjectRun = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.run));
   const activeProjectJob = computed<number | null>(() => normalizePositiveIntegerQuery(route.query.job));
   const activeFilePath = computed<string | null>(() => normalizeStringQuery(route.query.file));
@@ -478,18 +479,6 @@ export function useRepoDetailController() {
       selectedCommitHash.value = null;
     }
   });
-
-  function normalizeProjectTab(value: unknown): RepoProjectTab | null {
-    if (
-      value === "readme" ||
-      value === "issues" ||
-      value === "pulls" ||
-      value === "actions" ||
-      value === "release" ||
-      value === "settings"
-    ) return value;
-    return null;
-  }
 
   function normalizePositiveIntegerQuery(value: unknown): number | null {
     const next = Array.isArray(value) ? value[0] : value;
@@ -1350,6 +1339,7 @@ export function useRepoDetailController() {
       activeProjectTab,
       activeProjectIssue,
       activeProjectPullRequest,
+      activeProjectDiscussion,
       activeProjectRun,
       activeProjectJob,
       activeFilePath,

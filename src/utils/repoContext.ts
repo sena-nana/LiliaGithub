@@ -33,6 +33,7 @@ export type RepoCapabilityKey =
   | "deleteLocal"
   | "issues"
   | "pulls"
+  | "discussions"
   | "actions"
   | "settings"
   | "deleteRemote";
@@ -117,6 +118,7 @@ export function resolveRepoContext(input: ResolveRepoContextInput): RepoContext 
       deleteLocal: local(),
       issues: github(),
       pulls: github(),
+      discussions: github(),
       actions: github(),
       settings: github(),
       deleteRemote: github(),

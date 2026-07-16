@@ -45,6 +45,7 @@ const {
   activeProjectTab,
   activeProjectIssue,
   activeProjectPullRequest,
+  activeProjectDiscussion,
   activeProjectRun,
   activeProjectJob,
   activeFilePath,
@@ -146,6 +147,7 @@ const currentPageRefreshAvailable = computed(() => {
   if (activeTab.value === "run") return capabilities.launch.available;
   if (activeProjectTab.value === "issues") return capabilities.issues.available;
   if (activeProjectTab.value === "pulls") return capabilities.pulls.available;
+  if (activeProjectTab.value === "discussions") return capabilities.discussions.available;
   if (activeProjectTab.value === "actions") return capabilities.actions.available;
   if (activeProjectTab.value === "release") return capabilities.issues.available;
   if (activeProjectTab.value === "settings") {
@@ -296,6 +298,7 @@ async function refreshCurrentPage() {
           :project-tab="activeProjectTab"
           :project-issue-number="activeProjectIssue"
           :project-pull-request-number="activeProjectPullRequest"
+          :project-discussion-number="activeProjectDiscussion"
           :project-run-id="activeProjectRun"
           :project-job-id="activeProjectJob"
           @update-commit-message="commitMessage = $event"

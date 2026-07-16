@@ -5,6 +5,8 @@ use lilia_github_contracts::workspace::{
 };
 use serde::Deserialize;
 
+pub mod discussions;
+
 pub const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
 pub const GITHUB_DELETE_REPO_SCOPE: &str = "delete_repo";
 pub const GITHUB_READ_PROJECT_SCOPE: &str = "read:project";

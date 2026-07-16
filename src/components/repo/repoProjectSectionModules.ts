@@ -8,6 +8,7 @@ export type RepoProjectSectionKey =
   | "readme"
   | "issues"
   | "pulls"
+  | "discussions"
   | "actions"
   | "release"
   | "settings";
@@ -29,6 +30,8 @@ const repoActionsInfoSidebarModule = createCachedAsyncComponent(() => import("./
 const repoActionsSidebarControlsModule = createCachedAsyncComponent(() => import("./RepoActionsSidebarControls.vue"));
 const repoPullRequestsPanelModule = createCachedAsyncComponent(() => import("./RepoPullRequestsPanel.vue"));
 const repoPullRequestsSidebarControlsModule = createCachedAsyncComponent(() => import("./RepoPullRequestsSidebarControls.vue"));
+const repoDiscussionsPanelModule = createCachedAsyncComponent(() => import("./discussions/RepoDiscussionsPanel.vue"));
+const repoDiscussionsSidebarControlsModule = createCachedAsyncComponent(() => import("./discussions/RepoDiscussionsSidebarControls.vue"));
 const repoReleasesPanelModule = createCachedAsyncComponent(() => import("./RepoReleasesPanel.vue"));
 
 export const CommitDetailCard = commitDetailCardModule.component;
@@ -48,6 +51,8 @@ export const RepoActionsInfoSidebar = repoActionsInfoSidebarModule.component;
 export const RepoActionsSidebarControls = repoActionsSidebarControlsModule.component;
 export const RepoPullRequestsPanel = repoPullRequestsPanelModule.component;
 export const RepoPullRequestsSidebarControls = repoPullRequestsSidebarControlsModule.component;
+export const RepoDiscussionsPanel = repoDiscussionsPanelModule.component;
+export const RepoDiscussionsSidebarControls = repoDiscussionsSidebarControlsModule.component;
 export const RepoReleasesPanel = repoReleasesPanelModule.component;
 
 export function preloadRepoProjectSection(section: string) {
@@ -65,6 +70,10 @@ export function preloadRepoProjectSection(section: string) {
     repoPullRequestsPanelModule.load(),
     repoPullRequestsSidebarControlsModule.load(),
     repoGitHubDetailSidebarModule.load(),
+  ]);
+  if (section === "discussions") return Promise.all([
+    repoDiscussionsPanelModule.load(),
+    repoDiscussionsSidebarControlsModule.load(),
   ]);
   if (section === "actions") return Promise.all([
     repoActionsPanelModule.load(),
