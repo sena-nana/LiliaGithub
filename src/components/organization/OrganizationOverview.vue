@@ -235,14 +235,12 @@ onUnmounted(() => {
             <Building2 :size="34" aria-hidden="true" />
           </span>
           <div class="organization-profile__copy">
-            <div class="organization-profile__title">
-              <h1>{{ profile.name || profile.login }}</h1>
+            <div class="organization-profile__identity-line">
+              <p class="organization-profile__login">{{ profile.login }}</p>
               <span v-if="profile.isVerified" class="organization-profile__verified" title="Verified">
                 <BadgeCheck :size="15" aria-hidden="true" />Verified
               </span>
             </div>
-            <p class="organization-profile__login">{{ profile.login }}</p>
-            <p v-if="profile.description" class="organization-profile__description">{{ profile.description }}</p>
             <div class="organization-profile__meta">
               <span><Users :size="13" aria-hidden="true" />{{ formatCount(profile.followers) }} followers</span>
               <span><BookOpen :size="13" aria-hidden="true" />{{ formatCount(profile.publicRepoCount) }} public repositories</span>
@@ -485,7 +483,7 @@ onUnmounted(() => {
 
 .organization-profile,
 .organization-profile__identity,
-.organization-profile__title,
+.organization-profile__identity-line,
 .organization-profile__meta,
 .organization-profile__meta > span,
 .organization-profile__meta > button,
@@ -533,22 +531,17 @@ onUnmounted(() => {
   min-width: 0;
 }
 
-.organization-profile__title {
+.organization-profile__identity-line {
   min-width: 0;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.organization-profile__title h1,
-.organization-profile__login,
-.organization-profile__description {
+.organization-profile__login {
   margin: 0;
-}
-
-.organization-profile__title h1 {
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 1.3;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .organization-profile__verified {
@@ -558,19 +551,6 @@ onUnmounted(() => {
   color: var(--ok);
   font-size: 11px;
   font-weight: 600;
-}
-
-.organization-profile__login {
-  margin-top: 1px;
-  color: var(--text-muted);
-  font-size: 14px;
-}
-
-.organization-profile__description {
-  max-width: 680px;
-  margin-top: 8px;
-  font-size: 13px;
-  line-height: 1.5;
 }
 
 .organization-profile__meta {
