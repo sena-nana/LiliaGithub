@@ -764,6 +764,8 @@ describe("AppShell sidebar", () => {
     expect(pinButton).toHaveFocus();
     await fireEvent.keyDown(pinButton, { key: "Enter" });
     await fireEvent.keyUp(pinButton, { key: "Enter" });
+    await fireEvent.keyDown(pinButton, { key: " " });
+    await fireEvent.keyUp(pinButton, { key: " " });
 
     expect(view.router.currentRoute.value.fullPath).toBe("/");
   });
