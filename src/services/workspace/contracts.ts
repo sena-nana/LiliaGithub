@@ -99,6 +99,13 @@ import type {
   WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
+import type {
+  GitHubCreateRepositoryDiscussionRequest,
+  GitHubRepositoryDiscussion,
+  GitHubRepositoryDiscussionMetadata,
+  GitHubRepositoryDiscussionPage,
+  GitHubRepositoryDiscussionCommentPage,
+} from "./discussions/types";
 
 type NoArgs = undefined;
 type Maybe<T> = T | null;
@@ -316,6 +323,35 @@ export interface WorkspaceCommandContracts {
   github_update_issue: CommandContract<
     RepoFullNameArg & { issueNumber: number; request: GitHubUpdateIssueRequest },
     GitHubIssue
+  >;
+  github_get_discussion_metadata: CommandContract<RepoFullNameArg, GitHubRepositoryDiscussionMetadata>;
+  github_list_discussions: CommandContract<
+    RepoFullNameArg & {
+      first: Maybe<number>;
+      after: Maybe<string>;
+      categoryId: Maybe<string>;
+      answered: Maybe<boolean>;
+      state: Maybe<string>;
+      sort: Maybe<string>;
+      direction: Maybe<string>;
+    },
+    GitHubRepositoryDiscussionPage
+  >;
+  github_get_discussion: CommandContract<
+    RepoFullNameArg & { discussionNumber: number },
+    GitHubRepositoryDiscussion
+  >;
+  github_list_discussion_comments: CommandContract<
+    RepoFullNameArg & { discussionNumber: number; first: Maybe<number>; after: Maybe<string> },
+    GitHubRepositoryDiscussionCommentPage
+  >;
+  github_list_discussion_comment_replies: CommandContract<
+    RepoFullNameArg & { commentId: string; first: Maybe<number>; after: Maybe<string> },
+    GitHubRepositoryDiscussionCommentPage
+  >;
+  github_create_discussion: CommandContract<
+    RepoFullNameArg & { request: GitHubCreateRepositoryDiscussionRequest },
+    GitHubRepositoryDiscussion
   >;
   github_list_workflow_runs: CommandContract<
     RepoFullNameArg & { perPage: Maybe<number>; forceRefresh: Maybe<boolean> },

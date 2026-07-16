@@ -1,6 +1,7 @@
 pub mod bulk;
 pub mod file_browser;
 pub mod github;
+pub mod github_discussions;
 pub mod launch;
 pub(crate) mod operations;
 pub(crate) mod readme;

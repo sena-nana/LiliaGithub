@@ -208,7 +208,7 @@ export async function resetWorkspaceFallbacksForTests(): Promise<void> {
   workspaceFallbackModule?.resetWorkspaceFallbacksForTests();
 }
 
-async function call<TCommand extends WorkspaceCommandName>(
+export async function call<TCommand extends WorkspaceCommandName>(
   command: TCommand,
   args: WorkspaceCommandArgs<TCommand>,
   fallbackCall: () => Promise<WorkspaceCommandResult<TCommand>>,

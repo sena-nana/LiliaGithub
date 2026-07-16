@@ -1,12 +1,13 @@
 import type { RouteLocationNormalizedLoaded } from "vue-router";
 
 export type RepoRouteTab = "files" | "repo" | "changes" | "history" | "stash" | "run";
-export type RepoProjectTab = "readme" | "issues" | "pulls" | "actions" | "release" | "settings";
-export type RepoProjectCreateFlow = "issue" | "pull" | "release";
+export type RepoProjectTab = "readme" | "issues" | "pulls" | "discussions" | "actions" | "release" | "settings";
+export type RepoProjectCreateFlow = "issue" | "pull" | "discussion" | "release";
 
 const createFlowTabs: Record<RepoProjectCreateFlow, Exclude<RepoProjectTab, "readme">> = {
   issue: "issues",
   pull: "pulls",
+  discussion: "discussions",
   release: "release",
 };
 
@@ -29,12 +30,33 @@ export function repoProjectRoute(
   const query = new URLSearchParams({ projectTab });
   if (projectTab === "issues" && focusId) query.set("issue", String(focusId));
   if (projectTab === "pulls" && focusId) query.set("pr", String(focusId));
+  if (projectTab === "discussions" && focusId) query.set("discussion", String(focusId));
   if (projectTab === "actions" && focusId) {
     query.set("run", String(focusId));
     if (jobId) query.set("job", String(jobId));
   }
   if (projectTab === "release" && releaseTag) query.set("releaseTag", releaseTag);
   return `${repoRoute(repoId)}?${query.toString()}`;
+}
+
+export function normalizeRepoProjectTab(value: unknown): RepoProjectTab | null {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (
+    next === "readme" ||
+    next === "issues" ||
+    next === "pulls" ||
+    next === "discussions" ||
+    next === "actions" ||
+    next === "release" ||
+    next === "settings"
+  ) return next;
+  return null;
+}
+
+export function normalizeRepoProjectCreateFlow(value: unknown): RepoProjectCreateFlow | null {
+  const next = Array.isArray(value) ? value[0] : value;
+  if (next === "issue" || next === "pull" || next === "discussion" || next === "release") return next;
+  return null;
 }
 
 export function repoProjectCreateRoute(repoId: string, createFlow: RepoProjectCreateFlow) {

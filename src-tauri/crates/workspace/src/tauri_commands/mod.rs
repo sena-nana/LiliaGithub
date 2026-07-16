@@ -60,6 +60,7 @@ macro_rules! delegate_dialog_command {
 mod bulk;
 mod file_browser;
 mod github;
+mod github_discussions;
 mod launch;
 mod refresh;
 mod repos;
@@ -291,6 +292,12 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_list_issue_assignees,
         github::github_create_issue,
         github::github_update_issue,
+        github_discussions::github_get_discussion_metadata,
+        github_discussions::github_list_discussions,
+        github_discussions::github_get_discussion,
+        github_discussions::github_list_discussion_comments,
+        github_discussions::github_list_discussion_comment_replies,
+        github_discussions::github_create_discussion,
         github::github_list_workflow_runs,
         github::github_get_workflow_run_detail,
         github::github_get_workflow_job_log,
