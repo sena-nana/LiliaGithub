@@ -99,6 +99,7 @@ import type {
   WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
+import type { PersonalHomeNotification } from "../personalHome/types";
 import type {
   GitHubCreateRepositoryDiscussionRequest,
   GitHubRepositoryDiscussion,
@@ -169,6 +170,7 @@ export interface WorkspaceCommandContracts {
   workspace_list_tasks: CommandContract<NoArgs, WorkspaceTask[]>;
   workspace_cancel_task: CommandContract<{ taskId: string }, void>;
   workspace_set_active_repo: CommandContract<{ repoId: Maybe<string> }, void>;
+  workspace_record_recent_local_repo: CommandContract<{ repoId: string }, WorkspaceSettings>;
   workspace_set_refresh_paused: CommandContract<{ paused: boolean }, void>;
   workspace_enqueue_repo_refresh: CommandContract<{ request: WorkspaceRepoRefreshRequest }, string>;
 
@@ -207,6 +209,14 @@ export interface WorkspaceCommandContracts {
     direction: Maybe<string>;
     forceRefresh: Maybe<boolean>;
   }, GitHubAccountIssueItem[]>;
+  github_list_assigned_work: CommandContract<{
+    perPage: Maybe<number>;
+    forceRefresh: Maybe<boolean>;
+  }, GitHubAccountIssueItem[]>;
+  github_list_personal_notifications: CommandContract<{
+    perPage: Maybe<number>;
+    forceRefresh: Maybe<boolean>;
+  }, PersonalHomeNotification[]>;
   github_list_action_notifications: CommandContract<{
     perPage: Maybe<number>;
     forceRefresh: Maybe<boolean>;

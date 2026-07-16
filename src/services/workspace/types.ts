@@ -15,8 +15,14 @@ export interface WorkspaceSettings {
   repoGroups: WorkspaceRepoGroup[];
   organizationGroupingResolvedRepoIds: string[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
+  recentLocalRepos: RecentLocalRepoVisit[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
   contributionIdentities: ContributionIdentity[];
+}
+
+export interface RecentLocalRepoVisit {
+  repoId: string;
+  openedAt: number;
 }
 
 export type GitHubAuthPurpose = "binding" | "profileWrite";

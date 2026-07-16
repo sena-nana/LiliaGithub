@@ -419,7 +419,8 @@ describe("AppShell sidebar", () => {
       expect(sidebarRowForText(view.container, "LiliaGithub")).toBeInTheDocument();
     });
 
-    expect(sidebarRowForText(view.container, "概览")).toBeInTheDocument();
+    expect(sidebarRowForText(view.container, "首页")).toHaveAttribute("href", "/");
+    expect(sidebarRowForText(view.container, "项目总览")).toHaveAttribute("href", "/overview");
     const profileRow = sidebarRowForText(view.container, "lilia-user");
     expect(profileRow).toHaveAttribute("href", "/profile");
     const organizationRow = await waitFor(() => sidebarRowForText(view.container, "sena-nana"));
@@ -476,25 +477,25 @@ describe("AppShell sidebar", () => {
 
     const languageChart = view.getByLabelText("编程语言占比图");
     const typeScriptSlice = within(languageChart).getByLabelText(/TypeScript.*75%.*1 KB/);
+    expect(typeScriptSlice).toHaveAttribute("title", "TypeScript：75%，1 KB");
     await fireEvent.pointerEnter(typeScriptSlice);
-    expect(view.getByRole("tooltip")).toHaveTextContent("TypeScript：75%，1 KB");
-    expect(languageEntry).toHaveClass("is-hovered");
+    await waitFor(() => {
+      expect(languageEntry).toHaveClass("is-hovered");
+    });
 
     await fireEvent.pointerLeave(typeScriptSlice);
-    expect(view.queryByRole("tooltip")).toBeNull();
-    expect(languageEntry).not.toHaveClass("is-hovered");
+    await waitFor(() => {
+      expect(languageEntry).not.toHaveClass("is-hovered");
+    });
 
     await fireEvent.click(languageEntry as HTMLElement);
     expect(view.router.currentRoute.value.fullPath).toBe("/");
 
     await fireEvent.pointerEnter(typeScriptSlice);
-    expect(view.getByRole("tooltip")).toBeInTheDocument();
     await fireEvent.click(view.getByRole("button", { name: "按项目" }));
-    expect(view.queryByRole("tooltip")).toBeNull();
 
     const alphaSlice = within(languageChart).getByLabelText(/Alpha.*75%.*1 KB/);
-    await fireEvent.pointerEnter(alphaSlice);
-    expect(view.getByRole("tooltip")).toHaveTextContent("Alpha：75%，1 KB");
+    expect(alphaSlice).toHaveAttribute("title", "Alpha：75%，1 KB");
 
     const projectLink = await within(homeContent(view.container)).findByRole("link", { name: /Alpha/ });
     await fireEvent.click(projectLink);

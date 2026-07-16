@@ -10,20 +10,23 @@ import {
 import { invalidateSessionContextSnapshot } from "./composables/sessionContext";
 import { createCachedAsyncModule } from "./utils/asyncModule";
 
-const homePageModule = createCachedAsyncModule(() => import("./pages/Home.vue"));
+const personalHomePageModule = createCachedAsyncModule(() => import("./pages/PersonalHome.vue"));
+const projectOverviewPageModule = createCachedAsyncModule(() => import("./pages/Home.vue"));
 const profilePageModule = createCachedAsyncModule(() => import("./pages/Profile.vue"));
 const organizationPageModule = createCachedAsyncModule(() => import("./pages/Organization.vue"));
 const repoPageModule = createCachedAsyncModule(() => import("./pages/RepoDetail.vue"));
 const commitDetailPageModule = createCachedAsyncModule(() => import("./pages/CommitDetail.vue"));
 
-const HomePage = () => homePageModule.load();
+const PersonalHomePage = () => personalHomePageModule.load();
+const ProjectOverviewPage = () => projectOverviewPageModule.load();
 const ProfilePage = () => profilePageModule.load();
 const OrganizationPage = () => organizationPageModule.load();
 const RepoPage = () => repoPageModule.load();
 const CommitDetailPage = () => commitDetailPageModule.load();
 
 export const LILIA_GITHUB_ROUTES: RouteRecordRaw[] = [
-  { path: "", component: HomePage },
+  { path: "", component: PersonalHomePage },
+  { path: "overview", name: "project-overview", component: ProjectOverviewPage },
   { path: "profile", name: "github-profile", component: ProfilePage },
   { path: "organizations/:login", name: "github-organization", component: OrganizationPage },
   { path: "repos/:repoId(.*)/commits/:hash", component: CommitDetailPage },

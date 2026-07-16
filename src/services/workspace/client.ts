@@ -741,6 +741,11 @@ export function setActiveWorkspaceRepo(repoId: string | null): Promise<void> {
   return call("workspace_set_active_repo", { repoId }, () => workspaceFallback().setActiveWorkspaceRepo(repoId));
 }
 
+export function recordRecentLocalRepo(repoId: string): Promise<WorkspaceSettings> {
+  return call("workspace_record_recent_local_repo", { repoId }, () =>
+    workspaceFallback().recordRecentLocalRepo(repoId));
+}
+
 export function setWorkspaceRefreshPaused(paused: boolean): Promise<void> {
   return call("workspace_set_refresh_paused", { paused }, () => workspaceFallback().setWorkspaceRefreshPaused(paused));
 }

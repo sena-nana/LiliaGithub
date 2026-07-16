@@ -37,6 +37,8 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
     #[serde(default)]
+    pub recent_local_repos: Vec<RecentLocalRepoVisit>,
+    #[serde(default)]
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
     #[serde(default)]
     pub contribution_identities: Vec<ContributionIdentity>,
@@ -848,6 +850,13 @@ pub struct RemoteRepoShortcut {
     #[serde(default)]
     pub favorite: bool,
     #[serde(default)]
+    pub opened_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentLocalRepoVisit {
+    pub repo_id: String,
     pub opened_at: i64,
 }
 

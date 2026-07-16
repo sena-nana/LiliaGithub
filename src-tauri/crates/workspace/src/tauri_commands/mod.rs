@@ -62,6 +62,7 @@ mod file_browser;
 mod github;
 mod github_discussions;
 mod launch;
+mod personal_home;
 mod refresh;
 mod repos;
 mod settings;
@@ -242,6 +243,7 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         settings::workspace_forget_remote_repo,
         settings::workspace_unhide_repo,
         settings::workspace_list_hidden_repos,
+        personal_home::workspace_record_recent_local_repo,
         tasks::workspace_list_tasks,
         tasks::workspace_cancel_task,
         github::github_get_binding_status,
@@ -259,6 +261,8 @@ pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + 
         github::github_update_repo_subscription,
         github::github_list_account_issues,
         github::github_list_action_notifications,
+        personal_home::github_list_assigned_work,
+        personal_home::github_list_personal_notifications,
         github::github_list_repo_contribution,
         github::github_list_repo_owners,
         github::github_list_repo_templates,

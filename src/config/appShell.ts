@@ -32,10 +32,16 @@ export const SIDEBAR_CONFIG = {
 
 export const SIDEBAR_NAV: SidebarNavItems = [
   {
-    key: "overview",
+    key: "home",
     to: "/",
-    label: "概览",
+    label: "首页",
     icon: Home,
+  },
+  {
+    key: "overview",
+    to: "/overview",
+    label: "项目总览",
+    icon: FolderGit2,
   },
 ];
 
