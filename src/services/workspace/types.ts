@@ -456,6 +456,7 @@ export interface WorkspaceCloneRepositoryRef {
   id: number | null;
   fullName: string;
   cloneUrl: string;
+  defaultBranch?: string | null;
   owner?: GitHubRepositoryOwner | null;
 }
 

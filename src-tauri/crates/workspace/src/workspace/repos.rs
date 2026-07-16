@@ -951,6 +951,150 @@ pub(super) fn inspect_clone_target(
     ))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RemoteCheckoutTarget {
+    pub(super) remote: String,
+    pub(super) branch: String,
+}
+
+pub(super) fn repo_has_head(path: &Path) -> bool {
+    git_command_lossy(path, &["rev-parse", "--verify", "HEAD"]).is_some()
+}
+
+fn symbolic_head_branch(path: &Path) -> Option<String> {
+    git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .filter(|branch| !branch.is_empty())
+}
+
+fn remote_branch_names(path: &Path, remote: &str) -> Vec<String> {
+    let namespace = format!("refs/remotes/{remote}");
+    let output = git_command_lossy(
+        path,
+        &[
+            "for-each-ref",
+            "--format=%(refname:strip=3)",
+            namespace.as_str(),
+        ],
+    )
+    .unwrap_or_default();
+    let mut branches = output
+        .lines()
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty() && *branch != "HEAD")
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    branches.sort();
+    branches.dedup();
+    branches
+}
+
+fn remote_symbolic_head_branch(path: &Path, remote: &str) -> Option<String> {
+    let remote_head = format!("refs/remotes/{remote}/HEAD");
+    let symbolic = git_command_lossy(
+        path,
+        &["symbolic-ref", "--quiet", "--short", remote_head.as_str()],
+    )?;
+    symbolic
+        .strip_prefix(&format!("{remote}/"))
+        .map(str::to_string)
+        .filter(|branch| !branch.is_empty())
+}
+
+fn normalize_checkout_branch(remote: &str, branch: &str) -> Option<String> {
+    let branch = branch
+        .trim()
+        .strip_prefix("refs/heads/")
+        .unwrap_or(branch.trim());
+    let branch = branch
+        .strip_prefix(&format!("{remote}/"))
+        .unwrap_or(branch)
+        .trim();
+    (!branch.is_empty()).then(|| branch.to_string())
+}
+
+fn repo_has_any_commit(path: &Path) -> bool {
+    git_command_lossy(path, &["rev-list", "--all", "--max-count=1"])
+        .is_some_and(|commit| !commit.is_empty())
+}
+
+pub(super) fn resolve_remote_checkout_target(
+    path: &Path,
+    remote: &str,
+    preferred_branch: Option<&str>,
+) -> Result<Option<RemoteCheckoutTarget>, String> {
+    let branches = remote_branch_names(path, remote);
+    let preferred = preferred_branch
+        .and_then(|branch| normalize_checkout_branch(remote, branch))
+        .filter(|branch| branches.contains(branch));
+    let remote_head = remote_symbolic_head_branch(path, remote)
+        .filter(|branch| branches.contains(branch));
+    let branch = preferred
+        .or(remote_head)
+        .or_else(|| (branches.len() == 1).then(|| branches[0].clone()));
+
+    if let Some(branch) = branch {
+        return Ok(Some(RemoteCheckoutTarget {
+            remote: remote.to_string(),
+            branch,
+        }));
+    }
+    if branches.is_empty() && !repo_has_any_commit(path) {
+        return Ok(None);
+    }
+    Err("远端仓库包含提交，但无法确定要检出的默认分支，请先在远端设置默认分支。"
+        .to_string())
+}
+
+fn checkout_remote_target(
+    path: &Path,
+    target: &RemoteCheckoutTarget,
+    local_branch: &str,
+) -> Result<(), String> {
+    let remote_ref = format!("refs/remotes/{}/{}", target.remote, target.branch);
+    git_command(
+        path,
+        &["checkout", "-B", local_branch, remote_ref.as_str()],
+        None,
+    )
+    .map_err(|_| {
+        "无法安全检出远端分支，本地文件可能与远端内容冲突；请先移走本地文件后重试。"
+            .to_string()
+    })?;
+    let upstream = format!("{}/{}", target.remote, target.branch);
+    let upstream_arg = format!("--set-upstream-to={upstream}");
+    git_command(
+        path,
+        &["branch", upstream_arg.as_str(), local_branch],
+        None,
+    )
+    .map_err(|_| "已检出远端内容，但无法设置本地分支的跟踪关系。".to_string())?;
+    if !repo_has_head(path) {
+        return Err("远端分支检出后仍未建立本地提交，请重试克隆。".to_string());
+    }
+    Ok(())
+}
+
+pub(super) fn ensure_clone_checkout(
+    path: &Path,
+    preferred_branch: Option<&str>,
+) -> Result<(), String> {
+    if repo_has_head(path) {
+        return Ok(());
+    }
+    let Some(target) = resolve_remote_checkout_target(path, "origin", preferred_branch)? else {
+        if let Some(branch) = preferred_branch
+            .and_then(|branch| normalize_checkout_branch("origin", branch))
+        {
+            let head_ref = format!("refs/heads/{branch}");
+            git_command(path, &["symbolic-ref", "HEAD", head_ref.as_str()], None)
+                .map_err(|_| "无法设置空仓库的默认本地分支。".to_string())?;
+        }
+        return Ok(());
+    };
+    let local_branch = target.branch.clone();
+    checkout_remote_target(path, &target, &local_branch)
+}
+
 pub(super) fn create_clone_parent_directories(
     root: &Path,
     target: &Path,
@@ -1522,7 +1666,13 @@ pub(super) fn parse_status_snapshot(status: &str) -> RepoStatusSnapshot {
     let mut records = status.split('\0').filter(|record| !record.is_empty());
     while let Some(record) = records.next() {
         if let Some(header) = record.strip_prefix("## ") {
-            let branch_part = header.split("...").next().unwrap_or(header).trim();
+            let branch_part = header
+                .strip_prefix("No commits yet on ")
+                .unwrap_or(header)
+                .split("...")
+                .next()
+                .unwrap_or(header)
+                .trim();
             if branch_part != "HEAD (no branch)" {
                 snapshot.current_branch = Some(branch_part.to_string());
             }
@@ -1577,7 +1727,12 @@ fn repo_status_snapshot(path: &Path) -> RepoStatusSnapshot {
         ],
     )
     .unwrap_or_default();
-    parse_status_snapshot(&status)
+    let mut snapshot = parse_status_snapshot(&status);
+    snapshot.current_branch = git_command_lossy(
+        path,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+    );
+    snapshot
 }
 
 pub(super) fn repo_status_entries(path: &Path) -> Vec<RepoStatusEntry> {
@@ -2020,16 +2175,24 @@ pub async fn workspace_clone_repo(
             let remote = plan.remote;
             let target = plan.target;
             let disposition = inspect_clone_target(&target, &remote)?;
+            let preferred_branch = request
+                .repository
+                .as_ref()
+                .and_then(|repository| repository.default_branch.as_deref())
+                .map(str::trim)
+                .filter(|branch| !branch.is_empty())
+                .map(str::to_string);
+            let auth_header = if request.repository.is_some()
+                || normalize_github_repo_input(&request.remote_url).is_ok()
+                || parse_github_remote(&remote).is_some()
+            {
+                token_for_binding(&app)?.map(|token| github_auth_header(&token))
+            } else {
+                None
+            };
+            let mut uses_system_git = false;
 
             if disposition == CloneTargetDisposition::Clone {
-                let auth_header = if request.repository.is_some()
-                    || normalize_github_repo_input(&request.remote_url).is_ok()
-                    || parse_github_remote(&remote).is_some()
-                {
-                    token_for_binding(&app)?.map(|token| github_auth_header(&token))
-                } else {
-                    None
-                };
                 let target_existed = target.exists();
                 let mut created_directories = create_clone_parent_directories(&root, &target)?;
                 if let Some(parent) = target.parent() {
@@ -2068,8 +2231,26 @@ pub async fn workspace_clone_repo(
                         remove_created_empty_directories(&created_directories);
                         return Err(error);
                     }
-                    remember_repo_uses_system_git(&app, &target)?;
+                    uses_system_git = true;
                 }
+            } else if !repo_has_head(&target) {
+                let fetch_origin = |auth: Option<&str>| {
+                    git_command(&target, &["fetch", "--", "origin"], auth)
+                        .map(|_| ())
+                        .map_err(|error| normalize_git_remote_error(&remote, error))
+                };
+                if let Err(error) = fetch_origin(auth_header.as_deref()) {
+                    if should_retry_clone_with_system_git(&remote, &error) {
+                        fetch_origin(None)?;
+                        uses_system_git = true;
+                    } else {
+                        return Err(error);
+                    }
+                }
+            }
+            ensure_clone_checkout(&target, preferred_branch.as_deref())?;
+            if uses_system_git {
+                remember_repo_uses_system_git(&app, &target)?;
             }
             let _settings_guard = settings_write_lock()
                 .lock()
@@ -2501,24 +2682,8 @@ pub(super) fn run_configured_pull_with_config(
     if !repo_conflicts(path).files.is_empty() || summary.conflict_count > 0 {
         return Err("当前仓库存在未处理冲突，已阻止拉取".to_string());
     }
-    let local_changes = prepare_pull_local_changes(
-        path,
-        &summary,
-        local_changes_mode,
-        if force_merge { "合并拉取" } else { "pull" },
-    )?;
     let mut steps = run_multi_remote_fetch(app, path, config);
     if steps.iter().any(|step| step.status == "error") {
-        let restore_error = restore_pull_local_changes(path, local_changes).err();
-        if let Some(error) = restore_error {
-            steps.push(RepoRemoteOperationStep {
-                remote: String::new(),
-                operation: "restore".to_string(),
-                status: "error".to_string(),
-                message: error,
-                target_branch: None,
-            });
-        }
         return Ok(sync_result(
             root,
             path,
@@ -2527,17 +2692,45 @@ pub(super) fn run_configured_pull_with_config(
         ));
     }
 
-    let local_branch = summary
-        .current_branch
-        .as_deref()
-        .ok_or_else(|| "当前 HEAD 未指向命名分支，无法拉取".to_string())?;
     let pull_remotes = ordered_policy_remotes(
         &config.resolved_policy.primary_remote,
         &config.resolved_policy.pull_remotes,
     );
+    let operation = if force_merge { "合并拉取" } else { "pull" };
+    let mut bootstrapped = None;
+    let local_changes = if repo_has_head(path) {
+        prepare_pull_local_changes(path, &summary, local_changes_mode, operation)?
+    } else {
+        bootstrapped = bootstrap_unborn_from_remotes(
+            path,
+            &summary,
+            &pull_remotes,
+            local_changes_mode,
+            operation,
+        )?;
+        let Some(target) = bootstrapped.as_ref() else {
+            return Ok(sync_result(root, path, steps, "远端暂无可拉取提交"));
+        };
+        steps.push(RepoRemoteOperationStep {
+            remote: target.remote.clone(),
+            operation: "merge".to_string(),
+            status: "success".to_string(),
+            message: "已建立本地分支并检出远端内容".to_string(),
+            target_branch: Some(target.branch.clone()),
+        });
+        PullLocalChanges { stash_ref: None }
+    };
+    let local_branch = symbolic_head_branch(path)
+        .ok_or_else(|| "当前 HEAD 未指向命名分支，无法拉取".to_string())?;
     let multiple = pull_remotes.len() > 1;
     for remote in pull_remotes {
-        let target = remote_target_branch(path, &remote, local_branch);
+        let target = remote_target_branch(path, &remote, &local_branch);
+        if bootstrapped
+            .as_ref()
+            .is_some_and(|value| value.remote == remote && value.branch == target)
+        {
+            continue;
+        }
         let remote_ref = format!("refs/remotes/{remote}/{target}");
         if git_command_lossy(path, &["show-ref", "--verify", &remote_ref]).is_none() {
             steps.push(RepoRemoteOperationStep {
@@ -2763,20 +2956,34 @@ pub async fn repo_start_rebase(
                 return Err("配置了多个拉取源，请使用合并多个远端".to_string());
             }
             let summary = summarize_repo(&root, &path);
+            let remote = &config.resolved_policy.pull_remotes[0];
+            if !repo_has_head(&path) {
+                run_fetch_remote(&app, &path, remote)?;
+                let remotes = vec![remote.clone()];
+                let bootstrapped = bootstrap_unborn_from_remotes(
+                    &path,
+                    &summary,
+                    &remotes,
+                    local_changes_mode,
+                    "rebase",
+                )?;
+                return Ok(build_repo_operation_result(
+                    &root,
+                    &path,
+                    "success",
+                    if bootstrapped.is_some() {
+                        "已建立本地分支并检出远端内容"
+                    } else {
+                        "远端暂无可 rebase 的提交"
+                    },
+                ));
+            }
+            let target = configured_rebase_target(&path, remote, onto_ref)?;
+            if target == "@{u}" || target.contains('/') {
+                run_fetch_remote(&app, &path, remote)?;
+            }
             let local_changes =
                 prepare_pull_local_changes(&path, &summary, local_changes_mode, "rebase")?;
-            let target =
-                configured_rebase_target(&path, &config.resolved_policy.pull_remotes[0], onto_ref)?;
-            if target == "@{u}" || target.contains('/') {
-                let remote = &config.resolved_policy.pull_remotes[0];
-                if let Err(err) = run_fetch_remote(&app, &path, remote) {
-                    return Err(restore_pull_local_changes_after_error(
-                        &path,
-                        local_changes,
-                        err,
-                    ));
-                }
-            }
             let result = run_repo_operation_with_conflicts(
                 &root,
                 &path,
@@ -3441,6 +3648,66 @@ pub(super) struct PullLocalChanges {
     stash_ref: Option<String>,
 }
 
+fn discard_unborn_repo_local_changes(path: &Path) -> Result<(), String> {
+    git_command(path, &["read-tree", "--empty"], None)
+        .map_err(|_| "无法清理尚未建立初始提交的暂存区。".to_string())?;
+    git_command(path, &["clean", "-fd"], None)
+        .map_err(|_| "无法清理尚未建立初始提交的本地文件。".to_string())?;
+    Ok(())
+}
+
+fn prepare_unborn_checkout(
+    path: &Path,
+    summary: &RepoSummary,
+    mode: Option<RepoPullLocalChangesMode>,
+    operation: &str,
+) -> Result<(), String> {
+    if repo_dirty_count(summary) == 0 {
+        return Ok(());
+    }
+    match mode.unwrap_or_default() {
+        RepoPullLocalChangesMode::Reject => {
+            Err(format!("存在未提交变更，已阻止 {operation}"))
+        }
+        RepoPullLocalChangesMode::Stash => Ok(()),
+        RepoPullLocalChangesMode::Discard => discard_unborn_repo_local_changes(path),
+    }
+}
+
+pub(super) fn bootstrap_unborn_from_remotes(
+    path: &Path,
+    summary: &RepoSummary,
+    remotes: &[String],
+    local_changes_mode: Option<RepoPullLocalChangesMode>,
+    operation: &str,
+) -> Result<Option<RemoteCheckoutTarget>, String> {
+    if repo_has_head(path) {
+        return Ok(None);
+    }
+    let symbolic_branch = symbolic_head_branch(path)
+        .ok_or_else(|| "当前 HEAD 未指向命名分支，无法建立本地分支。".to_string())?;
+    for remote in remotes {
+        if remote_branch_names(path, remote).is_empty() {
+            continue;
+        }
+        let preferred = remote_target_branch(path, remote, &symbolic_branch);
+        let Some(target) =
+            resolve_remote_checkout_target(path, remote, Some(preferred.as_str()))?
+        else {
+            continue;
+        };
+        prepare_unborn_checkout(path, summary, local_changes_mode, operation)?;
+        let local_branch = if target.branch == preferred {
+            symbolic_branch.as_str()
+        } else {
+            target.branch.as_str()
+        };
+        checkout_remote_target(path, &target, local_branch)?;
+        return Ok(Some(target));
+    }
+    Ok(None)
+}
+
 pub(super) fn prepare_pull_local_changes(
     path: &Path,
     summary: &RepoSummary,
@@ -3487,17 +3754,6 @@ pub(super) fn restore_pull_local_changes(
     git_command(path, &["stash", "pop", stash_ref.as_str()], None)
         .map(|_| ())
         .map_err(|err| format!("拉取完成，但还原本地修改失败：{err}"))
-}
-
-pub(super) fn restore_pull_local_changes_after_error(
-    path: &Path,
-    local_changes: PullLocalChanges,
-    err: String,
-) -> String {
-    match restore_pull_local_changes(path, local_changes) {
-        Ok(()) => err,
-        Err(restore_err) => format!("{err}\n\n{restore_err}"),
-    }
 }
 
 pub(super) fn restore_pull_local_changes_for_operation_result(
@@ -4687,6 +4943,12 @@ fn rev_list_ahead_behind(path: &Path, remote_ref: &str) -> Option<(i32, i32)> {
     Some((values.next()?.parse().ok()?, values.next()?.parse().ok()?))
 }
 
+fn rev_list_count(path: &Path, git_ref: &str) -> i32 {
+    git_command_lossy(path, &["rev-list", "--count", git_ref])
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default()
+}
+
 pub(super) fn repo_remote_branch_states(path: &Path) -> Vec<RepoRemoteBranchState> {
     let Some(local_branch) =
         git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
@@ -4694,6 +4956,7 @@ pub(super) fn repo_remote_branch_states(path: &Path) -> Vec<RepoRemoteBranchStat
         return Vec::new();
     };
     let upstream = current_branch_upstream_target(path);
+    let has_head = repo_has_head(path);
     repo_remotes(path)
         .unwrap_or_default()
         .into_iter()
@@ -4704,10 +4967,14 @@ pub(super) fn repo_remote_branch_states(path: &Path) -> Vec<RepoRemoteBranchStat
                 .unwrap_or_else(|| local_branch.clone());
             let remote_ref = format!("refs/remotes/{}/{target}", remote.name);
             let exists = git_command_lossy(path, &["show-ref", "--verify", &remote_ref]).is_some();
-            let (ahead, behind) = if exists {
+            let (ahead, behind) = if exists && has_head {
                 rev_list_ahead_behind(path, &remote_ref).unwrap_or_default()
-            } else {
+            } else if exists {
+                (0, rev_list_count(path, &remote_ref))
+            } else if has_head {
                 (1, 0)
+            } else {
+                (0, 0)
             };
             RepoRemoteBranchState {
                 remote: remote.name,

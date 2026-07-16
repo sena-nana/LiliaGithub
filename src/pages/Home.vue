@@ -1912,6 +1912,7 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
         id: repo.id,
         fullName: repo.fullName,
         cloneUrl: repo.cloneUrl,
+        defaultBranch: repo.defaultBranch,
         owner: repo.owner ?? null,
       },
       placement: { kind: "automatic" },

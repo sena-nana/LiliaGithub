@@ -398,11 +398,13 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
           id: selected.id,
           fullName: selected.fullName,
           cloneUrl: selected.cloneUrl,
+          defaultBranch: selected.defaultBranch,
           owner: selected.owner ?? null,
         } : directGitHubRepo && directOrganizationOwner ? {
           id: null,
           fullName: directGitHubRepo,
           cloneUrl: remote,
+          defaultBranch: null,
           owner: {
             login: directOrganizationOwner.login,
             kind: "organization",
