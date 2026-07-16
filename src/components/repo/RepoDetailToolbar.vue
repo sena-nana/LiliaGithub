@@ -330,6 +330,21 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
           </RouterLink>
         </div>
 
+        <div class="repo-toolbar__group repo-toolbar__refresh-group">
+          <button
+            type="button"
+            class="repo-toolbar__btn"
+            :title="refreshingCurrentPage ? '正在刷新当前页' : '刷新当前页'"
+            :aria-label="refreshingCurrentPage ? '正在刷新当前页' : '刷新当前页'"
+            data-agent-id="repo.toolbar.refresh-page"
+            :disabled="actionRunning || refreshingCurrentPage || !currentPageRefreshAvailable"
+            @click="emit('refreshCurrentPage')"
+          >
+            <LoaderCircle v-if="refreshingCurrentPage" :size="17" aria-hidden="true" class="sb-spin" />
+            <RotateCw v-else :size="17" aria-hidden="true" />
+          </button>
+        </div>
+
         <div class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目操作">
           <template v-if="repoContext.capabilities.open.available">
           <RepoToolbarSettingsMenu
@@ -443,18 +458,6 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
           </button>
           </template>
         </div>
-        <button
-          type="button"
-          class="repo-toolbar__btn repo-toolbar__refresh"
-          :title="refreshingCurrentPage ? '正在刷新当前页' : '刷新当前页'"
-          :aria-label="refreshingCurrentPage ? '正在刷新当前页' : '刷新当前页'"
-          data-agent-id="repo.toolbar.refresh-page"
-          :disabled="actionRunning || refreshingCurrentPage || !currentPageRefreshAvailable"
-          @click="emit('refreshCurrentPage')"
-        >
-          <LoaderCircle v-if="refreshingCurrentPage" :size="17" aria-hidden="true" class="sb-spin" />
-          <RotateCw v-else :size="17" aria-hidden="true" />
-        </button>
       </div>
     </div>
   </header>
