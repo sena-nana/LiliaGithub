@@ -7,6 +7,7 @@ import {
   FolderOpen,
   GitCompare,
   History,
+  LoaderCircle,
   Monitor,
   Play,
   RotateCw,
@@ -88,6 +89,8 @@ const props = defineProps<{
   pushRemoteNames: readonly string[];
   remoteSyncUnavailableReason: string | null;
   launchCommand?: string | null;
+  refreshingCurrentPage: boolean;
+  currentPageRefreshAvailable: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -104,7 +107,7 @@ const emit = defineEmits<{
   selectLaunchCandidate: [value: string];
   runLaunchCommand: [command: string];
   stopLaunch: [];
-  refreshGitInfo: [];
+  refreshCurrentPage: [];
   updateSetting: [key: RepoSettingKey, value: boolean];
   useDefaultTokenAuth: [];
   openSelectedTarget: [];
@@ -329,17 +332,6 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
         </div>
 
         <div class="repo-toolbar__group repo-toolbar__actions" role="group" aria-label="项目操作">
-          <button
-            type="button"
-            class="repo-toolbar__btn"
-            title="刷新 Git 信息"
-            aria-label="刷新 Git 信息"
-            data-agent-id="repo.toolbar.refresh-git-info"
-            :disabled="actionRunning || (!repoContext.capabilities.branchBrowse.available && !repoContext.capabilities.history.available)"
-            @click="emit('refreshGitInfo')"
-          >
-            <RotateCw :size="17" aria-hidden="true" />
-          </button>
           <template v-if="repoContext.capabilities.open.available">
           <RepoToolbarSettingsMenu
             :values="repoSettingValues"
@@ -462,6 +454,18 @@ function handleLaunchPickerFocusout(event: FocusEvent) {
           </button>
           </template>
         </div>
+        <button
+          type="button"
+          class="repo-toolbar__btn repo-toolbar__refresh"
+          :title="refreshingCurrentPage ? '正在刷新当前页' : '刷新当前页'"
+          :aria-label="refreshingCurrentPage ? '正在刷新当前页' : '刷新当前页'"
+          data-agent-id="repo.toolbar.refresh-page"
+          :disabled="actionRunning || refreshingCurrentPage || !currentPageRefreshAvailable"
+          @click="emit('refreshCurrentPage')"
+        >
+          <LoaderCircle v-if="refreshingCurrentPage" :size="17" aria-hidden="true" class="sb-spin" />
+          <RotateCw v-else :size="17" aria-hidden="true" />
+        </button>
       </div>
     </div>
   </header>

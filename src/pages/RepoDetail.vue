@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref, watch } from "vue";
 import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
 import RepoConflictDialog from "../components/repo/RepoConflictDialog.vue";
 import RepoRemoteSyncDialog from "../components/repo/RepoRemoteSyncDialog.vue";
@@ -10,6 +11,7 @@ const repoProjectPanelModule = createCachedAsyncComponent(() => import("../compo
 const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
 const RepoProjectPanel = repoProjectPanelModule.component;
 const RepoStashPanel = repoStashPanelModule.component;
+type RefreshablePageHandle = { refreshCurrentPage: () => Promise<void> };
 
 const {
   activeTab,
@@ -82,6 +84,7 @@ const {
   commitSelected,
   requestGitHubBranches,
   refreshGitInfo,
+  refreshLaunchPage,
   selectOpenTarget,
   selectPullStrategy,
   setRepoSetting,
@@ -122,6 +125,66 @@ const {
   openSelectedTarget,
   commitMetaTitle,
 } = useRepoDetailController();
+
+const repoProjectPanel = ref<RefreshablePageHandle | null>(null);
+const repoStashPanel = ref<RefreshablePageHandle | null>(null);
+const refreshingCurrentPage = ref(false);
+let currentPageRefreshGeneration = 0;
+
+watch(() => [repoId.value, activeTab.value, activeProjectTab.value] as const, () => {
+  currentPageRefreshGeneration += 1;
+  refreshingCurrentPage.value = false;
+});
+
+const currentPageRefreshAvailable = computed(() => {
+  if (!repoId.value) return false;
+  const capabilities = repoContext.value.capabilities;
+  if (activeTab.value === "stash") return capabilities.stash.available && Boolean(repoStashPanel.value);
+  if (!repoProjectPanel.value) return false;
+  if (activeTab.value === "files") return capabilities.files.available;
+  if (activeTab.value === "changes") return capabilities.changes.available;
+  if (activeTab.value === "history") return capabilities.history.available;
+  if (activeTab.value === "run") return capabilities.launch.available;
+  if (activeProjectTab.value === "issues") return capabilities.issues.available;
+  if (activeProjectTab.value === "pulls") return capabilities.pulls.available;
+  if (activeProjectTab.value === "actions") return capabilities.actions.available;
+  if (activeProjectTab.value === "release") return capabilities.issues.available;
+  if (activeProjectTab.value === "settings") {
+    return capabilities.settings.available || capabilities.deleteLocal.available;
+  }
+  return Boolean(summary.value);
+});
+
+async function refreshCurrentPage() {
+  if (refreshingCurrentPage.value || !currentPageRefreshAvailable.value) return;
+  const generation = ++currentPageRefreshGeneration;
+  const tab = activeTab.value;
+  const projectTab = activeProjectTab.value;
+  refreshingCurrentPage.value = true;
+  try {
+    if (tab === "stash") {
+      await repoStashPanel.value?.refreshCurrentPage();
+      return;
+    }
+    if (tab === "run") {
+      await refreshLaunchPage();
+      return;
+    }
+    if (tab === "changes") {
+      await refreshGitInfo();
+      return;
+    }
+    if (tab === "history") {
+      await refreshGitInfo();
+      await repoProjectPanel.value?.refreshCurrentPage();
+      return;
+    }
+    if (tab === "files" || projectTab === "readme") await refreshGitInfo();
+    await repoProjectPanel.value?.refreshCurrentPage();
+  } finally {
+    if (generation === currentPageRefreshGeneration) refreshingCurrentPage.value = false;
+  }
+}
 </script>
 <template>
   <section class="repo-workbench">
@@ -157,7 +220,9 @@ const {
         :push-remote-names="pushRemoteNames"
         :remote-sync-unavailable-reason="remoteSyncUnavailableReason"
         :launch-command="launchConfig?.command"
-        @refresh-git-info="refreshGitInfo"
+        :refreshing-current-page="refreshingCurrentPage"
+        :current-page-refresh-available="currentPageRefreshAvailable"
+        @refresh-current-page="refreshCurrentPage"
         @checkout="checkout"
         @update-current-branch="updateCurrentBranch"
         @create-branch="createBranchFromRef($event.name, $event.fromRef, $event.checkoutAfter)"
@@ -187,12 +252,14 @@ const {
       <main class="workbench-main workbench-main--project">
         <RepoStashPanel
           v-if="activeTab === 'stash'"
+          ref="repoStashPanel"
           :repo-id="repoId"
           :repo-context="repoContext"
           :has-conflicts="hasConflicts"
         />
         <RepoProjectPanel
           v-else
+          ref="repoProjectPanel"
           :repo-id="repoId"
           :repo-title="repoTitle"
           :repo-full-name="summary?.githubFullName"
@@ -359,6 +426,14 @@ const {
 .repo-toolbar__actions {
   flex: 0 0 auto;
   margin-left: auto;
+}
+
+.repo-toolbar__refresh {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
 }
 
 .repo-toolbar__open-group,

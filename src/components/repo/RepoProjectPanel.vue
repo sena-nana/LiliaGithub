@@ -209,6 +209,7 @@ type ActionPanelFilters = {
 type HistoryCommit = CommitSummary;
 type DeleteTarget = "local" | "remote";
 type MarkdownReadmeInstance = { scrollToAnchor: (hash: string) => void };
+type RefreshHandle = { refresh: () => Promise<void> };
 type SharedPanelFilters = Pick<
   IssuePanelFilters,
   "creator" | "assignee" | "labels" | "milestone" | "project" | "sort" | "direction" | "query"
@@ -464,7 +465,10 @@ const aboutTopicList = ref<HTMLElement | null>(null);
 const aboutTopicMeasureList = ref<HTMLElement | null>(null);
 const repoReleasesPanel = ref<{ openCreate: () => void } | null>(null);
 const actionsInfoSidebar = ref<{ refreshCurrentRun: () => Promise<void> } | null>(null);
+const commitDetailCard = ref<RefreshHandle | null>(null);
+const settingsDetailSectionRefs = ref<RefreshHandle[]>([]);
 const refreshingProjectSection = ref<RefreshableProjectSection | null>(null);
+const pageRefreshError = ref<string | null>(null);
 const aboutTopicsExpanded = ref(false);
 const collapsedAboutTopicCount = ref(0);
 const issueState = ref<IssueState>(issueStateFromRoute());
@@ -899,6 +903,7 @@ const projectSidebarErrors = computed<ProjectSidebarError[]>(() => {
   }
   addError("action", "操作失败", props.actionError);
   addError("repo-action", "仓库错误", props.repoActionError);
+  addError("page-refresh", "页面刷新失败", pageRefreshError.value);
   addError("readme", "README 读取失败", readmeError.value);
   addError("github", "GitHub 请求失败", githubError.value);
   addError("actions", "Actions 读取失败", actionsError.value);
@@ -1087,29 +1092,6 @@ const projectSidebarContentUnavailable = computed(() =>
   (projectSidebarMode.value === "release" && Boolean(releasesAccessUnavailable.value)) ||
   (projectSidebarMode.value === "settings" && Boolean(settingsAccessUnavailable.value))
 );
-const refreshableProjectSection = computed<RefreshableProjectSection | null>(() =>
-  isRefreshableProjectSection(activeSection.value) ? activeSection.value : null
-);
-const currentProjectSectionRefreshRunning = computed(() => {
-  const section = refreshableProjectSection.value;
-  return Boolean(section && refreshingProjectSection.value === section);
-});
-const currentProjectSectionBusy = computed(() => {
-  const section = refreshableProjectSection.value;
-  if (!section) return false;
-  if (currentProjectSectionRefreshRunning.value) return true;
-  if (section === "issues") {
-    return issuesLoading.value || issueDiscussionLoading.value || issueFilterMetadataLoading.value;
-  }
-  if (section === "pulls") {
-    return pullsLoading.value ||
-      pullRequestDiscussionLoading.value ||
-      pullChecksLoading.value ||
-      issueFilterMetadataLoading.value;
-  }
-  if (section === "actions") return actionsLoading.value;
-  return releasesLoading.value;
-});
 const routedProjectTab = computed(() => normalizeProjectTab(route.query.projectTab));
 const projectTab = computed<ProjectTab>(() => routedProjectTab.value ?? normalizeProjectTab(props.projectTab) ?? "readme");
 const routedProjectCreateFlow = computed(() => normalizeProjectCreateFlow(route.query.create));
@@ -2046,14 +2028,16 @@ async function loadReadme(force = false) {
         readmeLoaded.value = true;
         return;
       }
-      const rootEntries = await listRepoFiles(repoId, null);
+      const rootEntries = await listRepoFiles(repoId, null, undefined, { forceRefresh: force });
       if (
         !readmeLoader.isCurrent(runId) ||
         repoId !== props.repoId ||
         fileProvider !== resolvedRepoContext.value.capabilities.files.provider
       ) return;
       const readme = rootEntries.find((entry) => entry.kind === "file" && entry.path === README_PATH);
-      const nextPreview = readme ? await getRepoFilePreview(repoId, README_PATH) : null;
+      const nextPreview = readme
+        ? await getRepoFilePreview(repoId, README_PATH, undefined, { forceRefresh: force })
+        : null;
       if (
         !readmeLoader.isCurrent(runId) ||
         repoId !== props.repoId ||
@@ -2106,7 +2090,7 @@ async function loadSettings(force = false) {
       applySettingsForm(nextSettings);
       preparePullRequestDefaults();
       settingsLoaded.value = true;
-      void loadSettingsBranches(force);
+      await loadSettingsBranches(force);
     } catch (err) {
       githubError.value = String(err);
     } finally {
@@ -2400,6 +2384,42 @@ async function refreshCurrentSectionData(section: RefreshableProjectSection) {
   }
 }
 
+async function refreshCurrentPage() {
+  pageRefreshError.value = null;
+  try {
+    const section = activeSection.value;
+    if (section === "readme") {
+      const refreshes: Promise<unknown>[] = [loadReadme(true)];
+      if (resolvedRepoContext.value.capabilities.settings.available) refreshes.push(loadSettings(true));
+      if (isLocalRepo.value) {
+        refreshes.push(loadStorageStats());
+        refreshes.push(workspace.refreshRepoLanguageStats(props.repoId));
+      }
+      await Promise.all(refreshes);
+      return;
+    }
+    if (section === "files") {
+      await fileBrowser.refreshCurrentPage();
+      return;
+    }
+    if (isRefreshableProjectSection(section)) {
+      await refreshCurrentSectionData(section);
+      return;
+    }
+    if (section === "settings") {
+      await loadSettings(true);
+      await nextTick();
+      await Promise.all(settingsDetailSectionRefs.value.map((handle) => handle.refresh()));
+      return;
+    }
+    if (section === "history") await commitDetailCard.value?.refresh();
+  } catch (err) {
+    pageRefreshError.value = String(err);
+  }
+}
+
+defineExpose({ refreshCurrentPage });
+
 function changedSettingsRequest(current: GitHubRepoManagement) {
   const request: GitHubUpdateRepoSettingsRequest = {};
   const maybeSet = <K extends keyof GitHubUpdateRepoSettingsRequest>(
@@ -2466,6 +2486,7 @@ function clearBlockedGitHubState() {
 function resetProjectSectionState() {
   activeSection.value = routeTabToSection(props.activeGitTab);
   refreshingProjectSection.value = null;
+  pageRefreshError.value = null;
   readmeLoader.invalidate();
   invalidateRepoMutations();
   readmePreview.value = null;
@@ -3949,6 +3970,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                 :aria-label="detailSection.title"
               >
                 <RepoSettingsDetailSection
+                  ref="settingsDetailSectionRefs"
                   :repo-full-name="settings.fullName"
                   :kind="detailSection.kind"
                   :title="detailSection.title"
@@ -4148,6 +4170,7 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
       <CommitDetailCard
         v-if="showCommitDetail && selectedCommitHash"
+        ref="commitDetailCard"
         class="project-commit-detail-card"
         :repo-id="repoId"
         :repo-title="repoTitle || repoId"
@@ -4185,19 +4208,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               <component :is="tab.icon" :size="15" aria-hidden="true" />
             </button>
           </div>
-          <button
-            v-if="refreshableProjectSection"
-            type="button"
-            class="project-sidebar-switcher__button project-sidebar-switcher__refresh"
-            data-agent-id="repo.project.sidebar.refresh"
-            :aria-label="currentProjectSectionRefreshRunning ? '正在刷新当前页' : '刷新当前页'"
-            :title="currentProjectSectionRefreshRunning ? '正在刷新当前页' : '刷新当前页'"
-            :disabled="currentProjectSectionBusy || projectSidebarContentUnavailable"
-            @click="refreshCurrentSectionData(refreshableProjectSection)"
-          >
-            <LoaderCircle v-if="currentProjectSectionBusy" :size="15" aria-hidden="true" class="sb-spin" />
-            <RotateCw v-else :size="15" aria-hidden="true" />
-          </button>
         </div>
 
         <div class="project-sidebar__scroll">
@@ -4771,13 +4781,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-sidebar-switcher__button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
-}
-
-.project-sidebar-switcher__refresh {
-  flex: 0 0 var(--repo-sidebar-icon-button-size);
-  margin-left: 2px;
-  border-left: 1px solid var(--border-soft);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .project-sidebar-error-card {

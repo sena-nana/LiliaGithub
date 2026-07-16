@@ -126,6 +126,8 @@ async function loadStashes() {
   });
 }
 
+defineExpose({ refreshCurrentPage: loadStashes });
+
 async function loadStashDetail(stashId: string) {
   if (!props.repoId) return;
   const repoId = props.repoId;

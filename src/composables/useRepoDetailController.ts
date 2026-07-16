@@ -925,14 +925,14 @@ export function useRepoDetailController() {
     });
   }
 
-  function refreshGitInfo() {
+  async function refreshGitInfo() {
     const targetRepoId = repoId.value;
     if (!targetRepoId) return;
     const localRepo = hasLocalRepo.value;
     const repoFullName = githubRepoFullName.value;
     const includeCommits = activeTab.value === "history";
 
-    void runAction(async () => {
+    await runAction(async () => {
       if (!localRepo) {
         await loadRemoteGitHubData(repoFullName, true);
         return;
@@ -942,6 +942,12 @@ export function useRepoDetailController() {
         includeBranches: true,
       });
     });
+  }
+
+  async function refreshLaunchPage() {
+    const targetRepoId = repoId.value;
+    if (!targetRepoId || !repoContext.value.capabilities.launch.available) return;
+    await runLaunchAction(() => workspace.loadLaunch(targetRepoId, { forceRefresh: true }));
   }
 
   function selectPullStrategy(value: string) {
@@ -1386,6 +1392,7 @@ export function useRepoDetailController() {
       commitSelected,
       requestGitHubBranches,
       refreshGitInfo,
+      refreshLaunchPage,
       selectPullStrategy,
       setRepoSetting,
       openRemoteSyncSettings,

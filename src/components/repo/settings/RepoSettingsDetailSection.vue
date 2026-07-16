@@ -282,14 +282,14 @@ watch(
 );
 
 async function load(forceRefresh = false) {
-  if (!props.repoFullName) return;
+  if (!props.repoFullName) return false;
   loading.value = true;
   error.value = null;
   try {
     if (props.kind === "rules") {
       rulesetSummaries.value = await listGitHubRepoRulesets(props.repoFullName);
       rulesetsLoaded.value = true;
-      return;
+      return true;
     }
     const loaded = await Promise.all(
       sectionKeys.value.map(async (key) => [
@@ -298,10 +298,31 @@ async function load(forceRefresh = false) {
       ] as const),
     );
     sections.value = Object.fromEntries(loaded);
+    return true;
   } catch (err) {
     error.value = props.kind === "rules" ? accessErrorMessage(err, "读取规则集") : String(err);
+    return false;
   } finally {
     loading.value = false;
+  }
+}
+
+async function refresh() {
+  const branch = selectedBranch.value;
+  const rulesetId = selectedRulesetId.value;
+  if (!await load(true)) return;
+  if (props.kind === "branches") {
+    const nextBranch = branchRows.value.find((item) => item.name === branch)
+      ?? branchRows.value.find((item) => item.defaultBranch)
+      ?? branchRows.value.find((item) => item.protected)
+      ?? branchRows.value[0];
+    resetBranchProtection();
+    if (nextBranch) await selectBranch(nextBranch.name);
+  }
+  if (props.kind === "rules") {
+    const nextRuleset = rulesetRows.value.find((item) => item.id === rulesetId) ?? rulesetRows.value[0];
+    clearRulesetSelection();
+    if (nextRuleset) await selectRuleset(nextRuleset.id);
   }
 }
 
@@ -316,14 +337,18 @@ function resetBranchProtection() {
 }
 
 function resetRuleset() {
+  clearRulesetSelection();
+  rulesetSummaries.value = [];
+  rulesetsLoaded.value = false;
+}
+
+function clearRulesetSelection() {
   selectedRulesetId.value = null;
   rulesetRaw.value = null;
   rulesetDraft.value = null;
   rulesetBaseline.value = "";
   rulesetError.value = null;
   rulesetWriteDenied.value = false;
-  rulesetSummaries.value = [];
-  rulesetsLoaded.value = false;
 }
 
 async function selectBranch(branch: string) {
@@ -689,6 +714,8 @@ function requestDeleteBranch(branch: RepoSettingsBranchRow) {
 function recordName(record: Record<string, unknown>) {
   return String(record.name ?? record.login ?? record.title ?? record.slug ?? record.id ?? "未命名");
 }
+
+defineExpose({ refresh });
 </script>
 
 <template>
@@ -705,7 +732,7 @@ function recordName(record: Record<string, unknown>) {
         aria-label="刷新"
         title="刷新"
         :data-agent-id="`repo.settings.${kind}.refresh`"
-        @click="load(true)"
+        @click="refresh"
       >
         <LoaderCircle v-if="loading" :size="14" class="sb-spin" aria-hidden="true" />
         <RotateCw v-else :size="14" aria-hidden="true" />

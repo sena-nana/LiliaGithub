@@ -1,6 +1,7 @@
 import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { defineComponent, h, ref } from "vue";
 import RepoProjectPanel from "../src/components/repo/RepoProjectPanel.vue";
 import {
   closeContextMenu,
@@ -28,6 +29,7 @@ import {
   getGitHubRepoManagement,
   getGitHubRepoRuleset,
   getGitHubRepoSettingsSection,
+  getRepoCommitDetail,
   getRepoFilePreview,
   getRepoStorageStats,
   getGitHubWorkflowArtifactFilePreview,
@@ -641,6 +643,15 @@ async function expectTreeOpenTarget(row: HTMLElement, label: string, target: str
   });
 }
 
+const { getRepoCommitDetailMock } = vi.hoisted(() => ({
+  getRepoCommitDetailMock: vi.fn(),
+}));
+
+vi.mock("../src/services/workspace", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/workspace")>(),
+  getRepoCommitDetail: getRepoCommitDetailMock,
+}));
+
 vi.mock("../src/services/workspace/client", () => ({
   createGitHubPullRequest: vi.fn(),
   createGitHubIssue: vi.fn(),
@@ -655,7 +666,7 @@ vi.mock("../src/services/workspace/client", () => ({
   getGitHubRepoFilePreview: vi.fn(),
   getGitHubIssueFilterMetadata: vi.fn(),
   getGitHubPullRequestDiscussion: vi.fn(),
-  getRepoCommitDetail: vi.fn(),
+  getRepoCommitDetail: getRepoCommitDetailMock,
   getGitHubRepoManagement: vi.fn(),
   getGitHubRepoRuleset: vi.fn(),
   getRepoFilePreview: vi.fn(),
@@ -732,6 +743,7 @@ type RepoProjectPanelProps = InstanceType<typeof RepoProjectPanel>["$props"];
 type RenderProjectPanelProps = Omit<RepoProjectPanelProps, "repoContext"> & {
   repoContext?: RepoProjectPanelProps["repoContext"];
 };
+type RepoProjectPanelRefreshHandle = { refreshCurrentPage: () => Promise<void> };
 
 async function renderProjectPanel(
   props: Partial<RepoProjectPanelProps> = {},
@@ -782,7 +794,14 @@ async function renderProjectPanel(
     githubAuthorized: true,
   });
 
-  const view = render(RepoProjectPanel, {
+  const panel = ref<RepoProjectPanelRefreshHandle | null>(null);
+  const TestHost = defineComponent({
+    inheritAttrs: false,
+    setup(_, { attrs }) {
+      return () => h(RepoProjectPanel, { ...attrs, ref: panel });
+    },
+  });
+  const view = render(TestHost as typeof RepoProjectPanel, {
     props: {
       ...panelProps,
       repoContext,
@@ -794,7 +813,13 @@ async function renderProjectPanel(
       },
     },
   });
-  return { ...view, router };
+  return {
+    ...view,
+    router,
+    refreshCurrentPage: async () => {
+      await panel.value?.refreshCurrentPage();
+    },
+  };
 }
 
 function deferred<T>() {
@@ -824,6 +849,7 @@ describe("RepoProjectPanel", () => {
     vi.mocked(getGitHubBranchProtection).mockReset();
     vi.mocked(getGitHubPullRequestDiscussion).mockReset();
     vi.mocked(getGitHubRepoFilePreview).mockReset();
+    vi.mocked(getRepoCommitDetail).mockReset();
     vi.mocked(getRepoFilePreview).mockReset();
     vi.mocked(getRepoStorageStats).mockReset();
     vi.mocked(getGitHubIssueFilterMetadata).mockReset();
@@ -938,6 +964,7 @@ describe("RepoProjectPanel", () => {
       projects: [{ id: "PVT_kwDOIssue", title: "Roadmap" }],
     });
     vi.mocked(getGitHubRepoFilePreview).mockRejectedValue(new Error("not found"));
+    vi.mocked(getRepoCommitDetail).mockResolvedValue(remoteCommitDetail);
     vi.mocked(getGitHubRepoManagement).mockResolvedValue(githubSettings);
     vi.mocked(getGitHubBranchProtection).mockResolvedValue({
       required_status_checks: { strict: true, contexts: ["CI"] },
@@ -1184,6 +1211,13 @@ describe("RepoProjectPanel", () => {
   });
 
   it("远程仓库历史可打开只读提交详情", async () => {
+    const refreshedCommitDetail = {
+      ...remoteCommitDetail,
+      body: "显式刷新后的远程提交详情。",
+    };
+    vi.mocked(getRepoCommitDetail).mockImplementation(async (_repoId, _hash, options) => (
+      options?.forceRefresh ? refreshedCommitDetail : remoteCommitDetail
+    ));
     const view = await renderProjectPanel({
       repoId: "github:sena-nana/remote-repo",
       repoFullName: "sena-nana/remote-repo",
@@ -1198,6 +1232,15 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByLabelText("提交详情卡片")).toBeInTheDocument();
     expect(await view.findByLabelText("提交元数据")).toHaveTextContent("远程历史提交");
     expect(await view.findByLabelText("改动文件列表")).toHaveTextContent("src/remote.ts");
+
+    await view.refreshCurrentPage();
+
+    expect(getRepoCommitDetail).toHaveBeenLastCalledWith(
+      "github:sena-nana/remote-repo",
+      remoteCommit.hash,
+      { forceRefresh: true },
+    );
+    expect(await view.findByLabelText("提交元数据")).toHaveTextContent("显式刷新后的远程提交详情。");
   });
 
   it("默认 readme 只加载可见内容，不预取 GitHub 项目分区数据", async () => {
@@ -1206,9 +1249,9 @@ describe("RepoProjectPanel", () => {
     });
 
     await waitFor(() => {
-      expect(listRepoFiles).toHaveBeenCalledWith("local-repo", null);
+      expect(listRepoFiles).toHaveBeenCalledWith("local-repo", null, undefined, { forceRefresh: false });
     });
-    expect(getRepoFilePreview).toHaveBeenCalledWith("local-repo", "README.md");
+    expect(getRepoFilePreview).toHaveBeenCalledWith("local-repo", "README.md", undefined, { forceRefresh: false });
     expect(await view.findByText("Remote repository tools")).toBeInTheDocument();
     expect(await view.findByText("Project README")).toBeInTheDocument();
     expect(view.queryByRole("tab", { name: "文件树" })).toBeNull();
@@ -1230,6 +1273,52 @@ describe("RepoProjectPanel", () => {
     expect(listGitHubRepoFiles).not.toHaveBeenCalled();
     expect(listGitHubIssues).not.toHaveBeenCalled();
     expect(listGitHubWorkflowRuns).not.toHaveBeenCalled();
+  });
+
+  it("README 页面显式刷新绕过缓存并更新当前内容", async () => {
+    vi.mocked(listRepoFiles).mockImplementation(async (_repoId, _parentPath, _repoRef, options) => (
+      options?.forceRefresh ? [repoFile("README.md")] : localRootFiles
+    ));
+    vi.mocked(getRepoFilePreview).mockImplementation(async (_repoId, path, _repoRef, options) => (
+      filePreview(path, options?.forceRefresh ? "# Refreshed README" : "# Project README")
+    ));
+    const view = await renderProjectPanel();
+
+    expect(await view.findByText("Project README")).toBeInTheDocument();
+    await view.refreshCurrentPage();
+
+    expect(await view.findByText("Refreshed README")).toBeInTheDocument();
+    expect(getRepoFilePreview).toHaveBeenLastCalledWith(
+      "local-repo",
+      "README.md",
+      undefined,
+      { forceRefresh: true },
+    );
+  });
+
+  it("Files 页面显式刷新重载文件树和当前预览", async () => {
+    vi.mocked(listRepoFiles).mockImplementation(async (_repoId, parentPath, _repoRef, options) => {
+      if (parentPath) return [];
+      return options?.forceRefresh ? [repoFile("CHANGELOG.md")] : [repoFile("README.md")];
+    });
+    vi.mocked(getRepoFilePreview).mockImplementation(async (_repoId, path, _repoRef, options) => (
+      filePreview(path, options?.forceRefresh ? "Updated file preview" : "Initial file preview")
+    ));
+    const view = await renderProjectPanel({}, "/repos/local-repo/files");
+
+    expect(await view.findByRole("button", { name: "README.md" })).toBeInTheDocument();
+    expect(await view.findByText("Initial file preview")).toBeInTheDocument();
+    await view.refreshCurrentPage();
+
+    expect(await view.findByRole("button", { name: "CHANGELOG.md" })).toBeInTheDocument();
+    expect(view.queryByRole("button", { name: "README.md" })).toBeNull();
+    expect(await view.findByText("Updated file preview")).toBeInTheDocument();
+    expect(getRepoFilePreview).toHaveBeenLastCalledWith(
+      "local-repo",
+      "CHANGELOG.md",
+      null,
+      { forceRefresh: true },
+    );
   });
 
   it("文件树右键菜单把目录入口接到本地打开目标", async () => {
@@ -1481,10 +1570,7 @@ describe("RepoProjectPanel", () => {
 
     const filterSidebar = view.getByRole("region", { name: "Release 筛选" });
     expect(within(filterSidebar).getByRole("button", { name: "新建 Release" })).toBeInTheDocument();
-    expect(view.getByRole("button", { name: "刷新当前页" })).toHaveAttribute(
-      "data-agent-id",
-      "repo.project.sidebar.refresh",
-    );
+    expect(view.queryByRole("button", { name: "刷新当前页" })).toBeNull();
     expect(within(filterSidebar).getByRole("button", { name: "清除筛选" })).toBeDisabled();
     await fireEvent.click(within(filterSidebar).getByRole("button", { name: /v1\.0\.0/ }));
 
@@ -1514,7 +1600,7 @@ describe("RepoProjectPanel", () => {
     expect(within(releaseTimeline).queryByText("Lilia v1.0.0")).toBeNull();
     expect(within(releaseTimeline).getByText(/Lilia v1\.1 beta/i)).toBeInTheDocument();
 
-    await fireEvent.click(view.getByRole("button", { name: "刷新当前页" }));
+    await view.refreshCurrentPage();
     expect(listGitHubReleases).toHaveBeenLastCalledWith("sena-nana/remote-repo", { forceRefresh: true });
   });
 
@@ -1901,7 +1987,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("Artifact")).toBeInTheDocument();
     expect(getGitHubWorkflowArtifactFilePreview).toHaveBeenCalledWith("sena-nana/remote-repo", 131001, "README.md");
 
-    await fireEvent.click(view.getByRole("button", { name: "刷新当前页" }));
+    await view.refreshCurrentPage();
     await waitFor(() => {
       expect(listGitHubWorkflowRuns).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2249,9 +2335,9 @@ describe("RepoProjectPanel", () => {
       expect(view.router.currentRoute.value.query).toMatchObject({ projectTab: "pulls", pr: "52" });
     });
     await waitFor(() => {
-      expect(view.getByRole("button", { name: "刷新当前页" })).toBeEnabled();
+      expect(view.queryByRole("button", { name: "刷新当前页" })).toBeNull();
     });
-    await fireEvent.click(view.getByRole("button", { name: "刷新当前页" }));
+    await view.refreshCurrentPage();
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -2959,7 +3045,7 @@ describe("RepoProjectPanel", () => {
     );
   });
 
-  it("侧栏刷新当前 Issues 列表、筛选元数据和已打开详情", async () => {
+  it("页面刷新当前 Issues 列表、筛选元数据和已打开详情", async () => {
     const refreshedIssue = { ...githubIssues[0], title: "刷新后的 Issue", body: "刷新后的正文" };
     vi.mocked(listGitHubIssues).mockImplementation(async (_repoFullName, _options, fetchOptions) => {
       if (fetchOptions?.forceRefresh) {
@@ -2983,7 +3069,7 @@ describe("RepoProjectPanel", () => {
       expect.objectContaining({ state: "open", query: "Roadmap", sort: "created", direction: "desc" }),
     );
 
-    await fireEvent.click(view.getByRole("button", { name: "刷新当前页" }));
+    await view.refreshCurrentPage();
 
     expect(await view.findByRole("heading", { level: 3, name: "#12 刷新后的 Issue" })).toBeInTheDocument();
     expect(view.getByText("刷新后的正文", { exact: false })).toBeInTheDocument();
@@ -3003,7 +3089,7 @@ describe("RepoProjectPanel", () => {
     );
   });
 
-  it("Issues 首次加载失败后可通过侧栏刷新重试", async () => {
+  it("Issues 首次加载失败后可通过页面刷新重试", async () => {
     let shouldFail = true;
     vi.mocked(listGitHubIssues).mockImplementation(async () => {
       if (shouldFail) throw new Error("temporary issue failure");
@@ -3016,7 +3102,7 @@ describe("RepoProjectPanel", () => {
 
     expect(await view.findByText(/temporary issue failure/)).toBeInTheDocument();
     shouldFail = false;
-    await fireEvent.click(view.getByRole("button", { name: "刷新当前页" }));
+    await view.refreshCurrentPage();
     expect(await view.findByText("#12 修复懒加载")).toBeInTheDocument();
     expect(listGitHubIssues).toHaveBeenLastCalledWith(
       "sena-nana/remote-repo",
@@ -3025,7 +3111,7 @@ describe("RepoProjectPanel", () => {
     );
   });
 
-  it("切换分区后侧栏刷新只更新当前 Pull Requests", async () => {
+  it("切换分区后页面刷新只更新当前 Pull Requests", async () => {
     vi.mocked(listGitHubIssues).mockResolvedValue(githubIssues);
     vi.mocked(listGitHubPullRequests).mockResolvedValue(githubPullRequests);
     const view = await renderProjectPanel({
@@ -3038,7 +3124,7 @@ describe("RepoProjectPanel", () => {
     expect(await view.findByText("#52 接入 Pull Request 工作流")).toBeInTheDocument();
     const issueRequestCount = vi.mocked(listGitHubIssues).mock.calls.length;
 
-    await fireEvent.click(view.getByRole("button", { name: "刷新当前页" }));
+    await view.refreshCurrentPage();
     await waitFor(() => {
       expect(listGitHubPullRequests).toHaveBeenLastCalledWith(
         "sena-nana/remote-repo",
@@ -3095,6 +3181,26 @@ describe("RepoProjectPanel", () => {
       expect(view.getByText("#77 next repo issue")).toBeInTheDocument();
     });
     expect(view.queryByText("#88 old repo created issue")).toBeNull();
+  });
+
+  it("Settings 页面刷新管理信息、branches 和详情分区", async () => {
+    const view = await renderProjectPanel(
+      { repoFullName: "sena-nana/remote-repo" },
+      "/repos/local-repo?projectTab=settings",
+    );
+
+    expect(await view.findByRole("region", { name: "Security" })).toBeInTheDocument();
+    const initialBranchRequests = vi.mocked(listGitHubBranches).mock.calls.length;
+    await view.refreshCurrentPage();
+
+    expect(getGitHubRepoManagement).toHaveBeenLastCalledWith(
+      "sena-nana/remote-repo",
+      { forceRefresh: true },
+    );
+    expect(vi.mocked(listGitHubBranches).mock.calls.length).toBeGreaterThan(initialBranchRequests);
+    expect(vi.mocked(getGitHubRepoSettingsSection).mock.calls.some((call) => (
+      call[0] === "sena-nana/remote-repo" && call[2]?.forceRefresh === true
+    ))).toBe(true);
   });
 
   it("linked worktree 在设置区显示删除工作树文案", async () => {

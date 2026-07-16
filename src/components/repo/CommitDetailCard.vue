@@ -98,6 +98,7 @@ watch(() => [props.repoId, props.hash] as const, () => {
 });
 
 watch(() => detail.value?.files, (files) => {
+  if (files?.some((file) => file.path === activeFilePath.value)) return;
   activeFilePath.value = files?.[0]?.path ?? null;
 });
 
@@ -107,7 +108,7 @@ onUnmounted(() => {
   clearCopyNoticeTimer();
 });
 
-async function load() {
+async function load(forceRefresh = false) {
   if (!props.repoId || !props.hash) return;
   const repoId = props.repoId;
   const hash = props.hash;
@@ -115,7 +116,7 @@ async function load() {
     loading.value = true;
     error.value = null;
     try {
-      const nextDetail = await getRepoCommitDetail(repoId, hash);
+      const nextDetail = await getRepoCommitDetail(repoId, hash, { forceRefresh });
       if (!detailLoader.isCurrent(runId) || repoId !== props.repoId || hash !== props.hash) return;
       detail.value = nextDetail;
     } catch (err) {
@@ -128,6 +129,10 @@ async function load() {
       }
     }
   });
+}
+
+async function refresh() {
+  await load(true);
 }
 
 function fileStatusLetter(status: string) {
@@ -205,6 +210,8 @@ function startResize(
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
+
+defineExpose({ refresh });
 </script>
 
 <template>

@@ -945,29 +945,102 @@ describe("基础路由", () => {
     expect(await screen.findByRole("tab", { name: "变更" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("仓库详情页右上角只刷新 Git 信息，不重读当前 GitHub 项目内容", async () => {
+  it("仓库详情页右上角独立刷新当前 Issues 页面", async () => {
     workspaceFallback.setFallbackGitHubIssuesForTests({
       "sena-nana/LiliaGithub": [
-        githubIssue("sena-nana/LiliaGithub", 12, "2026-06-18T08:00:00Z"),
+        githubIssue("sena-nana/LiliaGithub", 11, "2026-06-18T08:00:00Z"),
       ],
     });
     const summary = repoSummary("LiliaGithub");
-    const detailRequests = mockRepoDetail(summary, {});
+    mockRepoDetail(summary, {});
     await renderAt("/repos/LiliaGithub?projectTab=issues");
     await waitForRepoTitle("LiliaGithub");
-    await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
     await waitFor(() => {
       expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toContainEqual(
         expect.objectContaining({ repoFullName: "sena-nana/LiliaGithub" }),
       );
     });
-    const initialRequestCount = detailRequests.length;
+    expect(await screen.findByText("#11 sena-nana/LiliaGithub issue 11")).toBeInTheDocument();
     const initialIssueRequestCount = workspaceFallback.getFallbackGitHubIssueListCallsForTests().length;
+    const refresh = screen.getByRole("button", { name: "刷新当前页" });
+    const actions = screen.getByRole("group", { name: "项目操作" });
+    expect(refresh).toHaveAttribute("data-agent-id", "repo.toolbar.refresh-page");
+    expect(within(actions).queryByRole("button", { name: "刷新当前页" })).toBeNull();
+    expect(within(screen.getByLabelText("右侧面板工具栏")).queryByRole("button", { name: "刷新当前页" })).toBeNull();
 
-    await fireEvent.click(screen.getByRole("button", { name: "刷新 Git 信息" }));
+    workspaceFallback.setFallbackGitHubIssuesForTests({
+      "sena-nana/LiliaGithub": [
+        githubIssue("sena-nana/LiliaGithub", 13, "2026-06-19T08:00:00Z"),
+      ],
+    });
 
-    await waitFor(() => expect(detailRequests.length).toBeGreaterThan(initialRequestCount));
-    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests()).toHaveLength(initialIssueRequestCount);
+    await fireEvent.click(refresh);
+
+    expect(await screen.findByText("#13 sena-nana/LiliaGithub issue 13")).toBeInTheDocument();
+    expect(screen.queryByText("#11 sena-nana/LiliaGithub issue 11")).toBeNull();
+    expect(workspaceFallback.getFallbackGitHubIssueListCallsForTests().length).toBeGreaterThan(initialIssueRequestCount);
+  });
+
+  it("仓库详情页右上角刷新 Changes 的当前 Git 状态", async () => {
+    const summary = repoSummary("LiliaGithub");
+    let currentChanges = [repoChange("src/before-refresh.ts")];
+    workspaceFallback.setFallbackRepoOverridesForTests({ [summary.id]: summary });
+    workspaceFallback.setFallbackRepoDetailOverrideForTests((repoId) => (
+      repoId === summary.id ? repoDetail(summary, { changes: currentChanges }) : null
+    ));
+    await renderAt("/repos/LiliaGithub/changes");
+
+    expect(await screen.findByText("src/before-refresh.ts")).toBeInTheDocument();
+    currentChanges = [repoChange("src/after-refresh.ts")];
+    await fireEvent.click(screen.getByRole("button", { name: "刷新当前页" }));
+
+    expect(await screen.findByText("src/after-refresh.ts")).toBeInTheDocument();
+    expect(screen.queryByText("src/before-refresh.ts")).toBeNull();
+  });
+
+  it("仓库详情页右上角刷新 Run 的启动配置数据", async () => {
+    workspaceFallback.setFallbackLaunchCandidatesForTests({
+      LiliaGithub: [{
+        command: "yarn old-refresh-command",
+        label: "old refresh command",
+        hint: null,
+        kind: "script",
+        cwd: null,
+      }],
+    });
+    await renderAt("/repos/LiliaGithub/run");
+    await waitFor(() => {
+      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn old-refresh-command");
+    });
+
+    workspaceFallback.setFallbackLaunchCandidatesForTests({
+      LiliaGithub: [{
+        command: "yarn refreshed-command",
+        label: "refreshed command",
+        hint: null,
+        kind: "script",
+        cwd: null,
+      }],
+    });
+    const refresh = screen.getByRole("button", { name: "刷新当前页" });
+    await waitFor(() => expect(refresh).toBeEnabled());
+    await fireEvent.click(refresh);
+    await waitFor(() => {
+      expect(useWorkspace().state.launchCandidates.LiliaGithub?.[0]?.command).toBe("yarn refreshed-command");
+    });
+  });
+
+  it("仓库详情页右上角刷新 Stash 列表并保持当前路由", async () => {
+    const service = await import("../src/services/workspace");
+    await service.saveRepoStash("LiliaGithub", "On main: before page refresh");
+    const { router } = await renderAt("/repos/LiliaGithub/stash");
+    expect(await screen.findByRole("button", { name: /before page refresh/ })).toBeInTheDocument();
+
+    await service.saveRepoStash("LiliaGithub", "On main: after page refresh");
+    await fireEvent.click(screen.getByRole("button", { name: "刷新当前页" }));
+
+    expect(await screen.findByRole("button", { name: /after page refresh/ })).toBeInTheDocument();
+    expect(router.currentRoute.value.fullPath).toBe("/repos/LiliaGithub/stash");
   });
 
   it("仓库详情页打开目标按钮可下拉切换并立即打开目标", async () => {
