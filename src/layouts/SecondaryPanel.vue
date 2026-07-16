@@ -11,13 +11,11 @@ import {
   FolderInput,
   GitBranch,
   GitPullRequestArrow,
-  LoaderCircle,
   Pencil,
+  Pin,
   Plus,
-  Star,
   Trash2,
   UserRound,
-  X,
 } from "@lucide/vue";
 import { SIDEBAR_NAV } from "../config/appShell";
 import { useWorkspace } from "../composables/useWorkspace";
@@ -27,6 +25,7 @@ import {
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import SidebarFooter from "../components/sidebar/SidebarFooter.vue";
+import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue";
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
@@ -375,9 +374,29 @@ const repoGroups = computed(() => workspace.state.settings?.repoGroups ?? []);
 const favoriteRepos = computed(() =>
   favoriteRepositories(workspace.state.settings, workspace.state.repos),
 );
+const pinnedLocalRepoIds = computed(() => new Set(
+  favoriteRepos.value.flatMap((favorite) => favorite.localRepo ? [favorite.localRepo.id] : []),
+));
+const pinnedRemoteRepoKeys = computed(() => new Set(
+  favoriteRepos.value.flatMap((favorite) =>
+    favorite.remoteShortcut && !favorite.localRepo
+      ? [githubRepositoryIdentityKey(favorite.remoteShortcut.fullName)]
+      : []
+  ),
+));
 const repoGroupIds = computed(() => repoGroups.value.map((group) => group.id));
 
 const repoItemById = computed(() => new Map(repoItems.value.map((item) => [item.id, item])));
+const pinnedLocalRepoItems = computed(() => favoriteRepos.value.flatMap((favorite) => {
+  if (!favorite.localRepo) return [];
+  const item = repoItemById.value.get(favorite.localRepo.id);
+  return item ? [{ favorite, item }] : [];
+}));
+const pinnedRemoteRepoItems = computed(() => favoriteRepos.value.flatMap((favorite) =>
+  favorite.remoteShortcut && !favorite.localRepo
+    ? [{ favorite, repo: favorite.remoteShortcut }]
+    : []
+));
 const repoConflictIssueById = computed(() => {
   const issues = new Map<string, RepoIssue>();
   for (const item of repoItems.value) {
@@ -403,7 +422,9 @@ const groupedRepoIds = computed(() => {
 });
 
 const ungroupedRepoItems = computed(() =>
-  repoItems.value.filter((item) => !groupedRepoIds.value.has(item.id)),
+  repoItems.value.filter((item) =>
+    !groupedRepoIds.value.has(item.id) && !pinnedLocalRepoIds.value.has(item.id)
+  ),
 );
 
 const activeSidebarRepoSortOption = computed(() =>
@@ -452,7 +473,7 @@ const localRepoSections = computed<RepoSection[]>(() => [
       group.name,
       group.repoIds
         .map((repoId) => repoItemById.value.get(repoId))
-        .filter((item): item is RepoItem => Boolean(item)),
+        .filter((item): item is RepoItem => item !== undefined && !pinnedLocalRepoIds.value.has(item.id)),
       group,
     )
   ),
@@ -490,6 +511,7 @@ const remoteRepoItems = computed(() =>
       return !accountLogin || repo.accountLogin?.toLocaleLowerCase() === accountLogin.toLocaleLowerCase();
     })
     .filter((repo) => !localRepoFullNames.value.has(githubRepositoryIdentityKey(repo.fullName)))
+    .filter((repo) => !pinnedRemoteRepoKeys.value.has(githubRepositoryIdentityKey(repo.fullName)))
     .sort((a, b) => b.openedAt - a.openedAt || a.fullName.localeCompare(b.fullName)),
 );
 const visibleRemoteRepoItems = computed(() =>
@@ -541,8 +563,13 @@ function repoCurrentGroupId(repoId: string): string | null {
   return repoGroups.value.find((group) => group.repoIds.includes(repoId))?.id ?? null;
 }
 
-function localRepoFavorite(repoId: string) {
-  return workspace.state.settings?.favoriteRepoIds.includes(repoId) ?? false;
+function pinnedEntryForLocalRepo(repoId: string) {
+  const repo = workspace.state.repos.find((item) => item.id === repoId);
+  if (!repo) return null;
+  const key = repo.githubFullName
+    ? `github:${githubRepositoryIdentityKey(repo.githubFullName)}`
+    : `local:${repo.id}`;
+  return favoriteRepos.value.find((favorite) => favorite.key === key) ?? null;
 }
 
 function favoritePending(key: string) {
@@ -556,7 +583,7 @@ async function runFavoriteMutation(key: string, mutation: () => Promise<unknown>
   try {
     await mutation();
   } catch (err) {
-    favoriteError.value = `收藏更新失败：${err instanceof Error ? err.message : String(err)}`;
+    favoriteError.value = `置顶更新失败：${err instanceof Error ? err.message : String(err)}`;
   } finally {
     const next = new Set(favoritePendingKeys.value);
     next.delete(key);
@@ -567,11 +594,16 @@ async function runFavoriteMutation(key: string, mutation: () => Promise<unknown>
 async function toggleLocalRepoFavorite(repoId: string) {
   const repo = workspace.state.repos.find((item) => item.id === repoId);
   if (!repo) return;
+  const pinnedEntry = pinnedEntryForLocalRepo(repoId);
+  if (pinnedEntry) {
+    await removeSidebarFavorite(pinnedEntry);
+    return;
+  }
   const key = repo.githubFullName
     ? `github:${githubRepositoryIdentityKey(repo.githubFullName)}`
     : `local:${repo.id}`;
   await runFavoriteMutation(key, () =>
-    workspace.setLocalRepoFavorite(repoId, !localRepoFavorite(repoId)),
+    workspace.setLocalRepoFavorite(repoId, true),
   );
 }
 
@@ -584,16 +616,6 @@ async function removeSidebarFavorite(favorite: FavoriteRepositoryEntry) {
       await workspace.setRemoteRepoFavorite({ ...favorite.remoteShortcut }, false);
     }
   });
-}
-
-async function openSidebarFavorite(favorite: FavoriteRepositoryEntry) {
-  if (favorite.localRepo) {
-    await router.push(repoRoute(favorite.localRepo.id));
-    return;
-  }
-  if (favorite.remoteShortcut) {
-    await router.push(remoteRepoRoute(favorite.remoteShortcut.fullName));
-  }
 }
 
 const sidebarRepoContextMenuProvider: ContextMenuProvider = (event) => {
@@ -628,8 +650,8 @@ function repoContextMenu(repoId: string): ContextMenuItem[] {
   return [
     {
       id: `favorite-repo-${repoId}`,
-      label: localRepoFavorite(repoId) ? "取消收藏" : "收藏仓库",
-      icon: Star,
+      label: pinnedEntryForLocalRepo(repoId) ? "取消置顶" : "置顶仓库",
+      icon: Pin,
       async onSelect() {
         await toggleLocalRepoFavorite(repoId);
       },
@@ -892,44 +914,43 @@ async function deleteGroup(group: { id: string }) {
     >
       <div class="sb-section sb-section--favorites">
         <div class="sb-section__header">
-          <span class="sb-section__title">收藏仓库 {{ favoriteRepos.length }}</span>
+          <span class="sb-section__title">置顶仓库 {{ favoriteRepos.length }}</span>
         </div>
         <div class="sb-tree">
-          <div
-            v-for="favorite in favoriteRepos"
+          <RepoSidebarRow
+            v-for="{ favorite, item } in pinnedLocalRepoItems"
             :key="favorite.key"
-            class="sb-tree__row sb-tree__row--project sb-tree__row--favorite"
-            :class="{
-              'is-active': favorite.localRepo
-                ? activeRepoId === favorite.localRepo.id
-                : activeRemoteFullName === favorite.remoteShortcut?.fullName,
-            }"
-            role="link"
-            tabindex="0"
-            :data-agent-id="`sidebar.favorite.${favorite.key}.open`"
-            :aria-label="`打开收藏 ${favorite.name}`"
-            :title="favorite.title"
-            @click="openSidebarFavorite(favorite)"
-            @keydown.enter.prevent="openSidebarFavorite(favorite)"
-            @keydown.space.prevent="openSidebarFavorite(favorite)"
-          >
-            <Star :size="13" aria-hidden="true" class="sb-tree__favorite-icon" />
-            <span class="sb-tree__name">{{ favorite.name }}</span>
-            <span class="sb-tree__favorite-kind">{{ favorite.localRepo ? "本地" : "远程" }}</span>
-            <button
-              type="button"
-              class="sb-icon-btn sb-tree__favorite-remove"
-              :data-agent-id="`sidebar.favorite.${favorite.key}.remove`"
-              :aria-label="`取消收藏 ${favorite.name}`"
-              title="取消收藏"
-              :disabled="favoritePending(favorite.key)"
-              @click.stop="removeSidebarFavorite(favorite)"
-            >
-              <LoaderCircle v-if="favoritePending(favorite.key)" :size="12" aria-hidden="true" class="sb-spin" />
-              <X v-else :size="12" aria-hidden="true" />
-            </button>
-          </div>
-          <p v-if="!favoriteRepos.length" class="sb-tree__empty">右键本地仓库或在首页收藏。</p>
+            :id="item.id"
+            :name="item.name"
+            :title="item.title"
+            :href="item.href"
+            :agent-id="`sidebar.favorite.${favorite.key}.open`"
+            :aria-label="`打开置顶 ${favorite.name}`"
+            :icon="item.icon"
+            :icon-class="item.iconClass"
+            :active="activeRepoId === item.id"
+            :dirty-count="item.dirtyCount"
+            :ahead="item.ahead"
+            :behind="item.behind"
+            :issue="repoIssueById.get(item.id) ?? null"
+            :syncing="bulkSyncRunningRepoIds.has(item.id)"
+            :refreshing="refreshingRepoIds.has(item.id)"
+            :launch-running="launchRunningRepoIds.has(item.id)"
+            @navigate="navigateRepo(item.to, $event)"
+            @retry="retryRepoPush(item.id)"
+          />
+          <RepoRemoteSidebarRow
+            v-for="{ favorite, repo } in pinnedRemoteRepoItems"
+            :key="favorite.key"
+            :repo="repo"
+            :active="activeRemoteFullName === repo.fullName"
+            :agent-id="`sidebar.favorite.${favorite.key}.open`"
+            :remove-agent-id="`sidebar.favorite.${favorite.key}.remove`"
+            :open-label="`打开置顶 ${favorite.name}`"
+            @open="openRemoteRepo(repo.fullName)"
+            @remove="removeRemoteRepo(repo.fullName)"
+          />
+          <p v-if="!favoriteRepos.length" class="sb-tree__empty">右键本地仓库或在首页置顶。</p>
           <p v-if="favoriteError" class="sb-tree__empty sb-tree__empty--error">{{ favoriteError }}</p>
         </div>
       </div>
@@ -1061,35 +1082,17 @@ async function deleteGroup(group: { id: string }) {
           <span class="sb-section__title">远程仓库 {{ remoteRepoItems.length }}</span>
         </div>
         <div class="sb-tree">
-          <div
+          <RepoRemoteSidebarRow
             v-for="repo in visibleRemoteRepoItems"
             :key="repo.fullName"
-            class="sb-tree__row sb-tree__row--project sb-tree__row--remote"
-            :class="{ 'is-active': activeRemoteFullName === repo.fullName }"
-            role="link"
-            tabindex="0"
-            :data-agent-id="`sidebar.remote.${repo.fullName}`"
-            :title="repo.fullName"
-            :aria-label="`打开 ${repo.fullName}`"
-            @click="openRemoteRepo(repo.fullName)"
-            @keydown.enter.prevent="openRemoteRepo(repo.fullName)"
-            @keydown.space.prevent="openRemoteRepo(repo.fullName)"
-          >
-            <GitPullRequestArrow :size="14" aria-hidden="true" class="sb-tree__repo-icon is-remote" />
-            <span class="sb-tree__name">{{ repo.name }}</span>
-            <span v-if="repo.archived" class="sb-badge">ARCH</span>
-            <span v-if="repo.private" class="sb-badge">私有</span>
-            <button
-              type="button"
-              class="sb-icon-btn sb-tree__remote-remove"
-              :data-agent-id="`sidebar.remote.${repo.fullName}.remove`"
-              :aria-label="`移除 ${repo.fullName}`"
-              title="从侧边栏移除"
-              @click.stop="removeRemoteRepo(repo.fullName)"
-            >
-              <X :size="13" aria-hidden="true" />
-            </button>
-          </div>
+            :repo="repo"
+            :active="activeRemoteFullName === repo.fullName"
+            :agent-id="`sidebar.remote.${repo.fullName}`"
+            :remove-agent-id="`sidebar.remote.${repo.fullName}.remove`"
+            :open-label="`打开 ${repo.fullName}`"
+            @open="openRemoteRepo(repo.fullName)"
+            @remove="removeRemoteRepo(repo.fullName)"
+          />
           <button
             v-if="hiddenRemoteRepoItemCount > 0"
             type="button"
@@ -1170,10 +1173,6 @@ async function deleteGroup(group: { id: string }) {
   white-space: nowrap;
 }
 
-.sb-tree__row--favorite {
-  cursor: pointer;
-}
-
 .sb-tree__avatar {
   width: 16px;
   height: 16px;
@@ -1188,32 +1187,8 @@ async function deleteGroup(group: { id: string }) {
   font-size: 10px;
 }
 
-.sb-tree__favorite-icon {
-  flex: 0 0 auto;
-  fill: var(--warn);
-  color: var(--warn);
-}
-
-.sb-tree__favorite-kind {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  font-size: 10px;
-}
-
-.sb-tree__favorite-remove {
-  flex: 0 0 auto;
-  opacity: 0;
-  pointer-events: none;
-}
-
 .sb-tree__empty--error {
   color: var(--err);
-}
-
-.sb-tree__row--favorite:hover .sb-tree__favorite-remove,
-.sb-tree__row--favorite:focus-within .sb-tree__favorite-remove {
-  opacity: 1;
-  pointer-events: auto;
 }
 
 .sb-row-loader {
@@ -1373,55 +1348,6 @@ async function deleteGroup(group: { id: string }) {
   color: var(--err);
   font-size: 12px;
   white-space: nowrap;
-}
-
-.sb-tree__row--remote {
-  cursor: pointer;
-}
-
-.sb-tree__remote-remove {
-  flex: 0 0 auto;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.sb-tree__row--remote:hover .sb-tree__remote-remove,
-.sb-tree__row--remote:focus-within .sb-tree__remote-remove,
-.sb-tree__row--remote.is-active .sb-tree__remote-remove {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.sb-badge {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 17px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 17px;
-  text-align: center;
-}
-
-.sb-badge--warn {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-.sb-badge--ok {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
-.sb-badge--error {
-  background: var(--err-soft);
-  color: var(--err);
 }
 
 @keyframes sb-spin {

@@ -24,7 +24,7 @@ import {
   RotateCw,
   Search,
   ShieldCheck,
-  Star,
+  Pin,
   X,
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
@@ -349,7 +349,7 @@ async function runFavoriteMutation(key: string, mutation: () => Promise<unknown>
   try {
     await mutation();
   } catch (err) {
-    favoriteError.value = `收藏更新失败：${err instanceof Error ? err.message : String(err)}`;
+    favoriteError.value = `置顶更新失败：${err instanceof Error ? err.message : String(err)}`;
   } finally {
     const next = new Set(favoritePendingKeys.value);
     next.delete(key);
@@ -2642,8 +2642,8 @@ function bulkOperationDescription(operation: BulkOperation) {
                     class="repo-favorite-button"
                     :class="{ 'is-favorite': githubRepoFavorite(githubRepo) }"
                     :data-agent-id="`home.repo-status.${githubRepo.fullName}.favorite`"
-                    :aria-label="`${githubRepoFavorite(githubRepo) ? '取消收藏' : '收藏'} ${githubRepo.fullName}`"
-                    :title="githubRepoFavorite(githubRepo) ? '取消收藏' : '收藏仓库'"
+                    :aria-label="`${githubRepoFavorite(githubRepo) ? '取消置顶' : '置顶'} ${githubRepo.fullName}`"
+                    :title="githubRepoFavorite(githubRepo) ? '取消置顶' : '置顶仓库'"
                     :disabled="favoritePending(`github:${githubRepositoryIdentityKey(githubRepo.fullName)}`)"
                     @click.stop="toggleGitHubRepoFavorite(githubRepo)"
                   >
@@ -2653,7 +2653,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                       aria-hidden="true"
                       class="sb-spin"
                     />
-                    <Star v-else :size="13" aria-hidden="true" />
+                    <Pin v-else :size="13" aria-hidden="true" />
                   </button>
                   <template v-if="localRepo">
                     <button
