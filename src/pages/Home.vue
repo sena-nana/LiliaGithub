@@ -2320,8 +2320,8 @@ function bulkOperationDescription(operation: BulkOperation) {
           <div class="card-heading">
             <div>
               <h2>编程语言占比</h2>
-              <p class="language-total" :role="hoveredCodeSlice ? 'tooltip' : undefined">
-                {{ hoveredCodeSlice?.title ?? `${formatBytes(activeCodeOverview.totalBytes)} 代码量` }}
+              <p class="language-total">
+                {{ formatBytes(activeCodeOverview.totalBytes) }} 代码量
               </p>
             </div>
             <div class="language-actions">
@@ -2361,6 +2361,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 cx="21"
                 cy="21"
                 r="15.9155"
+                :title="slice.title"
                 :aria-label="slice.title"
                 :stroke="slice.color"
                 :stroke-dasharray="`${slice.percent} ${100 - slice.percent}`"
