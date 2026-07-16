@@ -2611,7 +2611,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                   <span v-if="githubRepo.archived" class="repo-status-row__badge repo-status-row__badge--archived">Archive</span>
                   <span v-if="githubRepo.private" class="repo-status-row__badge">私有</span>
                   <span
-                    v-if="githubRepositoryPermissionLabel(githubRepo.permissions)"
+                    v-if="!githubRepo.permissions?.admin && githubRepositoryPermissionLabel(githubRepo.permissions)"
                     class="repo-status-row__badge"
                     :title="`当前账号权限：${githubRepositoryPermissionLabel(githubRepo.permissions)}`"
                   >
