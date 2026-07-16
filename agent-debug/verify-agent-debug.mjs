@@ -220,6 +220,16 @@ export function assertNoMissingAgentIds(observe, label) {
   throw new Error(`${label} has ${missingAgentIds.length} missing agent ids: ${formatMissingAgentIds(missingAgentIds)}${suffix}`);
 }
 
+export function findEnabledVisibleAgentId(elements, candidates) {
+  const available = new Set(
+    (elements ?? [])
+      .filter((element) => element.visible !== false && element.disabled !== true)
+      .map((element) => element.id || element.agentId)
+      .filter(Boolean),
+  );
+  return candidates.find((candidate) => available.has(candidate)) ?? null;
+}
+
 function stopProcessTree(child) {
   if (!child || child.killed) return;
   if (process.platform === "win32" && child.pid) {
@@ -455,6 +465,15 @@ async function clickAgentTarget(sessionId, target) {
   return result;
 }
 
+async function enabledVisibleAgentTarget(sessionId, candidates) {
+  const elements = await execute(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     return api?.observe?.()?.elements ?? [];`,
+  );
+  return findEnabledVisibleAgentId(elements, candidates);
+}
+
 async function waitForVisibleAgentId(sessionId, selectSource, args, errorMessage, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -609,6 +628,28 @@ async function refreshCurrentRepoPage(sessionId, routePart, pageTarget, observeL
   await observeAgentStep(sessionId, observeLabel);
 }
 
+async function runProfileInteractionFlow(sessionId) {
+  const editTarget = await enabledVisibleAgentTarget(sessionId, ["profile.edit"]);
+  if (editTarget) {
+    await clickAgentTarget(sessionId, editTarget);
+    await waitForAgentElement(sessionId, "profile.cancel", 30_000, true);
+    await observeAgentStep(sessionId, "profile-edit");
+    await clickAgentTarget(sessionId, "profile.cancel");
+    await waitForAgentElement(sessionId, "profile.edit", 30_000, true);
+    await observeAgentStep(sessionId, "profile-edit-cancelled");
+  } else {
+    replay.push({
+      type: "skip",
+      scenario: "profile-edit-cancel",
+      reason: "profile.edit is not enabled for the fallback account",
+    });
+  }
+
+  const profileScreenshotPath = await screenshot(sessionId, "profile.png");
+  replay.push({ type: "screenshot", target: "profile.page", path: profileScreenshotPath });
+  return profileScreenshotPath;
+}
+
 async function runRegressionFlow(sessionId) {
   const steps = [
     {
@@ -713,9 +754,16 @@ async function runRegressionFlow(sessionId) {
       waits: ["settings.about.page"],
       observe: "settings-about",
     },
+    {
+      clicks: ["sidebar.profile"],
+      routeIncludes: ["/profile"],
+      waits: ["profile.page", "profile.editor", "profile.content", "profile.open-github"],
+      observe: "profile-overview",
+    },
   ];
 
   let firstObserve = null;
+  let profileScreenshotPath = null;
   for (const step of steps) {
     for (const target of step.clicks ?? []) await clickAgentTarget(sessionId, target);
     for (const routePart of step.routeIncludes ?? []) await waitForRouteIncludes(sessionId, routePart);
@@ -735,9 +783,10 @@ async function runRegressionFlow(sessionId) {
       );
     }
     if (step.observe === "linked-worktree-repo") await runRepoLaunchFlow(sessionId);
+    if (step.observe === "profile-overview") profileScreenshotPath = await runProfileInteractionFlow(sessionId);
     for (const target of step.after ?? []) await clickAgentTarget(sessionId, target);
   }
-  return firstObserve;
+  return { firstObserve, profileScreenshotPath };
 }
 
 async function screenshot(sessionId, name) {
@@ -923,7 +972,7 @@ async function main() {
     await waitForDebugApi(sessionId);
     await waitForDebugUi(sessionId);
     const beforeScreenshotPath = await screenshot(sessionId, "before.png");
-    const observe = await runRegressionFlow(sessionId);
+    const { firstObserve: observe, profileScreenshotPath } = await runRegressionFlow(sessionId);
 
     await writeJson("observe.json", observe);
     await writeJson("missing-agent-ids.json", observe.missingAgentIds ?? []);
@@ -952,6 +1001,7 @@ async function main() {
       preflight,
       beforeScreenshotPath,
       afterScreenshotPath,
+      profileScreenshotPath,
       observePath: path.join(runDir, "observe.json"),
       missingAgentIdsPath: path.join(runDir, "missing-agent-ids.json"),
       observedSnapshots,

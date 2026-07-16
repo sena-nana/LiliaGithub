@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assertNoMissingAgentIds } from "../agent-debug/verify-agent-debug.mjs";
+import {
+  assertNoMissingAgentIds,
+  findEnabledVisibleAgentId,
+} from "../agent-debug/verify-agent-debug.mjs";
 
 describe("agent debug verify script", () => {
   it("fails a regression step when missing agent ids are present", () => {
@@ -24,5 +27,16 @@ describe("agent debug verify script", () => {
 
   it("allows a regression step with a fully addressable snapshot", () => {
     expect(() => assertNoMissingAgentIds({ missingAgentIds: [] }, "settings-about")).not.toThrow();
+  });
+
+  it("only selects optional profile actions that are visible and enabled", () => {
+    expect(findEnabledVisibleAgentId([
+      { id: "profile.edit", visible: true, disabled: true },
+      { id: "profile.cancel", visible: false, disabled: false },
+    ], ["profile.edit", "profile.cancel"])).toBeNull();
+
+    expect(findEnabledVisibleAgentId([
+      { agentId: "profile.edit", visible: true, disabled: false },
+    ], ["profile.edit"])).toBe("profile.edit");
   });
 });
