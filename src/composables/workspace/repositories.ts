@@ -909,6 +909,11 @@ export async function rememberRemoteRepo(repo: RemoteRepoShortcut) {
   return updateWorkspaceSettings(() => service.rememberRemoteRepo(repo));
 }
 
+export async function recordRecentLocalRepo(repoId: string) {
+  const service = await loadWorkspaceService();
+  return updateWorkspaceSettings(() => service.recordRecentLocalRepo(repoId));
+}
+
 export async function setRemoteRepoFavorite(repo: RemoteRepoShortcut, favorite: boolean) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.setRemoteRepoFavorite(repo, favorite));

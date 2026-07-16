@@ -14,6 +14,8 @@ afterEach(async () => {
   resetWorkspaceStateForTests();
   clearHomeGitHubOverviewSnapshot();
   await resetWorkspaceFallbacksForTests();
+  const { resetPersonalHomeFallbackForTests } = await import("../src/services/personalHome/fallback");
+  resetPersonalHomeFallbackForTests();
   clearGitHubRepoCache();
   localStorage.clear();
   document.documentElement.removeAttribute("data-theme");

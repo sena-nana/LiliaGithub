@@ -2479,6 +2479,7 @@ function createFallbackSettings(
       repoGroups: [],
       organizationGroupingResolvedRepoIds: [],
       remoteRepoShortcuts: [],
+      recentLocalRepos: [],
       localContributionCache: {},
       contributionIdentities: [],
     };
@@ -2518,6 +2519,7 @@ function createFallbackSettings(
     ],
     organizationGroupingResolvedRepoIds: [],
     remoteRepoShortcuts: [],
+    recentLocalRepos: [],
     localContributionCache: {},
     contributionIdentities: [],
   };
@@ -3255,6 +3257,7 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     repoGroups: settings.repoGroups.map(cloneWorkspaceRepoGroup),
     organizationGroupingResolvedRepoIds: [...(settings.organizationGroupingResolvedRepoIds ?? [])],
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
+    recentLocalRepos: (settings.recentLocalRepos ?? []).map((visit) => ({ ...visit })),
     contributionIdentities: (settings.contributionIdentities ?? []).map((identity) => ({ ...identity })),
     localContributionCache: Object.fromEntries(
       Object.entries(settings.localContributionCache).map(([repoId, days]) => [
@@ -4821,6 +4824,23 @@ export function setActiveWorkspaceRepo(repoId: string | null): Promise<void> {
       cancelPendingFallbackTask(entry.taskId, "已取消");
     }
     scheduleFallbackRefreshPump();
+  });
+}
+
+export function recordRecentLocalRepo(repoId: string): Promise<WorkspaceSettings> {
+  return call("workspace_record_recent_local_repo", { repoId }, () => {
+    const normalized = repoId.trim();
+    if (!allFallbackRepos().some((repo) => repo.id === normalized)) {
+      throw new Error(`未找到 Git 仓库：${normalized}`);
+    }
+    fallbackSettings = {
+      ...fallbackSettings,
+      recentLocalRepos: [
+        { repoId: normalized, openedAt: Date.now() },
+        ...(fallbackSettings.recentLocalRepos ?? []).filter((visit) => visit.repoId !== normalized),
+      ].slice(0, 12),
+    };
+    return visibleFallbackSettings();
   });
 }
 

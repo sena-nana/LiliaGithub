@@ -272,10 +272,12 @@ describe("基础路由", () => {
     workspaceFallback.setFallbackStopLaunchOverrideForTests(null);
   });
 
-  it("用户资料与组织纵览进入独立页面，旧组织仓库深链回到项目总览", async () => {
+  it("用户资料与组织纵览进入独立页面，旧组织仓库深链回到首页", async () => {
     const profile = await renderAt("/profile");
     expect(profile.router.currentRoute.value.fullPath).toBe("/profile");
-    expect(await screen.findByRole("heading", { level: 1, name: "用户资料" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.querySelector('[data-agent-id="profile.editor"]')).toBeInstanceOf(HTMLElement);
+    });
 
     const organization = await renderAt("/organizations/sena-nana");
     expect(organization.router.currentRoute.value.fullPath).toBe("/organizations/sena-nana");
@@ -309,7 +311,7 @@ describe("基础路由", () => {
       })]),
     ));
 
-    await renderAt("/");
+    await renderAt("/overview");
     await fireEvent.click(await screen.findByRole("button", { name: "按项目" }));
 
     const chart = await screen.findByLabelText("编程语言占比图");
@@ -332,7 +334,7 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    const { router, container } = await renderAt("/");
+    const { router, container } = await renderAt("/overview");
 
     await fireEvent.click(await within(container).findByRole("link", { name: "打开 sena-nana/NewRepo" }));
 
@@ -748,7 +750,7 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    await renderAt("/");
+    await renderAt("/overview");
 
     const repoStatusList = await screen.findByLabelText("仓库状态列表");
     expect(await within(repoStatusList).findByText("sena-nana/LiliaGithub")).toBeInTheDocument();
@@ -771,7 +773,7 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    await renderAt("/");
+    await renderAt("/overview");
 
     const repoStatusList = await screen.findByLabelText("仓库状态列表");
     await within(repoStatusList).findByText("sena-nana/ArchivedRepo");
@@ -797,7 +799,7 @@ describe("基础路由", () => {
         nextPage: null,
       },
     ]);
-    await renderAt("/");
+    await renderAt("/overview");
 
     const repoStatusList = await screen.findByLabelText("仓库状态列表");
     await within(repoStatusList).findByText("sena-nana/LiliaGithub");
@@ -812,7 +814,7 @@ describe("基础路由", () => {
 
   it("总览页 GitHub 项目加载失败时保留本地侧栏并可重试", async () => {
     workspaceFallback.setFallbackGitHubReposErrorForTests("GitHub 绑定已失效，请重新绑定");
-    await renderAt("/");
+    await renderAt("/overview");
 
     expect(await screen.findByText("GitHub 绑定已失效，请重新绑定后再加载账号仓库。")).toBeInTheDocument();
     const ungroupedSection = screen.getByRole("button", { name: "折叠分组 未分组仓库" });
@@ -840,7 +842,7 @@ describe("基础路由", () => {
       },
     }));
 
-    await renderAt("/");
+    await renderAt("/overview");
 
     expect(await screen.findByText("暂无本地提交")).toBeInTheDocument();
 
@@ -873,7 +875,7 @@ describe("基础路由", () => {
   });
 
   it("侧边栏左下角提供设置和 GitHub 状态入口", async () => {
-    await renderAt("/");
+    await renderAt("/overview");
 
     expect(
       await screen.findByRole("link", { name: "GitHub 已授权。点击进入设置。" }),
@@ -1157,7 +1159,7 @@ describe("基础路由", () => {
   });
 
   it("删除 GitHub 远端后返回首页不会恢复旧的仓库状态快照", async () => {
-    const { router } = await renderAt("/");
+    const { router } = await renderAt("/overview");
 
     const repoStatusList = await screen.findByLabelText("仓库状态列表");
     expect(await within(repoStatusList).findByText("sena-nana/LiliaGithub")).toBeInTheDocument();
@@ -1174,7 +1176,7 @@ describe("基础路由", () => {
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "删除 GitHub 仓库" })).toBeNull();
     });
-    await router.push("/");
+    await router.push("/overview");
 
     const refreshedRepoStatusList = await screen.findByLabelText("仓库状态列表");
     await waitFor(() => {
@@ -1451,7 +1453,7 @@ describe("基础路由", () => {
   });
 
   it("总览页一键同步直接执行且不打开预检弹层", async () => {
-    await renderAt("/");
+    await renderAt("/overview");
 
     await clickOverviewSync();
 
@@ -1462,7 +1464,7 @@ describe("基础路由", () => {
 
   it("批量同步失败后进入项目详情处理失败仓库", async () => {
     mockLiliaGithubSyncFailure();
-    const { router } = await renderAt("/");
+    const { router } = await renderAt("/overview");
 
     await clickOverviewSync();
 
@@ -1512,7 +1514,7 @@ describe("基础路由", () => {
 
   it("仓库详情页右侧错误区出现或消失时保留项目主内容区", async () => {
     mockLiliaGithubSyncFailure();
-    await renderAt("/");
+    await renderAt("/overview");
 
     await clickOverviewSync();
 
@@ -1540,7 +1542,7 @@ describe("基础路由", () => {
 
   it("总览页可直接进入最近同步失败仓库继续处理", async () => {
     await mockLiliaGithubSyncFailure();
-    const { router } = await renderAt("/");
+    const { router } = await renderAt("/overview");
 
     await clickOverviewSync();
 
@@ -1602,7 +1604,7 @@ describe("基础路由", () => {
   it("未知路由回到首页", async () => {
     await renderAt("/missing");
 
-    expect(await screen.findByRole("heading", { level: 1, name: "项目总览" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "个人首页" })).toBeInTheDocument();
   });
 
   it("未知设置 tab 回落到外观", async () => {

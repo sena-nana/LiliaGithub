@@ -2431,7 +2431,7 @@ pub(super) fn github_issue_from_response(issue: GitHubIssueResponse) -> Option<G
     Some(github_issue_like_from_response(issue))
 }
 
-fn github_account_issue_item_from_response(
+pub(super) fn github_account_issue_item_from_response(
     issue: GitHubIssueResponse,
 ) -> Option<GitHubAccountIssueItem> {
     let repo_full_name = issue.repository.as_ref()?.full_name.clone();

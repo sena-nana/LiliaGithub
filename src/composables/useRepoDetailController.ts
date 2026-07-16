@@ -532,6 +532,8 @@ export function useRepoDetailController() {
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         await workspace.loadRepoDetail(targetRepoId);
         if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
+        await workspace.recordRecentLocalRepo(targetRepoId);
+        if (!repoDetailLoader.isCurrent(runId) || repoId.value !== targetRepoId) return;
         syncFocusedChange();
         markActiveRepoLocalReady(targetRepoId);
       } catch (err) {

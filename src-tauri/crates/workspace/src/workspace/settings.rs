@@ -904,6 +904,9 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
     settings.repo_bindings.remove(repo_id);
     settings.favorite_repo_ids.retain(|id| id != repo_id);
     settings
+        .recent_local_repos
+        .retain(|visit| visit.repo_id != repo_id);
+    settings
         .organization_grouping_resolved_repo_ids
         .retain(|id| id != repo_id);
     for group in &mut settings.repo_groups {
