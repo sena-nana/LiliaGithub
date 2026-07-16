@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bell, ExternalLink, LoaderCircle, RotateCw } from "@lucide/vue";
+import { ExternalLink, LoaderCircle, RotateCw } from "@lucide/vue";
 import { Dropdown, UiButton } from "@lilia/ui";
 import { computed, ref, watch } from "vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
@@ -150,107 +150,72 @@ watch(
 </script>
 
 <template>
-  <section
-    class="card repo-notification-card"
-    aria-label="仓库通知"
-    data-agent-id="repo.notifications.card"
-  >
-    <header class="repo-notification-card__header">
-      <Bell :size="14" aria-hidden="true" />
-      <strong>通知</strong>
-    </header>
-
-    <div class="repo-notification-card__body">
-      <div v-if="loading" class="repo-notification-card__loading" role="status">
-        <LoaderCircle :size="14" aria-hidden="true" class="sb-spin" />
-        <span>正在读取通知偏好…</span>
-      </div>
-
-      <p v-else-if="unavailable" class="repo-notification-card__unavailable" role="status">
-        {{ unavailable }}
-      </p>
-
-      <template v-else-if="mode">
-        <div class="repo-notification-card__control-label">
-          <span>通知方式</span>
-          <Dropdown
-            :model-value="mode"
-            :options="subscriptionOptions"
-            :disabled="saving"
-            block
-            placement="bottom"
-            menu-label="仓库通知方式"
-            agent-id="repo.notifications.mode"
-            @update:model-value="updateMode"
-          />
-        </div>
-        <p class="repo-notification-card__status" role="status">
-          <template v-if="saving">
-            <LoaderCircle :size="13" aria-hidden="true" class="sb-spin" />
-            正在保存…
-          </template>
-          <template v-else>GitHub 将按此偏好发送仓库通知。</template>
-        </p>
-      </template>
-
-      <div v-if="error" class="repo-notification-card__error" role="alert">
-        <p>{{ error }}</p>
-        <UiButton
-          size="sm"
-          agent-id="repo.notifications.retry"
-          :disabled="loading || saving"
-          @click="loadSubscription"
-        >
-          <RotateCw :size="13" aria-hidden="true" />
-          重试
-        </UiButton>
-      </div>
+  <div class="repo-notification-prefs" data-agent-id="repo.notifications.card">
+    <div v-if="loading" class="repo-notification-prefs__status" role="status">
+      <LoaderCircle :size="14" aria-hidden="true" class="sb-spin" />
+      <span>正在读取通知偏好…</span>
     </div>
 
-    <footer class="repo-notification-card__footer">
+    <p v-else-if="unavailable" class="repo-notification-prefs__note" role="status">
+      {{ unavailable }}
+    </p>
+
+    <template v-else-if="mode">
+      <div class="repo-notification-prefs__control">
+        <span>通知方式</span>
+        <Dropdown
+          :model-value="mode"
+          :options="subscriptionOptions"
+          :disabled="saving"
+          block
+          placement="bottom"
+          menu-label="仓库通知方式"
+          agent-id="repo.notifications.mode"
+          @update:model-value="updateMode"
+        />
+      </div>
+      <p class="repo-notification-prefs__status" role="status">
+        <template v-if="saving">
+          <LoaderCircle :size="13" aria-hidden="true" class="sb-spin" />
+          正在保存…
+        </template>
+        <template v-else>GitHub 将按此偏好发送仓库通知。</template>
+      </p>
+    </template>
+
+    <div v-if="error" class="repo-notification-prefs__error" role="alert">
+      <p>{{ error }}</p>
       <UiButton
         size="sm"
-        agent-id="repo.notifications.customize"
-        @click="openCustomization"
+        agent-id="repo.notifications.retry"
+        :disabled="loading || saving"
+        @click="loadSubscription"
       >
+        <RotateCw :size="13" aria-hidden="true" />
+        重试
+      </UiButton>
+    </div>
+
+    <div class="repo-notification-prefs__footer">
+      <UiButton size="sm" agent-id="repo.notifications.customize" @click="openCustomization">
         <ExternalLink :size="13" aria-hidden="true" />
         在 GitHub 自定义
       </UiButton>
-      <p v-if="customizeError" class="repo-notification-card__customize-error" role="alert">
+      <p v-if="customizeError" class="repo-notification-prefs__error-text" role="alert">
         {{ customizeError }}
       </p>
-    </footer>
-  </section>
+    </div>
+  </div>
 </template>
 
 <style scoped>
-.repo-notification-card {
-  display: grid;
-  gap: var(--repo-sidebar-card-gap, 8px);
-  min-width: 0;
-  margin: 0;
-  padding: var(--repo-sidebar-card-padding, 12px);
-}
-
-.repo-notification-card__header {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 20px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.repo-notification-card__body {
+.repo-notification-prefs {
   display: grid;
   gap: 8px;
   min-width: 0;
-  min-height: 64px;
-  align-content: start;
 }
 
-.repo-notification-card__loading,
-.repo-notification-card__status {
+.repo-notification-prefs__status {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -260,9 +225,9 @@ watch(
   font-size: 12px;
 }
 
-.repo-notification-card__unavailable,
-.repo-notification-card__error p,
-.repo-notification-card__customize-error {
+.repo-notification-prefs__note,
+.repo-notification-prefs__error p,
+.repo-notification-prefs__error-text {
   margin: 0;
   color: var(--text-muted);
   font-size: 12px;
@@ -270,7 +235,7 @@ watch(
   overflow-wrap: anywhere;
 }
 
-.repo-notification-card__control-label {
+.repo-notification-prefs__control {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -278,28 +243,21 @@ watch(
   font-size: 12px;
 }
 
-.repo-notification-card__error {
+.repo-notification-prefs__error {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
 
-.repo-notification-card__error p,
-.repo-notification-card__customize-error {
+.repo-notification-prefs__error p,
+.repo-notification-prefs__error-text {
   color: var(--err);
 }
 
-.repo-notification-card__footer {
+.repo-notification-prefs__footer {
   display: grid;
   justify-items: start;
   gap: 6px;
-  min-height: 30px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .repo-notification-card :deep(*) {
-    transition-duration: 0s !important;
-  }
 }
 </style>
