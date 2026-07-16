@@ -581,6 +581,8 @@ pub struct GitHubRepoSummary {
     pub full_name: String,
     pub owner_login: String,
     pub private: bool,
+    #[serde(default)]
+    pub visibility: Option<String>,
     pub disabled: bool,
     pub archived: bool,
     #[serde(default)]
@@ -592,9 +594,147 @@ pub struct GitHubRepoSummary {
     pub clone_url: String,
     pub html_url: String,
     #[serde(default)]
+    pub fork: bool,
+    #[serde(default)]
+    pub is_template: bool,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub topics: Vec<String>,
+    #[serde(default)]
+    pub stargazers_count: u64,
+    #[serde(default)]
+    pub forks_count: u64,
+    #[serde(default)]
+    pub license_spdx_id: Option<String>,
+    #[serde(default)]
     pub owner: Option<GitHubRepositoryOwner>,
     #[serde(default)]
     pub permissions: Option<GitHubRepositoryPermissions>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubOrganizationProfileView {
+    #[default]
+    Public,
+    Member,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubOrganizationSectionStatus {
+    Ready,
+    Empty,
+    #[default]
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationProfile {
+    pub login: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub html_url: String,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub website_url: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub twitter_username: Option<String>,
+    #[serde(default)]
+    pub followers: u64,
+    #[serde(default)]
+    pub public_repo_count: u64,
+    #[serde(default)]
+    pub total_repo_count: Option<u64>,
+    #[serde(default)]
+    pub is_verified: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationMember {
+    pub login: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
+    pub html_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationReadmeSection {
+    pub status: GitHubOrganizationSectionStatus,
+    #[serde(default)]
+    pub preview: Option<RepoFilePreview>,
+    #[serde(default)]
+    pub source_repo: Option<String>,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubOrganizationFeaturedSource {
+    Pinned,
+    Popular,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationFeaturedSection {
+    pub status: GitHubOrganizationSectionStatus,
+    #[serde(default)]
+    pub source: Option<GitHubOrganizationFeaturedSource>,
+    #[serde(default)]
+    pub items: Vec<GitHubRepoSummary>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationRepositorySection {
+    pub status: GitHubOrganizationSectionStatus,
+    #[serde(default)]
+    pub items: Vec<GitHubRepoSummary>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationMembersSection {
+    pub status: GitHubOrganizationSectionStatus,
+    #[serde(default)]
+    pub items: Vec<GitHubOrganizationMember>,
+    #[serde(default)]
+    pub total_count: u64,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubOrganizationOverview {
+    pub effective_view: GitHubOrganizationProfileView,
+    #[serde(default)]
+    pub member_view_available: bool,
+    pub readme: GitHubOrganizationReadmeSection,
+    pub featured: GitHubOrganizationFeaturedSection,
+    pub recent: GitHubOrganizationRepositorySection,
+    pub members: GitHubOrganizationMembersSection,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]

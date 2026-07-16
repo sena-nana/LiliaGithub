@@ -26,6 +26,9 @@ import type {
   GitHubIssueDiscussion,
   GitHubIssueFilterMetadata,
   GitHubMergePullRequestRequest,
+  GitHubOrganizationOverview,
+  GitHubOrganizationProfile,
+  GitHubOrganizationProfileView,
   GitHubPullRequest,
   GitHubPullRequestCheck,
   GitHubPullRequestDiscussion,
@@ -172,6 +175,11 @@ export interface WorkspaceCommandContracts {
   github_update_account_profile: CommandContract<
     { request: GitHubUpdateAccountProfileRequest },
     GitHubAccountProfile
+  >;
+  github_get_organization_profile: CommandContract<{ login: string }, GitHubOrganizationProfile>;
+  github_get_organization_overview: CommandContract<
+    { login: string; view: GitHubOrganizationProfileView },
+    GitHubOrganizationOverview
   >;
   github_list_repos: CommandContract<{
     scope: GitHubRepositoryScope;

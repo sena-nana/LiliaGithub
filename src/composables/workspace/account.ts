@@ -1,6 +1,9 @@
 import type {
   AccountPreferences,
   GitHubAccountProfile,
+  GitHubOrganizationOverview,
+  GitHubOrganizationProfile,
+  GitHubOrganizationProfileView,
   GitHubRepoOwner,
   GitHubRepositorySubscription,
   GitHubRepositorySubscriptionMode,
@@ -52,6 +55,19 @@ export async function updateAccountProfile(
 ): Promise<GitHubAccountProfile> {
   const service = await loadWorkspaceService();
   return service.updateGitHubAccountProfile(request);
+}
+
+export async function getOrganizationProfile(login: string): Promise<GitHubOrganizationProfile> {
+  const service = await loadWorkspaceService();
+  return service.getGitHubOrganizationProfile(login);
+}
+
+export async function getOrganizationOverview(
+  login: string,
+  view: GitHubOrganizationProfileView,
+): Promise<GitHubOrganizationOverview> {
+  const service = await loadWorkspaceService();
+  return service.getGitHubOrganizationOverview(login, view);
 }
 
 export async function getAccountRepositoryOwners(): Promise<GitHubRepoOwner[]> {

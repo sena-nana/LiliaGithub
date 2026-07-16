@@ -112,6 +112,8 @@ import {
 import {
   getAccountProfile,
   getAccountRepositoryOwners,
+  getOrganizationOverview,
+  getOrganizationProfile,
   getGitHubRepositorySubscription,
   listGitHubWatchedRepos,
   pickAccountWorkspaceRoot,
@@ -221,6 +223,8 @@ export function useWorkspace() {
     copyText,
     getAccountProfile,
     getAccountRepositoryOwners,
+    getOrganizationProfile,
+    getOrganizationOverview,
     listGitHubWatchedRepos,
     getGitHubRepositorySubscription,
     updateGitHubRepositorySubscription,

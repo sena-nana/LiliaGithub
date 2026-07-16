@@ -10,6 +10,9 @@ use super::github::{
     github_contribution_result, github_development_items_from_timeline,
     github_file_preview_from_content, github_graphql_errors_require_read_project,
     github_issue_cache_key, github_issue_from_response, github_issue_project_items_from_graphql,
+    github_organization_graphql_repositories, github_organization_profile_from_response,
+    github_organization_readme_image_path,
+    github_organization_repository_visibility_is_public,
     github_project_cache_repo_key, github_pull_request_cache_key,
     github_pull_request_reviewers_from_requested, github_pull_request_search_query,
     github_pull_request_search_required, github_release_asset_bytes, github_release_asset_name,
@@ -28,6 +31,8 @@ use super::github::{
     GitHubContentListItem, GitHubGraphQlError, GitHubIssueMilestoneResponse,
     GitHubIssueProjectsGraphQlData, GitHubIssueResponse, GitHubIssueTimelineResponse,
     GitHubIssueTimelineSourceIssueResponse, GitHubIssueTimelineSourceResponse, GitHubLabelResponse,
+    GitHubOrganizationGraphQlOrganization, GitHubOrganizationGraphQlRepositoryConnection,
+    GitHubOrganizationProfileResponse, GitHubOrganizationRepositoryVisibilityResponse,
     GitHubPullRequestReviewCommentResponse, GitHubPullRequestReviewResponse,
     GitHubPullRequestUserResponse, GitHubReleaseAssetResponse, GitHubReleaseResponse,
     GitHubReleaseUserResponse, GitHubRepoLicenseResponse, GitHubRepoOwnerResponse,
@@ -86,7 +91,8 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{
     CachedRepoSummary, ContributionIdentity, ContributionIdentityRecommendationConfidence,
     GitHubBindingMetadata, GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue,
-    GitHubOwnerKind, GitHubProjectCache, GitHubPullRequest, GitHubRelease, GitHubReleaseAsset,
+    GitHubOrganizationProfileView, GitHubOwnerKind, GitHubProjectCache, GitHubPullRequest,
+    GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoWorkflowPermissionsRequest,
     GitHubRepositoryOwner, GitHubUpdateRepoSettingsRequest, LanguageStat,
     LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut, RepoConflictChoice,
@@ -1069,6 +1075,7 @@ fn github_repo_management_maps_license() {
             visibility: Some("public".to_string()),
             disabled: false,
             archived: false,
+            fork: false,
             is_template: false,
             description: Some("Repository".to_string()),
             default_branch: Some("main".to_string()),
@@ -1076,6 +1083,8 @@ fn github_repo_management_maps_license() {
             updated_at: "2026-06-18T08:00:00Z".to_string(),
             clone_url: "https://github.com/a/repo.git".to_string(),
             html_url: "https://github.com/a/repo".to_string(),
+            language: Some("Rust".to_string()),
+            topics: vec!["tauri".to_string()],
             owner: GitHubRepoOwnerResponse {
                 login: "a".to_string(),
                 account_type: None,
@@ -1118,6 +1127,164 @@ fn github_repo_management_maps_license() {
     assert_eq!(
         management.license.unwrap().spdx_id.as_deref(),
         Some("BSD-3-Clause")
+    );
+}
+
+#[test]
+fn github_organization_profile_maps_public_and_optional_fields() {
+    let profile = github_organization_profile_from_response(GitHubOrganizationProfileResponse {
+        login: "lilia".to_string(),
+        name: Some(" Lilia Organization ".to_string()),
+        avatar_url: Some("https://avatars.example/lilia".to_string()),
+        description: Some(" ".to_string()),
+        html_url: "https://github.com/lilia".to_string(),
+        location: Some("Shanghai".to_string()),
+        blog: Some("https://lilia.example".to_string()),
+        email: Some("hello@lilia.example".to_string()),
+        twitter_username: None,
+        followers: 42,
+        public_repos: 12,
+        total_private_repos: Some(5),
+        is_verified: true,
+    });
+
+    assert_eq!(profile.name.as_deref(), Some("Lilia Organization"));
+    assert_eq!(profile.description, None);
+    assert_eq!(profile.public_repo_count, 12);
+    assert_eq!(profile.total_repo_count, Some(17));
+    assert!(profile.is_verified);
+}
+
+#[test]
+fn github_organization_public_view_excludes_internal_and_invalid_repositories() {
+    let repositories = serde_json::json!({
+        "nodes": [
+            {
+                "databaseId": 1,
+                "name": "Public",
+                "nameWithOwner": "lilia/Public",
+                "visibility": "PUBLIC",
+                "isPrivate": false,
+                "isFork": true,
+                "isTemplate": true,
+                "description": "Public repository",
+                "createdAt": "2026-07-01T00:00:00Z",
+                "updatedAt": "2026-07-15T00:00:00Z",
+                "url": "https://github.com/lilia/Public",
+                "owner": { "__typename": "Organization", "login": "lilia", "avatarUrl": null },
+                "primaryLanguage": { "name": "Rust" },
+                "repositoryTopics": { "nodes": [{ "topic": { "name": "tauri" } }] },
+                "stargazerCount": 12,
+                "forkCount": 3,
+                "licenseInfo": { "spdxId": "MIT" },
+                "viewerPermission": "WRITE"
+            },
+            {
+                "databaseId": 2,
+                "name": "Internal",
+                "nameWithOwner": "lilia/Internal",
+                "visibility": "INTERNAL",
+                "isPrivate": false,
+                "createdAt": "2026-07-01T00:00:00Z",
+                "updatedAt": "2026-07-14T00:00:00Z",
+                "url": "https://github.com/lilia/Internal",
+                "owner": { "__typename": "Organization", "login": "lilia", "avatarUrl": null },
+                "repositoryTopics": { "nodes": [] }
+            },
+            {
+                "databaseId": null,
+                "name": "MissingId",
+                "nameWithOwner": "lilia/MissingId",
+                "visibility": "PUBLIC",
+                "createdAt": "2026-07-01T00:00:00Z",
+                "updatedAt": "2026-07-13T00:00:00Z",
+                "url": "https://github.com/lilia/MissingId",
+                "owner": { "__typename": "Organization", "login": "lilia", "avatarUrl": null },
+                "repositoryTopics": { "nodes": [] }
+            }
+        ]
+    });
+    let public_connection: GitHubOrganizationGraphQlRepositoryConnection =
+        serde_json::from_value(repositories.clone()).unwrap();
+    let member_connection: GitHubOrganizationGraphQlRepositoryConnection =
+        serde_json::from_value(repositories).unwrap();
+
+    let public_repositories = github_organization_graphql_repositories(
+        public_connection,
+        GitHubOrganizationProfileView::Public,
+    );
+    assert_eq!(public_repositories.len(), 1);
+    assert_eq!(public_repositories[0].full_name, "lilia/Public");
+    assert_eq!(public_repositories[0].visibility.as_deref(), Some("public"));
+    assert!(public_repositories[0].fork);
+    assert!(public_repositories[0].is_template);
+    assert_eq!(public_repositories[0].language.as_deref(), Some("Rust"));
+    assert_eq!(public_repositories[0].topics, vec!["tauri"]);
+    assert_eq!(public_repositories[0].stargazers_count, 12);
+    assert_eq!(public_repositories[0].forks_count, 3);
+    assert_eq!(public_repositories[0].license_spdx_id.as_deref(), Some("MIT"));
+
+    let member_repositories = github_organization_graphql_repositories(
+        member_connection,
+        GitHubOrganizationProfileView::Member,
+    );
+    assert_eq!(member_repositories.len(), 2);
+    assert!(member_repositories.iter().any(|repo| repo.full_name == "lilia/Internal"));
+}
+
+#[test]
+fn github_organization_partial_graphql_sections_deserialize_independently() {
+    let organization: GitHubOrganizationGraphQlOrganization = serde_json::from_value(
+        serde_json::json!({
+            "itemShowcase": null,
+            "popularRepositories": null,
+            "recentRepositories": { "nodes": [] }
+        }),
+    )
+    .unwrap();
+
+    assert!(organization.popular_repositories.is_none());
+    assert!(organization.recent_repositories.is_some());
+}
+
+#[test]
+fn github_organization_public_readme_requires_public_repository_visibility() {
+    let public = GitHubOrganizationRepositoryVisibilityResponse {
+        private: false,
+        visibility: Some("public".to_string()),
+    };
+    let internal = GitHubOrganizationRepositoryVisibilityResponse {
+        private: false,
+        visibility: Some("internal".to_string()),
+    };
+    let private = GitHubOrganizationRepositoryVisibilityResponse {
+        private: true,
+        visibility: Some("private".to_string()),
+    };
+    let unknown = GitHubOrganizationRepositoryVisibilityResponse {
+        private: false,
+        visibility: None,
+    };
+
+    assert!(github_organization_repository_visibility_is_public(&public));
+    assert!(!github_organization_repository_visibility_is_public(&internal));
+    assert!(!github_organization_repository_visibility_is_public(&private));
+    assert!(!github_organization_repository_visibility_is_public(&unknown));
+}
+
+#[test]
+fn github_organization_readme_images_stay_within_the_source_repository() {
+    assert_eq!(
+        github_organization_readme_image_path("profile/README.md", "images/logo.png"),
+        Some("profile/images/logo.png".to_string())
+    );
+    assert_eq!(
+        github_organization_readme_image_path("profile/README.md", "/assets/logo.png"),
+        Some("assets/logo.png".to_string())
+    );
+    assert_eq!(
+        github_organization_readme_image_path("profile/README.md", "../../secret.png"),
+        None
     );
 }
 
@@ -4309,6 +4476,7 @@ fn maps_github_workflow_definition_from_content_file() {
             encoding: Some("base64".to_string()),
             content: Some("bmFtZTogQ0kK".to_string()),
             size: Some(9),
+            html_url: None,
         },
     )
     .unwrap()
@@ -4331,6 +4499,7 @@ fn ignores_github_workflow_definition_without_path() {
             encoding: Some("base64".to_string()),
             content: Some("bmFtZTogQ0kK".to_string()),
             size: Some(9),
+            html_url: None,
         },
     )
     .unwrap();
@@ -4622,6 +4791,7 @@ fn github_content_files_map_to_repo_tree_and_preview_kinds() {
             encoding: Some("base64".to_string()),
             content: Some(STANDARD.encode("# Title\n")),
             size: Some(8),
+            html_url: None,
         },
     )
     .unwrap();
@@ -4636,6 +4806,7 @@ fn github_content_files_map_to_repo_tree_and_preview_kinds() {
             encoding: Some("base64".to_string()),
             content: Some(STANDARD.encode([1_u8, 2, 3])),
             size: Some(3),
+            html_url: None,
         },
     )
     .unwrap();
@@ -4653,6 +4824,7 @@ fn github_content_files_map_to_repo_tree_and_preview_kinds() {
             encoding: Some("none".to_string()),
             content: None,
             size: Some((1024 * 1024) + 1),
+            html_url: None,
         },
     )
     .unwrap();

@@ -55,6 +55,8 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_unbind",
     "github_get_account_profile",
     "github_update_account_profile",
+    "github_get_organization_profile",
+    "github_get_organization_overview",
     "github_list_repos",
     "github_list_watched_repos",
     "github_get_repo_subscription",
