@@ -91,6 +91,7 @@ import type {
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
   WorkspaceTask,
+  WorkspaceCloneResult,
   WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
@@ -137,8 +138,12 @@ export interface WorkspaceCommandContracts {
   workspace_discover_repos: CommandContract<NoArgs, RepoSummary[]>;
   workspace_add_repo: CommandContract<{ repoPath: string }, RepoSummary>;
   workspace_create_local_repo: CommandContract<{ request: WorkspaceCreateLocalRepoRequest }, RepoSummary>;
-  workspace_clone_repo: CommandContract<{ request: WorkspaceCloneRepoRequest }, RepoSummary>;
+  workspace_clone_repo: CommandContract<{ request: WorkspaceCloneRepoRequest }, WorkspaceCloneResult>;
   workspace_hide_repo: CommandContract<RepoArg, WorkspaceSettings>;
+  workspace_reconcile_organization_repo_groups: CommandContract<
+    { organizationLogins: string[] },
+    WorkspaceSettings
+  >;
   workspace_create_repo_group: CommandContract<{ name: string }, WorkspaceSettings>;
   workspace_rename_repo_group: CommandContract<{ groupId: string; name: string }, WorkspaceSettings>;
   workspace_delete_repo_group: CommandContract<{ groupId: string }, WorkspaceSettings>;

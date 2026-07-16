@@ -24,8 +24,9 @@ use lilia_github_contracts::workspace::{
     AccountPreferences, CachedContributionResult, CachedRepoSummary, ContributionIdentity,
     ContributionIdentityRecommendation, ContributionIdentityRecommendationConfidence,
     ContributionIdentityRecommendationRepo, ContributionIdentityRecommendationResult,
-    ContributionIdentityRecommendationSource, HiddenRepo, RemoteRepoShortcut, RepoRemoteSyncConfig,
-    RepoRemoteSyncPolicy, RepoSummary, RepoSyncPreference, WorkspaceRepoGroup, WorkspaceSettings,
+    ContributionIdentityRecommendationSource, GitHubOwnerKind, HiddenRepo, RemoteRepoShortcut,
+    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoSyncPreference,
+    WorkspaceCloneRepositoryRef, WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceSettings,
     WorkspaceStartupCache, WorkspaceStartupContributions,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
@@ -65,7 +66,7 @@ fn startup_cache_write_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn settings_write_lock() -> &'static Mutex<()> {
+pub(super) fn settings_write_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -472,6 +473,7 @@ pub(super) fn create_repo_group(
     let group = WorkspaceRepoGroup {
         id: next_repo_group_id(settings),
         name: normalized.to_string(),
+        organization_login: None,
         repo_ids: Vec::new(),
     };
     settings.repo_groups.push(group.clone());
@@ -522,15 +524,20 @@ pub(super) fn delete_repo_group(
     if normalized.is_empty() {
         return Err("分组 ID 不能为空".to_string());
     }
-    let before = settings.repo_groups.len();
-    settings.repo_groups.retain(|group| group.id != normalized);
-    if settings.repo_groups.len() == before {
-        return Err("未找到仓库分组".to_string());
+    let deleted_repo_ids = settings
+        .repo_groups
+        .iter()
+        .find(|group| group.id == normalized)
+        .map(|group| group.repo_ids.clone())
+        .ok_or_else(|| "未找到仓库分组".to_string())?;
+    for repo_id in deleted_repo_ids {
+        mark_organization_grouping_resolved(settings, &repo_id);
     }
+    settings.repo_groups.retain(|group| group.id != normalized);
     Ok(())
 }
 
-pub(super) fn move_repo_to_group(
+fn move_repo_membership(
     settings: &mut WorkspaceSettings,
     repo_id: &str,
     group_id: Option<&str>,
@@ -563,6 +570,181 @@ pub(super) fn move_repo_to_group(
             sort_dedup(&mut group.repo_ids);
         }
     }
+    Ok(())
+}
+
+fn mark_organization_grouping_resolved(settings: &mut WorkspaceSettings, repo_id: &str) {
+    let repo_id = repo_id.trim();
+    if repo_id.is_empty() {
+        return;
+    }
+    if !settings
+        .organization_grouping_resolved_repo_ids
+        .iter()
+        .any(|id| id == repo_id)
+    {
+        settings
+            .organization_grouping_resolved_repo_ids
+            .push(repo_id.to_string());
+        sort_dedup(&mut settings.organization_grouping_resolved_repo_ids);
+    }
+}
+
+fn repo_has_group(settings: &WorkspaceSettings, repo_id: &str) -> bool {
+    settings
+        .repo_groups
+        .iter()
+        .any(|group| group.repo_ids.iter().any(|id| id == repo_id))
+}
+
+fn ensure_organization_repo_group(
+    settings: &mut WorkspaceSettings,
+    organization_login: &str,
+) -> Result<String, String> {
+    let login = organization_login.trim();
+    if login.is_empty() {
+        return Err("组织 login 不能为空".to_string());
+    }
+    if let Some(group) = settings.repo_groups.iter().find(|group| {
+        group
+            .organization_login
+            .as_deref()
+            .is_some_and(|current| current.eq_ignore_ascii_case(login))
+    }) {
+        return Ok(group.id.clone());
+    }
+    if let Some(group) = settings.repo_groups.iter_mut().find(|group| {
+        group.organization_login.is_none() && group.name.trim().eq_ignore_ascii_case(login)
+    }) {
+        group.organization_login = Some(login.to_string());
+        return Ok(group.id.clone());
+    }
+    let group = create_repo_group(settings, login)?;
+    let group_id = group.id;
+    if let Some(group) = settings
+        .repo_groups
+        .iter_mut()
+        .find(|group| group.id == group_id)
+    {
+        group.organization_login = Some(login.to_string());
+    }
+    Ok(group_id)
+}
+
+pub(super) fn reconcile_organization_repo_groups(
+    settings: &mut WorkspaceSettings,
+    organization_logins: &[String],
+) -> Result<(), String> {
+    let mut organizations = HashMap::new();
+    for login in organization_logins {
+        let login = login.trim();
+        if !login.is_empty() {
+            organizations
+                .entry(login.to_ascii_lowercase())
+                .or_insert_with(|| login.to_string());
+        }
+    }
+    let mut repo_ids = settings.managed_repo_ids.clone();
+    sort_dedup(&mut repo_ids);
+    for repo_id in repo_ids {
+        if settings
+            .organization_grouping_resolved_repo_ids
+            .iter()
+            .any(|id| id == &repo_id)
+        {
+            continue;
+        }
+        if repo_has_group(settings, &repo_id) {
+            mark_organization_grouping_resolved(settings, &repo_id);
+            continue;
+        }
+        let organization_login = settings
+            .repo_bindings
+            .get(&repo_id)
+            .and_then(|binding| binding.remote_full_name.split_once('/'))
+            .map(|(owner, _)| owner.trim().to_ascii_lowercase())
+            .and_then(|owner| organizations.get(&owner).cloned());
+        if let Some(login) = organization_login {
+            let group_id = ensure_organization_repo_group(settings, &login)?;
+            move_repo_membership(settings, &repo_id, Some(&group_id))?;
+            mark_organization_grouping_resolved(settings, &repo_id);
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn apply_repo_placement(
+    settings: &mut WorkspaceSettings,
+    repo_id: &str,
+    repository: Option<&WorkspaceCloneRepositoryRef>,
+    placement: &WorkspaceRepoPlacement,
+) -> Result<(), String> {
+    validate_repo_placement(settings, placement)?;
+    match placement {
+        WorkspaceRepoPlacement::Ungrouped => {
+            move_repo_membership(settings, repo_id, None)?;
+            mark_organization_grouping_resolved(settings, repo_id);
+        }
+        WorkspaceRepoPlacement::Group { group_id } => {
+            move_repo_membership(settings, repo_id, Some(group_id))?;
+            mark_organization_grouping_resolved(settings, repo_id);
+        }
+        WorkspaceRepoPlacement::Automatic => {
+            if settings
+                .organization_grouping_resolved_repo_ids
+                .iter()
+                .any(|id| id == repo_id)
+            {
+                return Ok(());
+            }
+            if repo_has_group(settings, repo_id) {
+                mark_organization_grouping_resolved(settings, repo_id);
+                return Ok(());
+            }
+            let Some(owner) = repository.and_then(|repository| repository.owner.as_ref()) else {
+                return Ok(());
+            };
+            match owner.kind {
+                GitHubOwnerKind::Organization => {
+                    let login = owner.login.trim();
+                    if login.is_empty() {
+                        return Ok(());
+                    }
+                    let group_id = ensure_organization_repo_group(settings, login)?;
+                    move_repo_membership(settings, repo_id, Some(&group_id))?;
+                    mark_organization_grouping_resolved(settings, repo_id);
+                }
+                GitHubOwnerKind::User => {
+                    move_repo_membership(settings, repo_id, None)?;
+                    mark_organization_grouping_resolved(settings, repo_id);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_repo_placement(
+    settings: &WorkspaceSettings,
+    placement: &WorkspaceRepoPlacement,
+) -> Result<(), String> {
+    let WorkspaceRepoPlacement::Group { group_id } = placement else {
+        return Ok(());
+    };
+    let group_id = group_id.trim();
+    if group_id.is_empty() || !settings.repo_groups.iter().any(|group| group.id == group_id) {
+        return Err("未找到仓库分组".to_string());
+    }
+    Ok(())
+}
+
+pub(super) fn move_repo_to_group(
+    settings: &mut WorkspaceSettings,
+    repo_id: &str,
+    group_id: Option<&str>,
+) -> Result<(), String> {
+    move_repo_membership(settings, repo_id, group_id)?;
+    mark_organization_grouping_resolved(settings, repo_id);
     Ok(())
 }
 
@@ -721,6 +903,9 @@ pub(super) fn prune_deleted_repo_settings(settings: &mut WorkspaceSettings, repo
     settings.system_git_repo_ids.retain(|id| id != repo_id);
     settings.repo_bindings.remove(repo_id);
     settings.favorite_repo_ids.retain(|id| id != repo_id);
+    settings
+        .organization_grouping_resolved_repo_ids
+        .retain(|id| id != repo_id);
     for group in &mut settings.repo_groups {
         group.repo_ids.retain(|id| id != repo_id);
     }
@@ -1420,6 +1605,19 @@ pub fn workspace_move_repo_to_group(
         .unwrap_or_else(|error| error.into_inner());
     let mut settings = load_settings(&app);
     move_repo_to_group(&mut settings, normalized, group_id.as_deref())?;
+    save_settings(&app, &settings)?;
+    Ok(visible_workspace_settings(settings))
+}
+
+pub fn workspace_reconcile_organization_repo_groups(
+    app: AppHandle,
+    organization_logins: Vec<String>,
+) -> Result<WorkspaceSettings, String> {
+    let _guard = settings_write_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut settings = load_settings(&app);
+    reconcile_organization_repo_groups(&mut settings, &organization_logins)?;
     save_settings(&app, &settings)?;
     Ok(visible_workspace_settings(settings))
 }

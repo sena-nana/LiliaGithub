@@ -7,19 +7,26 @@ import type {
   GitHubRepoOwner,
   GitHubRepoSummary,
   GitHubRepositoryScope,
+  WorkspaceRepoPlacement,
 } from "../../services/workspace";
 import GitHubRepositoryScopeControl from "../github/GitHubRepositoryScopeControl.vue";
 import GitHubRepositoryStateNotice from "../github/GitHubRepositoryStateNotice.vue";
 import { githubRepositoryPermissionLabel } from "../../utils/githubRepositoryScope";
 import { githubRepositoryIdentityKey } from "../../utils/remoteRepo";
+import {
+  AUTOMATIC_REPO_GROUP_VALUE,
+  UNGROUPED_REPO_GROUP_VALUE,
+  organizationGroup,
+  repoPlacementFromValue,
+  repoPlacementValue,
+} from "../../utils/repoGroupPlacement";
 
 type RepoCloneGroup = {
   readonly id: string;
   readonly name: string;
   readonly repoIds: readonly string[];
+  readonly organizationLogin?: string | null;
 };
-
-const UNGROUPED_REPO_GROUP_VALUE = "__ungrouped__";
 
 const props = defineProps<{
   busy: boolean;
@@ -49,7 +56,8 @@ const props = defineProps<{
   localRepoFullNames: readonly string[];
   repoLoaded: boolean;
   repoGroups: readonly RepoCloneGroup[];
-  selectedGroupId: string | null;
+  placement: WorkspaceRepoPlacement;
+  defaultOrganizationLogin: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -63,7 +71,7 @@ const emit = defineEmits<{
   selectRepo: [repo: GitHubRepoSummary];
   updateRemoteUrl: [value: string];
   updateDirectoryName: [value: string];
-  updateSelectedGroup: [groupId: string | null];
+  updatePlacement: [placement: WorkspaceRepoPlacement];
   markDirectoryTouched: [];
   clearSelectedRepo: [];
   updateRepositoryScope: [scope: GitHubRepositoryScope];
@@ -72,24 +80,34 @@ const emit = defineEmits<{
 }>();
 
 const cloneInput = ref<HTMLInputElement | null>(null);
+const defaultOrganizationGroup = computed(() =>
+  organizationGroup(props.repoGroups, props.defaultOrganizationLogin)
+);
 const repoGroupOptions = computed(() => [
   {
+    value: AUTOMATIC_REPO_GROUP_VALUE,
+    label: defaultOrganizationGroup.value?.name ?? props.defaultOrganizationLogin ?? "未分组仓库",
+    hint: "默认",
+    agentId: "clone-repo.group.option.automatic",
+  },
+  ...(props.defaultOrganizationLogin ? [{
     value: UNGROUPED_REPO_GROUP_VALUE,
     label: "未分组仓库",
-    hint: "默认",
     agentId: "clone-repo.group.option.ungrouped",
-  },
-  ...props.repoGroups.map((group) => ({
-    value: group.id,
-    label: group.name,
-    hint: `${group.repoIds.length} 个仓库`,
-    agentId: `clone-repo.group.option.${group.id}`,
-  })),
+  }] : []),
+  ...props.repoGroups
+    .filter((group) => group.id !== defaultOrganizationGroup.value?.id)
+    .map((group) => ({
+      value: group.id,
+      label: group.name,
+      hint: `${group.repoIds.length} 个仓库`,
+      agentId: `clone-repo.group.option.${group.id}`,
+    })),
 ]);
 const selectedGroupValue = computed({
-  get: () => props.selectedGroupId ?? UNGROUPED_REPO_GROUP_VALUE,
+  get: () => repoPlacementValue(props.placement),
   set: (value: string) => {
-    emit("updateSelectedGroup", value === UNGROUPED_REPO_GROUP_VALUE ? null : value);
+    emit("updatePlacement", repoPlacementFromValue(value));
   },
 });
 const localRepoIdentityKeys = computed(() => new Set(props.localRepoFullNames.map(githubRepositoryIdentityKey)));

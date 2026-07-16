@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   cloneRepo,
+  createLocalRepo,
+  createRepoGroup,
   deleteLocalRepo,
   forgetRemoteRepo,
   getWorkspaceSettings,
+  reconcileOrganizationRepoGroups,
   rememberRemoteRepo,
+  renameRepoGroup,
   workspaceFallbackForTests,
 } from "../src/services/workspace";
 
@@ -14,13 +18,14 @@ describe("workspace repository binding fallback", () => {
   });
 
   it("persists canonical identity for clone and removes it with the local repo", async () => {
-    const summary = await cloneRepo({
+    const { repo: summary } = await cloneRepo({
       remoteUrl: "binding-org/canonical-repo",
       repository: {
         id: 90210,
         fullName: "binding-org/canonical-repo",
         cloneUrl: "https://github.com/binding-org/canonical-repo.git",
       },
+      placement: { kind: "automatic" },
       target: { kind: "default" },
     });
 
@@ -39,6 +44,124 @@ describe("workspace repository binding fallback", () => {
 
     await deleteLocalRepo(summary.id);
     expect((await getWorkspaceSettings()).repoBindings[summary.id]).toBeUndefined();
+  });
+
+  it("creates one persistent group per organization and reuses it after rename", async () => {
+    const first = await cloneRepo({
+      remoteUrl: "https://github.com/Binding-Org/first.git",
+      repository: {
+        id: 91001,
+        fullName: "Binding-Org/first",
+        cloneUrl: "https://github.com/Binding-Org/first.git",
+        owner: { login: "Binding-Org", kind: "organization", avatarUrl: null },
+      },
+      placement: { kind: "automatic" },
+      target: { kind: "default" },
+    });
+    const organizationGroup = first.settings.repoGroups.find((group) =>
+      group.organizationLogin?.toLocaleLowerCase() === "binding-org"
+    );
+    expect(organizationGroup).toMatchObject({ name: "Binding-Org", repoIds: [first.repo.id] });
+
+    await renameRepoGroup(organizationGroup!.id, "核心项目");
+    const second = await cloneRepo({
+      remoteUrl: "https://github.com/binding-org/second.git",
+      repository: {
+        id: 91002,
+        fullName: "binding-org/second",
+        cloneUrl: "https://github.com/binding-org/second.git",
+        owner: { login: "binding-org", kind: "organization", avatarUrl: null },
+      },
+      placement: { kind: "automatic" },
+      target: { kind: "default" },
+    });
+
+    expect(second.settings.repoGroups).toEqual([
+      expect.objectContaining({
+        id: organizationGroup!.id,
+        name: "核心项目",
+        organizationLogin: "Binding-Org",
+        repoIds: [first.repo.id, second.repo.id],
+      }),
+    ]);
+  });
+
+  it("keeps explicit ungrouped and custom placements after organization reconciliation", async () => {
+    const customSettings = await createRepoGroup("自定义");
+    const customGroup = customSettings.repoGroups.find((group) => group.name === "自定义")!;
+    const owner = { login: "binding-org", kind: "organization" as const, avatarUrl: null };
+    const ungrouped = await cloneRepo({
+      remoteUrl: "https://github.com/binding-org/ungrouped.git",
+      repository: {
+        id: 92001,
+        fullName: "binding-org/ungrouped",
+        cloneUrl: "https://github.com/binding-org/ungrouped.git",
+        owner,
+      },
+      placement: { kind: "ungrouped" },
+      target: { kind: "default" },
+    });
+    const custom = await cloneRepo({
+      remoteUrl: "https://github.com/binding-org/custom.git",
+      repository: {
+        id: 92002,
+        fullName: "binding-org/custom",
+        cloneUrl: "https://github.com/binding-org/custom.git",
+        owner,
+      },
+      placement: { kind: "group", groupId: customGroup.id },
+      target: { kind: "default" },
+    });
+
+    const reconciled = await reconcileOrganizationRepoGroups(["Binding-Org"]);
+    expect(reconciled.repoGroups.find((group) => group.id === customGroup.id)?.repoIds).toEqual([custom.repo.id]);
+    expect(reconciled.repoGroups.every((group) => !group.repoIds.includes(ungrouped.repo.id))).toBe(true);
+    expect(reconciled.organizationGroupingResolvedRepoIds).toEqual(
+      expect.arrayContaining([ungrouped.repo.id, custom.repo.id]),
+    );
+  });
+
+  it("defers unknown owners until organization data is complete and leaves personal or local repos ungrouped", async () => {
+    const pending = await cloneRepo({
+      remoteUrl: "https://github.com/binding-org/pending.git",
+      repository: {
+        id: 93001,
+        fullName: "binding-org/pending",
+        cloneUrl: "https://github.com/binding-org/pending.git",
+      },
+      placement: { kind: "automatic" },
+      target: { kind: "default" },
+    });
+    expect(pending.settings.repoGroups).toEqual([]);
+    expect(pending.settings.organizationGroupingResolvedRepoIds).not.toContain(pending.repo.id);
+
+    const incomplete = await reconcileOrganizationRepoGroups([]);
+    expect(incomplete.repoGroups).toEqual([]);
+    expect(incomplete.organizationGroupingResolvedRepoIds).not.toContain(pending.repo.id);
+
+    const migrated = await reconcileOrganizationRepoGroups(["Binding-Org"]);
+    expect(migrated.repoGroups).toEqual([
+      expect.objectContaining({
+        organizationLogin: "Binding-Org",
+        repoIds: [pending.repo.id],
+      }),
+    ]);
+
+    const personal = await cloneRepo({
+      remoteUrl: "https://github.com/lilia-user/personal.git",
+      repository: {
+        id: 93002,
+        fullName: "lilia-user/personal",
+        cloneUrl: "https://github.com/lilia-user/personal.git",
+        owner: { login: "lilia-user", kind: "user", avatarUrl: null },
+      },
+      placement: { kind: "automatic" },
+      target: { kind: "default" },
+    });
+    const local = await createLocalRepo({ name: "local-only", addReadme: true });
+    const settings = await getWorkspaceSettings();
+    expect(settings.repoGroups.every((group) => !group.repoIds.includes(personal.repo.id))).toBe(true);
+    expect(settings.repoGroups.every((group) => !group.repoIds.includes(local.id))).toBe(true);
   });
 
   it("keeps remote shortcuts isolated by the bound account", async () => {

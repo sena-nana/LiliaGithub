@@ -62,6 +62,7 @@ import {
   type BulkOperation,
   type RepoPullLocalChangesMode,
   type RepoSummary,
+  type WorkspaceRepoPlacement,
   type WorkspaceSettings,
 } from "../services/workspace";
 import {
@@ -137,7 +138,7 @@ const searchOpen = ref(false);
 const searchQuery = ref("");
 const searchInput = ref<HTMLInputElement | null>(null);
 const cloneDialog = useCloneRepoDialog({
-  onCloned: placeCreatedRepo,
+  onCloned: placeClonedRepo,
 });
 const favoritePendingKeys = ref<Set<string>>(new Set());
 const favoriteError = ref<string | null>(null);
@@ -1758,8 +1759,8 @@ function openCreateRepoCard(mode: "local" | "remote") {
   createRepoCardOpen.value = true;
 }
 
-function openCloneRepoDialog(groupId: string | null = null) {
-  void cloneDialog.openDialog(groupId);
+function openCloneRepoDialog(placement: WorkspaceRepoPlacement = { kind: "automatic" }) {
+  void cloneDialog.openDialog(placement);
 }
 
 function closeCreateRepoCard() {
@@ -1774,7 +1775,6 @@ function createRepoMenuItems(): ContextMenuItem[] {
       icon: CloudDownload,
       disabled: !workspace.workspaceRoot.value,
       onSelect: () => openCloneRepoDialog(),
-      children: cloneRepoGroupMenuItems(),
     },
     {
       id: "home-create-local-repo",
@@ -1790,23 +1790,6 @@ function createRepoMenuItems(): ContextMenuItem[] {
       disabled: !workspace.workspaceRoot.value || !workspace.isAuthorized.value,
       onSelect: () => openCreateRepoCard("remote"),
     },
-  ];
-}
-
-function cloneRepoGroupMenuItems(): ContextMenuItem[] {
-  return [
-    {
-      id: "home-clone-repo-ungrouped",
-      label: "未分组仓库",
-      icon: FolderOpen,
-      onSelect: () => openCloneRepoDialog(null),
-    },
-    ...repoGroups.value.map((group) => ({
-      id: `home-clone-repo-${group.id}`,
-      label: group.name,
-      icon: FolderOpen,
-      onSelect: () => openCloneRepoDialog(group.id),
-    })),
   ];
 }
 
@@ -1828,8 +1811,13 @@ async function placeCreatedRepo(repo: RepoSummary, groupId: string | null = null
   await router.push(repoRoute(repo.id));
 }
 
-async function placeClonedCreatedRepo(repo: RepoSummary, _remote: GitHubRepoSummary, groupId: string | null) {
-  await placeCreatedRepo(repo, groupId);
+async function placeClonedRepo(repo: RepoSummary) {
+  commitHomeOverviewSnapshot();
+  await router.push(repoRoute(repo.id));
+}
+
+async function placeClonedCreatedRepo(repo: RepoSummary) {
+  await placeClonedRepo(repo);
 }
 
 async function discoverRepos() {
@@ -1920,7 +1908,13 @@ async function cloneGitHubRepo(repo: GitHubRepoSummary) {
   try {
     await workspace.cloneRepo({
       remoteUrl: repo.cloneUrl,
-      repository: { id: repo.id, fullName: repo.fullName, cloneUrl: repo.cloneUrl },
+      repository: {
+        id: repo.id,
+        fullName: repo.fullName,
+        cloneUrl: repo.cloneUrl,
+        owner: repo.owner ?? null,
+      },
+      placement: { kind: "automatic" },
       target: { kind: "default" },
     });
     await refreshHomeAfterRepoMutation();

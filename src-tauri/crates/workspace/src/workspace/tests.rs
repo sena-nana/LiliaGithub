@@ -68,11 +68,11 @@ use super::repos::{
 #[cfg(target_os = "windows")]
 use super::repos::{validate_clone_target_length, MAX_PORTABLE_CLONE_TARGET_UTF16};
 use super::settings::{
-    add_managed_repo_id, create_repo_group, delete_repo_group, load_settings,
+    add_managed_repo_id, apply_repo_placement, create_repo_group, delete_repo_group, load_settings,
     migrate_remote_repo_shortcuts, move_repo_to_group, prune_deleted_repo_settings,
-    remove_managed_repo_path, remove_system_git_repo_id, rename_repo_group, repo_path_from_id,
-    save_settings, scan_contribution_identity_recommendations, visible_workspace_settings,
-    workspace_set_root,
+    reconcile_organization_repo_groups, remove_managed_repo_path, remove_system_git_repo_id,
+    rename_repo_group, repo_path_from_id, save_settings,
+    scan_contribution_identity_recommendations, visible_workspace_settings, workspace_set_root,
 };
 use super::shared::{
     cached_local_contribution_count, collect_local_contribution_counts, compatible_path_text,
@@ -86,13 +86,14 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lilia_github_contracts::workspace::{
     CachedRepoSummary, ContributionIdentity, ContributionIdentityRecommendationConfidence,
     GitHubBindingMetadata, GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue,
-    GitHubProjectCache, GitHubPullRequest, GitHubRelease, GitHubReleaseAsset,
+    GitHubOwnerKind, GitHubProjectCache, GitHubPullRequest, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoWorkflowPermissionsRequest,
-    GitHubUpdateRepoSettingsRequest, LanguageStat, LocalContributionDayCache, ProjectLaunchConfig,
-    RemoteRepoShortcut, RepoConflictChoice, RepoPullLocalChangesMode, RepoRemoteBranchState,
-    RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoSummary, RepoWorktree,
-    WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef, WorkspaceCloneTarget,
-    WorkspaceRepoGroup, WorkspaceRepositoryBinding, WorkspaceSettings, WorkspaceStartupCache,
+    GitHubRepositoryOwner, GitHubUpdateRepoSettingsRequest, LanguageStat,
+    LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut, RepoConflictChoice,
+    RepoPullLocalChangesMode, RepoRemoteBranchState, RepoRemoteSyncConfig, RepoRemoteSyncPolicy,
+    RepoSummary, RepoWorktree, WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef,
+    WorkspaceCloneTarget, WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceRepositoryBinding,
+    WorkspaceSettings, WorkspaceStartupCache,
 };
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
@@ -923,6 +924,7 @@ fn favorites_and_workspace_groups_survive_settings_round_trip() {
         repo_groups: vec![WorkspaceRepoGroup {
             id: "daily".to_string(),
             name: "日常".to_string(),
+            organization_login: None,
             repo_ids: vec!["local/repo".to_string()],
         }],
         remote_repo_shortcuts: vec![remote],
@@ -2461,11 +2463,13 @@ fn plans_default_owner_group_and_preserves_custom_target_path() {
     let default = WorkspaceCloneRepoRequest {
         remote_url: "sena-nana/LiliaGithub".to_string(),
         repository: Some(WorkspaceCloneRepositoryRef {
-            id: 42,
+            id: Some(42),
             full_name: "example-org/LiliaGithub".to_string(),
             clone_url: "https://github.com/example-org/LiliaGithub.git".to_string(),
+            owner: None,
         }),
         target: WorkspaceCloneTarget::Default,
+        placement: WorkspaceRepoPlacement::Automatic,
     };
     let plan = plan_workspace_clone(&root, &default).unwrap();
     assert_eq!(plan.target, root.join("example-org").join("LiliaGithub"));
@@ -2500,9 +2504,10 @@ fn plans_default_owner_group_and_preserves_custom_target_path() {
 
     let mismatched_identity = WorkspaceCloneRepoRequest {
         repository: Some(WorkspaceCloneRepositoryRef {
-            id: 42,
+            id: Some(42),
             full_name: "example-org/LiliaGithub".to_string(),
             clone_url: "https://github.com/other-org/LiliaGithub.git".to_string(),
+            owner: None,
         }),
         target: WorkspaceCloneTarget::Default,
         ..outside_request
@@ -2521,11 +2526,36 @@ fn plans_github_ssh_default_target_without_repository_metadata() {
         remote_url: "git@github.com:Example-Org/Repo.git".to_string(),
         repository: None,
         target: WorkspaceCloneTarget::Default,
+        placement: WorkspaceRepoPlacement::Automatic,
     };
     let plan = plan_workspace_clone(&root, &request).unwrap();
     assert_eq!(plan.target, root.join("Example-Org").join("Repo"));
     assert_eq!(plan.remote, request.remote_url);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn clone_contract_defaults_to_automatic_placement_and_uses_camel_case_group_id() {
+    let request: WorkspaceCloneRepoRequest = serde_json::from_value(serde_json::json!({
+        "remoteUrl": "example/repo",
+        "repository": {
+            "id": 42,
+            "fullName": "example/repo",
+            "cloneUrl": "https://github.com/example/repo.git"
+        },
+        "target": { "kind": "default" }
+    }))
+    .unwrap();
+
+    assert_eq!(request.placement, WorkspaceRepoPlacement::Automatic);
+    assert_eq!(request.repository.unwrap().owner, None);
+    assert_eq!(
+        serde_json::to_value(WorkspaceRepoPlacement::Group {
+            group_id: "group-id".to_string(),
+        })
+        .unwrap(),
+        serde_json::json!({ "kind": "group", "groupId": "group-id" })
+    );
 }
 
 #[test]
@@ -2670,9 +2700,10 @@ fn clone_repository_metadata_upgrades_binding_and_prune_removes_it() {
         },
     );
     let repository = WorkspaceCloneRepositoryRef {
-        id: 90210,
+        id: Some(90210),
         full_name: "example-org/repo".to_string(),
         clone_url: "https://github.com/example-org/repo.git".to_string(),
+        owner: None,
     };
     assert!(upsert_workspace_repo_binding(
         &mut settings,
@@ -2697,6 +2728,7 @@ fn workspace_settings_deserializes_without_legacy_repo_bindings_field() {
     .unwrap();
     assert_eq!(settings.managed_repo_ids, vec!["legacy-repo"]);
     assert!(settings.repo_bindings.is_empty());
+    assert!(settings.organization_grouping_resolved_repo_ids.is_empty());
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -2708,6 +2740,7 @@ fn rejects_case_folded_owner_directory_conflicts() {
         remote_url: "example-org/repo".to_string(),
         repository: None,
         target: WorkspaceCloneTarget::Default,
+        placement: WorkspaceRepoPlacement::Automatic,
     };
     assert!(plan_workspace_clone(&root, &request)
         .unwrap_err()
@@ -2724,6 +2757,7 @@ fn linux_allows_distinct_case_sensitive_owner_directories() {
         remote_url: "example-org/repo".to_string(),
         repository: None,
         target: WorkspaceCloneTarget::Default,
+        placement: WorkspaceRepoPlacement::Automatic,
     };
 
     let plan = plan_workspace_clone(&root, &request).expect("Linux paths are case-sensitive");
@@ -4701,6 +4735,333 @@ fn deleting_repo_group_keeps_repo_members_as_ungrouped() {
     delete_repo_group(&mut settings, &frontend.id).unwrap();
 
     assert!(settings.repo_groups.is_empty());
+    assert_eq!(
+        settings.organization_grouping_resolved_repo_ids,
+        vec!["repo".to_string()]
+    );
+}
+
+#[test]
+fn organization_reconciliation_groups_known_organizations_without_resolving_unknown_owners() {
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec![
+            "octo/one".to_string(),
+            "acme/two".to_string(),
+            "person/repo".to_string(),
+            "local/repo".to_string(),
+        ],
+        repo_bindings: HashMap::from([
+            (
+                "octo/one".to_string(),
+                WorkspaceRepositoryBinding {
+                    repository_id: Some(1),
+                    remote_full_name: "OCTO/one".to_string(),
+                    canonical_remote_url: "https://github.com/OCTO/one.git".to_string(),
+                    local_path: "/workspace/octo/one".to_string(),
+                },
+            ),
+            (
+                "acme/two".to_string(),
+                WorkspaceRepositoryBinding {
+                    repository_id: Some(2),
+                    remote_full_name: "Acme/two".to_string(),
+                    canonical_remote_url: "https://github.com/Acme/two.git".to_string(),
+                    local_path: "/workspace/acme/two".to_string(),
+                },
+            ),
+            (
+                "person/repo".to_string(),
+                WorkspaceRepositoryBinding {
+                    repository_id: Some(3),
+                    remote_full_name: "person/repo".to_string(),
+                    canonical_remote_url: "https://github.com/person/repo.git".to_string(),
+                    local_path: "/workspace/person/repo".to_string(),
+                },
+            ),
+        ]),
+        ..WorkspaceSettings::default()
+    };
+
+    reconcile_organization_repo_groups(&mut settings, &["Octo".to_string(), "ACME".to_string()])
+        .unwrap();
+
+    assert_eq!(settings.repo_groups.len(), 2);
+    assert!(settings.repo_groups.iter().any(|group| {
+        group.organization_login.as_deref() == Some("Octo")
+            && group.repo_ids == vec!["octo/one".to_string()]
+    }));
+    assert!(settings.repo_groups.iter().any(|group| {
+        group.organization_login.as_deref() == Some("ACME")
+            && group.repo_ids == vec!["acme/two".to_string()]
+    }));
+    assert_eq!(
+        settings.organization_grouping_resolved_repo_ids,
+        vec!["acme/two".to_string(), "octo/one".to_string()]
+    );
+    let group_ids = settings
+        .repo_groups
+        .iter()
+        .map(|group| group.id.clone())
+        .collect::<Vec<_>>();
+    reconcile_organization_repo_groups(&mut settings, &["octo".to_string(), "acme".to_string()])
+        .unwrap();
+    assert_eq!(
+        settings
+            .repo_groups
+            .iter()
+            .map(|group| group.id.clone())
+            .collect::<Vec<_>>(),
+        group_ids
+    );
+}
+
+#[test]
+fn organization_reconciliation_binds_same_name_group_and_reuses_it_after_rename() {
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec!["acme/one".to_string()],
+        repo_bindings: HashMap::from([(
+            "acme/one".to_string(),
+            WorkspaceRepositoryBinding {
+                repository_id: Some(1),
+                remote_full_name: "Acme/one".to_string(),
+                canonical_remote_url: "https://github.com/Acme/one.git".to_string(),
+                local_path: "/workspace/acme/one".to_string(),
+            },
+        )]),
+        ..WorkspaceSettings::default()
+    };
+    let group = create_repo_group(&mut settings, "acme").unwrap();
+
+    reconcile_organization_repo_groups(&mut settings, &["Acme".to_string()]).unwrap();
+    assert_eq!(settings.repo_groups[0].id, group.id);
+    assert_eq!(
+        settings.repo_groups[0].organization_login.as_deref(),
+        Some("Acme")
+    );
+    rename_repo_group(&mut settings, &group.id, "核心仓库").unwrap();
+    settings.managed_repo_ids.push("acme/two".to_string());
+    settings.repo_bindings.insert(
+        "acme/two".to_string(),
+        WorkspaceRepositoryBinding {
+            repository_id: Some(2),
+            remote_full_name: "ACME/two".to_string(),
+            canonical_remote_url: "https://github.com/ACME/two.git".to_string(),
+            local_path: "/workspace/acme/two".to_string(),
+        },
+    );
+
+    reconcile_organization_repo_groups(&mut settings, &["acme".to_string()]).unwrap();
+
+    assert_eq!(settings.repo_groups.len(), 1);
+    assert_eq!(settings.repo_groups[0].name, "核心仓库");
+    assert_eq!(
+        settings.repo_groups[0].repo_ids,
+        vec!["acme/one".to_string(), "acme/two".to_string()]
+    );
+}
+
+#[test]
+fn organization_reconciliation_preserves_legacy_custom_group_membership() {
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec!["acme/repo".to_string()],
+        repo_bindings: HashMap::from([(
+            "acme/repo".to_string(),
+            WorkspaceRepositoryBinding {
+                repository_id: Some(1),
+                remote_full_name: "acme/repo".to_string(),
+                canonical_remote_url: "https://github.com/acme/repo.git".to_string(),
+                local_path: "/workspace/acme/repo".to_string(),
+            },
+        )]),
+        repo_groups: vec![WorkspaceRepoGroup {
+            id: "custom".to_string(),
+            name: "自定义".to_string(),
+            organization_login: None,
+            repo_ids: vec!["acme/repo".to_string()],
+        }],
+        ..WorkspaceSettings::default()
+    };
+
+    reconcile_organization_repo_groups(&mut settings, &["acme".to_string()]).unwrap();
+
+    assert_eq!(settings.repo_groups.len(), 1);
+    assert_eq!(settings.repo_groups[0].id, "custom");
+    assert_eq!(
+        settings.organization_grouping_resolved_repo_ids,
+        vec!["acme/repo"]
+    );
+}
+
+#[test]
+fn explicit_grouping_and_ungrouping_are_not_overridden_by_automatic_placement() {
+    let organization = WorkspaceCloneRepositoryRef {
+        id: Some(1),
+        full_name: "acme/repo".to_string(),
+        clone_url: "https://github.com/acme/repo.git".to_string(),
+        owner: Some(GitHubRepositoryOwner {
+            login: "Acme".to_string(),
+            kind: GitHubOwnerKind::Organization,
+            avatar_url: None,
+        }),
+    };
+    let mut settings = WorkspaceSettings::default();
+    let custom = create_repo_group(&mut settings, "自定义").unwrap();
+
+    apply_repo_placement(
+        &mut settings,
+        "acme/custom",
+        Some(&organization),
+        &WorkspaceRepoPlacement::Group {
+            group_id: custom.id.clone(),
+        },
+    )
+    .unwrap();
+    apply_repo_placement(
+        &mut settings,
+        "acme/custom",
+        Some(&organization),
+        &WorkspaceRepoPlacement::Automatic,
+    )
+    .unwrap();
+    apply_repo_placement(
+        &mut settings,
+        "acme/ungrouped",
+        Some(&organization),
+        &WorkspaceRepoPlacement::Ungrouped,
+    )
+    .unwrap();
+    apply_repo_placement(
+        &mut settings,
+        "acme/ungrouped",
+        Some(&organization),
+        &WorkspaceRepoPlacement::Automatic,
+    )
+    .unwrap();
+
+    assert_eq!(settings.repo_groups.len(), 1);
+    assert_eq!(settings.repo_groups[0].repo_ids, vec!["acme/custom"]);
+    assert!(settings
+        .repo_groups
+        .iter()
+        .all(|group| !group.repo_ids.iter().any(|id| id == "acme/ungrouped")));
+}
+
+#[test]
+fn automatic_placement_waits_for_owner_metadata_and_groups_known_organizations() {
+    let mut settings = WorkspaceSettings::default();
+    let unknown = WorkspaceCloneRepositoryRef {
+        id: Some(1),
+        full_name: "acme/unknown".to_string(),
+        clone_url: "https://github.com/acme/unknown.git".to_string(),
+        owner: None,
+    };
+    apply_repo_placement(
+        &mut settings,
+        "acme/unknown",
+        Some(&unknown),
+        &WorkspaceRepoPlacement::Automatic,
+    )
+    .unwrap();
+    assert!(settings.organization_grouping_resolved_repo_ids.is_empty());
+
+    let organization = WorkspaceCloneRepositoryRef {
+        owner: Some(GitHubRepositoryOwner {
+            login: "Acme".to_string(),
+            kind: GitHubOwnerKind::Organization,
+            avatar_url: None,
+        }),
+        ..unknown
+    };
+    apply_repo_placement(
+        &mut settings,
+        "acme/unknown",
+        Some(&organization),
+        &WorkspaceRepoPlacement::Automatic,
+    )
+    .unwrap();
+
+    assert_eq!(settings.repo_groups.len(), 1);
+    assert_eq!(
+        settings.repo_groups[0].organization_login.as_deref(),
+        Some("Acme")
+    );
+    assert_eq!(settings.repo_groups[0].repo_ids, vec!["acme/unknown"]);
+
+    let user = WorkspaceCloneRepositoryRef {
+        id: Some(2),
+        full_name: "person/repo".to_string(),
+        clone_url: "https://github.com/person/repo.git".to_string(),
+        owner: Some(GitHubRepositoryOwner {
+            login: "person".to_string(),
+            kind: GitHubOwnerKind::User,
+            avatar_url: None,
+        }),
+    };
+    apply_repo_placement(
+        &mut settings,
+        "person/repo",
+        Some(&user),
+        &WorkspaceRepoPlacement::Automatic,
+    )
+    .unwrap();
+    assert!(settings
+        .organization_grouping_resolved_repo_ids
+        .iter()
+        .any(|id| id == "person/repo"));
+    assert!(settings
+        .repo_groups
+        .iter()
+        .all(|group| !group.repo_ids.iter().any(|id| id == "person/repo")));
+}
+
+#[test]
+fn deleting_organization_group_does_not_regroup_members_but_allows_new_repos_to_recreate_it() {
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec!["acme/old".to_string()],
+        repo_bindings: HashMap::from([(
+            "acme/old".to_string(),
+            WorkspaceRepositoryBinding {
+                repository_id: Some(1),
+                remote_full_name: "acme/old".to_string(),
+                canonical_remote_url: "https://github.com/acme/old.git".to_string(),
+                local_path: "/workspace/acme/old".to_string(),
+            },
+        )]),
+        ..WorkspaceSettings::default()
+    };
+    reconcile_organization_repo_groups(&mut settings, &["acme".to_string()]).unwrap();
+    let group_id = settings.repo_groups[0].id.clone();
+    delete_repo_group(&mut settings, &group_id).unwrap();
+    reconcile_organization_repo_groups(&mut settings, &["acme".to_string()]).unwrap();
+    assert!(settings.repo_groups.is_empty());
+
+    settings.managed_repo_ids.push("acme/new".to_string());
+    settings.repo_bindings.insert(
+        "acme/new".to_string(),
+        WorkspaceRepositoryBinding {
+            repository_id: Some(2),
+            remote_full_name: "acme/new".to_string(),
+            canonical_remote_url: "https://github.com/acme/new.git".to_string(),
+            local_path: "/workspace/acme/new".to_string(),
+        },
+    );
+    reconcile_organization_repo_groups(&mut settings, &["ACME".to_string()]).unwrap();
+
+    assert_eq!(settings.repo_groups.len(), 1);
+    assert_eq!(settings.repo_groups[0].repo_ids, vec!["acme/new"]);
+}
+
+#[test]
+fn deleting_repo_clears_organization_grouping_resolution() {
+    let mut settings = WorkspaceSettings {
+        managed_repo_ids: vec!["repo".to_string()],
+        organization_grouping_resolved_repo_ids: vec!["repo".to_string()],
+        ..WorkspaceSettings::default()
+    };
+
+    prune_deleted_repo_settings(&mut settings, "repo");
+
+    assert!(settings.organization_grouping_resolved_repo_ids.is_empty());
 }
 
 #[test]
@@ -4745,6 +5106,7 @@ fn managed_repo_paths_prunes_stale_repo_ids_from_settings() {
         repo_groups: vec![WorkspaceRepoGroup {
             id: "repo-group".to_string(),
             name: "Group".to_string(),
+            organization_login: None,
             repo_ids: vec![
                 "visible".to_string(),
                 "missing".to_string(),
@@ -4871,6 +5233,7 @@ fn prune_deleted_repo_settings_clears_all_repo_scoped_state() {
         repo_groups: vec![WorkspaceRepoGroup {
             id: "group".to_string(),
             name: "分组".to_string(),
+            organization_login: None,
             repo_ids: vec!["repo".to_string(), "other".to_string()],
         }],
         project_launch_configs: HashMap::from([(

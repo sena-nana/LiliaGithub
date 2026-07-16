@@ -63,6 +63,7 @@ vi.mock("../src/composables/useWorkspace", async () => {
       repoBindings: {},
       favoriteRepoIds: [],
       repoGroups: [],
+      organizationGroupingResolvedRepoIds: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
       contributionIdentities: [],
