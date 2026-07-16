@@ -318,7 +318,7 @@ const homeContributionIdentityPanelOpen = ref(false);
 const componentEpoch = useComponentEpoch();
 const githubRepoStatusLoader = createLatestAsyncLoader({ componentEpoch });
 const githubRepoMoreLoader = createLatestAsyncLoader({ componentEpoch });
-const githubRepoOwnersLoader = createLatestAsyncLoader({ componentEpoch });
+const githubRepoOwnersLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
 const githubScopePages = new Map<string, {
   items: GitHubRepoSummary[];
   nextPage: number | null;
