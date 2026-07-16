@@ -3,7 +3,7 @@ import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invalidateSessionContextSnapshot, resetSessionContextForTests } from "../src/composables/sessionContext";
 import type { GitHubRepoOwner } from "../src/services/workspace";
-import { vContextMenu } from "@lilia/ui";
+import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -124,7 +124,7 @@ describe("侧边栏组织加载", () => {
     await router.push("/");
     await router.isReady();
     const view = render(SecondaryPanel, {
-      global: { plugins: [router], directives: { "context-menu": vContextMenu } },
+      global: { plugins: [router, liliaContextMenuPlugin] },
     });
 
     await waitFor(() => expect(view.getByText("正在加载组织…")).toBeInTheDocument());

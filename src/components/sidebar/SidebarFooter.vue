@@ -2,10 +2,12 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { Clock3, ListChecks, LoaderCircle, Settings } from "@lucide/vue";
 import { RouterLink } from "vue-router";
-import { SB_MENU_POP_TRANSITION_MS, useAnchoredMenuMotion, type LiliaSidebarConfigInput } from "@lilia/ui";
+import { SB_MENU_POP_TRANSITION_MS } from "@lilia/ui/composables/menuMotion";
+import { useAnchoredMenuMotion } from "@lilia/ui/composables/useAnchoredMenuMotion";
+import type { LiliaSidebarConfigInput } from "@lilia/ui/shell";
 import { useBackgroundTasks } from "../../composables/useBackgroundTasks";
 
-type SidebarFooterStatus = NonNullable<LiliaSidebarConfigInput["footerStatus"]>;
+type SidebarFooterStatus = NonNullable<LiliaSidebarConfigInput["footerStatuses"]>[number];
 
 defineProps<{
   status: SidebarFooterStatus;

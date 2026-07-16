@@ -1,9 +1,22 @@
-import { createLiliaApp } from "@lilia/ui";
-import type { Router, RouterHistory } from "vue-router";
-import { installLiliaGithubRouterGuards, LILIA_GITHUB_ROUTES } from "./router";
-import { LILIA_UI_CONFIG } from "./config/appShell";
+import { createApp } from "vue";
+import { installAgentDebugHarness } from "@lilia/ui/diagnostics";
+import {
+  installCornerStyle,
+  installGlobalScrollbarVisibility,
+  installLiliaContextMenu,
+  installNativeAppearance,
+} from "@lilia/ui/runtime";
+import { provideLiliaSettings } from "@lilia/ui/settings";
+import { liliaShellOptionsKey, setLiliaUiConfig } from "@lilia/ui/shell";
+import type { RouterHistory } from "vue-router";
+import { createLiliaGithubRouter } from "./router";
+import {
+  LILIA_AGENT_DEBUG_ENABLED,
+  LILIA_SETTINGS_MODEL,
+  LILIA_UI_CONFIG,
+} from "./config/appShell";
 import { useWorkspace } from "./composables/useWorkspace";
-import AppEffects from "./app/AppEffects.vue";
+import AppRoot from "./app/AppRoot.vue";
 import SecondaryPanel from "./layouts/SecondaryPanel.vue";
 
 export interface CreateLiliaGithubAppOptions {
@@ -12,20 +25,23 @@ export interface CreateLiliaGithubAppOptions {
 
 export function createLiliaGithubApp(options: CreateLiliaGithubAppOptions = {}) {
   const workspace = useWorkspace();
-  let router: Router | null = null;
-  const setupOverlayActive = () => (router?.currentRoute.value.path ?? window.location.pathname) === "/" &&
+  const router = createLiliaGithubRouter(options.history);
+  const setupOverlayActive = () => (router.currentRoute.value.path || window.location.pathname) === "/" &&
     !workspace.isReady.value;
-  const created = createLiliaApp({
-    config: LILIA_UI_CONFIG,
-    history: options.history,
-    overlays: [AppEffects],
-    routes: LILIA_GITHUB_ROUTES,
-    shellOptions: {
-      mainSidebar: SecondaryPanel,
-      setupOverlayActive,
-    },
+  const app = createApp(AppRoot);
+
+  setLiliaUiConfig(LILIA_UI_CONFIG);
+  provideLiliaSettings(app, LILIA_SETTINGS_MODEL);
+  app.provide(liliaShellOptionsKey, {
+    mainSidebar: SecondaryPanel,
+    setupOverlayActive,
   });
-  router = created.router;
-  installLiliaGithubRouterGuards(created.router);
-  return created;
+  app.use(router);
+  installLiliaContextMenu(app);
+  installGlobalScrollbarVisibility();
+  installCornerStyle();
+  installNativeAppearance();
+  if (LILIA_AGENT_DEBUG_ENABLED) installAgentDebugHarness({ enabled: true });
+
+  return { app, router };
 }

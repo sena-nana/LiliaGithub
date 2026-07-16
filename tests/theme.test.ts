@@ -5,9 +5,10 @@ describe("useTheme", () => {
     localStorage.setItem("lilia-github.theme", "light");
     vi.resetModules();
 
-    const { setLiliaAppConfig, useTheme } = await import("@lilia/ui");
+    const { setLiliaUiConfig } = await import("@lilia/ui/shell");
+    const { useTheme } = await import("@lilia/ui/composables/useTheme");
     const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
-    setLiliaAppConfig(LILIA_UI_CONFIG);
+    setLiliaUiConfig(LILIA_UI_CONFIG);
     const { theme } = useTheme();
 
     expect(theme.value).toBe("light");
@@ -16,9 +17,10 @@ describe("useTheme", () => {
 
   it("setTheme 会同步更新 data-theme 和 localStorage", async () => {
     vi.resetModules();
-    const { setLiliaAppConfig, useTheme } = await import("@lilia/ui");
+    const { setLiliaUiConfig } = await import("@lilia/ui/shell");
+    const { useTheme } = await import("@lilia/ui/composables/useTheme");
     const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
-    setLiliaAppConfig(LILIA_UI_CONFIG);
+    setLiliaUiConfig(LILIA_UI_CONFIG);
     const { theme, setTheme } = useTheme();
 
     setTheme("dark");

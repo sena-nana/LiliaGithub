@@ -1,9 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ContextMenuHost } from "@lilia/ui";
+import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import RepoHistoryPanel from "../src/components/repo/RepoHistoryPanel.vue";
-import { closeContextMenu, installContextMenu } from "@lilia/ui";
-import { vContextMenu } from "@lilia/ui";
+import { closeContextMenu, installContextMenu } from "@lilia/ui/composables/useContextMenu";
+import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 import type { CommitSummary } from "../src/services/workspace";
 
 function commit(hash: string, parents: string[] = [], refs: string[] = []): CommitSummary {
@@ -49,9 +49,7 @@ function renderHistoryPanel(props: {
       onCreateBranchFromCommit: handlers.createBranchFromCommit,
     },
     global: {
-      directives: {
-        contextMenu: vContextMenu,
-      },
+      plugins: [liliaContextMenuPlugin],
     },
   });
   return { ...view, handlers };

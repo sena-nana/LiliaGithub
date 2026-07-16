@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
-import { ContributionHeatmap, type ContributionHeatmapModel } from "@lilia/ui";
+import { CalendarHeatmap } from "@lilia/ui";
+import type { CalendarHeatmapModel } from "@lilia/ui/utils/calendarHeatmap";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 
 defineProps<{
@@ -12,7 +13,7 @@ defineProps<{
   skippedRepoActionButton?: boolean;
   skippedRepoActionDisabled?: boolean;
   hasContributionDays: boolean;
-  chartModel: ContributionHeatmapModel;
+  chartModel: CalendarHeatmapModel;
 }>();
 
 defineEmits<{
@@ -87,7 +88,7 @@ defineEmits<{
     </p>
     <div v-else class="contribution-chart">
       <div class="contribution-window">
-        <ContributionHeatmap
+        <CalendarHeatmap
           :model="chartModel"
           aria-label="本地提交贡献图"
         />

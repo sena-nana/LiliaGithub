@@ -2,15 +2,18 @@ import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { computed, defineComponent, onMounted, onUnmounted } from "vue";
-import { LILIA_UI_CONFIG, SIDEBAR_CONFIG } from "../src/config/appShell";
+import { LILIA_SETTINGS_MODEL, LILIA_UI_CONFIG, SIDEBAR_CONFIG } from "../src/config/appShell";
+import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import {
-  ContextMenuHost,
-  LiliaDesktopShell,
   closeContextMenu,
   installContextMenu,
+} from "@lilia/ui/composables/useContextMenu";
+import {
+  LiliaDesktopShell,
   liliaShellOptionsKey,
-  setLiliaAppConfig,
-} from "@lilia/ui";
+  setLiliaUiConfig,
+} from "@lilia/ui/shell";
+import { liliaSettingsKey } from "@lilia/ui/settings";
 import { useWorkspace } from "../src/composables/useWorkspace";
 import { resetWorkspaceStateForTests, setRepoActionError, state, upsertRepo } from "../src/composables/workspace/state";
 import { refreshRepoContributions } from "../src/composables/workspace/repositories";
@@ -21,7 +24,7 @@ import {
   type GitHubContributionResult,
   type GitHubRepoSummary,
 } from "../src/services/workspace";
-import { vContextMenu } from "@lilia/ui";
+import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 import SecondaryPanel from "../src/layouts/SecondaryPanel.vue";
 import Home from "../src/pages/Home.vue";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
@@ -58,7 +61,7 @@ async function renderAppShell(initialRoute = "/") {
     components: { LiliaDesktopShell, ContextMenuHost, TestAppEffects },
     template: "<TestAppEffects /><LiliaDesktopShell /><ContextMenuHost />",
   });
-  setLiliaAppConfig(LILIA_UI_CONFIG);
+  setLiliaUiConfig(LILIA_UI_CONFIG);
   const workspace = useWorkspace();
   if (state.repos.length === 0) {
     await workspace.initialize();
@@ -98,15 +101,13 @@ async function renderAppShell(initialRoute = "/") {
 
   const view = render(Wrapper, {
     global: {
-      plugins: [router],
+      plugins: [router, liliaContextMenuPlugin],
       provide: {
+        [liliaSettingsKey as symbol]: LILIA_SETTINGS_MODEL,
         [liliaShellOptionsKey as symbol]: {
           mainSidebar: SecondaryPanel,
           setupOverlayActive: computed(() => router.currentRoute.value.path === "/" && !workspace.isReady.value),
         },
-      },
-      directives: {
-        contextMenu: vContextMenu,
       },
     },
   });

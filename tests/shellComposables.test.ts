@@ -3,16 +3,16 @@ import { fireEvent, render } from "@testing-library/vue";
 import { beforeEach, describe, expect, it } from "vitest";
 import { SIDEBAR_CONFIG } from "../src/config/appShell";
 import {
-  setLiliaAppConfig,
   usePersistentBoolean,
   usePersistentNumber,
-} from "@lilia/ui";
-import { useShellSidebar } from "@lilia/ui";
+} from "@lilia/ui/composables/usePersistentState";
+import { useShellSidebar } from "@lilia/ui/composables/useShellSidebar";
+import { setLiliaUiConfig } from "@lilia/ui/shell";
 import { LILIA_UI_CONFIG } from "../src/config/appShell";
 
 beforeEach(() => {
   localStorage.clear();
-  setLiliaAppConfig(LILIA_UI_CONFIG);
+  setLiliaUiConfig(LILIA_UI_CONFIG);
 });
 
 describe("persistent state composables", () => {

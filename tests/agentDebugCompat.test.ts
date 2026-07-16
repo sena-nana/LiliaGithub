@@ -3,7 +3,7 @@ import {
   installAgentDebugHarness,
   uninstallAgentDebugHarness,
   type LiliaAgentDebugApi,
-} from "@lilia/ui";
+} from "@lilia/ui/diagnostics";
 import { installLiliaGithubAgentDebugCompat } from "../src/agentDebug/compat";
 
 vi.mock("@tauri-apps/api/core", () => ({

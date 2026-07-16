@@ -63,7 +63,7 @@ vi.mock("../src/composables/useWorkspace", () => ({
   }),
 }));
 
-const { LiliaDesktopShell, liliaShellOptionsKey, setLiliaAppConfig } = await import("@lilia/ui");
+const { LiliaDesktopShell, liliaShellOptionsKey, setLiliaUiConfig } = await import("@lilia/ui/shell");
 const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
 const { default: SecondaryPanel } = await import("../src/layouts/SecondaryPanel.vue");
 const { default: Home } = await import("../src/pages/Home.vue");
@@ -81,7 +81,7 @@ async function renderSetupHome() {
   await router.push("/");
   await router.isReady();
 
-  setLiliaAppConfig(LILIA_UI_CONFIG);
+  setLiliaUiConfig(LILIA_UI_CONFIG);
   return render(LiliaDesktopShell, {
     global: {
       plugins: [router],
