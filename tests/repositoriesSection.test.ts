@@ -16,6 +16,7 @@ const workspace = vi.hoisted(() => ({
       repoBindings: {},
       favoriteRepoIds: [],
       repoGroups: [],
+      organizationGroupingResolvedRepoIds: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
       contributionIdentities: [],

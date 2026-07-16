@@ -294,6 +294,7 @@ describe("基础路由", () => {
     for (const [repoId] of repos.slice(2)) {
       await service.cloneRepo({
         remoteUrl: `https://github.com/sena-nana/${repoId}.git`,
+        placement: { kind: "automatic" },
         target: { kind: "custom", path: `C:\\Files\\workspace\\${repoId}` },
       });
     }

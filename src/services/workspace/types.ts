@@ -13,6 +13,7 @@ export interface WorkspaceSettings {
   repoBindings: Record<string, WorkspaceRepositoryBinding>;
   favoriteRepoIds: string[];
   repoGroups: WorkspaceRepoGroup[];
+  organizationGroupingResolvedRepoIds: string[];
   remoteRepoShortcuts: RemoteRepoShortcut[];
   localContributionCache: Record<string, Record<string, LocalContributionDayCache>>;
   contributionIdentities: ContributionIdentity[];
@@ -118,6 +119,7 @@ export interface WorkspaceRepoGroup {
   id: string;
   name: string;
   repoIds: string[];
+  organizationLogin?: string | null;
 }
 
 export interface LocalContributionDayCache {
@@ -379,19 +381,31 @@ export interface WorkspaceCreateLocalRepoRequest {
 }
 
 export interface WorkspaceCloneRepositoryRef {
-  id: number;
+  id: number | null;
   fullName: string;
   cloneUrl: string;
+  owner?: GitHubRepositoryOwner | null;
 }
 
 export type WorkspaceCloneTarget =
   | { kind: "default" }
   | { kind: "custom"; path: string };
 
+export type WorkspaceRepoPlacement =
+  | { kind: "automatic" }
+  | { kind: "ungrouped" }
+  | { kind: "group"; groupId: string };
+
 export interface WorkspaceCloneRepoRequest {
   remoteUrl: string;
   repository?: WorkspaceCloneRepositoryRef | null;
   target: WorkspaceCloneTarget;
+  placement: WorkspaceRepoPlacement;
+}
+
+export interface WorkspaceCloneResult {
+  repo: RepoSummary;
+  settings: WorkspaceSettings;
 }
 
 export interface GitHubCreateRepoRequest {

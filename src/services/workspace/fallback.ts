@@ -52,6 +52,7 @@ import type {
   GitHubRepositorySubscription,
   GitHubRepositorySubscriptionMode,
   GitHubRepositoryScope,
+  GitHubRepositoryOwner,
   GitHubRepoTemplate,
   GitHubRepoSettingsSection,
   GitHubRepoSettingsSectionKey,
@@ -108,6 +109,7 @@ import type {
   WorkspaceRepoGroup,
   WorkspaceStartupCache,
   WorkspaceStartupContributions,
+  WorkspaceCloneResult,
   WorkspaceCloneRepoRequest,
   WorkspaceCreateLocalRepoRequest,
 } from "./types";
@@ -2470,6 +2472,7 @@ function createFallbackSettings(
       repoBindings: {},
       favoriteRepoIds: [],
       repoGroups: [],
+      organizationGroupingResolvedRepoIds: [],
       remoteRepoShortcuts: [],
       localContributionCache: {},
       contributionIdentities: [],
@@ -2508,6 +2511,7 @@ function createFallbackSettings(
       { id: "group-lilia-apps", name: "Lilia Apps", repoIds: ["LiliaGithub", "Lilia", "LiliaTodo"] },
       { id: "group-runtime-docs", name: "Runtime & Docs", repoIds: ["Mutsuki", "LiliaDocs"] },
     ],
+    organizationGroupingResolvedRepoIds: [],
     remoteRepoShortcuts: [],
     localContributionCache: {},
     contributionIdentities: [],
@@ -3244,6 +3248,7 @@ function cloneWorkspaceSettings(settings: WorkspaceSettings): WorkspaceSettings 
     ),
     favoriteRepoIds: [...(settings.favoriteRepoIds ?? [])],
     repoGroups: settings.repoGroups.map(cloneWorkspaceRepoGroup),
+    organizationGroupingResolvedRepoIds: [...(settings.organizationGroupingResolvedRepoIds ?? [])],
     remoteRepoShortcuts: settings.remoteRepoShortcuts.map(cloneRemoteRepoShortcut),
     contributionIdentities: (settings.contributionIdentities ?? []).map((identity) => ({ ...identity })),
     localContributionCache: Object.fromEntries(
@@ -4197,7 +4202,7 @@ function inferRepoDirectoryName(remoteUrl: string) {
   return parts[parts.length - 1] || `cloned-repo-${fallbackCloneIndex++}`;
 }
 
-export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<RepoSummary> {
+export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<WorkspaceCloneResult> {
   return call("workspace_clone_repo", { request }, () => {
     const remoteUrl = request.repository?.cloneUrl || request.remoteUrl;
     const inferredName = inferRepoDirectoryName(remoteUrl);
@@ -4248,8 +4253,7 @@ export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<RepoSumma
         mainRepoId: null,
       },
     };
-    fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
-    fallbackSettings = {
+    const nextSettings = applyFallbackRepoPlacement({
       ...fallbackSettings,
       managedRepoIds: Array.from(new Set([...fallbackSettings.managedRepoIds, repo.id])).sort(),
       repoBindings: fullName ? {
@@ -4261,8 +4265,14 @@ export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<RepoSumma
           localPath: targetPath,
         },
       } : fallbackSettings.repoBindings,
+    }, repo.id, request.placement ?? { kind: "automatic" }, request.repository?.owner);
+    fallbackClonedRepos = [...fallbackClonedRepos.filter((item) => item.id !== repo.id), repo];
+    fallbackSettings = nextSettings;
+    writeFallbackStartupRepoSummary(repo);
+    return {
+      repo: cloneRepoSummary(repo),
+      settings: visibleFallbackSettings(),
     };
-    return { ...repo };
   });
 }
 
@@ -4365,12 +4375,142 @@ function normalizeRepoGroupNameKey(name: string): string {
   return name.trim().toLocaleLowerCase();
 }
 
-function nextRepoGroupId(): string {
+function nextRepoGroupId(groups: readonly WorkspaceRepoGroup[] = fallbackSettings.repoGroups): string {
   let seed = Date.now();
-  while (fallbackSettings.repoGroups.some((group) => group.id === `repo-group-${seed}`)) {
+  while (groups.some((group) => group.id === `repo-group-${seed}`)) {
     seed += 1;
   }
   return `repo-group-${seed}`;
+}
+
+function organizationLoginKey(login: string): string {
+  return login.trim().toLocaleLowerCase();
+}
+
+function ensureOrganizationRepoGroup(
+  groups: readonly WorkspaceRepoGroup[],
+  organizationLogin: string,
+): { groups: WorkspaceRepoGroup[]; groupId: string } {
+  const login = organizationLogin.trim();
+  const loginKey = organizationLoginKey(login);
+  const associated = groups.find((group) =>
+    group.organizationLogin && organizationLoginKey(group.organizationLogin) === loginKey
+  );
+  if (associated) {
+    return { groups: groups.map(cloneWorkspaceRepoGroup), groupId: associated.id };
+  }
+
+  const named = groups.find((group) => normalizeRepoGroupNameKey(group.name) === loginKey);
+  const availableNamed = named?.organizationLogin ? null : named;
+  if (availableNamed) {
+    return {
+      groups: groups.map((group) => group.id === availableNamed.id
+        ? { ...cloneWorkspaceRepoGroup(group), organizationLogin: login }
+        : cloneWorkspaceRepoGroup(group)),
+      groupId: availableNamed.id,
+    };
+  }
+
+  const groupId = nextRepoGroupId(groups);
+  return {
+    groups: [
+      ...groups.map(cloneWorkspaceRepoGroup),
+      { id: groupId, name: login, repoIds: [], organizationLogin: login },
+    ],
+    groupId,
+  };
+}
+
+function moveFallbackRepoToGroup(
+  groups: readonly WorkspaceRepoGroup[],
+  repoId: string,
+  groupId: string | null,
+): WorkspaceRepoGroup[] {
+  return groups.map((group) => ({
+    ...cloneWorkspaceRepoGroup(group),
+    repoIds: [
+      ...group.repoIds.filter((id) => id !== repoId),
+      ...(group.id === groupId ? [repoId] : []),
+    ].sort(),
+  }));
+}
+
+function applyFallbackRepoPlacement(
+  settings: WorkspaceSettings,
+  repoId: string,
+  placement: WorkspaceCloneRepoRequest["placement"],
+  owner: GitHubRepositoryOwner | null | undefined,
+): WorkspaceSettings {
+  const resolved = new Set(settings.organizationGroupingResolvedRepoIds ?? []);
+  let groups = settings.repoGroups.map(cloneWorkspaceRepoGroup);
+
+  if (placement.kind === "group") {
+    const groupId = placement.groupId.trim();
+    if (!groupId || !groups.some((group) => group.id === groupId)) {
+      throw new Error("未找到仓库分组");
+    }
+    groups = moveFallbackRepoToGroup(groups, repoId, groupId);
+    resolved.add(repoId);
+  } else if (placement.kind === "ungrouped") {
+    groups = moveFallbackRepoToGroup(groups, repoId, null);
+    resolved.add(repoId);
+  } else if (!resolved.has(repoId)) {
+    if (groups.some((group) => group.repoIds.includes(repoId))) {
+      resolved.add(repoId);
+    } else if (owner?.kind === "organization" && owner.login.trim()) {
+      const organizationGroup = ensureOrganizationRepoGroup(groups, owner.login);
+      groups = moveFallbackRepoToGroup(organizationGroup.groups, repoId, organizationGroup.groupId);
+      resolved.add(repoId);
+    } else if (owner?.kind === "user") {
+      groups = moveFallbackRepoToGroup(groups, repoId, null);
+      resolved.add(repoId);
+    }
+  }
+
+  return {
+    ...settings,
+    repoGroups: groups,
+    organizationGroupingResolvedRepoIds: [...resolved].sort(),
+  };
+}
+
+export function reconcileOrganizationRepoGroups(organizationLogins: string[]): Promise<WorkspaceSettings> {
+  return call("workspace_reconcile_organization_repo_groups", { organizationLogins }, () => {
+    const organizations = new Map<string, string>();
+    for (const rawLogin of organizationLogins) {
+      const login = rawLogin.trim();
+      const key = organizationLoginKey(login);
+      if (login && !organizations.has(key)) organizations.set(key, login);
+    }
+
+    const resolved = new Set(fallbackSettings.organizationGroupingResolvedRepoIds ?? []);
+    let groups = fallbackSettings.repoGroups.map(cloneWorkspaceRepoGroup);
+    const repoIds = [...new Set(fallbackSettings.managedRepoIds)].sort();
+    for (const repoId of repoIds) {
+      if (resolved.has(repoId)) continue;
+      if (groups.some((group) => group.repoIds.includes(repoId))) {
+        resolved.add(repoId);
+        continue;
+      }
+      const fullName = fallbackSettings.repoBindings[repoId]?.remoteFullName;
+      const ownerLogin = fullName?.split("/", 1)[0]?.trim();
+      const organizationLogin = ownerLogin
+        ? organizations.get(organizationLoginKey(ownerLogin))
+        : null;
+      if (!organizationLogin) continue;
+
+      const organizationGroup = ensureOrganizationRepoGroup(groups, organizationLogin);
+      groups = moveFallbackRepoToGroup(organizationGroup.groups, repoId, organizationGroup.groupId);
+      resolved.add(repoId);
+    }
+
+    fallbackSettings = {
+      ...fallbackSettings,
+      repoGroups: groups,
+      organizationGroupingResolvedRepoIds: [...resolved].sort(),
+    };
+    return visibleFallbackSettings();
+  });
 }
 
 export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
@@ -4426,6 +4566,7 @@ export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
   return call("workspace_delete_repo_group", { groupId }, () => {
     const normalized = groupId.trim();
     if (!normalized) throw new Error("分组 ID 不能为空");
+    const deletedGroup = fallbackSettings.repoGroups.find((group) => group.id === normalized);
     const nextGroups = fallbackSettings.repoGroups.filter((group) => group.id !== normalized);
     if (nextGroups.length === fallbackSettings.repoGroups.length) {
       throw new Error("未找到仓库分组");
@@ -4433,6 +4574,10 @@ export function deleteRepoGroup(groupId: string): Promise<WorkspaceSettings> {
     fallbackSettings = {
       ...fallbackSettings,
       repoGroups: nextGroups,
+      organizationGroupingResolvedRepoIds: Array.from(new Set([
+        ...(fallbackSettings.organizationGroupingResolvedRepoIds ?? []),
+        ...(deletedGroup?.repoIds ?? []),
+      ])).sort(),
     };
     return visibleFallbackSettings();
   });
@@ -4451,13 +4596,11 @@ export function moveRepoToGroup(repoId: string, groupId: string | null): Promise
     }
     fallbackSettings = {
       ...fallbackSettings,
-      repoGroups: fallbackSettings.repoGroups.map((group) => ({
-        ...group,
-        repoIds: [
-          ...group.repoIds.filter((id) => id !== normalizedRepoId),
-          ...(group.id === normalizedGroupId ? [normalizedRepoId] : []),
-        ].sort(),
-      })),
+      repoGroups: moveFallbackRepoToGroup(fallbackSettings.repoGroups, normalizedRepoId, normalizedGroupId),
+      organizationGroupingResolvedRepoIds: Array.from(new Set([
+        ...(fallbackSettings.organizationGroupingResolvedRepoIds ?? []),
+        normalizedRepoId,
+      ])).sort(),
     };
     return visibleFallbackSettings();
   });
@@ -4506,6 +4649,8 @@ export function deleteLocalRepo(repoId: string): Promise<WorkspaceSettings> {
         ...group,
         repoIds: group.repoIds.filter((id) => id !== repoId),
       })),
+      organizationGroupingResolvedRepoIds: (fallbackSettings.organizationGroupingResolvedRepoIds ?? [])
+        .filter((id) => id !== repoId),
       localContributionCache,
     };
     fallbackRepos = fallbackRepos.filter((item) => item.id !== repoId);

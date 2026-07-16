@@ -835,9 +835,10 @@ export function resetRepositoryRuntimeForTests() {
 export async function cloneRepo(request: WorkspaceCloneRepoRequest) {
   state.error = null;
   const service = await loadWorkspaceService();
-  const summary = await service.cloneRepo(request);
-  upsertRepo(summary);
-  return summary;
+  const result = await service.cloneRepo(request);
+  state.settings = result.settings;
+  upsertRepo(result.repo);
+  return result.repo;
 }
 
 export async function createLocalRepo(request: WorkspaceCreateLocalRepoRequest) {
@@ -873,6 +874,11 @@ export async function deleteRepoGroup(groupId: string) {
 export async function moveRepoToGroup(repoId: string, groupId: string | null) {
   const service = await loadWorkspaceService();
   return updateWorkspaceSettings(() => service.moveRepoToGroup(repoId, groupId));
+}
+
+export async function reconcileOrganizationRepoGroups(organizationLogins: string[]) {
+  const service = await loadWorkspaceService();
+  return updateWorkspaceSettings(() => service.reconcileOrganizationRepoGroups(organizationLogins));
 }
 
 export async function setLocalRepoFavorite(repoId: string, favorite: boolean) {

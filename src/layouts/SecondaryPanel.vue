@@ -69,6 +69,7 @@ const route = useRoute();
 const router = useRouter();
 const componentEpoch = useComponentEpoch();
 const githubOwnersLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
+const organizationGroupsLoader = createLatestAsyncLoader({ componentEpoch, trackSessionContext: false });
 const githubOwners = ref<GitHubRepoOwner[]>([]);
 const githubOwnersLoading = ref(false);
 const githubOwnersError = ref<string | null>(null);
@@ -132,6 +133,14 @@ const githubOrganizationVisibilityLimited = computed(() =>
 const githubOrganizationRecovery = computed(() => githubOrganizationAccessRecovery(githubOwners.value));
 const githubOrganizationVisibilityMessage = computed(() => githubOrganizationAccessMessage(githubOwners.value));
 const githubOrganizations = computed(() => githubOrganizationOwners(githubOwners.value));
+const githubOrganizationLogins = computed(() => githubOrganizations.value.map((owner) => owner.login));
+
+async function reconcileOrganizationRepoGroups() {
+  if (!githubOrganizationLogins.value.length || !workspace.state.settings?.managedRepoIds.length) return;
+  await organizationGroupsLoader.run("organization-repo-groups", async () => {
+    await workspace.reconcileOrganizationRepoGroups([...githubOrganizationLogins.value]);
+  });
+}
 
 async function loadSidebarGitHubOwners() {
   if (!workspace.isAuthorized.value) return;
@@ -177,8 +186,20 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => [
+    githubOrganizationLogins.value.map((login) => login.toLocaleLowerCase()).sort().join("\n"),
+    workspace.state.repoListChange.revision,
+  ] as const,
+  ([organizationKey]) => {
+    if (organizationKey) void reconcileOrganizationRepoGroups().catch(() => undefined);
+  },
+  { immediate: true },
+);
+
 onUnmounted(() => {
   githubOwnersLoader.invalidate();
+  organizationGroupsLoader.invalidate();
 });
 
 function repoDirtyCount(repo: { stagedCount: number; unstagedCount: number; untrackedCount: number }) {

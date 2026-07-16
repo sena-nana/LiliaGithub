@@ -17,6 +17,7 @@ import {
   type GitHubRepoSummary,
   type GitHubRepositoryScope,
   type RepoSummary,
+  type WorkspaceRepoPlacement,
 } from "../services/workspace";
 import {
   ALL_GITHUB_REPOSITORIES,
@@ -28,9 +29,13 @@ import {
   githubUserFacingError,
 } from "../utils/githubRepositoryScope";
 import { githubRepositoryIdentityKey } from "../utils/remoteRepo";
+import {
+  organizationLoginForFullName,
+  organizationLoginForRepo,
+} from "../utils/repoGroupPlacement";
 
 type UseCloneRepoDialogOptions = {
-  onCloned: (repo: RepoSummary, groupId: string | null) => void | Promise<void>;
+  onCloned: (repo: RepoSummary) => void | Promise<void>;
 };
 
 function normalizeGitHubCloneInput(input: string): string | null {
@@ -95,7 +100,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const cloneRepoLoadError = ref<string | null>(null);
   const cloneNextRepoPage = ref<number | null>(null);
   const cloneSelectedRepo = ref<GitHubRepoSummary | null>(null);
-  const cloneSelectedGroupId = ref<string | null>(null);
+  const clonePlacement = ref<WorkspaceRepoPlacement>({ kind: "automatic" });
   const cloneScopePages = new Map<string, {
     items: GitHubRepoSummary[];
     nextPage: number | null;
@@ -111,6 +116,10 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
   const cloneBindingExpired = computed(() => cloneError.value?.includes("GitHub 绑定已失效") === true);
   const cloneDirectGitHubRepo = computed(() => normalizeGitHubCloneInput(cloneQueryTrimmed.value));
   const cloneOrganizationOwners = computed(() => githubOrganizationOwners(cloneRepoOwners.value));
+  const cloneDefaultOrganizationLogin = computed(() =>
+    organizationLoginForRepo(cloneSelectedRepo.value, cloneOrganizationOwners.value)
+      ?? organizationLoginForFullName(cloneDirectGitHubRepo.value, cloneOrganizationOwners.value)
+  );
   const cloneOrganizationAccessLimited = computed(() =>
     githubOrganizationAccessLimited(cloneBindingStatus.value?.binding?.scopes, cloneRepoOwners.value),
   );
@@ -304,7 +313,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     }
   }
 
-  async function openCloneDialog(groupId: string | null = null) {
+  async function openCloneDialog(placement: WorkspaceRepoPlacement = { kind: "automatic" }) {
     invalidateCloneSearchPagination();
     cloneBindingLoader.invalidate();
     cloneRepoPageLoader.invalidate();
@@ -328,7 +337,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     cloneRepoLoadError.value = null;
     cloneNextRepoPage.value = null;
     cloneSelectedRepo.value = null;
-    cloneSelectedGroupId.value = groupId;
+    clonePlacement.value = placement;
     await cloneBindingLoader.run("clone-binding", async (runId) => {
       try {
         const status = await getGitHubBindingStatus();
@@ -377,6 +386,11 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       const directGitHubRepo = cloneDirectGitHubRepo.value;
       const remote = selected?.cloneUrl
         ?? (directGitHubRepo ? `https://github.com/${directGitHubRepo}.git` : cloneRemoteUrl.value.trim());
+      const directOrganizationOwner = directGitHubRepo
+        ? cloneOrganizationOwners.value.find((owner) =>
+            owner.login.toLocaleLowerCase() === directGitHubRepo.split("/", 1)[0]?.toLocaleLowerCase()
+          ) ?? null
+        : null;
       const customPath = cloneDirectoryName.value.trim();
       const summary = await workspace.cloneRepo({
         remoteUrl: remote,
@@ -384,7 +398,18 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
           id: selected.id,
           fullName: selected.fullName,
           cloneUrl: selected.cloneUrl,
+          owner: selected.owner ?? null,
+        } : directGitHubRepo && directOrganizationOwner ? {
+          id: null,
+          fullName: directGitHubRepo,
+          cloneUrl: remote,
+          owner: {
+            login: directOrganizationOwner.login,
+            kind: "organization",
+            avatarUrl: directOrganizationOwner.avatarUrl,
+          },
         } : null,
+        placement: clonePlacement.value,
         target: cloneTouchedDirectory.value && customPath
           ? { kind: "custom", path: customPath }
           : { kind: "default" },
@@ -393,7 +418,7 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       cloneRepoPageLoader.invalidate();
       cloneRepoOwnersLoader.invalidate();
       cloneOpen.value = false;
-      await options.onCloned(summary, cloneSelectedGroupId.value);
+      await options.onCloned(summary);
     } catch (err) {
       if (isGitHubBindingExpiredError(err)) {
         showCloneRepoLoadError(err);
@@ -514,7 +539,8 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
     organizationRecoveryUrl: cloneOrganizationRecovery.value.url,
     localRepoFullNames: localCloneRepoFullNames.value,
     repoLoaded: cloneRepoLoaded.value,
-    selectedGroupId: cloneSelectedGroupId.value,
+    placement: clonePlacement.value,
+    defaultOrganizationLogin: cloneDefaultOrganizationLogin.value,
   }));
 
   const events = {
@@ -536,8 +562,8 @@ export function useCloneRepoDialog(options: UseCloneRepoDialogOptions) {
       cloneTouchedDirectory.value = true;
     },
     clearSelectedRepo: useDirectCloneTarget,
-    updateSelectedGroup: (groupId: string | null) => {
-      cloneSelectedGroupId.value = groupId;
+    updatePlacement: (placement: WorkspaceRepoPlacement) => {
+      clonePlacement.value = placement;
     },
     updateRepositoryScope: selectCloneRepositoryScope,
     retryOwners: loadCloneRepoOwners,

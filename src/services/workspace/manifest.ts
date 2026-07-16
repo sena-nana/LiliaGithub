@@ -30,6 +30,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "workspace_create_local_repo",
     "workspace_clone_repo",
     "workspace_hide_repo",
+    "workspace_reconcile_organization_repo_groups",
     "workspace_create_repo_group",
     "workspace_rename_repo_group",
     "workspace_delete_repo_group",

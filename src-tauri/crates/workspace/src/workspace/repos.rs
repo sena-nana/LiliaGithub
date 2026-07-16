@@ -19,9 +19,10 @@ use crate::workspace::repo_guard::{
 };
 use crate::workspace::run_core_operation_as;
 use crate::workspace::settings::{
-    add_managed_repo_id, cached_repo_summary, load_settings, matching_startup_cache,
-    prune_deleted_repo_settings, repo_path_by_id, repo_path_from_id, save_settings, sort_dedup,
-    workspace_root, write_startup_repo_summary, write_startup_repo_summary_after_fetch,
+    add_managed_repo_id, apply_repo_placement, cached_repo_summary, load_settings,
+    matching_startup_cache, prune_deleted_repo_settings, repo_path_by_id, repo_path_from_id,
+    save_settings, settings_write_lock, sort_dedup, visible_workspace_settings, workspace_root,
+    validate_repo_placement, write_startup_repo_summary, write_startup_repo_summary_after_fetch,
 };
 use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
 use lilia_github_contracts::workspace::{
@@ -32,8 +33,8 @@ use lilia_github_contracts::workspace::{
     RepoRefreshSummaryOptions, RepoRemote, RepoRemoteBranchState, RepoRemoteOperationStep,
     RepoRemoteSyncConfig, RepoRemoteSyncPolicy, RepoStashDetail, RepoStashEntry, RepoSummary,
     RepoSyncOperationResult, RepoWorktree, WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef,
-    WorkspaceCloneTarget, WorkspaceCreateLocalRepoRequest, WorkspaceRepositoryBinding,
-    WorkspaceSettings,
+    WorkspaceCloneResult, WorkspaceCloneTarget, WorkspaceCreateLocalRepoRequest,
+    WorkspaceRepositoryBinding, WorkspaceSettings,
 };
 use mutsuki_runtime_contracts::{DispatchLane, ResourceAccessMode};
 
@@ -838,7 +839,7 @@ fn github_binding_identity(
 ) -> Option<WorkspaceRepositoryBinding> {
     let (repository_id, remote_full_name) = if let Some(repository) = repository {
         let normalized = normalize_github_repo_input(&repository.full_name).ok()?;
-        (Some(repository.id), normalized.full_name)
+        (repository.id, normalized.full_name)
     } else {
         let remote = git_command_lossy(path, &["remote", "get-url", "origin"])?;
         let full_name = parse_github_remote(&remote).or_else(|| {
@@ -2006,13 +2007,14 @@ pub async fn workspace_create_local_repo(
 pub async fn workspace_clone_repo(
     app: AppHandle,
     request: WorkspaceCloneRepoRequest,
-) -> Result<RepoSummary, String> {
+) -> Result<WorkspaceCloneResult, String> {
     run_core_operation_as(
         app.clone(),
         OperationKind::LocalWrite,
         Some("workspace"),
         "克隆仓库",
         move || {
+            validate_repo_placement(&load_settings(&app), &request.placement)?;
             let root = workspace_root(&app)?;
             let plan = plan_workspace_clone(&root, &request)?;
             let remote = plan.remote;
@@ -2069,6 +2071,9 @@ pub async fn workspace_clone_repo(
                     remember_repo_uses_system_git(&app, &target)?;
                 }
             }
+            let _settings_guard = settings_write_lock()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let mut settings = load_settings(&app);
             let cloned_repo_id = repo_id(&root, &target);
             add_managed_repo_id(&mut settings, cloned_repo_id.clone());
@@ -2079,11 +2084,20 @@ pub async fn workspace_clone_repo(
                 &target,
                 request.repository.as_ref(),
             );
+            apply_repo_placement(
+                &mut settings,
+                &cloned_repo_id,
+                request.repository.as_ref(),
+                &request.placement,
+            )?;
             save_settings(&app, &settings)?;
             crate::workspace::watcher::sync_repo_watchers(&app);
             let summary = summarize_workspace_repo(&root, &target, &settings);
             let _ = write_startup_repo_summary(&app, &settings, &summary);
-            Ok(summary)
+            Ok(WorkspaceCloneResult {
+                repo: summary,
+                settings: visible_workspace_settings(settings),
+            })
         },
     )
     .await

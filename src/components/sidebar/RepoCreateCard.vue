@@ -15,8 +15,16 @@ import {
   type GitHubRepoSummary,
   type GitHubRepoTemplate,
   type RepoSummary,
+  type WorkspaceRepoPlacement,
 } from "../../services/workspace";
 import { githubUserFacingError } from "../../utils/githubRepositoryScope";
+import {
+  AUTOMATIC_REPO_GROUP_VALUE,
+  UNGROUPED_REPO_GROUP_VALUE,
+  organizationGroup,
+  repoPlacementFromValue,
+  repoPlacementValue,
+} from "../../utils/repoGroupPlacement";
 
 type RepoCreateMode = "local" | "remote";
 type RepoCreateAction = "local" | "remote-only" | "remote-clone";
@@ -26,8 +34,8 @@ type RepoCreateGroup = {
   readonly id: string;
   readonly name: string;
   readonly repoIds: readonly string[];
+  readonly organizationLogin?: string | null;
 };
-const UNGROUPED_REPO_GROUP_VALUE = "__ungrouped__";
 
 const props = defineProps<{
   open: boolean;
@@ -40,7 +48,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   localCreated: [repo: RepoSummary, groupId: string | null];
-  remoteCloned: [repo: RepoSummary, remote: GitHubRepoSummary, groupId: string | null];
+  remoteCloned: [repo: RepoSummary, remote: GitHubRepoSummary];
 }>();
 
 const workspace = useWorkspace();
@@ -59,7 +67,7 @@ const activeCreateAction = ref<RepoCreateAction | null>(null);
 const cloningCreatedRepo = ref(false);
 const createdRepo = ref<GitHubRepoSummary | null>(null);
 const createError = ref<string | null>(null);
-const selectedGroupId = ref<string | null>(null);
+const selectedPlacement = ref<WorkspaceRepoPlacement>({ kind: "automatic" });
 
 const form = ref({
   owner: "",
@@ -80,19 +88,32 @@ const form = ref({
 const isRemoteMode = computed(() => props.mode === "remote");
 const dialogTitle = computed(() => isRemoteMode.value ? "新建 GitHub 仓库" : "新建本地仓库");
 const groupSelectionEnabled = computed(() => props.repoGroups !== undefined);
+const defaultOrganizationLogin = computed(() =>
+  isRemoteMode.value && form.value.ownerKind === "organization" ? form.value.owner : null
+);
+const defaultOrganizationGroup = computed(() =>
+  organizationGroup(props.repoGroups ?? [], defaultOrganizationLogin.value)
+);
 const repoGroupOptions = computed(() => [
   {
+    value: AUTOMATIC_REPO_GROUP_VALUE,
+    label: defaultOrganizationGroup.value?.name ?? defaultOrganizationLogin.value ?? "未分组仓库",
+    hint: "默认",
+    agentId: "repo-create.group.option.automatic",
+  },
+  ...(defaultOrganizationLogin.value ? [{
     value: UNGROUPED_REPO_GROUP_VALUE,
     label: "未分组仓库",
-    hint: "默认",
     agentId: "repo-create.group.option.ungrouped",
-  },
-  ...(props.repoGroups ?? []).map((group) => ({
-    value: group.id,
-    label: group.name,
-    hint: `${group.repoIds.length} 个仓库`,
-    agentId: `repo-create.group.option.${group.id}`,
-  })),
+  }] : []),
+  ...(props.repoGroups ?? [])
+    .filter((group) => group.id !== defaultOrganizationGroup.value?.id)
+    .map((group) => ({
+      value: group.id,
+      label: group.name,
+      hint: `${group.repoIds.length} 个仓库`,
+      agentId: `repo-create.group.option.${group.id}`,
+    })),
 ]);
 const repoOwnerOptions = computed(() =>
   repoOwners.value.map((owner) => ({
@@ -126,9 +147,9 @@ const selectedOwnerValue = computed({
   },
 });
 const selectedGroupValue = computed({
-  get: () => selectedGroupId.value ?? UNGROUPED_REPO_GROUP_VALUE,
+  get: () => repoPlacementValue(selectedPlacement.value),
   set: (value: string) => {
-    selectedGroupId.value = value === UNGROUPED_REPO_GROUP_VALUE ? null : value;
+    selectedPlacement.value = repoPlacementFromValue(value);
   },
 });
 const blockedReason = computed(() => {
@@ -185,7 +206,7 @@ function resetForm() {
   createdRepo.value = null;
   createError.value = null;
   repoOwnersError.value = null;
-  selectedGroupId.value = null;
+  selectedPlacement.value = { kind: "automatic" };
 }
 
 function cancelTemplateLoading() {
@@ -284,7 +305,7 @@ async function submitLocalRepo() {
           licenseTemplate: form.value.licenseTemplate || null,
         }));
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
-      emit("localCreated", repo, selectedGroupId.value);
+      emit("localCreated", repo, selectedPlacement.value.kind === "group" ? selectedPlacement.value.groupId : null);
       emit("close");
     } catch (err) {
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
@@ -304,11 +325,17 @@ async function cloneCreatedRepo() {
     await createActionTracker.run(async () => {
         const clonedRepo = await workspace.cloneRepo({
           remoteUrl: repo.cloneUrl,
-          repository: { id: repo.id, fullName: repo.fullName, cloneUrl: repo.cloneUrl },
+          repository: {
+            id: repo.id,
+            fullName: repo.fullName,
+            cloneUrl: repo.cloneUrl,
+            owner: repo.owner ?? null,
+          },
+          placement: selectedPlacement.value,
           target: { kind: "default" },
         });
         if (!componentEpoch.assertAlive() || !props.open) return clonedRepo;
-        emit("remoteCloned", clonedRepo, repo, selectedGroupId.value);
+        emit("remoteCloned", clonedRepo, repo);
         emit("close");
         await workspace.refreshRepos();
         return clonedRepo;

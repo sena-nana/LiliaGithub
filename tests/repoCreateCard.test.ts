@@ -87,13 +87,19 @@ vi.mock("../src/services/workspace", async () => {
   };
 });
 
-async function renderRemoteRepoCard() {
+async function renderRemoteRepoCard(repoGroups?: Array<{
+  id: string;
+  name: string;
+  repoIds: string[];
+  organizationLogin?: string | null;
+}>) {
   const view = render(RepoCreateCard, {
     props: {
       open: false,
       mode: "remote",
       workspaceReady: true,
       githubReady: true,
+      repoGroups,
     },
   });
   await view.rerender({
@@ -101,6 +107,7 @@ async function renderRemoteRepoCard() {
     mode: "remote",
     workspaceReady: true,
     githubReady: true,
+    repoGroups,
   });
   return view;
 }
@@ -268,7 +275,9 @@ describe("RepoCreateCard", () => {
           id: 2,
           fullName: "sena-nana/from-template",
           cloneUrl: "https://github.com/sena-nana/from-template.git",
+          owner: null,
         },
+        placement: { kind: "automatic" },
         target: { kind: "default" },
       });
       expect(workspace.refreshRepos).toHaveBeenCalledTimes(1);
@@ -276,9 +285,55 @@ describe("RepoCreateCard", () => {
     expect(view.emitted("remoteCloned")?.[0]).toEqual([
       repoSummary("from-template"),
       expect.objectContaining({ fullName: "sena-nana/from-template" }),
-      null,
     ]);
     expect(view.emitted("close")).toHaveLength(1);
+  });
+
+  it.each([
+    ["未分组仓库", { kind: "ungrouped" }],
+    ["自定义", { kind: "group", groupId: "custom" }],
+  ] as const)("组织仓库默认显示组织分组并允许显式选择 %s", async (optionLabel, placement) => {
+    vi.mocked(listGitHubRepoOwners).mockResolvedValue([
+      githubOwner("lilia-user", "user"),
+      githubOwner("team-lilia", "organization"),
+    ]);
+    const remote = {
+      ...githubRepo("created", 30),
+      fullName: "team-lilia/created",
+      ownerLogin: "team-lilia",
+      cloneUrl: "https://github.com/team-lilia/created.git",
+      htmlUrl: "https://github.com/team-lilia/created",
+      owner: { login: "team-lilia", kind: "organization" as const, avatarUrl: null },
+    };
+    vi.mocked(createGitHubRepo).mockResolvedValue(remote);
+    workspace.cloneRepo.mockResolvedValue(repoSummary("created"));
+    await renderRemoteRepoCard([
+      { id: "organization", name: "组织项目", repoIds: [], organizationLogin: "TEAM-LILIA" },
+      { id: "custom", name: "自定义", repoIds: [] },
+    ]);
+
+    const dialog = screen.getByRole("dialog", { name: "新建 GitHub 仓库" });
+    await fireEvent.click(await within(dialog).findByRole("button", { name: "lilia-user · 个人" }));
+    await fireEvent.click(await screen.findByRole("option", { name: "team-lilia · 组织" }));
+    const groupTrigger = within(dialog).getByRole("button", { name: "组织项目" });
+    await fireEvent.click(groupTrigger);
+    await fireEvent.click(await screen.findByRole("option", { name: new RegExp(`^${optionLabel}`) }));
+    await fireEvent.update(within(dialog).getByLabelText("仓库名"), "created");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "创建并克隆" }));
+
+    await waitFor(() => {
+      expect(workspace.cloneRepo).toHaveBeenCalledWith({
+        remoteUrl: remote.cloneUrl,
+        repository: {
+          id: remote.id,
+          fullName: remote.fullName,
+          cloneUrl: remote.cloneUrl,
+          owner: remote.owner,
+        },
+        placement,
+        target: { kind: "default" },
+      });
+    });
   });
 
   it("仅在启用模板时加载，并在同一弹窗会话复用成功结果、新会话重新加载", async () => {

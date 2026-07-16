@@ -29,6 +29,8 @@ pub struct WorkspaceSettings {
     #[serde(default)]
     pub repo_groups: Vec<WorkspaceRepoGroup>,
     #[serde(default)]
+    pub organization_grouping_resolved_repo_ids: Vec<String>,
+    #[serde(default)]
     pub remote_repo_shortcuts: Vec<RemoteRepoShortcut>,
     #[serde(default)]
     pub local_contribution_cache: HashMap<String, HashMap<String, LocalContributionDayCache>>,
@@ -260,6 +262,8 @@ pub struct WorkspaceStartupContributions {
 pub struct WorkspaceRepoGroup {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub organization_login: Option<String>,
     #[serde(default)]
     pub repo_ids: Vec<String>,
 }
@@ -1214,9 +1218,24 @@ pub struct GitHubRepoOwner {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceCloneRepositoryRef {
-    pub id: u64,
+    #[serde(default)]
+    pub id: Option<u64>,
     pub full_name: String,
     pub clone_url: String,
+    #[serde(default)]
+    pub owner: Option<GitHubRepositoryOwner>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum WorkspaceRepoPlacement {
+    #[default]
+    Automatic,
+    Ungrouped,
+    Group {
+        #[serde(rename = "groupId")]
+        group_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1237,6 +1256,15 @@ pub struct WorkspaceCloneRepoRequest {
     pub repository: Option<WorkspaceCloneRepositoryRef>,
     #[serde(default)]
     pub target: WorkspaceCloneTarget,
+    #[serde(default)]
+    pub placement: WorkspaceRepoPlacement,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceCloneResult {
+    pub repo: RepoSummary,
+    pub settings: WorkspaceSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]

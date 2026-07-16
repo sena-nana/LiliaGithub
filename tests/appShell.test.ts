@@ -296,7 +296,9 @@ async function selectHomeCreateRepoAction(view: AppShellView, action: string, gr
 }
 
 async function selectCreateRepoGroup(view: AppShellView, dialog: HTMLElement, groupName: string) {
-  const trigger = dialog.querySelector('[data-agent-id="repo-create.group.trigger"]');
+  const trigger = dialog.querySelector(
+    '[data-agent-id="repo-create.group.trigger"], [data-agent-id="clone-repo.group.trigger"]',
+  );
   if (!(trigger instanceof HTMLElement)) {
     throw new Error("未找到创建仓库分组选择器");
   }
@@ -304,8 +306,12 @@ async function selectCreateRepoGroup(view: AppShellView, dialog: HTMLElement, gr
   await fireEvent.click(await view.findByRole("option", { name: new RegExp(groupName) }));
 }
 
-async function openHomeCloneDialog(view: AppShellView, groupName = "未分组仓库") {
-  await selectHomeCreateRepoAction(view, "克隆仓库", groupName);
+async function openHomeCloneDialog(view: AppShellView, groupName?: string) {
+  await selectHomeCreateRepoAction(view, "克隆仓库");
+  if (groupName) {
+    const dialog = await view.findByRole("dialog", { name: "克隆仓库" });
+    await selectCreateRepoGroup(view, dialog, groupName);
+  }
 }
 
 async function toggleSidebarRepoGroup(view: AppShellView, name: string) {
@@ -1300,6 +1306,7 @@ describe("AppShell sidebar", () => {
     expect(groupId).toBeTruthy();
     const repo = await workspace.cloneRepo({
       remoteUrl: "https://github.com/sena-nana/InstantSearchRepo.git",
+      placement: { kind: "automatic" },
       target: { kind: "default" },
     });
     await workspace.moveRepoToGroup(repo.id, groupId!);
@@ -1355,7 +1362,9 @@ describe("AppShell sidebar", () => {
               id: firstRemoteRepo.id,
               fullName: firstRemoteRepo.fullName,
               cloneUrl: firstRemoteRepo.cloneUrl,
+              owner: { login: "sena-nana", kind: "organization", avatarUrl: null },
             },
+            placement: { kind: "automatic" },
             target: { kind: "default" },
           }],
           [{
@@ -1364,7 +1373,9 @@ describe("AppShell sidebar", () => {
               id: secondRemoteRepo.id,
               fullName: secondRemoteRepo.fullName,
               cloneUrl: secondRemoteRepo.cloneUrl,
+              owner: { login: "sena-nana", kind: "organization", avatarUrl: null },
             },
+            placement: { kind: "automatic" },
             target: { kind: "default" },
           }],
         ]);
@@ -1481,8 +1492,7 @@ describe("AppShell sidebar", () => {
     });
 
     const view = await renderAppShell("/");
-    const homeScope = await view.findByRole("group", { name: "GitHub 仓库范围" });
-    expect(within(homeScope).getByRole("button", { name: "lilia-user" })).toHaveAttribute("aria-pressed", "true");
+    expect(await view.findByRole("button", { name: "lilia-user" })).toHaveAttribute("aria-expanded", "false");
 
     await openHomeCloneDialog(view);
     const dialog = view.getByRole("dialog", { name: "克隆仓库" });
@@ -1503,8 +1513,7 @@ describe("AppShell sidebar", () => {
       repositorySort: { key: "name", direction: "asc" },
     });
     const view = await renderAppShell("/?githubScope=all");
-    const scope = await view.findByRole("group", { name: "GitHub 仓库范围" });
-    expect(within(scope).getByRole("button", { name: "全部" })).toHaveAttribute("aria-pressed", "true");
+    expect(await view.findByRole("button", { name: "全部" })).toHaveAttribute("aria-expanded", "false");
     await waitFor(() => {
       const names = Array.from(view.container.querySelectorAll(".repo-status-row__name"))
         .map((node) => node.textContent);
@@ -1581,12 +1590,15 @@ describe("AppShell sidebar", () => {
     await waitFor(() => {
       expect(view.getByText("直接克隆 sena-nana/NewRepo")).toBeInTheDocument();
       expect(view.getByPlaceholderText("默认从 URL 推导")).toHaveValue("NewRepo");
+      expect(view.getByRole("button", { name: "sena-nana" })).toBeInTheDocument();
     });
     await fireEvent.click(view.getByRole("button", { name: "克隆" }));
 
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/repos/sena-nana%2FNewRepo");
-      expect(sidebarRowForText(view.container, "NewRepo")).toBeInTheDocument();
+      const row = sidebarRowForText(view.container, "NewRepo");
+      expect(row).toBeInTheDocument();
+      expect(row.closest(".sb-section")?.querySelector(".sb-group-toggle")).toHaveTextContent("sena-nana");
     });
   });
 

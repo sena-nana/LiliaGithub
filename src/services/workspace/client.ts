@@ -92,6 +92,7 @@ import type {
   RemoteRepoShortcut,
   SystemOpenTarget,
   WorkspaceTask,
+  WorkspaceCloneResult,
   WorkspaceRepoRefreshRequest,
   WorkspaceSettings,
   WorkspaceStartupCache,
@@ -639,7 +640,7 @@ export function createLocalRepo(request: WorkspaceCreateLocalRepoRequest): Promi
   return call("workspace_create_local_repo", { request }, () => workspaceFallback().createLocalRepo(request));
 }
 
-export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<RepoSummary> {
+export function cloneRepo(request: WorkspaceCloneRepoRequest): Promise<WorkspaceCloneResult> {
   return call("workspace_clone_repo", { request }, () =>
     workspaceFallback().cloneRepo(request),
   );
@@ -662,6 +663,14 @@ export function refreshRepoSummary(
 
 export function hideRepo(repoId: string): Promise<WorkspaceSettings> {
   return call("workspace_hide_repo", { repoId }, () => workspaceFallback().hideRepo(repoId));
+}
+
+export function reconcileOrganizationRepoGroups(organizationLogins: string[]): Promise<WorkspaceSettings> {
+  return call(
+    "workspace_reconcile_organization_repo_groups",
+    { organizationLogins },
+    () => workspaceFallback().reconcileOrganizationRepoGroups(organizationLogins),
+  );
 }
 
 export function createRepoGroup(name: string): Promise<WorkspaceSettings> {
