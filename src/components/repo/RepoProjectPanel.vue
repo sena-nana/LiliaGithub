@@ -839,33 +839,45 @@ const hasSettingsDangerSection = computed(() =>
   Boolean(settings.value),
 );
 const settingsNavigationCards = computed(() => {
-  const cards: SettingsNavigationCard[] = settings.value
-    ? [
-        {
-          id: "project-settings-nav-card-general",
-          title: "常规",
-          sections: [
-            ...settingsSwitchGroups.map((group) => ({
-              id: group.titleId,
-              label: group.title,
-              agentId: `repo.settings.nav.${group.titleId
-                .replace("project-settings-", "")
-                .replace("-title", "")}`,
-            })),
-            { id: "project-settings-merge-defaults-title", label: "合并默认值", agentId: "repo.settings.nav.merge-defaults" },
-          ],
-        },
-        {
-          id: "project-settings-nav-card-repository-controls",
-          title: "仓库控制",
-          sections: settingsDetailSections.map((section) => ({
-            id: section.id,
-            label: section.title,
-            agentId: `repo.settings.nav.${section.kind}`,
-          })),
-        },
-      ]
-    : [];
+  const cards: SettingsNavigationCard[] = [];
+  const generalSections: SettingsNavigationSection[] = [];
+  if (props.repoFullName) {
+    generalSections.push({
+      id: "project-settings-notifications-title",
+      label: "通知",
+      agentId: "repo.settings.nav.notifications",
+    });
+  }
+  if (settings.value) {
+    generalSections.push(
+      ...settingsSwitchGroups.map((group) => ({
+        id: group.titleId,
+        label: group.title,
+        agentId: `repo.settings.nav.${group.titleId
+          .replace("project-settings-", "")
+          .replace("-title", "")}`,
+      })),
+      { id: "project-settings-merge-defaults-title", label: "合并默认值", agentId: "repo.settings.nav.merge-defaults" },
+    );
+  }
+  if (generalSections.length) {
+    cards.push({
+      id: "project-settings-nav-card-general",
+      title: "常规",
+      sections: generalSections,
+    });
+  }
+  if (settings.value) {
+    cards.push({
+      id: "project-settings-nav-card-repository-controls",
+      title: "仓库控制",
+      sections: settingsDetailSections.map((section) => ({
+        id: section.id,
+        label: section.title,
+        agentId: `repo.settings.nav.${section.kind}`,
+      })),
+    });
+  }
   if (hasSettingsDangerSection.value) {
     cards.push({
       id: "project-settings-nav-card-danger",
@@ -3880,7 +3892,17 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             :loading="githubAuthLoading"
             @rebind="rebindGitHub"
           />
-          <div v-if="settings || (canDeleteLocal && repoPath)" class="project-settings-sections">
+          <div v-if="settings || (canDeleteLocal && repoPath) || repoFullName" class="project-settings-sections">
+            <section
+              v-if="repoFullName"
+              class="project-settings-section"
+              aria-labelledby="project-settings-notifications-title"
+            >
+              <div class="project-settings-section__head">
+                <h4 id="project-settings-notifications-title">通知</h4>
+              </div>
+              <RepoNotificationPreferencesCard :repo-full-name="repoFullName" />
+            </section>
             <template v-if="settings">
               <section
                 v-for="group in settingsSwitchGroups"
@@ -4335,11 +4357,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
             </template>
           </div>
         </section>
-
-        <RepoNotificationPreferencesCard
-          v-if="repoFullName && projectSidebarMode === 'repo'"
-          :repo-full-name="repoFullName"
-        />
 
         <RepoFileTreeCard
           v-if="projectSidebarMode === 'files' && canBrowseFiles"
