@@ -9,14 +9,6 @@ const workspace = useWorkspace();
 <template>
   <section class="profile-page" data-agent-id="profile.page">
     <div class="profile-page__inner">
-      <header class="profile-page__header">
-        <div>
-          <h1>用户资料</h1>
-          <p v-if="workspace.githubBinding.value">查看和管理 {{ workspace.githubBinding.value.login }} 的 GitHub 公开资料。</p>
-          <p v-else>绑定 GitHub 后可查看和更新公开资料。</p>
-        </div>
-      </header>
-
       <GitHubAccountProfileEditor v-if="workspace.githubBinding.value" />
       <div v-else class="card profile-page__unavailable" role="status">
         <div>
@@ -43,31 +35,6 @@ const workspace = useWorkspace();
 .profile-page__inner {
   width: min(100%, 1120px);
   margin: 0 auto;
-}
-
-.profile-page__header {
-  margin-bottom: 18px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.profile-page__header h1,
-.profile-page__header p {
-  margin: 0;
-}
-
-.profile-page__header h1 {
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.profile-page__header p {
-  margin-top: 4px;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .profile-page__unavailable {

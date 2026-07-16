@@ -179,7 +179,9 @@ describe("GitHub 风格组织页", () => {
       .mockResolvedValueOnce(organizationOverview({ effectiveView: "public" }));
     const view = await renderOrganization();
 
-    expect(await screen.findByRole("heading", { name: "Alpha Org" })).toBeInTheDocument();
+    const githubProfileButton = await screen.findByRole("button", { name: "在 GitHub 查看" });
+    await fireEvent.click(githubProfileButton);
+    expect(workspace.openUrl).toHaveBeenCalledWith("https://github.com/alpha-org");
     expect(screen.getByText("Verified")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Alpha" })).toBeInTheDocument();
     expect(view.container.querySelector("script")).toBeNull();
@@ -227,23 +229,21 @@ describe("GitHub 风格组织页", () => {
     expect(screen.queryByRole("button", { name: "Member" })).toBeNull();
   });
 
-  it("组织切换隔离旧 Overview 响应", async () => {
+  it("组织切换隔离旧组织资料响应", async () => {
     const staleProfile = deferred<GitHubOrganizationProfile>();
-    const staleOverview = deferred<GitHubOrganizationOverview>();
     getGitHubOrganizationProfile
       .mockImplementationOnce(() => staleProfile.promise)
       .mockResolvedValueOnce(organizationProfile("beta-org", { name: "Beta Org" }));
-    getGitHubOrganizationOverview
-      .mockImplementationOnce(() => staleOverview.promise)
-      .mockResolvedValueOnce(organizationOverview({ effectiveView: "public", memberViewAvailable: false }));
     const view = await renderOrganization();
 
     await view.router.push("/organizations/beta-org");
-    expect(await screen.findByRole("heading", { name: "Beta Org" })).toBeInTheDocument();
+    const githubProfileButton = await screen.findByRole("button", { name: "在 GitHub 查看" });
+    await fireEvent.click(githubProfileButton);
+    expect(workspace.openUrl).toHaveBeenLastCalledWith("https://github.com/beta-org");
     staleProfile.resolve(organizationProfile("alpha-org", { name: "Stale Org" }));
-    staleOverview.resolve(organizationOverview());
     await Promise.resolve();
-    expect(screen.queryByRole("heading", { name: "Stale Org" })).toBeNull();
+    await fireEvent.click(githubProfileButton);
+    expect(workspace.openUrl).toHaveBeenLastCalledWith("https://github.com/beta-org");
   });
 
   it("未绑定时不发请求并进入账户设置", async () => {
