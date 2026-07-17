@@ -25,7 +25,16 @@ import {
   Trash2,
   X,
 } from "@lucide/vue";
-import { Dropdown, SettingsRow, UiSwitch } from "@lilia/ui";
+import {
+  Dropdown,
+  LiliaBottomPanel,
+  LiliaInspector,
+  LiliaPrimaryContent,
+  LiliaWorkspace,
+  SettingsRow,
+  UiDialog,
+  UiSwitch,
+} from "../../ui";
 import RepoGitHubUnavailableNotice from "./RepoGitHubUnavailableNotice.vue";
 import RepoNotificationPreferencesCard from "./RepoNotificationPreferencesCard.vue";
 import { useRepoFileBrowser } from "./useRepoFileBrowser";
@@ -3544,18 +3553,16 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 
 <template>
   <section class="project-panel">
-    <div
+    <LiliaWorkspace
       class="project-layout"
-      :class="{
-        'project-layout--with-commit-detail': showCommitDetail,
-        'project-layout--full': !showProjectSidebar,
-      }"
+      aria-label="仓库工作区"
     >
-      <main
-        ref="projectMainRef"
-        class="project-main"
-        :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'discussions' || activeSection === 'release' || activeSection === 'settings' }"
-      >
+      <LiliaPrimaryContent id="repo-primary" overflow="hidden">
+        <main
+          ref="projectMainRef"
+          class="project-main"
+          :class="{ 'project-main--plain': activeSection === 'files' || activeSection === 'issues' || activeSection === 'pulls' || activeSection === 'discussions' || activeSection === 'release' || activeSection === 'settings' }"
+        >
         <RepoLaunchTerminalPanel
           v-if="canUseLaunchWorkflow && activeSection === 'launch'"
           :launch-logs="launchLogs"
@@ -4162,21 +4169,13 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
               </div>
             </section>
           </div>
-          <Teleport to="body">
-            <Transition name="modal">
-              <div
-                v-if="deleteDialogTarget"
-                class="project-delete-overlay"
-                role="dialog"
-                aria-modal="true"
-                :aria-label="deleteDialogTitle"
-                @click.self="closeDeleteDialog"
-              >
-                <div class="project-delete-dialog">
-                  <div class="project-delete-dialog__head">
-                    <Trash2 :size="15" aria-hidden="true" />
-                    <strong>{{ deleteDialogTitle }}</strong>
-                  </div>
+          <UiDialog
+            :open="Boolean(deleteDialogTarget)"
+            :title="deleteDialogTitle"
+            :close-disabled="deletingAnything"
+            @close="closeDeleteDialog"
+          >
+                <div v-if="deleteDialogTarget" class="project-delete-confirm">
                   <p v-if="deleteDialogTarget === 'remote'">
                     这会永久删除远端仓库 <strong>{{ repoFullName }}</strong>。本地目录会保留，但 GitHub
                     Issues、Actions 和 Settings 将不可用。
@@ -4202,13 +4201,14 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                       :disabled="deletingAnything"
                     />
                   </label>
-                  <div class="project-delete-dialog__actions">
-                    <button type="button" class="ghost" data-agent-id="repo.delete.cancel" :disabled="deletingAnything" @click="closeDeleteDialog">
+                </div>
+                  <template #actions>
+                    <button type="button" class="ghost project-confirm-action" data-agent-id="repo.delete.cancel" :disabled="deletingAnything" @click="closeDeleteDialog">
                       取消
                     </button>
                     <button
                       type="button"
-                      class="ghost danger"
+                      class="ghost danger project-confirm-action"
                       data-agent-id="repo.delete.confirm"
                       :disabled="deletingAnything || !deleteConfirmMatches"
                       @click="confirmDeleteDialog"
@@ -4217,26 +4217,15 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                       <Trash2 v-else :size="14" aria-hidden="true" />
                       确认删除
                     </button>
-                  </div>
-                </div>
-              </div>
-            </Transition>
-          </Teleport>
-          <Teleport to="body">
-            <Transition name="modal">
-              <div
-                v-if="archiveDialogOpen && settings"
-                class="project-delete-overlay"
-                role="dialog"
-                aria-modal="true"
-                :aria-label="settings.archived ? '取消归档 GitHub 仓库' : '归档 GitHub 仓库'"
-                @click.self="closeArchiveDialog"
-              >
-                <div class="project-delete-dialog">
-                  <div class="project-delete-dialog__head">
-                    <Package :size="15" aria-hidden="true" />
-                    <strong>{{ settings.archived ? "取消归档 GitHub 仓库" : "归档 GitHub 仓库" }}</strong>
-                  </div>
+                  </template>
+          </UiDialog>
+          <UiDialog
+            :open="Boolean(archiveDialogOpen && settings)"
+            :title="settings?.archived ? '取消归档 GitHub 仓库' : '归档 GitHub 仓库'"
+            :close-disabled="archivingSettings"
+            @close="closeArchiveDialog"
+          >
+                <div v-if="settings" class="project-delete-confirm">
                   <p>
                     {{ settings.archived ? "这会恢复仓库写入能力：" : "这会将仓库设为只读归档状态：" }}
                     <strong>{{ settings.fullName }}</strong>
@@ -4252,13 +4241,15 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                       :disabled="archivingSettings"
                     />
                   </label>
-                  <div class="project-delete-dialog__actions">
-                    <button type="button" class="ghost" data-agent-id="repo.archive.cancel" :disabled="archivingSettings" @click="closeArchiveDialog">
+                </div>
+                  <template #actions>
+                    <template v-if="settings">
+                    <button type="button" class="ghost project-confirm-action" data-agent-id="repo.archive.cancel" :disabled="archivingSettings" @click="closeArchiveDialog">
                       取消
                     </button>
                     <button
                       type="button"
-                      class="ghost danger"
+                      class="ghost danger project-confirm-action"
                       data-agent-id="repo.archive.confirm"
                       :disabled="archivingSettings || !sameRepoFullName(archiveConfirmInput, settings.fullName)"
                       @click="toggleArchivedSetting"
@@ -4267,31 +4258,51 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
                       <Package v-else :size="14" aria-hidden="true" />
                       {{ settings.archived ? "确认取消归档" : "确认归档" }}
                     </button>
-                  </div>
-                </div>
-              </div>
-            </Transition>
-          </Teleport>
+                    </template>
+                  </template>
+          </UiDialog>
         </form>
-      </main>
+        </main>
+      </LiliaPrimaryContent>
 
-      <CommitDetailCard
+      <LiliaBottomPanel
         v-if="showCommitDetail && selectedCommitHash"
-        ref="commitDetailCard"
-        class="project-commit-detail-card"
-        :repo-id="repoId"
-        :repo-title="repoTitle || repoId"
-        :hash="selectedCommitHash"
-        embedded
-        closable
-        @close="emit('closeCommit')"
-      />
-
-      <aside
-        v-if="showProjectSidebar"
-        class="project-sidebar"
-        :class="{ 'project-sidebar--fill': projectSidebarMode === 'files' && !hasProjectSidebarErrors }"
+        id="commit-detail"
+        :default-size="460"
+        :min-size="300"
+        :max-size="760"
+        resizable
+        resize-label="调整提交详情高度"
+        overflow="hidden"
       >
+        <CommitDetailCard
+          ref="commitDetailCard"
+          class="project-commit-detail-card"
+          :repo-id="repoId"
+          :repo-title="repoTitle || repoId"
+          :hash="selectedCommitHash"
+          embedded
+          closable
+          @close="emit('closeCommit')"
+        />
+      </LiliaBottomPanel>
+
+      <LiliaInspector
+        v-if="showProjectSidebar"
+        id="repo-inspector"
+        :default-size="260"
+        :min-size="220"
+        :max-size="420"
+        resizable
+        resize-label="调整仓库信息面板宽度"
+        narrow-behavior="collapse"
+        :collapse-below="960"
+        overflow="hidden"
+      >
+        <aside
+          class="project-sidebar"
+          :class="{ 'project-sidebar--fill': projectSidebarMode === 'files' && !hasProjectSidebarErrors }"
+        >
         <div
           v-if="projectSidebarMode !== 'files'"
           class="project-sidebar-switcher"
@@ -4640,8 +4651,9 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
         </template>
         </div>
 
-      </aside>
-    </div>
+        </aside>
+      </LiliaInspector>
+    </LiliaWorkspace>
   </section>
 </template>
 
@@ -4711,11 +4723,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 260px);
-  grid-template-rows: minmax(0, 1fr);
-  gap: 14px;
-  align-items: stretch;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -4723,18 +4730,8 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   overflow: hidden;
 }
 
-.project-layout--with-commit-detail {
-  grid-template-rows: minmax(0, 1fr) auto;
-}
-
-.project-layout--full {
-  grid-template-columns: minmax(0, 1fr);
-}
-
 .project-main {
   display: grid;
-  grid-column: 1;
-  grid-row: 1;
   grid-template-rows: minmax(0, 1fr);
   align-content: start;
   align-self: stretch;
@@ -4759,10 +4756,8 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-commit-detail-card {
-  grid-column: 1;
-  grid-row: 2;
-  align-self: start;
   min-width: 0;
+  height: 100%;
 }
 
 .project-readme-card,
@@ -4805,8 +4800,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
   --repo-sidebar-label-width: 72px;
 
   display: grid;
-  grid-column: 2;
-  grid-row: 1;
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--repo-sidebar-card-gap);
   min-width: 0;
@@ -5137,10 +5130,6 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 .project-topic-toggle:hover,
 .project-topic-toggle:focus-visible {
   background: var(--accent-soft);
-}
-
-.project-layout--with-commit-detail .project-sidebar {
-  grid-row: 1 / span 2;
 }
 
 .project-settings-nav {
@@ -5869,115 +5858,37 @@ async function removeReleaseAsset(release: GitHubRelease, asset: GitHubReleaseAs
 }
 
 .project-danger-zone button,
-.project-delete-dialog__actions button {
+.project-confirm-action {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
 }
 
-.project-delete-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1800;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 12vh;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
-}
-
-.project-delete-dialog {
+.project-delete-confirm {
   display: grid;
   gap: 12px;
-  width: min(520px, 92vw);
-  padding: 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
 }
 
-.project-delete-dialog__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--err);
-}
-
-.project-delete-dialog p {
+.project-delete-confirm p {
   margin: 0;
   color: var(--text);
   font-size: 13px;
   line-height: 1.5;
 }
 
-.project-delete-dialog label {
+.project-delete-confirm label {
   display: grid;
   gap: 5px;
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.project-delete-dialog input {
+.project-delete-confirm input {
   width: 100%;
 }
 
-.project-delete-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.16s ease;
-}
-
-.modal-enter-active .project-delete-dialog,
-.modal-leave-active .project-delete-dialog {
-  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-from .project-delete-dialog,
-.modal-leave-to .project-delete-dialog {
-  opacity: 0;
-  transform: translateY(-8px) scale(0.98);
-}
-
 @media (max-width: 900px) {
-  .project-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-  }
-
-  .project-main,
-  .project-commit-detail-card,
-  .project-sidebar {
-    grid-column: auto;
-    grid-row: auto;
-  }
-
-  .project-sidebar {
-    order: -1;
-    height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-
-  .project-sidebar__scroll {
-    height: auto;
-    max-height: none;
-    overflow: visible;
-    padding-right: 0;
-  }
-
   .project-section__head--compact,
   .project-toolbar,
   .project-row__actions {

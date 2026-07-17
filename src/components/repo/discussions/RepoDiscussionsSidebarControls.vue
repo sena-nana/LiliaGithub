@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { MessagesSquare, Plus } from "@lucide/vue";
-import { Dropdown } from "@lilia/ui";
+import { Dropdown } from "../../../ui";
 import { computed, watch } from "vue";
 import { useRepoDiscussionsStore } from "./useRepoDiscussions";
 

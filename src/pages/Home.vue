@@ -26,9 +26,12 @@ import {
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
 import { cloneAccountPreferences, useAccountPreferences } from "../composables/useAccountPreferences";
-import { Dropdown } from "@lilia/ui";
-import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui/composables/useContextMenu";
-import { buildCalendarHeatmapModel } from "@lilia/ui/utils/calendarHeatmap";
+import {
+  buildCalendarHeatmapModel,
+  Dropdown,
+  openContextMenuAt,
+  type ContextMenuItem,
+} from "../ui";
 import { createLatestAsyncLoader } from "../composables/useLatestAsyncLoader";
 import { useWorkspace } from "../composables/useWorkspace";
 import {

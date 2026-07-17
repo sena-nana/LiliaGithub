@@ -51,7 +51,7 @@ yarn tauri:install
 yarn liliaui:local
 ```
 
-该命令会通过 `yarn link --relative` 临时维护项目级 `resolutions`，把 `@lilia/build`、`@lilia/config`、`@lilia/tools` 和 `@lilia/ui` 切到默认的 `../LiliaUI/packages/*` `portal:` 依赖，并刷新 `node_modules`。如果 LiliaUI 不在相邻目录，可用 `LILIA_UI_LOCAL_PATH` 指定路径：
+该命令会通过 `yarn link --relative` 临时维护项目级 `resolutions`，把 `@lilia/build`、`@lilia/config`、`@lilia/tools`、`@lilia/ui`、`@lilia/ui-contract` 和 `@lilia/ui-foundation` 切到默认的 `../LiliaUI/packages/*` `portal:` 依赖，并刷新 `node_modules`。如果 LiliaUI 不在相邻目录，可用 `LILIA_UI_LOCAL_PATH` 指定路径：
 
 ```powershell
 $env:LILIA_UI_LOCAL_PATH = "C:\Files\workspace\LiliaUI"
@@ -66,7 +66,7 @@ yarn liliaui:remote
 yarn liliaui:status
 ```
 
-`yarn liliaui:status` 只检查当前四个 LiliaUI 包来自本地 `portal:` 还是固定 GitHub 依赖。提交策略是：默认远端 manifest 和锁文件可以入库，本地 `resolutions` / `portal:` lockfile 只作为个人联调状态，不随普通业务提交一起提交。
+`yarn liliaui:status` 只检查当前六个 LiliaUI 包来自本地 `portal:` 还是固定 GitHub 依赖。提交策略是：默认远端 manifest 和锁文件可以入库，本地 `resolutions` / `portal:` lockfile 只作为个人联调状态，不随普通业务提交一起提交。
 
 Rust 编译缓存可在个人机器启用 `sccache`,但不要写入仓库配置。确认本机已安装后,在 `~/.cargo/config.toml` 配置:
 

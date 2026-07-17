@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { AlertCircle, LoaderCircle } from "@lucide/vue";
-import { UiSwitch } from "@lilia/ui";
+import { UiSwitch } from "../../ui";
 import type {
   RepoRemoteSyncConfig,
   RepoRemoteSyncPolicy,
@@ -93,28 +93,14 @@ function remoteAgentId(name: string, role: string) {
 <template>
   <RepoSyncDialogShell
     :open="open"
-    title-id="repo-remote-sync-title"
+    title="远端同步设置"
+    description="选择已有远端在拉取和推送中的角色。"
     agent-id="repo.remote-sync.dialog"
-    card-class="remote-sync-dialog"
+    close-agent-id="repo.remote-sync.close"
+    size="wide"
     :close-disabled="saving"
     @close="emit('close')"
   >
-          <header class="remote-sync-dialog__header">
-            <div>
-              <h2 id="repo-remote-sync-title">远端同步设置</h2>
-              <p>选择已有远端在拉取和推送中的角色。</p>
-            </div>
-            <button
-              type="button"
-              class="ghost"
-              data-agent-id="repo.remote-sync.close"
-              :disabled="saving"
-              @click="emit('close')"
-            >
-              关闭
-            </button>
-          </header>
-
           <div v-if="loading" class="remote-sync-dialog__state" role="status" aria-live="polite" data-agent-id="repo.remote-sync.loading">
             <LoaderCircle class="remote-sync-dialog__spinner" :size="18" aria-hidden="true" />
             <span>正在读取远端配置…</span>
@@ -179,10 +165,12 @@ function remoteAgentId(name: string, role: string) {
               </div>
             </div>
 
-            <footer class="remote-sync-dialog__actions">
-              <p v-if="!pushRemotes.length">未选择推送目标；拉取仍可使用，推送将不可用。</p>
+          </template>
+          <template #actions>
+              <p v-if="config && !pushRemotes.length" class="remote-sync-dialog__action-hint">未选择推送目标；拉取仍可使用，推送将不可用。</p>
               <button type="button" class="ghost" :disabled="saving" @click="emit('close')">取消</button>
               <button
+                v-if="config"
                 type="button"
                 class="primary"
                 data-agent-id="repo.remote-sync.save"
@@ -191,44 +179,11 @@ function remoteAgentId(name: string, role: string) {
               >
                 {{ saving ? "保存中…" : "保存" }}
               </button>
-            </footer>
           </template>
   </RepoSyncDialogShell>
 </template>
 
 <style scoped>
-:deep(.remote-sync-dialog) {
-  width: min(680px, calc(100vw - 32px));
-  max-height: min(720px, calc(100vh - 32px));
-  overflow: auto;
-}
-
-.remote-sync-dialog__header,
-.remote-sync-dialog__actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  justify-content: space-between;
-}
-
-.remote-sync-dialog__header {
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.remote-sync-dialog__header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 650;
-}
-
-.remote-sync-dialog__header p,
-.remote-sync-dialog__actions p {
-  margin: 3px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
 .remote-sync-dialog__state {
   min-height: 160px;
   display: flex;
@@ -256,7 +211,7 @@ function remoteAgentId(name: string, role: string) {
 }
 
 .remote-sync-dialog__columns {
-  padding: 12px 18px 6px;
+  padding: 4px 2px 6px;
   color: var(--text-faint);
   font-size: 11px;
   text-align: center;
@@ -268,7 +223,6 @@ function remoteAgentId(name: string, role: string) {
 
 .remote-sync-dialog__remotes {
   display: grid;
-  padding: 0 10px;
 }
 
 .remote-sync-dialog__remote {
@@ -302,7 +256,7 @@ function remoteAgentId(name: string, role: string) {
 .remote-sync-dialog__errors {
   display: flex;
   gap: 8px;
-  margin: 12px 18px 0;
+  margin: 12px 0 0;
   padding: 9px 10px;
   border-radius: var(--radius-sm);
   background: var(--err-soft);
@@ -317,13 +271,11 @@ function remoteAgentId(name: string, role: string) {
   margin-top: 3px;
 }
 
-.remote-sync-dialog__actions {
-  justify-content: flex-end;
-  padding: 14px 18px 16px;
-}
-
-.remote-sync-dialog__actions p {
+.remote-sync-dialog__action-hint {
+  margin: 0;
   margin-right: auto;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 @keyframes remote-sync-spin {
@@ -340,9 +292,5 @@ function remoteAgentId(name: string, role: string) {
 
 @media (prefers-reduced-motion: reduce) {
   .remote-sync-dialog__spinner { animation: none; }
-  .modal-enter-active,
-  .modal-leave-active,
-  .modal-enter-active .modal-card,
-  .modal-leave-active .modal-card { transition: none; }
 }
 </style>

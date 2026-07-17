@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import { computed, reactive, ref } from "vue";
+import { reactive, ref } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,9 +63,9 @@ vi.mock("../src/composables/useWorkspace", () => ({
   }),
 }));
 
-const { LiliaDesktopShell, liliaShellOptionsKey, setLiliaUiConfig } = await import("@lilia/ui/shell");
+const { setLiliaUiConfig } = await import("../src/ui");
 const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
-const { default: SecondaryPanel } = await import("../src/layouts/SecondaryPanel.vue");
+const { default: AppShell } = await import("../src/layouts/AppShell.vue");
 const { default: Home } = await import("../src/pages/Home.vue");
 
 async function renderSetupHome() {
@@ -82,15 +82,9 @@ async function renderSetupHome() {
   await router.isReady();
 
   setLiliaUiConfig(LILIA_UI_CONFIG);
-  return render(LiliaDesktopShell, {
+  return render(AppShell, {
     global: {
       plugins: [router],
-      provide: {
-        [liliaShellOptionsKey as symbol]: {
-          mainSidebar: SecondaryPanel,
-          setupOverlayActive: computed(() => !isReady.value),
-        },
-      },
     },
   });
 }
@@ -107,7 +101,7 @@ describe("初始化覆盖界面", () => {
     const view = await renderSetupHome();
 
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
-    expect(view.getByRole("button", { name: "折叠左侧栏" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "展开左侧栏" })).toBeDisabled();
 
     expect(await screen.findByRole("heading", { level: 1, name: "LiliaGithub 初始化" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "工作区文件夹" })).toBeInTheDocument();

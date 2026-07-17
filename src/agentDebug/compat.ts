@@ -1,7 +1,7 @@
 import {
   recordAgentDebugLog,
   type LiliaAgentDebugApi,
-} from "@lilia/ui/diagnostics";
+} from "../ui";
 
 type LiliaGithubAgentDebugWindow = Window & {
   __liliaAgentDebug?: LiliaAgentDebugApi;

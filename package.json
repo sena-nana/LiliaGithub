@@ -36,11 +36,15 @@
     "agent-debug:verify": "node agent-debug/verify-agent-debug.mjs"
   },
   "dependencies": {
-    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=304f54706cf0a48469531e534efe7d775aaaacf4",
-    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=304f54706cf0a48469531e534efe7d775aaaacf4",
-    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=304f54706cf0a48469531e534efe7d775aaaacf4",
-    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=304f54706cf0a48469531e534efe7d775aaaacf4",
+    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=5341f2beab89703effa583ec8a8243ea43e10be9",
+    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=5341f2beab89703effa583ec8a8243ea43e10be9",
+    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=5341f2beab89703effa583ec8a8243ea43e10be9",
+    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=5341f2beab89703effa583ec8a8243ea43e10be9",
+    "@lilia/ui-contract": "github:sena-nana/LiliaUI#workspace=@lilia/ui-contract&commit=5341f2beab89703effa583ec8a8243ea43e10be9",
+    "@lilia/ui-foundation": "github:sena-nana/LiliaUI#workspace=@lilia/ui-foundation&commit=5341f2beab89703effa583ec8a8243ea43e10be9",
     "ansi_up": "^6.0.6",
+    "vue": "^3.5.39",
+    "vue-router": "^5.1.0",
     "yaml": "^2.9.0"
   },
   "packageManager": "yarn@4.17.1+sha512.ccbfabf7d7b6b32075088be9386fb9a2e00bb6887ef07fa56effabc890a56d53da1ccc4128d62db245fcbd3961b236d75335bdf7d5320ed6eafb7588b7ad4697",

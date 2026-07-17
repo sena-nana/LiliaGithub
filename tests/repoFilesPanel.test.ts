@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
-import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
+import ContextMenuHost from "../src/ui/contextMenuHost";
 import {
   closeContextMenu,
   installContextMenu,
   uninstallContextMenu,
-} from "@lilia/ui/composables/useContextMenu";
+} from "../src/ui";
 import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { SettingsRow, UiButton, UiCard } from "@lilia/ui";
+import { SettingsRow, UiButton, UiCard } from "../../../ui";
 import { onMounted, onUnmounted, ref } from "vue";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../../composables/useLatestAsyncLoader";

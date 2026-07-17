@@ -1,5 +1,4 @@
-import { LiliaSettingsPage } from "@lilia/ui/settings";
-import { LiliaDesktopShell } from "@lilia/ui/shell";
+import { LiliaSettingsPage } from "./ui";
 import {
   createRouter,
   createWebHistory,
@@ -47,7 +46,6 @@ export const LILIA_GITHUB_ROUTES: RouteRecordRaw[] = [
   {
     path: "settings",
     component: LiliaSettingsPage,
-    meta: { sidebar: "settings", lockSidebar: true, returnable: false },
   },
 ];
 
@@ -65,8 +63,6 @@ export function createLiliaGithubRouter(history: RouterHistory = createWebHistor
     routes: [
       {
         path: "/",
-        component: LiliaDesktopShell,
-        meta: { sidebar: "main", returnable: true },
         children: LILIA_GITHUB_ROUTES,
       },
       { path: "/:pathMatch(.*)*", redirect: "/" },

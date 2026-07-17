@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ExternalLink } from "@lucide/vue";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { useOverlayPresence } from "../../ui";
 import { readmeHeadingId, resolveReadmeLink, type ReadmeLinkTarget } from "../../utils/readmeLinks";
 
 const props = defineProps<{
@@ -28,6 +29,7 @@ const toolbarTarget = computed(() => resolveReadmeLink({
   readmePaths: props.readmePaths,
 }) ?? resolveMarkdownBaseLink(toolbarHref.value));
 const toolbarCanOpen = computed(() => Boolean(toolbarTarget.value));
+const toolbarPresence = useOverlayPresence();
 
 const allowedTags = new Set([
   "a",
@@ -553,9 +555,11 @@ function onKey(event: KeyboardEvent) {
 
 watch(linkToolbar, (value, previous) => {
   if (value && !previous) {
+    toolbarPresence.activate();
     document.addEventListener("pointerdown", onDocPointer, true);
     document.addEventListener("keydown", onKey);
   } else if (!value && previous) {
+    toolbarPresence.deactivate();
     document.removeEventListener("pointerdown", onDocPointer, true);
     document.removeEventListener("keydown", onKey);
   }
@@ -566,6 +570,7 @@ watch(() => props.content, closeLinkToolbar);
 defineExpose({ scrollToAnchor });
 
 onBeforeUnmount(() => {
+  toolbarPresence.deactivate();
   document.removeEventListener("pointerdown", onDocPointer, true);
   document.removeEventListener("keydown", onKey);
 });

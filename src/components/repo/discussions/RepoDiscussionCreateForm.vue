@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle } from "@lucide/vue";
-import { Dropdown } from "@lilia/ui";
+import { Dropdown } from "../../../ui";
 import { computed } from "vue";
 import type { GitHubRepositoryDiscussionCategory } from "../../../services/workspace/discussions/types";
 

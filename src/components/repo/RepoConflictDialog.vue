@@ -5,7 +5,6 @@ import {
   FileWarning,
   LoaderCircle,
   TriangleAlert,
-  X,
 } from "@lucide/vue";
 import type {
   RepoConflictChoice,
@@ -202,32 +201,16 @@ function sideLines(hunk: DeepReadonly<RepoConflictHunk>, side: ConflictSide) {
 <template>
   <RepoSyncDialogShell
     :open="open"
-    title-id="repo-conflicts-title"
+    :title="operationTitle"
+    :description="operationSummary"
     agent-id="repo.conflicts.dialog"
-    card-class="repo-conflicts-dialog"
+    close-agent-id="repo.conflicts.close"
+    close-label="关闭冲突处理"
+    size="workspace"
     :close-disabled="actionRunning"
     @close="close"
   >
-    <header class="conflicts-dialog__header">
-      <span class="conflicts-dialog__icon" aria-hidden="true">
-        <TriangleAlert :size="20" />
-      </span>
-      <div class="conflicts-dialog__heading">
-        <h2 id="repo-conflicts-title">{{ operationTitle }}</h2>
-        <p>{{ operationSummary }}</p>
-      </div>
-      <button
-        type="button"
-        class="ghost conflicts-dialog__close"
-        aria-label="关闭冲突处理"
-        data-agent-id="repo.conflicts.close"
-        :disabled="actionRunning"
-        @click="close"
-      >
-        <X :size="16" aria-hidden="true" />
-      </button>
-    </header>
-
+    <div class="repo-conflicts-dialog">
     <p v-if="error" class="conflicts-dialog__error" role="alert">
       <TriangleAlert :size="15" aria-hidden="true" />
       <span>{{ error }}</span>
@@ -350,8 +333,9 @@ function sideLines(hunk: DeepReadonly<RepoConflictHunk>, side: ConflictSide) {
         <p v-else>可以关闭此卡片。</p>
       </div>
     </div>
+    </div>
 
-    <footer class="conflicts-dialog__footer">
+    <template #actions>
       <button
         v-if="operationActive"
         type="button"
@@ -386,67 +370,35 @@ function sideLines(hunk: DeepReadonly<RepoConflictHunk>, side: ConflictSide) {
         <Check v-else :size="14" aria-hidden="true" />
         {{ continueLabel }}
       </button>
-    </footer>
+    </template>
   </RepoSyncDialogShell>
 </template>
 
 <style scoped>
-:deep(.repo-conflicts-dialog) {
+.repo-conflicts-dialog {
   display: flex;
   flex-direction: column;
-  width: min(1080px, calc(100vw - 32px));
-  max-height: min(780px, calc(100vh - 32px));
+  width: 100%;
+  min-height: min(620px, calc(100vh - 180px));
   overflow: hidden;
 }
 
-.conflicts-dialog__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.conflicts-dialog__icon {
-  display: grid;
-  place-items: center;
-  color: var(--warn);
-}
-
-.conflicts-dialog__heading,
 .conflicts-dialog__file-head > div {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
-.conflicts-dialog__heading h2,
-.conflicts-dialog__heading p,
 .conflicts-dialog__file-head strong,
 .conflicts-dialog__file-head span,
 .conflicts-dialog__resolved p {
   margin: 0;
 }
 
-.conflicts-dialog__heading h2 {
-  font-size: 16px;
-  font-weight: 650;
-}
-
-.conflicts-dialog__heading p,
 .conflicts-dialog__file-head span,
 .conflicts-dialog__resolved p {
   color: var(--text-muted);
   font-size: 12px;
-}
-
-.conflicts-dialog__close {
-  display: grid;
-  width: 30px;
-  min-width: 30px;
-  padding: 0;
-  place-items: center;
 }
 
 .conflicts-dialog__error {

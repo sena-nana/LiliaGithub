@@ -8,7 +8,7 @@ import {
   installContextMenu,
   selectContextMenuItem,
   useContextMenu,
-} from "@lilia/ui/composables/useContextMenu";
+} from "../src/ui";
 import { startAuthFlow } from "../src/composables/workspace/auth";
 import { state } from "../src/composables/workspace/state";
 import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";

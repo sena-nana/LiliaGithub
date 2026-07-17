@@ -51,25 +51,14 @@ function stepAgentId(step: RepoRemoteOperationStep) {
 <template>
   <RepoSyncDialogShell
     :open="Boolean(result)"
-    title-id="repo-sync-result-title"
+    :title="title"
+    :description="result?.message || (result?.status === 'conflicts' ? '解决冲突后再继续同步。' : '成功的远端不会重复执行。')"
     agent-id="repo.remote-sync.result-dialog"
-    card-class="sync-result-dialog"
+    size="medium"
     :close-disabled="retrying"
     @close="emit('close')"
   >
     <template v-if="result">
-          <header class="sync-result-dialog__header">
-            <span class="sync-result-dialog__status" :class="`is-${result.status}`">
-              <GitMerge v-if="result.status === 'conflicts'" :size="19" aria-hidden="true" />
-              <AlertCircle v-else-if="result.status === 'partial'" :size="19" aria-hidden="true" />
-              <XCircle v-else :size="19" aria-hidden="true" />
-            </span>
-            <div>
-              <h2 id="repo-sync-result-title">{{ title }}</h2>
-              <p>{{ result.message || (result.status === 'conflicts' ? '解决冲突后再继续同步。' : '成功的远端不会重复执行。') }}</p>
-            </div>
-          </header>
-
           <div class="sync-result-dialog__steps" role="list" aria-label="远端操作结果">
             <div
               v-for="(step, index) in result.steps"
@@ -95,7 +84,9 @@ function stepAgentId(step: RepoRemoteOperationStep) {
             </div>
           </div>
 
-          <footer class="sync-result-dialog__actions">
+    </template>
+          <template #actions>
+            <template v-if="result">
             <button type="button" class="ghost" data-agent-id="repo.remote-sync.result.close" :disabled="retrying" @click="emit('close')">关闭</button>
             <button
               v-if="failedPushRemotes.length"
@@ -119,45 +110,15 @@ function stepAgentId(step: RepoRemoteOperationStep) {
               <GitMerge :size="15" aria-hidden="true" />
               处理冲突
             </button>
-          </footer>
-    </template>
+            </template>
+          </template>
   </RepoSyncDialogShell>
 </template>
 
 <style scoped>
-:deep(.sync-result-dialog) {
-  width: min(600px, calc(100vw - 32px));
-  max-height: min(720px, calc(100vh - 32px));
-  overflow: auto;
-}
-
-.sync-result-dialog__header {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.sync-result-dialog__header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 650;
-}
-
-.sync-result-dialog__header p {
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.sync-result-dialog__status.is-conflicts,
-.sync-result-dialog__status.is-partial { color: var(--warn); }
-.sync-result-dialog__status.is-error { color: var(--err); }
-
 .sync-result-dialog__steps {
   display: grid;
-  padding: 6px 10px;
+  padding: 0;
 }
 
 .sync-result-dialog__step {
@@ -192,15 +153,7 @@ function stepAgentId(step: RepoRemoteOperationStep) {
   color: var(--text-muted);
 }
 
-.sync-result-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 18px 16px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.sync-result-dialog__actions .primary {
+.primary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -216,9 +169,5 @@ function stepAgentId(step: RepoRemoteOperationStep) {
 
 @media (prefers-reduced-motion: reduce) {
   .sync-result-dialog__spinner { animation: none; }
-  .modal-enter-active,
-  .modal-leave-active,
-  .modal-enter-active .modal-card,
-  .modal-leave-active .modal-card { transition: none; }
 }
 </style>

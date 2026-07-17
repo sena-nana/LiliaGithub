@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ExternalLink, LoaderCircle, RotateCw } from "@lucide/vue";
-import { Dropdown, UiButton } from "@lilia/ui";
+import { Dropdown, UiButton } from "../../ui";
 import { computed, ref, watch } from "vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";

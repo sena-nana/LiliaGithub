@@ -733,7 +733,12 @@ pub(super) fn validate_repo_placement(
         return Ok(());
     };
     let group_id = group_id.trim();
-    if group_id.is_empty() || !settings.repo_groups.iter().any(|group| group.id == group_id) {
+    if group_id.is_empty()
+        || !settings
+            .repo_groups
+            .iter()
+            .any(|group| group.id == group_id)
+    {
         return Err("未找到仓库分组".to_string());
     }
     Ok(())

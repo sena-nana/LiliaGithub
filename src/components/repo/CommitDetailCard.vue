@@ -34,10 +34,8 @@ const detail = ref<CommitDetail | null>(null);
 const activeFilePath = ref<string | null>(null);
 const copyNotice = ref<string | null>(null);
 const diffCollapsed = ref(true);
-const panelHeight = ref(460);
 const componentEpoch = useComponentEpoch();
 const detailLoader = createLatestAsyncLoader({ componentEpoch });
-let resizeCleanup: (() => void) | null = null;
 let copyNoticeTimer: number | null = null;
 
 const totalAdditions = computed(() =>
@@ -85,10 +83,6 @@ const workspaceFiles = computed<RepoDiffWorkspaceFile[]>(() =>
 const activeWorkspaceFile = computed(() =>
   workspaceFiles.value.find((file) => file.path === activeFilePath.value) ?? workspaceFiles.value[0] ?? null,
 );
-const cardStyle = computed(() => ({
-  "--commit-detail-height": `${panelHeight.value}px`,
-}));
-
 onMounted(() => {
   void load();
 });
@@ -104,7 +98,6 @@ watch(() => detail.value?.files, (files) => {
 
 onUnmounted(() => {
   detailLoader.invalidate();
-  stopResize();
   clearCopyNoticeTimer();
 });
 
@@ -176,41 +169,6 @@ function clearCopyNoticeTimer() {
   copyNoticeTimer = null;
 }
 
-function stopResize() {
-  resizeCleanup?.();
-  resizeCleanup = null;
-}
-
-function startHeightResize(event: PointerEvent) {
-  if (!props.embedded) return;
-  startResize(event, (start, current) => {
-    panelHeight.value = clamp(start.height + start.y - current.clientY, 300, 760);
-  });
-}
-
-function startResize(
-  event: PointerEvent,
-  apply: (start: { x: number; y: number; height: number }, current: PointerEvent) => void,
-) {
-  event.preventDefault();
-  stopResize();
-  const start = { x: event.clientX, y: event.clientY, height: panelHeight.value };
-  const onMove = (moveEvent: PointerEvent) => apply(start, moveEvent);
-  const onEnd = () => stopResize();
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onEnd, { once: true });
-  window.addEventListener("pointercancel", onEnd, { once: true });
-  resizeCleanup = () => {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onEnd);
-    window.removeEventListener("pointercancel", onEnd);
-  };
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
 defineExpose({ refresh });
 </script>
 
@@ -218,17 +176,8 @@ defineExpose({ refresh });
   <section
     class="commit-detail-card"
     :class="{ 'commit-detail-card--embedded': embedded }"
-    :style="cardStyle"
     aria-label="提交详情卡片"
   >
-    <div
-      v-if="embedded"
-      class="commit-detail-card__height-resizer"
-      role="separator"
-      aria-orientation="horizontal"
-      @pointerdown="startHeightResize"
-    />
-
     <p v-if="error" class="error-line commit-detail-card__state">{{ error }}</p>
     <p v-else-if="loading" class="muted commit-detail-card__state">正在读取提交详情...</p>
 
@@ -241,7 +190,6 @@ defineExpose({ refresh });
       empty-diff-text="仅文件元数据变更、二进制文件或无可展示的文本差异。"
       :mode="diffMode"
       :show-stats="true"
-      :splitter="embedded"
       @select-file="selectFile"
     >
       <template #meta>
@@ -328,8 +276,7 @@ defineExpose({ refresh });
 
 .commit-detail-card--embedded {
   grid-template-rows: minmax(0, 1fr);
-  height: var(--commit-detail-height);
-  min-height: 300px;
+  height: 100%;
 }
 
 .commit-detail-meta__repo,
@@ -341,17 +288,6 @@ defineExpose({ refresh });
 .commit-detail-card__state {
   margin: 0;
   padding: 14px;
-}
-
-.commit-detail-card__height-resizer {
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 6px;
-  cursor: ns-resize;
-  background: transparent;
 }
 
 .commit-detail-meta {

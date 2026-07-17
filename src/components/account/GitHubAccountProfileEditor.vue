@@ -8,7 +8,7 @@ import {
   Mail,
   MapPin,
 } from "@lucide/vue";
-import { UiButton, UiInput, UiSwitch, UiTextarea } from "@lilia/ui";
+import { UiButton, UiInput, UiSwitch, UiTextarea } from "../../ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";

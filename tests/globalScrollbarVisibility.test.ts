@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   installGlobalScrollbarVisibility,
   uninstallGlobalScrollbarVisibility,
-} from "@lilia/ui/composables/useGlobalScrollbarVisibility";
+} from "../src/ui";
 
 function createScroller(input: {
   overflow?: string;

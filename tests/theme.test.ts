@@ -5,8 +5,7 @@ describe("useTheme", () => {
     localStorage.setItem("lilia-github.theme", "light");
     vi.resetModules();
 
-    const { setLiliaUiConfig } = await import("@lilia/ui/shell");
-    const { useTheme } = await import("@lilia/ui/composables/useTheme");
+    const { setLiliaUiConfig, useTheme } = await import("../src/ui");
     const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
     setLiliaUiConfig(LILIA_UI_CONFIG);
     const { theme } = useTheme();
@@ -17,8 +16,7 @@ describe("useTheme", () => {
 
   it("setTheme 会同步更新 data-theme 和 localStorage", async () => {
     vi.resetModules();
-    const { setLiliaUiConfig } = await import("@lilia/ui/shell");
-    const { useTheme } = await import("@lilia/ui/composables/useTheme");
+    const { setLiliaUiConfig, useTheme } = await import("../src/ui");
     const { LILIA_UI_CONFIG } = await import("../src/config/appShell");
     setLiliaUiConfig(LILIA_UI_CONFIG);
     const { theme, setTheme } = useTheme();

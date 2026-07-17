@@ -11,17 +11,18 @@ import {
 import {
   type LiliaSidebarConfigInput,
   type LiliaUiConfig,
-} from "@lilia/ui/shell";
+} from "../ui";
 import {
   createLiliaSettingsModel,
   LiliaAppearanceSection,
   normalizeSettingsTab as normalizeLiliaSettingsTab,
-} from "@lilia/ui/settings";
+} from "../ui";
 import type { Component } from "vue";
 import type { RouteLocationRaw } from "vue-router";
+import appConfig from "../../app.config.json";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 
-export const APP_TITLE = "LiliaGithub";
+export const APP_TITLE = appConfig.productTitle;
 type SidebarNavItems = NonNullable<LiliaSidebarConfigInput["nav"]>;
 
 export const SIDEBAR_CONFIG = {
@@ -128,11 +129,11 @@ export const LILIA_SETTINGS_MODEL = createLiliaSettingsModel({
 });
 
 export const LILIA_UI_CONFIG = {
-  appName: "lilia-github",
+  appName: appConfig.appName,
   productTitle: APP_TITLE,
-  version: "1.0.0",
-  identifier: "com.lilia.github",
-  storageKeyPrefix: "lilia-github",
+  version: appConfig.version,
+  identifier: appConfig.identifier,
+  storageKeyPrefix: appConfig.storageKeyPrefix,
   appearance: {
     backdropTarget: "sidebar",
     backdropOpacity: 0.64,

@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
+import ContextMenuHost from "../src/ui/contextMenuHost";
 import RepoHistoryPanel from "../src/components/repo/RepoHistoryPanel.vue";
-import { closeContextMenu, installContextMenu } from "@lilia/ui/composables/useContextMenu";
+import { closeContextMenu, installContextMenu } from "../src/ui";
 import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
 import type { CommitSummary } from "../src/services/workspace";
 

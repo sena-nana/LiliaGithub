@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { Building2, Check, Search, UserRound } from "@lucide/vue";
-import { SearchDropdown } from "@lilia/ui";
+import { SearchDropdown } from "../../ui";
 import type { GitHubRepoOwner, GitHubRepositoryScope } from "../../services/workspace";
 
 const props = withDefaults(defineProps<{

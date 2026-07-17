@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
-import { buildCalendarHeatmapModel } from "@lilia/ui/utils/calendarHeatmap";
+import { buildCalendarHeatmapModel } from "../src/ui";
 import { describe, expect, it } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import HomeContributionCard from "../src/components/home/HomeContributionCard.vue";
