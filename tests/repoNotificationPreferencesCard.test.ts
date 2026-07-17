@@ -16,13 +16,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/composables/useWorkspace", () => ({
-  useWorkspace: () => ({ githubBinding: mocks.binding }),
+  useWorkspace: () => ({
+    githubBinding: mocks.binding,
+    getGitHubRepositorySubscription: mocks.getSubscription,
+    updateGitHubRepositorySubscription: mocks.updateSubscription,
+    openUrl: mocks.openUrl,
+  }),
 }));
 
-vi.mock("../src/services/workspace", () => ({
-  getGitHubRepositorySubscription: mocks.getSubscription,
-  updateGitHubRepositorySubscription: mocks.updateSubscription,
-  openUrl: mocks.openUrl,
+vi.mock("../src/utils/githubErrors", () => ({
   githubErrorCode: (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     return message.match(/^(github_[a-z0-9_]+)\s*[:：]/i)?.[1]?.toLocaleLowerCase() ?? null;

@@ -7,9 +7,6 @@ import { createPendingTaskTracker } from "../../composables/usePendingTaskTracke
 import { useWorkspace } from "../../composables/useWorkspace";
 import { Dropdown } from "../../ui";
 import {
-  createGitHubRepo,
-  listGitHubRepoOwners,
-  listGitHubRepoTemplates,
   type GitHubCreateRepoRequest,
   type GitHubRepoOwner,
   type GitHubRepoSummary,
@@ -229,7 +226,7 @@ async function loadRepoOwners() {
     repoOwnersStatus.value = "loading";
     repoOwnersError.value = null;
     try {
-      const owners = await listGitHubRepoOwners();
+      const owners = await workspace.getAccountRepositoryOwners();
       if (!repoOwnersLoader.isCurrent(runId) || !props.open) return;
       const sortedOwners = sortRepoOwners(owners);
       repoOwners.value = sortedOwners;
@@ -252,7 +249,7 @@ async function loadRepoTemplates() {
   await repoTemplatesLoader.run("repo-templates", async (runId) => {
     repoTemplatesStatus.value = "loading";
     try {
-      const templates = await listGitHubRepoTemplates();
+      const templates = await workspace.listGitHubRepoTemplates();
       if (!repoTemplatesLoader.isCurrent(runId) || !props.open || !form.value.useTemplate) return;
       repoTemplates.value = templates;
       repoTemplatesStatus.value = "loaded";
@@ -360,7 +357,7 @@ async function submitRemoteRepo(cloneAfterCreate = true) {
     syncOwnerKind();
     try {
       const request = buildGitHubCreateRepoRequest();
-      const repo = await createActionTracker.run(() => createGitHubRepo(request));
+      const repo = await createActionTracker.run(() => workspace.createGitHubRepo(request));
       if (!createRepoLoader.isCurrent(runId) || !props.open) return;
       if (!cloneAfterCreate) {
         emit("close");

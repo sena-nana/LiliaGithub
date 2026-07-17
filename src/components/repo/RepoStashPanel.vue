@@ -5,7 +5,7 @@ import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
-import { getRepoStashDetail, type CommitFileChange, type RepoStashDetail, type RepoStashEntry } from "../../services/workspace";
+import type { CommitFileChange, RepoStashDetail, RepoStashEntry } from "../../services/workspace";
 import { commitFileStatusText } from "../../utils/repoDisplay";
 import type { RepoContext } from "../../utils/repoContext";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
@@ -135,7 +135,7 @@ async function loadStashDetail(stashId: string) {
     detailLoading.value = true;
     error.value = null;
     try {
-      const nextDetail = await getRepoStashDetail(repoId, stashId);
+      const nextDetail = await workspace.getRepoStashDetail(repoId, stashId);
       if (
         !stashDetailLoader.isCurrent(runId) ||
         repoId !== props.repoId ||

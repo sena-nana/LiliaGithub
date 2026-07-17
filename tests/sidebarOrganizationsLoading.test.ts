@@ -21,8 +21,7 @@ const binding = {
   clientIdSource: "bundled",
 };
 
-const { listGitHubRepoOwners, workspace } = vi.hoisted(() => ({
-  listGitHubRepoOwners: vi.fn(),
+const { workspace } = vi.hoisted(() => ({
   workspace: {
     state: {} as Record<string, unknown>,
     githubBinding: { value: null as null | typeof binding },
@@ -37,6 +36,7 @@ const { listGitHubRepoOwners, workspace } = vi.hoisted(() => ({
     moveRepoToGroup: vi.fn(async () => undefined),
     hideRepo: vi.fn(async () => undefined),
     openUrl: vi.fn(async () => undefined),
+    getAccountRepositoryOwners: vi.fn(),
   },
 }));
 
@@ -94,11 +94,6 @@ vi.mock("../src/composables/workspace/state", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/services/workspace", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/services/workspace")>();
-  return { ...actual, listGitHubRepoOwners };
-});
-
 const { default: SecondaryPanel } = await import("../src/layouts/SecondaryPanel.vue");
 
 describe("侧边栏组织加载", () => {
@@ -109,7 +104,7 @@ describe("侧边栏组织加载", () => {
 
   it("session 失效后仍会结束组织加载", async () => {
     const pending = deferred<GitHubRepoOwner[]>();
-    listGitHubRepoOwners.mockReturnValue(pending.promise);
+    workspace.getAccountRepositoryOwners.mockReturnValue(pending.promise);
 
     const router = createRouter({
       history: createMemoryHistory(),

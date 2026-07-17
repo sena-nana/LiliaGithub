@@ -40,11 +40,6 @@ import {
   type RepoSyncIssueDisplay,
 } from "../composables/workspace/state";
 import {
-  clearGitHubRepoCache,
-  isGitHubBindingExpiredError,
-  listGitHubRepos,
-  listGitHubRepoOwners,
-  preloadGitHubRepos,
   type GitHubRepoSummary,
   type GitHubRepoOwner,
   type GitHubRepositoryScope,
@@ -56,6 +51,8 @@ import {
   type WorkspaceRepoPlacement,
   type WorkspaceSettings,
 } from "../services/workspace";
+import { clearGitHubRepoCache } from "../services/workspace/cache";
+import { isGitHubBindingExpiredError } from "../utils/githubErrors";
 import {
   clearHomeGitHubOverviewSnapshot,
   homeGitHubOverviewSnapshotNeedsRefresh,
@@ -758,7 +755,7 @@ async function loadGitHubRepoOwners() {
     githubRepoOwnersLoading.value = true;
     githubRepoOwnersError.value = null;
     try {
-      const owners = await listGitHubRepoOwners();
+      const owners = await workspace.getAccountRepositoryOwners();
       if (!githubRepoOwnersLoader.isCurrent(runId)) return;
       githubRepoOwners.value = owners;
       const routeScope = repositoryScopeFromRouteOrPreferences(owners);
@@ -917,7 +914,7 @@ async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
     githubReposLoading.value = true;
     githubReposError.value = null;
     try {
-      const page = await preloadGitHubRepos({ force: options.force, scope });
+      const page = await workspace.preloadGitHubRepos({ force: options.force, scope });
       if (!githubRepoStatusLoader.isCurrent(runId) || !workspace.isReady.value) return;
       if (githubRepositoryScopeKey(githubRepositoryScope.value) !== scopeKey) return;
       applyGitHubRepoPage(page, false, options.force);
@@ -948,7 +945,7 @@ async function loadMoreGitHubRepos() {
     githubReposLoadingMore.value = true;
     githubReposError.value = null;
     try {
-      const page = await listGitHubRepos(scope, pageNumber);
+      const page = await workspace.listGitHubRepos(scope, pageNumber);
       if (!githubRepoMoreLoader.isCurrent(runId) || githubReposNextPage.value !== pageNumber) return;
       if (githubRepositoryScopeKey(githubRepositoryScope.value) !== scopeKey) return;
       applyGitHubRepoPage(page, true);

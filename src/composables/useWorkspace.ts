@@ -105,6 +105,14 @@ import {
   syncAll,
 } from "./workspace/bulk";
 import {
+  deleteGitHubBranch,
+  getGitHubRepoManagement,
+  getRepoCommitDetail,
+  getRepoStashDetail,
+  listGitHubBranches,
+  listGitHubRepoCommits,
+} from "./workspace/repositories";
+import {
   openPath,
   openPathTarget,
   openUrl,
@@ -123,6 +131,11 @@ import {
   updateAccountPreferences,
   updateAccountProfile,
   updateGitHubRepositorySubscription,
+  createGitHubRepo,
+  listGitHubRepoTemplates,
+  listGitHubRepos,
+  preloadGitHubRepos,
+  getGitHubBindingStatus,
 } from "./workspace/account";
 
 export function useWorkspace() {
@@ -236,5 +249,16 @@ export function useWorkspace() {
     pickAccountWorkspaceRoot,
     updateAccountPreferences,
     reloadAccountWorkspace,
+    getRepoCommitDetail,
+    getRepoStashDetail,
+    getGitHubRepoManagement,
+    listGitHubBranches,
+    listGitHubRepoCommits,
+    deleteGitHubBranch,
+    createGitHubRepo,
+    listGitHubRepoTemplates,
+    listGitHubRepos,
+    preloadGitHubRepos,
+    getGitHubBindingStatus,
   };
 }

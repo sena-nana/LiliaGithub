@@ -1,13 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import RepoCreateCard from "../src/components/sidebar/RepoCreateCard.vue";
-import {
-  createGitHubRepo,
-  listGitHubRepoOwners,
-  listGitHubRepoTemplates,
-  type GitHubRepoOwner,
-  type GitHubRepoSummary,
-  type GitHubRepoTemplate,
+import type {
+  GitHubRepoOwner,
+  GitHubRepoSummary,
+  GitHubRepoTemplate,
 } from "../src/services/workspace";
 import { repoSummary } from "./fixtures/workspace";
 
@@ -71,21 +68,18 @@ const workspace = vi.hoisted(() => ({
   createLocalRepo: vi.fn(),
   cloneRepo: vi.fn(),
   refreshRepos: vi.fn(),
+  createGitHubRepo: vi.fn(),
+  listGitHubRepoTemplates: vi.fn(async () => []),
+  getAccountRepositoryOwners: vi.fn(async () => []),
 }));
 
 vi.mock("../src/composables/useWorkspace", () => ({
   useWorkspace: () => workspace,
 }));
 
-vi.mock("../src/services/workspace", async () => {
-  const actual = await vi.importActual<typeof import("../src/services/workspace")>("../src/services/workspace");
-  return {
-    ...actual,
-    createGitHubRepo: vi.fn(),
-    listGitHubRepoOwners: vi.fn(async () => []),
-    listGitHubRepoTemplates: vi.fn(async () => []),
-  };
-});
+const listGitHubRepoOwners = workspace.getAccountRepositoryOwners;
+const listGitHubRepoTemplates = workspace.listGitHubRepoTemplates;
+const createGitHubRepo = workspace.createGitHubRepo;
 
 async function renderRemoteRepoCard(repoGroups?: Array<{
   id: string;

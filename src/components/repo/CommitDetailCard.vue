@@ -3,7 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronDown, Clock3, Copy, FileText, GitCommitHorizontal, X } from "@lucide/vue";
 import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
-import { getRepoCommitDetail, type CommitDetail } from "../../services/workspace";
+import { useWorkspace } from "../../composables/useWorkspace";
+import type { CommitDetail } from "../../services/workspace";
 import { copyText } from "../../composables/workspace/system";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
 import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
@@ -27,6 +28,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   close: [];
 }>();
+
+const workspace = useWorkspace();
 
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -109,7 +112,7 @@ async function load(forceRefresh = false) {
     loading.value = true;
     error.value = null;
     try {
-      const nextDetail = await getRepoCommitDetail(repoId, hash, { forceRefresh });
+      const nextDetail = await workspace.getRepoCommitDetail(repoId, hash, { forceRefresh });
       if (!detailLoader.isCurrent(runId) || repoId !== props.repoId || hash !== props.hash) return;
       detail.value = nextDetail;
     } catch (err) {

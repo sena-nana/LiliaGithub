@@ -44,7 +44,6 @@ import {
 import { githubRepositoryIdentityKey, parseRemoteRepoId, remoteRepoRoute } from "../utils/remoteRepo";
 import { repoRoute } from "../utils/repoRoutes";
 import {
-  listGitHubRepoOwners,
   type GitHubRepoOwner,
   type RepoSummary,
 } from "../services/workspace";
@@ -153,7 +152,7 @@ async function loadSidebarGitHubOwners() {
     githubOwnersLoading.value = true;
     githubOwnersError.value = null;
     try {
-      const owners = await listGitHubRepoOwners();
+      const owners = await workspace.getAccountRepositoryOwners();
       if (!githubOwnersLoader.isCurrent(runId)) return;
       githubOwners.value = owners;
     } catch (err) {

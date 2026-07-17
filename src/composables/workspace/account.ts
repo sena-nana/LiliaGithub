@@ -1,11 +1,17 @@
 import type {
   AccountPreferences,
   GitHubAccountProfile,
+  GitHubBindingStatus,
+  GitHubCreateRepoRequest,
   GitHubOrganizationOverview,
   GitHubOrganizationProfile,
   GitHubOrganizationProfileView,
   GitHubProfileReadmeSection,
   GitHubRepoOwner,
+  GitHubRepoSummary,
+  GitHubRepoTemplate,
+  GitHubRepoPage,
+  GitHubRepositoryScope,
   GitHubRepositorySubscription,
   GitHubRepositorySubscriptionMode,
   GitHubUpdateAccountProfileRequest,
@@ -99,4 +105,36 @@ export async function updateGitHubRepositorySubscription(
 ): Promise<GitHubRepositorySubscription> {
   const service = await loadWorkspaceService();
   return service.updateGitHubRepositorySubscription(repoFullName, mode);
+}
+
+export async function createGitHubRepo(
+  request: GitHubCreateRepoRequest,
+): Promise<GitHubRepoSummary> {
+  const service = await loadWorkspaceService();
+  return service.createGitHubRepo(request);
+}
+
+export async function listGitHubRepoTemplates(): Promise<GitHubRepoTemplate[]> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubRepoTemplates();
+}
+
+export async function listGitHubRepos(
+  scope: GitHubRepositoryScope,
+  page?: number | null,
+): Promise<GitHubRepoPage> {
+  const service = await loadWorkspaceService();
+  return service.listGitHubRepos(scope, page ?? null);
+}
+
+export async function preloadGitHubRepos(
+  opts: { force?: boolean; scope?: GitHubRepositoryScope } = {},
+): Promise<GitHubRepoPage> {
+  const service = await loadWorkspaceService();
+  return service.preloadGitHubRepos(opts);
+}
+
+export async function getGitHubBindingStatus(): Promise<GitHubBindingStatus> {
+  const service = await loadWorkspaceService();
+  return service.getGitHubBindingStatus();
 }
