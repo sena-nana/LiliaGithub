@@ -77,7 +77,7 @@ const scopedLocalRepositories = computed(() => discovery.repositories.value.flat
 </template>
 
 <style scoped>
-.discovery-page { height: 100%; min-width: 0; overflow: auto; padding: 20px; }
+.discovery-page { height: 100%; min-width: 0; overflow: auto; }
 .discovery-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .discovery-header h1 { margin: 0; color: var(--text); font-size: 18px; font-weight: 600; }
 .discovery-header p { margin: 4px 0 0; color: var(--text-muted); font-size: 13px; }
@@ -93,6 +93,6 @@ const scopedLocalRepositories = computed(() => discovery.repositories.value.flat
 .discovery-repository-error .ghost { margin-left: auto; }
 .discovery-more { display: flex; justify-content: center; padding: 14px 0 4px; }
 .discovery-more button { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; }
-@media (max-width: 860px) { .discovery-page { padding: 14px; } .discovery-controls { align-items: stretch; flex-direction: column; } .discovery-batch { justify-content: flex-end; } }
+@media (max-width: 860px) { .discovery-controls { align-items: stretch; flex-direction: column; } .discovery-batch { justify-content: flex-end; } }
 @media (max-width: 520px) { .discovery-account { align-items: stretch; flex-direction: column; } .discovery-account .primary { justify-content: center; } }
 </style>

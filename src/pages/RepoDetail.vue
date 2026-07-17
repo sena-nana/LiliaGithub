@@ -360,7 +360,7 @@ async function refreshCurrentPage() {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
-  height: calc(100vh - 76px);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
