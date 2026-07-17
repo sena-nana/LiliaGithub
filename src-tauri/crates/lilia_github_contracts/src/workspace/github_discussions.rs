@@ -117,6 +117,45 @@ pub struct GitHubCreateRepositoryDiscussionRequest {
     pub body: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubCreateDiscussionCommentRequest {
+    pub discussion_id: String,
+    pub body: String,
+    #[serde(default)]
+    pub reply_to_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubUpdateDiscussionCommentRequest {
+    pub comment_id: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubDiscussionReactionRequest {
+    pub subject_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub remove: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubDiscussionStateRequest {
+    pub discussion_id: String,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubDiscussionAnswerRequest {
+    pub comment_id: String,
+    pub mark: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

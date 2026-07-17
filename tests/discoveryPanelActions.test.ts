@@ -8,16 +8,14 @@ import RecentReleasesPanel from "../src/components/discovery/RecentReleasesPanel
 import RepositoryStatusPanel from "../src/components/discovery/RepositoryStatusPanel.vue";
 
 const mocks = vi.hoisted(() => ({
-  getStatus: vi.fn(), review: vi.fn(), refresh: vi.fn(),
-  mergePr: vi.fn(), updatePr: vi.fn(), updateIssue: vi.fn(), rerun: vi.fn(), mergePull: vi.fn(),
+  getStatus: vi.fn(), refresh: vi.fn(),
+  updatePr: vi.fn(), updateIssue: vi.fn(), rerun: vi.fn(), mergePull: vi.fn(),
 }));
 
 vi.mock("../src/services/discovery", () => ({
   getGitHubDiscoveryRepositoryStatus: mocks.getStatus,
-  submitGitHubDiscoveryPullRequestReview: mocks.review,
 }));
 vi.mock("../src/services/workspace/client", () => ({
-  mergeGitHubPullRequest: mocks.mergePr,
   updateGitHubPullRequest: mocks.updatePr,
   updateGitHubIssue: mocks.updateIssue,
   rerunFailedGitHubWorkflowRun: mocks.rerun,
@@ -51,15 +49,11 @@ beforeEach(() => {
 });
 
 describe("跨仓库面板动作", () => {
-  it("提交审查、按仓库策略合并并关闭 Pull Request", async () => {
+  it("从待处理列表进入完整审查上下文，并保留明确的关闭动作", async () => {
     renderPanel(PendingPullRequestsPanel, { ...emptyResult, items: [pullItem] });
-    await fireEvent.click(await screen.findByRole("button", { name: "审查" }));
-    await fireEvent.click(screen.getByRole("button", { name: "提交审查" }));
-    await waitFor(() => expect(mocks.review).toHaveBeenCalledWith("lilia/app", 22, { event: "approve", body: undefined }));
-
-    await fireEvent.click(screen.getByRole("button", { name: "合并" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "确认合并" }));
-    await waitFor(() => expect(mocks.mergePr).toHaveBeenCalledWith("lilia/app", 22, { method: "merge" }));
+    const reviewLink = await screen.findByRole("link", { name: "进入完整审查" });
+    expect(reviewLink).toHaveAttribute("href", expect.stringContaining("projectTab=pulls"));
+    expect(reviewLink).toHaveAttribute("href", expect.stringContaining("pr=22"));
 
     await fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     await fireEvent.click(await screen.findByRole("button", { name: "确认关闭" }));

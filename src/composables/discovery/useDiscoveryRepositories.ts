@@ -66,6 +66,9 @@ export function useDiscoveryRepositories() {
     for (const shortcut of [...(workspace.state.settings?.remoteRepoShortcuts ?? [])].sort((a, b) => b.openedAt - a.openedAt)) {
       add(shortcut.fullName);
     }
+    for (const repo of workspace.state.repos) {
+      if (repo.githubFullName) add(repo.githubFullName, repo);
+    }
     return [...byKey.values()].slice(0, BATCH_SIZE);
   });
 

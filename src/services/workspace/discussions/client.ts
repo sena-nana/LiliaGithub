@@ -8,6 +8,12 @@ import type {
   GitHubRepositoryDiscussionPage,
   GitHubRepositoryDiscussionCommentPage,
   GitHubRepositoryDiscussionPageOptions,
+  GitHubCreateDiscussionCommentRequest,
+  GitHubUpdateDiscussionCommentRequest,
+  GitHubDiscussionReactionRequest,
+  GitHubDiscussionStateRequest,
+  GitHubDiscussionAnswerRequest,
+  GitHubRepositoryDiscussionComment,
 } from "./types";
 
 const fallbackModule = createCachedAsyncModule(() => import("./fallback"));
@@ -87,4 +93,34 @@ export function createGitHubRepositoryDiscussion(
     { repoFullName, request },
     async () => (await fallbackModule.load()).createDiscussionFallback(repoFullName, request),
   );
+}
+
+export function createGitHubDiscussionComment(request: GitHubCreateDiscussionCommentRequest): Promise<GitHubRepositoryDiscussionComment> {
+  return callWorkspaceCommand("github_create_discussion_comment", { request }, async () =>
+    (await fallbackModule.load()).createDiscussionCommentFallback(request));
+}
+
+export function updateGitHubDiscussionComment(request: GitHubUpdateDiscussionCommentRequest): Promise<GitHubRepositoryDiscussionComment> {
+  return callWorkspaceCommand("github_update_discussion_comment", { request }, async () =>
+    (await fallbackModule.load()).updateDiscussionCommentFallback(request));
+}
+
+export function deleteGitHubDiscussionComment(commentId: string): Promise<void> {
+  return callWorkspaceCommand("github_delete_discussion_comment", { commentId }, async () =>
+    (await fallbackModule.load()).deleteDiscussionCommentFallback(commentId));
+}
+
+export function updateGitHubDiscussionReaction(request: GitHubDiscussionReactionRequest): Promise<void> {
+  return callWorkspaceCommand("github_update_discussion_reaction", { request }, async () =>
+    (await fallbackModule.load()).updateDiscussionReactionFallback(request));
+}
+
+export function updateGitHubDiscussionState(request: GitHubDiscussionStateRequest): Promise<void> {
+  return callWorkspaceCommand("github_update_discussion_state", { request }, async () =>
+    (await fallbackModule.load()).updateDiscussionStateFallback(request));
+}
+
+export function updateGitHubDiscussionAnswer(request: GitHubDiscussionAnswerRequest): Promise<void> {
+  return callWorkspaceCommand("github_update_discussion_answer", { request }, async () =>
+    (await fallbackModule.load()).updateDiscussionAnswerFallback(request));
 }

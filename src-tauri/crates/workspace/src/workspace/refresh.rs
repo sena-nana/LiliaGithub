@@ -64,7 +64,7 @@ pub fn refresh_runtime_config() -> HostRuntimeConfig {
     config.runner_limits.insert(
         LOCAL_REFRESH_PROTOCOL.into(),
         RunnerLimits {
-            max_running: 4,
+            max_running: 1,
             max_inflight: 4,
             ..RunnerLimits::default()
         },
@@ -91,7 +91,7 @@ pub fn refresh_runtime_config() -> HostRuntimeConfig {
         config.runner_limits.insert(
             kind.protocol().into(),
             RunnerLimits {
-                max_running: concurrency,
+                max_running: 1,
                 max_inflight: concurrency,
                 ..RunnerLimits::default()
             },
@@ -1086,7 +1086,7 @@ mod tests {
         assert_eq!(runners[1].descriptor().batch.max_entry_concurrency, 1);
         let config = refresh_runtime_config();
         assert_eq!(config.blocking_threads, 4);
-        assert_eq!(config.runner_limits[LOCAL_REFRESH_PROTOCOL].max_running, 4);
+        assert_eq!(config.runner_limits[LOCAL_REFRESH_PROTOCOL].max_running, 1);
         assert_eq!(config.runner_limits[REMOTE_REFRESH_PROTOCOL].max_running, 1);
         for (kind, expected) in [
             (crate::workspace::operations::OperationKind::LocalRead, 4),
@@ -1107,7 +1107,7 @@ mod tests {
                 2,
             ),
         ] {
-            assert_eq!(config.runner_limits[kind.protocol()].max_running, expected);
+            assert_eq!(config.runner_limits[kind.protocol()].max_running, 1);
             assert_eq!(config.runner_limits[kind.protocol()].max_inflight, expected);
         }
     }

@@ -4,16 +4,16 @@ import {
   CircleOff,
   GitMerge,
   GitPullRequest,
-  LoaderCircle,
 } from "@lucide/vue";
-import { computed } from "vue";
-import { openUrl } from "../../services/workspace/client";
+import { computed, reactive, ref, watch } from "vue";
+import { openUrl, updateGitHubPullRequest } from "../../services/workspace/client";
 import type {
   GitHubDiscussionTimelineItem,
   GitHubPullRequest,
   GitHubPullRequestCheck,
 } from "../../services/workspace/types";
-import RepoDiscussionTimeline from "./RepoDiscussionTimeline.vue";
+import RepoIssueConversation from "./RepoIssueConversation.vue";
+import PullRequestCodeReviewWorkspace from "./review/PullRequestCodeReviewWorkspace.vue";
 
 const props = defineProps<{
   pull: GitHubPullRequest;
@@ -25,6 +25,10 @@ const props = defineProps<{
   updating: boolean;
   mergeMethod: "merge" | "squash" | "rebase";
   repoFullName: string;
+  worktreePath?: string | null;
+  currentBranch?: string | null;
+  remoteUrl?: string | null;
+  sourceRoute: string;
   timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
 
@@ -34,20 +38,42 @@ const emit = defineEmits<{
   "update:mergeMethod": [value: "merge" | "squash" | "rebase"];
 }>();
 
-const mergeMethodOptions: readonly { value: "merge" | "squash" | "rebase"; label: string }[] = [
-  { value: "merge", label: "Merge" },
-  { value: "squash", label: "Squash" },
-  { value: "rebase", label: "Rebase" },
-];
-
 const statusText = computed(() => {
   if (props.pull.merged) return "Merged";
   if (props.pull.draft) return "Draft";
   return props.pull.state === "open" ? "Open" : "Closed";
 });
 
-const canMerge = computed(() => props.pull.state === "open" && !props.pull.merged);
 const linkBaseUrl = computed(() => `https://github.com/${props.repoFullName}`);
+const metadata = reactive({ title: "", body: "", state: "open", labels: "", assignees: "", milestone: "" });
+const metadataPending = ref(false);
+const metadataError = ref<string | null>(null);
+const metadataNotice = ref<string | null>(null);
+
+watch(() => props.pull, (pull) => {
+  metadata.title = pull.title; metadata.body = pull.body ?? ""; metadata.state = pull.state;
+  metadata.labels = pull.labels.join(", "); metadata.assignees = pull.assignees.join(", ");
+  metadata.milestone = pull.milestone ? String(pull.milestone.number) : "";
+}, { immediate: true });
+
+function splitList(value: string) { return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))]; }
+async function saveMetadata() {
+  if (metadataPending.value || !metadata.title.trim()) return;
+  const milestone = metadata.milestone.trim() ? Number(metadata.milestone) : null;
+  if (milestone !== null && (!Number.isInteger(milestone) || milestone <= 0)) { metadataError.value = "请输入有效的 milestone 编号"; return; }
+  metadataPending.value = true; metadataError.value = null; metadataNotice.value = null;
+  try {
+    const updated = await updateGitHubPullRequest(props.repoFullName, props.pull.number, {
+      title: metadata.title.trim(), body: metadata.body, state: metadata.state,
+      labels: splitList(metadata.labels), assignees: splitList(metadata.assignees), milestone,
+    });
+    metadata.title = updated.title; metadata.body = updated.body ?? ""; metadata.state = updated.state;
+    metadata.labels = updated.labels.join(", "); metadata.assignees = updated.assignees.join(", ");
+    metadata.milestone = updated.milestone ? String(updated.milestone.number) : "";
+    metadataNotice.value = "Pull Request 元数据已保存。";
+  } catch (error) { metadataError.value = String(error).replace(/^Error:\s*/, ""); }
+  finally { metadataPending.value = false; }
+}
 
 function formatDateTime(value: string) {
   const date = new Date(value);
@@ -94,6 +120,21 @@ function openCheck(check: GitHubPullRequestCheck) {
       </p>
     </header>
 
+    <details class="pull-detail__metadata" data-agent-id="repo.pulls.detail.metadata">
+      <summary>编辑 Pull Request 信息</summary>
+      <form @submit.prevent="saveMetadata">
+        <label>标题<input v-model="metadata.title" data-agent-id="repo.pulls.detail.metadata.title" required /></label>
+        <label class="is-wide">正文<textarea v-model="metadata.body" rows="4" data-agent-id="repo.pulls.detail.metadata.body" /></label>
+        <label>状态<select v-model="metadata.state" data-agent-id="repo.pulls.detail.metadata.state"><option value="open">Open</option><option value="closed">Closed</option></select></label>
+        <label>Labels<input v-model="metadata.labels" data-agent-id="repo.pulls.detail.metadata.labels" placeholder="bug, ui" /></label>
+        <label>Assignees<input v-model="metadata.assignees" data-agent-id="repo.pulls.detail.metadata.assignees" placeholder="octocat" /></label>
+        <label>Milestone<input v-model="metadata.milestone" type="number" min="1" data-agent-id="repo.pulls.detail.metadata.milestone" placeholder="未设置" /></label>
+        <p v-if="metadataError" class="repo-error" data-agent-id="repo.pulls.detail.metadata.error">{{ metadataError }}</p>
+        <p v-if="metadataNotice" class="muted" role="status" data-agent-id="repo.pulls.detail.metadata.result">{{ metadataNotice }}</p>
+        <button type="submit" data-agent-id="repo.pulls.detail.metadata.save" :disabled="metadataPending || !metadata.title.trim()">{{ metadataPending ? "保存中" : "保存信息" }}</button>
+      </form>
+    </details>
+
     <section class="pull-detail__checks" aria-label="Checks">
       <div class="pull-detail__section-head">
         <h4>Checks</h4>
@@ -111,37 +152,27 @@ function openCheck(check: GitHubPullRequestCheck) {
       <p v-else class="muted">当前 Pull Request 没有 check 记录。</p>
     </section>
 
-    <section v-if="canMerge" class="pull-detail__merge" aria-label="合并操作">
-      <div>
-        <h4>合并方式</h4>
-        <span>选择合并策略后执行 Pull Request 合并。</span>
-      </div>
-      <div class="pull-detail__merge-actions">
-        <div class="ui-segmented pull-detail__merge-methods" role="group" aria-label="合并方式">
-          <button
-            v-for="method in mergeMethodOptions"
-            :key="method.value"
-            type="button"
-            :class="{ 'is-active': mergeMethod === method.value }"
-            :aria-pressed="mergeMethod === method.value"
-            @click="emit('update:mergeMethod', method.value)"
-          >
-            {{ method.label }}
-          </button>
-        </div>
-        <button type="button" class="primary" :disabled="updating" @click="emit('merge', pull)">
-          <LoaderCircle v-if="updating" :size="14" aria-hidden="true" class="sb-spin" />
-          <GitMerge v-else :size="14" aria-hidden="true" />
-          合并
-        </button>
-      </div>
-    </section>
+    <PullRequestCodeReviewWorkspace
+      :repo-full-name="repoFullName"
+      :pull="pull"
+      :checks="checks"
+      :updating="updating"
+      :merge-method="mergeMethod"
+      :worktree-path="worktreePath"
+      :current-branch="currentBranch"
+      :remote-url="remoteUrl"
+      :source-route="sourceRoute"
+      @merge="emit('merge', $event)"
+      @update:merge-method="emit('update:mergeMethod', $event)"
+    />
 
     <section class="pull-detail__body" aria-label="Pull Request 讨论">
       <div class="pull-detail__section-head">
         <h4>讨论</h4>
       </div>
-      <RepoDiscussionTimeline
+      <RepoIssueConversation
+        :repo-full-name="repoFullName"
+        :issue-number="pull.number"
         :items="discussionTimeline"
         :loading="discussionLoading"
         :error="discussionError"
@@ -223,6 +254,14 @@ function openCheck(check: GitHubPullRequestCheck) {
   border-radius: var(--radius-md);
   background: var(--bg-subtle);
 }
+
+.pull-detail__metadata { padding: 10px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-md); }
+.pull-detail__metadata summary { cursor: pointer; font-weight: 650; }
+.pull-detail__metadata form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 10px; }
+.pull-detail__metadata label { display: grid; gap: 5px; color: var(--text-muted); font-size: 12px; }
+.pull-detail__metadata .is-wide, .pull-detail__metadata p { grid-column: 1 / -1; }
+.pull-detail__metadata textarea { resize: vertical; }
+.pull-detail__metadata button { justify-self: end; grid-column: 1 / -1; }
 
 .pull-detail__section-head span,
 .pull-detail__merge span {

@@ -34,13 +34,13 @@ use lilia_github_contracts::workspace::{
     GitHubCreateRepoRequest, GitHubDevelopmentItem, GitHubDeviceFlowPollResult,
     GitHubDeviceFlowStart, GitHubDiscussionTimelineItem, GitHubIssue, GitHubIssueDiscussion,
     GitHubIssueFilterMetadata, GitHubIssueMilestone, GitHubIssueProjectItem,
-    GitHubMergePullRequestRequest, GitHubOwnerKind, GitHubProjectCache, GitHubProjectRepoCache,
-    GitHubOrganizationFeaturedSection, GitHubOrganizationFeaturedSource,
-    GitHubOrganizationMember, GitHubOrganizationMembersSection, GitHubOrganizationOverview,
-    GitHubOrganizationProfile, GitHubOrganizationProfileView, GitHubOrganizationRepositorySection,
-    GitHubOrganizationSectionStatus, GitHubProfileReadmeSection, GitHubReadmeSectionStatus,
-    GitHubPullRequest, GitHubPullRequestCheck, GitHubPullRequestDiscussion,
-    GitHubPullRequestReviewer, GitHubRelease, GitHubReleaseAsset,
+    GitHubMergePullRequestRequest, GitHubOrganizationFeaturedSection,
+    GitHubOrganizationFeaturedSource, GitHubOrganizationMember, GitHubOrganizationMembersSection,
+    GitHubOrganizationOverview, GitHubOrganizationProfile, GitHubOrganizationProfileView,
+    GitHubOrganizationRepositorySection, GitHubOrganizationSectionStatus, GitHubOwnerKind,
+    GitHubProfileReadmeSection, GitHubProjectCache, GitHubProjectRepoCache, GitHubPullRequest,
+    GitHubPullRequestCheck, GitHubPullRequestDiscussion, GitHubPullRequestReviewer,
+    GitHubReadmeSectionStatus, GitHubRelease, GitHubReleaseAsset,
     GitHubRepoActionsPermissionsRequest, GitHubRepoLicense, GitHubRepoManagement, GitHubRepoOwner,
     GitHubRepoPage, GitHubRepoSettingsEndpointItem, GitHubRepoSettingsSection, GitHubRepoSummary,
     GitHubRepoTemplate, GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner,
@@ -1347,7 +1347,7 @@ fn github_create_repo_from_response(
         .map_err(|error| format!("{prefix}：解析响应失败：{error}"))
 }
 
-fn github_branch_protection_from_response(
+pub(super) fn github_branch_protection_from_response(
     prefix: &str,
     response: Response,
 ) -> Result<Option<serde_json::Value>, String> {
@@ -2561,6 +2561,7 @@ fn github_json_id(value: Option<serde_json::Value>, fallback: &str) -> String {
 fn github_timeline_item_from_issue(issue: &GitHubIssue) -> GitHubDiscussionTimelineItem {
     GitHubDiscussionTimelineItem {
         id: format!("issue-{}-body", issue.number),
+        database_id: None,
         kind: "body".to_string(),
         actor: issue.author.clone(),
         body: issue.body.clone(),
@@ -2582,6 +2583,7 @@ fn github_timeline_item_from_pull_request(
 ) -> GitHubDiscussionTimelineItem {
     GitHubDiscussionTimelineItem {
         id: format!("pull-{}-body", pull_request.number),
+        database_id: None,
         kind: "body".to_string(),
         actor: Some(pull_request.author.clone()),
         body: pull_request.body.clone(),
@@ -2606,10 +2608,11 @@ pub(super) fn github_timeline_item_from_response(
         .as_ref()
         .is_some_and(|body| !body.trim().is_empty());
     let event = normalize_optional_string(item.event);
+    let database_id = item.id.as_ref().and_then(|value| value.as_u64());
     let id = item
         .node_id
         .clone()
-        .unwrap_or_else(|| github_json_id(item.id, event.as_deref().unwrap_or("timeline")));
+        .unwrap_or_else(|| github_json_id(item.id.clone(), event.as_deref().unwrap_or("timeline")));
     let actor = item.actor.or(item.user).map(|user| user.login);
     let created_at = item
         .created_at
@@ -2618,6 +2621,7 @@ pub(super) fn github_timeline_item_from_response(
         .unwrap_or_default();
     GitHubDiscussionTimelineItem {
         id,
+        database_id,
         kind: if is_comment { "comment" } else { "event" }.to_string(),
         actor,
         body: normalize_optional_string(item.body),
@@ -2640,6 +2644,7 @@ pub(super) fn github_review_timeline_item_from_response(
     let created_at = review.submitted_at.clone().unwrap_or_default();
     GitHubDiscussionTimelineItem {
         id: format!("review-{}", review.id),
+        database_id: Some(review.id),
         kind: "review".to_string(),
         actor: review.user.map(|user| user.login),
         body: normalize_optional_string(review.body),
@@ -2661,6 +2666,7 @@ pub(super) fn github_review_comment_timeline_item_from_response(
 ) -> GitHubDiscussionTimelineItem {
     GitHubDiscussionTimelineItem {
         id: format!("review-comment-{}", comment.id),
+        database_id: Some(comment.id),
         kind: "reviewComment".to_string(),
         actor: comment.user.map(|user| user.login),
         body: normalize_optional_string(comment.body),
@@ -4348,7 +4354,10 @@ fn github_organization_api_url(owner_login: &str) -> Result<String, String> {
 }
 
 fn github_organization_repos_endpoint(owner_login: &str) -> Result<String, String> {
-    Ok(format!("{}/repos", github_organization_api_url(owner_login)?))
+    Ok(format!(
+        "{}/repos",
+        github_organization_api_url(owner_login)?
+    ))
 }
 
 pub(super) fn github_organization_profile_from_response(
@@ -4387,7 +4396,10 @@ pub async fn github_get_organization_profile(
             let response = github_send(
                 &app,
                 "读取 GitHub 组织资料失败",
-                github_headers(client.get(github_organization_api_url(&login)?), Some(&token)),
+                github_headers(
+                    client.get(github_organization_api_url(&login)?),
+                    Some(&token),
+                ),
             )?;
             let profile = github_json::<GitHubOrganizationProfileResponse>(
                 "读取 GitHub 组织资料失败",
@@ -4489,10 +4501,12 @@ fn github_organization_graphql(
         app,
         "读取 GitHub 组织概览失败",
         github_headers(
-            client.post("https://api.github.com/graphql").json(&serde_json::json!({
-                "query": github_organization_graphql_query(view),
-                "variables": { "login": login },
-            })),
+            client
+                .post("https://api.github.com/graphql")
+                .json(&serde_json::json!({
+                    "query": github_organization_graphql_query(view),
+                    "variables": { "login": login },
+                })),
             Some(token),
         ),
     )?;
@@ -4513,7 +4527,10 @@ fn github_organization_repository_permissions(
     permission.map(|permission| {
         let permission = permission.to_ascii_uppercase();
         GitHubRepositoryPermissions {
-            pull: matches!(permission.as_str(), "READ" | "TRIAGE" | "WRITE" | "MAINTAIN" | "ADMIN"),
+            pull: matches!(
+                permission.as_str(),
+                "READ" | "TRIAGE" | "WRITE" | "MAINTAIN" | "ADMIN"
+            ),
             push: matches!(permission.as_str(), "WRITE" | "MAINTAIN" | "ADMIN"),
             admin: permission == "ADMIN",
         }
@@ -4634,10 +4651,7 @@ pub(super) fn github_readme_image_path(readme_path: &str, source: &str) -> Optio
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-pub(super) fn github_readme_image_paths(
-    readme_path: &str,
-    content: &str,
-) -> Vec<(String, String)> {
+pub(super) fn github_readme_image_paths(readme_path: &str, content: &str) -> Vec<(String, String)> {
     readme_image_sources(content)
         .into_iter()
         .take(GITHUB_README_IMAGE_LIMIT)
@@ -4750,7 +4764,8 @@ fn github_readme_section(
         };
         let html_url = file.html_url.clone();
         let readme_path = file.path.clone();
-        let mut preview = match github_file_preview_from_content("读取 GitHub README 失败", file) {
+        let mut preview = match github_file_preview_from_content("读取 GitHub README 失败", file)
+        {
             Ok(preview) => preview,
             Err(_) => return github_readme_unavailable(unavailable_message),
         };
@@ -4842,7 +4857,9 @@ fn github_organization_members(
         app,
         "读取 GitHub 组织成员失败",
         github_headers(
-            client.get(endpoint).query(&[("per_page", "100"), ("page", "1")]),
+            client
+                .get(endpoint)
+                .query(&[("per_page", "100"), ("page", "1")]),
             Some(token),
         ),
     ) {
@@ -4911,102 +4928,99 @@ pub async fn github_get_organization_overview(
             github_organization_api_url(&login)?;
             let (_binding, token) = github_require_token(&app)?;
             let client = build_client()?;
-            let member_view_available = github_organization_member_view_available(
-                &app, &client, &token, &login,
-            );
-            let effective_view = if view == GitHubOrganizationProfileView::Member
-                && member_view_available
-            {
-                GitHubOrganizationProfileView::Member
-            } else {
-                GitHubOrganizationProfileView::Public
-            };
-            let readme = github_organization_readme(
-                &app, &client, &token, &login, effective_view,
-            );
-            let members = github_organization_members(
-                &app, &client, &token, &login, effective_view,
-            );
-            let (featured, recent) = match github_organization_graphql(
-                &app, &client, &token, &login, effective_view,
-            ) {
-                Ok(organization) => {
-                    let pinned = if effective_view == GitHubOrganizationProfileView::Member {
-                        organization
-                            .item_showcase
-                            .map(|showcase| {
-                                github_organization_graphql_repositories(showcase.items, effective_view)
-                            })
-                            .filter(|items| !items.is_empty())
-                    } else {
-                        None
-                    };
-                    let popular = organization.popular_repositories.map(|repositories| {
-                        github_organization_graphql_repositories(repositories, effective_view)
-                    });
-                    let recent_items = organization.recent_repositories.map(|repositories| {
-                        github_organization_graphql_repositories(repositories, effective_view)
-                    });
-                    let featured = if let Some(items) = pinned {
-                        GitHubOrganizationFeaturedSection {
-                            status: GitHubOrganizationSectionStatus::Ready,
-                            source: Some(GitHubOrganizationFeaturedSource::Pinned),
-                            items: items.into_iter().take(6).collect(),
-                            error: None,
-                        }
-                    } else if let Some(items) = popular {
-                        GitHubOrganizationFeaturedSection {
-                            status: if items.is_empty() {
-                                GitHubOrganizationSectionStatus::Empty
-                            } else {
-                                GitHubOrganizationSectionStatus::Ready
-                            },
-                            source: (!items.is_empty())
-                                .then_some(GitHubOrganizationFeaturedSource::Popular),
-                            items: items.into_iter().take(6).collect(),
-                            error: None,
-                        }
-                    } else {
+            let member_view_available =
+                github_organization_member_view_available(&app, &client, &token, &login);
+            let effective_view =
+                if view == GitHubOrganizationProfileView::Member && member_view_available {
+                    GitHubOrganizationProfileView::Member
+                } else {
+                    GitHubOrganizationProfileView::Public
+                };
+            let readme = github_organization_readme(&app, &client, &token, &login, effective_view);
+            let members =
+                github_organization_members(&app, &client, &token, &login, effective_view);
+            let (featured, recent) =
+                match github_organization_graphql(&app, &client, &token, &login, effective_view) {
+                    Ok(organization) => {
+                        let pinned = if effective_view == GitHubOrganizationProfileView::Member {
+                            organization
+                                .item_showcase
+                                .map(|showcase| {
+                                    github_organization_graphql_repositories(
+                                        showcase.items,
+                                        effective_view,
+                                    )
+                                })
+                                .filter(|items| !items.is_empty())
+                        } else {
+                            None
+                        };
+                        let popular = organization.popular_repositories.map(|repositories| {
+                            github_organization_graphql_repositories(repositories, effective_view)
+                        });
+                        let recent_items = organization.recent_repositories.map(|repositories| {
+                            github_organization_graphql_repositories(repositories, effective_view)
+                        });
+                        let featured = if let Some(items) = pinned {
+                            GitHubOrganizationFeaturedSection {
+                                status: GitHubOrganizationSectionStatus::Ready,
+                                source: Some(GitHubOrganizationFeaturedSource::Pinned),
+                                items: items.into_iter().take(6).collect(),
+                                error: None,
+                            }
+                        } else if let Some(items) = popular {
+                            GitHubOrganizationFeaturedSection {
+                                status: if items.is_empty() {
+                                    GitHubOrganizationSectionStatus::Empty
+                                } else {
+                                    GitHubOrganizationSectionStatus::Ready
+                                },
+                                source: (!items.is_empty())
+                                    .then_some(GitHubOrganizationFeaturedSource::Popular),
+                                items: items.into_iter().take(6).collect(),
+                                error: None,
+                            }
+                        } else {
+                            GitHubOrganizationFeaturedSection {
+                                status: GitHubOrganizationSectionStatus::Unavailable,
+                                source: None,
+                                items: Vec::new(),
+                                error: Some("暂时无法读取精选仓库".to_string()),
+                            }
+                        };
+                        let recent = if let Some(items) = recent_items {
+                            GitHubOrganizationRepositorySection {
+                                status: if items.is_empty() {
+                                    GitHubOrganizationSectionStatus::Empty
+                                } else {
+                                    GitHubOrganizationSectionStatus::Ready
+                                },
+                                items: items.into_iter().take(10).collect(),
+                                error: None,
+                            }
+                        } else {
+                            GitHubOrganizationRepositorySection {
+                                status: GitHubOrganizationSectionStatus::Unavailable,
+                                items: Vec::new(),
+                                error: Some("暂时无法读取近期仓库".to_string()),
+                            }
+                        };
+                        (featured, recent)
+                    }
+                    Err(_) => (
                         GitHubOrganizationFeaturedSection {
                             status: GitHubOrganizationSectionStatus::Unavailable,
                             source: None,
                             items: Vec::new(),
                             error: Some("暂时无法读取精选仓库".to_string()),
-                        }
-                    };
-                    let recent = if let Some(items) = recent_items {
-                        GitHubOrganizationRepositorySection {
-                            status: if items.is_empty() {
-                                GitHubOrganizationSectionStatus::Empty
-                            } else {
-                                GitHubOrganizationSectionStatus::Ready
-                            },
-                            items: items.into_iter().take(10).collect(),
-                            error: None,
-                        }
-                    } else {
+                        },
                         GitHubOrganizationRepositorySection {
                             status: GitHubOrganizationSectionStatus::Unavailable,
                             items: Vec::new(),
                             error: Some("暂时无法读取近期仓库".to_string()),
-                        }
-                    };
-                    (featured, recent)
-                }
-                Err(_) => (
-                    GitHubOrganizationFeaturedSection {
-                        status: GitHubOrganizationSectionStatus::Unavailable,
-                        source: None,
-                        items: Vec::new(),
-                        error: Some("暂时无法读取精选仓库".to_string()),
-                    },
-                    GitHubOrganizationRepositorySection {
-                        status: GitHubOrganizationSectionStatus::Unavailable,
-                        items: Vec::new(),
-                        error: Some("暂时无法读取近期仓库".to_string()),
-                    },
-                ),
-            };
+                        },
+                    ),
+                };
             Ok(GitHubOrganizationOverview {
                 effective_view,
                 member_view_available,
@@ -6409,7 +6423,7 @@ pub async fn github_list_branches(
     .await
 }
 
-fn github_branch_protection_api_url(
+pub(super) fn github_branch_protection_api_url(
     repo_full_name: &str,
     branch_name: &str,
 ) -> Result<String, String> {
@@ -7070,23 +7084,54 @@ pub async fn github_update_pull_request(
             if let Some(value) = normalize_optional_string(request.base) {
                 payload.insert("base".to_string(), serde_json::Value::String(value));
             }
+            let mut issue_payload = serde_json::Map::new();
+            if let Some(value) = request.labels {
+                issue_payload.insert("labels".to_string(), serde_json::json!(value));
+            }
+            if let Some(value) = request.assignees {
+                issue_payload.insert("assignees".to_string(), serde_json::json!(value));
+            }
+            if let Some(value) = request.milestone {
+                issue_payload.insert("milestone".to_string(), serde_json::json!(value));
+            }
             let client = build_client()?;
-            let response = github_send(
+            let repo_api_url = github_repo_api_url(&repo_full_name)?;
+            if !payload.is_empty() {
+                let response = github_send(
+                    &app,
+                    "更新 GitHub Pull Request 失败",
+                    github_headers(
+                        client
+                            .patch(format!("{repo_api_url}/pulls/{pull_number}"))
+                            .json(&payload),
+                        Some(&token),
+                    ),
+                )?;
+                if !response.status().is_success() {
+                    return Err(github_http_error("更新 GitHub Pull Request 失败", response));
+                }
+            }
+            if !issue_payload.is_empty() {
+                let response = github_send(
+                    &app,
+                    "更新 Pull Request 元数据失败",
+                    github_headers(
+                        client
+                            .patch(format!("{repo_api_url}/issues/{pull_number}"))
+                            .json(&issue_payload),
+                        Some(&token),
+                    ),
+                )?;
+                if !response.status().is_success() {
+                    return Err(github_http_error("更新 Pull Request 元数据失败", response));
+                }
+            }
+            let pull_request = github_fetch_pull_request_response(
                 &app,
-                "更新 GitHub Pull Request 失败",
-                github_headers(
-                    client
-                        .patch(format!(
-                            "{}/pulls/{pull_number}",
-                            github_repo_api_url(&repo_full_name)?
-                        ))
-                        .json(&payload),
-                    Some(&token),
-                ),
-            )?;
-            let pull_request = github_json::<GitHubPullRequestResponse>(
-                "更新 GitHub Pull Request 失败",
-                response,
+                &repo_full_name,
+                pull_number,
+                &token,
+                "读取更新后的 Pull Request 失败",
             )?;
             let pull = github_pull_request_from_response(pull_request);
             clear_github_project_pull_request_cache(&app, &repo_full_name)?;
@@ -7731,6 +7776,9 @@ pub async fn github_update_issue(
             }
             if let Some(value) = request.assignees {
                 payload.insert("assignees".to_string(), serde_json::json!(value));
+            }
+            if let Some(value) = request.milestone {
+                payload.insert("milestone".to_string(), serde_json::json!(value));
             }
             let client = build_client()?;
             let response = github_send(

@@ -717,6 +717,33 @@ vi.mock("../src/services/workspace/client", () => ({
   uploadGitHubReleaseAsset: vi.fn(),
 }));
 
+vi.mock("../src/services/codeReview", () => ({
+  getPullRequestCodeReview: vi.fn(async () => ({
+    files: [],
+    reviews: [],
+    threads: [],
+    reviewDecision: "APPROVED",
+    mergeable: true,
+    mergeStateStatus: "CLEAN",
+    baseBranch: "main",
+    baseSha: "1234567890abcdef",
+    headSha: "abcdef1234567890",
+    branchProtection: {
+      available: true,
+      protected: false,
+      requiredApprovals: 0,
+      requireCodeOwnerReviews: false,
+      requiredStatusChecks: [],
+      enforceAdmins: false,
+      requireConversationResolution: false,
+      unavailableReason: null,
+    },
+  })),
+  createPullRequestLineComment: vi.fn(),
+  replyPullRequestReviewThread: vi.fn(),
+  submitPullRequestCodeReview: vi.fn(),
+}));
+
 vi.mock("../src/composables/workspace/auth", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/composables/workspace/auth")>();
   return {

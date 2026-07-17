@@ -122,6 +122,35 @@ pub fn parse_create_response(
         })
 }
 
+pub fn parse_comment_mutation_response(
+    value: Value,
+    field: &str,
+) -> Result<GitHubRepositoryDiscussionComment, GitHubDiscussionApiError> {
+    let data: Value = decode_data(value)?;
+    let comment = data
+        .get(field)
+        .and_then(|value| value.get("comment"))
+        .cloned()
+        .ok_or_else(|| {
+            GitHubDiscussionApiError::new(
+                "github_graphql_error",
+                "GitHub 未返回更新后的 Discussion 评论",
+            )
+        })?;
+    let comment: WireComment = serde_json::from_value(comment).map_err(|error| {
+        GitHubDiscussionApiError::new(
+            "github_graphql_error",
+            format!("解析 Discussion 评论失败：{error}"),
+        )
+    })?;
+    Ok(map_comment(comment))
+}
+
+pub fn parse_mutation_response(value: Value) -> Result<(), GitHubDiscussionApiError> {
+    let _: Value = decode_data(value)?;
+    Ok(())
+}
+
 fn decode_data<T: DeserializeOwned>(value: Value) -> Result<T, GitHubDiscussionApiError> {
     let response: WireResponse<T> = serde_json::from_value(value).map_err(|error| {
         GitHubDiscussionApiError::new(
@@ -244,24 +273,23 @@ fn map_discussion(value: WireDiscussion) -> GitHubRepositoryDiscussion {
 
 fn map_comment_page(value: WireCommentConnection) -> GitHubRepositoryDiscussionCommentPage {
     GitHubRepositoryDiscussionCommentPage {
-        items: value
-            .nodes
-            .into_iter()
-            .flatten()
-            .map(|comment| GitHubRepositoryDiscussionComment {
-                id: comment.id,
-                author: comment.author.map(Into::into),
-                body: comment.body,
-                created_at: comment.created_at,
-                updated_at: comment.updated_at,
-                url: comment.url,
-                is_answer: comment.is_answer,
-                reply_to_id: comment.reply_to.map(|reply| reply.id),
-                reply_count: comment.replies.total_count,
-            })
-            .collect(),
+        items: value.nodes.into_iter().flatten().map(map_comment).collect(),
         page_info: value.page_info.into(),
         total_count: value.total_count,
+    }
+}
+
+fn map_comment(comment: WireComment) -> GitHubRepositoryDiscussionComment {
+    GitHubRepositoryDiscussionComment {
+        id: comment.id,
+        author: comment.author.map(Into::into),
+        body: comment.body,
+        created_at: comment.created_at,
+        updated_at: comment.updated_at,
+        url: comment.url,
+        is_answer: comment.is_answer,
+        reply_to_id: comment.reply_to.map(|reply| reply.id),
+        reply_count: comment.replies.total_count,
     }
 }
 

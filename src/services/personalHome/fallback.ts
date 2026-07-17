@@ -1,8 +1,12 @@
 import type { GitHubAccountIssueItem } from "../workspace/types";
 import type { PersonalHomeNotification } from "./types";
+import {
+  notificationFallbackItems,
+  resetNotificationFallbackForTests,
+  setNotificationFallbackForTests,
+} from "../notifications/fallback";
 
 let assignedWork: GitHubAccountIssueItem[] = [];
-let notifications: PersonalHomeNotification[] = [];
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -13,7 +17,7 @@ export function listAssignedWork(perPage = 50) {
 }
 
 export function listPersonalNotifications(perPage = 50) {
-  return Promise.resolve(clone(notifications.slice(0, perPage)));
+  return Promise.resolve(notificationFallbackItems(perPage));
 }
 
 export function setPersonalHomeFallbackForTests(values: {
@@ -21,10 +25,10 @@ export function setPersonalHomeFallbackForTests(values: {
   notifications?: PersonalHomeNotification[];
 }) {
   assignedWork = clone(values.assignedWork ?? []);
-  notifications = clone(values.notifications ?? []);
+  setNotificationFallbackForTests(values.notifications ?? []);
 }
 
 export function resetPersonalHomeFallbackForTests() {
   assignedWork = [];
-  notifications = [];
+  resetNotificationFallbackForTests();
 }

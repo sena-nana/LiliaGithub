@@ -1,21 +1,20 @@
 <script setup lang="ts">
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
+import { computed } from "vue";
 import { RouterLink } from "vue-router";
+import ControlCenterBoard from "../components/control-center/ControlCenterBoard.vue";
 import DiscoveryRepositoryScopeControl from "../components/discovery/DiscoveryRepositoryScopeControl.vue";
-import DiscoveryPanel from "../components/discovery/DiscoveryPanel.vue";
 import { useDiscoveryRepositories } from "../composables/discovery/useDiscoveryRepositories";
 import { useDiscoveryScan } from "../composables/discovery/useDiscoveryScan";
-import { createCachedAsyncComponent } from "../utils/asyncComponent";
+import { useWorkspace } from "../composables/useWorkspace";
 
-const pendingPullRequests = createCachedAsyncComponent(() => import("../components/discovery/PendingPullRequestsPanel.vue"));
-const assignedIssues = createCachedAsyncComponent(() => import("../components/discovery/AssignedIssuesPanel.vue"));
-const failedWorkflows = createCachedAsyncComponent(() => import("../components/discovery/FailedWorkflowsPanel.vue"));
-const recentReleases = createCachedAsyncComponent(() => import("../components/discovery/RecentReleasesPanel.vue"));
-const repositoryStatus = createCachedAsyncComponent(() => import("../components/discovery/RepositoryStatusPanel.vue"));
-
+const workspace = useWorkspace();
 const discovery = useDiscoveryRepositories();
 const scan = useDiscoveryScan(discovery.repositories, discovery.refreshToken);
-const refreshScan = () => scan.load(true);
+const controlScope = computed(() => discovery.login.value || "anonymous");
+const scopedLocalRepositories = computed(() => discovery.repositories.value.flatMap((repository) =>
+  repository.localRepo ? [repository.localRepo] : []
+));
 </script>
 
 <template>
@@ -57,28 +56,15 @@ const refreshScan = () => scan.load(true);
         <button type="button" class="ghost" data-agent-id="discovery.repositories.retry" @click="discovery.refresh">重试</button>
       </div>
 
-      <div class="discovery-grid">
-        <Suspense>
-          <component :is="pendingPullRequests.component" :result="scan.result.value?.pendingPullRequests ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
-          <template #fallback><DiscoveryPanel title="待处理 Pull Requests" agent-id="discovery.pr" loading empty-message="" /></template>
-        </Suspense>
-        <Suspense>
-          <component :is="assignedIssues.component" :result="scan.result.value?.assignedIssues ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
-          <template #fallback><DiscoveryPanel title="被分配的 Issues" agent-id="discovery.issue" loading empty-message="" /></template>
-        </Suspense>
-        <Suspense>
-          <component :is="failedWorkflows.component" :result="scan.result.value?.failedWorkflows ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
-          <template #fallback><DiscoveryPanel title="失败的 Workflows" agent-id="discovery.workflow" loading empty-message="" /></template>
-        </Suspense>
-        <Suspense>
-          <component :is="recentReleases.component" :result="scan.result.value?.recentReleases ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
-          <template #fallback><DiscoveryPanel title="近期 Releases" agent-id="discovery.release" loading empty-message="" /></template>
-        </Suspense>
-        <Suspense>
-          <component :is="repositoryStatus.component" :repositories="discovery.repositories.value" :result="scan.result.value?.repositoryStatuses ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
-          <template #fallback><DiscoveryPanel title="仓库状态" agent-id="discovery.repository" loading empty-message="" /></template>
-        </Suspense>
-      </div>
+      <ControlCenterBoard
+        :repositories="discovery.repositories.value"
+        :local-repositories="scopedLocalRepositories"
+        :scan="scan.result.value"
+        :tasks="workspace.state.tasks"
+        :loading="scan.loading.value || discovery.loading.value"
+        :error="scan.error.value"
+        :scope="controlScope"
+      />
 
       <div v-if="discovery.hasMore.value" class="discovery-more">
         <button type="button" class="ghost" data-agent-id="discovery.repositories.more" :disabled="discovery.loadingMore.value" @click="discovery.loadMore">
@@ -105,9 +91,8 @@ const refreshScan = () => scan.load(true);
 .discovery-batch { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .discovery-repository-error { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 9px 11px; border-radius: 7px; color: var(--err); background: var(--err-soft); font-size: 12px; }
 .discovery-repository-error .ghost { margin-left: auto; }
-.discovery-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px; }
 .discovery-more { display: flex; justify-content: center; padding: 14px 0 4px; }
 .discovery-more button { min-height: 30px; display: inline-flex; align-items: center; gap: 6px; }
-@media (max-width: 860px) { .discovery-page { padding: 14px; } .discovery-controls { align-items: stretch; flex-direction: column; } .discovery-batch { justify-content: flex-end; } .discovery-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) { .discovery-page { padding: 14px; } .discovery-controls { align-items: stretch; flex-direction: column; } .discovery-batch { justify-content: flex-end; } }
 @media (max-width: 520px) { .discovery-account { align-items: stretch; flex-direction: column; } .discovery-account .primary { justify-content: center; } }
 </style>

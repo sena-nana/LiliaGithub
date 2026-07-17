@@ -11,36 +11,36 @@ use super::github::{
     github_file_preview_from_content, github_graphql_errors_require_read_project,
     github_issue_cache_key, github_issue_from_response, github_issue_project_items_from_graphql,
     github_organization_graphql_repositories, github_organization_profile_from_response,
-    github_readme_endpoint, github_readme_image_path, github_readme_image_paths,
-    github_repository_visibility_is_public,
     github_project_cache_repo_key, github_pull_request_cache_key,
     github_pull_request_reviewers_from_requested, github_pull_request_search_query,
-    github_pull_request_search_required, github_release_asset_bytes, github_release_asset_name,
+    github_pull_request_search_required, github_readme_endpoint, github_readme_image_path,
+    github_readme_image_paths, github_release_asset_bytes, github_release_asset_name,
     github_release_from_response, github_release_upload_base_url,
     github_release_validate_asset_file_size, github_repo_management_from_response,
-    github_require_scope, github_review_comment_timeline_item_from_response,
-    github_review_timeline_item_from_response, github_ruleset_summary_from_response,
-    github_timeline_item_from_response, github_update_repo_settings_payload,
-    github_validate_release_for_artifact_asset, github_workflow_artifact_from_response,
-    github_workflow_definition_from_file, github_workflow_job_from_response,
-    github_workflow_permissions_payload, github_workflow_run_from_response,
-    github_workflow_runs_cache_key, normalize_github_content_path, normalize_github_repo_input,
-    normalize_github_topics, normalize_scope_list, parse_github_datetime, parse_next_page,
-    remember_remote_repo_shortcut, sort_github_discussion_timeline, GitHubAssigneeResponse,
-    GitHubBranchResponse, GitHubCommitFileResponse, GitHubContentFileResponse,
-    GitHubContentListItem, GitHubGraphQlError, GitHubIssueMilestoneResponse,
-    GitHubIssueProjectsGraphQlData, GitHubIssueResponse, GitHubIssueTimelineResponse,
-    GitHubIssueTimelineSourceIssueResponse, GitHubIssueTimelineSourceResponse, GitHubLabelResponse,
-    GitHubOrganizationGraphQlOrganization, GitHubOrganizationGraphQlRepositoryConnection,
-    GitHubOrganizationProfileResponse, GitHubReadmeLocation, GitHubRepositoryVisibilityResponse,
+    github_repository_visibility_is_public, github_require_scope,
+    github_review_comment_timeline_item_from_response, github_review_timeline_item_from_response,
+    github_ruleset_summary_from_response, github_timeline_item_from_response,
+    github_update_repo_settings_payload, github_validate_release_for_artifact_asset,
+    github_workflow_artifact_from_response, github_workflow_definition_from_file,
+    github_workflow_job_from_response, github_workflow_permissions_payload,
+    github_workflow_run_from_response, github_workflow_runs_cache_key,
+    normalize_github_content_path, normalize_github_repo_input, normalize_github_topics,
+    normalize_scope_list, parse_github_datetime, parse_next_page, remember_remote_repo_shortcut,
+    sort_github_discussion_timeline, GitHubAssigneeResponse, GitHubBranchResponse,
+    GitHubCommitFileResponse, GitHubContentFileResponse, GitHubContentListItem, GitHubGraphQlError,
+    GitHubIssueMilestoneResponse, GitHubIssueProjectsGraphQlData, GitHubIssueResponse,
+    GitHubIssueTimelineResponse, GitHubIssueTimelineSourceIssueResponse,
+    GitHubIssueTimelineSourceResponse, GitHubLabelResponse, GitHubOrganizationGraphQlOrganization,
+    GitHubOrganizationGraphQlRepositoryConnection, GitHubOrganizationProfileResponse,
     GitHubPullRequestReviewCommentResponse, GitHubPullRequestReviewResponse,
-    GitHubPullRequestUserResponse, GitHubReleaseAssetResponse, GitHubReleaseResponse,
-    GitHubReleaseUserResponse, GitHubRepoLicenseResponse, GitHubRepoOwnerResponse,
-    GitHubRepoResponse, GitHubRequestedReviewersResponse, GitHubRulesetSummaryResponse,
-    GitHubTeamResponse, GitHubWorkflowActorResponse, GitHubWorkflowArtifactResponse,
-    GitHubWorkflowJobResponse, GitHubWorkflowJobStepResponse, GitHubWorkflowResponse,
-    GitHubWorkflowRunResponse, GITHUB_DELETE_REPO_SCOPE, GITHUB_READ_PROJECT_SCOPE,
-    GITHUB_RELEASE_ASSET_MAX_BYTES, GITHUB_REPO_SCOPE, GITHUB_SCOPE,
+    GitHubPullRequestUserResponse, GitHubReadmeLocation, GitHubReleaseAssetResponse,
+    GitHubReleaseResponse, GitHubReleaseUserResponse, GitHubRepoLicenseResponse,
+    GitHubRepoOwnerResponse, GitHubRepoResponse, GitHubRepositoryVisibilityResponse,
+    GitHubRequestedReviewersResponse, GitHubRulesetSummaryResponse, GitHubTeamResponse,
+    GitHubWorkflowActorResponse, GitHubWorkflowArtifactResponse, GitHubWorkflowJobResponse,
+    GitHubWorkflowJobStepResponse, GitHubWorkflowResponse, GitHubWorkflowRunResponse,
+    GITHUB_DELETE_REPO_SCOPE, GITHUB_READ_PROJECT_SCOPE, GITHUB_RELEASE_ASSET_MAX_BYTES,
+    GITHUB_REPO_SCOPE, GITHUB_SCOPE,
 };
 use super::launch::{
     clear_launch_logs, infer_launch_candidates, infer_launch_config, launch_logs, push_launch_log,
@@ -51,24 +51,24 @@ use super::launch::{macos_launch_process, resolve_macos_launch_shell, stop_launc
 use super::readme::readme_image_data_urls;
 use super::repo_guard::repo_resource_id;
 use super::repos::{
-    add_repo_files_to_gitignore, cached_managed_repos, canonical_repo_path, checkout_branch_at,
-    bootstrap_unborn_from_remotes,
-    commit_file_change_from_status, commit_file_changes_from_outputs, commit_file_numstats,
-    commit_file_patches, commit_file_statuses, configured_rebase_target, conflict_operation_args,
-    create_branch_at, create_clone_parent_directories, current_branch_upstream, delete_branch_at,
-    discard_all_repo_local_changes, discard_repo_files, expand_repo_paths_with_root_worktrees,
-    ensure_clone_checkout, filter_hidden_repos, git_common_dir, git_worktree_entries,
-    infer_clone_directory_name,
-    inspect_clone_target, is_conflict_status, language_for_path, lightweight_managed_repos,
-    local_branch_exists, managed_repo_paths, managed_repo_paths_and_prune_stale, merge_branch_at,
-    normalize_clone_directory_name, normalize_git_remote_error, normalize_stash_id,
-    parse_conflict_hunks, parse_github_remote, parse_status_snapshot, plan_workspace_clone,
-    prepare_pull_local_changes, remove_created_empty_directories, rename_branch_at, repo_branches,
-    repo_changes, repo_head_language_stats, repo_history, repo_id, repo_status_entries,
-    repo_has_head, resolve_conflict_content, resolve_remote_sync_config, resolve_repo_worktree,
-    restore_pull_local_changes, run_configured_pull_with_config, run_multi_remote_push,
-    sanitize_clone_path_segment, selected_repo_files, should_retry_clone_with_system_git,
-    should_skip_language_path, status_pair, summarize_repo, summarize_workspace_repo, sync_result,
+    add_repo_files_to_gitignore, bootstrap_unborn_from_remotes, cached_managed_repos,
+    canonical_repo_path, checkout_branch_at, commit_file_change_from_status,
+    commit_file_changes_from_outputs, commit_file_numstats, commit_file_patches,
+    commit_file_statuses, configured_rebase_target, conflict_operation_args, create_branch_at,
+    create_clone_parent_directories, current_branch_upstream, delete_branch_at,
+    discard_all_repo_local_changes, discard_repo_files, ensure_clone_checkout,
+    expand_repo_paths_with_root_worktrees, filter_hidden_repos, git_common_dir,
+    git_worktree_entries, infer_clone_directory_name, inspect_clone_target, is_conflict_status,
+    language_for_path, lightweight_managed_repos, local_branch_exists, managed_repo_paths,
+    managed_repo_paths_and_prune_stale, merge_branch_at, normalize_clone_directory_name,
+    normalize_git_remote_error, normalize_stash_id, parse_conflict_hunks, parse_github_remote,
+    parse_status_snapshot, plan_workspace_clone, prepare_pull_local_changes,
+    remove_created_empty_directories, rename_branch_at, repo_branches, repo_changes, repo_has_head,
+    repo_head_language_stats, repo_history, repo_id, repo_status_entries, resolve_conflict_content,
+    resolve_remote_sync_config, resolve_repo_worktree, restore_pull_local_changes,
+    run_configured_pull_with_config, run_multi_remote_push, sanitize_clone_path_segment,
+    selected_repo_files, should_retry_clone_with_system_git, should_skip_language_path,
+    status_pair, summarize_repo, summarize_workspace_repo, sync_result,
     upsert_workspace_repo_binding, validate_clone_directory_name, CloneTargetDisposition,
     RepoStatusEntry,
 };
@@ -94,14 +94,13 @@ use lilia_github_contracts::workspace::{
     CachedRepoSummary, ContributionIdentity, ContributionIdentityRecommendationConfidence,
     GitHubBindingMetadata, GitHubContributionDay, GitHubDiscussionTimelineItem, GitHubIssue,
     GitHubOrganizationProfileView, GitHubOwnerKind, GitHubProjectCache, GitHubPullRequest,
-    GitHubRelease, GitHubReleaseAsset,
-    GitHubRepoActionsPermissionsRequest, GitHubRepoWorkflowPermissionsRequest,
-    GitHubRepositoryOwner, GitHubUpdateRepoSettingsRequest, LanguageStat,
-    LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut, RepoConflictChoice,
-    RepoPullLocalChangesMode, RepoRemoteBranchState, RepoRemoteSyncConfig, RepoRemoteSyncPolicy,
-    RepoSummary, RepoWorktree, WorkspaceCloneRepoRequest, WorkspaceCloneRepositoryRef,
-    WorkspaceCloneTarget, WorkspaceRepoGroup, WorkspaceRepoPlacement, WorkspaceRepositoryBinding,
-    WorkspaceSettings, WorkspaceStartupCache,
+    GitHubRelease, GitHubReleaseAsset, GitHubRepoActionsPermissionsRequest,
+    GitHubRepoWorkflowPermissionsRequest, GitHubRepositoryOwner, GitHubUpdateRepoSettingsRequest,
+    LanguageStat, LocalContributionDayCache, ProjectLaunchConfig, RemoteRepoShortcut,
+    RepoConflictChoice, RepoPullLocalChangesMode, RepoRemoteBranchState, RepoRemoteSyncConfig,
+    RepoRemoteSyncPolicy, RepoSummary, RepoWorktree, WorkspaceCloneRepoRequest,
+    WorkspaceCloneRepositoryRef, WorkspaceCloneTarget, WorkspaceRepoGroup, WorkspaceRepoPlacement,
+    WorkspaceRepositoryBinding, WorkspaceSettings, WorkspaceStartupCache,
 };
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "macos")]
@@ -1350,26 +1349,30 @@ fn github_organization_public_view_excludes_internal_and_invalid_repositories() 
     assert_eq!(public_repositories[0].topics, vec!["tauri"]);
     assert_eq!(public_repositories[0].stargazers_count, 12);
     assert_eq!(public_repositories[0].forks_count, 3);
-    assert_eq!(public_repositories[0].license_spdx_id.as_deref(), Some("MIT"));
+    assert_eq!(
+        public_repositories[0].license_spdx_id.as_deref(),
+        Some("MIT")
+    );
 
     let member_repositories = github_organization_graphql_repositories(
         member_connection,
         GitHubOrganizationProfileView::Member,
     );
     assert_eq!(member_repositories.len(), 2);
-    assert!(member_repositories.iter().any(|repo| repo.full_name == "lilia/Internal"));
+    assert!(member_repositories
+        .iter()
+        .any(|repo| repo.full_name == "lilia/Internal"));
 }
 
 #[test]
 fn github_organization_partial_graphql_sections_deserialize_independently() {
-    let organization: GitHubOrganizationGraphQlOrganization = serde_json::from_value(
-        serde_json::json!({
+    let organization: GitHubOrganizationGraphQlOrganization =
+        serde_json::from_value(serde_json::json!({
             "itemShowcase": null,
             "popularRepositories": null,
             "recentRepositories": { "nodes": [] }
-        }),
-    )
-    .unwrap();
+        }))
+        .unwrap();
 
     assert!(organization.popular_repositories.is_none());
     assert!(organization.recent_repositories.is_some());
@@ -1632,6 +1635,7 @@ fn sorts_github_discussion_timeline_by_time_then_id() {
     let mut items = vec![
         GitHubDiscussionTimelineItem {
             id: "b".to_string(),
+            database_id: None,
             kind: "event".to_string(),
             actor: None,
             body: None,
@@ -1648,6 +1652,7 @@ fn sorts_github_discussion_timeline_by_time_then_id() {
         },
         GitHubDiscussionTimelineItem {
             id: "a".to_string(),
+            database_id: None,
             kind: "comment".to_string(),
             actor: None,
             body: Some("same time".to_string()),
@@ -1664,6 +1669,7 @@ fn sorts_github_discussion_timeline_by_time_then_id() {
         },
         GitHubDiscussionTimelineItem {
             id: "body".to_string(),
+            database_id: None,
             kind: "body".to_string(),
             actor: None,
             body: Some("first".to_string()),

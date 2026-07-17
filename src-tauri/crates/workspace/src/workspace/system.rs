@@ -4,6 +4,11 @@ use std::process::{Command, Stdio};
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::shared::configure_background_command;
 
+pub use super::lilia_code_handoff::{
+    lilia_code_create_task_handoff, lilia_code_get_task_handoff_status,
+    lilia_code_open_task_handoff_result,
+};
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -16,9 +21,9 @@ const VSCODE_COMMANDS: &[&str] = &["code.cmd", "code"];
 const VSCODE_COMMANDS: &[&str] = &["code"];
 
 #[cfg(target_os = "windows")]
-const LILIACODE_COMMANDS: &[&str] = &["liliacode.cmd", "liliacode"];
+pub(super) const LILIACODE_COMMANDS: &[&str] = &["liliacode.cmd", "liliacode"];
 #[cfg(not(target_os = "windows"))]
-const LILIACODE_COMMANDS: &[&str] = &["liliacode"];
+pub(super) const LILIACODE_COMMANDS: &[&str] = &["liliacode"];
 
 pub fn system_open_path(app: AppHandle, path: String) -> Result<(), String> {
     if !Path::new(&path).exists() {
@@ -112,7 +117,7 @@ fn open_terminal_at_path(path: &Path) -> Result<(), String> {
     spawn_first("终端", candidates)
 }
 
-fn spawn_first<'a, I>(label: &str, commands: I) -> Result<(), String>
+pub(super) fn spawn_first<'a, I>(label: &str, commands: I) -> Result<(), String>
 where
     I: IntoIterator<Item = (&'a str, Command)>,
 {

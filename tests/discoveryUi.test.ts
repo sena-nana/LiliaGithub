@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import DiscoveryPanel from "../src/components/discovery/DiscoveryPanel.vue";
-import PullRequestReviewDialog from "../src/components/discovery/PullRequestReviewDialog.vue";
+import PullRequestReviewComposer from "../src/components/repo/review/PullRequestReviewComposer.vue";
 
 describe("跨仓库工作台 UI", () => {
   it("保留已有结果并把部分失败作为可恢复状态", async () => {
@@ -24,21 +24,21 @@ describe("跨仓库工作台 UI", () => {
     expect(view.emitted("retry")).toHaveLength(1);
   });
 
-  it("请求修改必须填写说明并提交结构化审查请求", async () => {
-    const view = render(PullRequestReviewDialog, {
-      props: { open: true, pullTitle: "修复同步竞态" },
+  it("完整审查中的请求修改必须填写说明并提交结构化请求", async () => {
+    const submitReview = vi.fn().mockResolvedValue(undefined);
+    render(PullRequestReviewComposer, {
+      props: { busy: false, submitReview },
     });
-    const eventSelect = screen.getByLabelText("审查结果");
+    const eventSelect = screen.getByLabelText("Review 结果");
     await fireEvent.update(eventSelect, "request_changes");
-    await fireEvent.click(screen.getByRole("button", { name: "提交审查" }));
-    expect(view.emitted("submit")).toBeUndefined();
-    expect(screen.getByRole("alert")).toHaveTextContent("需要填写说明");
+    expect(screen.getByRole("button", { name: "提交 Review" })).toBeDisabled();
+    expect(screen.getByText("Comment 和 Request changes 需要填写说明。")).toBeInTheDocument();
 
     await fireEvent.update(screen.getByLabelText("说明（必填）"), "请先补充边界测试");
-    await fireEvent.click(screen.getByRole("button", { name: "提交审查" }));
-    expect(view.emitted("submit")).toEqual([[{
+    await fireEvent.click(screen.getByRole("button", { name: "提交 Review" }));
+    expect(submitReview).toHaveBeenCalledWith({
       event: "request_changes",
       body: "请先补充边界测试",
-    }]]);
+    });
   });
 });

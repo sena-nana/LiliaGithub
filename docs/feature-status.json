@@ -1,0 +1,416 @@
+{
+  "lastChecked": "2026-07-17",
+  "sections": [
+    {
+      "id": "local-git",
+      "title": {
+        "en": "Local Git And Repository Management",
+        "zh-CN": "本地 Git 和仓库管理"
+      },
+      "items": [
+        {
+          "id": "workspace-scan",
+          "complete": true,
+          "text": {
+            "en": "Workspace selection and local Git repository scanning.",
+            "zh-CN": "工作区选择和本地 Git 仓库扫描。"
+          }
+        },
+        {
+          "id": "repository-inspection",
+          "complete": true,
+          "text": {
+            "en": "Repository status, branches, changes, history, and repository detail views.",
+            "zh-CN": "仓库状态、分支、变更、历史和仓库详情视图。"
+          }
+        },
+        {
+          "id": "repository-writes",
+          "complete": true,
+          "text": {
+            "en": "Staging, committing, pull, push, checkout, remote-page open, and folder open actions.",
+            "zh-CN": "暂存、提交、pull、push、checkout、打开远端页面和打开文件夹。"
+          }
+        },
+        {
+          "id": "batch-sync",
+          "complete": true,
+          "text": {
+            "en": "Pull / push batch preflight and queued execution.",
+            "zh-CN": "pull / push 批量预检和队列执行。"
+          }
+        },
+        {
+          "id": "github-auth",
+          "complete": true,
+          "text": {
+            "en": "GitHub device-code authorization and system keychain credential reuse.",
+            "zh-CN": "GitHub 设备码授权和系统钥匙串凭证复用。"
+          }
+        },
+        {
+          "id": "recovery",
+          "complete": true,
+          "text": {
+            "en": "Conflict, failed-sync, and multi-step recovery guidance inside the app.",
+            "zh-CN": "应用内冲突、同步失败和多步骤恢复指引。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "github-collaboration",
+      "title": {
+        "en": "GitHub Project And Collaboration View",
+        "zh-CN": "GitHub 项目和协作视图"
+      },
+      "items": [
+        {
+          "id": "repository-metadata",
+          "complete": true,
+          "text": {
+            "en": "GitHub repository metadata, stars, forks, topics, releases, default branch state, and repository settings.",
+            "zh-CN": "GitHub 仓库元信息、star、fork、topic、release、默认分支状态和仓库设置。"
+          }
+        },
+        {
+          "id": "issues",
+          "complete": true,
+          "text": {
+            "en": "Issue browsing, filtering, detail timeline, template-assisted creation, and route-persisted filters.",
+            "zh-CN": "Issue 浏览、筛选、详情时间线、模板辅助创建和路由持久化筛选状态。"
+          }
+        },
+        {
+          "id": "pull-requests",
+          "complete": true,
+          "text": {
+            "en": "Pull request browsing, filtering, detail timeline, checks, creation, merge, and route-persisted filters.",
+            "zh-CN": "Pull Request 浏览、筛选、详情时间线、checks、创建、合并和路由持久化筛选状态。"
+          }
+        },
+        {
+          "id": "discussion-timeline",
+          "complete": true,
+          "text": {
+            "en": "Discussion Markdown timelines inside issue and pull request details.",
+            "zh-CN": "Issue 和 Pull Request 详情中的 Discussion Markdown 时间线。"
+          }
+        },
+        {
+          "id": "milestones",
+          "complete": true,
+          "text": {
+            "en": "Repository milestones grouped from linked issues and pull requests.",
+            "zh-CN": "基于关联 Issue 和 Pull Request 分组的仓库 Milestones。"
+          }
+        },
+        {
+          "id": "linked-project-fields",
+          "complete": true,
+          "text": {
+            "en": "Linked project field metadata in issue and pull request details.",
+            "zh-CN": "Issue 和 Pull Request 详情中的已关联 project 字段元数据。"
+          }
+        },
+        {
+          "id": "actions-observation",
+          "complete": true,
+          "text": {
+            "en": "Actions run details, job and workflow graphs, logs, artifact preview, failure diagnostics, and rerun.",
+            "zh-CN": "Actions run 详情、job 与 workflow 图、日志、artifact 预览、失败诊断和重跑。"
+          }
+        },
+        {
+          "id": "home-timeline",
+          "complete": true,
+          "text": {
+            "en": "Home timeline for recent issues, pull requests, workflow runs, pushes, and sync events in the current workspace.",
+            "zh-CN": "当前工作区最近 Issue、Pull Request、workflow run、push 和同步事件的首页时间线。"
+          }
+        },
+        {
+          "id": "releases",
+          "complete": true,
+          "text": {
+            "en": "Release list and status management.",
+            "zh-CN": "Release 列表和状态管理。"
+          }
+        },
+        {
+          "id": "discussions",
+          "complete": true,
+          "text": {
+            "en": "GitHub Discussions browsing, detail view, and topic creation.",
+            "zh-CN": "GitHub Discussions 浏览、详情查看和主题创建。"
+          }
+        },
+        {
+          "id": "full-code-review",
+          "complete": true,
+          "text": {
+            "en": "Complete pull request code review with changed files, threads, replies, and review submission.",
+            "zh-CN": "包含 Changed Files、thread、回复和 review 提交的完整 Pull Request Code Review。"
+          }
+        },
+        {
+          "id": "collaboration-writes",
+          "complete": true,
+          "text": {
+            "en": "Issue, pull request, and Discussion comment round-trips with recoverable writes.",
+            "zh-CN": "具备可恢复写入的 Issue、Pull Request 和 Discussion 评论往返。"
+          }
+        },
+        {
+          "id": "notification-inbox",
+          "complete": true,
+          "text": {
+            "en": "In-app notification inbox with filtering, read state, unsubscribe, and internal routing.",
+            "zh-CN": "支持筛选、已读状态、取消订阅和内部路由的应用内通知收件箱。"
+          }
+        },
+        {
+          "id": "projects-v2",
+          "complete": false,
+          "milestone": "P2",
+          "text": {
+            "en": "Projects V2 browsing and common field updates connected to the work-item model.",
+            "zh-CN": "与工作项模型联通的 Projects V2 浏览和常用字段更新。"
+          }
+        },
+        {
+          "id": "actions-control",
+          "complete": false,
+          "milestone": "P2",
+          "text": {
+            "en": "Actions workflow dispatch, run cancellation, and deployment approval controls.",
+            "zh-CN": "Actions workflow dispatch、运行取消和部署审批控制。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "personal-control-center",
+      "title": {
+        "en": "Personal Developer Control Center",
+        "zh-CN": "个人开发中控台"
+      },
+      "items": [
+        {
+          "id": "account-connection",
+          "complete": true,
+          "text": {
+            "en": "Signed-in GitHub account connection and profile management.",
+            "zh-CN": "GitHub 账号连接和个人资料管理。"
+          }
+        },
+        {
+          "id": "account-preferences",
+          "complete": true,
+          "text": {
+            "en": "Account repository scope, list preferences, local workspace preference, and theme persistence.",
+            "zh-CN": "账号仓库范围、列表偏好、本地工作区偏好和主题持久化。"
+          }
+        },
+        {
+          "id": "account-repositories",
+          "complete": true,
+          "text": {
+            "en": "Account and organization repository browsing, repository creation, and clone-to-workspace flow.",
+            "zh-CN": "个人与组织仓库浏览、仓库创建和克隆到工作区流程。"
+          }
+        },
+        {
+          "id": "personal-home",
+          "complete": true,
+          "text": {
+            "en": "Personal home for assigned work, recently touched repositories, notification summary, and current workspace context.",
+            "zh-CN": "展示分配工作、最近仓库、通知摘要和当前工作区上下文的个人首页。"
+          }
+        },
+        {
+          "id": "watched-repositories",
+          "complete": true,
+          "text": {
+            "en": "Watched repositories and repository notification preferences.",
+            "zh-CN": "关注仓库和仓库通知偏好。"
+          }
+        },
+        {
+          "id": "repository-organization",
+          "complete": true,
+          "text": {
+            "en": "Local repository favorites and repository groups.",
+            "zh-CN": "本地仓库收藏和仓库分组。"
+          }
+        },
+        {
+          "id": "attention-today-continue",
+          "complete": true,
+          "text": {
+            "en": "Explainable Attention / Today / Continue work-item organization and exact context restoration.",
+            "zh-CN": "可解释的 Attention / Today / Continue 工作项组织和精确上下文恢复。"
+          }
+        },
+        {
+          "id": "lilia-code-handoff",
+          "complete": true,
+          "text": {
+            "en": "Structured LiliaCode task handoff with source context, acceptance criteria, and result return path.",
+            "zh-CN": "包含来源上下文、验收条件和结果返回路径的结构化 LiliaCode 任务交接。"
+          }
+        },
+        {
+          "id": "multiple-workspaces",
+          "complete": false,
+          "milestone": "P1",
+          "text": {
+            "en": "Multiple named workspaces with multiple roots and workspace-specific preferences.",
+            "zh-CN": "支持多个根目录和工作区独立偏好的多个命名工作区。"
+          }
+        },
+        {
+          "id": "account-activity",
+          "complete": false,
+          "milestone": "P1",
+          "text": {
+            "en": "In-app account activity timeline with type, repository, and owner-scope filters.",
+            "zh-CN": "支持类型、仓库和所有者范围筛选的应用内账号活动时间线。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "quick-launch",
+      "title": {
+        "en": "Quick Launch",
+        "zh-CN": "快速启动"
+      },
+      "items": [
+        {
+          "id": "launch-discovery",
+          "complete": true,
+          "text": {
+            "en": "Repository launch candidate discovery and selection.",
+            "zh-CN": "仓库启动候选发现和选择。"
+          }
+        },
+        {
+          "id": "launch-config",
+          "complete": true,
+          "text": {
+            "en": "Saved quick launch configuration per repository.",
+            "zh-CN": "按仓库保存快速启动配置。"
+          }
+        },
+        {
+          "id": "launch-status",
+          "complete": true,
+          "text": {
+            "en": "Launch running-state polling and recent output logs.",
+            "zh-CN": "启动运行状态轮询和最近输出日志。"
+          }
+        },
+        {
+          "id": "launch-diagnostics",
+          "complete": true,
+          "text": {
+            "en": "Launch history and failure diagnostics.",
+            "zh-CN": "启动历史和失败诊断。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "desktop",
+      "title": {
+        "en": "Desktop Experience",
+        "zh-CN": "桌面体验"
+      },
+      "items": [
+        {
+          "id": "desktop-shell",
+          "complete": true,
+          "text": {
+            "en": "Compact desktop shell with workspace, repository, profile, and settings navigation.",
+            "zh-CN": "支持工作区、仓库、个人资料和设置导航的紧凑桌面壳。"
+          }
+        },
+        {
+          "id": "window-state",
+          "complete": true,
+          "text": {
+            "en": "Window position, size, and maximized-state restoration.",
+            "zh-CN": "窗口位置、尺寸和最大化状态恢复。"
+          }
+        },
+        {
+          "id": "themes",
+          "complete": true,
+          "text": {
+            "en": "Light and dark themes.",
+            "zh-CN": "浅色和深色主题。"
+          }
+        },
+        {
+          "id": "menus-dialogs",
+          "complete": true,
+          "text": {
+            "en": "Context menus and confirmation dialogs for repository actions.",
+            "zh-CN": "仓库操作的右键菜单和确认弹层。"
+          }
+        },
+        {
+          "id": "keyboard-navigation",
+          "complete": true,
+          "text": {
+            "en": "Keyboard navigation for repeated GitHub work.",
+            "zh-CN": "面向重复 GitHub 操作的键盘导航。"
+          }
+        }
+      ]
+    },
+    {
+      "id": "build-release",
+      "title": {
+        "en": "Build And Release",
+        "zh-CN": "构建和发布"
+      },
+      "items": [
+        {
+          "id": "windows-package",
+          "complete": true,
+          "text": {
+            "en": "Windows desktop app packaging.",
+            "zh-CN": "Windows 桌面应用打包。"
+          }
+        },
+        {
+          "id": "contributor-verification",
+          "complete": true,
+          "text": {
+            "en": "Contributor verification command for tests, builds, Rust checks, and generated feature-status consistency.",
+            "zh-CN": "覆盖测试、构建、Rust 检查和 Feature Status 生成一致性的贡献者验证命令。"
+          }
+        },
+        {
+          "id": "ci-release",
+          "complete": true,
+          "text": {
+            "en": "GitHub Actions CI, documentation build, and release packaging workflows.",
+            "zh-CN": "GitHub Actions CI、文档构建和 release 打包工作流。"
+          }
+        },
+        {
+          "id": "signed-installer",
+          "complete": false,
+          "milestone": "1.0",
+          "text": {
+            "en": "Signed installer integration.",
+            "zh-CN": "签名安装包集成。"
+          }
+        }
+      ]
+    }
+  ]
+}

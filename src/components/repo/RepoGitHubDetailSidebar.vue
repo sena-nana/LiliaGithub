@@ -214,15 +214,16 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
         <strong>{{ headerText }}</strong>
       </div>
       <div v-if="issue" class="project-sidebar-detail-card__actions" aria-label="Issue 操作">
-        <button type="button" class="ghost" aria-label="打开 GitHub" title="打开 GitHub" @click="emit('openIssue', issue)">
+        <button type="button" class="ghost" :data-agent-id="`repo.issues.${issue.number}.open-github`" aria-label="打开 GitHub" title="打开 GitHub" @click="emit('openIssue', issue)">
           <ExternalLink :size="14" aria-hidden="true" />
         </button>
-        <button type="button" class="ghost" :disabled="updatingIssue" aria-label="编辑" title="编辑" @click="emit('editIssue', issue)">
+        <button type="button" class="ghost" :data-agent-id="`repo.issues.${issue.number}.edit`" :disabled="updatingIssue" aria-label="编辑" title="编辑" @click="emit('editIssue', issue)">
           <Pencil :size="14" aria-hidden="true" />
         </button>
         <button
           type="button"
           class="ghost"
+          :data-agent-id="`repo.issues.${issue.number}.toggle`"
           :disabled="updatingIssue"
           :aria-label="issue.state === 'open' ? '关闭' : '重开'"
           :title="issue.state === 'open' ? '关闭' : '重开'"
@@ -234,13 +235,14 @@ function pullSections(pull: GitHubPullRequest): SidebarSection[] {
         </button>
       </div>
       <div v-else-if="pull" class="project-sidebar-detail-card__actions" aria-label="Pull Request 操作">
-        <button type="button" class="ghost" aria-label="打开 GitHub" title="打开 GitHub" @click="emit('openPullRequest', pull)">
+        <button type="button" class="ghost" :data-agent-id="`repo.pulls.${pull.number}.open-github`" aria-label="打开 GitHub" title="打开 GitHub" @click="emit('openPullRequest', pull)">
           <ExternalLink :size="14" aria-hidden="true" />
         </button>
         <button
           v-if="!pull.merged"
           type="button"
           class="ghost"
+          :data-agent-id="`repo.pulls.${pull.number}.toggle`"
           :disabled="updatingPullRequest"
           :aria-label="pull.state === 'open' ? '关闭' : '重开'"
           :title="pull.state === 'open' ? '关闭' : '重开'"

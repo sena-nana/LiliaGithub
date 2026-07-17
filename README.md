@@ -38,15 +38,15 @@
 
 ## Product Positioning
 
-LiliaGithub is the GitHub workspace tool in the Lilia family. It is built for developers who keep many local repositories active and want to handle most everyday GitHub work without opening the web UI.
+LiliaGithub is the personal developer control center for Git and GitHub in the Lilia family. It is built for developers who keep many repositories active and need one place to understand what needs attention, continue recent work, and complete everyday collaboration without repeatedly returning to the web UI.
 
-The long-term goal is a desktop-first workflow for local Git management, GitHub repository and project inspection, personal account workspace management, and push / sync activity review. The web UI remains the fallback for uncommon administration, organization policy, and advanced GitHub features that are better handled by GitHub itself.
+The product deliberately prioritizes focused developer decisions and recoverable workflows over GitHub web parity. Git and GitHub remain the source of truth; the web UI remains the fallback for uncommon administration, organization policy, and advanced capabilities that do not belong in a personal control center.
 
 ## Milestones
 
 - `1.0 Closing Stability`: stabilize the existing local Git, GitHub collaboration, Actions, Release, quick launch, and packaging paths, then close recovery guidance, failure diagnostics, and release validation gaps.
-- `2.0 GitHub Web Parity`: align repository settings, repository surfaces, Discussions, personal configuration, and preferences with the core GitHub web experience.
-- `3.0 Account Activity And Discovery`: support the GitHub account activity timeline, remote repository search, notification inbox, and cross-repository workflow aggregation.
+- `Collaboration And Control`: complete high-frequency review, comment, notification, Attention, Today, and Continue workflows inside the app.
+- `Focused Extensions`: add structured LiliaCode handoff, multiple workspaces, account activity, Projects V2 context, and Actions controls where they strengthen the personal developer workflow without copying the full GitHub web UI.
 
 ## The Lilia Family
 
@@ -59,7 +59,7 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It consum
 - Workspace-first repository view: scan a local workspace and keep repository status, branch state, changes, history, and sync state close together.
 - Focused repository operations: stage, commit, pull, push, checkout, open the remote page when needed, and open the local folder from one repository surface.
 - GitHub project visibility: bring repository, issue, pull request, review, release, and milestone context into the desktop app instead of requiring constant browser switching.
-- Personal workspace management: provide a signed-in home for account state, repository lists, notifications, saved workspaces, and personal preferences.
+- Personal workspace controls: provide a signed-in home for account state, repository lists, notification summary, watched repositories, and personal preferences.
 - Push activity review: surface recent pushes, outgoing changes, CI / release results, and sync problems where developers already manage their repositories.
 - Quick launch commands: save a repository launch target, poll running state, and inspect recent command output without turning the main workspace into a terminal-only app.
 - Queued sync workflows: preflight pull / push operations and execute them in a controlled queue.
@@ -67,61 +67,70 @@ LiliaGithub focuses on repository operations around GitHub workspaces. It consum
 
 ## Feature Status
 
-The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked with a target milestone. Last checked: 2026-06-24.
+<!-- Generated from docs/feature-status.json by scripts/sync-feature-status.mjs. Edit the source, then run yarn feature-status:generate. -->
+
+The list below is generated from the project's canonical feature-status data. Only user-facing capabilities available on the current main branch are marked complete. Last checked: 2026-07-17.
 
 ### Local Git And Repository Management
 
 - [x] Workspace selection and local Git repository scanning.
-- [x] Repository status summary, branch information, change details, history, and repository detail view.
-- [x] Single-repository staging, committing, pull, push, checkout, remote-page open, and folder open actions.
+- [x] Repository status, branches, changes, history, and repository detail views.
+- [x] Staging, committing, pull, push, checkout, remote-page open, and folder open actions.
 - [x] Pull / push batch preflight and queued execution.
 - [x] GitHub device-code authorization and system keychain credential reuse.
-- [ ] Safer conflict, failed-sync, and multi-step recovery guidance inside the app. `1.0`
+- [x] Conflict, failed-sync, and multi-step recovery guidance inside the app.
 
 ### GitHub Project And Collaboration View
 
 - [x] GitHub repository metadata, stars, forks, topics, releases, default branch state, and repository settings.
-- [x] Issue browsing, filtering, detail timeline, template-assisted creation, route-persisted filters, and repository project fields.
-- [x] Pull request browsing, filtering, detail timeline, checks, create flow, merge action, and route-persisted filters.
-- [x] Discussion Markdown timeline rendering inside issue and pull request details.
-- [x] Repository Milestones view grouped from linked issues and pull requests.
-- [x] Actions run list, run detail, job graph, job logs, workflow node graph, and artifact preview.
-- [x] Home GitHub timeline for recent issues, pull requests, workflow runs, pushes, and sync events.
+- [x] Issue browsing, filtering, detail timeline, template-assisted creation, and route-persisted filters.
+- [x] Pull request browsing, filtering, detail timeline, checks, creation, merge, and route-persisted filters.
+- [x] Discussion Markdown timelines inside issue and pull request details.
+- [x] Repository milestones grouped from linked issues and pull requests.
+- [x] Linked project field metadata in issue and pull request details.
+- [x] Actions run details, job and workflow graphs, logs, artifact preview, failure diagnostics, and rerun.
+- [x] Home timeline for recent issues, pull requests, workflow runs, pushes, and sync events in the current workspace.
 - [x] Release list and status management.
-- [ ] GitHub Discussions browsing and creation. `2.0`
-- [ ] Notification inbox with repository, issue, pull request, and review filters. `3.0`
-- [ ] Broader failed workflow visibility. `1.0`
+- [x] GitHub Discussions browsing, detail view, and topic creation.
+- [x] Complete pull request code review with changed files, threads, replies, and review submission.
+- [x] Issue, pull request, and Discussion comment round-trips with recoverable writes.
+- [x] In-app notification inbox with filtering, read state, unsubscribe, and internal routing.
+- [ ] Projects V2 browsing and common field updates connected to the work-item model. `P2`
+- [ ] Actions workflow dispatch, run cancellation, and deployment approval controls. `P2`
 
-### Personal Workspace
+### Personal Developer Control Center
 
-- [x] Signed-in GitHub account connection.
-- [x] Local workspace preferences and theme persistence.
-- [x] Account repository list access with a sidebar create-repository entry.
-- [x] GitHub repository creation and clone-to-workspace flow.
-- [ ] Personal home view for assigned work, recently touched repositories, and saved workspaces. `3.0`
-- [ ] Watched repositories and notification preferences. `2.0`
-- [ ] Local organization of favorite repositories and common workspaces. `2.0`
+- [x] Signed-in GitHub account connection and profile management.
+- [x] Account repository scope, list preferences, local workspace preference, and theme persistence.
+- [x] Account and organization repository browsing, repository creation, and clone-to-workspace flow.
+- [x] Personal home for assigned work, recently touched repositories, notification summary, and current workspace context.
+- [x] Watched repositories and repository notification preferences.
+- [x] Local repository favorites and repository groups.
+- [x] Explainable Attention / Today / Continue work-item organization and exact context restoration.
+- [x] Structured LiliaCode task handoff with source context, acceptance criteria, and result return path.
+- [ ] Multiple named workspaces with multiple roots and workspace-specific preferences. `P1`
+- [ ] In-app account activity timeline with type, repository, and owner-scope filters. `P1`
 
 ### Quick Launch
 
 - [x] Repository launch candidate discovery and selection.
 - [x] Saved quick launch configuration per repository.
-- [x] Launch running-state polling and recent output log display.
-- [ ] Clearer launch history and failure diagnostics. `1.0`
+- [x] Launch running-state polling and recent output logs.
+- [x] Launch history and failure diagnostics.
 
 ### Desktop Experience
 
-- [x] Compact desktop shell with workspace, repository, and settings navigation.
+- [x] Compact desktop shell with workspace, repository, profile, and settings navigation.
 - [x] Window position, size, and maximized-state restoration.
-- [x] Light / dark theme switching.
+- [x] Light and dark themes.
 - [x] Context menus and confirmation dialogs for repository actions.
-- [ ] More complete keyboard navigation for repeated GitHub work. `1.0`
+- [x] Keyboard navigation for repeated GitHub work.
 
 ### Build And Release
 
 - [x] Windows desktop app packaging.
-- [x] Contributor verification command for tests and builds.
-- [x] GitHub Actions CI, documentation build, and release packaging workflow.
+- [x] Contributor verification command for tests, builds, Rust checks, and generated feature-status consistency.
+- [x] GitHub Actions CI, documentation build, and release packaging workflows.
 - [ ] Signed installer integration. `1.0`
 
 ## Project Structure

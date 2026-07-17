@@ -8,6 +8,7 @@ import {
   preloadDiscussionView,
 } from "./discussionViewModules";
 import { useRepoDiscussionsStore } from "./useRepoDiscussions";
+import { useWorkspace } from "../../../composables/useWorkspace";
 
 const props = defineProps<{
   repoFullName: string;
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useRepoDiscussionsStore(() => props.repoFullName);
+const workspace = useWorkspace();
 const metadata = computed(() => store.value.list.metadata.value);
 const contentUnavailable = computed(() => props.unavailableReason || store.value.list.metadataError.value);
 
@@ -160,6 +162,15 @@ defineExpose({ refresh });
       :comments-error="store.detail.commentsError.value"
       :reply-states="store.detail.replyStates.value"
       :repo-full-name="repoFullName"
+      :viewer-login="workspace.githubBinding.value?.login || ''"
+      :mutation-pending="store.detail.mutationPending.value"
+      :mutation-errors="store.detail.mutationErrors.value"
+      :create-comment="store.detail.createComment"
+      :update-comment="store.detail.updateComment"
+      :delete-comment="store.detail.deleteComment"
+      :react="store.detail.react"
+      :change-state="store.detail.changeState"
+      :set-answer="store.detail.setAnswer"
       @back="emit('back')"
       @load-more-comments="store.detail.loadMoreComments(focusedDiscussionNumber)"
       @load-replies="store.detail.loadReplies($event)"

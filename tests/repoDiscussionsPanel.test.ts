@@ -149,4 +149,22 @@ describe("RepoDiscussionsPanel", () => {
     }));
     await waitFor(() => expect(view.emitted("created")).toEqual([[12]]));
   });
+
+  it("only offers answer selection for answerable discussion categories", async () => {
+    const category = { ...metadata.categories[0]!, isAnswerable: false };
+    api.getDiscussion.mockResolvedValue({ ...detail(), category });
+    const view = render(RepoDiscussionsPanel, {
+      props: {
+        repoFullName: "acme/repo",
+        focusedDiscussionNumber: null,
+        createView: false,
+      },
+    });
+
+    await fireEvent.click(await screen.findByRole("button", { name: /Rendered discussion/ }));
+    await view.rerender({ focusedDiscussionNumber: 12 });
+    await screen.findByRole("heading", { name: "Safe Markdown" });
+
+    expect(screen.queryByRole("button", { name: "采纳答案" })).toBeNull();
+  });
 });

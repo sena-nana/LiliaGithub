@@ -4,12 +4,13 @@ import {
   CircleDot,
   CircleOff,
 } from "@lucide/vue";
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import type {
   GitHubDiscussionTimelineItem,
   GitHubIssue,
 } from "../../services/workspace/types";
-import RepoDiscussionTimeline from "./RepoDiscussionTimeline.vue";
+import RepoIssueConversation from "./RepoIssueConversation.vue";
+import { updateGitHubIssue } from "../../services/workspace/client";
 
 const props = defineProps<{
   issue: GitHubIssue;
@@ -26,6 +27,32 @@ const emit = defineEmits<{
 
 const statusText = computed(() => props.issue.state === "open" ? "Open" : "Closed");
 const linkBaseUrl = computed(() => `https://github.com/${props.repoFullName}`);
+const milestoneDraft = ref("");
+const milestonePending = ref(false);
+const milestoneError = ref<string | null>(null);
+const milestoneTitle = ref<string | null>(null);
+
+watch(() => props.issue, (issue) => {
+  milestoneDraft.value = issue.milestone ? String(issue.milestone.number) : "";
+  milestoneTitle.value = issue.milestone?.title ?? null;
+}, { immediate: true });
+
+async function saveMilestone() {
+  if (milestonePending.value) return;
+  const milestone = milestoneDraft.value.trim() ? Number(milestoneDraft.value) : null;
+  if (milestone !== null && (!Number.isInteger(milestone) || milestone <= 0)) {
+    milestoneError.value = "请输入有效的 milestone 编号";
+    return;
+  }
+  milestonePending.value = true; milestoneError.value = null;
+  try {
+    const updated = await updateGitHubIssue(props.repoFullName, props.issue.number, { milestone });
+    milestoneDraft.value = updated.milestone ? String(updated.milestone.number) : "";
+    milestoneTitle.value = updated.milestone?.title ?? null;
+  } catch (error) {
+    milestoneError.value = String(error).replace(/^Error:\s*/, "");
+  } finally { milestonePending.value = false; }
+}
 
 function formatDateTime(value: string) {
   const date = new Date(value);
@@ -37,7 +64,7 @@ function formatDateTime(value: string) {
 <template>
   <article class="issue-detail" aria-label="Issue 详情">
     <div class="issue-detail__head">
-      <button type="button" class="ghost issue-detail__back" @click="emit('back')">
+      <button type="button" class="ghost issue-detail__back" data-agent-id="repo.issues.detail.back" @click="emit('back')">
         <ArrowLeft :size="14" aria-hidden="true" />
         Issues
       </button>
@@ -58,7 +85,17 @@ function formatDateTime(value: string) {
       </p>
     </header>
 
-    <RepoDiscussionTimeline
+    <form class="issue-detail__milestone" @submit.prevent="saveMilestone">
+      <label for="issue-milestone">Milestone</label>
+      <input id="issue-milestone" v-model="milestoneDraft" type="number" min="1" inputmode="numeric" data-agent-id="repo.issues.detail.milestone-input" placeholder="未设置" />
+      <button type="submit" data-agent-id="repo.issues.detail.milestone-save" :disabled="milestonePending">{{ milestonePending ? "保存中" : "保存" }}</button>
+      <span v-if="milestoneTitle" class="muted">{{ milestoneTitle }}</span>
+      <p v-if="milestoneError" class="repo-error" data-agent-id="repo.issues.detail.milestone-error">{{ milestoneError }}</p>
+    </form>
+
+    <RepoIssueConversation
+      :repo-full-name="repoFullName"
+      :issue-number="issue.number"
       :items="timeline"
       :loading="discussionLoading"
       :error="discussionError"
@@ -132,6 +169,11 @@ function formatDateTime(value: string) {
 .issue-detail__status.is-closed {
   color: var(--text-muted);
 }
+
+.issue-detail__milestone { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.issue-detail__milestone label { font-size: 12px; font-weight: 650; }
+.issue-detail__milestone input { width: 120px; }
+.issue-detail__milestone p { flex-basis: 100%; margin: 0; }
 
 @media (max-width: 760px) {
   .issue-detail__head {

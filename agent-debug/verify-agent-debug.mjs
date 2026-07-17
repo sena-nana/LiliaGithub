@@ -16,6 +16,7 @@ const appDataDir = path.join(runDir, "app-data");
 const webviewDataDir = path.join(runDir, "webview-data");
 const driverPort = Number.parseInt(process.env.LILIA_GITHUB_AGENT_DEBUG_DRIVER_PORT ?? "4444", 10);
 const driverUrl = `http://127.0.0.1:${driverPort}`;
+const debugAppIdentifier = `com.liliagithub.desktop.agent-debug.${runId.toLowerCase()}`;
 const defaultDevUrl = "http://127.0.0.1:1420";
 const explicitDevUrl = Boolean(process.env.LILIA_GITHUB_AGENT_DEBUG_DEV_URL);
 const explicitAppBinary = Boolean(process.env.LILIA_GITHUB_AGENT_DEBUG_APP);
@@ -24,6 +25,7 @@ const appBinary = process.env.LILIA_GITHUB_AGENT_DEBUG_APP ?? defaultAppBinary()
 const localViteBin = path.join(repoRoot, "node_modules", "vite", "bin", "vite.js");
 const replay = [];
 const observedSnapshots = [];
+const replayAssertions = [];
 
 const agentDebugEnv = {
   LILIA_GITHUB_AGENT_DEBUG: "1",
@@ -230,6 +232,30 @@ export function findEnabledVisibleAgentId(elements, candidates) {
   return candidates.find((candidate) => available.has(candidate)) ?? null;
 }
 
+function findControlCenterActionTarget(elements, bucket, action) {
+  const prefix = `control-center.${bucket}.`;
+  const suffix = `.${action}`;
+  return (elements ?? [])
+    .filter((element) => element.visible !== false && element.disabled !== true)
+    .map((element) => element.id || element.agentId)
+    .find((id) => id?.startsWith(prefix) && id.endsWith(suffix)) ?? null;
+}
+
+function findReviewLineCommentTarget(elements) {
+  return (elements ?? [])
+    .filter((element) => element.visible !== false && element.disabled !== true)
+    .map((element) => element.id || element.agentId)
+    .find((id) => /^repo\.pulls\.review\.file\..+\.line\.(left|right)\.\d+\.comment$/.test(id ?? "")) ?? null;
+}
+
+function findReviewThreadTarget(elements, excludedTargets = []) {
+  const excluded = new Set(excludedTargets);
+  return (elements ?? [])
+    .filter((element) => element.visible !== false)
+    .map((element) => element.id || element.agentId)
+    .find((id) => /^repo\.pulls\.review\.thread\.[^.]+$/.test(id ?? "") && !excluded.has(id)) ?? null;
+}
+
 function stopProcessTree(child) {
   if (!child || child.killed) return;
   if (process.platform === "win32" && child.pid) {
@@ -264,10 +290,17 @@ async function buildDebugAppForDevUrl(targetDevUrl) {
     ...config.build,
     devUrl: targetDevUrl,
   };
+  config.identifier = debugAppIdentifier;
 
   return run(
     "cargo",
-    ["build", "--manifest-path", path.join(repoRoot, "src-tauri", "Cargo.toml")],
+    [
+      "build",
+      "--manifest-path",
+      path.join(repoRoot, "src-tauri", "Cargo.toml"),
+      "--features",
+      "agent-debug-webdriver",
+    ],
     {
       cwd: repoRoot,
       env: {
@@ -288,7 +321,7 @@ async function waitForDriver() {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
-  throw new Error("tauri-driver did not become ready within 15s");
+  throw new Error("embedded Tauri WebDriver did not become ready within 15s");
 }
 
 async function execute(sessionId, script, args = []) {
@@ -453,6 +486,97 @@ async function waitForRouteIncludes(sessionId, routePart, timeoutMs = 30_000) {
   );
 }
 
+async function waitForExactRoute(sessionId, expectedRoute, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    "return window.location.pathname + window.location.search + window.location.hash === arguments[0];",
+    [expectedRoute],
+    `Agent debug route did not become exact route: ${expectedRoute}`,
+    timeoutMs,
+  );
+}
+
+async function waitForAgentTargetAbsent(sessionId, target, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     const observe = api?.observe?.();
+     return !observe?.elements?.some((element) =>
+       (element.id || element.agentId) === arguments[0] && element.visible !== false
+     );`,
+    [target],
+    `Agent debug target did not disappear: ${target}`,
+    timeoutMs,
+  );
+}
+
+async function waitForAgentPressed(sessionId, target, pressed, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     return element?.getAttribute('aria-pressed') === String(arguments[1]);`,
+    [target, pressed],
+    `Agent debug target did not reach aria-pressed=${pressed}: ${target}`,
+    timeoutMs,
+  );
+}
+
+async function waitForControlCenterActionTarget(sessionId, bucket, action, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const elements = await execute(
+      sessionId,
+      `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+       return api?.observe?.()?.elements ?? [];`,
+    ).catch(() => []);
+    const target = findControlCenterActionTarget(elements, bucket, action);
+    if (target) return target;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`No enabled control-center ${bucket} ${action} target became visible.`);
+}
+
+async function readAgentLinkRoute(sessionId, target) {
+  const route = await execute(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     if (!(element instanceof HTMLAnchorElement)) return null;
+     const url = new URL(element.href, window.location.href);
+     return url.pathname + url.search + url.hash;`,
+    [target],
+  );
+  if (!route) throw new Error(`Agent debug target is not a routed link: ${target}`);
+  return route;
+}
+
+async function waitForAgentLinkTargetByRoute(sessionId, prefix, route, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const target = await execute(
+      sessionId,
+      `const candidates = Array.from(document.querySelectorAll('[data-agent-id]'));
+       const match = candidates.find((element) => {
+         if (!(element instanceof HTMLAnchorElement) || !element.dataset.agentId?.startsWith(arguments[0])) return false;
+         const url = new URL(element.href, window.location.href);
+         return url.pathname + url.search + url.hash === arguments[1];
+       });
+       return match?.dataset.agentId ?? null;`,
+      [prefix, route],
+    ).catch(() => null);
+    if (target) return target;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`No agent link with prefix ${prefix} routes to ${route}`);
+}
+
+function recordReplayAssertion(name, evidence) {
+  const assertion = { name, status: "passed", evidence };
+  replayAssertions.push(assertion);
+  replay.push({ type: "assert", ...assertion });
+}
+
 async function clickAgentTarget(sessionId, target) {
   await waitForAgentElement(sessionId, target);
   const result = await execute(
@@ -463,6 +587,223 @@ async function clickAgentTarget(sessionId, target) {
   );
   replay.push({ type: "click", target });
   return result;
+}
+
+async function typeAgentTarget(sessionId, target, value) {
+  await waitForAgentElement(sessionId, target, 30_000, true);
+  await execute(
+    sessionId,
+    `const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     return api.act({ type: 'type', target: arguments[0], text: arguments[1], clear: true });`,
+    [target, value],
+  );
+  replay.push({ type: "type", target, valueLength: value.length });
+}
+
+async function waitForAgentInputValue(sessionId, target, expected, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+       ? element.value === arguments[1]
+       : false;`,
+    [target, expected],
+    `Agent debug input ${target} did not reach the expected value.`,
+    timeoutMs,
+  );
+}
+
+async function selectAgentTarget(sessionId, target, value) {
+  await waitForAgentElement(sessionId, target, 30_000, true);
+  const changed = await execute(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     if (!(element instanceof HTMLSelectElement)) return false;
+     element.value = arguments[1];
+     element.dispatchEvent(new Event('input', { bubbles: true }));
+     element.dispatchEvent(new Event('change', { bubbles: true }));
+     return element.value === arguments[1];`,
+    [target, value],
+  );
+  if (!changed) throw new Error(`Agent debug select ${target} could not choose ${value}.`);
+  replay.push({ type: "select", target, value });
+}
+
+async function waitForAgentSelectValue(sessionId, target, expected, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     return element instanceof HTMLSelectElement && element.value === arguments[1];`,
+    [target, expected],
+    `Agent debug select ${target} did not reach the expected value.`,
+    timeoutMs,
+  );
+}
+
+async function waitForAgentDisabled(sessionId, target, disabled = true, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     return element instanceof HTMLButtonElement && element.disabled === arguments[1];`,
+    [target, disabled],
+    `Agent debug target ${target} did not reach disabled=${disabled}.`,
+    timeoutMs,
+  );
+}
+
+async function clickReviewLineCommentTarget(sessionId) {
+  const preferredTarget = "repo.pulls.review.file.src_2Fexample.ts.line.right.2.comment";
+  const elements = await execute(
+    sessionId,
+    `return Array.from(document.querySelectorAll('[data-agent-id]'))
+      .filter((element) => /^repo\\.pulls\\.review\\.file\\..+\\.line\\.(left|right)\\.\\d+\\.comment$/.test(element.dataset.agentId ?? ''))
+      .map((element) => ({
+        id: element.dataset.agentId,
+        visible: true,
+        disabled: element instanceof HTMLButtonElement ? element.disabled : false,
+      }));`,
+  );
+  const preferred = elements.find((element) => element.id === preferredTarget && element.disabled !== true);
+  const target = preferred?.id ?? findReviewLineCommentTarget(elements);
+  if (!target) throw new Error("No stable PR review line-comment target is present in the debug mock diff.");
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     return element instanceof HTMLButtonElement && !element.disabled;`,
+    [target],
+    `PR review line-comment target is not enabled: ${target}`,
+  );
+  await execute(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     element?.focus();
+     const api = window.__liliaGithubAgentDebug || window.__liliaAgentDebug;
+     return api.act({ type: 'click', target: arguments[0] });`,
+    [target],
+  );
+  replay.push({ type: "click", target });
+  return target;
+}
+
+async function reviewThreadTargets(sessionId) {
+  return execute(
+    sessionId,
+    `return Array.from(document.querySelectorAll('[data-agent-id]'))
+      .map((element) => element.dataset.agentId)
+      .filter((id) => /^repo\\.pulls\\.review\\.thread\\.[^.]+$/.test(id ?? ''));`,
+  );
+}
+
+async function waitForNewReviewThreadTarget(sessionId, previousTargets, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const targets = await reviewThreadTargets(sessionId).catch(() => []);
+    const next = findReviewThreadTarget(
+      targets.map((target) => ({ id: target, visible: true, disabled: false })),
+      previousTargets,
+    );
+    if (next) return next;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("The submitted line comment did not create a visible review thread.");
+}
+
+async function reviewThreadCommentCount(sessionId, threadTarget) {
+  return execute(
+    sessionId,
+    `const thread = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((element) => element.dataset.agentId === arguments[0]);
+     return thread?.querySelectorAll('.review-thread__comments > li').length ?? -1;`,
+    [threadTarget],
+  );
+}
+
+async function waitForReviewThreadCommentCount(sessionId, threadTarget, expected, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const thread = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((element) => element.dataset.agentId === arguments[0]);
+     return (thread?.querySelectorAll('.review-thread__comments > li').length ?? -1) === arguments[1];`,
+    [threadTarget, expected],
+    `Review thread ${threadTarget} did not reach ${expected} comments.`,
+    timeoutMs,
+  );
+}
+
+async function waitForAgentClass(sessionId, target, className, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const element = Array.from(document.querySelectorAll('[data-agent-id]'))
+       .find((candidate) => candidate.dataset.agentId === arguments[0]);
+     return Boolean(element?.classList.contains(arguments[1]));`,
+    [target, className],
+    `Agent debug target ${target} did not gain class ${className}.`,
+    timeoutMs,
+  );
+}
+
+async function waitForConversationActionByBody(sessionId, body, action, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const target = await execute(
+      sessionId,
+      `const entry = Array.from(document.querySelectorAll('.discussion-timeline__entry'))
+         .find((candidate) => candidate.textContent?.includes(arguments[0]));
+       return Array.from(entry?.querySelectorAll('[data-agent-id]') ?? [])
+         .map((element) => element.dataset.agentId)
+         .find((id) => id?.endsWith('.' + arguments[1])) ?? null;`,
+      [body, action],
+    ).catch(() => null);
+    if (target) return target;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`No ${action} action became available for the newly written conversation item.`);
+}
+
+async function waitForConversationBody(sessionId, body, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `return Array.from(document.querySelectorAll('.discussion-timeline__entry'))
+      .some((candidate) => candidate.textContent?.includes(arguments[0]));`,
+    [body],
+    "The locally updated conversation body did not become visible.",
+    timeoutMs,
+  );
+}
+
+async function waitForDiscussionActionByBody(sessionId, body, action, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const target = await execute(
+      sessionId,
+      `const comment = Array.from(document.querySelectorAll('.discussion-comment'))
+         .find((candidate) => candidate.textContent?.includes(arguments[0]));
+       return Array.from(comment?.querySelectorAll('[data-agent-id]') ?? [])
+         .map((element) => element.dataset.agentId)
+         .find((id) => id?.endsWith('.' + arguments[1])) ?? null;`,
+      [body, action],
+    ).catch(() => null);
+    if (target) return target;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`No Discussion ${action} action became available for the newly written comment.`);
+}
+
+async function waitForDiscussionReplyBody(sessionId, body, timeoutMs = 30_000) {
+  await waitForAgentDebugCondition(
+    sessionId,
+    `return Array.from(document.querySelectorAll('.discussion-comment__reply'))
+      .some((candidate) => candidate.textContent?.includes(arguments[0]));`,
+    [body],
+    "The newly written Discussion reply did not become visible.",
+    timeoutMs,
+  );
 }
 
 async function enabledVisibleAgentTarget(sessionId, candidates) {
@@ -517,6 +858,305 @@ async function observeAgentStep(sessionId, label) {
   return observe;
 }
 
+async function openHomeFromCurrentRoute(sessionId) {
+  const target = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/");
+  await clickAgentTarget(sessionId, target);
+  await waitForExactRoute(sessionId, "/");
+  await waitForAgentElement(sessionId, "control-center.board");
+}
+
+async function runNotificationAndCommentFlow(sessionId) {
+  const notificationsTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/notifications");
+  await clickAgentTarget(sessionId, notificationsTarget);
+  await waitForExactRoute(sessionId, "/notifications");
+  await waitForAgentElement(sessionId, "notifications.page");
+
+  const markRow = "notifications.row.agent-debug-mark-read";
+  const markTarget = `${markRow}.mark-read`;
+  const openRow = "notifications.row.agent-debug-open-issue";
+  const openTarget = `${openRow}.open`;
+  await waitForAgentElement(sessionId, markTarget, 30_000, true);
+  await waitForAgentElement(sessionId, openTarget, 30_000, true);
+  recordReplayAssertion("notifications-inbox-loaded", { route: "/notifications", rows: [markRow, openRow] });
+  await observeAgentStep(sessionId, "notifications-inbox-loaded");
+
+  await waitForAgentClass(sessionId, markRow, "is-unread");
+  await clickAgentTarget(sessionId, markTarget);
+  await waitForAgentTargetAbsent(sessionId, markRow);
+  recordReplayAssertion("notifications-single-mark-read", {
+    row: markRow,
+    initiallyUnread: true,
+    absentFromUnreadInbox: true,
+  });
+
+  const issueRoute = "/repos/github%3Asena-nana%2FLiliaGithub?projectTab=issues&issue=12";
+  await clickAgentTarget(sessionId, openTarget);
+  await waitForExactRoute(sessionId, issueRoute);
+  await waitForAgentElement(sessionId, "repo.conversation.create-body", 30_000, true);
+  recordReplayAssertion("notifications-recognized-object-exact-route", {
+    target: openTarget,
+    expectedRoute: issueRoute,
+    actualRoute: issueRoute,
+  });
+  await observeAgentStep(sessionId, "notification-opened-issue");
+
+  const createBody = `agent-debug-comment-${runId}`;
+  await typeAgentTarget(sessionId, "repo.conversation.create-body", createBody);
+  await waitForAgentElement(sessionId, "repo.conversation.create-submit", 30_000, true);
+  await clickAgentTarget(sessionId, "repo.conversation.create-submit");
+  await waitForAgentInputValue(sessionId, "repo.conversation.create-body", "");
+  const editTarget = await waitForConversationActionByBody(sessionId, createBody, "edit");
+  recordReplayAssertion("issue-comment-create-local-result", {
+    composer: "repo.conversation.create-body",
+    submit: "repo.conversation.create-submit",
+    draftCleared: true,
+    commentVisible: true,
+    editTarget,
+  });
+
+  const editPrefix = editTarget.slice(0, -".edit".length);
+  const editBodyTarget = `${editPrefix}.edit-body`;
+  const editSubmitTarget = `${editPrefix}.edit-submit`;
+  const updatedBody = `${createBody}-edited`;
+  await clickAgentTarget(sessionId, editTarget);
+  await typeAgentTarget(sessionId, editBodyTarget, updatedBody);
+  await waitForAgentElement(sessionId, editSubmitTarget, 30_000, true);
+  await clickAgentTarget(sessionId, editSubmitTarget);
+  await waitForAgentTargetAbsent(sessionId, editBodyTarget);
+  await waitForConversationBody(sessionId, updatedBody);
+  await waitForExactRoute(sessionId, issueRoute);
+  recordReplayAssertion("issue-comment-edit-local-result", {
+    editTarget,
+    editSubmitTarget,
+    editorClosed: true,
+    updatedBodyVisible: true,
+    routePreserved: issueRoute,
+  });
+  await observeAgentStep(sessionId, "issue-comment-written-and-edited");
+
+  await clickAgentTarget(sessionId, "repo.project.sidebar.discussions");
+  await waitForAgentElement(sessionId, "repo.discussions.1.open", 30_000, true);
+  await clickAgentTarget(sessionId, "repo.discussions.1.open");
+  await waitForAgentElement(sessionId, "repo.discussions.comments.create-body", 30_000, true);
+  const discussionBody = `agent-debug-discussion-${runId}`;
+  await typeAgentTarget(sessionId, "repo.discussions.comments.create-body", discussionBody);
+  await waitForAgentElement(sessionId, "repo.discussions.comments.create-submit", 30_000, true);
+  await clickAgentTarget(sessionId, "repo.discussions.comments.create-submit");
+  await waitForAgentInputValue(sessionId, "repo.discussions.comments.create-body", "");
+  const replyTarget = await waitForDiscussionActionByBody(sessionId, discussionBody, "reply");
+  recordReplayAssertion("discussion-comment-create-local-result", {
+    draftCleared: true,
+    commentVisible: true,
+    replyTarget,
+  });
+
+  const discussionPrefix = replyTarget.slice(0, -".reply".length);
+  const replyBodyTarget = `${discussionPrefix}.reply-body`;
+  const replySubmitTarget = `${discussionPrefix}.reply-submit`;
+  const repliesTarget = `${discussionPrefix}.replies`;
+  const replyBody = `${discussionBody}-reply`;
+  await clickAgentTarget(sessionId, replyTarget);
+  await typeAgentTarget(sessionId, replyBodyTarget, replyBody);
+  await waitForAgentElement(sessionId, replySubmitTarget, 30_000, true);
+  await clickAgentTarget(sessionId, replySubmitTarget);
+  await waitForAgentTargetAbsent(sessionId, replyBodyTarget);
+  await waitForAgentElement(sessionId, repliesTarget, 30_000, true);
+  await clickAgentTarget(sessionId, repliesTarget);
+  await waitForDiscussionReplyBody(sessionId, replyBody);
+  recordReplayAssertion("discussion-comment-reply-local-result", {
+    replySubmitTarget,
+    editorClosed: true,
+    replyVisible: true,
+  });
+  await observeAgentStep(sessionId, "discussion-comment-written-and-replied");
+}
+
+async function runControlCenterFlow(sessionId) {
+  await waitForAgentElement(sessionId, "control-center.attention");
+  await waitForAgentElement(sessionId, "control-center.today");
+  const pinTarget = await waitForControlCenterActionTarget(sessionId, "attention", "pin");
+  const rowTarget = pinTarget.slice(0, -".pin".length);
+  const snoozeTarget = `${rowTarget}.snooze`;
+  const attentionOpenTarget = `${rowTarget}.open`;
+
+  await clickAgentTarget(sessionId, pinTarget);
+  await waitForAgentPressed(sessionId, pinTarget, true);
+  recordReplayAssertion("control-center-attention-pin", { target: pinTarget, ariaPressed: true });
+
+  await clickAgentTarget(sessionId, snoozeTarget);
+  await waitForAgentTargetAbsent(sessionId, rowTarget);
+  await waitForAgentElement(sessionId, "control-center.hidden.restore", 30_000, true);
+  recordReplayAssertion("control-center-attention-snooze", {
+    target: rowTarget,
+    hidden: true,
+    restoreTarget: "control-center.hidden.restore",
+  });
+
+  await clickAgentTarget(sessionId, "control-center.hidden.restore");
+  await waitForAgentElement(sessionId, rowTarget);
+  await waitForAgentPressed(sessionId, pinTarget, true);
+  recordReplayAssertion("control-center-attention-restore", {
+    target: rowTarget,
+    visible: true,
+    pinnedStatePreserved: true,
+  });
+
+  const attentionRoute = await readAgentLinkRoute(sessionId, attentionOpenTarget);
+  await clickAgentTarget(sessionId, attentionOpenTarget);
+  if (new URL(attentionRoute, "http://agent-debug.local").searchParams.get("resolveConflicts") === "1") {
+    const durableRoute = new URL(attentionRoute, "http://agent-debug.local");
+    durableRoute.searchParams.delete("resolveConflicts");
+    await waitForExactRoute(sessionId, `${durableRoute.pathname}${durableRoute.search}${durableRoute.hash}`);
+    await waitForAgentElement(sessionId, "repo.conflicts.dialog");
+    recordReplayAssertion("control-center-attention-open", {
+      target: attentionOpenTarget,
+      deepLinkRoute: attentionRoute,
+      conflictDialogOpen: true,
+    });
+  } else {
+    await waitForExactRoute(sessionId, attentionRoute);
+    recordReplayAssertion("control-center-attention-open", { target: attentionOpenTarget, route: attentionRoute });
+  }
+  await observeAgentStep(sessionId, "control-center-attention-open");
+  await openHomeFromCurrentRoute(sessionId);
+
+  const todayOpenTarget = await waitForControlCenterActionTarget(sessionId, "today", "open");
+  const todayRoute = await readAgentLinkRoute(sessionId, todayOpenTarget);
+  await clickAgentTarget(sessionId, todayOpenTarget);
+  await waitForExactRoute(sessionId, todayRoute);
+  recordReplayAssertion("control-center-today-open", { target: todayOpenTarget, route: todayRoute });
+  await observeAgentStep(sessionId, "control-center-today-open");
+  await openHomeFromCurrentRoute(sessionId);
+
+  const continueOpenTarget = await waitForAgentLinkTargetByRoute(
+    sessionId,
+    "control-center.continue.",
+    todayRoute,
+  );
+  await clickAgentTarget(sessionId, continueOpenTarget);
+  await waitForExactRoute(sessionId, todayRoute);
+  recordReplayAssertion("control-center-continue-exact-route", {
+    target: continueOpenTarget,
+    expectedRoute: todayRoute,
+    actualRoute: todayRoute,
+  });
+  await observeAgentStep(sessionId, "control-center-continue-restored");
+  await openHomeFromCurrentRoute(sessionId);
+
+  const handoffTarget = await waitForControlCenterActionTarget(sessionId, "attention", "handoff");
+  const handoffPrefix = handoffTarget.slice(0, -".handoff".length);
+  const resultTarget = `${handoffPrefix}.handoff-result`;
+  await clickAgentTarget(sessionId, handoffTarget);
+  await waitForAgentElement(sessionId, resultTarget, 30_000, true);
+  recordReplayAssertion("control-center-workflow-handoff-accepted", {
+    target: handoffTarget,
+    resultTarget,
+  });
+  await clickAgentTarget(sessionId, resultTarget);
+  await waitForAgentElement(sessionId, `${resultTarget}.status`);
+  recordReplayAssertion("control-center-workflow-result-open", {
+    target: resultTarget,
+    statusTarget: `${resultTarget}.status`,
+  });
+  await observeAgentStep(sessionId, "control-center-workflow-result-opened");
+}
+
+async function runPullRequestReviewFlow(sessionId) {
+  const pullTarget = "repo.pulls.7.open";
+  const listRoute = await execute(
+    sessionId,
+    "return window.location.pathname + window.location.search + window.location.hash;",
+  );
+  const expectedUrl = new URL(listRoute, "http://agent-debug.local");
+  expectedUrl.searchParams.set("pr", "7");
+  const reviewRoute = `${expectedUrl.pathname}${expectedUrl.search}${expectedUrl.hash}`;
+
+  await waitForAgentElement(sessionId, pullTarget, 30_000, true);
+  await clickAgentTarget(sessionId, pullTarget);
+  await waitForExactRoute(sessionId, reviewRoute);
+  await waitForAgentElement(sessionId, "repo.pulls.review.workspace");
+  await waitForAgentElement(sessionId, "repo.pulls.review.summary");
+  recordReplayAssertion("pull-review-workspace-exact-route", {
+    pullTarget,
+    expectedRoute: reviewRoute,
+    workspaceTarget: "repo.pulls.review.workspace",
+  });
+
+  await clickAgentTarget(sessionId, "repo.pulls.review.diff.split");
+  await waitForAgentPressed(sessionId, "repo.pulls.review.diff.split", true);
+  recordReplayAssertion("pull-review-split-diff", {
+    target: "repo.pulls.review.diff.split",
+    ariaPressed: true,
+  });
+
+  const previousThreads = await reviewThreadTargets(sessionId);
+  const lineCommentTarget = await clickReviewLineCommentTarget(sessionId);
+  const fileTarget = lineCommentTarget.slice(0, lineCommentTarget.indexOf(".line."));
+  const lineBodyTarget = `${fileTarget}.comment.body`;
+  const lineSubmitTarget = `${fileTarget}.comment.submit`;
+  const lineBody = `agent-debug-pr-line-${runId}`;
+  await typeAgentTarget(sessionId, lineBodyTarget, lineBody);
+  await waitForAgentElement(sessionId, lineSubmitTarget, 30_000, true);
+  await clickAgentTarget(sessionId, lineSubmitTarget);
+  await waitForAgentTargetAbsent(sessionId, lineBodyTarget);
+  const newThreadTarget = await waitForNewReviewThreadTarget(sessionId, previousThreads);
+  recordReplayAssertion("pull-review-line-comment-local-result", {
+    lineCommentTarget,
+    lineSubmitTarget,
+    draftCleared: true,
+    newThreadTarget,
+  });
+
+  const replyBodyTarget = `${newThreadTarget}.reply.body`;
+  const replySubmitTarget = `${newThreadTarget}.reply.submit`;
+  const commentsBeforeReply = await reviewThreadCommentCount(sessionId, newThreadTarget);
+  if (commentsBeforeReply < 1) throw new Error("The newly created review thread has no visible line comment.");
+  const replyBody = `agent-debug-pr-reply-${runId}`;
+  await typeAgentTarget(sessionId, replyBodyTarget, replyBody);
+  await waitForAgentElement(sessionId, replySubmitTarget, 30_000, true);
+  await clickAgentTarget(sessionId, replySubmitTarget);
+  await waitForAgentInputValue(sessionId, replyBodyTarget, "");
+  await waitForReviewThreadCommentCount(sessionId, newThreadTarget, commentsBeforeReply + 1);
+  recordReplayAssertion("pull-review-thread-reply-local-result", {
+    threadTarget: newThreadTarget,
+    replySubmitTarget,
+    draftCleared: true,
+    commentCountBefore: commentsBeforeReply,
+    commentCountAfter: commentsBeforeReply + 1,
+  });
+
+  await selectAgentTarget(sessionId, "repo.pulls.review.submit.event", "approve");
+  await waitForAgentSelectValue(sessionId, "repo.pulls.review.submit.event", "approve");
+  await waitForAgentElement(sessionId, "repo.pulls.review.submit.confirm", 30_000, true);
+  await clickAgentTarget(sessionId, "repo.pulls.review.submit.confirm");
+  await waitForAgentElement(sessionId, "repo.pulls.review.submit.notice");
+  await waitForAgentDebugCondition(
+    sessionId,
+    `const summary = document.querySelector('[data-agent-id="repo.pulls.review.summary"]');
+     return summary?.querySelector('strong')?.textContent?.trim().toLocaleUpperCase() === 'APPROVED';`,
+    [],
+    "PR review summary did not update to APPROVED after submission.",
+  );
+  recordReplayAssertion("pull-review-approve-summary", {
+    eventTarget: "repo.pulls.review.submit.event",
+    submitTarget: "repo.pulls.review.submit.confirm",
+    noticeTarget: "repo.pulls.review.submit.notice",
+    reviewDecision: "APPROVED",
+  });
+
+  await waitForAgentDisabled(sessionId, "repo.pulls.review.merge", true);
+  recordReplayAssertion("pull-review-merge-gate-fail-closed", {
+    gateTarget: "repo.pulls.review.merge-gate",
+    mergeTarget: "repo.pulls.review.merge",
+    disabled: true,
+  });
+
+  await execute(sessionId, "window.history.back(); return true;");
+  replay.push({ type: "navigate-back", from: reviewRoute, to: listRoute });
+  await waitForExactRoute(sessionId, listRoute);
+  await waitForAgentElement(sessionId, pullTarget);
+}
+
 const selectHomePendingOpenTarget = `(ids) => ids
   .find((id) => /^home\\.pending\\.(issue:|pull-request:|workflow-notification:).+\\.open$/.test(id))`;
 
@@ -560,7 +1200,8 @@ async function runHomePendingFlow(sessionId) {
   await waitForRouteIncludes(sessionId, homePendingRouteMarker(openTarget));
   await observeAgentStep(sessionId, "home-pending-open");
 
-  await clickAgentTarget(sessionId, "sidebar.nav.概览");
+  const overviewTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/overview");
+  await clickAgentTarget(sessionId, overviewTarget);
   await waitForAgentElement(sessionId, "home.overview.search");
 
   const actionTarget = await waitForVisibleAgentId(
@@ -652,6 +1293,10 @@ async function runProfileInteractionFlow(sessionId) {
 
 async function runRegressionFlow(sessionId) {
   const steps = [
+    {
+      observe: "personal-home-control-center",
+      waits: ["personal-home.page", "control-center.board"],
+    },
     {
       observe: "home-overview",
       waits: ["home.page", "home.overview.search"],
@@ -745,20 +1390,19 @@ async function runRegressionFlow(sessionId) {
       observe: "settings-appearance",
     },
     {
+      clicks: ["settings.tab.account"],
+      waits: ["settings.account.github.bind"],
+      observe: "settings-account",
+    },
+    {
       clicks: ["settings.tab.repositories"],
-      waits: ["settings.repositories.github.bind", "settings.repositories.contribution-identities"],
+      waits: ["settings.repositories.page", "settings.repositories.contribution-identities"],
       observe: "settings-repositories",
     },
     {
       clicks: ["settings.tab.about"],
       waits: ["settings.about.page"],
       observe: "settings-about",
-    },
-    {
-      clicks: ["sidebar.profile"],
-      routeIncludes: ["/profile"],
-      waits: ["profile.page", "profile.editor", "profile.content", "profile.open-github"],
-      observe: "profile-overview",
     },
   ];
 
@@ -772,7 +1416,14 @@ async function runRegressionFlow(sessionId) {
     if (step.observe) {
       const observe = await observeAgentStep(sessionId, step.observe);
       firstObserve ??= observe;
-      if (step.observe === "home-overview") await runHomePendingFlow(sessionId);
+      if (step.observe === "personal-home-control-center") {
+        await runControlCenterFlow(sessionId);
+        await runNotificationAndCommentFlow(sessionId);
+        const overviewTarget = await waitForAgentLinkTargetByRoute(sessionId, "sidebar.nav.", "/overview");
+        await clickAgentTarget(sessionId, overviewTarget);
+        await waitForExactRoute(sessionId, "/overview");
+      }
+      if (step.observe === "pulls-panel") await runPullRequestReviewFlow(sessionId);
     }
     if (step.refreshCurrentPage) {
       await refreshCurrentRepoPage(
@@ -818,23 +1469,14 @@ async function main() {
     }
   }
 
-  const configuredNativeWebDriver = process.env.LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER;
-  const nativeWebDriver =
-    configuredNativeWebDriver && existsSync(configuredNativeWebDriver)
-      ? configuredNativeWebDriver
-      : null;
   const preflight = {
     runId,
     runDir,
     appBinary,
+    debugAppIdentifier,
     devUrl,
     autoSelectedDevUrl,
-    tauriDriver: commandExists("tauri-driver", ["--help"]),
-    edgeDriver:
-      Boolean(nativeWebDriver) ||
-      commandExists("msedgedriver") ||
-      commandExists("MicrosoftWebDriver"),
-    nativeWebDriver,
+    webdriverProvider: "embedded",
     cargo: commandExists("cargo"),
     localViteBin,
     localViteExists: existsSync(localViteBin),
@@ -853,13 +1495,7 @@ async function main() {
       : null,
     shouldBuildDebugApp && !preflight.cargo ? "cargo is not available on PATH" : null,
   ].filter(Boolean);
-  const replayBlockers = [
-    !preflight.tauriDriver ? "tauri-driver is not available on PATH" : null,
-    !preflight.edgeDriver
-      ? "EdgeDriver is not available; set LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER or install msedgedriver for desktop replay"
-      : null,
-  ].filter(Boolean);
-  preflight.replayReady = replayBlockers.length === 0;
+  preflight.replayReady = true;
   await writeJson("preflight.json", preflight);
   if (readinessBlockers.length) {
     await writeJson("summary.json", {
@@ -872,22 +1508,6 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  if (replayBlockers.length) {
-    await writeJson("summary.json", {
-      status: "passed",
-      runId,
-      preflight,
-      desktopReplay: {
-        status: "skipped",
-        blockers: replayBlockers,
-        nextStep:
-          "Install msedgedriver, put it on PATH, or set LILIA_GITHUB_AGENT_DEBUG_NATIVE_DRIVER to run the full desktop replay.",
-      },
-      replay,
-    });
-    return;
-  }
-
   if (shouldBuildDebugApp) {
     preflight.rebuildReason = autoSelectedDevUrl
       ? `${defaultDevUrl} is occupied by another app.`
@@ -941,13 +1561,12 @@ async function main() {
       await waitForLiliaGithubDevUrl(devUrl, 30_000, devServer, devServerOutput);
     }
 
-    const driverArgs = ["--port", String(driverPort)];
-    if (preflight.nativeWebDriver) driverArgs.push("--native-driver", preflight.nativeWebDriver);
-    driver = spawn("tauri-driver", driverArgs, {
+    driver = spawn(appBinary, [], {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
         ...agentDebugEnv,
+        TAURI_WEBDRIVER_PORT: String(driverPort),
       },
     });
     driver.stdout.on("data", (chunk) => driverOutput.push(chunk.toString("utf8")));
@@ -957,14 +1576,7 @@ async function main() {
     const session = await request("POST", "/session", {
       capabilities: {
         alwaysMatch: {
-          browserName: "wry",
-          "tauri:options": {
-            application: appBinary,
-            args: [],
-            env: {
-              ...agentDebugEnv,
-            },
-          },
+          browserName: "tauri",
         },
       },
     });
@@ -1005,6 +1617,10 @@ async function main() {
       observePath: path.join(runDir, "observe.json"),
       missingAgentIdsPath: path.join(runDir, "missing-agent-ids.json"),
       observedSnapshots,
+      desktopReplay: {
+        status: "passed",
+        assertions: replayAssertions,
+      },
       replayPath: path.join(runDir, "replay.json"),
       missingAgentIdCount: observedSnapshots.reduce((count, item) => count + item.missingAgentIdCount, 0),
     });
@@ -1043,14 +1659,15 @@ async function main() {
       failureScreenshotPath,
       failureDiagnosticsPath,
       observedSnapshots,
+      replayAssertions,
       replay,
     });
     process.exitCode = 1;
   } finally {
     if (sessionId) await request("DELETE", `/session/${sessionId}`).catch(() => undefined);
-    driver?.kill();
+    stopProcessTree(driver);
     stopProcessTree(devServer);
-    await writeFile(path.join(runDir, "tauri-driver.log"), driverOutput.join(""), "utf8");
+    await writeFile(path.join(runDir, "embedded-webdriver.log"), driverOutput.join(""), "utf8");
     await writeFile(path.join(runDir, "dev-server.log"), devServerOutput.join(""), "utf8");
   }
 }

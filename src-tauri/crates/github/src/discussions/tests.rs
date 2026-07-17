@@ -108,6 +108,28 @@ fn request_builders_validate_pagination_filters_and_numbers() {
 }
 
 #[test]
+fn mutation_builders_validate_content_and_map_updated_comment() {
+    let request = add_comment_request("D_1".into(), " hello ".into(), Some("DC_1".into())).unwrap();
+    assert_eq!(request.variables["discussionId"], "D_1");
+    assert_eq!(request.variables["body"], "hello");
+    assert_eq!(request.variables["replyToId"], "DC_1");
+    assert!(add_comment_request("".into(), "hello".into(), None).is_err());
+    assert!(reaction_request("DC_1".into(), "heart".into(), false).is_ok());
+    assert!(reaction_request("DC_1".into(), "like".into(), false).is_err());
+    assert!(discussion_state_request("D_1".into(), "merge").is_err());
+
+    let mapped = parse_comment_mutation_response(
+        json!({
+            "data": { "updateDiscussionComment": { "comment": comment("DC_1", None, 2) } }
+        }),
+        "updateDiscussionComment",
+    )
+    .unwrap();
+    assert_eq!(mapped.id, "DC_1");
+    assert_eq!(mapped.reply_count, 2);
+}
+
+#[test]
 fn metadata_keeps_all_and_assignable_categories_separate() {
     let context = parse_metadata_response(json!({
         "data": {

@@ -92,3 +92,33 @@ export interface GitHubCreateRepositoryDiscussionRequest {
   title: string;
   body: string;
 }
+
+export type GitHubDiscussionReactionContent = "THUMBS_UP" | "THUMBS_DOWN" | "LAUGH" | "HOORAY" | "CONFUSED" | "HEART" | "ROCKET" | "EYES";
+export type GitHubDiscussionStateAction = "close" | "reopen" | "lock" | "unlock";
+
+export interface GitHubCreateDiscussionCommentRequest {
+  discussionId: string;
+  body: string;
+  replyToId?: string | null;
+}
+
+export interface GitHubUpdateDiscussionCommentRequest {
+  commentId: string;
+  body: string;
+}
+
+export interface GitHubDiscussionReactionRequest {
+  subjectId: string;
+  content: GitHubDiscussionReactionContent;
+  remove?: boolean;
+}
+
+export interface GitHubDiscussionStateRequest {
+  discussionId: string;
+  action: GitHubDiscussionStateAction;
+}
+
+export interface GitHubDiscussionAnswerRequest {
+  commentId: string;
+  mark: boolean;
+}

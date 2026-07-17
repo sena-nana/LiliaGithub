@@ -38,6 +38,10 @@ const props = defineProps<{
   pullChecks: Record<number, GitHubPullRequestCheck[]>;
   mergeMethod: "merge" | "squash" | "rebase";
   repoFullName: string;
+  worktreePath?: string | null;
+  currentBranch?: string | null;
+  remoteUrl?: string | null;
+  sourceRoute: string;
   isFocused: (pullNumber: number) => boolean;
   timelineItemOpener?: (item: GitHubDiscussionTimelineItem) => void;
 }>();
@@ -160,6 +164,10 @@ function pullChips(pull: GitHubPullRequest) {
       :updating="updating"
       :merge-method="mergeMethod"
       :repo-full-name="repoFullName"
+      :worktree-path="worktreePath"
+      :current-branch="currentBranch"
+      :remote-url="remoteUrl"
+      :source-route="sourceRoute"
       :timeline-item-opener="props.timelineItemOpener"
       @back="emit('back')"
       @merge="emit('merge', $event)"

@@ -93,6 +93,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
                 v-if="item.url"
                 type="button"
                 class="ghost project-icon-action"
+                :data-agent-id="`repo.conversation.${item.kind}.${encodeURIComponent(item.id)}.open`"
                 aria-label="打开讨论项"
                 title="打开讨论项"
                 @click="openItem(item)"
@@ -107,6 +108,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
               @open-link="openMarkdownTarget"
             />
             <p v-else class="muted discussion-timeline__empty">没有正文内容。</p>
+            <slot name="actions" :item="item" />
           </article>
 
           <div v-else class="discussion-timeline__event-row">
@@ -118,6 +120,7 @@ function openMarkdownTarget(target: ReadmeLinkTarget) {
               v-if="item.url"
               type="button"
               class="ghost project-icon-action"
+              :data-agent-id="`repo.conversation.${item.kind}.${encodeURIComponent(item.id)}.open`"
               aria-label="打开讨论项"
               title="打开讨论项"
               @click="openItem(item)"
