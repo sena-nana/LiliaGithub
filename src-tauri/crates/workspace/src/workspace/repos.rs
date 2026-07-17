@@ -21,8 +21,9 @@ use crate::workspace::run_core_operation_as;
 use crate::workspace::settings::{
     add_managed_repo_id, apply_repo_placement, cached_repo_summary, load_settings,
     matching_startup_cache, prune_deleted_repo_settings, repo_path_by_id, repo_path_from_id,
-    save_settings, settings_write_lock, sort_dedup, visible_workspace_settings, workspace_root,
-    validate_repo_placement, write_startup_repo_summary, write_startup_repo_summary_after_fetch,
+    save_settings, settings_write_lock, sort_dedup, validate_repo_placement,
+    visible_workspace_settings, workspace_root, write_startup_repo_summary,
+    write_startup_repo_summary_after_fetch,
 };
 use crate::workspace::shared::{compatible_path_text, configure_background_command, now_millis};
 use lilia_github_contracts::workspace::{
@@ -1026,8 +1027,8 @@ pub(super) fn resolve_remote_checkout_target(
     let preferred = preferred_branch
         .and_then(|branch| normalize_checkout_branch(remote, branch))
         .filter(|branch| branches.contains(branch));
-    let remote_head = remote_symbolic_head_branch(path, remote)
-        .filter(|branch| branches.contains(branch));
+    let remote_head =
+        remote_symbolic_head_branch(path, remote).filter(|branch| branches.contains(branch));
     let branch = preferred
         .or(remote_head)
         .or_else(|| (branches.len() == 1).then(|| branches[0].clone()));
@@ -1041,8 +1042,7 @@ pub(super) fn resolve_remote_checkout_target(
     if branches.is_empty() && !repo_has_any_commit(path) {
         return Ok(None);
     }
-    Err("远端仓库包含提交，但无法确定要检出的默认分支，请先在远端设置默认分支。"
-        .to_string())
+    Err("远端仓库包含提交，但无法确定要检出的默认分支，请先在远端设置默认分支。".to_string())
 }
 
 fn checkout_remote_target(
@@ -1057,17 +1057,12 @@ fn checkout_remote_target(
         None,
     )
     .map_err(|_| {
-        "无法安全检出远端分支，本地文件可能与远端内容冲突；请先移走本地文件后重试。"
-            .to_string()
+        "无法安全检出远端分支，本地文件可能与远端内容冲突；请先移走本地文件后重试。".to_string()
     })?;
     let upstream = format!("{}/{}", target.remote, target.branch);
     let upstream_arg = format!("--set-upstream-to={upstream}");
-    git_command(
-        path,
-        &["branch", upstream_arg.as_str(), local_branch],
-        None,
-    )
-    .map_err(|_| "已检出远端内容，但无法设置本地分支的跟踪关系。".to_string())?;
+    git_command(path, &["branch", upstream_arg.as_str(), local_branch], None)
+        .map_err(|_| "已检出远端内容，但无法设置本地分支的跟踪关系。".to_string())?;
     if !repo_has_head(path) {
         return Err("远端分支检出后仍未建立本地提交，请重试克隆。".to_string());
     }
@@ -1082,8 +1077,8 @@ pub(super) fn ensure_clone_checkout(
         return Ok(());
     }
     let Some(target) = resolve_remote_checkout_target(path, "origin", preferred_branch)? else {
-        if let Some(branch) = preferred_branch
-            .and_then(|branch| normalize_checkout_branch("origin", branch))
+        if let Some(branch) =
+            preferred_branch.and_then(|branch| normalize_checkout_branch("origin", branch))
         {
             let head_ref = format!("refs/heads/{branch}");
             git_command(path, &["symbolic-ref", "HEAD", head_ref.as_str()], None)
@@ -1728,10 +1723,8 @@ fn repo_status_snapshot(path: &Path) -> RepoStatusSnapshot {
     )
     .unwrap_or_default();
     let mut snapshot = parse_status_snapshot(&status);
-    snapshot.current_branch = git_command_lossy(
-        path,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-    );
+    snapshot.current_branch =
+        git_command_lossy(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
     snapshot
 }
 
@@ -3666,9 +3659,7 @@ fn prepare_unborn_checkout(
         return Ok(());
     }
     match mode.unwrap_or_default() {
-        RepoPullLocalChangesMode::Reject => {
-            Err(format!("存在未提交变更，已阻止 {operation}"))
-        }
+        RepoPullLocalChangesMode::Reject => Err(format!("存在未提交变更，已阻止 {operation}")),
         RepoPullLocalChangesMode::Stash => Ok(()),
         RepoPullLocalChangesMode::Discard => discard_unborn_repo_local_changes(path),
     }
@@ -3691,8 +3682,7 @@ pub(super) fn bootstrap_unborn_from_remotes(
             continue;
         }
         let preferred = remote_target_branch(path, remote, &symbolic_branch);
-        let Some(target) =
-            resolve_remote_checkout_target(path, remote, Some(preferred.as_str()))?
+        let Some(target) = resolve_remote_checkout_target(path, remote, Some(preferred.as_str()))?
         else {
             continue;
         };

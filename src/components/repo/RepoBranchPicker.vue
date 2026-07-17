@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   Check,
   CloudUpload,
@@ -14,7 +14,7 @@ import {
   Search,
   Trash2,
 } from "@lucide/vue";
-import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui/composables/useContextMenu";
+import { UiDialog, UiPopover, openContextMenuAt, type ContextMenuItem } from "../../ui";
 
 type RepoBranchPickerItem = {
   name: string;
@@ -65,8 +65,6 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const search = ref("");
-const root = ref<HTMLElement | null>(null);
-const searchInput = ref<HTMLInputElement | null>(null);
 
 const createDialogOpen = ref(false);
 const createSourceBranch = ref<RepoBranchPickerItem | null>(null);
@@ -110,44 +108,16 @@ function branchAriaLabel(branch: RepoBranchPickerItem) {
   return branch.defaultBranch ? `${branchDisplayLabel(branch)}（默认分支）` : branchDisplayLabel(branch);
 }
 
-function toggle() {
-  if (props.disabled || props.actionRunning) return;
-  open.value = !open.value;
-  if (open.value) emit("opened");
-}
-
 function closePicker() {
   open.value = false;
 }
 
-function onDocPointer(event: PointerEvent) {
-  if (!root.value) return;
-  if (!root.value.contains(event.target as Node)) closePicker();
-}
-
-function onKey(event: KeyboardEvent) {
-  if (event.key === "Escape" && open.value) {
-    closePicker();
-    event.stopPropagation();
-  }
-}
-
-watch(open, async (value) => {
+watch(open, (value, previous) => {
   if (value) {
-    await nextTick();
-    searchInput.value?.focus();
-    document.addEventListener("pointerdown", onDocPointer, true);
-    document.addEventListener("keydown", onKey);
+    if (!previous) emit("opened");
   } else {
     search.value = "";
-    document.removeEventListener("pointerdown", onDocPointer, true);
-    document.removeEventListener("keydown", onKey);
   }
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener("pointerdown", onDocPointer, true);
-  document.removeEventListener("keydown", onKey);
 });
 
 function pickBranch(branch: RepoBranchPickerItem) {
@@ -298,34 +268,33 @@ function branchTitle(branch: RepoBranchPickerItem) {
 </script>
 
 <template>
-  <div ref="root" class="branch-picker">
-    <button
-      type="button"
-      class="branch-picker__trigger"
-      :class="[buttonClass, { 'is-open': open }]"
-      :data-agent-id="agentId"
-      :disabled="disabled || actionRunning"
-      aria-haspopup="dialog"
-      :aria-expanded="open"
-      :aria-label="displayLabel"
-      @click="toggle"
+  <div class="branch-picker">
+    <UiPopover
+      v-model:open="open"
+      aria-label="分支选择器"
+      placement="bottom"
     >
-      <GitBranch :size="13" aria-hidden="true" />
-      <span class="branch-picker__trigger-label">{{ displayLabel }}</span>
-    </button>
+      <template #trigger>
+        <button
+          type="button"
+          class="branch-picker__trigger"
+          :class="[buttonClass, { 'is-open': open }]"
+          :data-agent-id="agentId"
+          :disabled="disabled || actionRunning"
+          aria-haspopup="dialog"
+          :aria-expanded="open"
+          :aria-label="displayLabel"
+        >
+          <GitBranch :size="13" aria-hidden="true" />
+          <span class="branch-picker__trigger-label">{{ displayLabel }}</span>
+        </button>
+      </template>
 
-    <Transition name="sb-menu-pop">
-      <div
-        v-if="open"
-        class="branch-picker__panel"
-        role="dialog"
-        aria-label="分支选择器"
-      >
+      <div class="branch-picker__panel">
         <div class="branch-picker__search-row">
           <label class="branch-picker__search">
             <Search :size="14" aria-hidden="true" />
             <input
-              ref="searchInput"
               v-model="search"
               type="text"
               placeholder="搜索分支"
@@ -405,22 +374,15 @@ function branchTitle(branch: RepoBranchPickerItem) {
           <p v-if="!filteredGroups.length" class="branch-picker__empty">没有匹配的分支</p>
         </div>
       </div>
-    </Transition>
+    </UiPopover>
 
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="createDialogOpen"
-          class="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="创建分支"
-          @click.self="closeCreateDialog"
-        >
-          <div class="modal-card branch-dialog">
-            <div class="branch-dialog__header">
-              <strong>创建分支</strong>
-            </div>
+    <UiDialog
+      v-model:open="createDialogOpen"
+      title="创建分支"
+      size="compact"
+      :close-disabled="actionRunning"
+      @close="closeCreateDialog"
+    >
             <div class="branch-dialog__body">
               <label class="branch-dialog__field">
                 <span>基准分支</span>
@@ -435,7 +397,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
                 <span>创建后立即检出</span>
               </label>
             </div>
-            <div class="branch-dialog__actions">
+            <template #actions>
               <button type="button" class="ghost" :disabled="actionRunning" @click="closeCreateDialog">取消</button>
               <button
                 type="button"
@@ -445,26 +407,16 @@ function branchTitle(branch: RepoBranchPickerItem) {
               >
                 创建
               </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+            </template>
+    </UiDialog>
 
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="renameDialogOpen"
-          class="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="重命名分支"
-          @click.self="closeRenameDialog"
-        >
-          <div class="modal-card branch-dialog">
-            <div class="branch-dialog__header">
-              <strong>重命名分支</strong>
-            </div>
+    <UiDialog
+      v-model:open="renameDialogOpen"
+      title="重命名分支"
+      size="compact"
+      :close-disabled="actionRunning"
+      @close="closeRenameDialog"
+    >
             <div class="branch-dialog__body">
               <label class="branch-dialog__field">
                 <span>当前分支</span>
@@ -475,7 +427,7 @@ function branchTitle(branch: RepoBranchPickerItem) {
                 <input v-model="renameBranchName" type="text" placeholder="feature/renamed-branch" />
               </label>
             </div>
-            <div class="branch-dialog__actions">
+            <template #actions>
               <button type="button" class="ghost" :disabled="actionRunning" @click="closeRenameDialog">取消</button>
               <button
                 type="button"
@@ -485,11 +437,8 @@ function branchTitle(branch: RepoBranchPickerItem) {
               >
                 重命名
               </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+            </template>
+    </UiDialog>
   </div>
 </template>
 
@@ -539,21 +488,10 @@ function branchTitle(branch: RepoBranchPickerItem) {
 }
 
 .branch-picker__panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 30;
   width: 320px;
   max-width: min(92vw, 320px);
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elev);
-  box-shadow: 0 10px 28px -10px rgba(0, 0, 0, 0.5);
   display: grid;
   gap: 8px;
-  transform-origin: top left;
-  will-change: transform, opacity;
 }
 
 .branch-picker__search-row {
@@ -744,60 +682,9 @@ function branchTitle(branch: RepoBranchPickerItem) {
   font-size: 12px;
 }
 
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1800;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 12vh;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
-}
-
-.modal-card {
-  width: min(420px, 92vw);
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
-}
-
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.16s ease;
-}
-
-.modal-enter-active .modal-card,
-.modal-leave-active .modal-card {
-  transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.16s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-from .modal-card,
-.modal-leave-to .modal-card {
-  opacity: 0;
-  transform: translateY(-8px) scale(0.98);
-}
-
-.branch-dialog {
-  display: grid;
-}
-
-.branch-dialog__header {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
 .branch-dialog__body {
   display: grid;
   gap: 12px;
-  padding: 14px;
 }
 
 .branch-dialog__field {
@@ -819,10 +706,4 @@ function branchTitle(branch: RepoBranchPickerItem) {
   font-size: 13px;
 }
 
-.branch-dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 10px 14px 14px;
-}
 </style>

@@ -296,7 +296,6 @@ function fileStatusLetter(status: CommitFileChange["status"]) {
           :mode="diffMode"
           fill
           show-stats
-          splitter
           @select-file="selectFile"
         >
           <template #meta>

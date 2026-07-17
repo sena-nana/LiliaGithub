@@ -14,6 +14,8 @@ const packages = [
   ["@lilia/config", "packages/config"],
   ["@lilia/tools", "packages/tools"],
   ["@lilia/ui", "packages/ui"],
+  ["@lilia/ui-contract", "packages/ui-contract"],
+  ["@lilia/ui-foundation", "packages/ui-foundation"],
 ];
 
 const mode = process.argv[2] || "status";

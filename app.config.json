@@ -4,6 +4,10 @@
   "version": "1.0.0",
   "identifier": "com.liliagithub.desktop",
   "storageKeyPrefix": "lilia-github",
+  "ui": {
+    "preset": "lilia",
+    "density": "compact"
+  },
   "shell": {
     "homeTitle": "概览",
     "homeDescription": "查看本地工作区和 GitHub 协作状态。",

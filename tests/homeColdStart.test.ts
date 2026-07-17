@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
-import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
+import ContextMenuHost from "../src/ui/contextMenuHost";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../src/composables/useWorkspace";
 import { resetWorkspaceStateForTests } from "../src/composables/workspace/state";

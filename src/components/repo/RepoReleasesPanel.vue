@@ -9,7 +9,7 @@ import {
   X,
 } from "@lucide/vue";
 import { computed, reactive, ref, watch } from "vue";
-import { openContextMenuAt, type ContextMenuItem } from "@lilia/ui/composables/useContextMenu";
+import { openContextMenuAt, type ContextMenuItem } from "../../ui";
 import type {
   GitHubCreateReleaseRequest,
   GitHubRelease,

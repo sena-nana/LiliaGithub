@@ -5,7 +5,7 @@ import { useComponentEpoch } from "../../composables/useComponentEpoch";
 import { createLatestAsyncLoader } from "../../composables/useLatestAsyncLoader";
 import { createPendingTaskTracker } from "../../composables/usePendingTaskTracker";
 import { useWorkspace } from "../../composables/useWorkspace";
-import { Dropdown } from "@lilia/ui";
+import { Dropdown } from "../../ui";
 import {
   createGitHubRepo,
   listGitHubRepoOwners,

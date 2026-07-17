@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, useSlots } from "vue";
+import { computed, useSlots } from "vue";
+import {
+  LiliaPrimaryContent,
+  LiliaResourcePanel,
+  LiliaWorkspace,
+} from "../../ui";
 import DiffCodeRenderer from "./DiffCodeRenderer.vue";
 import type { RepoDiffWorkspaceFile, RepoDiffWorkspaceMode } from "./repoDiffWorkspace";
 
@@ -14,13 +19,11 @@ const props = withDefaults(defineProps<{
   mode: RepoDiffWorkspaceMode;
   fill?: boolean;
   showStats?: boolean;
-  splitter?: boolean;
 }>(), {
   fileListLabel: "改动文件",
   diffPanelLabel: "改动文件 diff",
   fill: false,
   showStats: false,
-  splitter: false,
 });
 
 defineEmits<{
@@ -28,79 +31,46 @@ defineEmits<{
 }>();
 
 const slots = useSlots();
-const workspaceRef = ref<HTMLElement | null>(null);
-const splitPercent = ref(38);
-let resizeCleanup: (() => void) | null = null;
 const hasFilePrefix = computed(() => Boolean(slots["file-prefix"]));
 const hasHeaderStat = computed(() => props.showStats || props.files.some((file) => Boolean(file.statText)));
 const hasDiffActions = computed(() => Boolean(slots["diff-actions"]));
 const hasSidebar = computed(() => Boolean(slots.sidebar));
 const totalAdditions = computed(() => props.files.reduce((sum, file) => sum + (file.additions ?? 0), 0));
 const totalDeletions = computed(() => props.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0));
-const workspaceStyle = computed(() => ({
-  "--commit-detail-left": `${splitPercent.value}%`,
-}));
-
-onUnmounted(() => {
-  stopResize();
-});
-
 function fileTitle(file: RepoDiffWorkspaceFile) {
   return file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path;
-}
-
-function startSplitResize(event: PointerEvent) {
-  const shell = workspaceRef.value;
-  if (!shell) return;
-  const rect = shell.getBoundingClientRect();
-  event.preventDefault();
-  stopResize();
-  const onMove = (moveEvent: PointerEvent) => {
-    if (!rect.width) return;
-    const next = ((moveEvent.clientX - rect.left) / rect.width) * 100;
-    splitPercent.value = clamp(next, 28, 55);
-  };
-  const onEnd = () => stopResize();
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onEnd, { once: true });
-  window.addEventListener("pointercancel", onEnd, { once: true });
-  resizeCleanup = () => {
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onEnd);
-    window.removeEventListener("pointercancel", onEnd);
-  };
-}
-
-function stopResize() {
-  resizeCleanup?.();
-  resizeCleanup = null;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
 }
 </script>
 
 <template>
-  <div
-    ref="workspaceRef"
+  <LiliaWorkspace
     class="repo-diff-workspace commit-detail-card__content"
     :class="{
       'repo-diff-workspace--with-prefix': hasFilePrefix,
       'repo-diff-workspace--with-stats': hasHeaderStat,
       'repo-diff-workspace--fill': fill,
-      'repo-diff-workspace--splitter': splitter,
     }"
-    :style="workspaceStyle"
+    aria-label="差异工作区"
   >
-    <aside v-if="hasSidebar" class="commit-detail-card__sidebar commit-detail-card__sidebar--custom">
-      <slot name="sidebar" />
-    </aside>
+    <LiliaResourcePanel
+      id="diff-files"
+      :default-size="360"
+      :min-size="280"
+      :max-size="560"
+      resizable
+      resize-label="调整差异文件列表宽度"
+      narrow-behavior="overlay"
+      :collapse-below="860"
+      overflow="hidden"
+    >
+      <div v-if="hasSidebar" class="commit-detail-card__sidebar commit-detail-card__sidebar--custom">
+        <slot name="sidebar" />
+      </div>
 
-    <aside v-else class="commit-detail-card__sidebar">
-      <slot name="meta" />
+      <div v-else class="commit-detail-card__sidebar">
+        <slot name="meta" />
 
-      <section class="commit-file-picker" aria-label="改动文件列表">
+        <section class="commit-file-picker" aria-label="改动文件列表">
         <div class="commit-file-picker__header">
           <div class="commit-file-picker__header-title">
             <h3>{{ fileListLabel }}</h3>
@@ -123,6 +93,8 @@ function clamp(value: number, min: number, max: number) {
             :key="file.key"
             type="button"
             class="commit-file-picker__item"
+            data-lilia-interactive
+            :data-lilia-selected="activeFile?.key === file.key ? 'true' : 'false'"
             :data-agent-id="`repo.diff.file.${file.key}`"
             :class="{ 'is-active': activeFile?.key === file.key }"
             :title="fileTitle(file)"
@@ -146,49 +118,42 @@ function clamp(value: number, min: number, max: number) {
             </span>
           </button>
         </div>
+        </section>
+      </div>
+    </LiliaResourcePanel>
+
+    <LiliaPrimaryContent id="diff-content" overflow="hidden">
+      <section class="commit-diff-panel" :aria-label="diffPanelLabel">
+        <header v-if="hasDiffActions" class="commit-file-diff__header">
+          <slot name="diff-actions" :file="activeFile" :mode="mode" />
+        </header>
+        <template v-if="activeFile">
+          <DiffCodeRenderer
+            v-if="mode === 'hunks' && activeFile.hunks?.length"
+            :file-path="activeFile.path"
+            :hunks="activeFile.hunks"
+            :patch="activeFile.patch ?? ''"
+            mode="hunks"
+          />
+          <DiffCodeRenderer
+            v-else-if="activeFile.patch"
+            :file-path="activeFile.path"
+            :hunks="activeFile.hunks ?? []"
+            :patch="activeFile.patch"
+            mode="raw"
+            :fill="fill"
+          />
+          <p v-else class="muted commit-file-diff__empty">{{ emptyDiffText }}</p>
+        </template>
+        <p v-else class="muted commit-file-diff__empty">{{ files.length ? emptyDiffText : emptyFileText }}</p>
       </section>
-    </aside>
-
-    <div
-      v-if="splitter"
-      class="commit-detail-card__splitter"
-      role="separator"
-      aria-orientation="vertical"
-      @pointerdown="startSplitResize"
-    />
-
-    <section class="commit-diff-panel" :aria-label="diffPanelLabel">
-      <header v-if="hasDiffActions" class="commit-file-diff__header">
-        <slot name="diff-actions" :file="activeFile" :mode="mode" />
-      </header>
-      <template v-if="activeFile">
-        <DiffCodeRenderer
-          v-if="mode === 'hunks' && activeFile.hunks?.length"
-          :file-path="activeFile.path"
-          :hunks="activeFile.hunks"
-          :patch="activeFile.patch ?? ''"
-          mode="hunks"
-        />
-        <DiffCodeRenderer
-          v-else-if="activeFile.patch"
-          :file-path="activeFile.path"
-          :hunks="activeFile.hunks ?? []"
-          :patch="activeFile.patch"
-          mode="raw"
-          :fill="fill"
-        />
-        <p v-else class="muted commit-file-diff__empty">{{ emptyDiffText }}</p>
-      </template>
-      <p v-else class="muted commit-file-diff__empty">{{ files.length ? emptyDiffText : emptyFileText }}</p>
-    </section>
-  </div>
+    </LiliaPrimaryContent>
+  </LiliaWorkspace>
 </template>
 
 <style scoped>
 .repo-diff-workspace {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(300px, 38%) minmax(360px, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -196,10 +161,6 @@ function clamp(value: number, min: number, max: number) {
 .repo-diff-workspace--fill {
   height: 100%;
   max-height: 100%;
-}
-
-.repo-diff-workspace--splitter {
-  grid-template-columns: minmax(280px, var(--commit-detail-left, 38%)) 2px minmax(360px, 1fr);
 }
 
 .commit-detail-card__sidebar {
@@ -213,11 +174,6 @@ function clamp(value: number, min: number, max: number) {
 
 .commit-detail-card__sidebar--custom {
   grid-template-rows: minmax(0, 1fr);
-}
-
-.commit-detail-card__splitter {
-  background: var(--border-soft);
-  cursor: col-resize;
 }
 
 .commit-file-picker {
@@ -326,20 +282,6 @@ function clamp(value: number, min: number, max: number) {
 
 .commit-file-picker__item:first-child {
   border-top: 0;
-}
-
-.commit-file-picker__item:hover,
-.commit-file-picker__item.is-active {
-  background: var(--bg-hover);
-}
-
-.commit-file-picker__item.is-active {
-  background: var(--bg-active);
-}
-
-.commit-file-picker__item:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
 }
 
 .commit-file-picker__status,
@@ -479,23 +421,6 @@ function clamp(value: number, min: number, max: number) {
 .commit-file-diff__empty {
   margin: 0;
   padding: 12px 10px;
-}
-
-@media (max-width: 860px) {
-  .repo-diff-workspace,
-  .repo-diff-workspace--splitter {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 38%) minmax(0, 1fr);
-  }
-
-  .commit-detail-card__sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--border-soft);
-  }
-
-  .commit-detail-card__splitter {
-    display: none;
-  }
 }
 
 @media (max-width: 640px) {

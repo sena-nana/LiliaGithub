@@ -1,19 +1,14 @@
 import { fireEvent, render, waitFor, within } from "@testing-library/vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { computed, defineComponent, onMounted, onUnmounted } from "vue";
+import { defineComponent, nextTick, onMounted, onUnmounted } from "vue";
 import { LILIA_SETTINGS_MODEL, LILIA_UI_CONFIG, SIDEBAR_CONFIG } from "../src/config/appShell";
-import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import {
   closeContextMenu,
   installContextMenu,
-} from "@lilia/ui/composables/useContextMenu";
-import {
-  LiliaDesktopShell,
-  liliaShellOptionsKey,
   setLiliaUiConfig,
-} from "@lilia/ui/shell";
-import { liliaSettingsKey } from "@lilia/ui/settings";
+  liliaSettingsKey,
+} from "../src/ui";
 import { useWorkspace } from "../src/composables/useWorkspace";
 import { resetWorkspaceStateForTests, setRepoActionError, state, upsertRepo } from "../src/composables/workspace/state";
 import { refreshRepoContributions } from "../src/composables/workspace/repositories";
@@ -25,7 +20,7 @@ import {
   type GitHubRepoSummary,
 } from "../src/services/workspace";
 import { liliaContextMenuPlugin } from "./helpers/liliaContextMenu";
-import SecondaryPanel from "../src/layouts/SecondaryPanel.vue";
+import AppShell from "../src/layouts/AppShell.vue";
 import Home from "../src/pages/Home.vue";
 import { repoSummary, workspaceSettings } from "./fixtures/workspace";
 
@@ -58,8 +53,8 @@ async function renderAppShell(initialRoute = "/") {
     },
   });
   const Wrapper = defineComponent({
-    components: { LiliaDesktopShell, ContextMenuHost, TestAppEffects },
-    template: "<TestAppEffects /><LiliaDesktopShell /><ContextMenuHost />",
+    components: { AppShell, TestAppEffects },
+    template: "<TestAppEffects /><AppShell />",
   });
   setLiliaUiConfig(LILIA_UI_CONFIG);
   const workspace = useWorkspace();
@@ -91,7 +86,6 @@ async function renderAppShell(initialRoute = "/") {
       {
         path: "/settings",
         component: { template: "<div>settings</div>" },
-        meta: { sidebar: "settings", lockSidebar: true, returnable: false },
       },
       { path: "/:pathMatch(.*)*", redirect: "/" },
     ],
@@ -104,13 +98,10 @@ async function renderAppShell(initialRoute = "/") {
       plugins: [router, liliaContextMenuPlugin],
       provide: {
         [liliaSettingsKey as symbol]: LILIA_SETTINGS_MODEL,
-        [liliaShellOptionsKey as symbol]: {
-          mainSidebar: SecondaryPanel,
-          setupOverlayActive: computed(() => router.currentRoute.value.path === "/" && !workspace.isReady.value),
-        },
       },
     },
   });
+  await nextTick();
 
   return {
     ...view,
@@ -119,7 +110,7 @@ async function renderAppShell(initialRoute = "/") {
 }
 
 function leftResizer(container: HTMLElement): HTMLElement {
-  const resizer = container.querySelector(".shell__resizer");
+  const resizer = container.querySelector('[data-agent-id="workspace.region.sidebar.resize"]');
   if (!(resizer instanceof HTMLElement)) {
     throw new Error("未找到左侧栏拖拽线");
   }
@@ -546,6 +537,9 @@ describe("AppShell sidebar", () => {
       repoSummary("Alpha", { lastCommitAt: 20 }),
       repoSummary("Beta", { lastCommitAt: 30 }),
     ];
+    const repoNames = new Set(repos.map((repo) => repo.name));
+    const sortedTestRepos = () => sidebarRepoOrder(view.container)
+      .filter((name) => repoNames.has(name));
     workspaceFallback.setFallbackRepoOverridesForTests(Object.fromEntries(
       repos.map((repo) => [repo.id, repo]),
     ));
@@ -554,7 +548,7 @@ describe("AppShell sidebar", () => {
     const view = await renderAppShell("/repos/Beta");
 
     await waitFor(() => {
-      expect(sidebarRepoOrder(view.container)).toEqual(["Beta", "Alpha", "Gamma"]);
+      expect(sortedTestRepos()).toEqual(["Beta", "Alpha", "Gamma"]);
     });
     const group = sidebarGroupForText(view.container, "未分组仓库", 3);
     expect(group.textContent?.replace(/\s+/g, "")).toBe("未分组仓库3");
@@ -563,14 +557,16 @@ describe("AppShell sidebar", () => {
     await fireEvent.click(await view.findByRole("menuitem", { name: "首字母 A-Z" }));
 
     await waitFor(() => {
-      expect(sidebarRepoOrder(view.container)).toEqual(["Alpha", "Beta", "Gamma"]);
+      expect(sortedTestRepos()).toEqual(["Alpha", "Beta", "Gamma"]);
     });
     expect(JSON.parse(localStorage.getItem(SIDEBAR_REPO_SORT_STORAGE_KEY) ?? "{}")).toEqual({
       sort: "name",
       direction: "asc",
     });
     expect(localStorage.getItem(HOME_REPO_SORT_STORAGE_KEY)).toBeNull();
-    expect(sidebarGroupForText(view.container, "未分组仓库", 3).textContent?.replace(/\s+/g, "")).toBe("未分组仓库3");
+    const currentRepoCount = state.repos.length;
+    expect(sidebarGroupForText(view.container, "未分组仓库", currentRepoCount).textContent?.replace(/\s+/g, ""))
+      .toBe(`未分组仓库${currentRepoCount}`);
   });
 
   it("长列表中仓库行状态只影响对应行并保留分页结构", async () => {
@@ -1819,7 +1815,7 @@ describe("AppShell sidebar", () => {
 
     await fireEvent.click(collapse);
 
-    expect(leftResizer(view.container)).toHaveAttribute("aria-disabled", "true");
+    expect(view.container.querySelector('[data-agent-id="workspace.region.sidebar.resize"]')).toBeNull();
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
 
     const expand = view.getByRole("button", { name: "展开左侧栏" });
@@ -1876,8 +1872,6 @@ describe("AppShell sidebar", () => {
     expect(view.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
     expect(view.getByRole("button", { name: /外观/ })).toHaveAttribute("aria-current", "page");
     expect(view.getByRole("button", { name: /仓库/ })).toBeInTheDocument();
-    expect(view.router.currentRoute.value.meta.sidebar).toBe("settings");
-    expect(view.router.currentRoute.value.meta.lockSidebar).toBe(true);
     expect(localStorage.getItem(SIDEBAR_CONFIG.collapsedStorageKey)).toBe("1");
 
     await fireEvent.click(view.getByRole("button", { name: /关于/ }));

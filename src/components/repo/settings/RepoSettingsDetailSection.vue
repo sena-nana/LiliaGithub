@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { AlertCircle, LoaderCircle, RotateCw, Save, Trash2 } from "@lucide/vue";
-import { Dropdown, SettingsRow, UiSwitch } from "@lilia/ui";
+import { Dropdown, SettingsRow, UiDialog, UiSwitch } from "../../../ui";
 import {
   deleteGitHubBranch,
   getGitHubBranchProtection,
@@ -1118,22 +1118,16 @@ defineExpose({ refresh });
       </div>
     </div>
 
-    <Teleport to="body">
-      <Transition name="modal">
-        <div
-          v-if="confirmAction"
-          class="project-delete-overlay"
-          role="dialog"
-          aria-modal="true"
-          :aria-label="confirmAction.title"
-          @click.self="closeConfirm"
-        >
-          <div class="project-delete-dialog">
-            <div class="project-delete-dialog__head">
-              <AlertCircle :size="15" aria-hidden="true" />
-              <strong>{{ confirmAction.title }}</strong>
-            </div>
-            <p>{{ confirmAction.body }}</p>
+    <UiDialog
+      :open="Boolean(confirmAction)"
+      :title="confirmAction?.title ?? ''"
+      :description="confirmAction?.body"
+      size="compact"
+      :close-disabled="saving"
+      @close="closeConfirm"
+    >
+          <template v-if="confirmAction">
+            <div class="project-delete-confirm">
             <label>
               <span>输入 {{ confirmAction.expected }} 以确认</span>
               <input
@@ -1144,7 +1138,10 @@ defineExpose({ refresh });
                 :disabled="saving"
               />
             </label>
-            <div class="project-delete-dialog__actions">
+            </div>
+          </template>
+          <template #actions>
+            <template v-if="confirmAction">
               <button type="button" class="ghost" :disabled="saving" @click="closeConfirm">
                 取消
               </button>
@@ -1159,11 +1156,9 @@ defineExpose({ refresh });
                 <Trash2 v-else :size="14" aria-hidden="true" />
                 {{ confirmAction.actionLabel }}
               </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+            </template>
+          </template>
+    </UiDialog>
   </section>
 </template>
 
@@ -1347,53 +1342,14 @@ defineExpose({ refresh });
   white-space: normal;
 }
 
-.project-delete-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2500;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.4);
-}
-
-.project-delete-dialog {
-  display: grid;
-  gap: 14px;
-  width: min(420px, 100%);
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elev);
-  box-shadow: 0 18px 50px -24px rgba(0, 0, 0, 0.7);
-}
-
-.project-delete-dialog__head,
-.project-delete-dialog__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.project-delete-dialog__head {
-  color: var(--err);
-}
-
-.project-delete-dialog p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.project-delete-dialog label {
+.project-delete-confirm label {
   display: grid;
   gap: 6px;
   color: var(--text-muted);
   font-size: 12px;
 }
 
-.project-delete-dialog input {
+.project-delete-confirm input {
   height: 32px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1401,7 +1357,4 @@ defineExpose({ refresh });
   color: var(--text);
 }
 
-.project-delete-dialog__actions {
-  justify-content: flex-end;
-}
 </style>

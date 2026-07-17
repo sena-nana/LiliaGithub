@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { FolderInput, LoaderCircle, Lock, Search, Sparkles, X } from "@lucide/vue";
-import { Dropdown } from "@lilia/ui";
+import { FolderInput, LoaderCircle, Lock, Search, Sparkles } from "@lucide/vue";
+import { Dropdown, UiDialog } from "../../ui";
 import type {
   GitHubBindingStatus,
   GitHubRepoOwner,
@@ -140,14 +140,15 @@ watch(() => props.gitHubBound, focusCloneInput);
 </script>
 
 <template>
-  <div class="modal-backdrop modal-backdrop--top" role="presentation">
-    <form class="clone-dialog" role="dialog" aria-modal="true" aria-label="克隆仓库" @submit.prevent="emit('submit')">
-      <div class="clone-dialog__header">
-        <h2>克隆仓库</h2>
-        <button type="button" class="repo-icon-btn" aria-label="关闭" title="关闭" :disabled="busy" @click="emit('close')">
-          <X :size="14" aria-hidden="true" />
-        </button>
-      </div>
+  <UiDialog
+    :open="true"
+    title="克隆仓库"
+    :close-disabled="busy"
+    :close-on-escape="!busy"
+    :close-on-outside="!busy"
+    @close="emit('close')"
+  >
+    <form class="clone-dialog" @submit.prevent="emit('submit')">
       <label v-if="!gitHubBound">
         <span>远端 URL</span>
         <input
@@ -305,32 +306,20 @@ watch(() => props.gitHubBound, focusCloneInput);
         </button>
       </div>
     </form>
-  </div>
+  </UiDialog>
 </template>
 
 <style scoped>
 .clone-dialog {
-  width: min(460px, calc(100vw - 32px));
   display: grid;
   gap: 14px;
-  padding: 18px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-  background: var(--bg-elev);
-  box-shadow: var(--shadow-lg);
 }
 
-.clone-dialog__header,
 .clone-dialog__actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.clone-dialog h2 {
-  margin: 0;
-  font-size: 16px;
 }
 
 .clone-dialog label {

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle, RefreshCw } from "@lucide/vue";
-import { CalendarHeatmap } from "@lilia/ui";
-import type { CalendarHeatmapModel } from "@lilia/ui/utils/calendarHeatmap";
+import { CalendarHeatmap, type CalendarHeatmapModel } from "../../ui";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 
 defineProps<{

@@ -25,7 +25,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 vi.resetModules();
-const { TitleBar } = await import("@lilia/ui");
+const { TitleBar } = await import("../src/ui");
 
 async function renderTitleBar() {
   const view = render(TitleBar, {

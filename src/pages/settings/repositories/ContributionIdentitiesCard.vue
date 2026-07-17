@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { UiButton, UiCard } from "@lilia/ui";
+import { UiButton, UiCard } from "../../../ui";
 import ContributionIdentityRecommendations from "../../../components/ContributionIdentityRecommendations.vue";
 import { useComponentEpoch } from "../../../composables/useComponentEpoch";
 import { useWorkspace } from "../../../composables/useWorkspace";

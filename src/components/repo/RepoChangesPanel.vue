@@ -10,7 +10,7 @@ import {
   CloudUpload,
   RotateCcw,
 } from "@lucide/vue";
-import type { ContextMenuItem } from "@lilia/ui/composables/useContextMenu";
+import type { ContextMenuItem } from "../../ui";
 import type { RepoChange } from "../../services/workspace";
 import { changeStatusLetter, changeStatusText, changeStatusTone } from "../../utils/repoDisplay";
 import RepoDiffWorkspace from "./RepoDiffWorkspace.vue";
@@ -272,7 +272,6 @@ function submitCommit(pushAfter: boolean) {
       empty-diff-text="当前没有可展示的差异内容。"
       :mode="diffMode"
       fill
-      splitter
       @select-file="selectFile"
     >
       <template #sidebar>

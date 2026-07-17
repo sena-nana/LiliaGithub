@@ -17,7 +17,7 @@ import {
   SquareTerminal,
   TriangleAlert,
 } from "@lucide/vue";
-import { Dropdown } from "@lilia/ui";
+import { Dropdown } from "../../ui";
 import { computed, ref, watch } from "vue";
 import RepoBranchPicker from "./RepoBranchPicker.vue";
 import type { RepoSettingKey } from "../../config/repoSettingsManifest";

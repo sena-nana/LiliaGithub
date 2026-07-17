@@ -29,12 +29,13 @@ import RepoRemoteSidebarRow from "../components/sidebar/RepoRemoteSidebarRow.vue
 import RepoSidebarRow from "../components/sidebar/RepoSidebarRow.vue";
 import SidebarRowTools from "../components/sidebar/SidebarRowTools.vue";
 import GitHubRepositoryStateNotice from "../components/github/GitHubRepositoryStateNotice.vue";
-import SidebarCollapse from "@lilia/ui/components/sidebar/SidebarCollapse";
 import {
+  LiliaSidebarFrame,
+  SidebarCollapse,
   openContextMenuAt,
   type ContextMenuItem,
   type ContextMenuProvider,
-} from "@lilia/ui/composables/useContextMenu";
+} from "../ui";
 import { repoDisplayInfo, repoDisplayTitle, type RepoDisplaySource } from "../utils/repoDisplay";
 import {
   favoriteRepositories,
@@ -829,8 +830,8 @@ async function deleteGroup(group: { id: string }) {
 </script>
 
 <template>
-  <aside class="secondary-panel" data-agent-id="sidebar">
-    <div class="secondary-panel__top">
+  <LiliaSidebarFrame agent-id="sidebar">
+    <template #top>
       <div class="sb-section">
         <div class="sb-section__header">
           <span class="sb-section__title">工作区</span>
@@ -911,12 +912,10 @@ async function deleteGroup(group: { id: string }) {
           </template>
         </nav>
       </div>
-    </div>
+    </template>
 
-    <div
-      class="secondary-panel__body"
-      v-context-menu="sidebarRepoContextMenuProvider"
-    >
+    <template #body>
+      <div class="sidebar-sections" v-context-menu="sidebarRepoContextMenuProvider">
       <div class="sb-section sb-section--favorites">
         <div class="sb-section__header">
           <span class="sb-section__title">置顶仓库 {{ favoriteRepos.length }}</span>
@@ -1109,32 +1108,24 @@ async function deleteGroup(group: { id: string }) {
           </button>
         </div>
       </div>
-    </div>
+      </div>
+    </template>
 
-    <div class="secondary-panel__footer">
+    <template #footer>
       <SidebarFooter
         :status="footerStatus"
       />
-    </div>
-  </aside>
+    </template>
+  </LiliaSidebarFrame>
 </template>
 
 <style scoped>
-.secondary-panel__top,
-.secondary-panel__footer {
-  flex: 0 0 auto;
-  min-width: 0;
-}
-
-.secondary-panel__body {
-  flex: 1 1 auto;
+.sidebar-sections {
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 
-.secondary-panel__body > .sb-section + .sb-section {
+.sidebar-sections > .sb-section + .sb-section {
   margin-top: 14px;
 }
 
