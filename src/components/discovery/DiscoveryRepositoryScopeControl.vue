@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { GitHubRepoOwner } from "../../services/workspace";
+import type { GitHubRepoOwner } from "../../services/workspace/types";
 import type { DiscoveryRepositoryScope } from "../../composables/discovery/useDiscoveryRepositories";
 
 const props = defineProps<{

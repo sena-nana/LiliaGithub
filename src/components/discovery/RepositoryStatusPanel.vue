@@ -1,36 +1,37 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
-import { loadDiscoveryRepositoryStatuses } from "../../services/discovery";
 import { useWorkspace } from "../../composables/useWorkspace";
-import { useDiscoverySection } from "../../composables/discovery/useDiscoverySection";
 import { githubRepositoryPermissionLabel } from "../../utils/githubRepositoryScope";
 import { remoteRepoRoute } from "../../utils/remoteRepo";
 import { repoConflictRoute, repoRoute } from "../../utils/repoRoutes";
-import type { DiscoveryRepositoryInput } from "./types";
+import type {
+  DiscoveryAggregateResult,
+  DiscoveryRepositoryInput,
+  DiscoveryRepositoryStatus,
+  DiscoveryRepositoryStatusItem,
+} from "../../services/discovery/types";
 import DiscoveryItemRow from "./DiscoveryItemRow.vue";
 import DiscoveryPanel from "./DiscoveryPanel.vue";
 import { cleanDiscoveryError, discoveryDate } from "./display";
 
-const props = withDefaults(defineProps<{ repositories: readonly DiscoveryRepositoryInput[]; refreshToken?: number }>(), { refreshToken: 0 });
-type RepositoryStatus = Awaited<ReturnType<typeof loadDiscoveryRepositoryStatuses>>["items"][number]["status"];
+const props = defineProps<{
+  repositories: readonly DiscoveryRepositoryInput[];
+  result: DiscoveryAggregateResult<DiscoveryRepositoryStatusItem> | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}>();
+type RepositoryStatus = DiscoveryRepositoryStatus;
 type StatusItem = { repository: DiscoveryRepositoryInput; status: RepositoryStatus };
 const workspace = useWorkspace();
-const section = useDiscoverySection<StatusItem>(props, async (forceRefresh) => {
-  const result = await loadDiscoveryRepositoryStatuses(
-    props.repositories.map((repository) => repository.fullName),
-    { forceRefresh },
-  );
+const items = computed<StatusItem[]>(() => {
   const repositories = new Map(props.repositories.map((repository) => [repository.fullName.toLocaleLowerCase(), repository]));
-  return {
-    ...result,
-    items: result.items.flatMap(({ repoFullName, status }) => {
+  return props.result?.items.flatMap(({ repoFullName, status }) => {
       const repository = repositories.get(repoFullName.toLocaleLowerCase());
       return repository ? [{ repository, status }] : [];
-    }),
-  };
+    }) ?? [];
 });
-const items = computed(() => section.result.value?.items ?? []);
 const syncing = ref<string | null>(null);
 const actionErrors = ref<Record<string, string | undefined>>({});
 
@@ -59,7 +60,7 @@ async function sync(item: StatusItem) {
   actionErrors.value = { ...actionErrors.value, [item.repository.fullName]: undefined };
   try {
     await workspace.mergePull(local.id, "stash");
-    await section.load(true);
+    await props.refresh();
   } catch (error) {
     actionErrors.value = { ...actionErrors.value, [item.repository.fullName]: cleanDiscoveryError(error) };
   } finally { syncing.value = null; }
@@ -67,7 +68,7 @@ async function sync(item: StatusItem) {
 </script>
 
 <template>
-  <DiscoveryPanel title="常用仓库状态" agent-id="discovery.repository" :loading="section.loading.value" :error="section.error.value" :item-count="items.length" :failure-count="section.result.value?.failures.length ?? 0" empty-message="还没有置顶或最近打开的 GitHub 仓库。" @retry="section.load(true)">
+  <DiscoveryPanel title="仓库状态" agent-id="discovery.repository" :loading="loading" :error="error" :item-count="items.length" :failure-count="result?.failures.length ?? 0" empty-message="当前批次没有可显示的仓库。" @retry="refresh">
     <DiscoveryItemRow v-for="item in items" :key="item.repository.fullName" :title="item.repository.fullName" :repository="repositoryState(item)" :meta="discoveryDate(item.status.updatedAt)" :to="item.repository.localRepo ? repoRoute(item.repository.localRepo.id) : remoteRepoRoute(item.repository.fullName)" :agent-id="`discovery.repository.row.${item.repository.fullName}`" :tone="item.repository.localRepo?.conflictCount || actionErrors[item.repository.fullName] ? 'error' : 'normal'">
       <template #badges>
         <span v-if="item.status.private" class="badge">私有</span>

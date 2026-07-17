@@ -73,6 +73,7 @@ export const WORKSPACE_COMMAND_GROUPS = {
     "github_create_repo",
     "github_get_repo_management",
     "github_discovery_get_repository_status",
+    "github_discovery_scan",
     "github_discovery_submit_pull_request_review",
     "github_update_repo_settings",
     "github_get_repo_settings_section",

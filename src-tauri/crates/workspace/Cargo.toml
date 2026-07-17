@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 base64 = "0.22"
 dunce = "1"
+futures-util = "0.3"
 keyring = "4.0.1"
 libc = "0.2"
 lilia_github_contracts = { path = "../lilia_github_contracts" }

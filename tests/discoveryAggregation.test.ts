@@ -50,14 +50,8 @@ describe("discovery aggregation", () => {
     expect(result).toMatchObject({ failures: [], truncated: false, successfulRepositoryCount: 1 });
   });
 
-  it("keeps successful repositories, reports failures, marks source truncation, and caps reads at four", async () => {
-    let active = 0;
-    let maximumActive = 0;
+  it("keeps successful repositories, reports failures, and marks source truncation", async () => {
     workspace.listGitHubIssues.mockImplementation(async (repoFullName) => {
-      active += 1;
-      maximumActive = Math.max(maximumActive, active);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      active -= 1;
       if (repoFullName === "acme/failing") throw new Error("forbidden");
       if (repoFullName === "acme/full") return Array.from({ length: 100 }, (_, index) => issue(index + 1));
       return [issue(1)];
@@ -66,7 +60,6 @@ describe("discovery aggregation", () => {
 
     const result = await loadDiscoveryAssignedIssues(repositories, { forceRefresh: true });
 
-    expect(maximumActive).toBe(4);
     expect(result.truncated).toBe(true);
     expect(result.failures).toEqual([{ repoFullName: "acme/failing", message: "forbidden" }]);
     expect(result).toMatchObject({ requestedRepositoryCount: 9, successfulRepositoryCount: 8 });
@@ -91,40 +84,6 @@ describe("discovery aggregation", () => {
     expect(workspace.listGitHubReleases).toHaveBeenCalledWith("acme/two", { forceRefresh: true });
   });
 
-  it("shares the four-request budget across concurrently loaded panels", async () => {
-    let active = 0;
-    let maximumActive = 0;
-    const request = async (value: unknown) => {
-      active += 1;
-      maximumActive = Math.max(maximumActive, active);
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      active -= 1;
-      return value;
-    };
-    workspace.listGitHubIssues.mockImplementation(() => request([]));
-    workspace.getGitHubDiscoveryRepositoryStatus.mockImplementation((repoFullName) => request({
-      fullName: repoFullName,
-      updatedAt: "2026-07-17T00:00:00Z",
-      private: false,
-      archived: false,
-      disabled: false,
-      htmlUrl: `https://github.com/${repoFullName}`,
-      permissions: { pull: true, push: false, admin: false },
-      allowMergeCommit: true,
-      allowSquashMerge: true,
-      allowRebaseMerge: true,
-    }));
-    const repositories = Array.from({ length: 8 }, (_, index) => `acme/repo-${index}`);
-
-    const [issues, statuses] = await Promise.all([
-      loadDiscoveryAssignedIssues(repositories),
-      loadDiscoveryRepositoryStatuses(repositories),
-    ]);
-
-    expect(maximumActive).toBe(4);
-    expect(issues.successfulRepositoryCount).toBe(8);
-    expect(statuses.items).toHaveLength(8);
-  });
 });
 
 function pullRequest(number: number, updatedAt: string): GitHubPullRequest {

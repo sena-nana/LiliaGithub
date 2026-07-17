@@ -1,5 +1,30 @@
-import type { DiscoveryPullRequestReviewRequest, DiscoveryRepositoryStatus } from "./types";
+import type {
+  DiscoveryCommandOptions,
+  DiscoveryPullRequestReviewRequest,
+  DiscoveryRepositoryStatus,
+  DiscoveryScanResult,
+} from "./types";
 import { getGitHubRepoManagement, listGitHubRepos } from "../workspace/client";
+import { loadDiscoveryAssignedIssues } from "./issues";
+import { loadDiscoveryPendingPullRequests } from "./pullRequests";
+import { loadDiscoveryRecentReleases } from "./releases";
+import { loadDiscoveryRepositoryStatuses } from "./repositoryStatus";
+import { loadDiscoveryFailedWorkflowRuns } from "./workflows";
+
+export async function scanDiscoveryFallback(
+  repoFullNames: readonly string[],
+  options: DiscoveryCommandOptions = {},
+): Promise<DiscoveryScanResult> {
+  const [pendingPullRequests, assignedIssues, failedWorkflows, recentReleases, repositoryStatuses] =
+    await Promise.all([
+      loadDiscoveryPendingPullRequests(repoFullNames, options),
+      loadDiscoveryAssignedIssues(repoFullNames, options),
+      loadDiscoveryFailedWorkflowRuns(repoFullNames, options),
+      loadDiscoveryRecentReleases(repoFullNames, options),
+      loadDiscoveryRepositoryStatuses(repoFullNames, options),
+    ]);
+  return { pendingPullRequests, assignedIssues, failedWorkflows, recentReleases, repositoryStatuses };
+}
 
 export async function getRepositoryStatusFallback(repoFullName: string): Promise<DiscoveryRepositoryStatus> {
   const [repository, management] = await Promise.all([

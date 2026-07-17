@@ -22,7 +22,7 @@ const settings = reactive({
   recentLocalRepos: [],
 });
 
-vi.mock("../src/services/workspace", () => ({
+vi.mock("../src/services/workspace/client", () => ({
   clearGitHubRepoCache: mocks.clear,
   listGitHubRepoOwners: mocks.listOwners,
   listGitHubRepos: mocks.listRepos,

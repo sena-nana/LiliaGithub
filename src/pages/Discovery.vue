@@ -4,6 +4,7 @@ import { RouterLink } from "vue-router";
 import DiscoveryRepositoryScopeControl from "../components/discovery/DiscoveryRepositoryScopeControl.vue";
 import DiscoveryPanel from "../components/discovery/DiscoveryPanel.vue";
 import { useDiscoveryRepositories } from "../composables/discovery/useDiscoveryRepositories";
+import { useDiscoveryScan } from "../composables/discovery/useDiscoveryScan";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 
 const pendingPullRequests = createCachedAsyncComponent(() => import("../components/discovery/PendingPullRequestsPanel.vue"));
@@ -13,6 +14,8 @@ const recentReleases = createCachedAsyncComponent(() => import("../components/di
 const repositoryStatus = createCachedAsyncComponent(() => import("../components/discovery/RepositoryStatusPanel.vue"));
 
 const discovery = useDiscoveryRepositories();
+const scan = useDiscoveryScan(discovery.repositories, discovery.refreshToken);
+const refreshScan = () => scan.load(true);
 </script>
 
 <template>
@@ -56,24 +59,24 @@ const discovery = useDiscoveryRepositories();
 
       <div class="discovery-grid">
         <Suspense>
-          <component :is="pendingPullRequests.component" :repositories="discovery.repositories.value" :refresh-token="discovery.refreshToken.value" />
+          <component :is="pendingPullRequests.component" :result="scan.result.value?.pendingPullRequests ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
           <template #fallback><DiscoveryPanel title="待处理 Pull Requests" agent-id="discovery.pr" loading empty-message="" /></template>
         </Suspense>
         <Suspense>
-          <component :is="assignedIssues.component" :repositories="discovery.repositories.value" :refresh-token="discovery.refreshToken.value" />
+          <component :is="assignedIssues.component" :result="scan.result.value?.assignedIssues ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
           <template #fallback><DiscoveryPanel title="被分配的 Issues" agent-id="discovery.issue" loading empty-message="" /></template>
         </Suspense>
         <Suspense>
-          <component :is="failedWorkflows.component" :repositories="discovery.repositories.value" :refresh-token="discovery.refreshToken.value" />
+          <component :is="failedWorkflows.component" :result="scan.result.value?.failedWorkflows ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
           <template #fallback><DiscoveryPanel title="失败的 Workflows" agent-id="discovery.workflow" loading empty-message="" /></template>
         </Suspense>
         <Suspense>
-          <component :is="recentReleases.component" :repositories="discovery.repositories.value" :refresh-token="discovery.refreshToken.value" />
+          <component :is="recentReleases.component" :result="scan.result.value?.recentReleases ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
           <template #fallback><DiscoveryPanel title="近期 Releases" agent-id="discovery.release" loading empty-message="" /></template>
         </Suspense>
         <Suspense>
-          <component :is="repositoryStatus.component" :repositories="discovery.frequentRepositories.value" :refresh-token="discovery.refreshToken.value" />
-          <template #fallback><DiscoveryPanel title="常用仓库状态" agent-id="discovery.repository" loading empty-message="" /></template>
+          <component :is="repositoryStatus.component" :repositories="discovery.repositories.value" :result="scan.result.value?.repositoryStatuses ?? null" :loading="scan.loading.value" :error="scan.error.value" :refresh="refreshScan" />
+          <template #fallback><DiscoveryPanel title="仓库状态" agent-id="discovery.repository" loading empty-message="" /></template>
         </Suspense>
       </div>
 

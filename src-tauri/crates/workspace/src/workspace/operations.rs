@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -19,6 +20,10 @@ use crate::workspace::tasks::{
     finish_workspace_task, mark_workspace_task_running, record_pending_operation_task,
     register_pending_task_cancellation,
 };
+
+tokio::task_local! {
+    static ACTIVE_OPERATION_GROUP_TASK_ID: String;
+}
 
 pub const LOCAL_READ_PROTOCOL: &str = "effect.lilia.github.operation.local-read.v1";
 pub const LOCAL_WRITE_PROTOCOL: &str = "effect.lilia.github.operation.local-write.v1";
@@ -93,6 +98,88 @@ impl VisibleOperation {
     pub fn repo_id(mut self, repo_id: impl Into<String>) -> Self {
         self.repo_id = Some(repo_id.into());
         self
+    }
+}
+
+pub struct VisibleOperationGroup {
+    app: AppHandle,
+    task_id: String,
+}
+
+impl VisibleOperationGroup {
+    pub fn new(app: AppHandle, visible: VisibleOperation, pending_message: Option<String>) -> Self {
+        let task = record_pending_operation_task(
+            &app,
+            &visible.kind,
+            &visible.title,
+            &visible.priority,
+            visible.repo_id,
+            pending_message,
+        );
+        Self {
+            app,
+            task_id: task.id,
+        }
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn mark_running(&self, message: Option<String>) -> bool {
+        mark_workspace_task_running(&self.app, &self.task_id, message)
+    }
+
+    pub fn finish(&self, completion: OperationTaskCompletion) -> bool {
+        let (status, message) = match completion {
+            OperationTaskCompletion::Success(message) => ("success", message),
+            OperationTaskCompletion::Error(message) => ("error", message),
+        };
+        finish_workspace_task(&self.app, &self.task_id, status, Some(message))
+    }
+
+    pub fn finish_cancelled(&self, message: String) -> bool {
+        finish_workspace_task(&self.app, &self.task_id, "cancelled", Some(message))
+    }
+
+    pub fn register_cancel_targets(
+        &self,
+        targets: Vec<OperationCancelTarget>,
+        reason: &'static str,
+    ) -> bool {
+        let app = self.app.clone();
+        register_pending_task_cancellation(
+            &self.app,
+            &self.task_id,
+            Box::new(move || cancel_pending_operations(&app, &targets, reason)),
+        )
+    }
+
+    pub async fn run<T, F, Fut, C>(self, operation: F, completion: C) -> Result<T, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<T, String>>,
+        C: FnOnce(&T) -> OperationTaskCompletion,
+    {
+        self.mark_running(None);
+        let result = ACTIVE_OPERATION_GROUP_TASK_ID
+            .scope(self.task_id.clone(), operation())
+            .await;
+        match result {
+            Ok(value) => {
+                self.finish(completion(&value));
+                Ok(value)
+            }
+            Err(error) => {
+                let status = if error.contains("取消") {
+                    "cancelled"
+                } else {
+                    "error"
+                };
+                finish_workspace_task(&self.app, &self.task_id, status, Some(error.clone()));
+                Err(error)
+            }
+        }
     }
 }
 
@@ -383,13 +470,16 @@ where
 
 fn submit_operation_inner<T, F>(
     app: AppHandle,
-    spec: OperationSpec,
+    mut spec: OperationSpec,
     operation: F,
 ) -> Result<OperationTicket<T>, String>
 where
     T: Send + 'static,
     F: FnOnce() -> OperationExecution + Send + 'static,
 {
+    if spec.parent_task_id.is_none() {
+        spec.parent_task_id = ACTIVE_OPERATION_GROUP_TASK_ID.try_with(Clone::clone).ok();
+    }
     let operation_id = next_operation_id();
     let visible_task = spec.visible.as_ref().map(|visible| {
         record_pending_operation_task(
@@ -800,6 +890,7 @@ mod tests {
                 } else {
                     TaskOutcome::Completed {
                         task_id: handle.task_id.clone(),
+                        output: None,
                         output_ref: None,
                     }
                 };
@@ -857,6 +948,7 @@ mod tests {
             } else {
                 TaskOutcome::Completed {
                     task_id: task_id.to_string(),
+                    output: None,
                     output_ref: None,
                 }
             };
@@ -986,6 +1078,40 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(value, 42);
+    }
+
+    #[tokio::test]
+    async fn visible_group_keeps_invisible_children_under_one_parent_task() {
+        let _guard = test_guard();
+        let app = app(InlineRuntime::executing());
+        let group = VisibleOperationGroup::new(
+            app.clone(),
+            VisibleOperation::new("github", "operation group parent test").priority("low"),
+            Some("等待子操作".to_string()),
+        );
+        let parent_id = group.task_id().to_string();
+
+        let value = group
+            .run(
+                || async move {
+                    run_operation(app, OperationSpec::new(OperationKind::GitHubRead), || {
+                        Ok::<_, String>(42_u64)
+                    })
+                    .await
+                },
+                |_| OperationTaskCompletion::Success("完成".to_string()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(value, 42);
+        let matching = workspace_list_tasks()
+            .into_iter()
+            .filter(|task| task.title == "operation group parent test")
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].id, parent_id);
+        assert_eq!(matching[0].status, "success");
     }
 
     #[tokio::test]

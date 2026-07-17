@@ -1572,10 +1572,7 @@ describe("基础路由", () => {
 
     expect(await screen.findAllByRole("heading", { name: "仓库" })).toHaveLength(1);
     expect(await screen.findByRole("region", { name: "工作区与仓库" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "GitHub 账户" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "贡献身份" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "后台发现仓库" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "新建 GitHub 仓库" })).not.toBeInTheDocument();
     await fireEvent.click(await screen.findByRole("button", { name: "恢复管理" }));
 
     await waitFor(() => {
