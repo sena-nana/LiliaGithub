@@ -39,7 +39,7 @@
     "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=634e355f50eaf492dd590c60c39bef558f91f303",
     "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=634e355f50eaf492dd590c60c39bef558f91f303",
     "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=634e355f50eaf492dd590c60c39bef558f91f303",
-    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=b64e099d878adcdcbbf571f77e02ea954779ece5",
+    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=eba8c79a943999013d0f7367d4887ec5ed5a6b45",
     "@lilia/ui-contract": "github:sena-nana/LiliaUI#workspace=@lilia/ui-contract&commit=634e355f50eaf492dd590c60c39bef558f91f303",
     "@lilia/ui-foundation": "github:sena-nana/LiliaUI#workspace=@lilia/ui-foundation&commit=634e355f50eaf492dd590c60c39bef558f91f303",
     "ansi_up": "^6.0.6",
