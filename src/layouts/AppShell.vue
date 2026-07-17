@@ -43,7 +43,6 @@ const returnTo = ref("/");
 
 const isSettingsMode = computed(() => route.path === LILIA_SETTINGS_MODEL.path);
 const isSetupMode = computed(() => route.path === "/" && !workspace.isReady.value);
-const isRepoRoute = computed(() => route.path.startsWith("/repos/"));
 const sidebarDisabled = computed(() => isSettingsMode.value || isSetupMode.value);
 const effectiveSidebarCollapsed = computed(() => {
   if (isSetupMode.value) return true;
@@ -150,7 +149,6 @@ function toggleSidebar() {
         backdrop-effect="none"
         surface-level="base"
         surface-boundary
-        :style="{ '--lilia-primary-inset': isRepoRoute ? '0' : undefined }"
       >
         <RouterView />
       </LiliaPrimaryContent>
