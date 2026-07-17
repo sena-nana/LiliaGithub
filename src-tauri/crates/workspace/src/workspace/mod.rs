@@ -1,10 +1,11 @@
 pub mod bulk;
+pub mod discovery;
 pub mod file_browser;
 pub mod github;
 pub mod github_discussions;
 pub mod launch;
-pub mod personal_home;
 pub(crate) mod operations;
+pub mod personal_home;
 pub(crate) mod readme;
 pub(crate) mod refresh;
 pub(crate) mod repo_guard;

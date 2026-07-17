@@ -6058,6 +6058,7 @@ pub async fn github_update_repo_settings(
             update_github_project_repo_cache(&app, &repo_full_name, |repo_cache| {
                 repo_cache.management = Some(management.clone());
             })?;
+            crate::workspace::discovery::invalidate_repository_status(&repo_full_name);
             Ok(management)
         },
     )

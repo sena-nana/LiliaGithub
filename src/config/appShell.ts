@@ -1,5 +1,6 @@
 import {
   FolderGit2,
+  Boxes,
   Home,
   Info,
   Palette,
@@ -42,6 +43,12 @@ export const SIDEBAR_NAV: SidebarNavItems = [
     to: "/overview",
     label: "项目总览",
     icon: FolderGit2,
+  },
+  {
+    key: "discovery",
+    to: "/discovery",
+    label: "跨仓库",
+    icon: Boxes,
   },
 ];
 

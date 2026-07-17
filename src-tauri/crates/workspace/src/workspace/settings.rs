@@ -237,6 +237,7 @@ pub(super) fn save_settings(app: &AppHandle, settings: &WorkspaceSettings) -> Re
 }
 
 fn reset_workspace_runtime_state(app: &AppHandle) {
+    crate::workspace::discovery::clear_repository_status_cache();
     crate::workspace::refresh::reset_refresh_scheduler();
     let _ = clear_startup_cache(app);
     crate::workspace::watcher::clear_repo_watchers();
