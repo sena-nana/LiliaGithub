@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { loadDiscoveryAssignedIssues } from "../../services/discovery";
-import { updateGitHubIssue } from "../../services/workspace";
-import { useDiscoverySection } from "../../composables/discovery/useDiscoverySection";
-import type { DiscoveryRepositoryInput } from "./types";
+import { updateGitHubIssue } from "../../services/workspace/client";
+import type { DiscoveryAggregateResult, DiscoveryAssignedIssue } from "../../services/discovery/types";
 import DiscoveryConfirmDialog from "./DiscoveryConfirmDialog.vue";
 import DiscoveryItemRow from "./DiscoveryItemRow.vue";
 import DiscoveryPanel from "./DiscoveryPanel.vue";
 import { cleanDiscoveryError, discoveryDate, discoveryProjectRoute } from "./display";
 
-const props = withDefaults(defineProps<{ repositories: readonly DiscoveryRepositoryInput[]; refreshToken?: number }>(), { refreshToken: 0 });
-type IssueItem = Awaited<ReturnType<typeof loadDiscoveryAssignedIssues>>["items"][number];
-const section = useDiscoverySection(props, (forceRefresh) =>
-  loadDiscoveryAssignedIssues(props.repositories.map((repo) => repo.fullName), { forceRefresh }));
-const items = computed(() => section.result.value?.items ?? []);
+const props = defineProps<{
+  result: DiscoveryAggregateResult<DiscoveryAssignedIssue> | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}>();
+type IssueItem = DiscoveryAssignedIssue;
+const items = computed(() => props.result?.items ?? []);
 const target = ref<{ item: IssueItem; reason: "completed" | "not_planned" } | null>(null);
 const pendingKey = ref<string | null>(null);
 const actionErrors = ref<Record<string, string | undefined>>({});
@@ -27,7 +28,7 @@ async function confirmClose() {
   try {
     await updateGitHubIssue(item.repoFullName, item.issue.number, { state: "closed", stateReason: reason });
     target.value = null;
-    await section.load(true);
+    await props.refresh();
   } catch (error) {
     actionErrors.value = { ...actionErrors.value, [key(item)]: cleanDiscoveryError(error) };
   } finally { pendingKey.value = null; }
@@ -35,7 +36,7 @@ async function confirmClose() {
 </script>
 
 <template>
-  <DiscoveryPanel title="被分配的 Issues" agent-id="discovery.issue" :loading="section.loading.value" :error="section.error.value" :item-count="items.length" :failure-count="section.result.value?.failures.length ?? 0" :truncated-count="section.result.value?.truncated ? 1 : 0" empty-message="当前批次没有分配给你的 Issue。" @retry="section.load(true)">
+  <DiscoveryPanel title="被分配的 Issues" agent-id="discovery.issue" :loading="loading" :error="error" :item-count="items.length" :failure-count="result?.failures.length ?? 0" :truncated-count="result?.truncated ? 1 : 0" empty-message="当前批次没有分配给你的 Issue。" @retry="refresh">
     <DiscoveryItemRow v-for="item in items" :key="key(item)" :title="`#${item.issue.number} ${item.issue.title}`" :repository="item.repoFullName" :meta="discoveryDate(item.issue.updatedAt)" :to="discoveryProjectRoute(item.repoFullName, 'issues', item.issue.number)" :agent-id="`discovery.issue.row.${key(item)}`" :tone="actionErrors[key(item)] ? 'error' : 'normal'">
       <template #actions>
         <button type="button" class="ghost" :disabled="pendingKey !== null" :data-agent-id="`discovery.issue.row.${key(item)}.complete`" @click="target = { item, reason: 'completed' }">完成</button>

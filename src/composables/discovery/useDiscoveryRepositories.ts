@@ -1,13 +1,16 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter, type LocationQueryValue } from "vue-router";
-import type { DiscoveryRepositoryInput } from "../../components/discovery/types";
+import type { DiscoveryRepositoryInput } from "../../services/discovery/types";
 import {
-  clearGitHubRepoCache,
   listGitHubRepoOwners,
   listGitHubRepos,
   preloadGitHubRepos,
-} from "../../services/workspace";
-import type { GitHubRepoOwner, GitHubRepoSummary, GitHubRepositoryScope } from "../../services/workspace";
+} from "../../services/workspace/client";
+import type {
+  GitHubRepoOwner,
+  GitHubRepoSummary,
+  GitHubRepositoryScope,
+} from "../../services/workspace/types";
 import { favoriteRepositories } from "../../utils/repoFavorites";
 import { githubRepositoryIdentityKey } from "../../utils/remoteRepo";
 import {
@@ -89,7 +92,6 @@ export function useDiscoveryRepositories() {
         if (force) refreshToken.value += 1;
         return;
       }
-      if (force) clearGitHubRepoCache();
       const page = await preloadGitHubRepos({ force, scope: scope.value });
       if (current !== generation) return;
       allRepos.value = dedupe(page.items);

@@ -1,6 +1,5 @@
 import { aggregateRepositories } from "./aggregate";
 import { getGitHubDiscoveryRepositoryStatus } from "./client";
-import { discoveryRequestLimiter } from "./concurrency";
 import type {
   DiscoveryAggregateResult,
   DiscoveryLoadOptions,
@@ -14,8 +13,7 @@ export function loadDiscoveryRepositoryStatuses(
   return aggregateRepositories(repoFullNames, async (repoFullName) => ({
     items: [{
       repoFullName,
-      status: await discoveryRequestLimiter.run(() =>
-        getGitHubDiscoveryRepositoryStatus(repoFullName, options)),
+      status: await getGitHubDiscoveryRepositoryStatus(repoFullName, options),
     }],
     truncated: false,
   }));

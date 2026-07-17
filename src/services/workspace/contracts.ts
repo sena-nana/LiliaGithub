@@ -102,6 +102,8 @@ import type {
 import type {
   DiscoveryPullRequestReviewRequest,
   DiscoveryRepositoryStatus,
+  DiscoveryScanRequest,
+  DiscoveryScanResult,
 } from "../discovery/types";
 import type { PersonalHomeNotification } from "../personalHome/types";
 import type {
@@ -234,6 +236,7 @@ export interface WorkspaceCommandContracts {
     RepoFullNameArg & ForceRefreshArg,
     DiscoveryRepositoryStatus
   >;
+  github_discovery_scan: CommandContract<{ request: DiscoveryScanRequest }, DiscoveryScanResult>;
   github_discovery_submit_pull_request_review: CommandContract<
     RepoFullNameArg & { pullNumber: number; request: DiscoveryPullRequestReviewRequest },
     void

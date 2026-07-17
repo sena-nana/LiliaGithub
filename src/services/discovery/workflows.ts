@@ -1,6 +1,5 @@
 import { listGitHubWorkflowRuns } from "../workspace/client";
 import { aggregateRepositories } from "./aggregate";
-import { discoveryRequestLimiter } from "./concurrency";
 import {
   compareDatesDescending,
   DISCOVERY_SOURCE_PAGE_SIZE,
@@ -14,11 +13,11 @@ export async function loadDiscoveryFailedWorkflowRuns(
 ): Promise<DiscoveryAggregateResult<DiscoveryFailedWorkflowRun>> {
   const now = options.now ?? new Date();
   const result = await aggregateRepositories(repoFullNames, async (repoFullName) => {
-    const runs = await discoveryRequestLimiter.run(() => listGitHubWorkflowRuns(
+    const runs = await listGitHubWorkflowRuns(
       repoFullName,
       DISCOVERY_SOURCE_PAGE_SIZE,
       { forceRefresh: options.forceRefresh },
-    ));
+    );
     return {
       items: runs
         .filter((run) => isRecentActionableWorkflowRun(run, now))

@@ -1,6 +1,5 @@
 import { listGitHubReleases } from "../workspace/client";
 import { aggregateRepositories } from "./aggregate";
-import { discoveryRequestLimiter } from "./concurrency";
 import {
   compareDatesDescending,
   DISCOVERY_SOURCE_PAGE_SIZE,
@@ -14,10 +13,10 @@ export async function loadDiscoveryRecentReleases(
 ): Promise<DiscoveryAggregateResult<DiscoveryRecentRelease>> {
   const now = options.now ?? new Date();
   const result = await aggregateRepositories(repoFullNames, async (repoFullName) => {
-    const releases = await discoveryRequestLimiter.run(() => listGitHubReleases(
+    const releases = await listGitHubReleases(
       repoFullName,
       { forceRefresh: options.forceRefresh },
-    ));
+    );
     return {
       items: releases
         .filter((release) => isRecentPublishedRelease(release, now))

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getGitHubDiscoveryRepositoryStatus,
+  scanGitHubDiscovery,
   submitGitHubDiscoveryPullRequestReview,
 } from "../src/services/discovery/client";
 
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   runtime: vi.fn(() => "tauri"),
   listRepos: vi.fn(),
   getManagement: vi.fn(),
+  call: vi.fn(),
 }));
 
 vi.mock("../src/tauri/runtime", () => ({ invoke: mocks.invoke }));
@@ -16,11 +18,14 @@ vi.mock("../src/services/workspace/client", () => ({
   resolveWorkspaceRuntimeForTests: mocks.runtime,
   listGitHubRepos: mocks.listRepos,
   getGitHubRepoManagement: mocks.getManagement,
+  call: mocks.call,
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.runtime.mockReturnValue("tauri");
+  mocks.call.mockImplementation((command, args, fallback) =>
+    mocks.runtime() === "tauri" ? mocks.invoke(command, args) : fallback());
 });
 
 describe("discovery command client", () => {
@@ -43,6 +48,16 @@ describe("discovery command client", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("github_discovery_get_repository_status", {
       repoFullName: "acme/repo",
       forceRefresh: true,
+    });
+  });
+
+  it("submits one normalized scan request for the repository batch", async () => {
+    mocks.invoke.mockResolvedValue({ pendingPullRequests: { items: [] } });
+
+    await scanGitHubDiscovery([" acme/one ", "ACME/ONE", "acme/two"], { forceRefresh: true });
+
+    expect(mocks.invoke).toHaveBeenCalledWith("github_discovery_scan", {
+      request: { repoFullNames: ["acme/one", "acme/two"], forceRefresh: true },
     });
   });
 

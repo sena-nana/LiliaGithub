@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import RepoDetailToolbar from "../components/repo/RepoDetailToolbar.vue";
-import RepoConflictDialog from "../components/repo/RepoConflictDialog.vue";
-import RepoRemoteSyncDialog from "../components/repo/RepoRemoteSyncDialog.vue";
-import RepoSyncResultDialog from "../components/repo/RepoSyncResultDialog.vue";
 import { useRepoDetailController } from "../composables/useRepoDetailController";
 import { createCachedAsyncComponent } from "../utils/asyncComponent";
 
 const repoProjectPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoProjectPanel.vue"));
 const repoStashPanelModule = createCachedAsyncComponent(() => import("../components/repo/RepoStashPanel.vue"));
+const repoConflictDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoConflictDialog.vue"));
+const repoRemoteSyncDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoRemoteSyncDialog.vue"));
+const repoSyncResultDialogModule = createCachedAsyncComponent(() => import("../components/repo/RepoSyncResultDialog.vue"));
 const RepoProjectPanel = repoProjectPanelModule.component;
 const RepoStashPanel = repoStashPanelModule.component;
+const RepoConflictDialog = repoConflictDialogModule.component;
+const RepoRemoteSyncDialog = repoRemoteSyncDialogModule.component;
+const RepoSyncResultDialog = repoSyncResultDialogModule.component;
 type RefreshablePageHandle = { refreshCurrentPage: () => Promise<void> };
 
 const {
@@ -318,6 +321,7 @@ async function refreshCurrentPage() {
     </div>
 
     <RepoRemoteSyncDialog
+      v-if="remoteSyncDialogOpen"
       :open="remoteSyncDialogOpen"
       :config="remoteSyncConfig"
       :loading="remoteSyncConfigLoading"
@@ -328,6 +332,7 @@ async function refreshCurrentPage() {
       @save="saveRemoteSyncPolicy"
     />
     <RepoSyncResultDialog
+      v-if="syncOperationResult"
       :result="syncOperationResult"
       :retrying="failedPushRetrying"
       @close="closeSyncResultDialog"
@@ -335,6 +340,7 @@ async function refreshCurrentPage() {
       @resolve-conflicts="openConflictDialogFromSyncResult"
     />
     <RepoConflictDialog
+      v-if="conflictDialogOpen"
       :open="conflictDialogOpen"
       :conflicts="conflicts"
       :action-running="actionRunning"

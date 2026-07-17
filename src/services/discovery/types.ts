@@ -4,7 +4,15 @@ import type {
   GitHubRelease,
   GitHubRepositoryPermissions,
   GitHubWorkflowRun,
+  GitHubRepoSummary,
+  RepoSummary,
 } from "../workspace/types";
+
+export interface DiscoveryRepositoryInput {
+  fullName: string;
+  remote: GitHubRepoSummary | null;
+  localRepo: RepoSummary | null;
+}
 
 export type DiscoveryPullRequestReason = "review_requested" | "assigned";
 
@@ -74,4 +82,17 @@ export interface DiscoveryPullRequestReviewRequest {
 
 export interface DiscoveryCommandOptions {
   forceRefresh?: boolean;
+}
+
+export interface DiscoveryScanRequest {
+  repoFullNames: string[];
+  forceRefresh?: boolean | null;
+}
+
+export interface DiscoveryScanResult {
+  pendingPullRequests: DiscoveryAggregateResult<DiscoveryPendingPullRequest>;
+  assignedIssues: DiscoveryAggregateResult<DiscoveryAssignedIssue>;
+  failedWorkflows: DiscoveryAggregateResult<DiscoveryFailedWorkflowRun>;
+  recentReleases: DiscoveryAggregateResult<DiscoveryRecentRelease>;
+  repositoryStatuses: DiscoveryAggregateResult<DiscoveryRepositoryStatusItem>;
 }

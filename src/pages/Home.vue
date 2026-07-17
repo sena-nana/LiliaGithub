@@ -1,19 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, reactive, ref, shallowRef, watch, type Component } from "vue";
+import { computed, nextTick, onUnmounted, reactive, ref, shallowRef, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import {
   AlertCircle,
   ArrowDownAZ,
-  ArrowRight,
   CalendarDays,
-  CheckCircle2,
-  CircleDot,
   Clock,
   FolderOpen,
   FolderGit2,
   GitBranchPlus,
-  GitMerge,
-  GitPullRequestArrow,
   Info,
   Plus,
   CloudDownload,
@@ -21,11 +16,9 @@ import {
   LoaderCircle,
   Radar,
   RefreshCw,
-  RotateCw,
   Search,
   ShieldCheck,
   Pin,
-  X,
 } from "@lucide/vue";
 import { useComponentEpoch } from "../composables/useComponentEpoch";
 import { useCloneRepoDialog } from "../composables/useCloneRepoDialog";
@@ -45,16 +38,7 @@ import {
   isGitHubBindingExpiredError,
   listGitHubRepos,
   listGitHubRepoOwners,
-  listGitHubAccountIssues,
-  listGitHubActionNotifications,
-  mergeGitHubPullRequest,
   preloadGitHubRepos,
-  updateGitHubIssue,
-  updateGitHubPullRequest,
-  type GitHubAccountIssueItem,
-  type GitHubActionNotification,
-  type GitHubIssue,
-  type GitHubPullRequest,
   type GitHubRepoSummary,
   type GitHubRepoOwner,
   type GitHubRepositoryScope,
@@ -82,18 +66,10 @@ import {
   favoriteRepositories,
   type FavoriteRepositoryEntry,
 } from "../utils/repoFavorites";
-import {
-  buildHomePendingItems,
-  type HomePendingItem,
-  type HomePendingRepoSource,
-} from "../utils/homePendingItems";
-import {
-  repoCalculatesHomeTimeline,
-  repoIncludedInHomeCodeStats,
-} from "../config/repoSettingsManifest";
+import { repoIncludedInHomeCodeStats } from "../config/repoSettingsManifest";
 import { representativeReposByGitHubFullName, representativeReposBySharedGroup } from "../utils/repoWorktree";
 import { githubRepositoryIdentityKey, remoteRepoRoute, shortcutFromGitHubRepo } from "../utils/remoteRepo";
-import { repoConflictRoute, repoProjectRoute, repoRoute } from "../utils/repoRoutes";
+import { repoConflictRoute, repoRoute } from "../utils/repoRoutes";
 import {
   buildLanguageOverviewFromRepos,
   buildProjectCodeOverviewFromRepos,
@@ -203,25 +179,6 @@ type HomeSearchResult = {
   { kind: "remote"; repo: GitHubRepoSummary }
 );
 
-type HomePendingLink = {
-  kind: "route";
-  to: string;
-} | {
-  kind: "none";
-};
-
-type HomePendingAction = "issue-complete" | "issue-close" | "pull-merge" | "pull-close";
-
-type HomePendingRow = {
-  item: HomePendingItem;
-  icon: Component;
-  repoFullName: string;
-  link: HomePendingLink;
-  actions: HomePendingAction[];
-  confirmingAction: HomePendingAction | null;
-  runningAction: HomePendingAction | null;
-};
-
 type HomeOverviewSettingsSnapshot = Pick<WorkspaceSettings, "repoSyncPreferences"> | null;
 
 type HomeOverviewSnapshot = {
@@ -230,17 +187,10 @@ type HomeOverviewSnapshot = {
   codeRepos: RepoSummary[];
   githubRepos: GitHubRepoSummary[];
   githubReposNextPage: number | null;
-  issuesByRepo: Record<string, GitHubIssue[] | undefined>;
-  pullRequestsByRepo: Record<string, GitHubPullRequest[] | undefined>;
-  actionNotificationsByRepo: Record<string, GitHubActionNotification[] | undefined>;
   syncIssuesByRepoId: Map<string, RepoSyncIssueDisplay>;
 };
 
-type ProjectTabRef = "issues" | "pulls" | "actions";
 const REPO_STATUS_RENDER_PAGE_SIZE = 60;
-const HOME_PENDING_ITEM_LIMIT = 20;
-const GITHUB_ACCOUNT_ISSUES_PER_PAGE = 100;
-const GITHUB_ACTION_NOTIFICATIONS_PER_PAGE = 50;
 const LEGACY_REPO_STATUS_SORT_STORAGE_KEY = "lilia-github.home.repoStatusSort.v1";
 const REPO_STATUS_SORT_STORAGE_PREFIX = "lilia-github.home.repoStatusSort.v2";
 const CONTRIBUTION_SETTINGS_ROUTE = {
@@ -294,14 +244,6 @@ const githubRepoOwners = ref<GitHubRepoOwner[]>([]);
 const githubRepoOwnersLoading = ref(false);
 const githubRepoOwnersError = ref<string | null>(null);
 const githubRepositoryScope = ref<GitHubRepositoryScope>(repositoryScopeFromRouteOrPreferences([]));
-const githubIssuesByRepo = ref<Record<string, GitHubIssue[] | undefined>>({});
-const githubPullRequestsByRepo = ref<Record<string, GitHubPullRequest[] | undefined>>({});
-const githubAccountIssuesLoading = ref(false);
-const githubActionNotificationsByRepo = ref<Record<string, GitHubActionNotification[] | undefined>>({});
-const githubActionNotificationsLoading = ref(false);
-const githubTimelineError = ref<string | null>(null);
-const homePendingRunningActions = ref<Record<string, HomePendingAction | undefined>>({});
-const homePendingArmedAction = ref<{ itemId: string; action: HomePendingAction } | null>(null);
 const cloningFullNames = reactive(new Set<string>());
 const repoStatusVisibleCount = ref(REPO_STATUS_RENDER_PAGE_SIZE);
 const repoStatusSort = ref<RepoStatusSortState>(
@@ -449,15 +391,6 @@ function cloneContributions(contributions: typeof workspace.state.githubContribu
   };
 }
 
-function cloneRecordArray<T>(source: Record<string, T[] | undefined>) {
-  return Object.fromEntries(
-    Object.entries(source).map(([key, values]) => [
-      key,
-      values?.map((value) => ({ ...value })) ?? [],
-    ]),
-  ) as Record<string, T[] | undefined>;
-}
-
 function buildCodeReposForOverview(settings: HomeOverviewSettingsSnapshot) {
   return representativeReposBySharedGroup(snapshotHomeCodeRepos(workspace.state.repos))
     .filter((repo) => repoIncludedInHomeCodeStats(settings, repo.id));
@@ -467,10 +400,7 @@ function buildHomeOverviewSnapshot(
   overrides: Partial<Pick<
     HomeOverviewSnapshot,
     "githubRepos" |
-    "githubReposNextPage" |
-    "issuesByRepo" |
-    "pullRequestsByRepo" |
-    "actionNotificationsByRepo"
+    "githubReposNextPage"
   >> = {},
 ): HomeOverviewSnapshot {
   const settings = cloneOverviewSettings(workspace.state.settings);
@@ -482,15 +412,6 @@ function buildHomeOverviewSnapshot(
     githubReposNextPage: overrides.githubReposNextPage ??
       homeOverviewSnapshot.value?.githubReposNextPage ??
       githubReposNextPage.value,
-    issuesByRepo: cloneRecordArray(overrides.issuesByRepo ?? homeOverviewSnapshot.value?.issuesByRepo ?? githubIssuesByRepo.value),
-    pullRequestsByRepo: cloneRecordArray(
-      overrides.pullRequestsByRepo ?? homeOverviewSnapshot.value?.pullRequestsByRepo ?? githubPullRequestsByRepo.value,
-    ),
-    actionNotificationsByRepo: cloneRecordArray(
-      overrides.actionNotificationsByRepo ??
-        homeOverviewSnapshot.value?.actionNotificationsByRepo ??
-        githubActionNotificationsByRepo.value,
-    ),
     syncIssuesByRepoId: new Map(repoSyncIssuesByRepoId()),
   };
 }
@@ -499,10 +420,7 @@ function commitHomeOverviewSnapshot(
   overrides: Partial<Pick<
     HomeOverviewSnapshot,
     "githubRepos" |
-    "githubReposNextPage" |
-    "issuesByRepo" |
-    "pullRequestsByRepo" |
-    "actionNotificationsByRepo"
+    "githubReposNextPage"
   >> = {},
 ) {
   homeOverviewSnapshot.value = buildHomeOverviewSnapshot(overrides);
@@ -512,9 +430,6 @@ function commitHomeOverviewSnapshotFromGitHubState() {
   commitHomeOverviewSnapshot({
     githubRepos: githubRepos.value,
     githubReposNextPage: githubReposNextPage.value,
-    issuesByRepo: githubIssuesByRepo.value,
-    pullRequestsByRepo: githubPullRequestsByRepo.value,
-    actionNotificationsByRepo: githubActionNotificationsByRepo.value,
   });
 }
 
@@ -558,9 +473,6 @@ const overviewStatusRepos = computed(() => homeOverviewSnapshot.value?.statusRep
 const overviewCodeRepos = computed(() => homeOverviewSnapshot.value?.codeRepos ?? []);
 const overviewGitHubRepos = computed(() => homeOverviewSnapshot.value?.githubRepos ?? []);
 const overviewGitHubReposNextPage = computed(() => homeOverviewSnapshot.value?.githubReposNextPage ?? null);
-const overviewIssuesByRepo = computed(() => homeOverviewSnapshot.value?.issuesByRepo ?? {});
-const overviewPullRequestsByRepo = computed(() => homeOverviewSnapshot.value?.pullRequestsByRepo ?? {});
-const overviewActionNotificationsByRepo = computed(() => homeOverviewSnapshot.value?.actionNotificationsByRepo ?? {});
 const overviewSyncIssuesByRepoId = computed(() =>
   homeOverviewSnapshot.value?.syncIssuesByRepoId ?? emptySyncIssuesByRepoId,
 );
@@ -697,60 +609,6 @@ const visibleRepoStatusRows = computed(() =>
 const hiddenRepoStatusRowCount = computed(() =>
   Math.max(0, repoStatusRows.value.length - visibleRepoStatusRows.value.length),
 );
-const homeTimelineRepos = computed(() => overviewGitHubRepos.value.filter((repo) => repoIncludedInHomeTimeline(repo)));
-const homeTimelineAccountIssuesPending = computed(() =>
-  homeTimelineRepos.value.some((repo) =>
-    overviewIssuesByRepo.value[repo.fullName] == null ||
-    overviewPullRequestsByRepo.value[repo.fullName] == null
-  ),
-);
-const homeTimelineActionNotificationsPending = computed(() =>
-  homeTimelineRepos.value.some((repo) => overviewActionNotificationsByRepo.value[repo.fullName] == null),
-);
-function hasHomeTimelineRepoData(repo: GitHubRepoSummary, localRepo: RepoSummary | null) {
-  const syncIssue = localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null;
-  return Boolean(
-    syncIssue ||
-    (localRepo && (localRepo.ahead > 0 || localRepo.behind > 0 || localRepo.conflictCount > 0)) ||
-    overviewIssuesByRepo.value[repo.fullName]?.length ||
-    overviewPullRequestsByRepo.value[repo.fullName]?.length ||
-    overviewActionNotificationsByRepo.value[repo.fullName]?.length
-  );
-}
-
-function buildGitHubTimelineRepoSourcesSnapshot(): HomePendingRepoSource[] {
-  return homeTimelineRepos.value
-    .filter((githubRepo) => {
-      const localRepo = localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null;
-      return hasHomeTimelineRepoData(githubRepo, localRepo);
-    })
-    .map((githubRepo) => {
-      return {
-        githubRepo,
-        localRepo: localRepoByGitHubFullName.value.get(githubRepositoryIdentityKey(githubRepo.fullName)) ?? null,
-        syncIssue: repoSyncIssueForTimeline(githubRepo),
-        issues: overviewIssuesByRepo.value[githubRepo.fullName] ?? [],
-        pullRequests: overviewPullRequestsByRepo.value[githubRepo.fullName] ?? [],
-        pullRequestChecksByPull: undefined,
-        actionNotifications: overviewActionNotificationsByRepo.value[githubRepo.fullName] ?? [],
-      };
-    });
-}
-
-const homePendingRows = computed<HomePendingRow[]>(() =>
-  buildHomePendingItems(buildGitHubTimelineRepoSourcesSnapshot(), HOME_PENDING_ITEM_LIMIT)
-    .map(toHomePendingRow),
-);
-const githubTimelineBusy = computed(() =>
-  githubReposLoading.value ||
-  githubAccountIssuesLoading.value ||
-  githubActionNotificationsLoading.value ||
-  homeTimelineAccountIssuesPending.value ||
-  homeTimelineActionNotificationsPending.value,
-);
-
-let githubPendingGeneration = 0;
-let githubAccountIssuesGeneration = 0;
 watch(
   () => repoStatusRows.value.length,
   (length, previousLength) => {
@@ -781,7 +639,6 @@ watch(
 );
 
 onUnmounted(() => {
-  githubPendingGeneration += 1;
   homeContributionRefreshGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
@@ -845,24 +702,6 @@ watch(
   { immediate: true },
 );
 
-function repoProjectPath(
-  repo: Pick<RepoSummary, "id">,
-  tab: ProjectTabRef,
-  focusId?: number | null,
-  releaseTag?: string | null,
-) {
-  return repoProjectRoute(repo.id, tab, focusId, null, releaseTag);
-}
-
-function remoteRepoProjectPath(
-  repo: Pick<GitHubRepoSummary, "fullName">,
-  tab: ProjectTabRef,
-  focusId?: number | null,
-  releaseTag?: string | null,
-) {
-  return repoProjectRoute(`github:${repo.fullName}`, tab, focusId, null, releaseTag);
-}
-
 function dedupeGitHubRepos(items: GitHubRepoSummary[]) {
   const seen = new Set<string>();
   const next: GitHubRepoSummary[] = [];
@@ -897,19 +736,15 @@ function restoreGitHubScopePage(scope: GitHubRepositoryScope) {
 function applyGitHubRepoPage(
   page: { items: GitHubRepoSummary[]; nextPage: number | null },
   append = false,
-  refreshIssues = false,
+  refresh = false,
 ) {
-  if (!append || refreshIssues) {
-    githubPendingGeneration += 1;
-  }
-  githubRepos.value = append ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
+  githubRepos.value = append && !refresh ? dedupeGitHubRepos([...githubRepos.value, ...page.items]) : page.items;
   githubReposNextPage.value = page.nextPage;
   githubReposError.value = null;
   githubReposLoaded.value = true;
   rememberGitHubScopePage();
   commitHomeOverviewSnapshotFromGitHubState();
   writeGitHubRepoOverviewSnapshot();
-  prepareGitHubTimeline(page.items, refreshIssues);
 }
 
 async function loadGitHubRepoOwners() {
@@ -1002,8 +837,6 @@ function currentGitHubBindingIdentity() {
 function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } = {}) {
   homeOverviewInitialized = false;
   homeContributionRefreshGeneration += 1;
-  githubPendingGeneration += 1;
-  githubAccountIssuesGeneration += 1;
   githubRepoStatusLoader.invalidate();
   githubRepoMoreLoader.invalidate();
   githubRepoOwnersLoader.invalidate();
@@ -1019,12 +852,6 @@ function resetHomeGitHubBindingState(options: { clearAccountCaches?: boolean } =
   githubRepoOwnersError.value = null;
   githubScopePages.clear();
   githubRepositoryScope.value = preferredRepositoryScope([]);
-  githubIssuesByRepo.value = {};
-  githubPullRequestsByRepo.value = {};
-  githubActionNotificationsByRepo.value = {};
-  githubAccountIssuesLoading.value = false;
-  githubActionNotificationsLoading.value = false;
-  githubTimelineError.value = null;
   homeOverviewSnapshot.value = null;
   homeContributionSnapshot.value = null;
   repoStatusVisibleCount.value = REPO_STATUS_RENDER_PAGE_SIZE;
@@ -1045,13 +872,9 @@ function restoreGitHubOverviewSnapshot() {
   githubRepos.value = snapshot.repos;
   githubReposNextPage.value = snapshot.nextPage;
   githubReposLoaded.value = true;
-  githubIssuesByRepo.value = snapshot.issuesByRepo;
-  githubPullRequestsByRepo.value = snapshot.pullRequestsByRepo;
-  githubActionNotificationsByRepo.value = snapshot.actionNotificationsByRepo;
   githubReposError.value = null;
   commitHomeOverviewSnapshotFromGitHubState();
   rememberGitHubScopePage();
-  prepareGitHubTimeline(snapshot.repos);
   return snapshot;
 }
 
@@ -1073,243 +896,9 @@ function writeGitHubRepoOverviewSnapshot() {
 
 function githubRepoLoadErrorMessage(err: unknown) {
   if (isGitHubBindingExpiredError(err)) {
-    clearGitHubPendingItems();
     return "GitHub 绑定已失效，请重新绑定后再加载账号仓库。";
   }
   return `GitHub 仓库列表加载失败：${githubUserFacingError(err)}`;
-}
-
-async function loadHomePendingAccountIssues(repos: GitHubRepoSummary[], refresh = false) {
-  if (!repos.length) return;
-  const alreadyLoaded = repos.every((repo) =>
-    githubIssuesByRepo.value[repo.fullName] != null &&
-    githubPullRequestsByRepo.value[repo.fullName] != null
-  );
-  if (!refresh && alreadyLoaded) return;
-
-  const generation = githubPendingGeneration;
-  const accountIssuesGeneration = githubAccountIssuesGeneration;
-  const isCurrent = () =>
-    generation === githubPendingGeneration && accountIssuesGeneration === githubAccountIssuesGeneration;
-  githubAccountIssuesLoading.value = true;
-  githubTimelineError.value = null;
-  try {
-    const items = await listGitHubAccountIssues({
-      state: "open",
-      perPage: GITHUB_ACCOUNT_ISSUES_PER_PAGE,
-      sort: "updated",
-      direction: "desc",
-    }, { forceRefresh: refresh });
-    if (!isCurrent()) return;
-    const grouped = groupAccountIssuesByRepo(items, repos);
-    githubIssuesByRepo.value = replaceReposByFullName(githubIssuesByRepo.value, repos, grouped.issues);
-    githubPullRequestsByRepo.value = replaceReposByFullName(
-      githubPullRequestsByRepo.value,
-      repos,
-      grouped.pullRequests,
-    );
-    commitHomeOverviewSnapshotFromGitHubState();
-  } catch (err) {
-    if (isGitHubBindingExpiredError(err)) {
-      clearGitHubPendingItems();
-      return;
-    }
-    if (isCurrent()) {
-      githubTimelineError.value = `Issue / PR 加载失败：${githubUserFacingError(err)}`;
-    }
-  } finally {
-    if (isCurrent()) {
-      githubAccountIssuesLoading.value = false;
-    }
-  }
-}
-
-async function loadHomePendingActionNotifications(repos: GitHubRepoSummary[], refresh = false) {
-  if (!repos.length) return;
-  const alreadyLoaded = repos.every((repo) => githubActionNotificationsByRepo.value[repo.fullName] != null);
-  if (!refresh && alreadyLoaded) return;
-
-  const generation = githubPendingGeneration;
-  githubActionNotificationsLoading.value = true;
-  githubTimelineError.value = null;
-  try {
-    const notifications = await listGitHubActionNotifications(
-      GITHUB_ACTION_NOTIFICATIONS_PER_PAGE,
-      { forceRefresh: refresh },
-    );
-    if (generation !== githubPendingGeneration) return;
-    githubActionNotificationsByRepo.value = replaceReposByFullName(
-      githubActionNotificationsByRepo.value,
-      repos,
-      groupActionNotificationsByRepo(notifications, repos),
-    );
-    commitHomeOverviewSnapshotFromGitHubState();
-  } catch (err) {
-    if (isGitHubBindingExpiredError(err)) {
-      clearGitHubPendingItems();
-      return;
-    }
-    if (generation === githubPendingGeneration) {
-      githubTimelineError.value = `Actions 通知加载失败：${githubUserFacingError(err)}`;
-    }
-  } finally {
-    if (generation === githubPendingGeneration) {
-      githubActionNotificationsLoading.value = false;
-    }
-  }
-}
-
-function groupAccountIssuesByRepo(items: readonly GitHubAccountIssueItem[], repos: readonly GitHubRepoSummary[]) {
-  const repoNames = new Set(repos.map((repo) => repo.fullName));
-  const issues: Record<string, GitHubIssue[]> = {};
-  const pullRequests: Record<string, GitHubPullRequest[]> = {};
-  for (const item of items) {
-    if (!repoNames.has(item.repoFullName)) continue;
-    if (item.pullRequest) {
-      (pullRequests[item.repoFullName] ??= []).push(accountIssueItemToPullRequest(item));
-    } else {
-      (issues[item.repoFullName] ??= []).push(cloneGitHubIssue(item.issue));
-    }
-  }
-  return { issues, pullRequests };
-}
-
-function groupActionNotificationsByRepo(
-  notifications: readonly GitHubActionNotification[],
-  repos: readonly GitHubRepoSummary[],
-) {
-  const repoNames = new Set(repos.map((repo) => repo.fullName));
-  const byRepo: Record<string, GitHubActionNotification[]> = {};
-  for (const notification of notifications) {
-    if (!repoNames.has(notification.repoFullName)) continue;
-    (byRepo[notification.repoFullName] ??= []).push({ ...notification });
-  }
-  return byRepo;
-}
-
-function replaceReposByFullName<T>(
-  current: Record<string, T[] | undefined>,
-  repos: readonly GitHubRepoSummary[],
-  values: Record<string, T[] | undefined>,
-) {
-  const next = { ...current };
-  for (const repo of repos) {
-    next[repo.fullName] = values[repo.fullName] ?? [];
-  }
-  return next;
-}
-
-function accountIssueItemToPullRequest(item: GitHubAccountIssueItem): GitHubPullRequest {
-  const issue = cloneGitHubIssue(item.issue);
-  return {
-    number: issue.number,
-    title: issue.title,
-    state: issue.state,
-    draft: false,
-    body: issue.body,
-    labels: issue.labels,
-    assignees: issue.assignees,
-    author: issue.author ?? "",
-    milestone: issue.milestone ?? null,
-    comments: issue.comments ?? 0,
-    projectItems: issue.projectItems ?? [],
-    developmentItems: issue.developmentItems ?? [],
-    htmlUrl: issue.htmlUrl,
-    updatedAt: issue.updatedAt,
-    createdAt: issue.createdAt,
-    baseBranch: "",
-    headBranch: "",
-    merged: false,
-    mergeable: null,
-    mergeableState: null,
-  };
-}
-
-function cloneGitHubIssue(issue: GitHubIssue): GitHubIssue {
-  return {
-    ...issue,
-    labels: [...issue.labels],
-    assignees: [...issue.assignees],
-    milestone: issue.milestone ? { ...issue.milestone } : null,
-    projectItems: issue.projectItems?.map((project) => ({ ...project })) ?? [],
-    developmentItems: issue.developmentItems?.map((item) => ({ ...item })) ?? [],
-  };
-}
-
-function cloneGitHubPullRequest(pullRequest: GitHubPullRequest): GitHubPullRequest {
-  return {
-    ...pullRequest,
-    labels: [...pullRequest.labels],
-    assignees: [...pullRequest.assignees],
-    milestone: pullRequest.milestone ? { ...pullRequest.milestone } : null,
-    projectItems: pullRequest.projectItems?.map((project) => ({ ...project })) ?? [],
-    reviewers: pullRequest.reviewers?.map((reviewer) => ({ ...reviewer })) ?? [],
-    developmentItems: pullRequest.developmentItems?.map((item) => ({ ...item })) ?? [],
-  };
-}
-
-function clearGitHubPendingItems() {
-  githubAccountIssuesGeneration += 1;
-  githubAccountIssuesLoading.value = false;
-  githubActionNotificationsLoading.value = false;
-  githubTimelineError.value = null;
-  githubIssuesByRepo.value = {};
-  githubPullRequestsByRepo.value = {};
-  githubActionNotificationsByRepo.value = {};
-  commitHomeOverviewSnapshotFromGitHubState();
-  clearHomeGitHubOverviewSnapshot();
-}
-
-function prepareGitHubTimeline(repos: GitHubRepoSummary[], refresh = false) {
-  const timelineRepos = repos.filter((repo) => repoIncludedInHomeTimeline(repo));
-  const shouldLoadIssues = shouldLoadHomePendingAccountIssues(timelineRepos, refresh);
-  const shouldLoadNotifications = shouldLoadHomePendingActionNotifications(timelineRepos, refresh);
-  if (!shouldLoadIssues && !shouldLoadNotifications) {
-    githubAccountIssuesLoading.value = false;
-    githubActionNotificationsLoading.value = false;
-    return;
-  }
-
-  const generation = githubPendingGeneration;
-  githubTimelineError.value = null;
-  if (shouldLoadIssues) {
-    githubAccountIssuesLoading.value = true;
-  } else {
-    githubAccountIssuesLoading.value = false;
-  }
-  if (shouldLoadNotifications) {
-    githubActionNotificationsLoading.value = true;
-  } else {
-    githubActionNotificationsLoading.value = false;
-  }
-  if (generation !== githubPendingGeneration) return;
-  if (shouldLoadIssues) void loadHomePendingAccountIssues(timelineRepos, refresh);
-  if (shouldLoadNotifications) void loadHomePendingActionNotifications(timelineRepos, refresh);
-}
-
-function retryHomePendingItems() {
-  prepareGitHubTimeline(homeTimelineRepos.value, true);
-}
-
-function shouldLoadHomePendingAccountIssues(repos: readonly GitHubRepoSummary[], refresh = false) {
-  if (!repos.length) return false;
-  if (refresh) return true;
-  return repos.some((repo) =>
-    githubIssuesByRepo.value[repo.fullName] == null ||
-    githubPullRequestsByRepo.value[repo.fullName] == null
-  );
-}
-
-function shouldLoadHomePendingActionNotifications(repos: readonly GitHubRepoSummary[], refresh = false) {
-  if (!repos.length) return false;
-  if (refresh) return true;
-  return repos.some((repo) => githubActionNotificationsByRepo.value[repo.fullName] == null);
-}
-
-function repoIncludedInHomeTimeline(repo: GitHubRepoSummary) {
-  if (repo.disabled) return false;
-  const localRepo = localRepoByGitHubFullName.value.get(repo.fullName) ?? null;
-  return !localRepo || repoCalculatesHomeTimeline(homeOverviewSnapshot.value?.settings ?? null, localRepo.id);
 }
 
 async function loadGitHubRepoStatus(options: { force?: boolean } = {}) {
@@ -1404,233 +993,6 @@ function repoAction(repo: RepoSummary): RepoAction | null {
     };
   }
   return null;
-}
-
-function repoSyncIssueForTimeline(githubRepo: GitHubRepoSummary) {
-  const localRepo = localRepoByGitHubFullName.value.get(githubRepo.fullName) ?? null;
-  return localRepo ? overviewSyncIssuesByRepoId.value.get(localRepo.id) ?? null : null;
-}
-
-function toHomePendingRow(item: HomePendingItem): HomePendingRow {
-  const armedAction = homePendingArmedAction.value;
-  return {
-    item,
-    icon: homePendingItemIcon(item.kind),
-    repoFullName: homePendingItemRepoFullName(item),
-    link: homePendingItemLink(item),
-    actions: homePendingActions(item),
-    confirmingAction: armedAction?.itemId === item.id ? armedAction.action : null,
-    runningAction: homePendingRunningActions.value[item.id] ?? null,
-  };
-}
-
-function homePendingItemRepoFullName(item: HomePendingItem) {
-  const target = item.target;
-  if (target.kind === "repo") return item.summary;
-  return target.repoFullName;
-}
-
-function homePendingItemLink(item: HomePendingItem): HomePendingLink {
-  const target = item.target;
-  if (target.kind === "repo") {
-    const href = target.view === "conflicts"
-      ? repoConflictRoute(target.repoId)
-      : repoRoute(target.repoId);
-    return homePendingRouteLink(href);
-  }
-  if (target.kind === "issue") {
-    const href = target.localRepoId
-      ? repoProjectPath({ id: target.localRepoId }, "issues", target.number)
-      : remoteRepoProjectPath({ fullName: target.repoFullName }, "issues", target.number);
-    return homePendingRouteLink(href);
-  }
-  if (target.kind === "pull") {
-    const href = target.localRepoId
-      ? repoProjectPath({ id: target.localRepoId }, "pulls", target.number)
-      : remoteRepoProjectPath({ fullName: target.repoFullName }, "pulls", target.number);
-    return homePendingRouteLink(href);
-  }
-  const href = target.localRepoId
-    ? repoProjectPath({ id: target.localRepoId }, "actions", target.runId)
-    : remoteRepoProjectPath({ fullName: target.repoFullName }, "actions", target.runId);
-  return homePendingRouteLink(href);
-}
-
-function homePendingItemIcon(kind: HomePendingItem["kind"]) {
-  if (kind === "issue") return CircleDot;
-  if (kind === "pull") return GitPullRequestArrow;
-  if (kind === "workflow") return RotateCw;
-  return RefreshCw;
-}
-
-function homePendingRouteLink(href: string | undefined): HomePendingLink {
-  if (!href) return { kind: "none" };
-  return { kind: "route", to: href };
-}
-
-function homePendingItemHref(link: HomePendingLink) {
-  if (link.kind === "route") return router.resolve(link.to).href;
-  return undefined;
-}
-
-async function openHomePendingLink(event: MouseEvent | KeyboardEvent, link: HomePendingLink) {
-  if (link.kind !== "route" || event.defaultPrevented) return;
-  if ("button" in event && event.button !== 0) return;
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  event.preventDefault();
-  await router.push(link.to);
-}
-
-async function openHomePendingLinkFromKeyboard(event: KeyboardEvent, link: HomePendingLink) {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  await openHomePendingLink(event, link);
-}
-
-function homePendingActionLabel(action: HomePendingAction) {
-  if (action === "issue-complete") return "完成";
-  if (action === "issue-close") return "关闭";
-  if (action === "pull-merge") return "合并";
-  return "关闭";
-}
-
-function homePendingButtonLabel(row: HomePendingRow, action: HomePendingAction) {
-  const prefix = row.runningAction === action ? "正在" : row.confirmingAction === action ? "确认" : "";
-  return `${prefix}${homePendingActionLabel(action)}`;
-}
-
-function homePendingActionIcon(action: HomePendingAction) {
-  if (action === "issue-complete") return CheckCircle2;
-  if (action === "pull-merge") return GitMerge;
-  return X;
-}
-
-function homePendingActions(item: HomePendingItem): HomePendingAction[] {
-  if (item.target.kind === "issue") return ["issue-complete", "issue-close"];
-  if (item.target.kind === "pull") return ["pull-merge", "pull-close"];
-  return [];
-}
-
-function homePendingActionAgentId(item: HomePendingItem, action: HomePendingAction) {
-  return `home.pending.${item.id}.${action}`;
-}
-
-function homePendingItemAgentId(item: HomePendingItem) {
-  return item.target.kind === "repo" && item.target.view === "conflicts"
-    ? `home.pending.conflict.${item.target.repoId}`
-    : `home.pending.${item.id}`;
-}
-
-async function requestHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
-  if (homePendingRunningActions.value[item.id]) return;
-  const armedAction = homePendingArmedAction.value;
-  if (armedAction?.itemId === item.id && armedAction.action === action) {
-    homePendingArmedAction.value = null;
-    await runHomePendingAction(item, action);
-    return;
-  }
-  homePendingArmedAction.value = { itemId: item.id, action };
-}
-
-function closeHomePendingConfirm() {
-  homePendingArmedAction.value = null;
-}
-
-function onHomePendingConfirmPointer(event: PointerEvent) {
-  const target = event.target;
-  if (target instanceof Element && target.closest(".home-pending-action.is-confirming")) return;
-  closeHomePendingConfirm();
-}
-
-function onHomePendingConfirmKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape" || !homePendingArmedAction.value) return;
-  closeHomePendingConfirm();
-  event.stopPropagation();
-}
-
-watch(homePendingArmedAction, (value, _, onCleanup) => {
-  if (!value) return;
-  document.addEventListener("pointerdown", onHomePendingConfirmPointer, true);
-  document.addEventListener("keydown", onHomePendingConfirmKeydown);
-  onCleanup(() => {
-    document.removeEventListener("pointerdown", onHomePendingConfirmPointer, true);
-    document.removeEventListener("keydown", onHomePendingConfirmKeydown);
-  });
-});
-
-async function runHomePendingAction(item: HomePendingItem, action: HomePendingAction) {
-  if (homePendingRunningActions.value[item.id]) return;
-  homePendingRunningActions.value = {
-    ...homePendingRunningActions.value,
-    [item.id]: action,
-  };
-  try {
-    if (action === "issue-complete" || action === "issue-close") {
-      await updateHomePendingIssue(item, action);
-    } else {
-      await updateHomePendingPullRequest(item, action);
-    }
-  } catch {
-    return;
-  } finally {
-    if (homePendingRunningActions.value[item.id] === action) {
-      const { [item.id]: _removed, ...next } = homePendingRunningActions.value;
-      homePendingRunningActions.value = next;
-    }
-  }
-}
-
-async function updateHomePendingIssue(item: HomePendingItem, action: Extract<HomePendingAction, "issue-complete" | "issue-close">) {
-  const target = item.target;
-  if (target.kind !== "issue") return;
-  const updated = await updateGitHubIssue(target.repoFullName, target.number, {
-    state: "closed",
-    stateReason: action === "issue-complete" ? "completed" : "not_planned",
-  });
-  githubAccountIssuesGeneration += 1;
-  replaceHomePendingIssue(target.repoFullName, updated);
-  await loadHomePendingAccountIssues(homeTimelineRepos.value, true);
-}
-
-async function updateHomePendingPullRequest(item: HomePendingItem, action: Extract<HomePendingAction, "pull-merge" | "pull-close">) {
-  const target = item.target;
-  if (target.kind !== "pull") return;
-  const updated = action === "pull-merge"
-    ? await mergeGitHubPullRequest(target.repoFullName, target.number, { method: "merge" })
-    : await updateGitHubPullRequest(target.repoFullName, target.number, { state: "closed" });
-  githubAccountIssuesGeneration += 1;
-  replaceHomePendingPullRequest(target.repoFullName, updated);
-  await loadHomePendingAccountIssues(homeTimelineRepos.value, true);
-}
-
-function replaceHomePendingIssue(repoFullName: string, updated: GitHubIssue) {
-  const current = githubIssuesByRepo.value[repoFullName] ?? overviewIssuesByRepo.value[repoFullName] ?? [];
-  const nextItems = updated.state === "open"
-    ? upsertByNumber(current, cloneGitHubIssue(updated))
-    : current.filter((item) => item.number !== updated.number);
-  githubIssuesByRepo.value = {
-    ...githubIssuesByRepo.value,
-    [repoFullName]: nextItems,
-  };
-  commitHomeOverviewSnapshotFromGitHubState();
-}
-
-function replaceHomePendingPullRequest(repoFullName: string, updated: GitHubPullRequest) {
-  const current = githubPullRequestsByRepo.value[repoFullName] ?? overviewPullRequestsByRepo.value[repoFullName] ?? [];
-  const visible = updated.state === "open" && !updated.merged && !updated.draft;
-  const nextItems = visible
-    ? upsertByNumber(current, cloneGitHubPullRequest(updated))
-    : current.filter((item) => item.number !== updated.number);
-  githubPullRequestsByRepo.value = {
-    ...githubPullRequestsByRepo.value,
-    [repoFullName]: nextItems,
-  };
-  commitHomeOverviewSnapshotFromGitHubState();
-}
-
-function upsertByNumber<T extends { number: number }>(items: readonly T[], updated: T): T[] {
-  const existing = items.some((item) => item.number === updated.number);
-  if (existing) return items.map((item) => item.number === updated.number ? updated : item);
-  return [updated, ...items];
 }
 
 function valueMatchesHomeSearch(value: string | null | undefined, query: string) {
@@ -2404,130 +1766,6 @@ function bulkOperationDescription(operation: BulkOperation) {
       </div>
 
       <div class="repo-overview-grid">
-        <div class="card github-timeline-card">
-          <div class="repo-status-heading">
-            <h2>
-              待处理事项
-              <LoaderCircle
-                v-if="githubTimelineBusy"
-                :size="13"
-                aria-hidden="true"
-                class="card-title-loader"
-              />
-            </h2>
-          </div>
-          <div class="home-scroll-card__body">
-            <p
-              v-if="githubTimelineError"
-              class="repo-status-error"
-            >
-              {{ githubTimelineError }}
-              <button type="button" class="ghost" :disabled="githubAccountIssuesLoading || githubActionNotificationsLoading" @click="retryHomePendingItems">
-                重试
-              </button>
-            </p>
-            <p
-              v-if="githubTimelineBusy && !homePendingRows.length && !githubTimelineError"
-              class="repo-status-empty"
-            >
-              正在加载待处理事项...
-            </p>
-            <p v-else-if="!homePendingRows.length && !githubTimelineError" class="repo-status-empty">暂无待处理事项</p>
-            <ol
-              v-if="homePendingRows.length"
-              class="home-pending-list"
-              aria-label="待处理事项列表"
-              v-memo="[homePendingRows]"
-            >
-              <li
-                v-for="row in homePendingRows"
-                :key="row.item.id"
-                class="home-pending-row"
-                :class="{
-                  'has-hover-controls': row.actions.length || row.link.kind !== 'none',
-                  'is-clickable': row.link.kind !== 'none',
-                }"
-                :role="row.link.kind === 'route' ? 'link' : undefined"
-                :data-agent-id="row.link.kind === 'route' ? homePendingItemAgentId(row.item) : undefined"
-                :aria-label="`${row.item.title} ${row.item.detail}，${row.repoFullName}`"
-                :tabindex="row.link.kind === 'route' ? 0 : undefined"
-                @click="openHomePendingLink($event, row.link)"
-                @keydown.self="openHomePendingLinkFromKeyboard($event, row.link)"
-              >
-                <span class="home-pending-row__icon" :class="row.item.tone ? `is-${row.item.tone}` : null" aria-hidden="true">
-                  <component :is="row.icon" :size="14" aria-hidden="true" />
-                </span>
-                <span class="home-pending-row__main">
-                  <strong>{{ row.item.title }}</strong>
-                  <span>{{ row.item.detail }}</span>
-                </span>
-                <span class="home-pending-row__side">
-                  <span
-                    class="home-pending-row__repo"
-                    :title="row.repoFullName"
-                  >
-                    {{ row.repoFullName }}
-                  </span>
-                  <span
-                    v-if="row.actions.length || row.link.kind !== 'none'"
-                    class="home-pending-row__actions"
-                    :class="{
-                      'is-expanded': Boolean(row.confirmingAction || row.runningAction),
-                    }"
-                    aria-label="快捷操作"
-                  >
-                    <button
-                      v-for="action in row.actions"
-                      v-show="!row.runningAction || row.runningAction === action"
-                      :key="action"
-                      type="button"
-                      class="home-pending-action"
-                      :class="{
-                        'home-pending-action--ok': action === 'issue-complete' || action === 'pull-merge',
-                        'home-pending-action--danger': action === 'issue-close' || action === 'pull-close',
-                        'is-confirming': row.confirmingAction === action,
-                        'is-expanded': row.confirmingAction === action || row.runningAction === action,
-                      }"
-                      :aria-label="homePendingButtonLabel(row, action)"
-                      :title="homePendingButtonLabel(row, action)"
-                      :data-agent-id="`${homePendingActionAgentId(row.item, action)}${row.confirmingAction === action ? '.confirm' : ''}`"
-                      :disabled="Boolean(row.runningAction)"
-                      @click.stop="requestHomePendingAction(row.item, action)"
-                    >
-                      <LoaderCircle
-                        v-if="row.runningAction === action"
-                        :size="11"
-                        aria-hidden="true"
-                        class="sb-spin"
-                      />
-                      <component
-                        v-else
-                        :is="homePendingActionIcon(action)"
-                        :size="row.confirmingAction === action ? 12 : 13"
-                        aria-hidden="true"
-                      />
-                      <span v-if="row.runningAction === action || row.confirmingAction === action">
-                        {{ homePendingButtonLabel(row, action) }}
-                      </span>
-                    </button>
-                    <a
-                      v-if="row.link.kind !== 'none'"
-                      class="home-pending-row__jump"
-                      :href="homePendingItemHref(row.link)"
-                      :aria-label="`打开 ${row.item.title}`"
-                      title="打开"
-                      :data-agent-id="`${homePendingItemAgentId(row.item)}.open`"
-                      @click.stop="openHomePendingLink($event, row.link)"
-                    >
-                      <ArrowRight :size="13" aria-hidden="true" />
-                    </a>
-                  </span>
-                </span>
-              </li>
-            </ol>
-          </div>
-        </div>
-
         <div class="card repo-status-card">
           <div class="repo-status-heading">
             <h2>
@@ -2541,7 +1779,7 @@ function bulkOperationDescription(operation: BulkOperation) {
                 :options="homeRepositoryScopeOptions"
                 :disabled="githubReposLoading || githubRepoOwnersLoading"
                 placement="bottom"
-                button-class="overview-actions__btn repo-status-sort-button"
+                button-class="repo-status-sort-button"
                 agent-id="home.repo-status.scope"
               />
               <button
@@ -3216,7 +2454,7 @@ function bulkOperationDescription(operation: BulkOperation) {
 
 .repo-overview-grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 12px;
   height: 100%;
@@ -3225,7 +2463,6 @@ function bulkOperationDescription(operation: BulkOperation) {
   overflow: hidden;
 }
 
-.github-timeline-card,
 .repo-status-card {
   display: flex;
   flex-direction: column;
@@ -3248,198 +2485,6 @@ function bulkOperationDescription(operation: BulkOperation) {
   overscroll-behavior: contain;
   padding-right: 2px;
   contain: layout paint style;
-}
-
-.home-pending-list {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.home-pending-row {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) minmax(104px, 32%);
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  min-height: 30px;
-  padding: 2px 4px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.home-pending-row.is-clickable {
-  cursor: pointer;
-}
-
-.home-pending-row:hover {
-  background: var(--bg-hover);
-}
-
-.home-pending-row:focus-visible,
-.home-pending-row:focus-within {
-  outline: 0;
-  border-color: var(--border-strong);
-}
-
-.home-pending-row__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  color: var(--accent);
-}
-
-.home-pending-row__icon.is-error {
-  color: var(--err);
-}
-
-.home-pending-row__icon.is-warn {
-  color: var(--warn);
-}
-
-.home-pending-row__icon.is-ok {
-  color: var(--ok);
-}
-
-.home-pending-row__icon.is-muted {
-  color: var(--text-muted);
-}
-
-.home-pending-row__main {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.home-pending-row__main strong {
-  flex: 0 0 auto;
-  color: var(--accent);
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.home-pending-row__main span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.home-pending-row__side {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 0;
-  height: 24px;
-}
-
-.home-pending-row__repo {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: opacity 0.12s ease;
-}
-
-.home-pending-row__repo {
-  color: var(--text-faint);
-  font-weight: 600;
-}
-
-.home-pending-row__actions {
-  position: absolute;
-  inset: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease, visibility 0.12s ease;
-}
-
-.home-pending-row.has-hover-controls:hover .home-pending-row__repo,
-.home-pending-row.has-hover-controls:focus-within .home-pending-row__repo {
-  opacity: 0;
-}
-
-.home-pending-row.has-hover-controls:hover .home-pending-row__actions,
-.home-pending-row.has-hover-controls:focus-within .home-pending-row__actions {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.home-pending-action,
-.home-pending-row__jump {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 0;
-  border-radius: 6px;
-  line-height: 1;
-  text-decoration: none;
-  background: transparent;
-}
-
-.home-pending-action {
-  padding: 0;
-  color: var(--text);
-}
-
-.home-pending-action--ok {
-  --home-pending-action-state-bg: var(--ok-soft);
-  color: var(--ok);
-}
-
-.home-pending-action--danger {
-  --home-pending-action-state-bg: var(--err-soft);
-  color: var(--err);
-}
-
-.home-pending-row__actions.is-expanded .home-pending-row__jump {
-  display: none;
-}
-
-.home-pending-action:hover,
-.home-pending-action:focus-visible,
-.home-pending-row__jump:hover,
-.home-pending-row__jump:focus-visible {
-  background: var(--bg-hover);
-  outline: 0;
-}
-
-.home-pending-action.is-expanded {
-  width: auto;
-  min-width: 68px;
-  gap: 4px;
-  padding: 0 7px;
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
-  background: var(--home-pending-action-state-bg);
-}
-
-.home-pending-action:disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
-.home-pending-row__jump {
-  color: var(--text-muted);
 }
 
 .repo-status-heading {
@@ -3500,11 +2545,18 @@ function bulkOperationDescription(operation: BulkOperation) {
 }
 
 .repo-status-heading__tools :deep(.dd__button) {
+  width: auto;
   max-width: min(160px, 34vw);
+  height: 22px;
+  min-height: 22px;
+  padding: 0 5px;
   border: 0;
   background: transparent;
   color: var(--text-muted);
   gap: 3px;
+  font-size: 12px;
+  line-height: 22px;
+  font-weight: 700;
 }
 
 .repo-status-heading__tools :deep(.dd__button:hover:not(:disabled)),
@@ -3911,11 +2963,6 @@ function bulkOperationDescription(operation: BulkOperation) {
     gap: 4px 8px;
     align-items: center;
     padding: 6px;
-  }
-
-  .home-pending-row {
-    grid-template-columns: 18px minmax(0, 1fr) minmax(100px, 30%);
-    gap: 5px;
   }
 
   .repo-status-row__name {

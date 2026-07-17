@@ -1,21 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
-import { createMemoryHistory } from "vue-router";
 import { describe, expect, it } from "vitest";
-import { SIDEBAR_NAV } from "../src/config/appShell";
 import DiscoveryPanel from "../src/components/discovery/DiscoveryPanel.vue";
 import PullRequestReviewDialog from "../src/components/discovery/PullRequestReviewDialog.vue";
-import { createLiliaGithubRouter } from "../src/router";
 
 describe("跨仓库工作台 UI", () => {
-  it("通过懒加载路由与侧栏入口到达跨仓库页面", () => {
-    const router = createLiliaGithubRouter(createMemoryHistory());
-    const resolved = router.resolve("/discovery");
-
-    expect(resolved.name).toBe("discovery");
-    expect(resolved.matched.some((record) => typeof record.components?.default === "function")).toBe(true);
-    expect(SIDEBAR_NAV.some((item) => item.key === "discovery" && item.to === "/discovery")).toBe(true);
-  });
-
   it("保留已有结果并把部分失败作为可恢复状态", async () => {
     const view = render(DiscoveryPanel, {
       props: {

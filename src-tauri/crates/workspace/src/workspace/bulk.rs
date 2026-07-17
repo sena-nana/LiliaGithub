@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::runtime::WorkspaceContext as AppHandle;
 use crate::workspace::operations::{
-    cancel_pending_operations, run_operation, submit_operation, OperationKind, OperationSpec,
-    OperationTicket,
+    run_operation, submit_operation, OperationKind, OperationSpec, OperationTaskCompletion,
+    OperationTicket, VisibleOperation, VisibleOperationGroup,
 };
 use crate::workspace::repo_guard::{repo_resource_id, with_repo_guard, RepoAccess};
 use crate::workspace::repos::{
@@ -12,10 +12,6 @@ use crate::workspace::repos::{
     run_configured_pull_with_config, run_multi_remote_push, summarize_repo, sync_result,
 };
 use crate::workspace::settings::{repo_path_by_id, workspace_root};
-use crate::workspace::tasks::{
-    finish_workspace_task, mark_workspace_task_running, record_pending_operation_task,
-    register_pending_task_cancellation,
-};
 use lilia_github_contracts::workspace::{
     BulkSyncPreview, BulkSyncRepo, BulkSyncResult, RepoPullLocalChangesMode, RepoRemoteSyncPolicy,
     RepoSummary,
@@ -335,8 +331,7 @@ enum SubmittedBulkRepo {
 }
 
 async fn aggregate_bulk_sync(
-    app: AppHandle,
-    parent_task_id: String,
+    group: VisibleOperationGroup,
     submitted: Vec<SubmittedBulkRepo>,
 ) -> Result<Vec<BulkSyncResult>, String> {
     let mut results = Vec::with_capacity(submitted.len());
@@ -354,7 +349,7 @@ async fn aggregate_bulk_sync(
         }
     }
     if let Some(error) = cancellation_error {
-        finish_workspace_task(&app, &parent_task_id, "cancelled", Some(error.clone()));
+        group.finish_cancelled(error.clone());
         return Err(error);
     }
     let failures = results
@@ -362,19 +357,15 @@ async fn aggregate_bulk_sync(
         .filter(|result| result.status == "error")
         .count();
     if failures == 0 {
-        finish_workspace_task(
-            &app,
-            &parent_task_id,
-            "success",
-            Some(format!("已同步 {} 个仓库", results.len())),
-        );
+        group.finish(OperationTaskCompletion::Success(format!(
+            "已同步 {} 个仓库",
+            results.len()
+        )));
     } else {
-        finish_workspace_task(
-            &app,
-            &parent_task_id,
-            "error",
-            Some(format!("{} 个仓库同步失败", failures)),
-        );
+        group.finish(OperationTaskCompletion::Error(format!(
+            "{} 个仓库同步失败",
+            failures
+        )));
     }
     Ok(results)
 }
@@ -390,18 +381,15 @@ pub async fn bulk_sync_execute(
         return Ok(Vec::new());
     }
     let trigger = BulkSyncTrigger::parse(trigger.as_deref())?;
-    let parent = record_pending_operation_task(
-        &app,
-        "sync",
-        trigger.title(&operation),
-        trigger.priority(),
-        None,
+    let parent = VisibleOperationGroup::new(
+        app.clone(),
+        VisibleOperation::new("sync", trigger.title(&operation)).priority(trigger.priority()),
         Some(format!("等待同步 {} 个仓库", repo_ids.len())),
     );
     let root = match workspace_root(&app) {
         Ok(root) => root,
         Err(error) => {
-            finish_workspace_task(&app, &parent.id, "error", Some(error.clone()));
+            parent.finish(OperationTaskCompletion::Error(error.clone()));
             return Err(error);
         }
     };
@@ -425,7 +413,7 @@ pub async fn bulk_sync_execute(
         let spec = OperationSpec::new(OperationKind::Bulk)
             .lane(trigger.lane())
             .priority(trigger.core_priority())
-            .parent_task(parent.id.clone())
+            .parent_task(parent.task_id().to_string())
             .resource(resource.clone(), ResourceAccessMode::ExclusiveWrite)
             .same_resource_order(resource);
         match submit_operation(app.clone(), spec, move || {
@@ -448,19 +436,12 @@ pub async fn bulk_sync_execute(
     }
 
     if cancel_targets.is_empty() {
-        mark_workspace_task_running(&app, &parent.id, Some("正在汇总同步结果".to_string()));
+        parent.mark_running(Some("正在汇总同步结果".to_string()));
     } else {
-        let cancel_app = app.clone();
-        register_pending_task_cancellation(
-            &app,
-            &parent.id,
-            Box::new(move || {
-                cancel_pending_operations(&cancel_app, &cancel_targets, "批量同步已取消")
-            }),
-        );
+        parent.register_cancel_targets(cancel_targets, "批量同步已取消");
     }
 
-    tokio::spawn(aggregate_bulk_sync(app, parent.id, submitted))
+    tokio::spawn(aggregate_bulk_sync(parent, submitted))
         .await
         .map_err(|_| "批量同步结果通道已关闭".to_string())?
 }
@@ -558,24 +539,20 @@ mod trigger_tests {
     #[tokio::test]
     async fn aggregation_preserves_input_order_and_projects_partial_failure() {
         let app = test_app();
-        let parent = record_pending_operation_task(
-            &app,
-            "sync",
-            "bulk aggregate ordering",
-            "high",
-            None,
+        let parent = VisibleOperationGroup::new(
+            app,
+            VisibleOperation::new("sync", "bulk aggregate ordering").priority("high"),
             None,
         );
-        mark_workspace_task_running(&app, &parent.id, None);
+        parent.mark_running(None);
+        let parent_id = parent.task_id().to_string();
         let submitted = vec![
             SubmittedBulkRepo::Result(result("third", "success")),
             SubmittedBulkRepo::Result(result("first", "error")),
             SubmittedBulkRepo::Result(result("second", "success")),
         ];
 
-        let results = aggregate_bulk_sync(app, parent.id.clone(), submitted)
-            .await
-            .unwrap();
+        let results = aggregate_bulk_sync(parent, submitted).await.unwrap();
 
         assert_eq!(
             results
@@ -584,29 +561,26 @@ mod trigger_tests {
                 .collect::<Vec<_>>(),
             vec!["third", "first", "second"]
         );
-        wait_for_parent_status(&parent.id, "error").await;
+        wait_for_parent_status(&parent_id, "error").await;
     }
 
     #[tokio::test]
     async fn detached_aggregation_finishes_parent_after_command_waiter_is_dropped() {
         let app = test_app();
-        let parent = record_pending_operation_task(
-            &app,
-            "sync",
-            "detached bulk aggregation",
-            "high",
-            None,
+        let parent = VisibleOperationGroup::new(
+            app,
+            VisibleOperation::new("sync", "detached bulk aggregation").priority("high"),
             None,
         );
-        mark_workspace_task_running(&app, &parent.id, None);
+        parent.mark_running(None);
+        let parent_id = parent.task_id().to_string();
         let waiter = tokio::spawn(aggregate_bulk_sync(
-            app,
-            parent.id.clone(),
+            parent,
             vec![SubmittedBulkRepo::Result(result("repo", "success"))],
         ));
 
         drop(waiter);
 
-        wait_for_parent_status(&parent.id, "success").await;
+        wait_for_parent_status(&parent_id, "success").await;
     }
 }

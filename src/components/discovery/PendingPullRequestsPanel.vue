@@ -2,28 +2,26 @@
 import { computed, ref } from "vue";
 import {
   getGitHubDiscoveryRepositoryStatus,
-  loadDiscoveryPendingPullRequests,
   submitGitHubDiscoveryPullRequestReview,
 } from "../../services/discovery";
-import { mergeGitHubPullRequest, updateGitHubPullRequest } from "../../services/workspace";
-import { useDiscoverySection } from "../../composables/discovery/useDiscoverySection";
-import type { DiscoveryRepositoryInput } from "./types";
+import { mergeGitHubPullRequest, updateGitHubPullRequest } from "../../services/workspace/client";
+import type { DiscoveryAggregateResult, DiscoveryPendingPullRequest } from "../../services/discovery/types";
 import DiscoveryConfirmDialog from "./DiscoveryConfirmDialog.vue";
 import DiscoveryItemRow from "./DiscoveryItemRow.vue";
 import DiscoveryPanel from "./DiscoveryPanel.vue";
 import PullRequestReviewDialog, { type DiscoveryReviewEvent } from "./PullRequestReviewDialog.vue";
 import { cleanDiscoveryError, discoveryDate, discoveryProjectRoute } from "./display";
 
-const props = withDefaults(defineProps<{
-  repositories: readonly DiscoveryRepositoryInput[];
-  refreshToken?: number;
-}>(), { refreshToken: 0 });
+const props = defineProps<{
+  result: DiscoveryAggregateResult<DiscoveryPendingPullRequest> | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+}>();
 
-type PendingItem = Awaited<ReturnType<typeof loadDiscoveryPendingPullRequests>>["items"][number];
+type PendingItem = DiscoveryPendingPullRequest;
 type MergeMethod = "merge" | "squash" | "rebase";
-const section = useDiscoverySection(props, (forceRefresh) =>
-  loadDiscoveryPendingPullRequests(props.repositories.map((repo) => repo.fullName), { forceRefresh }));
-const items = computed(() => section.result.value?.items ?? []);
+const items = computed(() => props.result?.items ?? []);
 const reviewTarget = ref<PendingItem | null>(null);
 const confirmTarget = ref<{ item: PendingItem; action: "merge" | "close" } | null>(null);
 const mergeMethods = ref<MergeMethod[]>([]);
@@ -66,7 +64,7 @@ async function submitReview(request: { event: DiscoveryReviewEvent; body?: strin
   try {
     await submitGitHubDiscoveryPullRequestReview(item.repoFullName, item.pullRequest.number, request);
     reviewTarget.value = null;
-    await section.load(true);
+    await props.refresh();
   } catch (error) { setError(item, error); }
   finally { pendingKey.value = null; }
 }
@@ -84,7 +82,7 @@ async function confirmAction() {
       await updateGitHubPullRequest(item.repoFullName, item.pullRequest.number, { state: "closed" });
     }
     confirmTarget.value = null;
-    await section.load(true);
+    await props.refresh();
   } catch (error) { setError(item, error); }
   finally { pendingKey.value = null; }
 }
@@ -94,13 +92,13 @@ async function confirmAction() {
   <DiscoveryPanel
     title="待处理 Pull Requests"
     agent-id="discovery.pr"
-    :loading="section.loading.value"
-    :error="section.error.value"
+    :loading="loading"
+    :error="error"
     :item-count="items.length"
-    :failure-count="section.result.value?.failures.length ?? 0"
-    :truncated-count="section.result.value?.truncated ? 1 : 0"
+    :failure-count="result?.failures.length ?? 0"
+    :truncated-count="result?.truncated ? 1 : 0"
     empty-message="当前批次没有需要你处理的 Pull Request。"
-    @retry="section.load(true)"
+    @retry="refresh"
   >
     <DiscoveryItemRow
       v-for="item in items"
